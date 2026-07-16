@@ -48,7 +48,12 @@ test("SSE stream state survives a sidecar restart", async ({ page, request }) =>
   let respawned: ChildProcess | null = null;
 
   try {
-    await page.goto("/");
+    // The dev status surface sits behind the profile gate — seed one via API.
+    await request.post(`http://127.0.0.1:${port}/api/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { resume_markdown: "# E2E Candidate" },
+    });
+    await page.goto("/dev");
     await expect(page.getByTestId("sse-status")).toHaveText("live", {
       timeout: 15_000,
     });

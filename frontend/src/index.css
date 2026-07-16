@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Design tokens — ported from the canonical prototype
+ * (design/prototype/prototype-modal/assets/head.js + base.css).
+ *
+ * The prototype expressed its palette through a Tailwind CDN config plus a
+ * CSS-variable layer that swaps on `[data-theme="dark"]`. Here we keep the
+ * CSS-variable layer as the single source of truth and bind Tailwind's color
+ * utilities to it with `@theme inline`, so `bg-surface-2` / `text-ink-3` /
+ * `bg-accent-wash` resolve live against the active theme (no per-utility
+ * `!important` dark overrides needed — the variable changes, the util follows).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --bg: #f9fafb;
+  --surface: #ffffff;
+  --surface-2: #f3f4f6;
+  --surface-3: #e5e7eb;
+
+  --ink: #111827;
+  --ink-2: #374151;
+  --ink-3: #6b7280;
+  --ink-4: #9ca3af;
+
+  --border: #e5e7eb;
+  --border-2: #d1d5db;
+
+  --accent: #257697;
+  --accent-ink: #184d63;
+  --accent-wash: #e0f2fe;
+
+  --good: #059669;
+  --good-wash: #d1fae5;
+  --warn: #d97706;
+  --warn-wash: #fef3c7;
+  --bad: #dc2626;
+  --bad-wash: #fee2e2;
+  --purple: #7c3aed;
+  --purple-wash: #ede9fe;
+  --pink: #db2777;
+  --pink-wash: #fce7f3;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1115;
+  --surface: #16181d;
+  --surface-2: #1c1f25;
+  --surface-3: #232730;
+
+  --ink: #f9fafb;
+  --ink-2: #d1d5db;
+  --ink-3: #9ca3af;
+  --ink-4: #6b7280;
+
+  --border: #374151;
+  --border-2: #4b5563;
+
+  --accent: #4dc2c2;
+  --accent-ink: #8be0e0;
+  --accent-wash: #103b3b;
+
+  --good: #34d399;
+  --good-wash: #064e3b;
+  --warn: #fbbf24;
+  --warn-wash: #78350f;
+  --bad: #f87171;
+  --bad-wash: #7f1d1d;
+  --purple: #a78bfa;
+  --purple-wash: #4c1d95;
+  --pink: #f472b6;
+  --pink-wash: #831843;
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+
+  --color-border: var(--border);
+  --color-border-2: var(--border-2);
+  --color-line: var(--border);
+
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-wash: var(--accent-wash);
+
+  --color-good: var(--good);
+  --color-good-wash: var(--good-wash);
+  --color-warn: var(--warn);
+  --color-warn-wash: var(--warn-wash);
+  --color-bad: var(--bad);
+  --color-bad-wash: var(--bad-wash);
+  --color-purple: var(--purple);
+  --color-purple-wash: var(--purple-wash);
+  --color-pink: var(--pink);
+  --color-pink-wash: var(--pink-wash);
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-7: 7px;
+  --radius-10: 10px;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* Hide native scrollbars on kanban horizontal-scroll rows (matches the design). */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* Resize handle col-resize feedback (JD split, US-JB-04). */
+.resize-handle {
+  cursor: col-resize;
+}
+
+/* Prose recipe for the resume/markdown preview — mirrors base.css .resume-prose. */
+.resume-prose {
+  color: var(--ink);
+}
+.resume-prose h1 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+.resume-prose h2 {
+  margin-top: 24px;
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.resume-prose h3 {
+  margin-top: 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.resume-prose p,
+.resume-prose li {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.resume-prose li {
+  margin: 2px 0;
+}
+.resume-prose ul {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+.resume-prose strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.resume-prose em {
+  color: var(--ink-3);
+  font-family: "IBM Plex Mono", monospace;
+  font-style: normal;
+  font-size: 11.5px;
+}
+.resume-prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+.resume-prose a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.resume-prose a:hover {
+  text-decoration: underline;
+}
+
+/* Soft fade between themes. */
+body,
+[class*="bg-surface"],
+[class*="bg-canvas"],
+[class*="border-border"],
+[class*="text-ink"] {
+  transition:
+    background-color 240ms ease,
+    border-color 240ms ease,
+    color 240ms ease;
+}

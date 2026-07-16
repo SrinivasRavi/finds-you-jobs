@@ -22,6 +22,9 @@ export default defineConfig({
   testDir: "./e2e",
   outputDir: "./e2e/_results",
   fullyParallel: false,
+  // One worker: the reconnect spec kills and respawns the shared sidecar —
+  // a parallel board test would see the outage as flakiness.
+  workers: 1,
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:1420",
