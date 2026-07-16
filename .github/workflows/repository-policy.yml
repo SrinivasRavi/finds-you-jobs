@@ -1,0 +1,54 @@
+name: Repository policy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    name: Provenance baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify required repository records
+        run: |
+          test -f LICENSE
+          grep -Fqx 'GNU AFFERO GENERAL PUBLIC LICENSE' LICENSE
+          test -f THIRD_PARTY_NOTICES.md
+          test -f UPSTREAMS.md
+          test -f CONTRIBUTING.md
+          test -f docs/.gitignore
+      - name: Prevent publication of private planning directory contents
+        run: |
+          test -z "$(git ls-files 'docs/*' ':!docs/.gitignore')"
+
+  dco:
+    name: Developer Certificate of Origin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify commit sign-offs
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="$BASE_REF..HEAD"
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            range="HEAD"
+          else
+            range="$BEFORE..HEAD"
+          fi
+          for commit in $(git rev-list --no-merges "$range"); do
+            git show -s --format=%B "$commit" | grep -Eq '^Signed-off-by: .+ <.+>$' || {
+              echo "Missing DCO sign-off: $commit"
+              exit 1
+            }
+          done

@@ -1,0 +1,22 @@
+# Operating-system and editor artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local application state and secrets
+.env
+.env.*
+!.env.example
+app-data/
+*.sqlite
+*.sqlite3
+
+# Build and test outputs
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+__pycache__/
+*.py[cod]

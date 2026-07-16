@@ -1,0 +1,6 @@
+# This directory is intentionally available in every clone for private planning,
+# agent handoffs, working notes, and rendered evidence. None of that material is
+# published by default. Add a specific public document deliberately by changing
+# this rule in a reviewed commit.
+*
+!.gitignore
