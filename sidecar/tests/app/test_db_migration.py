@@ -12,8 +12,8 @@ from sqlalchemy import create_engine, inspect
 
 from sidecar.app.db.migrate import downgrade_to_base, upgrade_to_head
 
-# The tables landed so far (`docs/internal/roadmap.md` §7.2 #3–4); the rest of
-# the database-design §7 set lands with its feature commits.
+# Every table the migration chain creates (`docs/internal/roadmap.md` §7.2
+# #3–#8); the rest of the database-design §7 set lands with its feature commits.
 _EXPECTED = {
     "operations",
     "user_preferences",
@@ -22,6 +22,13 @@ _EXPECTED = {
     "experience_skills",
     "project_skills",
     "engine_settings",
+    "jobs",
+    "job_scores",
+    "tombstones",
+    "schedules",
+    "applications",
+    "artifacts",
+    "application_events",
 }
 
 
@@ -29,8 +36,11 @@ def test_migration_creates_core_tables(tmp_path: Path) -> None:
     url = f"sqlite:///{tmp_path / 'db.sqlite'}"
     upgrade_to_head(url)
     tables = set(inspect(create_engine(url)).get_table_names())
-    assert _EXPECTED <= tables, f"missing: {_EXPECTED - tables}"
-    assert "alembic_version" in tables
+    # Exact equality (not subset) so a migration adding or dropping a table can
+    # never drift past this list silently.
+    assert tables == _EXPECTED | {"alembic_version"}, (
+        f"missing: {_EXPECTED - tables}; unexpected: {tables - _EXPECTED - {'alembic_version'}}"
+    )
 
 
 def test_migration_is_reversible(tmp_path: Path) -> None:
