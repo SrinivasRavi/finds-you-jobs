@@ -12,12 +12,21 @@ When third-party material is added, the same change must:
 4. inventory the selected subset's direct and transitive dependencies; and
 5. include the corresponding source/build instructions required for distributed binaries.
 
+## Carried third-party material
+
+### career-ops — MIT (prompt text, attributed)
+
+- Upstream: [santifer/career-ops](https://github.com/santifer/career-ops) @ `8369b4001ba63be78818240b9dbc3aa94aebe2e8` (MIT; license text retained at `third_party/career-ops@8369b40/LICENSE`).
+- **What is carried:** prompt text only. The module *skill files* (`sidecar/modules/tailorer/tailor-resume-skill.md`, `sidecar/modules/coverletterer/cover-letter-skill.md`, and — when the scorer lands — `sidecar/modules/scorer/score-job-skill.md`) are distilled from career-ops's mode prompts (`modes/pdf.md`, `modes/cover.md`, `modes/oferta.md`, `modes/_shared.md`, `modes/heuristics/recruiter-side.md`, `voice-dna.md`). A skill-by-skill audit (2026-07-16) found several blocks **near-verbatim** (the voice-dna banned-word list, the recruiter-side risk-map table, the business-value bullet patterns, the cover-letter word band and JD-gate structure); the rest is adapted or finds-you-jobs-original, tagged `[FYJ]` in place. Each skill file carries an upstream-attribution header and a per-section distillation log appendix — that log is the file-level take/adapt/exclude record.
+- **What is not carried:** no career-ops runtime code. The module `.py` implementations are independently written; behavioral inspiration is documented, not copied.
+- Verbatim source snapshots of the six distilled upstream files ship publicly at `third_party/career-ops@8369b40/` (with the upstream MIT LICENSE and a provenance README) so every distillation is reviewable against its source in the distributed tree.
+- The MIT grant and copyright notice for the carried portions remain with career-ops; nothing here relabels that material as AGPL-only.
+
 ## Planned upstream audits — no source carried yet
 
 | Upstream | Expected license | Intended scope | Status |
 | --- | --- | --- | --- |
-| [career-ops](https://github.com/santifer/career-ops) | MIT | Existing skill/prompt lineage must receive a skill-by-skill provenance audit before porting. | No source or prompt text carried in this commit. |
-| [OpenOutreach](https://github.com/eracle/OpenOutreach) | GPL-3.0 | A deliberately trimmed LinkedIn/Voyager core may be imported directly into the AGPL application. | No source carried in this commit. |
-| [Skyvern](https://github.com/Skyvern-AI/skyvern) | AGPL-3.0 | A deliberately trimmed local screenshot/browser-agent core may be imported after a dependency feasibility spike. | No source carried in this commit. |
+| [OpenOutreach](https://github.com/eracle/OpenOutreach) | GPL-3.0 | A deliberately trimmed LinkedIn/Voyager core may be imported directly into the AGPL application. | No source carried yet. |
+| [Skyvern](https://github.com/Skyvern-AI/skyvern) | AGPL-3.0 | A deliberately trimmed local screenshot/browser-agent core may be imported after a dependency feasibility spike. | No source carried yet. |
 
 An AGPL aggregate does not erase upstream notices or change the original license of carried portions. In particular, retain MIT notices for MIT-derived material and GPL notices for GPL-derived material.
