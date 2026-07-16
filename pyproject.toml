@@ -1,0 +1,49 @@
+[project]
+name = "finds-you-jobs"
+version = "0.1.0-dev"
+description = "Open-source AI job-search desktop tool"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "AGPL-3.0-only" }
+authors = [{ name = "Srinivas Ravi" }]
+dependencies = [
+    "fastapi>=0.139.0",
+    "uvicorn[standard]>=0.50.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["sidecar"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [
+    ".venv",
+    "dist",
+    "build",
+    "frontend",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S"]
+ignore = ["S101"]
+
+[tool.pyright]
+include = ["sidecar"]
+
+[tool.pytest.ini_options]
+testpaths = ["sidecar/tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pyright>=1.1.390",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.20",
+]

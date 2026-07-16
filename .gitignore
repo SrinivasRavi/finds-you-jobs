@@ -23,3 +23,8 @@ playwright-report/
 test-results/
 __pycache__/
 *.py[cod]
+node_modules/
+logs/
+frontend/e2e/_results/
+frontend/e2e/_screenshots/
+.venv/

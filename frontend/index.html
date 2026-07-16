@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>finds-you-jobs</title>
+    <!-- Fonts land with the product UI (bundled locally via @fontsource) — the
+         packaged app's loopback-only CSP blocks external hosts, so there will
+         never be a Google Fonts link. -->
+    <script>
+      // Theme init before first paint (mirrors head.js): default "system"
+      // (FR-SET-09) — follow prefers-color-scheme; a stored light/dark choice wins.
+      (function () {
+        try {
+          var m = localStorage.getItem("fyj-theme") || "system";
+          var t =
+            m === "light" || m === "dark"
+              ? m
+              : window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

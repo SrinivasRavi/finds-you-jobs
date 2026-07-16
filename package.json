@@ -1,0 +1,22 @@
+{
+  "name": "finds-you-jobs",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "Open-source AI job-search desktop tool",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "boot": "cd frontend && pnpm install && cd .. && pnpm install && uv sync",
+    "dev": "pnpm tauri dev",
+    "dev:web": "node scripts/dev-web.mjs",
+    "tauri": "tauri",
+    "build": "cd frontend && pnpm build && cd .. && pnpm tauri build",
+    "test": "uv run pytest",
+    "lint": "uv run ruff check .",
+    "typecheck": "uv run pyright sidecar && cd frontend && pnpm typecheck",
+    "playwright": "cd frontend && pnpm playwright test"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
