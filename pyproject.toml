@@ -9,6 +9,8 @@ authors = [{ name = "Srinivas Ravi" }]
 dependencies = [
     "fastapi>=0.139.0",
     "uvicorn[standard]>=0.50.2",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
 ]
 
 [tool.hatch.build.targets.wheel]

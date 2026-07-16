@@ -97,6 +97,23 @@ def test_shutdown_401_without_token_live(sidecar: tuple[str, str]) -> None:
     assert resp.status_code == 401
 
 
+def test_events_401_without_token_live(sidecar: tuple[str, str]) -> None:
+    base, _ = sidecar
+    resp = httpx.get(f"{base}/api/events", timeout=5)
+    assert resp.status_code == 401
+
+
+def test_events_streams_heartbeat_live(sidecar: tuple[str, str]) -> None:
+    base, token = sidecar
+    with httpx.stream("GET", f"{base}/api/events?token={token}", timeout=5) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        for line in resp.iter_lines():
+            if line.startswith("data: "):
+                assert '"type":"heartbeat"' in line
+                break
+
+
 def test_shutdown_exits_process_live(tmp_path: Path) -> None:
     proc = subprocess.Popen(
         [sys.executable, "-m", "sidecar.app"],

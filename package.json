@@ -6,17 +6,19 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "boot": "cd frontend && pnpm install && cd .. && pnpm install && uv sync",
-    "dev": "pnpm tauri dev",
-    "dev:web": "node scripts/dev-web.mjs",
+    "dev": "node scripts/codegen.mjs && pnpm tauri dev",
+    "dev:web": "node scripts/codegen.mjs && node scripts/dev-web.mjs",
     "tauri": "tauri",
-    "build": "cd frontend && pnpm build && cd .. && pnpm tauri build",
-    "test": "uv run pytest",
+    "build": "node scripts/codegen.mjs && cd frontend && pnpm build && cd .. && pnpm tauri build",
+    "test": "node scripts/codegen.mjs && uv run pytest",
     "lint": "uv run ruff check .",
     "typecheck": "uv run pyright sidecar && cd frontend && pnpm typecheck",
-    "playwright": "cd frontend && pnpm playwright test"
+    "playwright": "cd frontend && pnpm playwright test",
+    "codegen": "node scripts/codegen.mjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.0"
+    "@tauri-apps/cli": "^2.9.0",
+    "openapi-typescript": "^7.4.0"
   },
   "packageManager": "pnpm@9.0.0"
 }

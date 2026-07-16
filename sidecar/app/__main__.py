@@ -66,7 +66,17 @@ def main() -> int:
     app = create_app(token=token, original_ppid=original_ppid)
 
     config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="info", access_log=False
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="info",
+        access_log=False,
+        # /shutdown must actually end the process even while an SSE client is
+        # attached: uvicorn's default graceful shutdown waits forever for open
+        # connections, and the app always holds the /api/events stream open.
+        # 5 s stays inside the shell's 10 s drain window (§4.4 step 3), so the
+        # sidecar exits on its own before the AM3 force-kill has to fire.
+        timeout_graceful_shutdown=5,
     )
     server = uvicorn.Server(config)
 

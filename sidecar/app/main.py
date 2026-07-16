@@ -1,9 +1,11 @@
 """FastAPI app factory (architecture §4.1 `app/api`).
 
-Skeleton-commit scope: bearer auth, loopback CORS, flight-recorder log, orphan
-watchdog, and the lifecycle routes (/healthz, /shutdown). The SQLite storage,
-SSE event hub, Operation Runner, and scheduler land in the core-storage commit
-(`docs/internal/roadmap.md` §7.2 #3) and come up in this same lifespan.
+Wires the scaffold (bearer auth, loopback CORS, flight-recorder log, orphan
+watchdog, lifecycle routes) plus the core-storage slice
+(`docs/internal/roadmap.md` §7.2 #3): the SQLite storage + migrations, the SSE
+event hub, and the Operation Runner. The runner comes up in the lifespan and
+drains on shutdown. Engine routing and the scheduler land with their feature
+commits in this same lifespan.
 """
 
 from __future__ import annotations
@@ -18,7 +20,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router
 from .auth import BearerAuthMiddleware
+from .db import Database, resolve_db_url
+from .db.database import resolve_data_dir
+from .db.migrate import upgrade_to_head
+from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub
 from .logging_setup import get_logger, setup_flight_recorder
+from .registry import OperationRegistry
+from .runner import OperationRunner
 from .watchdog import watch_parent
 
 # §4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
@@ -34,12 +42,17 @@ def create_app(
     *,
     token: str,
     original_ppid: int | None = None,
+    data_dir: str | os.PathLike[str] | None = None,
+    operation_registry: OperationRegistry | None = None,
 ) -> FastAPI:
     """Build the sidecar FastAPI app.
 
     `token` guards every non-open route. `original_ppid` (the shell's pid at
     spawn) arms the orphan watchdog; when None (tests, standalone curl) the
-    watchdog is skipped.
+    watchdog is skipped. `data_dir` overrides the DB/app-data location (tests
+    point it at a tmp dir); None falls back to FYJ_DATA_DIR / the platform dir.
+    `operation_registry` overrides the default kind table (tests register fake
+    entrypoints); None uses `default_operation_registry()`.
     """
 
     @asynccontextmanager
@@ -47,6 +60,26 @@ def create_app(
         setup_flight_recorder()
         log = get_logger()
         log.info("sidecar app starting (original_ppid=%s)", original_ppid)
+
+        # Storage: migrate to head, then open the engine (architecture §5.3 boot).
+        db_url = resolve_db_url(data_dir)
+        upgrade_to_head(db_url)
+        # Alembic's fileConfig (inside upgrade_to_head) disables existing loggers,
+        # including our flight recorder — re-arm it so every runner/operation log
+        # written after boot lands in the file (was the "only boot lines land" bug).
+        # setup_flight_recorder is idempotent and clears `.disabled`.
+        setup_flight_recorder()
+        db = Database(db_url)
+        hub = EventHub()
+        hub.bind_loop(asyncio.get_running_loop())
+
+        runner = OperationRunner(db, registry=operation_registry, publish=hub.publish)
+        runner.start()  # boot recovery (NFR-LONG-02) + first pump
+
+        app.state.db = db
+        app.state.hub = hub
+        app.state.runner = runner
+        app.state.data_dir = resolve_data_dir(data_dir)
 
         watchdog_task: asyncio.Task[None] | None = None
         if original_ppid is not None:
@@ -69,6 +102,9 @@ def create_app(
                     await watchdog_task
                 except asyncio.CancelledError:
                     pass
+            # Drain in-flight operations, then release the DB engine (§4.4 step 3).
+            runner.shutdown(drain_timeout=SHUTDOWN_DRAIN_SECONDS)
+            db.dispose()
             log.info("sidecar app stopped")
 
     app = FastAPI(
@@ -80,6 +116,7 @@ def create_app(
     # __main__ assigns this to flip the uvicorn server's should_exit. Left None
     # under TestClient (no server) — /shutdown then simply 200s.
     app.state.request_shutdown = None
+    app.state.heartbeat_interval = HEARTBEAT_INTERVAL_SECONDS
 
     # Auth added first, CORS last → CORS is the outermost layer so preflight
     # OPTIONS resolve before the token check.

@@ -1,11 +1,13 @@
-// Skeleton shell: proves the handshake + /healthz path end to end (shell →
-// sidecar → UI) and renders an honest connection state. The real product UI
-// replaces this as later roadmap commits land; nothing here is a design
-// surface.
+// Skeleton shell: proves the handshake + /healthz path and the SSE transport
+// (live / reconnecting, with a snapshot refetch after every reconnect) end to
+// end. The real product UI replaces this as later roadmap commits land;
+// nothing here is a design surface.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { fetchHealth, getSidecarInfo, type SidecarInfo } from "./api/client";
+import { eventBus, type StreamState } from "./api/events";
+import { fetchOperations } from "./api/operations";
 
 const POLL_MS = 2000;
 
@@ -16,6 +18,14 @@ type Status =
 
 export default function App() {
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
+  const [stream, setStream] = useState<StreamState>("connecting");
+  const [opsCount, setOpsCount] = useState<number | null>(null);
+
+  const refetchSnapshot = useCallback(() => {
+    fetchOperations()
+      .then((ops) => setOpsCount(ops.length))
+      .catch(() => setOpsCount(null));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +56,15 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    // Events missed while disconnected are never replayed — refetch the
+    // snapshot on every transition into `live` (initial connect + reconnects).
+    return eventBus.subscribe(null, (state) => {
+      setStream(state);
+      if (state === "live") refetchSnapshot();
+    });
+  }, [refetchSnapshot]);
+
   return (
     <main
       style={{
@@ -70,6 +89,14 @@ export default function App() {
       {status.kind === "unavailable" && (
         <p data-testid="sidecar-error">{status.message}</p>
       )}
+      <p>
+        event stream: <span data-testid="sse-status">{stream}</span>
+      </p>
+      <p data-testid="ops-count">
+        {opsCount === null
+          ? "operations ledger unavailable"
+          : `operations recorded: ${opsCount}`}
+      </p>
     </main>
   );
 }
