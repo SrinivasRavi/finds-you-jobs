@@ -30,6 +30,10 @@ extend-exclude = [
     "dist",
     "build",
     "frontend",
+    # GPLv3 OpenOutreach-derived subtree — kept close to upstream style, not
+    # linted to finds-you-jobs conventions (the facade at the package root IS
+    # linted). See sidecar/packages/referral_outreach/provenance.md.
+    "sidecar/packages/referral_outreach/upstream",
 ]
 
 [tool.ruff.lint]
@@ -38,6 +42,11 @@ ignore = ["S101"]
 
 [tool.pyright]
 include = ["sidecar"]
+exclude = [
+    "**/__pycache__",
+    # GPLv3 vendored subtree — not typechecked to our standard (see ruff note).
+    "sidecar/packages/referral_outreach/upstream",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["sidecar/tests"]

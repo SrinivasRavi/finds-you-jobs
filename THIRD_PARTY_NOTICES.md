@@ -22,11 +22,18 @@ When third-party material is added, the same change must:
 - Verbatim source snapshots of the six distilled upstream files ship publicly at `third_party/career-ops@8369b40/` (with the upstream MIT LICENSE and a provenance README) so every distillation is reviewable against its source in the distributed tree.
 - The MIT grant and copyright notice for the carried portions remain with career-ops; nothing here relabels that material as AGPL-only.
 
+### OpenOutreach — GPL-3.0-only (LinkedIn/Voyager core, carried directly)
+
+- Upstream: [eracle/OpenOutreach](https://github.com/eracle/OpenOutreach) @ `a7a9101af255d72ee5df7fbf1dfd1d7fd5fd8a1a` (2026-04-29). Upstream license: **GNU GPL v3** (confirmed via upstream `LICENCE.md` + GPLv3 badge — **not** AGPL). Full license text retained at `sidecar/packages/referral_outreach/upstream/LICENSE`.
+- **What is carried:** a trimmed, GPLv3 LinkedIn Voyager browser core under `sidecar/packages/referral_outreach/upstream/` — the profile-response parser (`voyager.py`, verbatim), URL helpers (`url_utils.py`, verbatim), the in-page fetch client (`client.py`; `tenacity` → hand-rolled retry), browser session/login (`session.py`; Django + `playwright_stealth`/`termcolor` dropped), the connect/status/DM actions with their verbatim LinkedIn selector chains (`actions.py`), company-employee discovery (`discovery.py`), the exceptions (`errors.py`), plus new GPL code owned in the subtree: `pacing.py` (tiered caps/jitter/backoff), `secure_store.py` (Fernet sealing), `worker.py` (the bounded-operation layer). Each file carries an `SPDX-License-Identifier: GPL-3.0-only` header and a per-file upstream-source line; `sidecar/packages/referral_outreach/provenance.md` is the full take/trim table.
+- **Direct in-process (no subprocess firewall).** Unlike the prior MIT-era repository — which isolated this GPL code behind a `python -m voyager_py` subprocess — finds-you-jobs is AGPL-3.0-only, so GPLv3 + AGPLv3 combine directly. The finds-you-jobs-owned facade (`client.py`/`types.py`/`fake.py`, AGPL) calls the `upstream/` core in-process; the subprocess JSON-CLI is **not carried**.
+- **Deliberately NOT taken:** OpenOutreach's remote-controlled *freemium promotional actions* (connection requests + promo messages sent from the user's account) and its *auto-newsletter subscription* in non-GDPR jurisdictions, plus the Django/Celery CRM, ML qualifier/embeddings, and mem0 vendor tree.
+- **GPL source availability:** the GPLv3 source ships in this public repository at `sidecar/packages/referral_outreach/upstream/`, satisfying the source-availability requirement (reinforced by the whole aggregate being AGPL-3.0-only).
+
 ## Planned upstream audits — no source carried yet
 
 | Upstream | Expected license | Intended scope | Status |
 | --- | --- | --- | --- |
-| [OpenOutreach](https://github.com/eracle/OpenOutreach) | GPL-3.0 | A deliberately trimmed LinkedIn/Voyager core may be imported directly into the AGPL application. | No source carried yet. |
 | [Skyvern](https://github.com/Skyvern-AI/skyvern) | AGPL-3.0 | A deliberately trimmed local screenshot/browser-agent core may be imported after a dependency feasibility spike. | No source carried yet. |
 
 An AGPL aggregate does not erase upstream notices or change the original license of carried portions. In particular, retain MIT notices for MIT-derived material and GPL notices for GPL-derived material.
