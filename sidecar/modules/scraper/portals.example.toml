@@ -1,0 +1,70 @@
+# portals.example.toml — the career-ops `portals.yml` model in TOML.
+# List company careers URLs + board feeds; the right adapter claims each one
+# from its URL shape. Copy, edit, run:
+#
+#   uv run python -m sidecar.modules.scraper --portals my-portals.toml
+
+# --- per-company ATS boards (public JSON APIs, no keys) ---
+
+[[sources]]
+url = "https://job-boards.greenhouse.io/gleanwork"
+company = "Glean"
+
+[[sources]]
+url = "https://jobs.lever.co/cred"
+company = "CRED"
+
+[[sources]]
+url = "https://jobs.ashbyhq.com/sarvam"
+company = "Sarvam AI"
+
+[[sources]]
+url = "https://apply.workable.com/gsstech-group"
+company = "GSSTech Group"
+
+[[sources]]
+url = "https://careers.smartrecruiters.com/Continental"
+company = "Continental"
+
+[[sources]]
+url = "https://acme.recruitee.com"
+company = "Acme"
+
+[[sources]]
+url = "https://acme.teamtailor.com"   # any *.teamtailor.com careers URL → /jobs.rss
+company = "Acme"
+
+[[sources]]
+url = "https://acme.jobs.personio.de"  # DACH/EU; also .com → /xml feed
+company = "Acme"
+
+# --- board-wide feeds ---
+
+[[sources]]
+board = "remoteok"
+
+[[sources]]
+board = "remotive"
+
+[[sources]]
+board = "hackernews"   # latest "Ask HN: Who is hiring?" thread
+
+[[sources]]
+url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
+type = "rss"
+
+# --- filters (word-boundary matching; block wins over allow) ---
+
+[filters.title]
+allow = ["software engineer", "backend engineer", "forward deployed engineer"]
+block = []
+
+[filters.location]
+allow = ["india", "mumbai", "pune", "bengaluru", "bangalore", "remote"]
+block = []
+always_allow = []      # rescues multi-location postings past the block list
+
+[scan]
+max_age_days = 0       # 0 = no freshness window
+per_source_cap = 0     # 0 = uncapped (never self-throttle by default)
+timeout_s = 20

@@ -29,6 +29,9 @@ from .logging_setup import get_logger, setup_flight_recorder
 from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
 from .runner import OperationRunner
+from .scheduler import Scheduler
+from .scheduler.planner import plan_schedule, plan_score_new
+from .seed import seed_defaults
 from .watchdog import watch_parent
 
 # §4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
@@ -46,6 +49,7 @@ def create_app(
     original_ppid: int | None = None,
     data_dir: str | os.PathLike[str] | None = None,
     operation_registry: OperationRegistry | None = None,
+    enable_scheduler: bool = True,
 ) -> FastAPI:
     """Build the sidecar FastAPI app.
 
@@ -54,7 +58,8 @@ def create_app(
     watchdog is skipped. `data_dir` overrides the DB/app-data location (tests
     point it at a tmp dir); None falls back to FYJ_DATA_DIR / the platform dir.
     `operation_registry` overrides the default kind table (tests register fake
-    entrypoints); None uses `default_operation_registry()`.
+    entrypoints); None uses `default_operation_registry()`. `enable_scheduler`
+    runs the 60 s tick loop (off for isolated route tests).
     """
 
     @asynccontextmanager
@@ -72,6 +77,7 @@ def create_app(
         # setup_flight_recorder is idempotent and clears `.disabled`.
         setup_flight_recorder()
         db = Database(db_url)
+        seed_defaults(db)  # first-run portals config + (disabled) schedules
         hub = EventHub()
         hub.bind_loop(asyncio.get_running_loop())
 
@@ -90,6 +96,18 @@ def create_app(
         runner = OperationRunner(
             db, registry=operation_registry, engines=engines, publish=hub.publish
         )
+
+        # Scan → score chain (US-JB-02): every successful scan fans out one
+        # `score` op per unscored job (idempotent planner — cache + pending
+        # skipped; capped by thresholds.score_new_batch; no-op without a master
+        # profile). Scores land one by one and the board re-ranks per SSE event.
+        def _chain_scan_to_scores(_operation_id: str, kind: str) -> None:
+            if kind != "scan":
+                return
+            for op_kind, snapshot in plan_score_new(db):
+                runner.submit(op_kind, snapshot)
+
+        runner.on_success = _chain_scan_to_scores
         runner.start()  # boot recovery (NFR-LONG-02) + first pump
 
         app.state.db = db
@@ -97,6 +115,18 @@ def create_app(
         app.state.engines = engines
         app.state.runner = runner
         app.state.data_dir = resolved_data_dir
+
+        scheduler: Scheduler | None = None
+        scheduler_task: asyncio.Task[None] | None = None
+        if enable_scheduler:
+            scheduler = Scheduler(
+                db,
+                runner,
+                planner=lambda kind: plan_schedule(db, kind),
+                publish=hub.publish,
+            )
+            scheduler_task = asyncio.create_task(scheduler.run_forever())
+        app.state.scheduler = scheduler
 
         watchdog_task: asyncio.Task[None] | None = None
         if original_ppid is not None:
@@ -113,12 +143,15 @@ def create_app(
         try:
             yield
         finally:
-            if watchdog_task is not None:
-                watchdog_task.cancel()
-                try:
-                    await watchdog_task
-                except asyncio.CancelledError:
-                    pass
+            if scheduler is not None:
+                scheduler.stop()
+            for task in (scheduler_task, watchdog_task):
+                if task is not None:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
             # Drain in-flight operations, then release the DB engine (§4.4 step 3).
             runner.shutdown(drain_timeout=SHUTDOWN_DRAIN_SECONDS)
             db.dispose()

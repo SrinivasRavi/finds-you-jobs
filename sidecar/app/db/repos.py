@@ -17,7 +17,16 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .base import now_utc
-from .models import EngineSettings, MasterProfile, Operation, UserPreferences
+from .models import (
+    EngineSettings,
+    Job,
+    JobScore,
+    MasterProfile,
+    Operation,
+    Schedule,
+    Tombstone,
+    UserPreferences,
+)
 
 # ---------------------------------------------------------------------------
 # Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07)
@@ -142,6 +151,20 @@ class OperationsRepo:
             Operation.kind == kind, Operation.state.in_(states)
         )
         return list(self._s.scalars(stmt))
+
+    def score_states_by_job(self) -> dict[str, set[str]]:
+        """job_id → the set of its `score` operation states — the board's
+        Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02). A job with a failed
+        score op and no cached score resolves to `Score failed`, never a
+        perpetual Pending. (Bounded by ledger retention; a pruned failure simply
+        re-reads as Pending, and the Remove→Add-back retry path re-scores.)"""
+        result: dict[str, set[str]] = {}
+        stmt = select(Operation).where(Operation.kind == "score")
+        for op in self._s.scalars(stmt):
+            job_id = (op.input_snapshot or {}).get("job_id")
+            if job_id:
+                result.setdefault(job_id, set()).add(op.state)
+        return result
 
     def latest_by_kind(self, kind: str) -> Operation | None:
         """The most-recently-created op of `kind`."""
@@ -270,6 +293,260 @@ class PreferencesRepo:
         prefs.ui_state = ui
 
 
+class SchedulesRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def create(
+        self,
+        kind: str,
+        interval_minutes: int,
+        *,
+        next_due_at: datetime | None = None,
+        enabled: bool = True,
+    ) -> Schedule:
+        sched = Schedule(
+            kind=kind,
+            interval_minutes=interval_minutes,
+            next_due_at=next_due_at or now_utc(),
+            enabled=enabled,
+        )
+        self._s.add(sched)
+        self._s.flush()
+        return sched
+
+    def get(self, schedule_id: str) -> Schedule | None:
+        return self._s.get(Schedule, schedule_id)
+
+    def list_all(self) -> list[Schedule]:
+        return list(self._s.scalars(select(Schedule).order_by(Schedule.next_due_at)))
+
+    def list_due(self, now: datetime) -> list[Schedule]:
+        stmt = (
+            select(Schedule)
+            .where(Schedule.enabled.is_(True), Schedule.next_due_at <= now)
+            .order_by(Schedule.next_due_at)
+        )
+        return list(self._s.scalars(stmt))
+
+    def mark_enqueued(
+        self, schedule_id: str, *, operation_id: str | None, next_due_at: datetime
+    ) -> None:
+        sched = self._s.get(Schedule, schedule_id)
+        if sched is None:
+            raise KeyError(f"schedule {schedule_id!r} not found")
+        sched.last_enqueued_operation_id = operation_id
+        sched.next_due_at = next_due_at
+
+    def update(self, schedule_id: str, **fields: Any) -> Schedule:
+        sched = self._s.get(Schedule, schedule_id)
+        if sched is None:
+            raise KeyError(f"schedule {schedule_id!r} not found")
+        for key, value in fields.items():
+            setattr(sched, key, value)
+        return sched
+
+
+class JobsRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, job_id: str) -> Job | None:
+        return self._s.get(Job, job_id)
+
+    def get_by_canonical_url(self, canonical_url: str) -> Job | None:
+        stmt = select(Job).where(Job.canonical_url == canonical_url)
+        return self._s.scalars(stmt).first()
+
+    def list(
+        self, *, feed_state: str | None = "active", limit: int = 200
+    ) -> list[Job]:
+        stmt = select(Job)
+        if feed_state is not None:
+            stmt = stmt.where(Job.feed_state == feed_state)
+        stmt = stmt.order_by(Job.ingested_at.desc(), Job.id).limit(limit)
+        return list(self._s.scalars(stmt))
+
+    def list_by_states(self, states: list[str], *, limit: int = 10_000) -> list[Job]:
+        """All jobs in any of `states` (the board serves active + expired —
+        FR-SYS-03: Expired rows stay on the board, greyed). No silent 200-row cap
+        — the board endpoint paginates the full result server-side."""
+        stmt = (
+            select(Job)
+            .where(Job.feed_state.in_(states))
+            .order_by(Job.ingested_at.desc(), Job.id)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
+    def create(self, **fields: Any) -> Job:
+        job = Job(**fields)
+        self._s.add(job)
+        self._s.flush()
+        return job
+
+    def upsert_by_canonical_url(self, canonical_url: str, **fields: Any) -> Job:
+        existing = self.get_by_canonical_url(canonical_url)
+        if existing is not None:
+            for key, value in fields.items():
+                setattr(existing, key, value)
+            return existing
+        return self.create(canonical_url=canonical_url, **fields)
+
+    def update(self, job_id: str, **fields: Any) -> Job:
+        job = self._s.get(Job, job_id)
+        if job is None:
+            raise KeyError(f"job {job_id!r} not found")
+        for key, value in fields.items():
+            setattr(job, key, value)
+        return job
+
+    def set_trash_state(
+        self, job_id: str, *, trashed: bool, now: datetime | None = None
+    ) -> Job:
+        """Move a job into/out of Trash (US-JB-11 / FR-JB-12).
+
+        Trashing records `trashed_at` in `source_meta` so the 7-day TTL tick
+        (FR-SYS-03/FR-SYS-04) can age it out; restoring clears that bookkeeping
+        and returns the row to the active feed — its score/history are untouched.
+        `source_meta` is otherwise unused for scanned/pasted jobs, so overloading
+        it here needs no schema change."""
+        job = self._s.get(Job, job_id)
+        if job is None:
+            raise KeyError(f"job {job_id!r} not found")
+        meta = dict(job.source_meta or {})
+        if trashed:
+            job.feed_state = "removed"
+            meta["trashed_at"] = (now or now_utc()).isoformat()
+        else:
+            job.feed_state = "active"
+            meta.pop("trashed_at", None)
+        job.source_meta = meta or None
+        return job
+
+    def set_expired(self, job_id: str, *, now: datetime | None = None) -> Job:
+        """Age a feed job into `Expired` (FR-SYS-03) — greyed, labelled "Older
+        listing", still on the board. Stamps `expired_at` in `source_meta` (the
+        same JSON-overload pattern as `trashed_at`) so the 30-day hard-delete
+        clock can start. No score/history change."""
+        job = self._s.get(Job, job_id)
+        if job is None:
+            raise KeyError(f"job {job_id!r} not found")
+        meta = dict(job.source_meta or {})
+        meta["expired_at"] = (now or now_utc()).isoformat()
+        job.feed_state = "expired"
+        job.source_meta = meta
+        return job
+
+    def unexpire(self, job_id: str, *, now: datetime | None = None) -> Job:
+        """Explicit un-expire (FR-SYS-03): restore an Expired job to the active
+        feed and **reset the 14-day timer** by stamping `feed_since` (the aging
+        clock reads `feed_since` when present, else `ingested_at`, so the sort
+        order — recency — is preserved)."""
+        job = self._s.get(Job, job_id)
+        if job is None:
+            raise KeyError(f"job {job_id!r} not found")
+        meta = dict(job.source_meta or {})
+        meta.pop("expired_at", None)
+        meta["feed_since"] = (now or now_utc()).isoformat()
+        job.feed_state = "active"
+        job.source_meta = meta or None
+        return job
+
+    def delete(self, job_id: str) -> bool:
+        """Hard-delete a job row + its cached scores (foreign_keys=ON forbids
+        orphaned `JobScore` rows). Used by the tombstone paths (Empty Trash /
+        Delete forever / TTL eviction) — the caller writes the `Tombstone`."""
+        job = self._s.get(Job, job_id)
+        if job is None:
+            return False
+        self._s.execute(delete(JobScore).where(JobScore.job_id == job_id))
+        self._s.delete(job)
+        return True
+
+
+class JobScoresRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get_cached(
+        self, job_id: str, profile_version: int, scorer_impl: str = "scorer-llm"
+    ) -> JobScore | None:
+        stmt = select(JobScore).where(
+            JobScore.job_id == job_id,
+            JobScore.profile_version == profile_version,
+            JobScore.scorer_impl == scorer_impl,
+        )
+        return self._s.scalars(stmt).first()
+
+    def latest_for_jobs(
+        self, job_ids: list[str], profile_version: int, scorer_impl: str = "scorer-llm"
+    ) -> dict[str, JobScore]:
+        """The cached score per job for one `(profile_version, scorer_impl)` —
+        the board join (FR-JB-01 sort)."""
+        if not job_ids:
+            return {}
+        stmt = select(JobScore).where(
+            JobScore.job_id.in_(job_ids),
+            JobScore.profile_version == profile_version,
+            JobScore.scorer_impl == scorer_impl,
+        )
+        return {row.job_id: row for row in self._s.scalars(stmt)}
+
+    def scored_job_ids(
+        self, profile_version: int, scorer_impl: str = "scorer-llm"
+    ) -> set[str]:
+        stmt = select(JobScore.job_id).where(
+            JobScore.profile_version == profile_version,
+            JobScore.scorer_impl == scorer_impl,
+        )
+        return set(self._s.scalars(stmt))
+
+    def create(self, **fields: Any) -> JobScore:
+        score = JobScore(**fields)
+        self._s.add(score)
+        self._s.flush()
+        return score
+
+    def upsert(
+        self,
+        *,
+        job_id: str,
+        profile_version: int,
+        scorer_impl: str = "scorer-llm",
+        **fields: Any,
+    ) -> JobScore:
+        """Cache write: refresh the row for a `(job, version, impl)` triple, or
+        create it. A recompute of the same cache key never duplicates."""
+        existing = self.get_cached(job_id, profile_version, scorer_impl)
+        if existing is not None:
+            for key, value in fields.items():
+                setattr(existing, key, value)
+            self._s.flush()
+            return existing
+        return self.create(
+            job_id=job_id,
+            profile_version=profile_version,
+            scorer_impl=scorer_impl,
+            **fields,
+        )
+
+
+class TombstonesRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def exists(self, canonical_url: str) -> bool:
+        stmt = select(Tombstone.id).where(Tombstone.canonical_url == canonical_url)
+        return self._s.scalars(stmt).first() is not None
+
+    def create(self, canonical_url: str, reason: str = "manual") -> Tombstone:
+        tomb = Tombstone(canonical_url=canonical_url, reason=reason)
+        self._s.add(tomb)
+        self._s.flush()
+        return tomb
+
+
 class ProfileRepo:
     """The master profile — single active row in P1."""
 
@@ -348,6 +625,10 @@ class Repos:
         self.preferences = PreferencesRepo(session)
         self.profile = ProfileRepo(session)
         self.engine_settings = EngineSettingsRepo(session)
+        self.schedules = SchedulesRepo(session)
+        self.jobs = JobsRepo(session)
+        self.job_scores = JobScoresRepo(session)
+        self.tombstones = TombstonesRepo(session)
 
     def prune_ledger(self, keep: int) -> int:
         """Ledger retention that preserves all-time spend: fold the usd/tokens of

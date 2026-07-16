@@ -60,6 +60,7 @@ def app_client(
         token=TOKEN,
         original_ppid=None,
         data_dir=tmp_path / "data",
+        enable_scheduler=False,
     )
     app.state._test_data_dir = tmp_path / "data"  # for the on-disk plaintext scan
     with TestClient(app) as client:

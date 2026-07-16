@@ -65,6 +65,147 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Jobs */
+        get: operations["list_jobs_api_jobs_get"];
+        put?: never;
+        /**
+         * Create Job
+         * @description Add-by-URL step 2 (US-JB-07) + programmatic ingest: persist one job with
+         *     the same dedup/tombstone discipline as scan, then enqueue a score so the new
+         *     row lands on the board with a fit rating.
+         */
+        post: operations["create_job_api_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Board
+         * @description The paginated Job Board feed + header meta (FR-JB-02/10). Saved jobs are
+         *     excluded server-side; Expired jobs stay (greyed). One honest `total` count and
+         *     a real last-scan time/status — never a silent 200-row cap or hardcoded refresh.
+         *     `list_q` / `text_q` (FR-JB-13) filter server-side *before* pagination — the
+         *     feed is paginated, so a client-side filter over loaded pages would silently
+         *     miss matches on unloaded pages.
+         */
+        get: operations["board_api_board_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Job
+         * @description Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
+         *     fields — best-effort, not persisted. 20 s fetch, no auto-retry (§17b). The
+         *     blocking probe runs off the event loop.
+         *
+         *     Two DB short-circuits before the network probe: a **tombstoned** URL fails
+         *     fast with the honest 409 (re-add is impossible); an **existing** URL (active
+         *     or Trashed) returns its stored fields — we "fetch it back" from our own copy
+         *     rather than re-scrape.
+         */
+        post: operations["preview_job_api_jobs_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Job */
+        get: operations["get_job_api_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Job
+         * @description App-side job state (Trash — US-JB-11; Expired — FR-SYS-03). Moving into/out
+         *     of `removed` routes through `set_trash_state` (7-day TTL clock); un-expiring an
+         *     `expired` job routes through `unexpire` (resets the 14-day timer).
+         */
+        patch: operations["update_job_api_jobs__job_id__patch"];
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/tombstone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tombstone Job
+         * @description Delete forever from Trash (US-JB-11): write a `Tombstone` for the job's
+         *     canonical URL, then hard-delete the row. A tombstone is final — a future
+         *     scan or Add-by-URL can never re-surface it (FR-SYS-04).
+         */
+        post: operations["tombstone_job_api_jobs__job_id__tombstone_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/trash/empty": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Empty Trash
+         * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL and
+         *     hard-delete the rows immediately, bypassing the 7-day TTL.
+         */
+        post: operations["empty_trash_api_jobs_trash_empty_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profile": {
         parameters: {
             query?: never;
@@ -142,6 +283,69 @@ export interface paths {
         put: operations["replace_settings_api_settings_put"];
         /** Update Settings */
         post: operations["update_settings_api_settings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Schedules
+         * @description The recurring-enqueue rules (scan / score_new). Seeded disabled (§7 seed).
+         */
+        get: operations["list_schedules_api_schedules_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Schedule
+         * @description Enable/disable a schedule or change its cadence. Enabling a seeded-
+         *     disabled schedule makes it due on the next tick (next_due_at → now).
+         */
+        patch: operations["update_schedule_api_schedules__schedule_id__patch"];
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Schedule
+         * @description Run a schedule now, regardless of enabled/due — the explicit user trigger
+         *     (score_new fans out to a `score` op per unscored job; scan enqueues one scan).
+         *     Idempotent for score_new: the planner skips already-scored + pending jobs.
+         */
+        post: operations["run_schedule_api_schedules__schedule_id__run_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -310,6 +514,28 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * BoardPageDTO
+         * @description One page of the Job Board feed (FR-JB-02) plus the header meta the board
+         *     needs (FR-JB-10): a real last-scan time + scrape status so the empty state is
+         *     always explained, never a silent blank. Saved jobs are excluded server-side.
+         */
+        BoardPageDTO: {
+            /** Jobs */
+            jobs: components["schemas"]["JobDTO"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Pagesize */
+            pageSize: number;
+            /** Scanstatus */
+            scanStatus: string;
+            /** Lastscanat */
+            lastScanAt?: string | null;
+            /** Scanerror */
+            scanError?: string | null;
+        };
+        /**
          * CostTotalsDTO
          * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
          *
@@ -408,6 +634,136 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * JobCreate
+         * @description Add-by-URL (US-JB-07) + programmatic ingest.
+         */
+        JobCreate: {
+            /** Canonical Url */
+            canonical_url: string;
+            /** Title */
+            title: string;
+            /**
+             * Company
+             * @default
+             */
+            company: string;
+            /**
+             * Location
+             * @default
+             */
+            location: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Posted At */
+            posted_at?: string | null;
+            /** Salary */
+            salary?: string | null;
+            /**
+             * Source Adapter
+             * @default paste-url
+             */
+            source_adapter: string;
+        };
+        /** JobDTO */
+        JobDTO: {
+            /** Id */
+            id: string;
+            /** Canonical Url */
+            canonical_url: string;
+            /** Title */
+            title: string;
+            /** Company */
+            company: string;
+            /** Location */
+            location: string;
+            /** Description */
+            description: string;
+            /** Posted At */
+            posted_at: string | null;
+            /** Salary */
+            salary: string | null;
+            /** Source Adapter */
+            source_adapter: string;
+            /** Trust Score */
+            trust_score: number;
+            /** Trust Flags */
+            trust_flags: string[];
+            /** Feed State */
+            feed_state: string;
+            /**
+             * Ingested At
+             * Format: date-time
+             */
+            ingested_at: string;
+            /**
+             * Workstyle
+             * @default
+             */
+            workStyle: string;
+            score?: components["schemas"]["JobScoreDTO"] | null;
+            /**
+             * Scorestatus
+             * @default pending
+             */
+            scoreStatus: string;
+        };
+        /**
+         * JobPreviewDTO
+         * @description The editable review payload the Add-by-URL modal shows before submit.
+         *
+         *     Best-effort — a known ATS URL comes back fully structured; a generic page
+         *     fills what it can and the user edits the rest.
+         */
+        JobPreviewDTO: {
+            /** Canonical Url */
+            canonical_url: string;
+            /** Title */
+            title: string;
+            /** Company */
+            company: string;
+            /** Location */
+            location: string;
+            /** Description */
+            description: string;
+            /** Posted At */
+            posted_at: string | null;
+            /** Salary */
+            salary: string | null;
+            /** Source Adapter */
+            source_adapter: string;
+        };
+        /**
+         * JobPreviewRequest
+         * @description Add-by-URL step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist.
+         */
+        JobPreviewRequest: {
+            /** Url */
+            url: string;
+        };
+        /**
+         * JobScoreDTO
+         * @description The cached fit score for the current master version (FR-JB-01 sort).
+         */
+        JobScoreDTO: {
+            /** Score 0 100 */
+            score_0_100: number;
+            /** Reasons */
+            reasons: unknown[];
+            /** Breakdown Md */
+            breakdown_md: string;
+        };
+        /**
+         * JobUpdate
+         * @description App-side job state — Trash (US-JB-11): `feed_state` active/removed.
+         */
+        JobUpdate: {
+            /** Feed State */
+            feed_state?: string | null;
         };
         /** OperationAccepted */
         OperationAccepted: {
@@ -560,11 +916,59 @@ export interface components {
             /** Resume Markdown */
             resume_markdown: string;
         };
+        /** ScheduleDTO */
+        ScheduleDTO: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Interval Minutes */
+            interval_minutes: number;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Next Due At
+             * Format: date-time
+             */
+            next_due_at: string;
+            /** Last Enqueued Operation Id */
+            last_enqueued_operation_id: string | null;
+        };
+        /**
+         * ScheduleRunResult
+         * @description The `POST /api/schedules/{id}/run` response: the schedule + enqueued ops.
+         */
+        ScheduleRunResult: {
+            schedule: components["schemas"]["ScheduleDTO"];
+            /** Enqueued */
+            enqueued: string[];
+        };
+        /**
+         * ScheduleUpdate
+         * @description Enable/disable a schedule or change its cadence.
+         */
+        ScheduleUpdate: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Interval Minutes */
+            interval_minutes?: number | null;
+        };
         /** SettingsDTO */
         SettingsDTO: {
             preferences: components["schemas"]["PreferencesDTO"];
             /** Engines */
             engines: components["schemas"]["EngineSettingDTO"][];
+        };
+        /**
+         * TombstoneResultDTO
+         * @description Result of a permanent-discard action (Empty Trash / Delete forever /
+         *     TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned.
+         */
+        TombstoneResultDTO: {
+            /** Tombstoned */
+            tombstoned: number;
+            /** Canonical Urls */
+            canonical_urls: string[];
         };
         /** ValidationError */
         ValidationError: {
@@ -646,6 +1050,254 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_jobs_api_jobs_get: {
+        parameters: {
+            query?: {
+                feed_state?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_job_api_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    board_api_board_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+                list_q?: string;
+                text_q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoardPageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_job_api_jobs_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobPreviewDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_api_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_job_api_jobs__job_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tombstone_job_api_jobs__job_id__tombstone_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TombstoneResultDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    empty_trash_api_jobs_trash_empty_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TombstoneResultDTO"];
                 };
             };
         };
@@ -831,6 +1483,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedules_api_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleDTO"][];
+                };
+            };
+        };
+    };
+    update_schedule_api_schedules__schedule_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_schedule_api_schedules__schedule_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRunResult"];
                 };
             };
             /** @description Validation Error */

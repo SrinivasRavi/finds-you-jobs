@@ -104,14 +104,126 @@ def _require_engine(ctx: OperationContext) -> ResolvedEngine:
     return ctx.engine
 
 
+def scan_entrypoint(ctx: OperationContext) -> OperationOutcome:
+    """Zero-LLM job scan (Scraper module) → persisted `Job` rows. No engine."""
+    from sidecar.modules.scraper import scan
+
+    from .persistence import persist_scan, resolve_portals, resolve_scan_prefs, scan_usage
+
+    snap = ctx.input_snapshot
+    if ctx.db is not None:
+        with ctx.db.repos() as repos:
+            portals = resolve_portals(snap, repos)
+            prefs = resolve_scan_prefs(snap, repos=repos, portals=portals)
+    else:
+        portals = snap["portals_config"]
+        prefs = resolve_scan_prefs(snap)
+    result = scan(portals, prefs=prefs)
+    result_ref = persist_scan(ctx.db, result)
+    return OperationOutcome(result_ref=result_ref, usage=scan_usage(result))
+
+
+def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
+    """The daily entity-lifecycle maintenance tick (zero-LLM, zero-network,
+    DB-only). Every window reads the user-configurable lifecycle settings
+    (FR-SYS-05); the defaults preserve prior behavior:
+
+    - **Trash TTL** (FR-SYS-04): tombstone + delete Trashed jobs past the window
+      (default 7 days).
+    - **Expired aging** (FR-SYS-03): grey active jobs at 14 days, hard-delete
+      Expired ones (no tombstone) at 30 days.
+
+    The prior repository also purges archived contacts/applications here; those
+    stages return with the tracker + Referral Outreach commits.
+    """
+    from ..lifecycle import LIFECYCLE_DEFAULTS, resolve_lifecycle
+    from .persistence import age_expired_jobs, evict_stale_trash
+
+    settings = None
+    if ctx.db is not None:
+        with ctx.db.repos() as repos:
+            settings = resolve_lifecycle(repos.preferences.get_or_create())
+    settings = settings or dict(LIFECYCLE_DEFAULTS)
+
+    tombstoned = evict_stale_trash(ctx.db, ttl_days=settings["trashed_jobs_purge_days"])
+    aged = age_expired_jobs(ctx.db)
+    return OperationOutcome(
+        result_ref={
+            "tombstoned_count": len(tombstoned),
+            "job_ids": tombstoned,
+            "expired_count": len(aged["expired"]),
+            "expired_deleted_count": len(aged["deleted"]),
+            "expired_ids": aged["expired"],
+            "expired_deleted_ids": aged["deleted"],
+        }
+    )
+
+
+def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
+    """Fit-score one job (Scorer module) → a cached `JobScore`. Routed engine."""
+    resolved = _require_engine(ctx)
+    from sidecar.modules.scorer.scorer import score
+
+    from ..prompt_overrides import get_override
+    from .persistence import SCORER_IMPL, load_job_and_master
+
+    snap = ctx.input_snapshot
+    job_id = snap.get("job_id")
+
+    if ctx.db is not None:
+        with ctx.db.repos() as repos:
+            job_text, master_md, profile_version = load_job_and_master(repos, snap)
+    else:
+        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+
+    result = score(
+        master_md, job_text, engine=resolved.engine, skill_md=get_override("score")
+    )
+
+    score_id: str | None = None
+    if ctx.db is not None and job_id is not None:
+        from ..priority import STATS_KEY, welford_update
+
+        with ctx.db.repos() as repos:
+            # Feed the running priority distribution (FR-TR-09) exactly once per
+            # *new* score — a recompute of an existing cache key must not double
+            # count (μ/σ are over jobs ever scored, not scoring attempts).
+            is_new_score = (
+                repos.job_scores.get_cached(job_id, profile_version, SCORER_IMPL) is None
+            )
+            row = repos.job_scores.upsert(
+                job_id=job_id,
+                profile_version=profile_version,
+                score_0_100=result.score,
+                reasons=list(result.reasons),
+                breakdown_md=result.breakdown_md,
+                scorer_impl=SCORER_IMPL,
+                operation_id=ctx.operation_id,
+            )
+            score_id = row.id
+            if is_new_score:
+                prefs = repos.preferences.get_or_create()
+                thresholds = dict(prefs.thresholds or {})
+                thresholds[STATS_KEY] = welford_update(
+                    thresholds.get(STATS_KEY), float(result.score)
+                )
+                repos.preferences.update(thresholds=thresholds)
+    return OperationOutcome(
+        result_ref={"score": result.score, "job_id": job_id, "score_id": score_id},
+        usage=_usage_to_dict(result.usage),
+        engine=resolved.name,
+        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+    )
+
+
 def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Extract the structured application profile from the current master
     resume (Profiler module) → `master_profiles.application_profile`
-    (FR-APP-01). Routed engine — one small call. (The prior repository threads
-    a user-editable prompt override here; that returns with the
-    prompt-overrides feature.)"""
+    (FR-APP-01). Routed engine — one small call."""
     resolved = _require_engine(ctx)
     from sidecar.modules.profiler import extract_profile
+
+    from ..prompt_overrides import get_override
 
     if ctx.db is None:
         raise RuntimeError("extract operation requires a database context")
@@ -122,7 +234,9 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
         master_md = profile_row.resume_markdown
         version = profile_row.version
 
-    result = extract_profile(master_md, engine=resolved.engine)
+    result = extract_profile(
+        master_md, engine=resolved.engine, system_prompt=get_override("extract")
+    )
     record = {**result.profile, "profile_version": version, "source": "extracted"}
     with ctx.db.repos() as repos:
         repos.profile.set_application_profile(record)
@@ -142,6 +256,9 @@ def default_operation_registry() -> OperationRegistry:
     (architecture §5.4)."""
     return OperationRegistry(
         {
+            "scan": scan_entrypoint,
+            "cleanup_trash": cleanup_trash_entrypoint,
+            "score": score_entrypoint,
             "extract": extract_entrypoint,
         }
     )

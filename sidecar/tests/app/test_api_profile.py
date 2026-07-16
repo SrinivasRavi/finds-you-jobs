@@ -23,7 +23,12 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 @pytest.fixture
 def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(token=TOKEN, original_ppid=None, data_dir=tmp_path / "data")
+    app = create_app(
+        token=TOKEN,
+        original_ppid=None,
+        data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
     with TestClient(app) as client:
         yield app, client
 

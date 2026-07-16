@@ -8,7 +8,7 @@ from .main import create_app
 
 
 def main() -> None:
-    app = create_app(token="codegen")  # noqa: S106 — schema introspection, not a secret
+    app = create_app(token="codegen", enable_scheduler=False)  # noqa: S106 — schema introspection, not a secret
     print(json.dumps(app.openapi(), indent=2))
 
 

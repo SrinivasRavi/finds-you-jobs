@@ -25,6 +25,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -64,6 +65,85 @@ class Operation(Base):
         Index("ix_operations_kind_created", "kind", "created_at"),
         Index("ix_operations_finished", "finished_at"),
     )
+
+
+class Schedule(Base):
+    """A recurring operation (database-design §2)."""
+
+    __tablename__ = "schedules"
+
+    id: Mapped[str] = _pk()
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_due_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    last_enqueued_operation_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("operations.id"), nullable=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+# ---------------------------------------------------------------------------
+# Jobs (database-design §3)
+# ---------------------------------------------------------------------------
+
+
+class Job(Base):
+    """One discovered posting; `canonical_url` is the dedup key (FR-SYS-01)."""
+
+    __tablename__ = "jobs"
+
+    id: Mapped[str] = _pk()
+    canonical_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    company: Mapped[str] = mapped_column(String, nullable=False, default="")
+    location: Mapped[str] = mapped_column(String, nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    posted_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    salary: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_adapter: Mapped[str] = mapped_column(String, nullable=False)
+    trust_score: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    trust_flags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    ingested_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    feed_state: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_jobs_feedstate_ingested", "feed_state", "ingested_at"),
+        Index("ix_jobs_company", "company"),
+    )
+
+
+class JobScore(Base):
+    """The cached fit score for one `(job, profile_version, scorer_impl)`."""
+
+    __tablename__ = "job_scores"
+
+    id: Mapped[str] = _pk()
+    job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    score_0_100: Mapped[int] = mapped_column(Integer, nullable=False)
+    reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    scorer_impl: Mapped[str] = mapped_column(String, nullable=False, default="scorer-llm")
+    operation_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("operations.id"), nullable=True
+    )
+    scored_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "profile_version", "scorer_impl", name="uq_jobscore_cachekey"),
+    )
+
+
+class Tombstone(Base):
+    """A permanently-discarded canonical URL — never re-ingested (FR-SYS-04)."""
+
+    __tablename__ = "tombstones"
+
+    id: Mapped[str] = _pk()
+    canonical_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    tombstoned_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    reason: Mapped[str] = mapped_column(String, nullable=False, default="manual")
 
 
 # ---------------------------------------------------------------------------

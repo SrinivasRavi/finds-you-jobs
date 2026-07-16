@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<workzag-jobs>
+  <position>
+    <id>987654</id>
+    <subcompany>Acme GmbH</subcompany>
+    <office>München</office>
+    <additionalOffices><office>Berlin</office></additionalOffices>
+    <department>Engineering</department>
+    <recruitingCategory>Software</recruitingCategory>
+    <name>Senior Softwareentwickler (m/w/d)</name>
+    <jobDescriptions>
+      <jobDescription>
+        <name>Aufgaben</name>
+        <value><![CDATA[<p>Baue Dienste. Ein </position> im Text.</p>]]></value>
+      </jobDescription>
+    </jobDescriptions>
+    <createdAt>2026-06-01T00:00:00+02:00</createdAt>
+  </position>
+  <position>
+    <id>not-numeric</id>
+    <office>Hamburg</office>
+    <name>Should Be Skipped</name>
+    <createdAt>2026-06-02T00:00:00+02:00</createdAt>
+  </position>
+</workzag-jobs>

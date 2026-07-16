@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Acme Jobs</title>
+    <link>https://acme.teamtailor.com/</link>
+    <item>
+      <title>Backend Engineer</title>
+      <link>https://acme.teamtailor.com/jobs/111-backend-engineer</link>
+      <description><![CDATA[<p>Build <b>APIs</b> in Go.</p>]]></description>
+      <location>Stockholm, Sweden</location>
+      <pubDate>Mon, 15 Jun 2026 09:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Frontend Engineer</title>
+      <link>https://acme.teamtailor.com/jobs/222-frontend-engineer</link>
+      <description>Ship React.</description>
+      <pubDate>Wed, 17 Jun 2026 09:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>No Link Role</title>
+    </item>
+  </channel>
+</rss>

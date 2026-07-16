@@ -1,0 +1,29 @@
+{
+  "totalFound": 2,
+  "content": [
+    {
+      "id": "744000012345678",
+      "name": "Senior Backend Engineer",
+      "uuid": "abc-123",
+      "refNumber": "REF-1",
+      "ref": "https://api.smartrecruiters.com/v1/companies/Continental/postings/744000012345678",
+      "releasedDate": "2026-06-15T09:00:00.000Z",
+      "location": {
+        "city": "Bengaluru",
+        "region": "Karnataka",
+        "country": "in",
+        "remote": false
+      }
+    },
+    {
+      "id": "744000087654321",
+      "name": "Staff Platform Engineer (Remote)",
+      "ref": "https://api.smartrecruiters.com/v1/companies/Continental/postings/744000087654321",
+      "releasedDate": "2026-06-20T09:00:00.000Z",
+      "location": {
+        "fullLocation": "Anywhere, India",
+        "remote": true
+      }
+    }
+  ]
+}

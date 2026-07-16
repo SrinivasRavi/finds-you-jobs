@@ -1,0 +1,98 @@
+{
+ "apiVersion": "1",
+ "jobs": [
+  {
+   "id": "03a26f63-fd74-4a59-870d-21d49a0d331d",
+   "title": "Sr. Forward Deployed Software Engineer - Dubbing Platform",
+   "department": "Engineering",
+   "team": "Engineering",
+   "employmentType": "FullTime",
+   "location": "Bengaluru",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-06-01T16:55:26.432+00:00",
+   "isListed": true,
+   "isRemote": false,
+   "workplaceType": "OnSite",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Karnataka",
+     "addressCountry": "India",
+     "addressLocality": "Bengaluru"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/sarvam/03a26f63-fd74-4a59-870d-21d49a0d331d",
+   "applyUrl": "https://jobs.ashbyhq.com/sarvam/03a26f63-fd74-4a59-870d-21d49a0d331d/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\"><strong>About Sarvam</strong></p><p style=\"min-height:1.5em\">Sarvam is building the bedrock of Sovereign AI for India. The company is developing India’s full-stack sovereign AI platform, building across research, models, infrastructure and applications with a singular focus on making AI genuinely work for India. Sarvam works with leading enterprises and public instituti",
+   "descriptionPlain": "About Sarvam\n\nSarvam is building the bedrock of Sovereign AI for India. The company is developing India’s full-stack sovereign AI platform, building across research, models, infrastructure and applications with a singular focus on making AI genuinely work for India. Sarvam works with leading enterprises and public institutions and is backed by Lightspeed, Peak XV, and Khosla Ventures. Sarvam partn",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "0632eb6b-e99c-4e31-9a6a-c3bd36fc8512",
+   "title": "Solution Architect",
+   "department": "Sales/GTM",
+   "team": "Sales/GTM",
+   "employmentType": "FullTime",
+   "location": "Bengaluru",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-05-07T06:47:11.483+00:00",
+   "isListed": true,
+   "isRemote": false,
+   "workplaceType": "OnSite",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Karnataka",
+     "addressCountry": "India",
+     "addressLocality": "Bengaluru"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/sarvam/0632eb6b-e99c-4e31-9a6a-c3bd36fc8512",
+   "applyUrl": "https://jobs.ashbyhq.com/sarvam/0632eb6b-e99c-4e31-9a6a-c3bd36fc8512/application",
+   "descriptionHtml": "<h2><strong>About Sarvam</strong></h2><p style=\"min-height:1.5em\">Sarvam is building the bedrock of Sovereign AI for India. The company is developing India's full-stack sovereign AI platform, building across research, models, infrastructure and applications with a singular focus on making AI genuinely work for India. Sarvam works with leading enterprises and public institutions and is backed by Li",
+   "descriptionPlain": "ABOUT SARVAM\n\nSarvam is building the bedrock of Sovereign AI for India. The company is developing India's full-stack sovereign AI platform, building across research, models, infrastructure and applications with a singular focus on making AI genuinely work for India. Sarvam works with leading enterprises and public institutions and is backed by Lightspeed, Peak XV, and Khosla Ventures. Sarvam partn",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "0fe3d2d1-5d44-4039-b3f5-38a8348f1ebd",
+   "title": "GTM & Strategy, Model API",
+   "department": "Sales/GTM",
+   "team": "Sales/GTM",
+   "employmentType": "FullTime",
+   "location": "Bengaluru",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-04-17T20:11:07.291+00:00",
+   "isListed": true,
+   "isRemote": false,
+   "workplaceType": "OnSite",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Karnataka",
+     "addressCountry": "India",
+     "addressLocality": "Bengaluru"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/sarvam/0fe3d2d1-5d44-4039-b3f5-38a8348f1ebd",
+   "applyUrl": "https://jobs.ashbyhq.com/sarvam/0fe3d2d1-5d44-4039-b3f5-38a8348f1ebd/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\"><strong>About Sarvam</strong></p><p style=\"min-height:1.5em\">Sarvam is building the bedrock of Sovereign AI for India. The company is developing India’s full-stack sovereign AI platform, building across research, models, infrastructure and applications with a singular focus on making AI genuinely work for India. Sarvam works with leading enterprises and public instituti",
+   "descriptionPlain": "About Sarvam\n\nSarvam is building the bedrock of Sovereign AI for India. The company is developing India’s full-stack sovereign AI platform, building across research, models, infrastructure and applications with a singular focus on making AI genuinely work for India. Sarvam works with leading enterprises and public institutions and is backed by Lightspeed, Peak XV, and Khosla Ventures. Sarvam partn",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  }
+ ]
+}

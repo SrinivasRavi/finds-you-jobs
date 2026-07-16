@@ -1,0 +1,390 @@
+"""Board correctness + Expired aging (this round's board work package).
+
+Covers:
+- Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02): a failed `score` op with
+  no cached score resolves the board row to `scoreStatus == "failed"`.
+- Board pagination + honest total (FR-JB-02): 50/page, `total` counts every
+  eligible row — no silent 200-row cap.
+- Real last-scan meta + explained empty/running/error status (FR-JB-10).
+- Board search (FR-JB-13 / US-JB-12): shallow list_q vs deep text_q, filtered
+  server-side before pagination; a search miss never masquerades as an empty
+  scrape.
+- Expired aging (FR-SYS-03): grey at 14d, hard-delete (no tombstone) at 30d,
+  rescued by Save, un-expire resets the timer, legacy rows backfilled once.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from sidecar.app.db import Database
+from sidecar.app.db.base import now_utc
+from sidecar.app.main import create_app
+from sidecar.app.registry.persistence import age_expired_jobs
+
+TOKEN = "test-token-board"  # noqa: S105 — test fixture, not a real secret
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
+
+@pytest.fixture
+def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    app = create_app(
+        token=TOKEN,
+        original_ppid=None,
+        data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+    with TestClient(app) as client:
+        yield app, client
+
+
+def _db(app: FastAPI) -> Database:
+    return app.state.db  # type: ignore[no-any-return]
+
+
+def _job(repos: object, job_id: str):  # type: ignore[no-untyped-def]
+    j = repos.jobs.get(job_id)  # type: ignore[attr-defined]
+    assert j is not None
+    return j
+
+
+# ---------------------------------------------------------------------------
+# Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02)
+# ---------------------------------------------------------------------------
+
+
+def test_board_marks_score_failed_when_score_op_failed(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="lever")
+        op = repos.operations.create("score", {"job_id": job.id})
+        repos.operations.mark_failed(op.id, error="no connectivity")
+        job_id = job.id
+
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    assert rows[job_id]["scoreStatus"] == "failed"  # never a perpetual Pending
+    assert rows[job_id]["score"] is None
+
+
+def test_board_pending_when_no_score_op(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="lever")
+        job_id = job.id
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    assert rows[job_id]["scoreStatus"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Pagination + total (FR-JB-02)
+# ---------------------------------------------------------------------------
+
+
+def test_board_paginates_with_honest_total(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        for i in range(60):
+            repos.jobs.create(
+                canonical_url=f"u{i}", title=f"J{i}", source_adapter="lever"
+            )
+
+    page0 = client.get("/api/board?page=0", headers=AUTH).json()
+    assert page0["total"] == 60
+    assert page0["pageSize"] == 50
+    assert len(page0["jobs"]) == 50
+
+    page1 = client.get("/api/board?page=1", headers=AUTH).json()
+    assert page1["total"] == 60
+    assert len(page1["jobs"]) == 10  # the remainder — nothing silently truncated
+
+
+def _seed_search_jobs(app: FastAPI) -> dict[str, str]:
+    """Two distinguishable jobs; the second carries a score whose breakdown
+    mentions 'kubernetes' so text_q can prove it searches score texts."""
+    with _db(app).repos() as repos:
+        j1 = repos.jobs.create(
+            canonical_url="u-stripe",
+            title="Backend Engineer",
+            company="Stripe",
+            location="Remote",
+            description="Build payments infrastructure in Go.",
+            source_adapter="lever",
+        )
+        j2 = repos.jobs.create(
+            canonical_url="u-acme",
+            title="Platform Engineer",
+            company="Acme",
+            location="Berlin",
+            description="Own the deployment pipeline.",
+            source_adapter="greenhouse",
+        )
+        repos.job_scores.create(
+            job_id=j2.id,
+            profile_version=1,
+            score_0_100=77,
+            reasons=["Strong infra match"],
+            breakdown_md="Deep kubernetes experience matches the JD.",
+        )
+        return {"stripe": j1.id, "acme": j2.id}
+
+
+def test_board_list_q_matches_title_company_location_only(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    ids = _seed_search_jobs(app)
+
+    body = client.get("/api/board?list_q=stripe", headers=AUTH).json()
+    assert [j["id"] for j in body["jobs"]] == [ids["stripe"]]
+    assert body["total"] == 1  # total reflects the filtered count
+
+    # list_q is shallow: JD text ('pipeline') must NOT match.
+    body = client.get("/api/board?list_q=pipeline", headers=AUTH).json()
+    assert body["jobs"] == []
+    assert body["total"] == 0
+
+    # Clearing the search restores the full feed.
+    body = client.get("/api/board", headers=AUTH).json()
+    assert body["total"] == 2
+
+
+def test_board_text_q_matches_jd_and_score_texts(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    ids = _seed_search_jobs(app)
+
+    # JD body text.
+    body = client.get("/api/board?text_q=payments", headers=AUTH).json()
+    assert [j["id"] for j in body["jobs"]] == [ids["stripe"]]
+
+    # Match-score breakdown text.
+    body = client.get("/api/board?text_q=kubernetes", headers=AUTH).json()
+    assert [j["id"] for j in body["jobs"]] == [ids["acme"]]
+
+    # Match-score reasons text.
+    body = client.get("/api/board?text_q=infra+match", headers=AUTH).json()
+    assert [j["id"] for j in body["jobs"]] == [ids["acme"]]
+
+    # Case-insensitive.
+    body = client.get("/api/board?text_q=STRIPE", headers=AUTH).json()
+    assert [j["id"] for j in body["jobs"]] == [ids["stripe"]]
+
+
+def test_board_search_miss_keeps_scan_status_honest(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A search that matches nothing is a filter miss, not an empty scrape —
+    scanStatus must stay 'idle' so the UI can say 'no match' not 'no jobs'."""
+    app, client = app_client
+    _seed_search_jobs(app)
+    body = client.get("/api/board?text_q=zzz-no-such-term", headers=AUTH).json()
+    assert body["jobs"] == []
+    assert body["total"] == 0
+    assert body["scanStatus"] == "idle"
+
+
+def test_board_search_filters_before_pagination(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Matches beyond page 0 of the unfiltered feed are still found (the whole
+    point of server-side search vs. filtering loaded pages client-side)."""
+    app, client = app_client
+    with _db(app).repos() as repos:
+        for i in range(60):
+            repos.jobs.create(
+                canonical_url=f"u{i}", title=f"J{i}", source_adapter="lever"
+            )
+        needle = repos.jobs.create(
+            canonical_url="u-needle",
+            title="Needle Role",
+            company="Haystack",
+            source_adapter="lever",
+        )
+        needle_id = needle.id
+
+    body = client.get("/api/board?list_q=needle", headers=AUTH).json()
+    assert [j["id"] for j in body["jobs"]] == [needle_id]
+    assert body["total"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Last-scan meta + explained status (FR-JB-10)
+# ---------------------------------------------------------------------------
+
+
+def test_board_scan_status_empty_then_error_then_running(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    # No jobs, no scan → empty.
+    body = client.get("/api/board", headers=AUTH).json()
+    assert body["scanStatus"] == "empty"
+    assert body["lastScanAt"] is None
+
+    # A failed scan → error + verbatim message + no success time.
+    with _db(app).repos() as repos:
+        op = repos.operations.create("scan", {})
+        repos.operations.mark_failed(op.id, error="dns failure")
+    body = client.get("/api/board", headers=AUTH).json()
+    assert body["scanStatus"] == "error"
+    assert body["scanError"] == "dns failure"
+
+    # A newer running scan wins → running.
+    with _db(app).repos() as repos:
+        repos.operations.create("scan", {})  # queued
+    body = client.get("/api/board", headers=AUTH).json()
+    assert body["scanStatus"] == "running"
+
+
+def test_board_last_scan_at_from_succeeded_scan(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        repos.jobs.create(canonical_url="u1", title="A", source_adapter="lever")
+        op = repos.operations.create("scan", {})
+        repos.operations.mark_succeeded(op.id, result_ref={"scan": {}})
+    body = client.get("/api/board", headers=AUTH).json()
+    assert body["scanStatus"] == "idle"  # rows present
+    assert body["lastScanAt"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Expired aging (FR-SYS-03)
+# ---------------------------------------------------------------------------
+
+
+def test_active_greys_to_expired_at_14_days(migrated_db: Database) -> None:
+    db = migrated_db
+    now = now_utc()
+    with db.repos() as repos:
+        fresh = repos.jobs.create(
+            canonical_url="fresh", title="F", source_adapter="lever",
+            ingested_at=now - timedelta(days=10),
+        )
+        old = repos.jobs.create(
+            canonical_url="old", title="O", source_adapter="lever",
+            ingested_at=now - timedelta(days=20),
+        )
+        fresh_id, old_id = fresh.id, old.id
+
+    result = age_expired_jobs(db, now=now)
+    assert result["expired"] == [old_id]
+    with db.repos() as repos:
+        assert _job(repos, old_id).feed_state == "expired"
+        assert (_job(repos, old_id).source_meta or {}).get("expired_at") is not None
+        assert _job(repos, fresh_id).feed_state == "active"  # under 14 days
+
+
+def test_expired_hard_deleted_at_30_days_without_tombstone(
+    migrated_db: Database,
+) -> None:
+    db = migrated_db
+    now = now_utc()
+    with db.repos() as repos:
+        job = repos.jobs.create(canonical_url="stale", title="S", source_adapter="lever")
+        repos.jobs.update(
+            job.id,
+            feed_state="expired",
+            source_meta={"expired_at": (now - timedelta(days=31)).isoformat()},
+        )
+        job_id, url = job.id, job.canonical_url
+
+    result = age_expired_jobs(db, now=now)
+    assert result["deleted"] == [job_id]
+    with db.repos() as repos:
+        assert repos.jobs.get(job_id) is None
+        # FR-SYS-03: no tombstone — a later scrape may re-surface the posting.
+        assert repos.tombstones.exists(url) is False
+
+
+def test_expired_legacy_row_without_stamp_backfilled_not_deleted(
+    migrated_db: Database,
+) -> None:
+    db = migrated_db
+    now = now_utc()
+    with db.repos() as repos:
+        job = repos.jobs.create(canonical_url="legacy", title="L", source_adapter="lever")
+        repos.jobs.update(job.id, feed_state="expired", source_meta=None)
+        job_id = job.id
+    result = age_expired_jobs(db, now=now)
+    assert result["deleted"] == []  # clock starts now, not deleted this tick
+    with db.repos() as repos:
+        assert repos.jobs.get(job_id) is not None
+        assert (_job(repos, job_id).source_meta or {}).get("expired_at") is not None
+
+
+def test_unexpire_resets_the_14_day_timer(migrated_db: Database) -> None:
+    db = migrated_db
+    now = now_utc()
+    with db.repos() as repos:
+        job = repos.jobs.create(
+            canonical_url="u", title="U", source_adapter="lever",
+            ingested_at=now - timedelta(days=40),
+        )
+        repos.jobs.update(
+            job.id,
+            feed_state="expired",
+            source_meta={"expired_at": (now - timedelta(days=1)).isoformat()},
+        )
+        repos.jobs.unexpire(job.id, now=now)
+        job_id = job.id
+
+    # Immediately after un-expire the 14-day timer restarts (feed_since = now),
+    # so the same tick must NOT re-expire it despite the old ingested_at.
+    result = age_expired_jobs(db, now=now)
+    assert result["expired"] == []
+    with db.repos() as repos:
+        assert _job(repos, job_id).feed_state == "active"
+
+
+# ---------------------------------------------------------------------------
+# work_style derivation (US-JB-01 chip / FR-JB-04 filter — one source)
+# ---------------------------------------------------------------------------
+
+
+def test_derive_work_style_keyword_cases() -> None:
+    from sidecar.app.api.dto import derive_work_style
+
+    # Remote signals (location or description).
+    assert derive_work_style("Remote", "") == "REMOTE"
+    assert derive_work_style("", "This is a fully remote role.") == "REMOTE"
+    assert derive_work_style("Anywhere", "Work from home, WFH friendly.") == "REMOTE"
+    # Hybrid outranks a stray remote mention (explicit constraint wins).
+    assert derive_work_style("NYC", "Hybrid — 3 days in office, remote 2.") == "HYBRID"
+    assert derive_work_style("Hybrid (London)", "") == "HYBRID"
+    # Onsite signals.
+    assert derive_work_style("Austin, TX", "On-site position, in-office team.") == "ONSITE"
+    assert derive_work_style("", "This is an in person role.") == "ONSITE"
+    # Undeterminable → empty (never guessed).
+    assert derive_work_style("Berlin", "We build backend services in Go.") == ""
+    assert derive_work_style("", "") == ""
+
+
+def test_board_row_exposes_derived_work_style(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        repos.jobs.create(
+            canonical_url="ws1", title="Remote Backend Engineer", source_adapter="lever",
+            location="Remote", description="Fully remote team building services.",
+        )
+        repos.jobs.create(
+            canonical_url="ws2", title="Onsite Analyst", source_adapter="lever",
+            location="Chicago", description="On-site, in-office role.",
+        )
+    rows = {j["title"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    assert rows["Remote Backend Engineer"]["workStyle"] == "REMOTE"
+    assert rows["Onsite Analyst"]["workStyle"] == "ONSITE"

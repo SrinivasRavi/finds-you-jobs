@@ -40,6 +40,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         original_ppid=None,
         data_dir=tmp_path / "data",
         operation_registry=OperationRegistry({"echo": _success, "boom": _boom}),
+        enable_scheduler=False,
     )
     with TestClient(app) as client:
         yield client
