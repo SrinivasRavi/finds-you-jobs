@@ -1,4 +1,4 @@
-# Contributing to FindsYouJobs
+# Contributing to finds-you-jobs
 
 ## Commit provenance
 
