@@ -14,6 +14,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..db.models import (
+    Application,
+    Artifact,
     EngineSettings,
     Job,
     JobScore,
@@ -154,6 +156,118 @@ class ScheduleRunResult(BaseModel):
 
     schedule: ScheduleDTO
     enqueued: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Applications (database-design §4)
+# ---------------------------------------------------------------------------
+
+
+class ArtifactDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    application_id: str
+    kind: str
+    markdown: str
+    notes: list[Any]
+    profile_version: int
+    guidance_used: str | None
+    operation_id: str | None
+    operation_state: str | None = None
+    superseded_by: str | None
+    approved_at: datetime | None = None
+    created_at: datetime
+
+
+class ApplicationDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: str
+    job_id: str
+    # The application's job, embedded server-side so the Tracker never joins
+    # against a capped client-side jobs list. None only if the job row was
+    # hard-deleted underneath.
+    job: JobDTO | None = None
+    column: str
+    priority: str
+    # Exclusive pre-submission intent (`docs/internal/roadmap.md` §5.1):
+    # `none | referral | apply` — one authoritative value.
+    intent: str = "none"
+    notes_markdown: str
+    applied_via: str | None
+    preview_screenshot_path: str | None
+    archived_at: datetime | None
+    saved_at: datetime
+    last_touched_at: datetime
+    # Combined packet state (kept for the card-menu regen logic + Activity tab).
+    packet_state: str = Field(serialization_alias="packetState")
+    # Per-artifact states (US-RES-02 / US-CL-01 storage model): the Resume and
+    # Cover-letter slots are driven independently — one generating/failing must
+    # not repaint the other. `approved` comes from that artifact's approved_at.
+    packet_resume_state: str = Field(
+        default="none", serialization_alias="packetResumeState"
+    )
+    packet_cover_letter_state: str = Field(
+        default="none", serialization_alias="packetCoverLetterState"
+    )
+    artifacts: list[ArtifactDTO] = Field(default_factory=list)
+
+
+class ApplicationCreate(BaseModel):
+    job_id: str
+    column: str = "saved"
+    # None → the server assigns priority by the Welford z-band at Save (FR-TR-09);
+    # an explicit value is treated as a manual choice and used verbatim.
+    priority: str | None = None
+    notes_markdown: str = ""
+    # Per-job automation toggles (US-TL-03). None → fall back to the split
+    # auto-generate-on-Save settings (`thresholds.auto_{resume,cover}_on_save`).
+    generate_resume: bool | None = None
+    generate_cover: bool | None = None
+    guidance: str = ""
+
+
+class ApplicationUpdate(BaseModel):
+    column: str | None = None
+    priority: str | None = None
+    # Exclusive intent (`docs/internal/roadmap.md` §5.1): setting one value
+    # replaces the other — the column IS the single authoritative store.
+    intent: Literal["none", "referral", "apply"] | None = None
+    notes_markdown: str | None = None
+    applied_via: str | None = None
+    # True → archive (set archived_at), False → unarchive (clear it).
+    archived: bool | None = None
+
+
+class ArtifactPatch(BaseModel):
+    """Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
+
+    `markdown` overwrites the head artifact's text; `approved=True` stamps
+    `approved_at` (flip `ready → approved`), `approved=False` clears it."""
+
+    markdown: str | None = None
+    approved: bool | None = None
+
+
+class PacketRequest(BaseModel):
+    """Manual/regenerate packet build for an existing application (US-TL-02)."""
+
+    resume: bool = True
+    cover: bool = True
+    guidance: str = ""
+
+
+class ActivityEntryDTO(BaseModel):
+    """One real event on an application's Activity tab (US-TR-03 / FR-TR-03),
+    composed from the ledger — never synthesized client-side."""
+
+    # added | score | tailor | cover (ledger) + column_change | notes |
+    # archive | unarchive (user-driven card events).
+    kind: str
+    label: str
+    state: str | None = None  # the backing op state, when applicable
+    at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +474,79 @@ def job_dto(
     dto.score_status = derive_score_status(score is not None, score_op_states or set())
     dto.work_style = derive_work_style(job.location, job.description)
     return dto
+
+
+def derive_packet_state(operation_states: list[str | None]) -> str:
+    """The card's packetState from its artifacts' operation states (database-design §4).
+
+    none → no artifacts yet; generating → any op still queued/running;
+    failed → an op failed and none is generating; ready → everything settled.
+    """
+    if not operation_states:
+        return "none"
+    if any(state in ("queued", "running") for state in operation_states):
+        return "generating"
+    if any(state == "failed" for state in operation_states):
+        return "failed"
+    return "ready"
+
+
+def derive_artifact_state(
+    artifact: Artifact | None, operation_state: str | None
+) -> str:
+    """One slot's state (US-RES-02 table): none → no head artifact of this kind;
+    generating → its op is queued/running; failed → its op failed; approved →
+    approved_at is stamped; ready → otherwise settled."""
+    if artifact is None:
+        return "none"
+    if operation_state in ("queued", "running"):
+        return "generating"
+    if operation_state == "failed":
+        return "failed"
+    if artifact.approved_at is not None:
+        return "approved"
+    return "ready"
+
+
+def artifact_dto(artifact: Artifact, operation_state: str | None) -> ArtifactDTO:
+    dto = ArtifactDTO.model_validate(artifact)
+    dto.operation_state = operation_state
+    return dto
+
+
+def application_dto(
+    application: Application,
+    artifacts_with_states: list[tuple[Artifact, str | None]],
+    *,
+    job: JobDTO | None = None,
+) -> ApplicationDTO:
+    # Built explicitly (not model_validate) so we never lazy-load the ORM
+    # relationship and packetState stays purely derived.
+    artifact_dtos = [artifact_dto(a, state) for a, state in artifacts_with_states]
+    packet_state = derive_packet_state([state for _a, state in artifacts_with_states])
+    # Per-kind slot states (US-RES-02 / US-CL-01): the resume and cover artifacts
+    # are independent — derived from the head artifact of each kind + its op state.
+    by_kind = {a.kind: (a, state) for a, state in artifacts_with_states}
+    resume_a, resume_state = by_kind.get("tailored_resume", (None, None))
+    cover_a, cover_state = by_kind.get("cover_letter", (None, None))
+    return ApplicationDTO(
+        id=application.id,
+        job_id=application.job_id,
+        job=job,
+        column=application.column,
+        priority=application.priority,
+        intent=application.intent,
+        notes_markdown=application.notes_markdown,
+        applied_via=application.applied_via,
+        preview_screenshot_path=application.preview_screenshot_path,
+        archived_at=application.archived_at,
+        saved_at=application.saved_at,
+        last_touched_at=application.last_touched_at,
+        packet_state=packet_state,
+        packet_resume_state=derive_artifact_state(resume_a, resume_state),
+        packet_cover_letter_state=derive_artifact_state(cover_a, cover_state),
+        artifacts=artifact_dtos,
+    )
 
 
 def schedule_dto(schedule: Schedule) -> ScheduleDTO:

@@ -132,12 +132,18 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
       (default 7 days).
     - **Expired aging** (FR-SYS-03): grey active jobs at 14 days, hard-delete
       Expired ones (no tombstone) at 30 days.
+    - **Archived-application purge** (FR-SYS-06): permanently remove archived
+      tracker cards past the window (default 30 days).
 
-    The prior repository also purges archived contacts/applications here; those
-    stages return with the tracker + Referral Outreach commits.
+    The prior repository also purges archived contacts here; that stage returns
+    with the Referral Outreach commits.
     """
     from ..lifecycle import LIFECYCLE_DEFAULTS, resolve_lifecycle
-    from .persistence import age_expired_jobs, evict_stale_trash
+    from .persistence import (
+        age_expired_jobs,
+        evict_stale_trash,
+        purge_archived_applications,
+    )
 
     settings = None
     if ctx.db is not None:
@@ -147,6 +153,9 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
     tombstoned = evict_stale_trash(ctx.db, ttl_days=settings["trashed_jobs_purge_days"])
     aged = age_expired_jobs(ctx.db)
+    purged_apps = purge_archived_applications(
+        ctx.db, retention_days=settings["archived_applications_purge_days"]
+    )
     return OperationOutcome(
         result_ref={
             "tombstoned_count": len(tombstoned),
@@ -155,6 +164,8 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
             "expired_deleted_count": len(aged["deleted"]),
             "expired_ids": aged["expired"],
             "expired_deleted_ids": aged["deleted"],
+            "purged_applications_count": len(purged_apps),
+            "purged_application_ids": purged_apps,
         }
     )
 
@@ -216,6 +227,133 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     )
 
 
+def _persist_artifact(
+    ctx: OperationContext,
+    *,
+    kind: str,
+    markdown: str,
+    notes: list[Any],
+    profile_version: int,
+    guidance: str,
+) -> str | None:
+    """Fill the pre-created `Artifact` (found by operation_id) or create one.
+
+    Save pre-creates an empty artifact carrying `operation_id` so `packetState`
+    reads *generating* while the op runs; on success we fill markdown + notes.
+    A directly-enqueued op (no pre-created row) creates the artifact here."""
+    if ctx.db is None:
+        return None
+    snap = ctx.input_snapshot
+    application_id = snap.get("application_id")
+    with ctx.db.repos() as repos:
+        existing = (
+            repos.artifacts.get_by_operation_id(ctx.operation_id)
+            if ctx.operation_id is not None
+            else None
+        )
+        if existing is not None:
+            repos.artifacts.update(
+                existing.id, markdown=markdown, notes=notes, profile_version=profile_version
+            )
+            return existing.id
+        if application_id is None:
+            return None
+        artifact = repos.artifacts.create(
+            application_id,
+            kind=kind,
+            markdown=markdown,
+            notes=notes,
+            profile_version=profile_version,
+            guidance_used=guidance or None,
+            operation_id=ctx.operation_id,
+        )
+        return artifact.id
+
+
+def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
+    """Tailor a resume (Tailorer module) → its `Artifact`. Routed engine."""
+    resolved = _require_engine(ctx)
+    from sidecar.modules.tailorer import tailor
+
+    from ..prompt_overrides import get_override
+    from .persistence import load_job_and_master
+
+    snap = ctx.input_snapshot
+    if ctx.db is not None:
+        with ctx.db.repos() as repos:
+            job_text, master_md, profile_version = load_job_and_master(repos, snap)
+    else:
+        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+
+    result = tailor(
+        master_md,
+        job_text,
+        guidance=snap.get("guidance", ""),
+        engine=resolved.engine,
+        skill_md=get_override("tailor"),
+    )
+    artifact_id = _persist_artifact(
+        ctx,
+        kind="tailored_resume",
+        markdown=result.resume_md,
+        notes=list(result.notes),
+        profile_version=profile_version,
+        guidance=snap.get("guidance", ""),
+    )
+    return OperationOutcome(
+        result_ref={
+            "artifact_id": artifact_id,
+            "application_id": snap.get("application_id"),
+            "kind": "tailored_resume",
+        },
+        usage=_usage_to_dict(result.usage),
+        engine=resolved.name,
+        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+    )
+
+
+def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
+    """Write a cover letter (CoverLetterer module) → its `Artifact`. Routed engine."""
+    resolved = _require_engine(ctx)
+    from sidecar.modules.coverletterer.coverletterer import cover
+
+    from ..prompt_overrides import get_override
+    from .persistence import load_job_and_master
+
+    snap = ctx.input_snapshot
+    if ctx.db is not None:
+        with ctx.db.repos() as repos:
+            job_text, master_md, profile_version = load_job_and_master(repos, snap)
+    else:
+        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+
+    result = cover(
+        master_md,
+        job_text,
+        guidance=snap.get("guidance", ""),
+        engine=resolved.engine,
+        skill_md=get_override("cover"),
+    )
+    artifact_id = _persist_artifact(
+        ctx,
+        kind="cover_letter",
+        markdown=result.cover_letter_md,
+        notes=list(result.notes),
+        profile_version=profile_version,
+        guidance=snap.get("guidance", ""),
+    )
+    return OperationOutcome(
+        result_ref={
+            "artifact_id": artifact_id,
+            "application_id": snap.get("application_id"),
+            "kind": "cover_letter",
+        },
+        usage=_usage_to_dict(result.usage),
+        engine=resolved.name,
+        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+    )
+
+
 def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Extract the structured application profile from the current master
     resume (Profiler module) → `master_profiles.application_profile`
@@ -259,6 +397,8 @@ def default_operation_registry() -> OperationRegistry:
             "scan": scan_entrypoint,
             "cleanup_trash": cleanup_trash_entrypoint,
             "score": score_entrypoint,
+            "tailor": tailor_entrypoint,
+            "cover": cover_entrypoint,
             "extract": extract_entrypoint,
         }
     )

@@ -18,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from .base import now_utc
 from .models import (
+    Application,
+    ApplicationEvent,
+    Artifact,
     EngineSettings,
     Job,
     JobScore,
@@ -547,6 +550,128 @@ class TombstonesRepo:
         return tomb
 
 
+class ApplicationsRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, application_id: str) -> Application | None:
+        return self._s.get(Application, application_id)
+
+    def list(self, *, include_archived: bool = False) -> list[Application]:
+        stmt = select(Application)
+        if not include_archived:
+            stmt = stmt.where(Application.archived_at.is_(None))
+        stmt = stmt.order_by(Application.saved_at.desc(), Application.id)
+        return list(self._s.scalars(stmt))
+
+    def list_archived_before(self, cutoff: datetime) -> list[Application]:
+        """Archived tracker cards whose `archived_at` is past `cutoff` — the
+        configurable archived-application purge scope (FR-SYS-06). Terminal-only:
+        an active card (archived_at IS NULL) is never in scope."""
+        stmt = select(Application).where(
+            Application.archived_at.is_not(None), Application.archived_at <= cutoff
+        )
+        return list(self._s.scalars(stmt))
+
+    def job_ids(self, *, include_archived: bool = True) -> set[str]:
+        """The set of job ids that have an Application — i.e. Saved (and later)
+        jobs, which the board excludes (US-JB-06). Includes archived by default so
+        an archived-then-restored card never double-surfaces on the board."""
+        stmt = select(Application.job_id)
+        if not include_archived:
+            stmt = stmt.where(Application.archived_at.is_(None))
+        return set(self._s.scalars(stmt))
+
+    def create(self, job_id: str, **fields: Any) -> Application:
+        app = Application(job_id=job_id, **fields)
+        self._s.add(app)
+        self._s.flush()
+        return app
+
+    def update(self, application_id: str, **fields: Any) -> Application:
+        app = self._s.get(Application, application_id)
+        if app is None:
+            raise KeyError(f"application {application_id!r} not found")
+        for key, value in fields.items():
+            setattr(app, key, value)
+        return app
+
+    def delete(self, application_id: str) -> bool:
+        app = self._s.get(Application, application_id)
+        if app is None:
+            return False
+        self._s.delete(app)  # ORM delete → cascades to artifacts
+        return True
+
+
+class ArtifactsRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, artifact_id: str) -> Artifact | None:
+        return self._s.get(Artifact, artifact_id)
+
+    def list_for_application(self, application_id: str) -> list[Artifact]:
+        stmt = (
+            select(Artifact)
+            .where(Artifact.application_id == application_id)
+            .order_by(Artifact.created_at, Artifact.id)
+        )
+        return list(self._s.scalars(stmt))
+
+    def get_by_operation_id(self, operation_id: str) -> Artifact | None:
+        stmt = select(Artifact).where(Artifact.operation_id == operation_id)
+        return self._s.scalars(stmt).first()
+
+    def create(self, application_id: str, **fields: Any) -> Artifact:
+        artifact = Artifact(application_id=application_id, **fields)
+        self._s.add(artifact)
+        self._s.flush()
+        return artifact
+
+    def update(self, artifact_id: str, **fields: Any) -> Artifact | None:
+        artifact = self._s.get(Artifact, artifact_id)
+        if artifact is None:
+            return None
+        for key, value in fields.items():
+            setattr(artifact, key, value)
+        self._s.flush()
+        return artifact
+
+
+class ApplicationEventsRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def create(
+        self, application_id: str, kind: str, detail: dict[str, Any] | None = None
+    ) -> ApplicationEvent:
+        event = ApplicationEvent(
+            application_id=application_id, kind=kind, detail=detail or {}
+        )
+        self._s.add(event)
+        self._s.flush()
+        return event
+
+    def list_for_application(self, application_id: str) -> list[ApplicationEvent]:
+        stmt = (
+            select(ApplicationEvent)
+            .where(ApplicationEvent.application_id == application_id)
+            .order_by(ApplicationEvent.created_at, ApplicationEvent.id)
+        )
+        return list(self._s.scalars(stmt))
+
+    def delete_for_application(self, application_id: str) -> int:
+        """Remove every event of an application (`foreign_keys=ON` forbids
+        orphans when the card is purged). Returns the row count deleted."""
+        result = self._s.execute(
+            delete(ApplicationEvent).where(
+                ApplicationEvent.application_id == application_id
+            )
+        )
+        return cast("CursorResult[Any]", result).rowcount
+
+
 class ProfileRepo:
     """The master profile — single active row in P1."""
 
@@ -629,6 +754,9 @@ class Repos:
         self.jobs = JobsRepo(session)
         self.job_scores = JobScoresRepo(session)
         self.tombstones = TombstonesRepo(session)
+        self.applications = ApplicationsRepo(session)
+        self.artifacts = ArtifactsRepo(session)
+        self.application_events = ApplicationEventsRepo(session)
 
     def prune_ledger(self, keep: int) -> int:
         """Ledger retention that preserves all-time spend: fold the usd/tokens of

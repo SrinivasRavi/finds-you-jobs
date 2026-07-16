@@ -349,12 +349,28 @@ def age_expired_jobs(
 
 
 def _saved_job_ids(repos: Repos) -> set[str]:
-    """Job ids rescued by a Saved application. Empty until the tracker commit
-    lands `applications` (`repos.applications.job_ids()` replaces this)."""
-    applications = getattr(repos, "applications", None)
-    if applications is None:
-        return set()
-    return set(applications.job_ids())
+    """Job ids rescued by a Saved application — never auto-expired/deleted."""
+    return repos.applications.job_ids()
+
+
+def purge_archived_applications(
+    db: Database | None, *, retention_days: int, now: datetime | None = None
+) -> list[str]:
+    """Permanently delete archived tracker cards past the retention window
+    (FR-SYS-06). Cascades the card's artifacts (ORM) + events; the underlying
+    `Job` is untouched (it may re-surface in the feed). Returns the purged
+    application ids."""
+    if db is None:
+        return []
+    now = now or now_utc()
+    cutoff = now - timedelta(days=retention_days)
+    purged: list[str] = []
+    with db.repos() as repos:
+        for app in repos.applications.list_archived_before(cutoff):
+            repos.application_events.delete_for_application(app.id)
+            if repos.applications.delete(app.id):
+                purged.append(app.id)
+    return purged
 
 
 def _parse_iso(value: Any) -> datetime | None:

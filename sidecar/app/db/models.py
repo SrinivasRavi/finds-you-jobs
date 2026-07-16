@@ -205,6 +205,94 @@ class ProfileEntity(Base):
 
 
 # ---------------------------------------------------------------------------
+# Applications (database-design §4)
+# ---------------------------------------------------------------------------
+
+
+class Application(Base):
+    """A pipeline card (database-design §4). `packetState` is *not* stored here —
+    it's derived from this app's Artifact rows + their operations' states.
+
+    The prior repository also stored `apply_state` (latest Applier run summary)
+    and `form_prep` (the Save-time answer cache) here; both are retired in this
+    rebuild (`docs/internal/applier.md` §2) — the durable ApplyRun model arrives
+    with the applier commits instead."""
+
+    __tablename__ = "applications"
+
+    id: Mapped[str] = _pk()
+    job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
+    column: Mapped[str] = mapped_column(String, nullable=False, default="saved")
+    priority: Mapped[str] = mapped_column(String, nullable=False, default="P0")
+    # Exclusive pre-submission intent (`docs/internal/roadmap.md` §5.1):
+    # `none | referral | apply` — one authoritative value, so two competing
+    # background paths can never present conflicting calls to action.
+    intent: Mapped[str] = mapped_column(String, nullable=False, default="none")
+    notes_markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    applied_via: Mapped[str | None] = mapped_column(String, nullable=True)
+    preview_screenshot_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    saved_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    last_touched_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )
+
+    artifacts: Mapped[list[Artifact]] = relationship(
+        back_populates="application", cascade="all, delete-orphan"
+    )
+
+
+class Artifact(Base):
+    """One generated document (tailored resume | cover letter) — database-design §4.
+    Resume + cover letter are two separate operations → two rows (AM5)."""
+
+    __tablename__ = "artifacts"
+
+    id: Mapped[str] = _pk()
+    application_id: Mapped[str] = mapped_column(
+        String, ForeignKey("applications.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    notes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    guidance_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+    operation_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("operations.id"), nullable=True
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String, ForeignKey("artifacts.id"), nullable=True
+    )
+    # "Approve and Save" stamp (US-RES-02 / FR-RES-02). Null → the variant is at
+    # `ready` (or generating/failed/none); set → the per-kind `approved` state.
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    application: Mapped[Application] = relationship(back_populates="artifacts")
+
+
+class ApplicationEvent(Base):
+    """A user-driven lifecycle event on a card (FR-TR-03/04) — the Activity-tab
+    source for the actions the operations ledger never sees: a column move
+    (`detail={"from","to"}`), a notes edit (`kind="notes"`), and archive /
+    unarchive. Composed with the ledger in `GET …/activity`. Kinds are plain
+    TEXT string-enums (§2). No other kinds are written."""
+
+    __tablename__ = "application_events"
+
+    id: Mapped[str] = _pk()
+    application_id: Mapped[str] = mapped_column(
+        String, ForeignKey("applications.id"), nullable=False
+    )
+    # column_change | notes | archive | unarchive
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    __table_args__ = (Index("ix_appevent_application", "application_id", "created_at"),)
+
+
+# ---------------------------------------------------------------------------
 # Settings (database-design §4/§6)
 # ---------------------------------------------------------------------------
 

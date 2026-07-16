@@ -289,6 +289,120 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Applications */
+        get: operations["list_applications_api_applications_get"];
+        put?: never;
+        /** Create Application */
+        post: operations["create_application_api_applications_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/{application_id}/packet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Packet
+         * @description Manual/regenerate packet build (US-TL-02) — supersedes prior artifacts.
+         */
+        post: operations["generate_packet_api_applications__application_id__packet_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/{application_id}/artifacts/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Artifact
+         * @description Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
+         *
+         *     Targets the head (non-superseded) artifact of `kind` for this application.
+         *     `markdown` overwrites the text (edits apply only to this variant — the master
+         *     is untouched); `approved` stamps/clears `approved_at` (the `ready ⇄ approved`
+         *     flip). Per-artifact, so the resume and cover letter are approved separately.
+         */
+        patch: operations["patch_artifact_api_applications__application_id__artifacts__kind__patch"];
+        trace?: never;
+    };
+    "/api/applications/{application_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Application */
+        get: operations["get_application_api_applications__application_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Application
+         * @description Remove a card (unsave / return-to-board — US-JB / US-TR-07).
+         */
+        delete: operations["delete_application_api_applications__application_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Application
+         * @description Move/annotate/archive a card. Column moves, notes edits, and
+         *     archive/unarchive each write an `ApplicationEvent` (only on real change —
+         *     a no-op PATCH records nothing). `intent` is the §5.1 exclusive value:
+         *     setting it replaces the previous one wholesale.
+         */
+        patch: operations["update_application_api_applications__application_id__patch"];
+        trace?: never;
+    };
+    "/api/applications/{application_id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Application Activity
+         * @description Real Activity log for one application (US-TR-03 / FR-TR-03) — composed from
+         *     the operations ledger + card events, never synthesized client-side. Records:
+         *     added-to-tracker, score, tailor/cover generation, column moves, notes edits,
+         *     archive/unarchive. (Apply + outreach entries return with their commits.)
+         */
+        get: operations["application_activity_api_applications__application_id__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schedules": {
         parameters: {
             query?: never;
@@ -513,6 +627,154 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActivityEntryDTO
+         * @description One real event on an application's Activity tab (US-TR-03 / FR-TR-03),
+         *     composed from the ledger — never synthesized client-side.
+         */
+        ActivityEntryDTO: {
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** State */
+            state?: string | null;
+            /** At */
+            at?: string | null;
+        };
+        /** ApplicationCreate */
+        ApplicationCreate: {
+            /** Job Id */
+            job_id: string;
+            /**
+             * Column
+             * @default saved
+             */
+            column: string;
+            /** Priority */
+            priority?: string | null;
+            /**
+             * Notes Markdown
+             * @default
+             */
+            notes_markdown: string;
+            /** Generate Resume */
+            generate_resume?: boolean | null;
+            /** Generate Cover */
+            generate_cover?: boolean | null;
+            /**
+             * Guidance
+             * @default
+             */
+            guidance: string;
+        };
+        /** ApplicationDTO */
+        ApplicationDTO: {
+            /** Id */
+            id: string;
+            /** Job Id */
+            job_id: string;
+            job?: components["schemas"]["JobDTO"] | null;
+            /** Column */
+            column: string;
+            /** Priority */
+            priority: string;
+            /**
+             * Intent
+             * @default none
+             */
+            intent: string;
+            /** Notes Markdown */
+            notes_markdown: string;
+            /** Applied Via */
+            applied_via: string | null;
+            /** Preview Screenshot Path */
+            preview_screenshot_path: string | null;
+            /** Archived At */
+            archived_at: string | null;
+            /**
+             * Saved At
+             * Format: date-time
+             */
+            saved_at: string;
+            /**
+             * Last Touched At
+             * Format: date-time
+             */
+            last_touched_at: string;
+            /** Packetstate */
+            packetState: string;
+            /**
+             * Packetresumestate
+             * @default none
+             */
+            packetResumeState: string;
+            /**
+             * Packetcoverletterstate
+             * @default none
+             */
+            packetCoverLetterState: string;
+            /** Artifacts */
+            artifacts?: components["schemas"]["ArtifactDTO"][];
+        };
+        /** ApplicationUpdate */
+        ApplicationUpdate: {
+            /** Column */
+            column?: string | null;
+            /** Priority */
+            priority?: string | null;
+            /** Intent */
+            intent?: ("none" | "referral" | "apply") | null;
+            /** Notes Markdown */
+            notes_markdown?: string | null;
+            /** Applied Via */
+            applied_via?: string | null;
+            /** Archived */
+            archived?: boolean | null;
+        };
+        /** ArtifactDTO */
+        ArtifactDTO: {
+            /** Id */
+            id: string;
+            /** Application Id */
+            application_id: string;
+            /** Kind */
+            kind: string;
+            /** Markdown */
+            markdown: string;
+            /** Notes */
+            notes: unknown[];
+            /** Profile Version */
+            profile_version: number;
+            /** Guidance Used */
+            guidance_used: string | null;
+            /** Operation Id */
+            operation_id: string | null;
+            /** Operation State */
+            operation_state?: string | null;
+            /** Superseded By */
+            superseded_by: string | null;
+            /** Approved At */
+            approved_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * ArtifactPatch
+         * @description Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
+         *
+         *     `markdown` overwrites the head artifact's text; `approved=True` stamps
+         *     `approved_at` (flip `ready → approved`), `approved=False` clears it.
+         */
+        ArtifactPatch: {
+            /** Markdown */
+            markdown?: string | null;
+            /** Approved */
+            approved?: boolean | null;
+        };
         /**
          * BoardPageDTO
          * @description One page of the Job Board feed (FR-JB-02) plus the header meta the board
@@ -809,6 +1071,27 @@ export interface components {
             started_at: string | null;
             /** Finished At */
             finished_at: string | null;
+        };
+        /**
+         * PacketRequest
+         * @description Manual/regenerate packet build for an existing application (US-TL-02).
+         */
+        PacketRequest: {
+            /**
+             * Resume
+             * @default true
+             */
+            resume: boolean;
+            /**
+             * Cover
+             * @default true
+             */
+            cover: boolean;
+            /**
+             * Guidance
+             * @default
+             */
+            guidance: string;
         };
         /** PreferencesDTO */
         PreferencesDTO: {
@@ -1483,6 +1766,267 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_applications_api_applications_get: {
+        parameters: {
+            query?: {
+                include_archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_application_api_applications_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_packet_api_applications__application_id__packet_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PacketRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_artifact_api_applications__application_id__artifacts__kind__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_application_api_applications__application_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_application_api_applications__application_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_application_api_applications__application_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    application_activity_api_applications__application_id__activity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityEntryDTO"][];
                 };
             };
             /** @description Validation Error */

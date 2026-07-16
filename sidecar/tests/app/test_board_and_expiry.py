@@ -388,3 +388,44 @@ def test_board_row_exposes_derived_work_style(
     rows = {j["title"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
     assert rows["Remote Backend Engineer"]["workStyle"] == "REMOTE"
     assert rows["Onsite Analyst"]["workStyle"] == "ONSITE"
+
+def test_board_excludes_saved_jobs(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="lever")
+        repos.applications.create(job.id, column="saved", priority="P0")
+        job_id = job.id
+    ids = [j["id"] for j in client.get("/api/board", headers=AUTH).json()["jobs"]]
+    assert job_id not in ids  # Saved jobs leave the board (US-JB-06)
+
+
+# ---------------------------------------------------------------------------
+# Board search (FR-JB-13): list_q (title/company/location) + text_q (full text
+# incl. JD + match-score reasons/breakdown), filtered before pagination.
+# ---------------------------------------------------------------------------
+
+
+
+def test_saved_job_never_auto_expires_or_deletes(migrated_db: Database) -> None:
+    db = migrated_db
+    now = now_utc()
+    with db.repos() as repos:
+        active = repos.jobs.create(
+            canonical_url="a", title="A", source_adapter="lever",
+            ingested_at=now - timedelta(days=40),
+        )
+        repos.applications.create(active.id, column="saved", priority="P0")
+        expired = repos.jobs.create(canonical_url="e", title="E", source_adapter="lever")
+        repos.jobs.update(
+            expired.id,
+            feed_state="expired",
+            source_meta={"expired_at": (now - timedelta(days=40)).isoformat()},
+        )
+        repos.applications.create(expired.id, column="saved", priority="P0")
+        active_id, expired_id = active.id, expired.id
+
+    result = age_expired_jobs(db, now=now)
+    assert result == {"expired": [], "deleted": []}  # Saving rescues both
+    with db.repos() as repos:
+        assert _job(repos, active_id).feed_state == "active"
+        assert repos.jobs.get(expired_id) is not None

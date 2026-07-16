@@ -24,11 +24,13 @@ from ..db import Database
 from ..db.base import now_utc
 from ..events import heartbeat_stream
 from ..logging_setup import get_logger
+from ..priority import STATS_KEY, zband_priority
 from ..registry import EngineRegistry
 from ..registry.engine_config import apply_routing
 from ..runner import OperationRunner
 from ..scheduler.planner import plan_schedule
 from . import dto
+from .packet import auto_cover_default, auto_resume_default, enqueue_packet
 
 router = APIRouter()
 
@@ -102,12 +104,8 @@ def _sort_board(dtos: list[dto.JobDTO]) -> None:
 
 
 def _saved_job_ids(repos: Any) -> set[str]:
-    """Job ids already Saved (excluded from the board server-side). Empty until
-    the tracker commit lands `applications`."""
-    applications = getattr(repos, "applications", None)
-    if applications is None:
-        return set()
-    return set(applications.job_ids())
+    """Job ids already Saved — excluded from the board server-side (US-JB-06)."""
+    return set(repos.applications.job_ids())
 
 
 @router.get("/api/jobs")
@@ -523,6 +521,314 @@ async def replace_settings(
 ) -> dto.SettingsDTO:
     """PUT is an alias of POST for the settings map (idempotent update)."""
     return await update_settings(request, payload)
+
+
+# -- applications (with derived packetState) --------------------------------
+
+
+def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
+    # Only head artifacts (not superseded) surface + drive packetState.
+    artifacts = [
+        a
+        for a in repos.artifacts.list_for_application(application.id)
+        if a.superseded_by is None
+    ]
+    with_states: list[tuple[Any, str | None]] = []
+    for artifact in artifacts:
+        state: str | None = None
+        if artifact.operation_id is not None:
+            op = repos.operations.get(artifact.operation_id)
+            state = op.state if op is not None else None
+        with_states.append((artifact, state))
+    job = repos.jobs.get(application.job_id)
+    version = _current_profile_version(repos)
+    job_dto_val = None
+    if job is not None:
+        score = repos.job_scores.get_cached(job.id, version)
+        op_states = repos.operations.score_states_by_job().get(job.id)
+        job_dto_val = dto.job_dto(job, score, score_op_states=op_states)
+    return dto.application_dto(application, with_states, job=job_dto_val)
+
+
+@router.get("/api/applications")
+async def list_applications(
+    request: Request, include_archived: bool = False
+) -> list[dto.ApplicationDTO]:
+    with _db(request).repos() as repos:
+        apps = repos.applications.list(include_archived=include_archived)
+        return [_application_dto(repos, app) for app in apps]
+
+
+@router.post("/api/applications", status_code=201)
+async def create_application(
+    request: Request, payload: dto.ApplicationCreate
+) -> dto.ApplicationDTO:
+    db = _db(request)
+    # 1. Create + commit the Application first (the worker must see it).
+    with db.repos() as repos:
+        if repos.jobs.get(payload.job_id) is None:
+            raise HTTPException(status_code=404, detail=f"job {payload.job_id!r} not found")
+        prefs = repos.preferences.get_or_create()
+        # Priority assignment (FR-TR-09): an explicit value is a manual choice;
+        # otherwise the z-band of the job's current score, or P0 if saved while
+        # the score is still Pending (the strongest signal — skips the z-band).
+        if payload.priority is not None:
+            priority = payload.priority
+        else:
+            version = _current_profile_version(repos)
+            score = repos.job_scores.get_cached(payload.job_id, version)
+            if score is None:
+                priority = "P0"
+            else:
+                priority = zband_priority(
+                    (prefs.thresholds or {}).get(STATS_KEY), score.score_0_100
+                )
+        app = repos.applications.create(
+            payload.job_id,
+            column=payload.column,
+            priority=priority,
+            notes_markdown=payload.notes_markdown,
+        )
+        application_id = app.id
+        auto_resume = auto_resume_default(prefs.thresholds)
+        auto_cover = auto_cover_default(prefs.thresholds)
+
+    # 2. Per-job automation toggles (US-TL-03): split defaults (FR-SET-02).
+    # (The prior repository also enqueued Save-time form prep here; retired.)
+    resume = payload.generate_resume if payload.generate_resume is not None else auto_resume
+    cover = payload.generate_cover if payload.generate_cover is not None else auto_cover
+    if resume or cover:
+        enqueue_packet(
+            db,
+            _runner(request),
+            application_id=application_id,
+            job_id=payload.job_id,
+            resume=resume,
+            cover=cover,
+            guidance=payload.guidance,
+        )
+
+    with db.repos() as repos:
+        return _application_dto(repos, repos.applications.get(application_id))
+
+
+@router.post("/api/applications/{application_id}/packet", status_code=202)
+async def generate_packet(
+    request: Request, application_id: str, payload: dto.PacketRequest
+) -> dto.ApplicationDTO:
+    """Manual/regenerate packet build (US-TL-02) — supersedes prior artifacts."""
+    db = _db(request)
+    with db.repos() as repos:
+        app = repos.applications.get(application_id)
+        if app is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        job_id = app.job_id
+    enqueue_packet(
+        db,
+        _runner(request),
+        application_id=application_id,
+        job_id=job_id,
+        resume=payload.resume,
+        cover=payload.cover,
+        guidance=payload.guidance,
+    )
+    with db.repos() as repos:
+        return _application_dto(repos, repos.applications.get(application_id))
+
+
+_ARTIFACT_KINDS = {"tailored_resume", "cover_letter"}
+
+
+@router.patch("/api/applications/{application_id}/artifacts/{kind}")
+async def patch_artifact(
+    request: Request, application_id: str, kind: str, payload: dto.ArtifactPatch
+) -> dto.ApplicationDTO:
+    """Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
+
+    Targets the head (non-superseded) artifact of `kind` for this application.
+    `markdown` overwrites the text (edits apply only to this variant — the master
+    is untouched); `approved` stamps/clears `approved_at` (the `ready ⇄ approved`
+    flip). Per-artifact, so the resume and cover letter are approved separately."""
+    if kind not in _ARTIFACT_KINDS:
+        raise HTTPException(status_code=400, detail=f"unknown artifact kind {kind!r}")
+    with _db(request).repos() as repos:
+        app = repos.applications.get(application_id)
+        if app is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        head = next(
+            (
+                a
+                for a in repos.artifacts.list_for_application(application_id)
+                if a.kind == kind and a.superseded_by is None
+            ),
+            None,
+        )
+        if head is None:
+            raise HTTPException(status_code=404, detail=f"no {kind} artifact to update")
+        fields: dict[str, Any] = {}
+        if payload.markdown is not None:
+            fields["markdown"] = payload.markdown
+        if payload.approved is not None:
+            fields["approved_at"] = now_utc() if payload.approved else None
+        if fields:
+            repos.artifacts.update(head.id, **fields)
+            # Persisting a review is a touch on the card (last-touched clock).
+            repos.applications.update(application_id, last_touched_at=now_utc())
+        return _application_dto(repos, repos.applications.get(application_id))
+
+
+@router.get("/api/applications/{application_id}")
+async def get_application(request: Request, application_id: str) -> dto.ApplicationDTO:
+    with _db(request).repos() as repos:
+        app = repos.applications.get(application_id)
+        if app is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        return _application_dto(repos, app)
+
+
+_ALL_OP_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
+_SCORE_LABELS = {"failed": "Score failed", "succeeded": "Scored"}
+
+
+def _ops_for_job(repos: Any, kind: str, job_id: str) -> list[Any]:
+    return [
+        op
+        for op in repos.operations.list_by_kind_states(kind, _ALL_OP_STATES)
+        if (op.input_snapshot or {}).get("job_id") == job_id
+    ]
+
+
+def _column_label(column: str) -> str:
+    """Humanize a pipeline column id for the Activity label (e.g.
+    `seeking_referral` → `Seeking Referral`)."""
+    return column.replace("_", " ").title()
+
+
+def _event_label(kind: str, detail: dict[str, Any]) -> str:
+    """The Activity-tab label for a user-driven card event (FR-TR-03/04)."""
+    if kind == "column_change":
+        frm = _column_label(str(detail.get("from", "")))
+        to = _column_label(str(detail.get("to", "")))
+        return f"Moved from {frm} to {to}"
+    if kind == "notes":
+        return "Notes updated"
+    if kind == "archive":
+        return "Archived"
+    if kind == "unarchive":
+        return "Restored from archive"
+    return kind
+
+
+@router.get("/api/applications/{application_id}/activity")
+async def application_activity(
+    request: Request, application_id: str
+) -> list[dto.ActivityEntryDTO]:
+    """Real Activity log for one application (US-TR-03 / FR-TR-03) — composed from
+    the operations ledger + card events, never synthesized client-side. Records:
+    added-to-tracker, score, tailor/cover generation, column moves, notes edits,
+    archive/unarchive. (Apply + outreach entries return with their commits.)"""
+    with _db(request).repos() as repos:
+        app = repos.applications.get(application_id)
+        if app is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        entries: list[dto.ActivityEntryDTO] = [
+            dto.ActivityEntryDTO(kind="added", label="Added to tracker", at=app.saved_at)
+        ]
+        # Score ops for the job.
+        for op in _ops_for_job(repos, "score", app.job_id):
+            if op.state in ("succeeded", "failed"):
+                entries.append(
+                    dto.ActivityEntryDTO(
+                        kind="score",
+                        label=_SCORE_LABELS.get(op.state, "Scoring"),
+                        state=op.state,
+                        at=op.finished_at or op.created_at,
+                    )
+                )
+        # Tailor / cover artifacts (head + superseded — the full generation trail).
+        for artifact in repos.artifacts.list_for_application(application_id):
+            op = (
+                repos.operations.get(artifact.operation_id)
+                if artifact.operation_id is not None
+                else None
+            )
+            noun = "Tailored resume" if artifact.kind == "tailored_resume" else "Cover letter"
+            state = op.state if op is not None else "succeeded"
+            verb = "generation failed" if state == "failed" else "generated"
+            entries.append(
+                dto.ActivityEntryDTO(
+                    kind="tailor" if artifact.kind == "tailored_resume" else "cover",
+                    label=f"{noun} {verb}",
+                    state=state,
+                    at=(op.finished_at if op is not None else None) or artifact.created_at,
+                )
+            )
+        # User-driven card events (FR-TR-03/04): column moves, notes edits, archive.
+        for event in repos.application_events.list_for_application(application_id):
+            entries.append(
+                dto.ActivityEntryDTO(
+                    kind=event.kind,
+                    label=_event_label(event.kind, event.detail),
+                    at=event.created_at,
+                )
+            )
+    entries.sort(key=lambda e: (e.at is None, e.at))
+    return entries
+
+
+@router.patch("/api/applications/{application_id}")
+async def update_application(
+    request: Request, application_id: str, payload: dto.ApplicationUpdate
+) -> dto.ApplicationDTO:
+    """Move/annotate/archive a card. Column moves, notes edits, and
+    archive/unarchive each write an `ApplicationEvent` (only on real change —
+    a no-op PATCH records nothing). `intent` is the §5.1 exclusive value:
+    setting it replaces the previous one wholesale."""
+    fields = payload.model_dump(exclude_none=True)
+    archived_flag = fields.pop("archived", None)
+    with _db(request).repos() as repos:
+        existing = repos.applications.get(application_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        events: list[tuple[str, dict[str, Any]]] = []
+        if "column" in fields and fields["column"] != existing.column:
+            events.append(("column_change", {"from": existing.column, "to": fields["column"]}))
+        if "notes_markdown" in fields and fields["notes_markdown"] != existing.notes_markdown:
+            events.append(("notes", {}))
+        if archived_flag is not None:
+            currently_archived = existing.archived_at is not None
+            if archived_flag and not currently_archived:
+                events.append(("archive", {}))
+            elif not archived_flag and currently_archived:
+                events.append(("unarchive", {}))
+            fields["archived_at"] = now_utc() if archived_flag else None
+        app = repos.applications.update(application_id, **fields)
+        for kind, detail in events:
+            repos.application_events.create(application_id, kind, detail)
+        return _application_dto(repos, app)
+
+
+@router.delete("/api/applications/{application_id}", status_code=204)
+async def delete_application(request: Request, application_id: str) -> None:
+    """Remove a card (unsave / return-to-board — US-JB / US-TR-07)."""
+    with _db(request).repos() as repos:
+        app = repos.applications.get(application_id)
+        if app is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        repos.application_events.delete_for_application(application_id)
+        repos.applications.delete(application_id)
 
 
 # -- schedules -------------------------------------------------------------
