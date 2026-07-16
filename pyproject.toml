@@ -11,6 +11,12 @@ dependencies = [
     "uvicorn[standard]>=0.50.2",
     "sqlalchemy>=2.0.36",
     "alembic>=1.14.0",
+    # Secrets-at-rest (NFR-SEC-01): `keyring` (MIT) holds the app's encryption
+    # key in the OS keychain; `cryptography` (Apache-2.0/BSD, permissive)
+    # provides Fernet for sealed BYOK keys. App-managed key-file fallback when
+    # no keychain backend exists (the NFR's stated fallback).
+    "keyring>=25",
+    "cryptography>=43",
 ]
 
 [tool.hatch.build.targets.wheel]

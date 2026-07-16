@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.engines import router as engines_router
 from .api.routes import router
 from .auth import BearerAuthMiddleware
 from .db import Database, resolve_db_url
@@ -25,7 +26,8 @@ from .db.database import resolve_data_dir
 from .db.migrate import upgrade_to_head
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub
 from .logging_setup import get_logger, setup_flight_recorder
-from .registry import OperationRegistry
+from .registry import EngineRegistry, OperationRegistry
+from .registry.engine_config import configure_engines
 from .runner import OperationRunner
 from .watchdog import watch_parent
 
@@ -73,13 +75,28 @@ def create_app(
         hub = EventHub()
         hub.bind_loop(asyncio.get_running_loop())
 
-        runner = OperationRunner(db, registry=operation_registry, publish=hub.publish)
+        # Register the claude-cli engine + any configured BYOK engines from the
+        # persisted EngineSettings rows, then apply the settings routing map.
+        engines = EngineRegistry()
+        resolved_data_dir = resolve_data_dir(data_dir)
+        with db.repos() as repos:
+            prefs = repos.preferences.get_or_create()
+            routing = prefs.engine_routing
+            engine_rows = repos.engine_settings.list()
+        configure_engines(
+            engines, routing, engine_rows=engine_rows, data_dir=resolved_data_dir
+        )
+
+        runner = OperationRunner(
+            db, registry=operation_registry, engines=engines, publish=hub.publish
+        )
         runner.start()  # boot recovery (NFR-LONG-02) + first pump
 
         app.state.db = db
         app.state.hub = hub
+        app.state.engines = engines
         app.state.runner = runner
-        app.state.data_dir = resolve_data_dir(data_dir)
+        app.state.data_dir = resolved_data_dir
 
         watchdog_task: asyncio.Task[None] | None = None
         if original_ppid is not None:
@@ -129,6 +146,7 @@ def create_app(
     )
 
     app.include_router(router)
+    app.include_router(engines_router)
     return app
 
 

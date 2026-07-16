@@ -15,10 +15,10 @@ runner with fake entrypoints only.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import TYPE_CHECKING, Any
 
-from .engines import ResolvedEngine
+from .engines import EngineNotConfiguredError, ResolvedEngine
 
 if TYPE_CHECKING:
     from ..db import Database
@@ -83,7 +83,65 @@ class OperationRegistry:
         return frozenset(self._entries)
 
 
+def _usage_to_dict(usage: Any) -> dict[str, Any] | None:
+    if usage is None:
+        return None
+    if is_dataclass(usage) and not isinstance(usage, type):
+        return asdict(usage)
+    if isinstance(usage, dict):
+        return usage
+    return None
+
+
+# ---------------------------------------------------------------------------
+# The real wrappers (app → modules import is allowed and correct).
+# ---------------------------------------------------------------------------
+
+
+def _require_engine(ctx: OperationContext) -> ResolvedEngine:
+    if ctx.engine is None:
+        raise EngineNotConfiguredError(ctx.kind)
+    return ctx.engine
+
+
+def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
+    """Extract the structured application profile from the current master
+    resume (Profiler module) → `master_profiles.application_profile`
+    (FR-APP-01). Routed engine — one small call. (The prior repository threads
+    a user-editable prompt override here; that returns with the
+    prompt-overrides feature.)"""
+    resolved = _require_engine(ctx)
+    from sidecar.modules.profiler import extract_profile
+
+    if ctx.db is None:
+        raise RuntimeError("extract operation requires a database context")
+    with ctx.db.repos() as repos:
+        profile_row = repos.profile.get_current()
+        if profile_row is None:
+            raise LookupError("no master profile to extract an application profile from")
+        master_md = profile_row.resume_markdown
+        version = profile_row.version
+
+    result = extract_profile(master_md, engine=resolved.engine)
+    record = {**result.profile, "profile_version": version, "source": "extracted"}
+    with ctx.db.repos() as repos:
+        repos.profile.set_application_profile(record)
+    return OperationOutcome(
+        result_ref={
+            "profile_version": version,
+            "keys_filled": sorted(k for k, v in result.profile.items() if v),
+        },
+        usage=_usage_to_dict(result.usage),
+        engine=resolved.name,
+        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+    )
+
+
 def default_operation_registry() -> OperationRegistry:
-    """The app's real `kind → entrypoint` table. Empty at the core-storage
-    commit; each module commit registers its kinds here."""
-    return OperationRegistry()
+    """The app's real `kind → entrypoint` table. Grows as module commits land
+    (architecture §5.4)."""
+    return OperationRegistry(
+        {
+            "extract": extract_entrypoint,
+        }
+    )

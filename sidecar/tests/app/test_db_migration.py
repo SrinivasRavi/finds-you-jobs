@@ -12,11 +12,16 @@ from sqlalchemy import create_engine, inspect
 
 from sidecar.app.db.migrate import downgrade_to_base, upgrade_to_head
 
-# The core-storage table list (`docs/internal/roadmap.md` §7.2 #3); the rest of
+# The tables landed so far (`docs/internal/roadmap.md` §7.2 #3–4); the rest of
 # the database-design §7 set lands with its feature commits.
 _EXPECTED = {
     "operations",
     "user_preferences",
+    "master_profiles",
+    "profile_entities",
+    "experience_skills",
+    "project_skills",
+    "engine_settings",
 }
 
 

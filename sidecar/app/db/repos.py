@@ -17,7 +17,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .base import now_utc
-from .models import Operation, UserPreferences
+from .models import EngineSettings, MasterProfile, Operation, UserPreferences
 
 # ---------------------------------------------------------------------------
 # Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07)
@@ -270,6 +270,75 @@ class PreferencesRepo:
         prefs.ui_state = ui
 
 
+class ProfileRepo:
+    """The master profile — single active row in P1."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get_current(self) -> MasterProfile | None:
+        stmt = select(MasterProfile).order_by(MasterProfile.version.desc()).limit(1)
+        return self._s.scalars(stmt).first()
+
+    def upsert(self, resume_markdown: str) -> MasterProfile:
+        current = self.get_current()
+        if current is None:
+            profile = MasterProfile(resume_markdown=resume_markdown, version=1)
+            self._s.add(profile)
+            self._s.flush()
+            return profile
+        current.resume_markdown = resume_markdown
+        current.version += 1
+        return current
+
+    def set_application_profile(self, profile: dict[str, Any] | None) -> MasterProfile:
+        """Write the structured application-profile record (FR-APP-01) onto the
+        current master. Raises when no master exists yet."""
+        current = self.get_current()
+        if current is None:
+            raise LookupError("no master profile to attach an application profile to")
+        current.application_profile = profile
+        return current
+
+
+class EngineSettingsRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def list(self) -> list[EngineSettings]:
+        return list(self._s.scalars(select(EngineSettings).order_by(EngineSettings.engine)))
+
+    def get(self, settings_id: str) -> EngineSettings | None:
+        return self._s.get(EngineSettings, settings_id)
+
+    def get_by_engine(self, engine: str) -> EngineSettings | None:
+        return self._s.scalars(
+            select(EngineSettings).where(EngineSettings.engine == engine)
+        ).first()
+
+    def create(self, engine: str, **fields: Any) -> EngineSettings:
+        row = EngineSettings(engine=engine, **fields)
+        self._s.add(row)
+        self._s.flush()
+        return row
+
+    def update(self, settings_id: str, **fields: Any) -> EngineSettings | None:
+        row = self._s.get(EngineSettings, settings_id)
+        if row is None:
+            return None
+        for k, v in fields.items():
+            setattr(row, k, v)
+        self._s.flush()
+        return row
+
+    def delete_by_engine(self, engine: str) -> bool:
+        result = cast(
+            "CursorResult[Any]",
+            self._s.execute(delete(EngineSettings).where(EngineSettings.engine == engine)),
+        )
+        return result.rowcount > 0
+
+
 class Repos:
     """One session, every aggregate repo. Feature commits add their repos here."""
 
@@ -277,6 +346,8 @@ class Repos:
         self.session = session
         self.operations = OperationsRepo(session)
         self.preferences = PreferencesRepo(session)
+        self.profile = ProfileRepo(session)
+        self.engine_settings = EngineSettingsRepo(session)
 
     def prune_ledger(self, keep: int) -> int:
         """Ledger retention that preserves all-time spend: fold the usd/tokens of

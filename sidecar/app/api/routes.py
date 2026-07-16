@@ -18,6 +18,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..db import Database
 from ..events import heartbeat_stream
 from ..logging_setup import get_logger
+from ..registry import EngineRegistry
+from ..registry.engine_config import apply_routing
 from ..runner import OperationRunner
 from . import dto
 
@@ -73,6 +75,104 @@ async def shutdown(request: Request) -> JSONResponse:
     if request_shutdown is not None:
         request_shutdown()
     return JSONResponse({"status": "shutting_down"}, status_code=200)
+
+
+# -- profile ---------------------------------------------------------------
+
+
+@router.get("/api/profile")
+async def get_profile(request: Request) -> dto.ProfileDTO | None:
+    with _db(request).repos() as repos:
+        profile = repos.profile.get_current()
+        return dto.profile_dto(profile) if profile is not None else None
+
+
+@router.post("/api/profile")
+async def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileDTO:
+    with _db(request).repos() as repos:
+        profile = repos.profile.upsert(payload.resume_markdown)
+        result = dto.profile_dto(profile)
+    # Always extract the application profile at master-save (FR-APP-01;
+    # maintainer removed the toggle — it's one small cheap call and the record
+    # is load-bearing for every form fill).
+    _runner(request).submit("extract", {"profile_version": result.version})
+    return result
+
+
+@router.post("/api/profile/extract", status_code=202)
+async def extract_application_profile(request: Request) -> dto.OperationAccepted:
+    """Manually (re-)extract the application profile from the current master
+    (the Settings "Re-extract" button — FR-APP-01)."""
+    with _db(request).repos() as repos:
+        if repos.profile.get_current() is None:
+            raise HTTPException(status_code=404, detail="no master profile to extract from")
+    operation_id = _runner(request).submit("extract", {})
+    return dto.OperationAccepted(id=operation_id, kind="extract", state="queued")
+
+
+@router.patch("/api/profile/application-profile")
+async def patch_application_profile(
+    request: Request, payload: dict[str, Any]
+) -> dto.ProfileDTO:
+    """Persist manual edits to the application profile (Settings editor).
+    The payload replaces the stored record verbatim, stamped `source: edited`
+    — deterministic user edits always win over extraction."""
+    with _db(request).repos() as repos:
+        if repos.profile.get_current() is None:
+            raise HTTPException(status_code=404, detail="no master profile yet")
+        record = {**payload, "source": "edited"}
+        profile = repos.profile.set_application_profile(record)
+        return dto.profile_dto(profile)
+
+
+# -- settings --------------------------------------------------------------
+
+
+def _settings_dto(repos: Any) -> dto.SettingsDTO:
+    prefs = repos.preferences.get_or_create()
+    engines = repos.engine_settings.list()
+    return dto.SettingsDTO(
+        preferences=dto.preferences_dto(prefs),
+        engines=[dto.engine_setting_dto(e) for e in engines],
+    )
+
+
+@router.get("/api/settings")
+async def get_settings(request: Request) -> dto.SettingsDTO:
+    with _db(request).repos() as repos:
+        return _settings_dto(repos)
+
+
+def _engines(request: Request) -> EngineRegistry | None:
+    return getattr(request.app.state, "engines", None)
+
+
+@router.post("/api/settings")
+async def update_settings(
+    request: Request, payload: dto.PreferencesUpdate
+) -> dto.SettingsDTO:
+    # The prior repository threads scan/contact-sync cadence schedules and
+    # observability reconfiguration through this write; both return with their
+    # feature commits (scheduler, observability) — the bare preferences write +
+    # live routing re-apply is the core-slice surface.
+    fields = payload.model_dump(exclude_none=True)
+    with _db(request).repos() as repos:
+        prefs = repos.preferences.update(**fields)
+        routing = prefs.engine_routing
+        result = _settings_dto(repos)
+    # Re-apply the routing map so a Settings change takes effect immediately.
+    engines = _engines(request)
+    if engines is not None and "engine_routing" in fields:
+        apply_routing(engines, routing)
+    return result
+
+
+@router.put("/api/settings")
+async def replace_settings(
+    request: Request, payload: dto.PreferencesUpdate
+) -> dto.SettingsDTO:
+    """PUT is an alias of POST for the settings map (idempotent update)."""
+    return await update_settings(request, payload)
 
 
 # -- operations ------------------------------------------------------------

@@ -14,8 +14,19 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Index, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Table,
+    Text,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, UTCDateTime, now_utc
 from .ids import uuid7
@@ -53,6 +64,84 @@ class Operation(Base):
         Index("ix_operations_kind_created", "kind", "created_at"),
         Index("ix_operations_finished", "finished_at"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Profile (database-design §3)
+# ---------------------------------------------------------------------------
+
+
+class MasterProfile(Base):
+    __tablename__ = "master_profiles"
+
+    id: Mapped[str] = _pk()
+    resume_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Structured form-fill facts (FR-APP-01): extracted from the resume by the
+    # `extract` op at save, user-editable in Settings; the Applier reads this
+    # instead of regex-scraping the markdown. Nullable — absent means not yet
+    # extracted.
+    application_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )
+
+    entities: Mapped[list[ProfileEntity]] = relationship(
+        back_populates="profile", cascade="all, delete-orphan"
+    )
+
+
+# Join tables per the no-graph-DB decision (§4): entity↔entity links live in SQL.
+experience_skills = Table(
+    "experience_skills",
+    Base.metadata,
+    Column("experience_id", String, ForeignKey("profile_entities.id"), primary_key=True),
+    Column("skill_id", String, ForeignKey("profile_entities.id"), primary_key=True),
+)
+
+project_skills = Table(
+    "project_skills",
+    Base.metadata,
+    Column("project_id", String, ForeignKey("profile_entities.id"), primary_key=True),
+    Column("skill_id", String, ForeignKey("profile_entities.id"), primary_key=True),
+)
+
+
+class ProfileEntity(Base):
+    """Extracted profile entity backing the FR-TL-01 fabrication guard."""
+
+    __tablename__ = "profile_entities"
+
+    id: Mapped[str] = _pk()
+    profile_id: Mapped[str] = mapped_column(
+        String, ForeignKey("master_profiles.id"), nullable=False
+    )
+    entity_type: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    user_curated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    profile: Mapped[MasterProfile] = relationship(back_populates="entities")
+
+
+# ---------------------------------------------------------------------------
+# Settings (database-design §4/§6)
+# ---------------------------------------------------------------------------
+
+
+class EngineSettings(Base):
+    """One row per configured LLM engine (architecture §9 registry)."""
+
+    __tablename__ = "engine_settings"
+
+    id: Mapped[str] = _pk()
+    engine: Mapped[str] = mapped_column(String, nullable=False)
+    key_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Encrypted-at-rest — never plaintext (NFR-SEC-01).
+    key_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    default_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class UserPreferences(Base):

@@ -65,6 +65,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Profile */
+        get: operations["get_profile_api_profile_get"];
+        put?: never;
+        /** Upsert Profile */
+        post: operations["upsert_profile_api_profile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profile/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extract Application Profile
+         * @description Manually (re-)extract the application profile from the current master
+         *     (the Settings "Re-extract" button — FR-APP-01).
+         */
+        post: operations["extract_application_profile_api_profile_extract_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profile/application-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Application Profile
+         * @description Persist manual edits to the application profile (Settings editor).
+         *     The payload replaces the stored record verbatim, stamped `source: edited`
+         *     — deterministic user edits always win over extraction.
+         */
+        patch: operations["patch_application_profile_api_profile_application_profile_patch"];
+        trace?: never;
+    };
+    "/api/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_api_settings_get"];
+        /**
+         * Replace Settings
+         * @description PUT is an alias of POST for the settings map (idempotent update).
+         */
+        put: operations["replace_settings_api_settings_put"];
+        /** Update Settings */
+        post: operations["update_settings_api_settings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/operations/{kind}": {
         parameters: {
             query?: never;
@@ -170,6 +253,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/engines/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Engine */
+        post: operations["verify_engine_api_engines_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Engines */
+        get: operations["list_engines_api_engines_get"];
+        put?: never;
+        /** Save Engine */
+        post: operations["save_engine_api_engines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Engine */
+        delete: operations["delete_engine_api_engines__provider__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -197,6 +332,77 @@ export interface components {
             by_kind: {
                 [key: string]: number;
             };
+        };
+        /**
+         * EngineSettingDTO
+         * @description Engine config sans secret — `has_key` reports presence, `key_hint` is a
+         *     masked display fragment (e.g. `sk-…abc4`), never the key itself.
+         */
+        EngineSettingDTO: {
+            /** Id */
+            id: string;
+            /** Engine */
+            engine: string;
+            /** Base Url */
+            base_url: string | null;
+            /** Default Model */
+            default_model: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Has Key */
+            has_key: boolean;
+            /** Key Hint */
+            key_hint: string | null;
+        };
+        /**
+         * EngineSettingUpsert
+         * @description Save/replace a provider's config. Omitting `key` leaves any existing
+         *     sealed key intact; sending `key` re-seals. The key never round-trips back.
+         */
+        EngineSettingUpsert: {
+            /** Provider */
+            provider: string;
+            /** Key */
+            key?: string | null;
+            /** Base Url */
+            base_url?: string | null;
+            /** Default Model */
+            default_model?: string | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * EngineVerifyRequest
+         * @description A provider-appropriate verify probe (FR-SET-06). `key` is sent for a
+         *     verify-only check and is never persisted by this call.
+         */
+        EngineVerifyRequest: {
+            /** Provider */
+            provider: string;
+            /** Key */
+            key?: string | null;
+            /** Base Url */
+            base_url?: string | null;
+            /** Model */
+            model?: string | null;
+        };
+        /** EngineVerifyResult */
+        EngineVerifyResult: {
+            /** Ok */
+            ok: boolean;
+            /** Detail */
+            detail: string;
+            /** Provider */
+            provider: string;
+            /**
+             * Status
+             * @default ok
+             * @enum {string}
+             */
+            status: "ok" | "not_found" | "not_logged_in" | "error";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -247,6 +453,118 @@ export interface components {
             started_at: string | null;
             /** Finished At */
             finished_at: string | null;
+        };
+        /** PreferencesDTO */
+        PreferencesDTO: {
+            /** Role Aliases */
+            role_aliases: unknown[];
+            /** Locations */
+            locations: unknown[];
+            /** Freshness Days */
+            freshness_days: number;
+            /** Hard Excludes */
+            hard_excludes: {
+                [key: string]: unknown;
+            };
+            /** Hard Requires */
+            hard_requires: {
+                [key: string]: unknown;
+            };
+            /** Soft Preferences */
+            soft_preferences: {
+                [key: string]: unknown;
+            };
+            /** Thresholds */
+            thresholds: {
+                [key: string]: unknown;
+            };
+            /** Portals Config */
+            portals_config: {
+                [key: string]: unknown;
+            };
+            /** Voyager Risk Marker On */
+            voyager_risk_marker_on: boolean;
+            /** Engine Routing */
+            engine_routing: {
+                [key: string]: unknown;
+            };
+            /** Ui State */
+            ui_state: {
+                [key: string]: unknown;
+            };
+        };
+        /** PreferencesUpdate */
+        PreferencesUpdate: {
+            /** Role Aliases */
+            role_aliases?: unknown[] | null;
+            /** Locations */
+            locations?: unknown[] | null;
+            /** Freshness Days */
+            freshness_days?: number | null;
+            /** Hard Excludes */
+            hard_excludes?: {
+                [key: string]: unknown;
+            } | null;
+            /** Hard Requires */
+            hard_requires?: {
+                [key: string]: unknown;
+            } | null;
+            /** Soft Preferences */
+            soft_preferences?: {
+                [key: string]: unknown;
+            } | null;
+            /** Thresholds */
+            thresholds?: {
+                [key: string]: unknown;
+            } | null;
+            /** Portals Config */
+            portals_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Voyager Risk Marker On */
+            voyager_risk_marker_on?: boolean | null;
+            /** Engine Routing */
+            engine_routing?: {
+                [key: string]: unknown;
+            } | null;
+            /** Ui State */
+            ui_state?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ProfileDTO */
+        ProfileDTO: {
+            /** Id */
+            id: string;
+            /** Resume Markdown */
+            resume_markdown: string;
+            /** Version */
+            version: number;
+            /** Application Profile */
+            application_profile?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ProfileUpsert */
+        ProfileUpsert: {
+            /** Resume Markdown */
+            resume_markdown: string;
+        };
+        /** SettingsDTO */
+        SettingsDTO: {
+            preferences: components["schemas"]["PreferencesDTO"];
+            /** Engines */
+            engines: components["schemas"]["EngineSettingDTO"][];
         };
         /** ValidationError */
         ValidationError: {
@@ -328,6 +646,200 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_profile_api_profile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileDTO"] | null;
+                };
+            };
+        };
+    };
+    upsert_profile_api_profile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    extract_application_profile_api_profile_extract_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+        };
+    };
+    patch_application_profile_api_profile_application_profile_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_api_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsDTO"];
+                };
+            };
+        };
+    };
+    replace_settings_api_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferencesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_settings_api_settings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferencesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -470,6 +982,121 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OperationDTO"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_engine_api_engines_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EngineVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineVerifyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_engines_api_engines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineSettingDTO"][];
+                };
+            };
+        };
+    };
+    save_engine_api_engines_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EngineSettingUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineSettingDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_engine_api_engines__provider__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
