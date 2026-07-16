@@ -18,7 +18,10 @@ jobs:
       - name: Verify required repository records
         run: |
           test -f LICENSE
-          grep -Fqx 'GNU AFFERO GENERAL PUBLIC LICENSE' LICENSE
+          # The AGPL header line is centered (leading whitespace), so an exact
+          # whole-line match (grep -x) can never succeed against the verbatim
+          # license text — this check failed on every push since commit 1.
+          grep -Eq '^[[:space:]]*GNU AFFERO GENERAL PUBLIC LICENSE[[:space:]]*$' LICENSE
           test -f THIRD_PARTY_NOTICES.md
           test -f UPSTREAMS.md
           test -f CONTRIBUTING.md
