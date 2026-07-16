@@ -120,6 +120,104 @@ export interface JobDraft {
   source_adapter: string;
 }
 
+// ─── /api/applications (the tracker) — restored from the prior repo, trimmed to
+// what this sidecar's ApplicationDTO actually carries (no apply/prep/referrals
+// surface yet) ─────────────────────────────────────────────────────────────
+
+export type Stage =
+  | "Saved"
+  | "Seeking Referral"
+  | "Applied"
+  | "Interviewing"
+  | "Offer"
+  | "Rejected";
+
+export const STAGES: Stage[] = [
+  "Saved",
+  "Seeking Referral",
+  "Applied",
+  "Interviewing",
+  "Offer",
+  "Rejected",
+];
+
+/** Card-level triage priority — z-band against the score distribution (US-TR-10). */
+export type Priority = "P0" | "P1" | "P2" | "P3";
+
+/**
+ * packetState — the card's mirror of the tailor+cover runner state
+ * (architecture §4.2 long-op UX contract; AM5 = two operations).
+ */
+export type PacketState =
+  | "none" // no packet generated yet — "Generate resume"
+  | "generating" // tailor/cover operations running — "Generating…"
+  | "ready" // packet available, awaiting approval — yellow pill (US-RES-02)
+  | "approved" // reviewed + approved — green pill
+  | "failed";
+
+/** One real Activity-log event on the detail modal (US-TR-03 / FR-TR-03).
+ *  Ledger + outreach kinds, plus user-driven card events (FR-TR-04). Kinds
+ *  this sidecar doesn't emit yet (apply/prep/outreach) stay in the union —
+ *  harmless, and saves a re-narrowing pass once those land. */
+export interface ActivityEntry {
+  kind:
+    | "added"
+    | "score"
+    | "tailor"
+    | "cover"
+    | "apply"
+    | "prep"
+    | "outreach"
+    | "column_change"
+    | "notes"
+    | "archive"
+    | "unarchive";
+  label: string;
+  state: string | null;
+  at: string | null;
+}
+
+/** A tracked application (one per saved/applied job). Trimmed from the prior
+ *  repo's shape: no apply_state/form_prep/form_prep_summary/
+ *  active_apply_operation_id/referrals_state/referrals_count — the Applier,
+ *  save-time prep, and referral-outreach surfaces haven't landed on this
+ *  sidecar. `intent` is new (§5.1 exclusive value on ApplicationUpdate). */
+export interface Application {
+  id: string;
+  job: Job;
+  stage: Stage;
+  priority: Priority;
+  /** The §5.1 exclusive next-step marker — "none" | "referral" | "apply". */
+  intent: "none" | "referral" | "apply";
+  notes: string;
+  /** Combined packet state (kept for the card-menu regen logic + Activity tab). */
+  packet_state: PacketState;
+  /** Per-artifact states (US-RES-02 / US-CL-01): the Resume and Cover-letter slots
+   *  are driven independently — one generating/failing must not repaint the other. */
+  packet_resume_state: PacketState;
+  packet_cover_state: PacketState;
+  /** operation ids backing the packet (tailor, cover) while generating. */
+  packet_ops: string[];
+  tailored_resume_md: string | null;
+  tailored_notes: string[];
+  /** Master-profile version each variant was generated from — drives the
+   *  stale-variant warning (FR-RES-03). Null when the variant doesn't exist. */
+  tailored_profile_version: number | null;
+  cover_profile_version: number | null;
+  cover_letter_md: string | null;
+  cover_notes: string[];
+  /** Applier preview screenshot (loadable URL / data URL) — US-TR-03 §17d.
+   *  Always null on this sidecar (no Applier surface yet); the DTO field
+   *  exists so this stays a straight DTO→type mapping. */
+  preview_screenshot: string | null;
+  /** Save-time liveness (2026-07-11): true when a prep run found the posting
+   *  dead. Always false on this sidecar (no save-time prep surface yet). */
+  posting_closed: boolean;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── /api/profile ───────────────────────────────────────────────────────────
 
 /** Structured form-fill facts (FR-APP-01, 2026-07-11) — extracted from the

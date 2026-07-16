@@ -1,3 +1,7 @@
+// Named zz- so it runs LAST (specs execute alphabetically on one worker):
+// this test kills and respawns the shared dev-web sidecar, and its cleanup
+// leaves that sidecar dead — any spec after it would hit a dead port.
+//
 // Covers: core storage — the SSE transport renders an honest connection state:
 // live → reconnecting when the sidecar really dies → live again once it comes
 // back, with the operations snapshot refetched on every reconnect.

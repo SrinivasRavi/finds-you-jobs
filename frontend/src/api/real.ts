@@ -7,9 +7,10 @@
 //
 // This repo's sidecar implements a SUBSET of the prior API surface so far
 // (jobs/board/trash/tombstone/preview/add-by-url, operations, cost totals,
-// schedules, profile, settings, engines, SSE). Tracker/networking/apply/prep/
-// packet/prompts/spans/ingest/dev-tools methods are trimmed until their
-// sidecar surface lands — see schema.d.ts for exactly what's live.
+// schedules, profile, settings, engines, SSE, and now the full applications/
+// tracker CRUD + packet/artifact endpoints). Networking/apply/prep/prompts/
+// spans/ingest/dev-tools methods stay trimmed until their sidecar surface
+// lands — see schema.d.ts for exactly what's live.
 //
 // FR-sync (2026-07-07): the live NormalizedJob has no work-style / applicants /
 // skill-chips, so those render empty (work-style filter is best-effort location
@@ -19,12 +20,17 @@ import type { components } from "./schema";
 import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
 import { JobTombstonedError } from "./types";
 import type {
+  Application,
   ApplicationProfile,
+  ActivityEntry,
   BoardPage,
   EngineSaveInput,
   EngineVerifyResult,
   Job,
   JobDraft,
+  PacketState,
+  Priority,
+  Stage,
   TombstoneResult,
   LedgerEntry,
   Operation,
@@ -41,10 +47,31 @@ type TombstoneResultDTO = components["schemas"]["TombstoneResultDTO"];
 type SettingsDTO = components["schemas"]["SettingsDTO"];
 type ProfileDTO = components["schemas"]["ProfileDTO"];
 type OperationDTO = components["schemas"]["OperationDTO"];
+type ApplicationDTO = components["schemas"]["ApplicationDTO"];
+type ActivityEntryDTO = components["schemas"]["ActivityEntryDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
 const LLM_KINDS: OperationKind[] = ["score", "tailor", "cover", "extract", "prep"];
+
+// ─── column ⇄ stage (restored from the prior repo's real.ts) ────────────────
+
+const COLUMN_TO_STAGE: Record<string, Stage> = {
+  saved: "Saved",
+  seeking_referral: "Seeking Referral",
+  applied: "Applied",
+  interviewing: "Interviewing",
+  offer: "Offer",
+  rejected: "Rejected",
+};
+const STAGE_TO_COLUMN: Record<Stage, string> = {
+  Saved: "saved",
+  "Seeking Referral": "seeking_referral",
+  Applied: "applied",
+  Interviewing: "interviewing",
+  Offer: "offer",
+  Rejected: "rejected",
+};
 
 // Configurable entity-lifecycle windows (FR-SYS-06 / FR-NW-15). Defaults mirror
 // the sidecar's `LIFECYCLE_DEFAULTS` so the UI reads the same values a fresh DB
@@ -104,6 +131,63 @@ function toJob(d: JobDTO, saved: boolean): Job {
         : d.feed_state === "expired"
           ? "expired"
           : "active",
+  };
+}
+
+// Restored from the prior repo's real.ts — the "(job removed)" fallback for an
+// application whose embedded job somehow came back null.
+function placeholderJob(jobId: string): JobDTO {
+  return {
+    id: jobId,
+    canonical_url: "",
+    title: "(job removed)",
+    company: "",
+    location: "",
+    description: "",
+    posted_at: null,
+    salary: null,
+    source_adapter: "unknown",
+    trust_score: 0,
+    trust_flags: [],
+    feed_state: "expired",
+    ingested_at: new Date().toISOString(),
+    workStyle: "",
+    score: null,
+    scoreStatus: "pending",
+  };
+}
+
+// Restored from the prior repo's real.ts, trimmed: no apply_state/form_prep/
+// active_apply_operation_id/referrals_state/referrals_count (no Applier, no
+// save-time prep, no referral-outreach surface on this sidecar yet) —
+// preview_screenshot and posting_closed stay in the Application type but have
+// no live source here, so they're hardcoded null/false.
+function toApplication(d: ApplicationDTO, job: Job): Application {
+  const artifacts = d.artifacts ?? [];
+  const resume = artifacts.find((a) => a.kind === "tailored_resume");
+  const cover = artifacts.find((a) => a.kind === "cover_letter");
+  return {
+    id: d.id,
+    job,
+    stage: COLUMN_TO_STAGE[d.column] ?? "Saved",
+    priority: d.priority as Priority,
+    intent: (d.intent as Application["intent"]) ?? "none",
+    notes: d.notes_markdown,
+    packet_state: (d.packetState as PacketState) ?? "none",
+    packet_resume_state: (d.packetResumeState as PacketState) ?? "none",
+    packet_cover_state: (d.packetCoverLetterState as PacketState) ?? "none",
+    packet_ops: artifacts.map((a) => a.operation_id).filter((x): x is string => !!x),
+    tailored_resume_md: resume?.markdown ? resume.markdown : null,
+    tailored_notes: (resume?.notes ?? []) as string[],
+    tailored_profile_version: resume?.profile_version ?? null,
+    cover_profile_version: cover?.profile_version ?? null,
+    cover_letter_md: cover?.markdown ? cover.markdown : null,
+    cover_notes: (cover?.notes ?? []) as string[],
+    preview_screenshot: null,
+    posting_closed: false,
+    archived: d.archived_at != null,
+    created_at: d.saved_at,
+    updated_at: d.last_touched_at,
   };
 }
 
@@ -196,11 +280,15 @@ export class RealApi {
   }
 
   // ── jobs ───────────────────────────────────────────────────────────────
+  // Restored: `/api/applications` now exists — cross-reference it so
+  // `saved` reflects a real tracked card instead of always reporting false.
   async listJobs(): Promise<Job[]> {
-    // No `/api/applications` yet (tracker commit) — "saved" can't be derived
-    // server-side, so every row reports unsaved until that surface lands.
-    const jobs = await this.req<JobDTO[]>("/api/jobs");
-    return jobs.map((d) => toJob(d, false));
+    const [jobs, apps] = await Promise.all([
+      this.req<JobDTO[]>("/api/jobs"),
+      this.req<ApplicationDTO[]>("/api/applications"),
+    ]);
+    const saved = new Set(apps.map((a) => a.job_id));
+    return jobs.map((d) => toJob(d, saved.has(d.id)));
   }
 
   /** One page of the board feed + header meta (FR-JB-02/10): saved-excluded,
@@ -283,25 +371,146 @@ export class RealApi {
     return (await this.json("POST", `/api/jobs/${id}/tombstone`, {})) as TombstoneResultDTO;
   }
 
-  // `/api/applications` doesn't exist yet in this sidecar (tracker commit) —
-  // there's nowhere to persist a Save. Signature kept so the board's Save
-  // button + its existing error handling still compile against this client.
+  // Restored (`/api/applications` now exists): Save = POST an application row;
+  // un-save = find it by job_id and DELETE it — the prior repo's model. Per-job
+  // toggles (US-TL-03/US-JB-03); omitted → server falls back to the
+  // auto-packet-on-save setting. `generate_prep` is accepted (JobBoard's Save
+  // dialog still offers it) but dropped — no save-time prep surface on this
+  // sidecar (ApplicationCreate carries no such field).
   async setJobSaved(
-    _id: string,
-    _saved: boolean,
-    _opts?: {
+    id: string,
+    saved: boolean,
+    opts?: {
       generate_resume?: boolean | null;
       generate_cover?: boolean | null;
       generate_prep?: boolean | null;
     },
   ): Promise<Job | undefined> {
-    throw new Error("saving jobs lands with the tracker commit");
+    if (saved) {
+      await this.json("POST", "/api/applications", {
+        job_id: id,
+        ...(opts?.generate_resume != null && { generate_resume: opts.generate_resume }),
+        ...(opts?.generate_cover != null && { generate_cover: opts.generate_cover }),
+      });
+    } else {
+      const apps = await this.req<ApplicationDTO[]>("/api/applications");
+      const app = apps.find((a) => a.job_id === id);
+      if (app) await this.req(`/api/applications/${app.id}`, { method: "DELETE" });
+    }
+    return this.getJob(id);
   }
 
   async setJobBoardState(id: string, board_state: Job["board_state"]): Promise<Job | undefined> {
     const feed_state = board_state === "trashed" ? "removed" : "active";
     const d = (await this.json("PATCH", `/api/jobs/${id}`, { feed_state })) as JobDTO;
     return toJob(d, false);
+  }
+
+  // ── applications ─────────────────────────────────────────────────────────
+  // Restored from the prior repo's real.ts, trimmed to the live endpoints (no
+  // /networking, /apply, /prep — those surfaces haven't landed here). The job
+  // rides embedded on each ApplicationDTO (server-side join) — never joined
+  // against a capped /api/jobs list (the "(job removed)" bug).
+  async listApplications(): Promise<Application[]> {
+    const apps = await this.req<ApplicationDTO[]>("/api/applications");
+    return apps.map((d) => toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true)));
+  }
+
+  async getApplication(id: string): Promise<Application | undefined> {
+    try {
+      const d = await this.req<ApplicationDTO>(`/api/applications/${id}`);
+      return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Real Activity log for one application (US-TR-03 / FR-TR-03) — composed
+   *  server-side from the ledger + card events, never synthesized. */
+  async getApplicationActivity(id: string): Promise<ActivityEntry[]> {
+    const rows = await this.req<ActivityEntryDTO[]>(`/api/applications/${id}/activity`);
+    return rows.map((r) => ({
+      kind: r.kind as ActivityEntry["kind"],
+      label: r.label,
+      state: r.state ?? null,
+      at: r.at ?? null,
+    }));
+  }
+
+  async listArchived(): Promise<Application[]> {
+    const apps = await this.req<ApplicationDTO[]>("/api/applications?include_archived=true");
+    return apps
+      .filter((d) => d.archived_at != null)
+      .map((d) => toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true)));
+  }
+
+  private async patchApp(id: string, body: unknown): Promise<Application | undefined> {
+    const d = (await this.json("PATCH", `/api/applications/${id}`, body)) as ApplicationDTO;
+    const job = await this.getJob(d.job_id);
+    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
+  }
+
+  async updateApplication(id: string, patch: Partial<Application>): Promise<Application | undefined> {
+    const body: Record<string, unknown> = {};
+    if (patch.stage !== undefined) body.column = STAGE_TO_COLUMN[patch.stage];
+    if (patch.priority !== undefined) body.priority = patch.priority;
+    if (patch.notes !== undefined) body.notes_markdown = patch.notes;
+    if (patch.intent !== undefined) body.intent = patch.intent;
+    return this.patchApp(id, body);
+  }
+
+  moveApplication(id: string, stage: Stage): Promise<Application | undefined> {
+    return this.patchApp(id, { column: STAGE_TO_COLUMN[stage] });
+  }
+
+  setPriority(id: string, priority: Priority): Promise<Application | undefined> {
+    return this.patchApp(id, { priority });
+  }
+
+  async archiveApplication(id: string): Promise<void> {
+    await this.json("PATCH", `/api/applications/${id}`, { archived: true });
+  }
+
+  async unarchiveApplication(id: string): Promise<void> {
+    await this.json("PATCH", `/api/applications/${id}`, { archived: false });
+  }
+
+  async returnToBoard(id: string): Promise<void> {
+    await this.req(`/api/applications/${id}`, { method: "DELETE" });
+  }
+
+  /** Manual/regenerate packet build (US-TL-02) — per-artifact: the tailor and
+   *  cover modules are independent. `guidance` (FR-TL-02) reaches the Tailorer
+   *  and is persisted with the variant. `_fail` exists only to match the
+   *  MockApi arity (union call sites, restored from the prior repo) — the
+   *  real path never simulates failure. */
+  async generatePacket(
+    appId: string,
+    _fail = false,
+    kinds: { resume: boolean; cover: boolean } = { resume: true, cover: true },
+    guidance = "",
+  ): Promise<void> {
+    await this.json("POST", `/api/applications/${appId}/packet`, { ...kinds, guidance });
+  }
+
+  /** Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
+   *  `kind` maps the popup kind to the artifact kind. */
+  async patchArtifact(
+    appId: string,
+    kind: "tailored" | "cover",
+    patch: { markdown?: string; approved?: boolean },
+  ): Promise<Application | undefined> {
+    const artifactKind = kind === "cover" ? "cover_letter" : "tailored_resume";
+    const d = (await this.json(
+      "PATCH", `/api/applications/${appId}/artifacts/${artifactKind}`, patch,
+    )) as ApplicationDTO;
+    const job = await this.getJob(d.job_id);
+    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
+  }
+
+  async packetState(appId: string): Promise<PacketState> {
+    const d = await this.req<ApplicationDTO>(`/api/applications/${appId}`);
+    return (d.packetState as PacketState) ?? "none";
   }
 
   // ── profile ────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import { useMasterProfileExists, useSSEInvalidation } from "./api/queries";
 import { Dev } from "./surfaces/Dev";
 import { JobBoard } from "./surfaces/JobBoard";
 import { Placeholder } from "./surfaces/Placeholder";
+import { Tracker } from "./surfaces/Tracker";
 import { Layout } from "./shell/Layout";
 import { installExternalLinkInterceptor } from "./shell/openExternal";
 // Fonts bundled locally (MIT/OFL) — the packaged app's loopback-only CSP blocks
@@ -59,7 +60,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/jobs" replace /> },
       { path: "jobs", element: <JobBoard /> },
-      { path: "applications", element: <Placeholder name="Applications" commit="tracker" /> },
+      { path: "applications", element: <Tracker /> },
       { path: "networking", element: <Placeholder name="Networking" commit="referral-outreach" /> },
       { path: "dev", element: <Dev /> },
       { path: "analytics", element: <Placeholder name="Analytics" commit="observability" /> },

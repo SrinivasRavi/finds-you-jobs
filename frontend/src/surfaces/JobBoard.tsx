@@ -238,12 +238,12 @@ function JobDetail({
   packetDefaults,
 }: {
   job: Job | null;
-  onSave: (j: Job, gen: { resume: boolean; cover: boolean; prep: boolean }) => void;
+  onSave: (j: Job, gen: { resume: boolean; cover: boolean }) => void;
   onRemove: (j: Job) => void;
   onUnexpire: (j: Job) => void;
   sourceFilter: string | null;
   onToggleSource: (adapter: string) => void;
-  packetDefaults: { resume: boolean; cl: boolean; prep: boolean };
+  packetDefaults: { resume: boolean; cl: boolean };
 }) {
   // Per-job automation toggles (US-JB-03), seeded from the Settings default
   // (auto-packet-on-save) and reset per job — prototype jobs.html semantics.
@@ -318,7 +318,7 @@ function JobDetail({
         <button
           onClick={() => {
             setJustSaved(true);
-            onSave(job, { resume: toggles.resume, cover: toggles.cl, prep: toggles.prep });
+            onSave(job, { resume: toggles.resume, cover: toggles.cl });
             // Find referrals on Save returns with the referral-outreach commit.
           }}
           data-testid="save-to-tracker"
@@ -344,17 +344,15 @@ function JobDetail({
         {/* Per-job automation toggles (US-JB-03). Referrals toggle returns
             with the referral-outreach commit (US-NW-09 / FR-SET-03). */}
         <div className="ml-2 flex items-center gap-1.5" data-testid="jd-automation-toggles">
-          {(["resume", "cl", "prep"] as const).map(
+          {/* The "Application form answers" toggle is retired with Save-time
+              form prep (docs/internal/applier.md §2). */}
+          {(["resume", "cl"] as const).map(
             (slot) => {
               const on = toggles[slot];
-              const label =
-                slot === "resume" ? "Resume"
-                : slot === "cl" ? "Cover letter"
-                : "Application form answers";
+              const label = slot === "resume" ? "Resume" : "Cover letter";
               return (
                 <button
                   key={slot}
-                  data-testid={slot === "prep" ? "jd-prep-toggle" : undefined}
                   data-on={on}
                   onClick={() => setToggles((t) => ({ ...t, [slot]: !t[slot] }))}
                   className={
@@ -830,7 +828,6 @@ export function JobBoard() {
                 saved: true,
                 generate_resume: gen.resume,
                 generate_cover: gen.cover,
-                generate_prep: gen.prep,
               })
             }
             onRemove={(j) => {
@@ -843,7 +840,6 @@ export function JobBoard() {
             packetDefaults={{
               resume: settings?.auto_resume_on_save ?? true,
               cl: settings?.auto_cover_on_save ?? true,
-              prep: settings?.auto_prep_on_save ?? true,
             }}
           />
         </div>
