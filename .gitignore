@@ -1,3 +1,6 @@
+# Private agent workspace file at the repository root (same policy as docs/)
+/CLAUDE.md
+
 # Operating-system and editor artifacts
 .DS_Store
 .idea/
