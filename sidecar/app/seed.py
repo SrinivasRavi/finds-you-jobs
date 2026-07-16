@@ -61,14 +61,33 @@ def seed_defaults(db: Database) -> None:
             repos.schedules.create("scan", 1440, next_due_at=far_future, enabled=False)
         if "score_new" not in existing:
             repos.schedules.create("score_new", 60, next_due_at=far_future, enabled=False)
+        # US-NW-11 / FR-NW-13: auto-archive never-accepted connections after 60
+        # days. Zero-LLM, zero-network, non-destructive → seeded **enabled** (unlike
+        # the budget-spending scan/score) so the kanban self-prunes without the
+        # user having to. Daily cadence; first run one day out.
+        if "archive_stale_contacts" not in existing:
+            repos.schedules.create(
+                "archive_stale_contacts", 1440,
+                next_due_at=now_utc() + timedelta(days=1), enabled=True,
+            )
         # FR-SYS-04 / FR-JB-12: age Trashed jobs out (tombstone) after 7 days.
-        # Zero-LLM, zero-network, no LLM budget → seeded **enabled** so Trash
-        # self-empties. Daily cadence.
+        # Zero-LLM, zero-network, no LLM budget → seeded **enabled** (like
+        # archive_stale_contacts) so Trash self-empties. Daily cadence.
         if "cleanup_trash" not in existing:
             repos.schedules.create(
                 "cleanup_trash", 1440,
                 next_due_at=now_utc() + timedelta(days=1), enabled=True,
             )
-        # The networking housekeeping schedules (archive_stale_contacts,
-        # contact_sync) are seeded by the Referral Outreach commits alongside
-        # the entrypoints they drive.
+        # US-NW-12 / FR-NW-15: periodic LinkedIn contact-status sync. Seeded
+        # **enabled** but the entrypoint no-ops cleanly when Referral Outreach is
+        # OFF or the session is disconnected (zero LinkedIn traffic until the user
+        # opts in), so it's safe on by default. Modest 12 h cadence (720 min);
+        # user-adjustable in Settings → Contact & data lifecycle. First run 1 h out.
+        if "contact_sync" not in existing:
+            from .lifecycle import LIFECYCLE_DEFAULTS
+
+            repos.schedules.create(
+                "contact_sync",
+                LIFECYCLE_DEFAULTS["contact_sync_cadence_hours"] * 60,
+                next_due_at=now_utc() + timedelta(hours=1), enabled=True,
+            )

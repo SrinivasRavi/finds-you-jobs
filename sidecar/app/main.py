@@ -31,6 +31,7 @@ from .registry.engine_config import configure_engines
 from .runner import OperationRunner
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
+from .security import migrate_plaintext_session
 from .seed import seed_defaults
 from .watchdog import watch_parent
 
@@ -78,6 +79,14 @@ def create_app(
         setup_flight_recorder()
         db = Database(db_url)
         seed_defaults(db)  # first-run portals config + (disabled) schedules
+        # NFR-SEC-01: seal a pre-encryption plaintext LinkedIn session file if one
+        # exists (roundtrip-verified, atomic; no-op when absent/sealed — and it
+        # never touches the OS keychain unless a file is present).
+        try:
+            if migrate_plaintext_session(resolve_data_dir(data_dir)):
+                log.info("LinkedIn session file migrated to encrypted-at-rest")
+        except Exception:  # noqa: BLE001 — migration must never block boot
+            log.exception("LinkedIn session encrypt-at-rest migration failed")
         hub = EventHub()
         hub.bind_loop(asyncio.get_running_loop())
 

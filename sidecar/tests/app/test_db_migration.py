@@ -29,6 +29,13 @@ _EXPECTED = {
     "applications",
     "artifacts",
     "application_events",
+    "contacts",
+    "company_resolutions",
+    "contact_job_assocs",
+    "sequences",
+    "sequence_steps",
+    "outreach_logs",
+    "linkedin_sessions",
 }
 
 

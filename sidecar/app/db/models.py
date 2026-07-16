@@ -331,3 +331,220 @@ class UserPreferences(Base):
     )
     engine_routing: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     ui_state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+# ---------------------------------------------------------------------------
+# Networking (database-design §5)
+# ---------------------------------------------------------------------------
+
+
+class Contact(Base):
+    """One person discovered as (or added as) an outreach target (US-REF-05).
+
+    Person-level, not job-level: the same person is reused across every role at
+    their company (US-REF-04 "one connection per contact, ever"). `linkedin_url`
+    is the identity key (same person + new URL = new row in P1 — database-design
+    §8 Q4). `audience_tag`/`warmth` are auto-assigned at discovery (US-REF-02/10);
+    `connection_status` is the kanban column (US-NW-07)."""
+
+    __tablename__ = "contacts"
+
+    id: Mapped[str] = _pk()
+    linkedin_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, default="")
+    current_role: Mapped[str] = mapped_column(String, nullable=False, default="")
+    current_company: Mapped[str] = mapped_column(String, nullable=False, default="")
+    headline: Mapped[str] = mapped_column(String, nullable=False, default="")
+    connection_degree: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_first_degree: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # peer / hm / recruiter / leadership / other (US-NW-09 / US-REF-02).
+    audience_tag: Mapped[str] = mapped_column(String, nullable=False, default="other")
+    warmth: Mapped[str] = mapped_column(String, nullable=False, default="cold")  # warm | cold
+    # Lifecycle. `candidate` = discovered but not yet reached (off the kanban);
+    # the kanban columns are sent | accepted | engagement | ghosted | converted
+    # (US-NW-01). Manual add-by-URL sets one of the live columns directly.
+    connection_status: Mapped[str] = mapped_column(String, nullable=False, default="candidate")
+    profile_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    added_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    last_touched_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )
+    # Sent-timestamp clock for the 60-day never-accepted auto-archive (US-NW-11).
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_contacts_company", "current_company"),
+        Index("ix_contacts_status", "connection_status"),
+    )
+
+
+class CompanyResolution(Base):
+    """A cached name → LinkedIn company-entity resolution (FR-NW-02).
+
+    Keyed by a stable per-employer key (`domain:…` > `<adapter>:<slug>` >
+    `name:…`, see `registry/company_anchor.py`) so every job of the same employer
+    reuses ONE typeahead call + ONE user confirm choice — no re-prompting, no
+    inconsistent picks across a company's jobs. `source` records how the URN was
+    chosen: `domain` (silent — the employer website matched), `single` (the only
+    candidate), or `user` (confirmed in the find-referrals popup)."""
+
+    __tablename__ = "company_resolutions"
+
+    id: Mapped[str] = _pk()
+    resolution_key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    company_name: Mapped[str] = mapped_column(String, nullable=False, default="")
+    company_urn: Mapped[str] = mapped_column(String, nullable=False, default="")
+    company_vanity: Mapped[str] = mapped_column(String, nullable=False, default="")
+    industry: Mapped[str] = mapped_column(String, nullable=False, default="")
+    source: Mapped[str] = mapped_column(String, nullable=False, default="user")
+    resolved_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )
+
+
+class ContactJobAssoc(Base):
+    """A contact ↔ job link: one referral ask per role (US-REF-05).
+
+    The per-role ask status is distinct from the person-level connection status
+    on `Contact` (a contact reused across roles has one connection but many asks).
+    `audience_tag` is copied here at add-time so a job-scoped view keeps its own
+    tag even if the person's role later changes."""
+
+    __tablename__ = "contact_job_assocs"
+
+    id: Mapped[str] = _pk()
+    contact_id: Mapped[str] = mapped_column(
+        String, ForeignKey("contacts.id"), nullable=False
+    )
+    job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
+    audience_tag: Mapped[str] = mapped_column(String, nullable=False, default="other")
+    # pending / accepted / replied / converted / ignored (database-design §5).
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    # The user's current find-referrals selection for this role (FR-NW-01). Set at
+    # reach-out time; persisted so a `pending` popup restores the selection on
+    # reopen (candidates + who was picked) after a partial/cap-stopped batch.
+    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    added_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("contact_id", "job_id", name="uq_contactjob"),
+        Index("ix_contactjob_job", "job_id"),
+    )
+
+
+class Sequence(Base):
+    """An audience playbook (US-PLB-*): the ordered outreach steps for one
+    audience. P1 seeds these from the Networker's bundled playbook files; the
+    editable Playbook Editor (US-PLB-01..05) writes them back. `is_default`
+    marks a canonical seeded playbook (Reset-to-default target)."""
+
+    __tablename__ = "sequences"
+
+    id: Mapped[str] = _pk()
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # peer | hm | recruiter | leadership | other
+    audience: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    steps: Mapped[list[SequenceStep]] = relationship(
+        back_populates="sequence", cascade="all, delete-orphan"
+    )
+
+
+class SequenceStep(Base):
+    """One step of a playbook (US-PLB-02/03/05)."""
+
+    __tablename__ = "sequence_steps"
+
+    id: Mapped[str] = _pk()
+    sequence_id: Mapped[str] = mapped_column(
+        String, ForeignKey("sequences.id"), nullable=False
+    )
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    title: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # linkedin_connect / linkedin_dm / email (email = manual-send-only P1, §17a).
+    channel: Mapped[str] = mapped_column(String, nullable=False, default="linkedin_dm")
+    body_template: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    delay_days_from_previous: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # manual | after_previous_days
+    trigger: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+
+    sequence: Mapped[Sequence] = relationship(back_populates="steps")
+
+    __table_args__ = (Index("ix_seqstep_sequence", "sequence_id", "order_index"),)
+
+
+class OutreachLog(Base):
+    """Per-message audit (database-design §5). One row per send attempt.
+
+    `outcome_detail` carries the verbatim underlying error on failure
+    (NFR-SIDE-04, never swallowed). Cap/quota accounting is NOT stored here — the
+    Referral Outreach package owns the caps; the app queries live quota (§17c)."""
+
+    __tablename__ = "outreach_logs"
+
+    id: Mapped[str] = _pk()
+    contact_id: Mapped[str] = mapped_column(
+        String, ForeignKey("contacts.id"), nullable=False
+    )
+    job_id: Mapped[str | None] = mapped_column(String, ForeignKey("jobs.id"), nullable=True)
+    sequence_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("sequences.id"), nullable=True
+    )
+    step_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("sequence_steps.id"), nullable=True
+    )
+    channel: Mapped[str] = mapped_column(String, nullable=False)  # connection_note | dm
+    # The reach-out batch this send belongs to (FR-NW-01/03). One batch id ties
+    # every send of a single "Reach out (N)" together, so `referralsState` derives
+    # from the latest batch (all members sent → reachedOut, some → pending, none →
+    # failed). Null for legacy/manual single sends (each is its own settled batch).
+    batch_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    body_sent: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # sent | failed | pending
+    outcome: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    outcome_detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    operation_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("operations.id"), nullable=True
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    __table_args__ = (
+        Index("ix_outreach_contact", "contact_id"),
+        Index("ix_outreach_job", "job_id"),
+    )
+
+
+class LinkedInSession(Base):
+    """Single-row LinkedIn session state (database-design §5).
+
+    `cookies_encrypted` is a secret-at-rest BLOB (NFR-SEC-01 / §6) — never
+    plaintext. `status` gates the popup's send path (US-NW-09): a `valid` session
+    unlocks live discover/send; anything else is drafts-only / manual-web."""
+
+    __tablename__ = "linkedin_sessions"
+
+    id: Mapped[str] = _pk()
+    cookies_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # valid | expired | never_set | connecting | backing_off (N4). `connecting`
+    # while a headed `login` op is in flight; `backing_off` after the Referral
+    # Outreach package reports a rate-limit pause (FR-NW-05) — cleared by resume.
+    status: Mapped[str] = mapped_column(String, nullable=False, default="never_set")
+    account_tier: Mapped[str] = mapped_column(String, nullable=False, default="new")  # new|seasoned
+    # N4 session-capture metadata for Settings → LinkedIn session (US-SET-06).
+    # `connected_as` is the member's display name (best-effort, DOM-read at login);
+    # `li_at_expires_at` drives the expiry pill; `last_validated_at` is the local
+    # revalidation clock. `paused_reason` carries the verbatim backoff text.
+    connected_as: Mapped[str] = mapped_column(String, nullable=False, default="")
+    li_at_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    paused_until: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    paused_reason: Mapped[str] = mapped_column(String, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )

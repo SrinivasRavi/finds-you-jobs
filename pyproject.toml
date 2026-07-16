@@ -17,6 +17,10 @@ dependencies = [
     # no keychain backend exists (the NFR's stated fallback).
     "keyring>=25",
     "cryptography>=43",
+    # Browser automation for the Referral Outreach package's GPLv3 LinkedIn core
+    # (Apache-2.0 Python client; the Chromium binary is fetched on first use,
+    # never bundled). Also used by the Applier browser agent when it lands.
+    "playwright>=1.48",
 ]
 
 [tool.hatch.build.targets.wheel]

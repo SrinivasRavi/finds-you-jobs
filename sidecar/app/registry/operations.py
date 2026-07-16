@@ -392,6 +392,13 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
 def default_operation_registry() -> OperationRegistry:
     """The app's real `kind → entrypoint` table. Grows as module commits land
     (architecture §5.4)."""
+    # Imported here (not at module top) so the operations module stays free of
+    # the networking package's playwright import cost unless a networking kind is
+    # actually wired.
+    from .contact_sync_op import contact_sync_entrypoints
+    from .linkedin_op import linkedin_entrypoints
+    from .networker_ops import networker_entrypoints
+
     return OperationRegistry(
         {
             "scan": scan_entrypoint,
@@ -400,5 +407,8 @@ def default_operation_registry() -> OperationRegistry:
             "tailor": tailor_entrypoint,
             "cover": cover_entrypoint,
             "extract": extract_entrypoint,
+            **networker_entrypoints(),  # discover / draft / send
+            **linkedin_entrypoints(),  # linkedin_login / archive_stale_contacts
+            **contact_sync_entrypoints(),  # contact_sync
         }
     )

@@ -16,11 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..db.models import (
     Application,
     Artifact,
+    Contact,
     EngineSettings,
     Job,
     JobScore,
+    LinkedInSession,
     MasterProfile,
     Operation,
+    OutreachLog,
     Schedule,
     UserPreferences,
 )
@@ -211,6 +214,11 @@ class ApplicationDTO(BaseModel):
     packet_cover_letter_state: str = Field(
         default="none", serialization_alias="packetCoverLetterState"
     )
+    # Referral progress for the tracker card's Referrals slot (FR-NW-01 canonical
+    # enum). Derived, not stored: `none` (→ `notStarted` frontend) | `finding` |
+    # `pending` | `sending` | `reachedOut` | `failed`. See derive_referrals_state.
+    referrals_state: str = Field(default="none", serialization_alias="referralsState")
+    referrals_count: int = Field(default=0, serialization_alias="referralsCount")
     artifacts: list[ArtifactDTO] = Field(default_factory=list)
 
 
@@ -343,6 +351,206 @@ class EngineSettingDTO(BaseModel):
 class SettingsDTO(BaseModel):
     preferences: PreferencesDTO
     engines: list[EngineSettingDTO]
+
+
+# ---------------------------------------------------------------------------
+# Networking (database-design §5)
+# ---------------------------------------------------------------------------
+
+
+class NetworkingContactDTO(BaseModel):
+    """One referral contact for a role, shown on the detail modal's Networking
+    tab (US-TR-03 — visible only when LinkedIn is ON). Status + last outreach."""
+
+    contact_id: str
+    name: str
+    role: str
+    company: str
+    linkedin_url: str
+    connection_status: str
+    ask_status: str | None = None
+    audience_tag: str
+    last_message: str | None = None
+    last_message_at: datetime | None = None
+    last_outcome: str | None = None
+
+
+class ContactDTO(BaseModel):
+    """One contact on the networking kanban (US-NW-01) / contact modal (US-NW-03)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    linkedin_url: str
+    name: str
+    current_role: str
+    current_company: str
+    headline: str
+    connection_degree: int | None
+    is_first_degree: bool
+    audience_tag: str
+    warmth: str
+    connection_status: str
+    added_at: datetime
+    last_touched_at: datetime
+    sent_at: datetime | None
+    accepted_at: datetime | None
+    archived_at: datetime | None
+    # Derived last-message snippet for the kanban card (US-NW-01). P1 has no
+    # reply detection (that's P2), so this is always the last message *we* sent.
+    last_message: str | None = None
+    last_message_at: datetime | None = None
+
+
+class ContactCreate(BaseModel):
+    """Manual add-a-contact (US-NW-02) — the rank-don't-gate escape hatch. The
+    user can always add a contact by URL/name regardless of LinkedIn state."""
+
+    linkedin_url: str
+    name: str = ""
+    current_company: str = ""
+    current_role: str = ""
+    # One of the live kanban columns (sent|accepted|engagement|converted).
+    connection_status: str = "sent"
+    audience_tag: str = "other"
+
+
+class ContactUpdate(BaseModel):
+    """Move between columns (US-NW-07) / archive / mark unresponsive."""
+
+    connection_status: str | None = None
+    audience_tag: str | None = None
+    archived: bool | None = None
+
+
+class ReferralCandidateDTO(BaseModel):
+    """One row in the find-referrals popup (US-NW-09 / US-REF-01/02/03/10)."""
+
+    contact_id: str
+    name: str
+    role: str
+    company: str
+    linkedin_url: str
+    degree: int | None
+    audience_tag: str  # peer | hm | recruiter | leadership | other
+    warmth: str        # warm | cold
+    channel: str       # dm | connection_note
+    already_reached: bool
+    # Whether this contact is in the role's persisted selection (FR-NW-01) — so a
+    # reopened `pending` popup restores who the user picked, not just the roster.
+    already_selected: bool = False
+    # A ready-to-edit per-audience template draft (deterministic, zero-LLM). The
+    # "Regenerate" action calls the LLM `draft` op for a grounded rewrite.
+    draft: str
+
+
+class ReferralCandidatesDTO(BaseModel):
+    """The find-referrals popup payload for one role (US-NW-09)."""
+
+    job_id: str
+    company: str
+    candidates: list[ReferralCandidateDTO]
+    already_reached_count: int
+
+
+class ReachOutContact(BaseModel):
+    contact_id: str
+    message: str
+
+
+class DiscoverReferralsRequest(BaseModel):
+    """Kick off / resume referral discovery for a role (US-REF-01 / FR-NW-02).
+
+    `limit` bumps for the "find 10 more" control. `company_urn` (+ name/vanity/
+    industry) is set only when re-calling after a `needs_company_confirm` event —
+    it's the company the user picked in the confirm popup; the op caches + uses
+    it, skipping resolution."""
+
+    limit: int = 10
+    page: int = 1  # "find 10 more" fetches the next results page
+    # A user-picked candidate (from the confirm popup)…
+    company_urn: str | None = None
+    company_name: str | None = None
+    company_vanity: str | None = None
+    company_industry: str | None = None
+    # …or a pasted LinkedIn company URL to resolve authoritatively (vanity → URN).
+    company_url: str | None = None
+
+
+class ReachOutRequest(BaseModel):
+    """Batch reach-out (US-NW-09). Each contact gets ITS audience/warmth template
+    (fanned out per person, not one string). Per-action confirmation lives in the
+    UI; `dry_run` plans the sends without touching LinkedIn."""
+
+    job_id: str | None = None
+    application_id: str | None = None
+    dry_run: bool = False
+    contacts: list[ReachOutContact]
+
+
+class ReachOutResult(BaseModel):
+    """The enqueued send-operation ids, plus the contacts skipped as duplicates.
+
+    `skipped_contact_ids` lists contacts that already had a queued/running send
+    for this role — the idempotency guard against double-clicking "Send now"
+    enqueuing duplicate real LinkedIn invites (US-NW-09)."""
+
+    enqueued: list[str]
+    skipped_contact_ids: list[str] = Field(
+        default_factory=list, serialization_alias="skippedContactIds"
+    )
+
+
+class QuotaDTO(BaseModel):
+    """Rolling outreach quota for the popup counter (US-NW-09 / US-NW-10).
+
+    App-side view derived from the OutreachLog send windows + the account-tier
+    caps. The *live* remaining cap is queried from the Referral Outreach package
+    only on the maintainer's live-dogfood path."""
+
+    connected: bool
+    tier: str
+    daily_used: int
+    daily_limit: int
+    weekly_used: int
+    weekly_limit: int
+    # 1st-degree DMs: tracked + displayed, never capped — they do not decrement
+    # the invite counters above (FR-NW-04 / NFR-LI-02).
+    dm_daily_sent: int = 0
+    dm_weekly_sent: int = 0
+
+
+class LinkedInSessionDTO(BaseModel):
+    """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+
+    `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
+    `status` is the session validity. The popup send path unlocks only when
+    enabled AND status == 'valid'. N4 adds the session-capture metadata the
+    Settings → LinkedIn session UI renders (connected-as, expiry, backoff)."""
+
+    enabled: bool
+    status: str        # valid | expired | never_set | connecting | backing_off
+    account_tier: str  # new | seasoned
+    connected_as: str = ""
+    li_at_expires_at: datetime | None = None
+    last_validated_at: datetime | None = None
+    paused_until: datetime | None = None
+    paused_reason: str = ""
+
+
+class LinkedInConnectRequest(BaseModel):
+    """Start the headed LinkedIn login (US-SET-06 as-built). `login_url` +
+    `timeout_s` are maintainer/test overrides (a LOCAL fixture — never
+    linkedin.com); production sends an empty body and uses the real login page."""
+
+    login_url: str | None = None
+    timeout_s: float | None = None
+
+
+class LinkedInTierRequest(BaseModel):
+    """Set the account-tier the app passes to the outreach package (US-REF-08)."""
+
+    account_tier: str  # new | seasoned
 
 
 class EngineVerifyRequest(BaseModel):
@@ -519,6 +727,11 @@ def application_dto(
     artifacts_with_states: list[tuple[Artifact, str | None]],
     *,
     job: JobDTO | None = None,
+    referrals_count: int = 0,
+    referrals_op_states: list[str] | None = None,
+    discover_in_flight: bool = False,
+    has_candidates: bool = False,
+    latest_batch_outcomes: list[str] | None = None,
 ) -> ApplicationDTO:
     # Built explicitly (not model_validate) so we never lazy-load the ORM
     # relationship and packetState stays purely derived.
@@ -529,6 +742,12 @@ def application_dto(
     by_kind = {a.kind: (a, state) for a, state in artifacts_with_states}
     resume_a, resume_state = by_kind.get("tailored_resume", (None, None))
     cover_a, cover_state = by_kind.get("cover_letter", (None, None))
+    referrals_state = derive_referrals_state(
+        send_op_states=referrals_op_states or [],
+        discover_in_flight=discover_in_flight,
+        has_candidates=has_candidates,
+        latest_batch_outcomes=latest_batch_outcomes or [],
+    )
     return ApplicationDTO(
         id=application.id,
         job_id=application.job_id,
@@ -545,8 +764,149 @@ def application_dto(
         packet_state=packet_state,
         packet_resume_state=derive_artifact_state(resume_a, resume_state),
         packet_cover_letter_state=derive_artifact_state(cover_a, cover_state),
+        referrals_state=referrals_state,
+        referrals_count=referrals_count,
         artifacts=artifact_dtos,
     )
+
+
+def template_draft(name: str, company: str, audience_tag: str, warmth: str) -> str:
+    """A deterministic per-audience/warmth referral draft (US-NW-09 §9 8-template
+    model). Zero-LLM — shown instantly in the popup, editable, and replaceable by
+    a grounded LLM rewrite via the `draft` op. Mirrors the prototype copy."""
+    first = (name.split(" ")[0] if name else "there")
+    tag = audience_tag if audience_tag in ("peer", "hm", "recruiter", "leadership") else "peer"
+    cold = {
+        "peer": f"Hi {first}, I'm exploring roles at {company} and your work caught my "
+                f"eye — would love to connect. Open to a quick chat?",
+        "hm": f"Hi {first}, I'm very interested in a role you're hiring for at {company} "
+              f"and would love to connect and share why I'd be a strong fit.",
+        "recruiter": f"Hi {first}, I'm applying for a role at {company} and would love to "
+                     f"connect — keen to learn about the team and process.",
+        "leadership": f"Hi {first}, I admire what you're building at {company} and I'm "
+                      f"exploring roles on the team — would love to connect.",
+    }
+    warm = {
+        "peer": f"Hi {first}, hope you're well! I'm applying for a role on your team at "
+                f"{company} and would really value your perspective — would you be open to "
+                f"referring me, or pointing me to the right person?",
+        "hm": f"Hi {first}, hope you're well. I'm very interested in a role you're hiring "
+              f"for at {company} and believe I'd be a strong fit — would you be open to "
+              f"considering my application directly?",
+        "recruiter": f"Hi {first}, hope all's well! I'm applying for a role at {company} — "
+                     f"would you be open to taking a look at my application or flagging it "
+                     f"to the hiring team?",
+        "leadership": f"Hi {first}, hope you're doing well. I admire what you're building at "
+                      f"{company} and I'm applying for a role on the team — would you be open "
+                      f"to a brief chat or to referring me?",
+    }
+    return (warm if warmth == "warm" else cold)[tag]
+
+
+def contact_dto(contact: Contact, last_log: OutreachLog | None = None) -> ContactDTO:
+    dto = ContactDTO.model_validate(contact)
+    if last_log is not None:
+        dto.last_message = last_log.body_sent
+        dto.last_message_at = last_log.sent_at or last_log.created_at
+    return dto
+
+
+def referral_candidate_dto(
+    contact: Contact, *, already_reached: bool, already_selected: bool = False
+) -> ReferralCandidateDTO:
+    channel = "dm" if contact.is_first_degree else "connection_note"
+    return ReferralCandidateDTO(
+        contact_id=contact.id,
+        name=contact.name,
+        role=contact.current_role,
+        company=contact.current_company,
+        linkedin_url=contact.linkedin_url,
+        degree=contact.connection_degree,
+        audience_tag=contact.audience_tag,
+        warmth=contact.warmth,
+        channel=channel,
+        already_reached=already_reached,
+        already_selected=already_selected,
+        draft=template_draft(
+            contact.name, contact.current_company, contact.audience_tag, contact.warmth
+        ),
+    )
+
+
+# Account-tier rolling caps (US-NW-10 illustrative OpenOutreach defaults). NOT a
+# hard contract — the outreach package owns the authoritative caps (§17).
+# Surfaced for the popup's counter only.
+_TIER_CAPS = {"new": (15, 100), "seasoned": (30, 200)}
+
+
+def quota_dto(
+    *, connected: bool, tier: str, daily_used: int, weekly_used: int,
+    dm_daily_sent: int = 0, dm_weekly_sent: int = 0,
+) -> QuotaDTO:
+    daily_limit, weekly_limit = _TIER_CAPS.get(tier, _TIER_CAPS["new"])
+    return QuotaDTO(
+        connected=connected, tier=tier,
+        daily_used=daily_used, daily_limit=daily_limit,
+        weekly_used=weekly_used, weekly_limit=weekly_limit,
+        dm_daily_sent=dm_daily_sent, dm_weekly_sent=dm_weekly_sent,
+    )
+
+
+def linkedin_session_dto(
+    session: LinkedInSession | None, *, enabled: bool
+) -> LinkedInSessionDTO:
+    if session is None:
+        return LinkedInSessionDTO(enabled=enabled, status="never_set", account_tier="new")
+    return LinkedInSessionDTO(
+        enabled=enabled,
+        status=session.status,
+        account_tier=session.account_tier,
+        connected_as=session.connected_as,
+        li_at_expires_at=session.li_at_expires_at,
+        last_validated_at=session.last_validated_at,
+        paused_until=session.paused_until,
+        paused_reason=session.paused_reason,
+    )
+
+
+def derive_referrals_state(
+    *,
+    send_op_states: list[str],
+    discover_in_flight: bool,
+    has_candidates: bool,
+    latest_batch_outcomes: list[str],
+) -> str:
+    """The canonical `referralsState` for a role's Tracker card (FR-NW-01).
+
+    Precedence (transient in-flight states win so a spinner never goes stale):
+
+    - `sending`  — a send op of the current batch is queued/running.
+    - `finding`  — a discover op for this role is queued/running (and nothing is
+      sending).
+    - Otherwise the resting state comes from the *latest reach-out batch*
+      (`latest_batch_outcomes`, one entry per OutreachLog row sharing the newest
+      `batch_id`):
+        - all members `sent`     → `reachedOut`
+        - ≥1 sent, not all       → `pending`    (partial / cap-stopped batch)
+        - a batch exists, 0 sent → `failed`     (all-failed — an honest extension
+          of the 5-state spec)
+    - No batch yet but candidates were discovered for the role → `pending`.
+    - Nothing discovered or sent → `none` (frontend `notStarted`).
+    """
+    if any(state in ("queued", "running") for state in send_op_states):
+        return "sending"
+    if discover_in_flight:
+        return "finding"
+    if latest_batch_outcomes:
+        sent = sum(1 for outcome in latest_batch_outcomes if outcome == "sent")
+        if sent == len(latest_batch_outcomes):
+            return "reachedOut"
+        if sent > 0:
+            return "pending"
+        return "failed"
+    if has_candidates:
+        return "pending"
+    return "none"
 
 
 def schedule_dto(schedule: Schedule) -> ScheduleDTO:

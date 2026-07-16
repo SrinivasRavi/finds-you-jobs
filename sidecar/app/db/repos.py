@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from .base import now_utc
@@ -21,12 +21,18 @@ from .models import (
     Application,
     ApplicationEvent,
     Artifact,
+    CompanyResolution,
+    Contact,
+    ContactJobAssoc,
     EngineSettings,
     Job,
     JobScore,
+    LinkedInSession,
     MasterProfile,
     Operation,
+    OutreachLog,
     Schedule,
+    Sequence,
     Tombstone,
     UserPreferences,
 )
@@ -741,6 +747,327 @@ class EngineSettingsRepo:
         return result.rowcount > 0
 
 
+class CompanyResolutionsRepo:
+    """Cached name → LinkedIn company-entity resolutions (FR-NW-02).
+
+    Keyed by the stable per-employer `resolution_key` (see
+    `registry/company_anchor.py`), so one typeahead + one confirm choice is
+    reused across every job of the same employer."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, resolution_key: str) -> CompanyResolution | None:
+        if not resolution_key:
+            return None
+        return self._s.scalars(
+            select(CompanyResolution).where(
+                CompanyResolution.resolution_key == resolution_key
+            )
+        ).first()
+
+    def upsert(
+        self,
+        resolution_key: str,
+        *,
+        company_name: str,
+        company_urn: str,
+        company_vanity: str = "",
+        industry: str = "",
+        source: str = "user",
+    ) -> CompanyResolution:
+        row = self.get(resolution_key)
+        if row is None:
+            row = CompanyResolution(resolution_key=resolution_key)
+            self._s.add(row)
+        row.company_name = company_name
+        row.company_urn = company_urn
+        row.company_vanity = company_vanity
+        row.industry = industry
+        row.source = source
+        self._s.flush()
+        return row
+
+
+class ContactsRepo:
+    """Person-level outreach targets (US-REF-05). Identity key = linkedin_url."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, contact_id: str) -> Contact | None:
+        return self._s.get(Contact, contact_id)
+
+    def get_by_url(self, linkedin_url: str) -> Contact | None:
+        stmt = select(Contact).where(Contact.linkedin_url == linkedin_url)
+        return self._s.scalars(stmt).first()
+
+    def list(
+        self, *, company: str | None = None, include_archived: bool = False
+    ) -> list[Contact]:
+        stmt = select(Contact)
+        if not include_archived:
+            stmt = stmt.where(Contact.archived_at.is_(None))
+        if company:
+            stmt = stmt.where(Contact.current_company == company)
+        stmt = stmt.order_by(Contact.last_touched_at.desc(), Contact.id)
+        return list(self._s.scalars(stmt))
+
+    def list_for_referrals(
+        self, *, company_names: set[str], contact_ids: set[str]
+    ) -> list[Contact]:
+        """The find-referrals popup roster for a role (US-NW-09 / FR-NW-02).
+
+        A contact belongs on it if it is at the target company — matched
+        **case-insensitively against ANY of `company_names`** (the raw ATS
+        `job.company` AND the resolved LinkedIn entity name, which often differ,
+        e.g. `hopper` vs `Hopper`) — OR it is already associated with this job
+        (`contact_ids`, the reliable link discovery writes regardless of how the
+        employer string is spelled). Excludes archived. This replaces a brittle
+        exact-match on `job.company` that could hide a whole discovered roster."""
+        lowered = {n.strip().lower() for n in company_names if n and n.strip()}
+        conds = []
+        if lowered:
+            conds.append(func.lower(Contact.current_company).in_(lowered))
+        if contact_ids:
+            conds.append(Contact.id.in_(contact_ids))
+        if not conds:
+            return []
+        stmt = (
+            select(Contact)
+            .where(Contact.archived_at.is_(None))
+            .where(or_(*conds))
+            .order_by(Contact.last_touched_at.desc(), Contact.id)
+        )
+        return list(self._s.scalars(stmt))
+
+    def create(self, linkedin_url: str, **fields: Any) -> Contact:
+        contact = Contact(linkedin_url=linkedin_url, **fields)
+        self._s.add(contact)
+        self._s.flush()
+        return contact
+
+    def upsert_by_url(self, linkedin_url: str, **fields: Any) -> Contact:
+        """First-seen wins for identity fields, but refresh the mutable ones.
+
+        Discovery re-running for the same company must not duplicate a contact
+        (US-REF-04 "at most once per person"), and an already-known 1st-degree
+        contact surfaces warm rather than as a new cold prospect (US-REF-01)."""
+        existing = self.get_by_url(linkedin_url)
+        if existing is not None:
+            for key, value in fields.items():
+                # Never downgrade a manually-advanced connection_status back to a
+                # discovery default; discovery only refreshes profile-ish fields.
+                if key == "connection_status":
+                    continue
+                setattr(existing, key, value)
+            return existing
+        return self.create(linkedin_url, **fields)
+
+    def update(self, contact_id: str, **fields: Any) -> Contact:
+        contact = self._s.get(Contact, contact_id)
+        if contact is None:
+            raise KeyError(f"contact {contact_id!r} not found")
+        for key, value in fields.items():
+            setattr(contact, key, value)
+        return contact
+
+    def list_never_accepted_before(self, cutoff: datetime) -> list[Contact]:
+        """Sent-but-never-accepted connections older than `cutoff` (US-NW-11)."""
+        stmt = select(Contact).where(
+            Contact.archived_at.is_(None),
+            Contact.connection_status == "sent",
+            Contact.accepted_at.is_(None),
+            Contact.sent_at.is_not(None),
+            Contact.sent_at <= cutoff,
+        )
+        return list(self._s.scalars(stmt))
+
+    # Live-kanban statuses the contact-status sync engine probes (US-NW-12 /
+    # FR-NW-15). `candidate` (off the kanban), `converted` (the user's sacred
+    # referral record — never auto-touched), and `ghosted` (terminal for auto —
+    # revival is a manual drag) are excluded, so sync traffic stays bounded.
+    _SYNCABLE_STATUSES = ("sent", "accepted", "engagement")
+
+    def list_syncable(self, *, limit: int) -> list[Contact]:
+        """The next `limit` contacts due for a status-sync probe (US-NW-12).
+
+        Ordered by `last_touched_at` ASC (least-recently-touched first): each
+        probe bumps `last_touched_at`, so the probed contacts rotate to the back
+        and the whole live set is swept fairly over successive ticks — a natural
+        round-robin cursor with no extra bookkeeping column."""
+        stmt = (
+            select(Contact)
+            .where(Contact.archived_at.is_(None))
+            .where(Contact.connection_status.in_(self._SYNCABLE_STATUSES))
+            .order_by(Contact.last_touched_at.asc(), Contact.id)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_archived_before(self, cutoff: datetime) -> list[Contact]:
+        """Archived (deleted) contacts whose `archived_at` is past `cutoff` — the
+        permanent-purge scope (FR-SYS-06 configurable retention)."""
+        stmt = select(Contact).where(
+            Contact.archived_at.is_not(None), Contact.archived_at <= cutoff
+        )
+        return list(self._s.scalars(stmt))
+
+    def purge(self, contact_id: str) -> bool:
+        """Permanently delete a contact + its per-role asks + outreach history
+        (`foreign_keys=ON` forbids orphans). Used only by the archived-contact
+        retention purge — a deliberate, configurable, terminal cleanup."""
+        contact = self._s.get(Contact, contact_id)
+        if contact is None:
+            return False
+        self._s.execute(delete(ContactJobAssoc).where(ContactJobAssoc.contact_id == contact_id))
+        self._s.execute(delete(OutreachLog).where(OutreachLog.contact_id == contact_id))
+        self._s.delete(contact)
+        return True
+
+
+class ContactJobAssocsRepo:
+    """Per-role referral asks (US-REF-05): a contact ↔ job link."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, contact_id: str, job_id: str) -> ContactJobAssoc | None:
+        stmt = select(ContactJobAssoc).where(
+            ContactJobAssoc.contact_id == contact_id,
+            ContactJobAssoc.job_id == job_id,
+        )
+        return self._s.scalars(stmt).first()
+
+    def list_for_job(self, job_id: str) -> list[ContactJobAssoc]:
+        stmt = select(ContactJobAssoc).where(ContactJobAssoc.job_id == job_id)
+        return list(self._s.scalars(stmt))
+
+    def list_for_contact(self, contact_id: str) -> list[ContactJobAssoc]:
+        stmt = select(ContactJobAssoc).where(ContactJobAssoc.contact_id == contact_id)
+        return list(self._s.scalars(stmt))
+
+    def selected_contact_ids(self, job_id: str) -> set[str]:
+        """The contacts currently selected for this role (FR-NW-01) — restores the
+        find-referrals popup selection when a `pending` popup is reopened."""
+        stmt = select(ContactJobAssoc.contact_id).where(
+            ContactJobAssoc.job_id == job_id, ContactJobAssoc.selected.is_(True)
+        )
+        return set(self._s.scalars(stmt))
+
+    def upsert(
+        self, contact_id: str, job_id: str, **fields: Any
+    ) -> ContactJobAssoc:
+        existing = self.get(contact_id, job_id)
+        if existing is not None:
+            for key, value in fields.items():
+                setattr(existing, key, value)
+            return existing
+        assoc = ContactJobAssoc(contact_id=contact_id, job_id=job_id, **fields)
+        self._s.add(assoc)
+        self._s.flush()
+        return assoc
+
+
+class OutreachLogsRepo:
+    """Per-message audit (database-design §5)."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, log_id: str) -> OutreachLog | None:
+        return self._s.get(OutreachLog, log_id)
+
+    def create(self, contact_id: str, **fields: Any) -> OutreachLog:
+        log = OutreachLog(contact_id=contact_id, **fields)
+        self._s.add(log)
+        self._s.flush()
+        return log
+
+    def list_for_contact(self, contact_id: str) -> list[OutreachLog]:
+        stmt = (
+            select(OutreachLog)
+            .where(OutreachLog.contact_id == contact_id)
+            .order_by(OutreachLog.created_at, OutreachLog.id)
+        )
+        return list(self._s.scalars(stmt))
+
+    def count_sent_for_job(self, job_id: str) -> int:
+        """Reaches actually sent for a role (US-NW-09 per-role reached count)."""
+        stmt = select(OutreachLog).where(
+            OutreachLog.job_id == job_id, OutreachLog.outcome == "sent"
+        )
+        return len(list(self._s.scalars(stmt)))
+
+    def list_for_job(self, job_id: str) -> list[OutreachLog]:
+        stmt = select(OutreachLog).where(OutreachLog.job_id == job_id)
+        return list(self._s.scalars(stmt))
+
+    def latest_batch_for_job(self, job_id: str) -> list[OutreachLog]:
+        """The OutreachLog rows of the *latest* reach-out batch for a role, used
+        to derive `referralsState` (FR-NW-01). The batch is keyed by `batch_id`;
+        a NULL batch_id (legacy/manual single send) is its own settled batch. The
+        latest batch = the one containing the most-recently-created log."""
+        logs = sorted(
+            self.list_for_job(job_id),
+            key=lambda log: (log.created_at, log.id),
+        )
+        if not logs:
+            return []
+        newest = logs[-1]
+        if newest.batch_id is None:
+            return [newest]  # a solo (batchless) send is its own settled batch
+        return [log for log in logs if log.batch_id == newest.batch_id]
+
+
+class SequencesRepo:
+    """Audience playbooks (US-PLB-*). P1 seeds these from the bundled module
+    playbook files; the editor writes them back."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, sequence_id: str) -> Sequence | None:
+        return self._s.get(Sequence, sequence_id)
+
+    def list(self) -> list[Sequence]:
+        return list(self._s.scalars(select(Sequence).order_by(Sequence.name)))
+
+    def get_by_audience(self, audience: str) -> Sequence | None:
+        stmt = select(Sequence).where(Sequence.audience == audience)
+        return self._s.scalars(stmt).first()
+
+    def create(self, name: str, audience: str, **fields: Any) -> Sequence:
+        seq = Sequence(name=name, audience=audience, **fields)
+        self._s.add(seq)
+        self._s.flush()
+        return seq
+
+
+class LinkedInSessionRepo:
+    """Single-row LinkedIn session state (database-design §5)."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self) -> LinkedInSession | None:
+        return self._s.scalars(select(LinkedInSession).limit(1)).first()
+
+    def get_or_create(self) -> LinkedInSession:
+        row = self.get()
+        if row is None:
+            row = LinkedInSession()
+            self._s.add(row)
+            self._s.flush()
+        return row
+
+    def update(self, **fields: Any) -> LinkedInSession:
+        row = self.get_or_create()
+        for key, value in fields.items():
+            setattr(row, key, value)
+        return row
+
+
 class Repos:
     """One session, every aggregate repo. Feature commits add their repos here."""
 
@@ -757,6 +1084,12 @@ class Repos:
         self.applications = ApplicationsRepo(session)
         self.artifacts = ArtifactsRepo(session)
         self.application_events = ApplicationEventsRepo(session)
+        self.contacts = ContactsRepo(session)
+        self.company_resolutions = CompanyResolutionsRepo(session)
+        self.contact_job_assocs = ContactJobAssocsRepo(session)
+        self.outreach_logs = OutreachLogsRepo(session)
+        self.sequences = SequencesRepo(session)
+        self.linkedin_session = LinkedInSessionRepo(session)
 
     def prune_ledger(self, keep: int) -> int:
         """Ledger retention that preserves all-time spend: fold the usd/tokens of

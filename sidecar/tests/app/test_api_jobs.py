@@ -56,14 +56,19 @@ def test_schedules_seeded_disabled(app_client: tuple[FastAPI, TestClient]) -> No
     resp = client.get("/api/schedules", headers=AUTH)
     assert resp.status_code == 200
     kinds = {s["kind"]: s for s in resp.json()}
-    # scan/score_new seeded OFF (no unattended LLM spend); cleanup_trash is
-    # zero-LLM/zero-network → seeded ON. The networking housekeeping schedules
-    # return with the Referral Outreach commits.
-    assert set(kinds) == {"scan", "score_new", "cleanup_trash"}
+    # scan/score_new seeded OFF (no unattended LLM spend); cleanup_trash +
+    # archive_stale_contacts + contact_sync are zero-LLM housekeeping → seeded ON.
+    assert set(kinds) == {
+        "scan", "score_new", "cleanup_trash", "archive_stale_contacts", "contact_sync",
+    }
     assert not kinds["scan"]["enabled"]
     assert not kinds["score_new"]["enabled"]
     # FR-SYS-04: zero-LLM/zero-network Trash-TTL eviction → seeded ON.
     assert kinds["cleanup_trash"]["enabled"]
+    # US-NW-11 / US-NW-12: zero-LLM kanban housekeeping → seeded ON (contact_sync
+    # no-ops cleanly until the user enables Referral Outreach + connects).
+    assert kinds["archive_stale_contacts"]["enabled"]
+    assert kinds["contact_sync"]["enabled"]
 
 
 def test_schedule_enable_and_set_interval(app_client: tuple[FastAPI, TestClient]) -> None:

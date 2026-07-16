@@ -74,7 +74,14 @@ def _extract_default() -> str:
     return SYSTEM_PROMPT
 
 
-# The registry — order is the Settings display order.
+def _networker_draft_default() -> str:
+    from sidecar.modules.networker.prompt import load_skill
+
+    return load_skill()
+
+
+# The registry — order is the Settings display order. `networker_draft` is
+# prompt-only (not a routed LLM kind — `routed=False`).
 PROMPT_KINDS: dict[str, PromptKind] = {
     p.kind: p
     for p in (
@@ -82,6 +89,8 @@ PROMPT_KINDS: dict[str, PromptKind] = {
         PromptKind("tailor", "Resume tailoring", _tailor_default),
         PromptKind("cover", "Cover letter", _cover_default),
         PromptKind("extract", "Application profile extraction", _extract_default),
+        PromptKind("networker_draft", "Referral message drafting",
+                   _networker_draft_default, routed=False),
     )
 }
 

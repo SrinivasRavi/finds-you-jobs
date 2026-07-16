@@ -1,27 +1,30 @@
 """Secrets-at-rest (NFR-SEC-01) — the app key and the sealing primitives.
 
 One symmetric Fernet key per install seals every locally stored secret (BYOK
-API keys now; the LinkedIn session storage-state when Referral Outreach
-lands). Key resolution (`get_app_key`): env `FYJ_SESSION_KEY` (tests/dev
-override) → OS keychain via `keyring` (service "finds-you-jobs") → an
-app-managed key file under the data dir with owner-only permissions (the
-NFR's stated fallback when no keychain backend exists). The key is never
-logged and never passed via argv.
+API keys and the LinkedIn session storage-state). Key resolution
+(`get_app_key`): env `FYJ_SESSION_KEY` (tests/dev override) → OS keychain via
+`keyring` (service "finds-you-jobs") → an app-managed key file under the data
+dir with owner-only permissions (the NFR's stated fallback when no keychain
+backend exists). The key is never logged and never passed via argv.
 
-The LinkedIn session-file seal/read/write helpers from the prior repository
-return with the Referral Outreach commits (`docs/internal/roadmap.md` §7.2
-#9-11) — they are not carried ahead of their feature.
+The LinkedIn session-file seal/read/write helpers interoperate with
+`referral_outreach/upstream/secure_store.py` (the GPL side) via the shared
+sealed-JSON shape `{"fyj_sealed": 1, "token": "<Fernet token>"}` — the two
+sides never import each other, only agree on that format and the key env var.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger("fyj.sidecar.security")
 
-SESSION_KEY_ENV = "FYJ_SESSION_KEY"
+SESSION_KEY_ENV = "FYJ_SESSION_KEY"  # must match referral_outreach/upstream/secure_store.py
+SEALED_MARKER = "fyj_sealed"         # must match referral_outreach/upstream/secure_store.py
 KEYRING_SERVICE = "finds-you-jobs"
 KEYRING_ACCOUNT = "session-store-key"
 KEY_FILE_NAME = "session_store.key"
@@ -121,3 +124,101 @@ def mask_key(plaintext: str) -> str:
         return "…"
     prefix = plaintext[:3] if plaintext[:3].isascii() and "-" in plaintext[:5] else ""
     return f"{prefix}…{plaintext[-4:]}"
+
+
+def seal_session_file(path: Path, key: str) -> bool:
+    """One-time migration: encrypt a legacy plaintext storage-state file in
+    place. Roundtrip-verified before the atomic replace — on ANY doubt the
+    original file is left untouched (an intact plaintext session beats a
+    destroyed one; the gap is then loud in the logs, not silent).
+
+    Returns True when the file was migrated, False when there was nothing to
+    do (missing, already sealed) or the migration could not be verified."""
+    if not path.exists():
+        return False
+    try:
+        raw = path.read_text()
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("session file %s unreadable (%s) — not migrating", path, e)
+        return False
+    if not isinstance(data, dict) or SEALED_MARKER in data:
+        return False  # already sealed (or not a state dict)
+
+    from cryptography.fernet import Fernet
+
+    f = Fernet(key.encode())
+    token = f.encrypt(raw.encode())
+    if json.loads(f.decrypt(token).decode()) != data:  # roundtrip verify
+        logger.error("seal roundtrip mismatch for %s — leaving plaintext untouched", path)
+        return False
+    payload = json.dumps({SEALED_MARKER: 1, "token": token.decode()})
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as out:
+            out.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    logger.info("migrated %s to encrypted-at-rest (NFR-SEC-01)", path)
+    return True
+
+
+def read_session_state(path: Path, key: str) -> tuple[dict, bool]:
+    """Load a storage-state file, transparently unsealing a Fernet-sealed one
+    (`{"fyj_sealed": 1, "token": …}`). Returns `(state_dict, was_sealed)` — so a
+    caller that mutates and re-persists can reseal in the SAME format. Legacy
+    plaintext files come back with `was_sealed=False`. Raises on missing/corrupt/
+    undecryptable input: callers (the dev fault-injection tool) surface that
+    honestly rather than silently no-op'ing on a sealed file."""
+    raw = path.read_text()
+    data = json.loads(raw)
+    was_sealed = bool(isinstance(data, dict) and data.get(SEALED_MARKER))
+    if was_sealed:
+        from cryptography.fernet import Fernet
+
+        plaintext = Fernet(key.encode()).decrypt(str(data["token"]).encode()).decode()
+        state = json.loads(plaintext)
+    else:
+        state = data
+    if not isinstance(state, dict):
+        raise ValueError("session state is not a JSON object")
+    return state, was_sealed
+
+
+def write_session_state(path: Path, state: dict, key: str, *, sealed: bool) -> None:
+    """Persist a storage-state dict, resealing (same format as `seal_session_file`)
+    when `sealed`, else writing plaintext. Atomic replace — the file is never left
+    half-written."""
+    if sealed:
+        from cryptography.fernet import Fernet
+
+        token = Fernet(key.encode()).encrypt(json.dumps(state).encode())
+        payload = json.dumps({SEALED_MARKER: 1, "token": token.decode()})
+    else:
+        payload = json.dumps(state)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as out:
+            out.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def migrate_plaintext_session(data_dir: Path) -> bool:
+    """Startup hook: if a pre-encryption plaintext session file exists under
+    `<data-dir>/linkedin/`, seal it. Resolves the key ONLY when a file is
+    present (so test/temp data dirs never touch the OS keychain)."""
+    path = data_dir / "linkedin" / "storage_state.json"
+    if not path.exists():
+        return False
+    return seal_session_file(path, get_session_key(data_dir))

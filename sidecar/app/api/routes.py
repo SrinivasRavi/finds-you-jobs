@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -26,7 +27,11 @@ from ..events import heartbeat_stream
 from ..logging_setup import get_logger
 from ..priority import STATS_KEY, zband_priority
 from ..registry import EngineRegistry
+from ..registry import networker_ops as networker_ops
+from ..registry.company_anchor import resolution_key
 from ..registry.engine_config import apply_routing
+from ..registry.linkedin_op import LOGIN_CONTROL
+from ..registry.networker_ops import linkedin_storage_path
 from ..runner import OperationRunner
 from ..scheduler.planner import plan_schedule
 from . import dto
@@ -547,7 +552,36 @@ def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
         score = repos.job_scores.get_cached(job.id, version)
         op_states = repos.operations.score_states_by_job().get(job.id)
         job_dto_val = dto.job_dto(job, score, score_op_states=op_states)
-    return dto.application_dto(application, with_states, job=job_dto_val)
+    # Referral progress (FR-NW-01 canonical enum): landed-send count, in-flight
+    # send ops, whether a discover op is running, whether a roster was found for
+    # the role, and the latest reach-out batch's outcomes.
+    job_id = application.job_id
+    referrals_count = repos.outreach_logs.count_sent_for_job(job_id)
+    send_states = [
+        op.state
+        for op in repos.operations.list_by_kind_states(
+            "send", {"queued", "running", "failed", "succeeded"}
+        )
+        if (op.input_snapshot or {}).get("job_id") == job_id
+    ]
+    discover_in_flight = any(
+        (op.input_snapshot or {}).get("job_id") == job_id
+        for op in repos.operations.list_by_kind_states("discover", {"queued", "running"})
+    )
+    has_candidates = len(repos.contact_job_assocs.list_for_job(job_id)) > 0
+    latest_batch_outcomes = [
+        log.outcome for log in repos.outreach_logs.latest_batch_for_job(job_id)
+    ]
+    return dto.application_dto(
+        application,
+        with_states,
+        job=job_dto_val,
+        referrals_count=referrals_count,
+        referrals_op_states=send_states,
+        discover_in_flight=discover_in_flight,
+        has_candidates=has_candidates,
+        latest_batch_outcomes=latest_batch_outcomes,
+    )
 
 
 @router.get("/api/applications")
@@ -900,6 +934,16 @@ async def create_operation(
 ) -> dto.OperationAccepted:
     """Enqueue an operation; return its id immediately (architecture §4.2)."""
     runner = _runner(request)
+    # A few kinds are interactive/side-effectful and must go through their own
+    # dedicated route (which does the P1-consent + resource setup), never the
+    # generic enqueue: `linkedin_login` opens a headed browser (use
+    # `/api/linkedin/connect`). The applier's `apply`/`prep` join this list when
+    # they land.
+    if kind == "linkedin_login":
+        raise HTTPException(
+            status_code=422,
+            detail="use POST /api/linkedin/connect to start a LinkedIn login",
+        )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
     operation_id = runner.submit(kind, input_snapshot or {})
@@ -962,3 +1006,557 @@ async def get_operation(request: Request, operation_id: str) -> dto.OperationDTO
                 status_code=404, detail=f"operation {operation_id!r} not found"
             )
         return dto.operation_dto(op)
+
+
+# -- applications: networking tab -------------------------------------------
+
+@router.get("/api/applications/{application_id}/networking")
+async def application_networking(
+    request: Request, application_id: str
+) -> list[dto.NetworkingContactDTO]:
+    """The referral contacts linked to this role + their statuses — the detail
+    modal's Networking tab (US-TR-03, shown only when LinkedIn is ON)."""
+    with _db(request).repos() as repos:
+        app = repos.applications.get(application_id)
+        if app is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        # Latest outreach per contact for this role.
+        last_by_contact: dict[str, Any] = {}
+        for log in repos.outreach_logs.list_for_job(app.job_id):
+            last_by_contact[log.contact_id] = log  # list is created_at-ordered
+        out: list[dto.NetworkingContactDTO] = []
+        for assoc in repos.contact_job_assocs.list_for_job(app.job_id):
+            contact = repos.contacts.get(assoc.contact_id)
+            if contact is None:
+                continue
+            log = last_by_contact.get(contact.id)
+            out.append(
+                dto.NetworkingContactDTO(
+                    contact_id=contact.id,
+                    name=contact.name,
+                    role=contact.current_role,
+                    company=contact.current_company,
+                    linkedin_url=contact.linkedin_url,
+                    connection_status=contact.connection_status,
+                    ask_status=assoc.status,
+                    audience_tag=contact.audience_tag,
+                    last_message=log.body_sent if log is not None else None,
+                    last_message_at=(log.sent_at or log.created_at) if log is not None else None,
+                    last_outcome=log.outcome if log is not None else None,
+                )
+            )
+    return out
+
+
+
+
+# -- networking: contacts kanban (US-NW-01/02/03/07) ------------------------
+
+def _contact_dto(repos: Any, contact: Any) -> dto.ContactDTO:
+    logs = repos.outreach_logs.list_for_contact(contact.id)
+    return dto.contact_dto(contact, logs[-1] if logs else None)
+
+
+@router.get("/api/contacts")
+async def list_contacts(
+    request: Request,
+    company: str | None = None,
+    include_candidates: bool = False,
+    archived: bool = False,
+) -> list[dto.ContactDTO]:
+    """The networking kanban roster (US-NW-01). Excludes archived and, by
+    default, `candidate` rows (discovered-but-not-reached — off the kanban).
+    `archived=true` flips it to the "Deleted Contacts" recovery view: only the
+    archived rows, so a user can restore a contact they removed."""
+    with _db(request).repos() as repos:
+        if archived:
+            rows = repos.contacts.list(company=company, include_archived=True)
+            return [_contact_dto(repos, c) for c in rows if c.archived_at is not None]
+        contacts = repos.contacts.list(company=company)
+        if not include_candidates:
+            contacts = [c for c in contacts if c.connection_status != "candidate"]
+        return [_contact_dto(repos, c) for c in contacts]
+
+
+@router.post("/api/contacts", status_code=201)
+async def create_contact(request: Request, payload: dto.ContactCreate) -> dto.ContactDTO:
+    """Manual add-a-contact by URL/name (US-NW-02) — the rank-don't-gate escape
+    hatch. Always available regardless of LinkedIn state. Dedups on linkedin_url.
+
+    Re-adding a URL that belongs to an *archived* (deleted) contact restores it
+    to the kanban rather than silently returning a still-hidden row — the same
+    "put it back" semantics as un-trashing a job (2026-07-10 re-add fix). Its
+    prior outreach history is preserved; only the requested live column is set."""
+    with _db(request).repos() as repos:
+        existing = repos.contacts.get_by_url(payload.linkedin_url)
+        if existing is not None:
+            if existing.archived_at is not None:
+                existing = repos.contacts.update(
+                    existing.id,
+                    archived_at=None,
+                    connection_status=payload.connection_status,
+                    last_touched_at=now_utc(),
+                    sent_at=(
+                        now_utc()
+                        if payload.connection_status == "sent" and existing.sent_at is None
+                        else existing.sent_at
+                    ),
+                )
+            return _contact_dto(repos, existing)
+        contact = repos.contacts.create(
+            payload.linkedin_url,
+            name=payload.name,
+            current_company=payload.current_company,
+            current_role=payload.current_role,
+            connection_status=payload.connection_status,
+            audience_tag=payload.audience_tag,
+            sent_at=now_utc() if payload.connection_status == "sent" else None,
+        )
+        return _contact_dto(repos, contact)
+
+
+@router.patch("/api/contacts/{contact_id}")
+async def update_contact(
+    request: Request, contact_id: str, payload: dto.ContactUpdate
+) -> dto.ContactDTO:
+    """Move a contact between kanban columns (US-NW-07) / archive / re-tag."""
+    fields = payload.model_dump(exclude_none=True)
+    if "archived" in fields:
+        fields["archived_at"] = now_utc() if fields.pop("archived") else None
+    with _db(request).repos() as repos:
+        existing = repos.contacts.get(contact_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"contact {contact_id!r} not found")
+        # Manual wins (US-NW-12): a user-driven column move stamps the status as
+        # `manual` so the contact-status sync engine won't immediately override it.
+        if "connection_status" in fields:
+            fields["profile_payload"] = {
+                **(existing.profile_payload or {}),
+                "status_meta": {"source": "manual", "changed_at": now_utc().isoformat()},
+            }
+        contact = repos.contacts.update(contact_id, **fields)
+        return _contact_dto(repos, contact)
+
+
+# -- networking: find-referrals popup (US-NW-09 / US-REF-*) -----------------
+
+
+def _require_networking_enabled(repos: Any) -> None:
+    """Defense-in-depth server-side gate (audit P2-4): Referral Outreach is the
+    experimental, account-risk automation — the Settings UI already gates it
+    behind the toggle + ack, but a client that skips the UI (a stray call, a
+    future non-web client) must not be able to trigger discovery or sends while
+    the toggle is off. Mirrors `prefs.voyager_risk_marker_on`, the same flag the
+    session/quota endpoints already read."""
+    prefs = repos.preferences.get_or_create()
+    if not bool(prefs.voyager_risk_marker_on):
+        raise HTTPException(
+            status_code=403,
+            detail="Referral Outreach is disabled — enable it in Settings first.",
+        )
+
+
+@router.get("/api/jobs/{job_id}/referrals/candidates")
+async def list_referral_candidates(
+    request: Request, job_id: str
+) -> dto.ReferralCandidatesDTO:
+    """The find-referrals popup candidate list for one role (US-NW-09). Contacts
+    at the job's company + per-contact template drafts + already-reached derived
+    from the OutreachLog. Run discover first to populate candidates."""
+    with _db(request).repos() as repos:
+        job = repos.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
+        company = job.company
+        # Roster = contacts at the target company (raw ATS name AND the resolved
+        # LinkedIn entity name — they differ, e.g. `hopper` vs `Hopper`) OR already
+        # linked to this job. Matching only the raw `job.company` string exact-case
+        # hid discovered rosters once the `or company` mask was removed (FR-NW-02).
+        company_names = {company}
+        resolved = repos.company_resolutions.get(
+            resolution_key(job.canonical_url, job.source_adapter, company)
+        )
+        if resolved is not None and resolved.company_name:
+            company_names.add(resolved.company_name)
+        assoc_ids = {a.contact_id for a in repos.contact_job_assocs.list_for_job(job_id)}
+        contacts = repos.contacts.list_for_referrals(
+            company_names=company_names, contact_ids=assoc_ids
+        )
+        reached_ids = {
+            log.contact_id
+            for log in repos.outreach_logs.list_for_job(job_id)
+            if log.outcome == "sent"
+        }
+        # Persisted selection (FR-NW-01): restores which contacts the user picked
+        # so a reopened `pending` popup shows the selection, not just the roster.
+        selected_ids = repos.contact_job_assocs.selected_contact_ids(job_id)
+        candidates = [
+            dto.referral_candidate_dto(
+                c,
+                already_reached=c.id in reached_ids,
+                already_selected=c.id in selected_ids,
+            )
+            for c in contacts
+        ]
+    # 1st → 2nd → 3rd degree ordering (US-NW-09 sort).
+    candidates.sort(key=lambda c: (c.degree if c.degree is not None else 99))
+    return dto.ReferralCandidatesDTO(
+        job_id=job_id, company=company, candidates=candidates,
+        already_reached_count=len(reached_ids),
+    )
+
+
+@router.post("/api/jobs/{job_id}/referrals/discover", status_code=202)
+async def discover_referrals(
+    request: Request,
+    job_id: str,
+    payload: dto.DiscoverReferralsRequest | None = None,
+) -> dto.OperationAccepted:
+    """Kick off referral discovery for a job's company (US-REF-01 / FR-NW-02).
+    Enqueues a `discover` op; live progress streams as `networker` SSE events for
+    the popup. `limit` is how many candidates to pull — the "find 10 more" /
+    `Load more` control bumps it (10 → 20 → …) so voyager returns a larger roster
+    that merges into the shared pool.
+
+    The op first resolves the company name to a LinkedIn company entity (URN) and
+    scopes the People search by it — current-employees-only, no name collisions.
+    When that resolution is ambiguous the op emits a `needs_company_confirm`
+    event instead of discovering; the popup then re-calls this with the user's
+    chosen `company_urn` (+ name/vanity/industry), which is cached and used."""
+    payload = payload or dto.DiscoverReferralsRequest()
+    is_confirm = bool(payload.company_urn or payload.company_url)
+    with _db(request).repos() as repos:
+        _require_networking_enabled(repos)
+        job = repos.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
+        company = job.company
+        # Single-flight the plain boot discover per job (NFR-LI account safety +
+        # the confirm→ask-again loop fix): if an un-confirmed discover for this job
+        # is already queued/running, reuse it rather than launching a second live
+        # LinkedIn scan. A confirm (URN/URL) always runs — it supersedes the boot.
+        if not is_confirm:
+            for op in repos.operations.list_by_kind_states("discover", {"queued", "running"}):
+                snap = op.input_snapshot or {}
+                if snap.get("job_id") == job_id and not (
+                    snap.get("company_urn") or snap.get("company_url")
+                ):
+                    return dto.OperationAccepted(id=op.id, kind="discover", state=op.state)
+    snapshot: dict[str, Any] = {
+        "company": company, "job_id": job_id, "limit": max(1, payload.limit),
+        "page": max(1, payload.page),
+    }
+    if payload.company_urn:
+        snapshot["company_urn"] = payload.company_urn
+        snapshot["company_name"] = payload.company_name or company
+        snapshot["company_vanity"] = payload.company_vanity or ""
+        snapshot["company_industry"] = payload.company_industry or ""
+    if payload.company_url:
+        snapshot["company_url"] = payload.company_url
+    operation_id = _runner(request).submit("discover", snapshot)
+    return dto.OperationAccepted(id=operation_id, kind="discover", state="queued")
+
+
+@router.post("/api/contacts/{contact_id}/draft", status_code=202)
+async def draft_referral(
+    request: Request, contact_id: str, job_id: Annotated[str | None, Body(embed=True)] = None
+) -> dto.OperationAccepted:
+    """Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate).
+    Enqueues a `draft` op; read the message from the operation's result_ref."""
+    with _db(request).repos() as repos:
+        if repos.contacts.get(contact_id) is None:
+            raise HTTPException(status_code=404, detail=f"contact {contact_id!r} not found")
+    operation_id = _runner(request).submit(
+        "draft", {"contact_id": contact_id, "job_id": job_id}
+    )
+    return dto.OperationAccepted(id=operation_id, kind="draft", state="queued")
+
+
+@router.post("/api/referrals/reach-out", status_code=202)
+async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.ReachOutResult:
+    """Batch reach-out (US-NW-09). Enqueues one single-flight `send` op per
+    selected contact — each carrying its own per-audience message. The per-action
+    confirmation lives in the UI; the send path runs only when the master toggle
+    is on (the UI gates it, and `_require_networking_enabled` gates it server-side
+    too — audit P2-4; a dry-run plans without touching LinkedIn)."""
+    runner = _runner(request)
+    with _db(request).repos() as repos:
+        _require_networking_enabled(repos)
+        for c in payload.contacts:
+            if repos.contacts.get(c.contact_id) is None:
+                raise HTTPException(
+                    status_code=404, detail=f"contact {c.contact_id!r} not found"
+                )
+        # Persist the selection (FR-NW-01): mark every picked contact selected for
+        # this role so a `pending` popup (partial / cap-stopped batch) restores who
+        # was chosen on reopen. Un-picked contacts keep their prior flag — un-sent
+        # picks from an earlier batch stay selected so the user can retry them.
+        if payload.job_id:
+            for c in payload.contacts:
+                assoc = repos.contact_job_assocs.get(c.contact_id, payload.job_id)
+                if assoc is not None:
+                    assoc.selected = True
+                else:
+                    repos.contact_job_assocs.upsert(
+                        c.contact_id, payload.job_id, selected=True
+                    )
+        # Idempotency guard (US-NW-09): a repeated "Send now" (double-click / retry)
+        # must not enqueue a second real invite for a contact whose send for this
+        # role is already queued or running. Skip those; the UI disables the button
+        # and shows "Sending…" but this is the authoritative backstop.
+        active_sends = repos.operations.list_by_kind_states("send", {"queued", "running"})
+        inflight = {
+            (op.input_snapshot or {}).get("contact_id")
+            for op in active_sends
+            if (op.input_snapshot or {}).get("job_id") == payload.job_id
+        }
+    # One batch id ties every send of this reach-out together, so each send's
+    # entrypoint can detect *batch settle* and move the card once (FR-NW-03).
+    batch_id = uuid4().hex
+    enqueued: list[str] = []
+    skipped: list[str] = []
+    for c in payload.contacts:
+        if c.contact_id in inflight:
+            skipped.append(c.contact_id)
+            continue
+        inflight.add(c.contact_id)  # guard against duplicates within one request too
+        enqueued.append(
+            runner.submit("send", {
+                "contact_id": c.contact_id,
+                "job_id": payload.job_id,
+                "application_id": payload.application_id,
+                "batch_id": batch_id,
+                "message": c.message,
+                "dry_run": payload.dry_run,
+            })
+        )
+    return dto.ReachOutResult(enqueued=enqueued, skipped_contact_ids=skipped)
+
+
+@router.get("/api/referrals/quota")
+async def referrals_quota(request: Request) -> dto.QuotaDTO:
+    """Rolling outreach quota for the popup counter (US-NW-09/10). App-side view
+    from the OutreachLog send windows + tier caps. The authoritative *live*
+    voyager quota is the maintainer's live-dogfood path (zero traffic here)."""
+    day_ago = now_utc() - timedelta(days=1)
+    week_ago = now_utc() - timedelta(days=7)
+    with _db(request).repos() as repos:
+        session = repos.linkedin_session.get()
+        prefs = repos.preferences.get_or_create()
+        tier = session.account_tier if session is not None else "new"
+        connected = bool(prefs.voyager_risk_marker_on) and (
+            session is not None and session.status == "valid"
+        )
+        # Count sends across all contacts within each window. Only invites
+        # (connection requests) consume the cap — 1st-degree DMs are tracked
+        # separately and never decrement it (FR-NW-04 acceptance; the DM
+        # counters exist so a sent DM doesn't read as "0 used").
+        daily = weekly = dm_daily = dm_weekly = 0
+        for contact in repos.contacts.list(include_archived=True):
+            for log in repos.outreach_logs.list_for_contact(contact.id):
+                if log.outcome != "sent" or log.sent_at is None:
+                    continue
+                is_dm = log.channel == "dm"
+                if log.sent_at >= week_ago:
+                    dm_weekly += is_dm
+                    weekly += not is_dm
+                if log.sent_at >= day_ago:
+                    dm_daily += is_dm
+                    daily += not is_dm
+    return dto.quota_dto(
+        connected=connected, tier=tier, daily_used=daily, weekly_used=weekly,
+        dm_daily_sent=dm_daily, dm_weekly_sent=dm_weekly,
+    )
+
+
+@router.get("/api/linkedin/session")
+async def linkedin_session(request: Request) -> dto.LinkedInSessionDTO:
+    """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+    Reads the persisted session (fast — local only); the popup send path
+    unlocks only when enabled AND status == 'valid'."""
+    with _db(request).repos() as repos:
+        session = repos.linkedin_session.get()
+        prefs = repos.preferences.get_or_create()
+        return dto.linkedin_session_dto(
+            session, enabled=bool(prefs.voyager_risk_marker_on)
+        )
+
+
+@router.post("/api/linkedin/connect", status_code=202)
+async def linkedin_connect(
+    request: Request, payload: dto.LinkedInConnectRequest | None = None
+) -> dto.OperationAccepted:
+    """Start the headed-login session capture (US-SET-06 as-built). Enqueues the
+    exclusive `linkedin_login` op — a visible browser opens at LinkedIn's login
+    page; the user logs in themselves (the password never touches finds-you-jobs).
+    `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture."""
+    snap: dict[str, Any] = {}
+    if payload is not None and payload.login_url:
+        snap["login_url"] = payload.login_url
+    if payload is not None and payload.timeout_s:
+        snap["timeout_s"] = payload.timeout_s
+    operation_id = _runner(request).submit("linkedin_login", snap)
+    return dto.OperationAccepted(id=operation_id, kind="linkedin_login", state="queued")
+
+
+@router.post("/api/linkedin/cancel", status_code=202)
+async def linkedin_cancel() -> dict[str, Any]:
+    """Cancel an in-flight headed login (the Cancel button). Closes the browser."""
+    cancelled = LOGIN_CONTROL.cancel_all()
+    return {"status": "cancelling", "cancelled": cancelled}
+
+
+@router.post("/api/linkedin/disconnect")
+async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
+    """Disconnect: cancel any in-flight login, clear the session row, and delete
+    BOTH on-disk session stores — the sealed storage-state JSON and the
+    persistent Chromium profile (US-SET-06 Disconnect). Before 2026-07-12 the
+    profile dir survived, so a "disconnected" user's next login window opened
+    already logged in. This is local deletion only — it never logs the user out
+    of LinkedIn server-side (the UI says so)."""
+    import shutil
+
+    from ..registry.networker_ops import linkedin_profile_dir
+
+    LOGIN_CONTROL.cancel_all()
+    storage = linkedin_storage_path()
+    try:
+        storage.unlink(missing_ok=True)
+    except OSError as exc:
+        get_logger().warning("linkedin disconnect: could not delete session file: %s", exc)
+    try:
+        shutil.rmtree(linkedin_profile_dir(), ignore_errors=False)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        get_logger().warning("linkedin disconnect: could not delete profile dir: %s", exc)
+    with _db(request).repos() as repos:
+        session = repos.linkedin_session.update(
+            status="never_set", connected_as="", li_at_expires_at=None,
+            last_validated_at=None, paused_until=None, paused_reason="",
+        )
+        prefs = repos.preferences.get_or_create()
+        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+
+
+@router.post("/api/linkedin/validate")
+async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
+    """Re-check the saved session LOCALLY (li_at presence/expiry) — **never hits
+    LinkedIn** (US-SET-06 Validate). Flips status to valid / expired / never_set
+    and stamps `last_validated_at`."""
+    with _db(request).repos() as repos:
+        session = repos.linkedin_session.get()
+        tier = session.account_tier if session is not None else "new"
+    driver = networker_ops.DRIVER_FACTORY(tier)
+    try:
+        info = driver.session_status()
+    finally:
+        driver.close()
+    status = info.get("status", "never_set")
+    with _db(request).repos() as repos:
+        fields: dict[str, Any] = {"status": status, "last_validated_at": now_utc()}
+        if status != "valid":
+            fields["connected_as"] = ""
+        session = repos.linkedin_session.update(**fields)
+        prefs = repos.preferences.get_or_create()
+        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+
+
+@router.post("/api/linkedin/resume")
+async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
+    """Clear the voyager-owned backoff pause (Settings → Networking manual resume,
+    FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates."""
+    with _db(request).repos() as repos:
+        session = repos.linkedin_session.get()
+        tier = session.account_tier if session is not None else "new"
+    driver = networker_ops.DRIVER_FACTORY(tier)
+    try:
+        driver.resume()
+        info = driver.session_status()
+    finally:
+        driver.close()
+    status = info.get("status", "never_set")
+    with _db(request).repos() as repos:
+        session = repos.linkedin_session.update(
+            status=status, paused_until=None, paused_reason="",
+            last_validated_at=now_utc(),
+        )
+        prefs = repos.preferences.get_or_create()
+        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+
+
+@router.post("/api/linkedin/tier")
+async def linkedin_set_tier(
+    request: Request, payload: dto.LinkedInTierRequest
+) -> dto.LinkedInSessionDTO:
+    """Set the account-tier (New / Seasoned) the app passes to voyager (US-REF-08).
+    voyager owns the cap *values*; this is only the user's tier selection."""
+    if payload.account_tier not in ("new", "seasoned"):
+        raise HTTPException(status_code=422, detail="account_tier must be 'new' or 'seasoned'")
+    with _db(request).repos() as repos:
+        session = repos.linkedin_session.update(account_tier=payload.account_tier)
+        prefs = repos.preferences.get_or_create()
+        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+
+
+# -- Dev tools (local testing only) ----------------------------------------
+# A single-user local app on the user's own machine — these fault-injection
+# endpoints power the Dev surface (US-DEV-01, dev-only): simulate an expired
+# LinkedIn cookie mid-action, a crash mid-generation, and quick seed data.
+
+
+@router.post("/api/dev/linkedin/expire-cookie")
+async def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
+    """Expire the `li_at` cookie in the saved session **without** touching the
+    session row — so the app still believes it's connected, and the *next* real
+    LinkedIn action fails on auth. Lets the maintainer test how an in-flight
+    action handles a session that dies midway (graceful-failure design).
+
+    Works whether the storage-state file is Fernet-sealed (NFR-SEC-01, 2026-07-09)
+    or legacy plaintext: it unseals with the session key, sets `li_at`'s expiry to
+    the past, and reseals in the SAME format. Before this fix it parsed the file
+    as plaintext and silently no-op'd on any sealed session."""
+    from pathlib import Path
+
+    from ..db.database import resolve_data_dir
+    from ..security import get_session_key, read_session_state, write_session_state
+
+    data_dir = Path(getattr(request.app.state, "data_dir", None) or resolve_data_dir())
+    storage = data_dir / "linkedin" / "storage_state.json"
+    if not storage.exists():
+        return {"ok": False, "detail": "no saved session file to expire"}
+    try:
+        key = get_session_key(data_dir)
+    except Exception as exc:  # noqa: BLE001 — surface a missing key honestly
+        raise HTTPException(
+            status_code=500, detail=f"no session key available to unseal: {exc}"
+        ) from exc
+    try:
+        state, sealed = read_session_state(storage, key)
+    except Exception as exc:  # noqa: BLE001 — unreadable/undecryptable → honest 500
+        raise HTTPException(
+            status_code=500, detail=f"could not read session file: {exc}"
+        ) from exc
+    expired = 0
+    for cookie in state.get("cookies", []):
+        if cookie.get("name") == "li_at":
+            cookie["expires"] = 1  # epoch+1s — unambiguously in the past
+            expired += 1
+    if expired == 0:
+        return {"ok": False, "detail": "no li_at cookie in the saved session"}
+    try:
+        write_session_state(storage, state, key, sealed=sealed)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"could not rewrite session file: {exc}"
+        ) from exc
+    get_logger().info(
+        "dev: expired li_at cookie (%d, sealed=%s) — session row left intact", expired, sealed
+    )
+    return {
+        "ok": True,
+        "removed_cookies": expired,
+        "note": "next LinkedIn action will fail on auth",
+    }

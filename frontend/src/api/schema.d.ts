@@ -571,6 +571,381 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications/{application_id}/networking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Application Networking
+         * @description The referral contacts linked to this role + their statuses — the detail
+         *     modal's Networking tab (US-TR-03, shown only when LinkedIn is ON).
+         */
+        get: operations["application_networking_api_applications__application_id__networking_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Contacts
+         * @description The networking kanban roster (US-NW-01). Excludes archived and, by
+         *     default, `candidate` rows (discovered-but-not-reached — off the kanban).
+         *     `archived=true` flips it to the "Deleted Contacts" recovery view: only the
+         *     archived rows, so a user can restore a contact they removed.
+         */
+        get: operations["list_contacts_api_contacts_get"];
+        put?: never;
+        /**
+         * Create Contact
+         * @description Manual add-a-contact by URL/name (US-NW-02) — the rank-don't-gate escape
+         *     hatch. Always available regardless of LinkedIn state. Dedups on linkedin_url.
+         *
+         *     Re-adding a URL that belongs to an *archived* (deleted) contact restores it
+         *     to the kanban rather than silently returning a still-hidden row — the same
+         *     "put it back" semantics as un-trashing a job (2026-07-10 re-add fix). Its
+         *     prior outreach history is preserved; only the requested live column is set.
+         */
+        post: operations["create_contact_api_contacts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/contacts/{contact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Contact
+         * @description Move a contact between kanban columns (US-NW-07) / archive / re-tag.
+         */
+        patch: operations["update_contact_api_contacts__contact_id__patch"];
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/referrals/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Referral Candidates
+         * @description The find-referrals popup candidate list for one role (US-NW-09). Contacts
+         *     at the job's company + per-contact template drafts + already-reached derived
+         *     from the OutreachLog. Run discover first to populate candidates.
+         */
+        get: operations["list_referral_candidates_api_jobs__job_id__referrals_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/referrals/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover Referrals
+         * @description Kick off referral discovery for a job's company (US-REF-01 / FR-NW-02).
+         *     Enqueues a `discover` op; live progress streams as `networker` SSE events for
+         *     the popup. `limit` is how many candidates to pull — the "find 10 more" /
+         *     `Load more` control bumps it (10 → 20 → …) so voyager returns a larger roster
+         *     that merges into the shared pool.
+         *
+         *     The op first resolves the company name to a LinkedIn company entity (URN) and
+         *     scopes the People search by it — current-employees-only, no name collisions.
+         *     When that resolution is ambiguous the op emits a `needs_company_confirm`
+         *     event instead of discovering; the popup then re-calls this with the user's
+         *     chosen `company_urn` (+ name/vanity/industry), which is cached and used.
+         */
+        post: operations["discover_referrals_api_jobs__job_id__referrals_discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/contacts/{contact_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draft Referral
+         * @description Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate).
+         *     Enqueues a `draft` op; read the message from the operation's result_ref.
+         */
+        post: operations["draft_referral_api_contacts__contact_id__draft_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/referrals/reach-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reach Out
+         * @description Batch reach-out (US-NW-09). Enqueues one single-flight `send` op per
+         *     selected contact — each carrying its own per-audience message. The per-action
+         *     confirmation lives in the UI; the send path runs only when the master toggle
+         *     is on (the UI gates it, and `_require_networking_enabled` gates it server-side
+         *     too — audit P2-4; a dry-run plans without touching LinkedIn).
+         */
+        post: operations["reach_out_api_referrals_reach_out_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/referrals/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Referrals Quota
+         * @description Rolling outreach quota for the popup counter (US-NW-09/10). App-side view
+         *     from the OutreachLog send windows + tier caps. The authoritative *live*
+         *     voyager quota is the maintainer's live-dogfood path (zero traffic here).
+         */
+        get: operations["referrals_quota_api_referrals_quota_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Linkedin Session
+         * @description LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+         *     Reads the persisted session (fast — local only); the popup send path
+         *     unlocks only when enabled AND status == 'valid'.
+         */
+        get: operations["linkedin_session_api_linkedin_session_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Connect
+         * @description Start the headed-login session capture (US-SET-06 as-built). Enqueues the
+         *     exclusive `linkedin_login` op — a visible browser opens at LinkedIn's login
+         *     page; the user logs in themselves (the password never touches finds-you-jobs).
+         *     `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture.
+         */
+        post: operations["linkedin_connect_api_linkedin_connect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Cancel
+         * @description Cancel an in-flight headed login (the Cancel button). Closes the browser.
+         */
+        post: operations["linkedin_cancel_api_linkedin_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Disconnect
+         * @description Disconnect: cancel any in-flight login, clear the session row, and delete
+         *     BOTH on-disk session stores — the sealed storage-state JSON and the
+         *     persistent Chromium profile (US-SET-06 Disconnect). Before 2026-07-12 the
+         *     profile dir survived, so a "disconnected" user's next login window opened
+         *     already logged in. This is local deletion only — it never logs the user out
+         *     of LinkedIn server-side (the UI says so).
+         */
+        post: operations["linkedin_disconnect_api_linkedin_disconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Validate
+         * @description Re-check the saved session LOCALLY (li_at presence/expiry) — **never hits
+         *     LinkedIn** (US-SET-06 Validate). Flips status to valid / expired / never_set
+         *     and stamps `last_validated_at`.
+         */
+        post: operations["linkedin_validate_api_linkedin_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Resume
+         * @description Clear the voyager-owned backoff pause (Settings → Networking manual resume,
+         *     FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates.
+         */
+        post: operations["linkedin_resume_api_linkedin_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/tier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Set Tier
+         * @description Set the account-tier (New / Seasoned) the app passes to voyager (US-REF-08).
+         *     voyager owns the cap *values*; this is only the user's tier selection.
+         */
+        post: operations["linkedin_set_tier_api_linkedin_tier_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/linkedin/expire-cookie": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Expire Linkedin Cookie
+         * @description Expire the `li_at` cookie in the saved session **without** touching the
+         *     session row — so the app still believes it's connected, and the *next* real
+         *     LinkedIn action fails on auth. Lets the maintainer test how an in-flight
+         *     action handles a session that dies midway (graceful-failure design).
+         *
+         *     Works whether the storage-state file is Fernet-sealed (NFR-SEC-01, 2026-07-09)
+         *     or legacy plaintext: it unseals with the session key, sets `li_at`'s expiry to
+         *     the past, and reseals in the SAME format. Before this fix it parsed the file
+         *     as plaintext and silently no-op'd on any sealed session.
+         */
+        post: operations["dev_expire_linkedin_cookie_api_dev_linkedin_expire_cookie_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/engines/verify": {
         parameters: {
             query?: never;
@@ -714,6 +1089,16 @@ export interface components {
              * @default none
              */
             packetCoverLetterState: string;
+            /**
+             * Referralsstate
+             * @default none
+             */
+            referralsState: string;
+            /**
+             * Referralscount
+             * @default 0
+             */
+            referralsCount: number;
             /** Artifacts */
             artifacts?: components["schemas"]["ArtifactDTO"][];
         };
@@ -797,6 +1182,105 @@ export interface components {
             /** Scanerror */
             scanError?: string | null;
         };
+        /** Body_draft_referral_api_contacts__contact_id__draft_post */
+        Body_draft_referral_api_contacts__contact_id__draft_post: {
+            /** Job Id */
+            job_id?: string | null;
+        };
+        /**
+         * ContactCreate
+         * @description Manual add-a-contact (US-NW-02) — the rank-don't-gate escape hatch. The
+         *     user can always add a contact by URL/name regardless of LinkedIn state.
+         */
+        ContactCreate: {
+            /** Linkedin Url */
+            linkedin_url: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Current Company
+             * @default
+             */
+            current_company: string;
+            /**
+             * Current Role
+             * @default
+             */
+            current_role: string;
+            /**
+             * Connection Status
+             * @default sent
+             */
+            connection_status: string;
+            /**
+             * Audience Tag
+             * @default other
+             */
+            audience_tag: string;
+        };
+        /**
+         * ContactDTO
+         * @description One contact on the networking kanban (US-NW-01) / contact modal (US-NW-03).
+         */
+        ContactDTO: {
+            /** Id */
+            id: string;
+            /** Linkedin Url */
+            linkedin_url: string;
+            /** Name */
+            name: string;
+            /** Current Role */
+            current_role: string;
+            /** Current Company */
+            current_company: string;
+            /** Headline */
+            headline: string;
+            /** Connection Degree */
+            connection_degree: number | null;
+            /** Is First Degree */
+            is_first_degree: boolean;
+            /** Audience Tag */
+            audience_tag: string;
+            /** Warmth */
+            warmth: string;
+            /** Connection Status */
+            connection_status: string;
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+            /**
+             * Last Touched At
+             * Format: date-time
+             */
+            last_touched_at: string;
+            /** Sent At */
+            sent_at: string | null;
+            /** Accepted At */
+            accepted_at: string | null;
+            /** Archived At */
+            archived_at: string | null;
+            /** Last Message */
+            last_message?: string | null;
+            /** Last Message At */
+            last_message_at?: string | null;
+        };
+        /**
+         * ContactUpdate
+         * @description Move between columns (US-NW-07) / archive / mark unresponsive.
+         */
+        ContactUpdate: {
+            /** Connection Status */
+            connection_status?: string | null;
+            /** Audience Tag */
+            audience_tag?: string | null;
+            /** Archived */
+            archived?: boolean | null;
+        };
         /**
          * CostTotalsDTO
          * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
@@ -820,6 +1304,37 @@ export interface components {
             by_kind: {
                 [key: string]: number;
             };
+        };
+        /**
+         * DiscoverReferralsRequest
+         * @description Kick off / resume referral discovery for a role (US-REF-01 / FR-NW-02).
+         *
+         *     `limit` bumps for the "find 10 more" control. `company_urn` (+ name/vanity/
+         *     industry) is set only when re-calling after a `needs_company_confirm` event —
+         *     it's the company the user picked in the confirm popup; the op caches + uses
+         *     it, skipping resolution.
+         */
+        DiscoverReferralsRequest: {
+            /**
+             * Limit
+             * @default 10
+             */
+            limit: number;
+            /**
+             * Page
+             * @default 1
+             */
+            page: number;
+            /** Company Urn */
+            company_urn?: string | null;
+            /** Company Name */
+            company_name?: string | null;
+            /** Company Vanity */
+            company_vanity?: string | null;
+            /** Company Industry */
+            company_industry?: string | null;
+            /** Company Url */
+            company_url?: string | null;
         };
         /**
          * EngineSettingDTO
@@ -1027,6 +1542,88 @@ export interface components {
             /** Feed State */
             feed_state?: string | null;
         };
+        /**
+         * LinkedInConnectRequest
+         * @description Start the headed LinkedIn login (US-SET-06 as-built). `login_url` +
+         *     `timeout_s` are maintainer/test overrides (a LOCAL fixture — never
+         *     linkedin.com); production sends an empty body and uses the real login page.
+         */
+        LinkedInConnectRequest: {
+            /** Login Url */
+            login_url?: string | null;
+            /** Timeout S */
+            timeout_s?: number | null;
+        };
+        /**
+         * LinkedInSessionDTO
+         * @description LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+         *
+         *     `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
+         *     `status` is the session validity. The popup send path unlocks only when
+         *     enabled AND status == 'valid'. N4 adds the session-capture metadata the
+         *     Settings → LinkedIn session UI renders (connected-as, expiry, backoff).
+         */
+        LinkedInSessionDTO: {
+            /** Enabled */
+            enabled: boolean;
+            /** Status */
+            status: string;
+            /** Account Tier */
+            account_tier: string;
+            /**
+             * Connected As
+             * @default
+             */
+            connected_as: string;
+            /** Li At Expires At */
+            li_at_expires_at?: string | null;
+            /** Last Validated At */
+            last_validated_at?: string | null;
+            /** Paused Until */
+            paused_until?: string | null;
+            /**
+             * Paused Reason
+             * @default
+             */
+            paused_reason: string;
+        };
+        /**
+         * LinkedInTierRequest
+         * @description Set the account-tier the app passes to the outreach package (US-REF-08).
+         */
+        LinkedInTierRequest: {
+            /** Account Tier */
+            account_tier: string;
+        };
+        /**
+         * NetworkingContactDTO
+         * @description One referral contact for a role, shown on the detail modal's Networking
+         *     tab (US-TR-03 — visible only when LinkedIn is ON). Status + last outreach.
+         */
+        NetworkingContactDTO: {
+            /** Contact Id */
+            contact_id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Company */
+            company: string;
+            /** Linkedin Url */
+            linkedin_url: string;
+            /** Connection Status */
+            connection_status: string;
+            /** Ask Status */
+            ask_status?: string | null;
+            /** Audience Tag */
+            audience_tag: string;
+            /** Last Message */
+            last_message?: string | null;
+            /** Last Message At */
+            last_message_at?: string | null;
+            /** Last Outcome */
+            last_outcome?: string | null;
+        };
         /** OperationAccepted */
         OperationAccepted: {
             /** Id */
@@ -1198,6 +1795,125 @@ export interface components {
         ProfileUpsert: {
             /** Resume Markdown */
             resume_markdown: string;
+        };
+        /**
+         * QuotaDTO
+         * @description Rolling outreach quota for the popup counter (US-NW-09 / US-NW-10).
+         *
+         *     App-side view derived from the OutreachLog send windows + the account-tier
+         *     caps. The *live* remaining cap is queried from the Referral Outreach package
+         *     only on the maintainer's live-dogfood path.
+         */
+        QuotaDTO: {
+            /** Connected */
+            connected: boolean;
+            /** Tier */
+            tier: string;
+            /** Daily Used */
+            daily_used: number;
+            /** Daily Limit */
+            daily_limit: number;
+            /** Weekly Used */
+            weekly_used: number;
+            /** Weekly Limit */
+            weekly_limit: number;
+            /**
+             * Dm Daily Sent
+             * @default 0
+             */
+            dm_daily_sent: number;
+            /**
+             * Dm Weekly Sent
+             * @default 0
+             */
+            dm_weekly_sent: number;
+        };
+        /** ReachOutContact */
+        ReachOutContact: {
+            /** Contact Id */
+            contact_id: string;
+            /** Message */
+            message: string;
+        };
+        /**
+         * ReachOutRequest
+         * @description Batch reach-out (US-NW-09). Each contact gets ITS audience/warmth template
+         *     (fanned out per person, not one string). Per-action confirmation lives in the
+         *     UI; `dry_run` plans the sends without touching LinkedIn.
+         */
+        ReachOutRequest: {
+            /** Job Id */
+            job_id?: string | null;
+            /** Application Id */
+            application_id?: string | null;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /** Contacts */
+            contacts: components["schemas"]["ReachOutContact"][];
+        };
+        /**
+         * ReachOutResult
+         * @description The enqueued send-operation ids, plus the contacts skipped as duplicates.
+         *
+         *     `skipped_contact_ids` lists contacts that already had a queued/running send
+         *     for this role — the idempotency guard against double-clicking "Send now"
+         *     enqueuing duplicate real LinkedIn invites (US-NW-09).
+         */
+        ReachOutResult: {
+            /** Enqueued */
+            enqueued: string[];
+            /** Skippedcontactids */
+            skippedContactIds?: string[];
+        };
+        /**
+         * ReferralCandidateDTO
+         * @description One row in the find-referrals popup (US-NW-09 / US-REF-01/02/03/10).
+         */
+        ReferralCandidateDTO: {
+            /** Contact Id */
+            contact_id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Company */
+            company: string;
+            /** Linkedin Url */
+            linkedin_url: string;
+            /** Degree */
+            degree: number | null;
+            /** Audience Tag */
+            audience_tag: string;
+            /** Warmth */
+            warmth: string;
+            /** Channel */
+            channel: string;
+            /** Already Reached */
+            already_reached: boolean;
+            /**
+             * Already Selected
+             * @default false
+             */
+            already_selected: boolean;
+            /** Draft */
+            draft: string;
+        };
+        /**
+         * ReferralCandidatesDTO
+         * @description The find-referrals popup payload for one role (US-NW-09).
+         */
+        ReferralCandidatesDTO: {
+            /** Job Id */
+            job_id: string;
+            /** Company */
+            company: string;
+            /** Candidates */
+            candidates: components["schemas"]["ReferralCandidateDTO"][];
+            /** Already Reached Count */
+            already_reached_count: number;
         };
         /** ScheduleDTO */
         ScheduleDTO: {
@@ -2272,6 +2988,482 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    application_networking_api_applications__application_id__networking_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkingContactDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_contacts_api_contacts_get: {
+        parameters: {
+            query?: {
+                company?: string | null;
+                include_candidates?: boolean;
+                archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_contact_api_contacts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_contact_api_contacts__contact_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                contact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_referral_candidates_api_jobs__job_id__referrals_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferralCandidatesDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_referrals_api_jobs__job_id__referrals_discover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DiscoverReferralsRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draft_referral_api_contacts__contact_id__draft_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                contact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Body_draft_referral_api_contacts__contact_id__draft_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reach_out_api_referrals_reach_out_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReachOutRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReachOutResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    referrals_quota_api_referrals_quota_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaDTO"];
+                };
+            };
+        };
+    };
+    linkedin_session_api_linkedin_session_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkedInSessionDTO"];
+                };
+            };
+        };
+    };
+    linkedin_connect_api_linkedin_connect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["LinkedInConnectRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    linkedin_cancel_api_linkedin_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    linkedin_disconnect_api_linkedin_disconnect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkedInSessionDTO"];
+                };
+            };
+        };
+    };
+    linkedin_validate_api_linkedin_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkedInSessionDTO"];
+                };
+            };
+        };
+    };
+    linkedin_resume_api_linkedin_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkedInSessionDTO"];
+                };
+            };
+        };
+    };
+    linkedin_set_tier_api_linkedin_tier_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkedInTierRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkedInSessionDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dev_expire_linkedin_cookie_api_dev_linkedin_expire_cookie_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
