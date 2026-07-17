@@ -38,9 +38,16 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
             return []
         version = profile.version
 
+        prefs = repos.preferences.get_or_create()
+        thresholds = prefs.thresholds or {}
+        # Auto-score opt-out (2026-07-17 dogfood): scoring every scanned job
+        # spends real tokens; the user can turn the whole chain off and jobs
+        # land unscored (Pending). Default ON — scoring is the product's
+        # rank-don't-gate backbone.
+        if not thresholds.get("auto_score_on_scan", True):
+            return []
         if limit is None:
-            prefs = repos.preferences.get_or_create()
-            raw = prefs.thresholds.get("score_new_batch", 0) if prefs.thresholds else 0
+            raw = thresholds.get("score_new_batch", 0)
             limit = int(raw or 0)
 
         jobs = repos.jobs.list(feed_state="active", limit=1000)

@@ -32,7 +32,7 @@ from ..registry import (
     OperationRegistry,
     default_operation_registry,
 )
-from .policy import DEFAULT_POLICY, ConcurrencyPolicy, can_start
+from .policy import DEFAULT_POLICY, ConcurrencyPolicy, can_start, dispatch_priority
 
 RESTART_NOTE = (
     "operation was running when the sidecar restarted; marked failed on boot "
@@ -170,6 +170,11 @@ class OperationRunner:
                 return
             with self._db.repos() as repos:
                 queued = repos.operations.list_by_state("queued")
+                # Interactive kinds jump the bulk fan-out (policy.py
+                # DISPATCH_PRIORITY): an apply/tailor the user is watching must
+                # never sit behind dozens of queued scores. Stable sort keeps
+                # FIFO within a priority band.
+                queued.sort(key=lambda op: dispatch_priority(op.kind))
                 running_kinds = list(self._running.values())
                 for op in queued:
                     if op.id in self._running:

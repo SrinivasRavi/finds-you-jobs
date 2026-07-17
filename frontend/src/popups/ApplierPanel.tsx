@@ -37,6 +37,8 @@ const DOT_CLS: Record<Tone, string> = {
  *  while running). Spinner shows only while the run is genuinely live. */
 function phaseInfo(status: ApplyRunStatus, phase: string): { label: string; tone: Tone; live: boolean } {
   switch (status) {
+    case "queued":
+      return { label: "Queued", tone: "info", live: true };
     case "waiting_for_packet":
       return { label: "Waiting for résumé", tone: "info", live: true };
     case "ready_for_human":
@@ -258,7 +260,8 @@ export function ApplierPanel({
     return parts.join(" · ");
   }, [usage]);
 
-  const canCancel = status === "waiting_for_packet" || status === "running";
+  const canCancel =
+    status === "queued" || status === "waiting_for_packet" || status === "running";
   const isRetryable = NON_SUCCESS_TERMINALS.includes(status);
   const okFields = run?.fields.filter((f) => f.ok).length ?? 0;
   const totalFields = run?.fields.length ?? 0;

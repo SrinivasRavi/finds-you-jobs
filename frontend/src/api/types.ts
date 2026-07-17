@@ -248,6 +248,7 @@ export interface Application {
 /** One durable Apply Run's terminal/live status (applier.md §9.1). `none` is the
  *  application-level "no run yet" marker; a real run is one of the others. */
 export type ApplyRunStatus =
+  | "queued"
   | "none"
   | "waiting_for_packet"
   | "running"
@@ -634,6 +635,7 @@ export interface Settings {
   /** Find referrals on Save — default OFF (experimental, account-risk); only
    *  effective when Referral Outreach (networking) is enabled. */
   auto_referrals_on_save: boolean;
+  auto_score_on_scan: boolean;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
    *  the human — the default) or "auto" (legacy fill-and-submit). */
   /** Save-time form prep (FR-APP-01, 2026-07-11): visit the job's real form,

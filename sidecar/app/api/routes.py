@@ -1635,7 +1635,7 @@ async def start_apply(
         if job is None:
             raise HTTPException(status_code=404, detail="job row missing")
         active = repos.apply_runs.latest_for_application(application_id)
-        if active is not None and active.status in ("waiting_for_packet", "running"):
+        if active is not None and active.status in ("queued", "waiting_for_packet", "running"):
             # Single-flight per card: reopening the companion binds to the
             # active run instead of double-launching a browser (§8.2).
             return dto.apply_run_dto(active)
@@ -1647,11 +1647,16 @@ async def start_apply(
         if payload.dev:
             snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
         operation_id = runner.submit("apply", snapshot)
+        # Honest initial state: the run is QUEUED until the op actually starts
+        # (the op flips it to waiting_for_packet/running) — the panel must not
+        # claim "waiting for résumé" while the dispatcher hasn't picked it up.
         run = repos.apply_runs.create(
             application_id,
             operation_id=operation_id,
             retry_of_run_id=payload.retry_of_run_id,
             source_url=job.canonical_url,
+            status="queued",
+            phase="queued",
         )
         return dto.apply_run_dto(run)
 
@@ -1708,12 +1713,24 @@ async def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
     run as `interrupted`; an already-terminal run is returned unchanged."""
     from ..registry.apply_op import APPLY_CONTROL
 
+    runner = _runner(request)
     with _db(request).repos() as repos:
         run = repos.apply_runs.get(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
         if run.operation_id and run.operation_id in APPLY_CONTROL:
+            # In flight: cooperative — the loop notices between steps.
             APPLY_CONTROL[run.operation_id].cancel()
+        elif run.operation_id and run.status == "queued":
+            # Still queued: cancel the op outright and land the run honestly.
+            if runner.cancel(run.operation_id):
+                run = repos.apply_runs.update(
+                    run_id,
+                    status="interrupted",
+                    phase="interrupted",
+                    summary="cancelled before the run started",
+                    ended_at=now_utc(),
+                )
         return dto.apply_run_dto(run)
 
 

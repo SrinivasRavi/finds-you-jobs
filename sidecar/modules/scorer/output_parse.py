@@ -44,10 +44,16 @@ def parse_output(raw: str) -> tuple[int, list[str], str]:
         for line in m_reasons.group(1).strip().splitlines()
         if line.strip() and line.strip() not in {"-", "•"}
     ]
-    if not 2 <= len(reasons) <= 4:
+    # US-JB-05 wants 2–4 bullets. Too few is a real contract failure (no
+    # signal to show); too MANY is the model being chatty — failing the whole
+    # op (and eating the spend) over that was overzealous (2026-07-17
+    # dogfood: "got 5" burned a $0.30 call). Keep the strongest cut: the
+    # model orders reasons by importance, so truncate to the first 4.
+    if len(reasons) < 2:
         raise ScoreError(
             "parse", f"REASONS must be 2–4 bullets (US-JB-05); got {len(reasons)}"
         )
+    reasons = reasons[:4]
 
     breakdown_md = m_breakdown.group(1).strip()
     if not breakdown_md:

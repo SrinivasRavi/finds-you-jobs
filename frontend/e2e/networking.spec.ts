@@ -131,6 +131,13 @@ test("tracker referrals slot opens the find-referrals popup", async ({
     data: { job_id: job.id, generate_resume: false, generate_cover: false },
   });
 
+  // With networking ON, the Job Board's JD pane regains its per-job
+  // Find-referrals toggle (US-JB-03 / US-NW-09, restored 2026-07-17).
+  await page.goto("/jobs");
+  await page.getByText("Platform Engineer").first().click();
+  await expect(page.getByTestId("jd-referrals-toggle")).toBeVisible({ timeout: 15_000 });
+  await page.screenshot({ path: `${DIR}/jd-referrals-toggle.png`, fullPage: true });
+
   await page.goto("/applications");
   await expect(page.getByText("Platform Engineer").first()).toBeVisible({
     timeout: 15_000,

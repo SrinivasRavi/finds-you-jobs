@@ -11,6 +11,9 @@ import { qk } from "../api/queries";
 
 import {
   useAddJobByUrl,
+  useDiscoverReferrals,
+  useLinkedInSession,
+  useUpdateProfile,
   useBoard,
   useEmptyTrash,
   useJobPreview,
@@ -26,6 +29,7 @@ import { JobTombstonedError, type BoardPage, type Job, type JobDraft } from "../
 import { Icon } from "../shell/icons";
 import { Modal } from "../shell/Modal";
 import { Markdown } from "../shell/Markdown";
+import { ResumeModal } from "../popups/ResumeModal";
 import {
   firstHeading,
   initials,
@@ -235,6 +239,8 @@ function JobDetail({
   onUnexpire,
   sourceFilter,
   onToggleSource,
+  networkingEnabled,
+  onFindReferrals,
   packetDefaults,
 }: {
   job: Job | null;
@@ -243,7 +249,9 @@ function JobDetail({
   onUnexpire: (j: Job) => void;
   sourceFilter: string | null;
   onToggleSource: (adapter: string) => void;
-  packetDefaults: { resume: boolean; cl: boolean };
+  networkingEnabled: boolean;
+  onFindReferrals: (j: Job) => void;
+  packetDefaults: { resume: boolean; cl: boolean; refs: boolean };
 }) {
   // Per-job automation toggles (US-JB-03), seeded from the Settings default
   // (auto-packet-on-save) and reset per job — prototype jobs.html semantics.
@@ -319,7 +327,9 @@ function JobDetail({
           onClick={() => {
             setJustSaved(true);
             onSave(job, { resume: toggles.resume, cover: toggles.cl });
-            // Find referrals on Save returns with the referral-outreach commit.
+            // Saving with "Find referrals" on kicks off discovery for the
+            // company (US-NW-09 / US-REF-01).
+            if (toggles.refs) onFindReferrals(job);
           }}
           data-testid="save-to-tracker"
           data-saved={job.saved || justSaved}
@@ -341,19 +351,22 @@ function JobDetail({
           <Icon name="trash" size={14} strokeWidth={2} />
           Remove
         </button>
-        {/* Per-job automation toggles (US-JB-03). Referrals toggle returns
-            with the referral-outreach commit (US-NW-09 / FR-SET-03). */}
+        {/* Per-job automation toggles (US-JB-03). Referrals only when the
+            networking master toggle is on (US-NW-09 / FR-SET-03); the
+            "Application form answers" toggle stays retired (applier.md §2). */}
         <div className="ml-2 flex items-center gap-1.5" data-testid="jd-automation-toggles">
-          {/* The "Application form answers" toggle is retired with Save-time
-              form prep (docs/internal/applier.md §2). */}
-          {(["resume", "cl"] as const).map(
+          {(["resume", "cl", ...(networkingEnabled ? (["refs"] as const) : [])] as const).map(
             (slot) => {
               const on = toggles[slot];
-              const label = slot === "resume" ? "Resume" : "Cover letter";
+              const label =
+                slot === "resume" ? "Resume"
+                : slot === "cl" ? "Cover letter"
+                : "Find referrals";
               return (
                 <button
                   key={slot}
                   data-on={on}
+                  data-testid={slot === "refs" ? "jd-referrals-toggle" : undefined}
                   onClick={() => setToggles((t) => ({ ...t, [slot]: !t[slot] }))}
                   className={
                     "inline-flex h-[30px] items-center gap-1.5 rounded-7 border px-2 text-[11.5px] font-medium " +
@@ -516,6 +529,10 @@ export function JobBoard() {
   const tombstoneJob = useTombstoneJob();
   const addByUrl = useAddJobByUrl();
   const { data: settings } = useSettings();
+  const { data: profile } = useProfile();
+  const updateProfile = useUpdateProfile();
+  const session = useLinkedInSession();
+  const discoverReferrals = useDiscoverReferrals();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusFilter>("ALL");
@@ -530,7 +547,7 @@ export function JobBoard() {
   });
   const [showAdd, setShowAdd] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
-  // Master Resume popup returns with the resume-popup commit.
+  const [showMaster, setShowMaster] = useState(false);
   const [showPrefs, setShowPrefs] = useState(false);
   const dragging = useRef(false);
 
@@ -620,7 +637,15 @@ export function JobBoard() {
             <Icon name="settings" size={14} strokeWidth={2} />
             Job finder preferences
           </button>
-          {/* Master Resume popup returns with the resume-popup commit. */}
+          <button
+            onClick={() => setShowMaster(true)}
+            data-action="open-master-resume"
+            title="Jobs in the board are scored and ranked based on your Master Resume. Click to view and edit."
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
+          >
+            <Icon name="file" size={14} strokeWidth={2} />
+            Master Resume
+          </button>
           <button
             onClick={() => setShowTrash(true)}
             data-testid="trash-btn"
@@ -837,9 +862,12 @@ export function JobBoard() {
             onUnexpire={(j) => trashJob.mutate({ id: j.id, trashed: false })}
             sourceFilter={sourceFilter}
             onToggleSource={(a) => setSourceFilter((cur) => (cur === a ? null : a))}
+            networkingEnabled={Boolean(session.data?.enabled)}
+            onFindReferrals={(j) => discoverReferrals.mutate(j.id)}
             packetDefaults={{
               resume: settings?.auto_resume_on_save ?? true,
               cl: settings?.auto_cover_on_save ?? true,
+              refs: settings?.auto_referrals_on_save ?? false,
             }}
           />
         </div>
@@ -858,7 +886,14 @@ export function JobBoard() {
           onEmpty={() => emptyTrash.mutate()}
         />
       ) : null}
-      {/* Master Resume popup returns with the resume-popup commit. */}
+      {showMaster && profile ? (
+        <ResumeModal
+          kind="master"
+          profile={profile}
+          onClose={() => setShowMaster(false)}
+          onSaveMaster={(md: string) => updateProfile.mutate(md)}
+        />
+      ) : null}
       {showPrefs ? <FinderPrefsModal onClose={() => setShowPrefs(false)} /> : null}
     </>
   );

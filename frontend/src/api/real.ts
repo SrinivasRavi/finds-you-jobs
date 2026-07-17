@@ -779,6 +779,8 @@ export class RealApi {
       auto_resume_on_save: autoResume,
       auto_cover_on_save: autoCover,
       auto_referrals_on_save: autoReferrals,
+      auto_score_on_scan:
+        "auto_score_on_scan" in thresholds ? Boolean(thresholds.auto_score_on_scan) : true,
       score_new_batch: scoreNewBatch,
       providers: d.engines.map((e) => ({
         id: e.engine,
@@ -822,6 +824,8 @@ export class RealApi {
     const thresholdPatch: Record<string, unknown> = {};
     if (patch.auto_resume_on_save !== undefined) thresholdPatch.auto_resume_on_save = patch.auto_resume_on_save;
     if (patch.auto_cover_on_save !== undefined) thresholdPatch.auto_cover_on_save = patch.auto_cover_on_save;
+    if (patch.auto_score_on_scan !== undefined)
+      thresholdPatch.auto_score_on_scan = patch.auto_score_on_scan;
     if (patch.auto_referrals_on_save !== undefined)
       thresholdPatch.auto_referrals_on_save = patch.auto_referrals_on_save;
     if (patch.auto_packet_on_save !== undefined) thresholdPatch.auto_packet_on_save = patch.auto_packet_on_save;

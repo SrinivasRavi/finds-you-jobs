@@ -34,13 +34,18 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         "scan": "scan",
         # Trash-TTL eviction (FR-SYS-04): zero-LLM, DB-only, single-flight.
         "cleanup_trash": "cleanup_trash",
+        # One apply run at a time — but NOT exclusive: the agentic apply op
+        # WAITS for a still-generating tailored resume (applier.md §8.1), so
+        # the `tailor` op must be able to run beside it. Making apply
+        # exclusive dead-locked that wait until the packet timeout
+        # (2026-07-17 dogfood: "Waiting for résumé" for 15 minutes).
         "apply": "apply",
         # Networking voyager ops (Track N3) are each single-flight: LinkedIn
         # automation must never fan out in parallel (account-safety, NFR-LI-*).
         "discover": "networker_discover",
         "send": "networker_send",
         # The headed login (Track N4) opens a visible browser the user drives —
-        # exclusive so nothing else contends for it (like apply).
+        # exclusive so nothing else contends for it.
         "linkedin_login": "linkedin_login",
         "archive_stale_contacts": "archive_stale_contacts",
     },
@@ -49,8 +54,31 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         "networker_discover": 1, "networker_send": 1,
         "linkedin_login": 1, "archive_stale_contacts": 1,
     },
-    exclusive_kinds=frozenset({"apply", "linkedin_login"}),
+    exclusive_kinds=frozenset({"linkedin_login"}),
 )
+
+
+# Dispatch priority (lower dispatches first). The pump serves queued ops in
+# (priority, enqueue order): a user watching an Apply panel or a tracker card
+# must never sit behind a bulk score fan-out (2026-07-17 dogfood: an apply
+# queued behind 13 scores). Background bulk work keeps FIFO among itself.
+DISPATCH_PRIORITY: dict[str, int] = {
+    "apply": 0,
+    "linkedin_login": 0,
+    "tailor": 1,   # the apply packet-wait depends on these landing promptly
+    "cover": 1,
+    "draft": 2,
+    "send": 2,
+    "extract": 3,
+    "discover": 3,
+    "score": 8,
+    "scan": 9,
+}
+DEFAULT_DISPATCH_PRIORITY = 5
+
+
+def dispatch_priority(kind: str) -> int:
+    return DISPATCH_PRIORITY.get(kind, DEFAULT_DISPATCH_PRIORITY)
 
 
 def can_start(kind: str, running_kinds: Iterable[str], policy: ConcurrencyPolicy) -> bool:

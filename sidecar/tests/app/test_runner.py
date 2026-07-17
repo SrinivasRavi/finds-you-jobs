@@ -75,10 +75,33 @@ def test_can_start_scan_is_single_flight() -> None:
     assert can_start("scan", ["scan"], DEFAULT_POLICY) is False
 
 
-def test_can_start_apply_is_exclusive() -> None:
-    assert can_start("apply", ["score"], DEFAULT_POLICY) is False  # can't start beside others
-    assert can_start("score", ["apply"], DEFAULT_POLICY) is False  # apply blocks everything
+def test_apply_runs_beside_llm_ops_but_single_flight() -> None:
+    # The agentic apply op WAITS for a still-generating tailored resume
+    # (applier.md §8.1), so `tailor` MUST be startable while apply runs —
+    # exclusivity here dead-locked the packet wait (2026-07-17 dogfood).
+    assert can_start("apply", ["score"], DEFAULT_POLICY) is True
+    assert can_start("tailor", ["apply"], DEFAULT_POLICY) is True
+    assert can_start("apply", ["apply"], DEFAULT_POLICY) is False  # one run at a time
     assert can_start("apply", [], DEFAULT_POLICY) is True
+
+
+def test_linkedin_login_stays_exclusive() -> None:
+    assert can_start("linkedin_login", ["score"], DEFAULT_POLICY) is False
+    assert can_start("score", ["linkedin_login"], DEFAULT_POLICY) is False
+    assert can_start("linkedin_login", [], DEFAULT_POLICY) is True
+
+
+def test_dispatch_priority_orders_interactive_before_bulk() -> None:
+    from sidecar.app.runner.policy import dispatch_priority
+
+    # An apply the user is watching outranks the score fan-out, and the
+    # tailor it waits on outranks scores too (the starvation fix).
+    assert dispatch_priority("apply") < dispatch_priority("tailor")
+    assert dispatch_priority("tailor") < dispatch_priority("score")
+    assert dispatch_priority("score") < dispatch_priority("scan")
+    kinds = ["score", "score", "apply", "tailor", "scan"]
+    kinds.sort(key=dispatch_priority)
+    assert kinds[:2] == ["apply", "tailor"]
 
 
 # -- live runner -----------------------------------------------------------

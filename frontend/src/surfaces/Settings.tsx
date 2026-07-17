@@ -957,21 +957,49 @@ export function Settings() {
             </div>
           </Section>
 
-          {/* Scoring batch cap (audit P1-1) — caps how many jobs one scheduler
-              tick scores; 0/Uncapped is the planner's own default. */}
+          {/* Auto-score master switch (2026-07-17 dogfood) + batch cap (audit
+              P1-1). Scoring costs real tokens — the user can turn the whole
+              scan→score chain off; the cap only matters while it's on, so it
+              hides when disabled. */}
           <Section title="Scoring">
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <div className="text-[13px] font-medium text-ink">Scoring batch cap</div>
-                <div className="text-[12px] text-ink-3">
-                  Limit how many newly-scanned jobs get scored in one scheduler pass. Uncapped
-                  scores everything found; a cap spreads the LLM cost across more ticks.
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="text-[13px] font-medium text-ink">
+                    Score scanned jobs automatically
+                  </div>
+                  <div className="text-[12px] text-ink-3">
+                    Every new job is scored against your master resume (one AI call per
+                    job) so the board ranks by fit. Turn off to skip scoring — new jobs
+                    land unscored and the board sorts by recency.
+                  </div>
                 </div>
+                <Toggle
+                  on={settings.auto_score_on_scan}
+                  onChange={(v) => patch({ auto_score_on_scan: v })}
+                  testid="auto-score-toggle"
+                />
               </div>
-              <ScoreBatchCapControl
-                value={settings.score_new_batch}
-                onChange={(v) => patch({ score_new_batch: v })}
-              />
+              {settings.auto_score_on_scan ? (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <div className="text-[13px] font-medium text-ink">Scoring batch cap</div>
+                    <div className="text-[12px] text-ink-3">
+                      Limit how many newly-scanned jobs get scored in one scheduler pass. Uncapped
+                      scores everything found; a cap spreads the LLM cost across more ticks.
+                    </div>
+                  </div>
+                  <ScoreBatchCapControl
+                    value={settings.score_new_batch}
+                    onChange={(v) => patch({ score_new_batch: v })}
+                  />
+                </div>
+              ) : (
+                <div className="text-[12px] text-ink-3" data-testid="scoring-disabled-note">
+                  Scoring is off — scans still run, and new jobs appear unscored. You can
+                  turn this back on any time.
+                </div>
+              )}
             </div>
           </Section>
 

@@ -12,6 +12,86 @@ use tauri::{Manager, RunEvent, State};
 
 use sidecar::{dev_cwd, spawn_once, supervise, AppState};
 
+/// Open an external http(s) URL in the OS default browser. The WebView blocks
+/// window.open/target=_blank for external origins, so every outbound link in
+/// the app routes through here (2026-07-11 beta feedback — links didn't open;
+/// re-hit 2026-07-17: "Open posting" did nothing because this command was
+/// missing from the rebuild's shell while the frontend already invoked it).
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(format!("refusing to open non-http(s) URL: {url}"));
+    }
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(&url).spawn();
+    result.map(|_| ()).map_err(|e| format!("could not open browser: {e}"))
+}
+
+/// Open the user's terminal running `claude` so they can log into their Claude
+/// subscription for the CLI provider. The terminal's own login shell resolves
+/// `claude` on PATH (the same env the sidecar's login-shell probe uses), and
+/// `claude` persists auth to `~/.claude`, so onboarding's Verify — which reads
+/// that persisted auth — confirms success after they log in. Shown only when
+/// Verify reports `not_logged_in`, so an already-logged-in user never lands here.
+#[tauri::command]
+fn open_login_terminal() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"Terminal\" to activate",
+            "-e",
+            "tell application \"Terminal\" to do script \"claude\"",
+        ])
+        .spawn();
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("cmd")
+        .args(["/C", "start", "cmd", "/K", "claude"])
+        .spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("x-terminal-emulator")
+        .args(["-e", "claude"])
+        .spawn();
+    result.map(|_| ()).map_err(|e| format!("could not open terminal: {e}"))
+}
+
+/// Set the macOS dock / app-switcher icon at runtime to the finds-you-jobs logo.
+///
+/// A packaged `.app` gets its dock icon from `Contents/Resources/icon.icns` via
+/// `CFBundleIconFile`, but `pnpm tauri dev` runs an unbundled debug binary that
+/// has no such bundle, so it falls back to the default Tauri square. We embed
+/// the logo bytes and hand them to `NSApplication` directly. Harmless in a
+/// packaged build (it just re-asserts the same logo).
+#[cfg(target_os = "macos")]
+fn set_macos_dock_icon() {
+    use objc2::{AnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    // Embedded at compile time — no runtime path lookup (icons/ isn't beside the
+    // dev binary). Same source PNG the bundled icon.icns is generated from.
+    const ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
+
+    // Tauri's `setup` runs on the main thread; bail rather than panic if not.
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let data = NSData::with_bytes(ICON_PNG);
+    // SAFETY: `data` is a valid NSData; NSImage may return None for undecodable
+    // bytes, which we handle. setApplicationIconImage with Some is well-defined.
+    unsafe {
+        if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+            NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image));
+        }
+    }
+}
+
 /// Frontend reads the sidecar port through this command (architecture §4.4).
 #[tauri::command]
 fn get_sidecar_port(state: State<AppState>) -> Result<u16, String> {
@@ -58,13 +138,30 @@ fn fatal_dialog(message: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Single-instance guard (2026-07-17 dogfood: two app windows, two
+        // sidecars). A second launch focuses the existing window and exits.
+        // Must be the FIRST plugin registered so it wins before any setup.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             get_sidecar_port,
             get_api_token,
             get_sidecar_status,
+            open_external,
+            open_login_terminal,
         ])
         .setup(|app| {
+            // Dev-mode dock icon: the unbundled `tauri dev` binary has no
+            // .app bundle to source an icon from, so set it explicitly on macOS.
+            #[cfg(target_os = "macos")]
+            set_macos_dock_icon();
+
             let state: State<AppState> = app.state();
             let inner = state.inner.clone();
             let cwd = dev_cwd();

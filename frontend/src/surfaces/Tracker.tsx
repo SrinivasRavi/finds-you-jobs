@@ -73,6 +73,7 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
 // (yellow), submitted→"Submitted" (green check), and the honest non-success
 // terminals→"Retry" (red).
 const APPLY_SLOT: Record<Application["apply_run_status"], { label: string; state: string }> = {
+  queued: { label: "Applying…", state: "generating" },
   none: { label: "Apply", state: "none" },
   waiting_for_packet: { label: "Applying…", state: "generating" },
   running: { label: "Applying…", state: "generating" },

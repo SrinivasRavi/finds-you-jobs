@@ -87,7 +87,7 @@ def _wait_terminal(client: TestClient, run_id: str, timeout: float = 60.0) -> di
     run: dict = {}
     while time.monotonic() < deadline:
         run = client.get(f"/api/apply-runs/{run_id}", headers=AUTH).json()
-        if run["status"] not in ("waiting_for_packet", "running"):
+        if run["status"] not in ("queued", "waiting_for_packet", "running"):
             return run
         time.sleep(0.25)
     raise AssertionError(f"run {run_id} never landed: {run}")
@@ -126,7 +126,7 @@ def test_apply_run_lands_ready_for_human(app_client) -> None:
     )
     assert resp.status_code == 202, resp.text
     run = resp.json()
-    assert run["status"] == "waiting_for_packet"
+    assert run["status"] == "queued"  # honest: not started yet (2026-07-17)
 
     final = _wait_terminal(client, run["id"])
     assert final["status"] == "ready_for_human", final

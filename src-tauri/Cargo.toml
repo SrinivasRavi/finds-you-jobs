@@ -26,8 +26,20 @@ ureq = { version = "2", default-features = false }
 # Native message box for the AM1 "backend failed to start" fatal dialog.
 rfd = "0.15"
 
+# Second-launch guard: a re-run (or a dev relaunch beside a surviving window)
+# focuses the existing instance instead of opening a second app + sidecar.
+tauri-plugin-single-instance = "2"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# macOS-only: set the dock / app-switcher icon at runtime so the finds-you-jobs
+# logo shows during `pnpm tauri dev` (the unbundled debug binary doesn't carry
+# the bundled .icns the way a packaged .app does).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSImage"] }
+objc2-foundation = { version = "0.3", features = ["NSData"] }
 
 [features]
 # Kept for parity with the Tauri template; nothing custom yet.

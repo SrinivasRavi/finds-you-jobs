@@ -134,3 +134,25 @@ def test_dry_run_prompt_contains_skill_and_inputs_without_llm():
     assert "SYSTEM (skill)" in p and "USER" in p
     assert "job-fit scoring engine" in p
     assert "# Master resume body" in p
+
+
+def test_parse_output_truncates_excess_reasons_instead_of_failing():
+    # 2026-07-17 dogfood: a 5-bullet REASONS burned the whole (paid) call as a
+    # parse failure. The model orders reasons by importance — keep the first 4.
+    six = GOOD_OUTPUT.replace(
+        "===BREAKDOWN===",
+        "- extra reason three\n- extra reason four\n- extra reason five\n===BREAKDOWN===",
+    )
+    value, reasons, _ = parse_output(six)
+    assert value == 82
+    assert len(reasons) == 4
+    assert reasons[0] == "8 years Java/Spring matches the 5+ years backend requirement"
+
+
+def test_parse_output_still_rejects_too_few_reasons():
+    one = GOOD_OUTPUT.replace(
+        "- Missing: Rust listed as required; no master evidence\n", ""
+    )
+    with pytest.raises(ScoreError) as ei:
+        parse_output(one)
+    assert "2–4 bullets" in str(ei.value)

@@ -1114,7 +1114,7 @@ class ApplyRunsRepo:
     def list_active(self) -> list[ApplyRun]:
         """Runs a boot-recovery pass must mark interrupted (§9.3)."""
         stmt = select(ApplyRun).where(
-            ApplyRun.status.in_(("waiting_for_packet", "running"))
+            ApplyRun.status.in_(("queued", "waiting_for_packet", "running"))
         )
         return list(self._s.scalars(stmt))
 

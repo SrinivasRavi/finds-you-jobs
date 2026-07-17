@@ -53,6 +53,7 @@ interface Draft {
   locations: string[];
   freshness: string;
   cadence: string;
+  autoScore: boolean;
   provider: string;
   verified: boolean;
 }
@@ -87,6 +88,7 @@ export function Onboarding() {
   const [locInput, setLocInput] = useState("");
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
+  const [autoScore, setAutoScore] = useState(d0.autoScore ?? true);
 
   // Draft — provider. The raw key/base-URL is NOT persisted (it is sealed
   // server-side on Verify success); `verified` is, so a resumed wizard whose
@@ -117,6 +119,7 @@ export function Onboarding() {
       locations,
       freshness,
       cadence,
+      autoScore,
       provider,
       verified: verifyState === "verified",
     };
@@ -133,6 +136,7 @@ export function Onboarding() {
     locations,
     freshness,
     cadence,
+    autoScore,
     provider,
     verifyState,
   ]);
@@ -240,6 +244,11 @@ export function Onboarding() {
         await api.updateSettings({
           routing: LLM_KINDS.map((kind) => ({ kind, engine: provider, model: "" })),
         });
+      }
+      // Scoring opt-out (2026-07-17): committed only when the user turned it
+      // off — the backend default is on.
+      if (!autoScore) {
+        await api.updateSettings({ auto_score_on_scan: false });
       }
       // Cold-start scan (US-JB-09) — fire-and-forget, never blocks the redirect.
       await api.enqueueOperation("scan");
@@ -394,6 +403,22 @@ export function Onboarding() {
                       {c}
                     </Pill>
                   ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[12px] text-ink-3">
+                  Score scanned jobs automatically
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <Pill active={autoScore} onClick={() => setAutoScore(true)}>
+                    On — rank the board by fit (one AI call per job)
+                  </Pill>
+                  <Pill active={!autoScore} onClick={() => setAutoScore(false)}>
+                    Off — no scoring cost, sort by recency
+                  </Pill>
+                </div>
+                <div className="mt-1 text-[11.5px] text-ink-4">
+                  You can change this any time in Settings → Scoring.
                 </div>
               </div>
             </div>

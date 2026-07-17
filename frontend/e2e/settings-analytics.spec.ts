@@ -42,7 +42,17 @@ test("settings renders every restored section", async ({ page }) => {
   await expect(page.getByTestId("apply-mode-toggle")).toHaveCount(0);
   await expect(page.getByTestId("auto-prep-toggle")).toHaveCount(0);
   await expect(page.getByTestId("applier-p1-boundary")).toBeVisible();
+  // Auto-score master switch (2026-07-17): on by default with the batch cap
+  // visible; off hides the cap and shows the honest disabled note.
+  await expect(page.getByTestId("auto-score-toggle")).toBeVisible();
+  await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
   await page.screenshot({ path: `${DIR}/settings-overview.png`, fullPage: true });
+  await page.getByTestId("auto-score-toggle").click();
+  await expect(page.getByTestId("scoring-disabled-note")).toBeVisible();
+  await expect(page.getByTestId("score-batch-cap-uncapped")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/settings-scoring-off.png`, fullPage: true });
+  await page.getByTestId("auto-score-toggle").click();
+  await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
 });
 
 test("prompts editor round-trips an override", async ({ page, request }) => {
