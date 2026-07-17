@@ -51,3 +51,43 @@ async def render_resume_pdf_async(pw: Any, markdown_text: str, out_path: str) ->
         )
     finally:
         await browser.close()
+
+
+class PdfRenderError(RuntimeError):
+    """Chromium missing / render failure, with a user-facing message."""
+
+
+def render_resume_pdf(markdown_text: str, out_path: str) -> None:
+    """Sync render for worker-thread callers (the `/api/export/pdf` route).
+
+    Same pipeline/CSS as the async path; sync Playwright refuses to start
+    inside a running asyncio loop, so callers must run this in a thread."""
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import sync_playwright
+
+    body = MarkdownIt("commonmark").render(markdown_text)
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<style>{_CSS}</style></head><body>{body}</body></html>"
+    )
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.set_content(html, wait_until="load")
+                page.pdf(
+                    path=out_path,
+                    format="A4",
+                    print_background=True,
+                    margin={
+                        "top": "14mm",
+                        "bottom": "14mm",
+                        "left": "13mm",
+                        "right": "13mm",
+                    },
+                )
+            finally:
+                browser.close()
+    except PlaywrightError as e:
+        raise PdfRenderError(f"could not render the PDF: {e}") from e

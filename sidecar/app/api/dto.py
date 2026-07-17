@@ -605,6 +605,64 @@ class LinkedInTierRequest(BaseModel):
     account_tier: str  # new | seasoned
 
 
+class PromptDTO(BaseModel):
+    """One user-editable LLM prompt (module skill markdown). `default_md` is the
+    shipped text; `override_md` is the saved edit or None when unset (→ default).
+    `routed` marks the kinds that also carry an engine/model selector."""
+
+    kind: str
+    title: str
+    routed: bool
+    default_md: str
+    override_md: str | None
+
+
+class PromptUpdate(BaseModel):
+    """PUT body for a prompt override — the full replacement markdown."""
+
+    markdown: str
+
+
+class SpanDTO(BaseModel):
+    """One Logfire span row from the local span store (US-SYS-05 / A6).
+
+    Powers the Logs drill-down: per-operation timings + the engine-call breakdown
+    (cost / tokens / latency / model live in `attributes`). Read from
+    `logfire.sqlite` — never the app schema (no `Trace` table by design)."""
+
+    span_id: str
+    trace_id: str
+    parent_span_id: str | None
+    name: str
+    operation_id: str | None
+    op_kind: str | None
+    start_ns: int
+    end_ns: int
+    duration_ms: float
+    status: str
+    attributes: dict[str, Any]
+    events: list[dict[str, Any]]
+
+
+class ExportPdfRequest(BaseModel):
+    """Export a markdown document (resume / cover letter) as a PDF into the
+    user's Downloads folder (US-RES-03 slice, 2026-07-12 — the webview can't
+    print/download, so the sidecar renders and saves natively)."""
+
+    markdown: str
+    filename: str = "document"
+
+
+class ExportPdfResult(BaseModel):
+    path: str
+
+
+class BrowserInstallResult(BaseModel):
+    """The `POST /api/system/install-browser` response (A5b / A0.6)."""
+
+    status: str  # "started" | "already_running"
+
+
 class EngineVerifyRequest(BaseModel):
     """A provider-appropriate verify probe (FR-SET-06). `key` is sent for a
     verify-only check and is never persisted by this call."""

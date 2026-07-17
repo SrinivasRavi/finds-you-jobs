@@ -22,10 +22,27 @@ dependencies = [
     # never bundled). Also used by the Applier browser agent when it lands.
     "playwright>=1.48",
     "markdown-it-py>=4.2.0",
+    # Observability (architecture §10): Logfire SDK for per-operation tracing
+    # spans. Logfire itself is MIT; its OpenTelemetry deps are Apache-2.0 (both
+    # permissive / AGPL-compatible). App-layer only — never imported by
+    # `modules/` (the one-way rule). Spans persist to a local `logfire.sqlite`
+    # via a custom OTel exporter; `send_to_logfire=False` means ZERO network
+    # calls by default (NFR-OBS-01). OTLP export is opt-in only.
+    "logfire>=3.0",
+    "pypdf>=5",
+    "python-multipart>=0.0.32",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["sidecar"]
+
+[tool.logfire]
+# Observability is configured explicitly at app startup (observability/setup.py)
+# with send_to_logfire=False — a purely-local span pipeline, no network by
+# default (NFR-OBS-01). The runner may emit spans before/without that config
+# (isolated unit tests, boot-recovery), so suppress the "not configured" warning
+# rather than let it spam those paths — the spans are simply no-ops there.
+ignore_no_config = true
 
 [tool.ruff]
 line-length = 100

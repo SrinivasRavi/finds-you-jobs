@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.engines import router as engines_router
+from .api.ingest import router as ingest_router
 from .api.routes import router
 from .auth import BearerAuthMiddleware
 from .db import Database, resolve_db_url
@@ -27,6 +28,8 @@ from .db.database import resolve_data_dir
 from .db.migrate import upgrade_to_head
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub
 from .logging_setup import get_logger, setup_flight_recorder
+from .observability import ObservabilityHandle, configure_observability
+from .observability.config import observability_config
 from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
 from .runner import OperationRunner
@@ -98,10 +101,29 @@ def create_app(
         with db.repos() as repos:
             prefs = repos.preferences.get_or_create()
             routing = prefs.engine_routing
+            obs_cfg = observability_config(prefs.ui_state)
             engine_rows = repos.engine_settings.list()
         configure_engines(
             engines, routing, engine_rows=engine_rows, data_dir=resolved_data_dir
         )
+
+        # Observability (architecture §10): wire Logfire → local `logfire.sqlite`
+        # under the data dir. `send_to_logfire=False` is the hard invariant (no
+        # network by default, NFR-OBS-01); OTLP export only when the user opted
+        # in via Settings. Failure-tolerant: observability must never block boot,
+        # so a bad config degrades to no spans (runner tolerates `None`).
+        observability: ObservabilityHandle | None = None
+        try:
+            observability = configure_observability(
+                resolved_data_dir,
+                content_logging=obs_cfg.content_logging,
+                otlp_enabled=obs_cfg.otlp_enabled,
+                otlp_endpoint=obs_cfg.otlp_endpoint,
+                otlp_headers=obs_cfg.otlp_headers,
+                retention_days=obs_cfg.retention_days,
+            )
+        except Exception:  # noqa: BLE001 — observability must never block boot
+            log.exception("observability configuration failed; continuing without spans")
 
         # Applier boot recovery (`docs/internal/applier.md` §9.3): an active
         # browser context cannot be silently restored after a restart. Mark
@@ -126,7 +148,11 @@ def create_app(
             log.exception("apply-run boot recovery failed")
 
         runner = OperationRunner(
-            db, registry=operation_registry, engines=engines, publish=hub.publish
+            db,
+            registry=operation_registry,
+            engines=engines,
+            publish=hub.publish,
+            observability=observability,
         )
 
         # Scan → score chain (US-JB-02): every successful scan fans out one
@@ -146,6 +172,7 @@ def create_app(
         app.state.hub = hub
         app.state.engines = engines
         app.state.runner = runner
+        app.state.observability = observability
         app.state.data_dir = resolved_data_dir
 
         scheduler: Scheduler | None = None
@@ -212,6 +239,7 @@ def create_app(
 
     app.include_router(router)
     app.include_router(engines_router)
+    app.include_router(ingest_router)
     return app
 
 

@@ -95,6 +95,18 @@ PROMPT_KINDS: dict[str, PromptKind] = {
 }
 
 
+class UnknownPromptKind(KeyError):
+    """Asked for a prompt kind that isn't registered."""
+
+
+def default_md(kind: str) -> str:
+    """The shipped default text for `kind` (what Reset restores)."""
+    spec = PROMPT_KINDS.get(kind)
+    if spec is None:
+        raise UnknownPromptKind(kind)
+    return spec.default_loader()
+
+
 def _override_path(kind: str, data_dir: Path | None = None) -> Path:
     return resolve_data_dir(data_dir) / "prompts" / f"{kind}.md"
 

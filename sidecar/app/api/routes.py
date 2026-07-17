@@ -11,6 +11,7 @@ CRUD lands with its feature commits.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
@@ -26,6 +27,8 @@ from ..db import Database
 from ..db.base import now_utc
 from ..events import heartbeat_stream
 from ..logging_setup import get_logger
+from ..observability import reconfigure_observability
+from ..observability.config import observability_config
 from ..priority import STATS_KEY, zband_priority
 from ..registry import EngineRegistry
 from ..registry import networker_ops as networker_ops
@@ -499,6 +502,27 @@ def _thread_scan_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
     )
 
 
+def _thread_contact_sync_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
+    """Retime the `contact_sync` schedule from `lifecycle.contact_sync_cadence_hours`
+    (FR-NW-15 / FR-SYS-06). The schedule stays enabled (the entrypoint self-gates on
+    the toggle + session); we only adjust its interval so the user owns the cadence.
+    Clamped to ≥ 1 h so a fat-fingered 0 can't hot-loop the LinkedIn probe."""
+    lifecycle = (ui_state or {}).get("lifecycle")
+    if not isinstance(lifecycle, dict):
+        return
+    hours = lifecycle.get("contact_sync_cadence_hours")
+    if not isinstance(hours, (int, float)) or hours <= 0:
+        return
+    minutes = int(max(1, hours) * 60)
+    sched = next((s for s in repos.schedules.list_all() if s.kind == "contact_sync"), None)
+    if sched is None or sched.interval_minutes == minutes:
+        return
+    repos.schedules.update(
+        sched.id, interval_minutes=minutes,
+        next_due_at=now_utc() + timedelta(minutes=minutes),
+    )
+
+
 @router.post("/api/settings")
 async def update_settings(
     request: Request, payload: dto.PreferencesUpdate
@@ -513,11 +537,27 @@ async def update_settings(
         ui_state = prefs.ui_state
         if "ui_state" in fields:
             _thread_scan_cadence(repos, ui_state)
+            _thread_contact_sync_cadence(repos, ui_state)
         result = _settings_dto(repos)
     # Re-apply the routing map so a Settings change takes effect immediately.
     engines = _engines(request)
     if engines is not None and "engine_routing" in fields:
         apply_routing(engines, routing)
+    # A6: an observability change (content logging / OTLP opt-in / retention) is
+    # re-applied live — turning OTLP export ON adds the exporter, OFF removes it
+    # entirely (no exporter at all — the no-network-by-default invariant).
+    obs = getattr(request.app.state, "observability", None)
+    if obs is not None and "ui_state" in fields:
+        cfg = observability_config(ui_state)
+        reconfigure_observability(
+            obs,
+            obs.span_db_path.parent,  # the data dir (where logfire.sqlite lives)
+            content_logging=cfg.content_logging,
+            otlp_enabled=cfg.otlp_enabled,
+            otlp_endpoint=cfg.otlp_endpoint,
+            otlp_headers=cfg.otlp_headers,
+            retention_days=cfg.retention_days,
+        )
     return result
 
 
@@ -1709,3 +1749,168 @@ async def attest_apply_run(
                     {"from": app_row.column, "to": "applied", "by": "user_attested"},
                 )
         return dto.apply_run_dto(run)
+
+
+# ---------------------------------------------------------------------------
+# Feature-parity surfaces: prompts editor, spans drill-down, PDF export,
+# browser install, dev tools (carried from the prior repository)
+# ---------------------------------------------------------------------------
+
+
+def _prompts_data_dir(request: Request) -> Path:
+    return getattr(request.app.state, "data_dir", None) or Path()
+
+
+@router.get("/api/settings/prompts")
+async def list_prompts(request: Request) -> list[dto.PromptDTO]:
+    """Every editable prompt with its default + current override (US-SET-12)."""
+    from ..prompt_overrides import list_prompts as _list
+
+    return [dto.PromptDTO(**row) for row in _list(_prompts_data_dir(request))]
+
+
+@router.put("/api/settings/prompts/{kind}")
+async def set_prompt(
+    request: Request, kind: str, payload: dto.PromptUpdate
+) -> dto.PromptDTO:
+    """Save an override for `kind` (404 unknown kind, 422 empty markdown)."""
+    from ..prompt_overrides import (
+        PROMPT_KINDS,
+        default_md,
+        get_override,
+        set_override,
+    )
+
+    spec = PROMPT_KINDS.get(kind)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"unknown prompt kind {kind!r}")
+    if not payload.markdown.strip():
+        raise HTTPException(status_code=422, detail="prompt markdown cannot be empty")
+    data_dir = _prompts_data_dir(request)
+    set_override(kind, payload.markdown, data_dir)
+    return dto.PromptDTO(
+        kind=spec.kind, title=spec.title, routed=spec.routed,
+        default_md=default_md(kind), override_md=get_override(kind, data_dir),
+    )
+
+
+@router.delete("/api/settings/prompts/{kind}")
+async def reset_prompt(request: Request, kind: str) -> dto.PromptDTO:
+    """Reset `kind` to its shipped default (delete the override file)."""
+    from ..prompt_overrides import PROMPT_KINDS, default_md, reset
+
+    spec = PROMPT_KINDS.get(kind)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"unknown prompt kind {kind!r}")
+    data_dir = _prompts_data_dir(request)
+    reset(kind, data_dir)
+    return dto.PromptDTO(
+        kind=spec.kind, title=spec.title, routed=spec.routed,
+        default_md=default_md(kind), override_md=None,
+    )
+
+
+@router.get("/api/operations/{operation_id}/spans")
+async def get_operation_spans(request: Request, operation_id: str) -> list[dto.SpanDTO]:
+    """The Logfire spans for one operation — the Logs drill-down (US-SYS-05 / A6).
+
+    Reads the local `logfire.sqlite` span store (never the app schema). Returns
+    an empty list when observability isn't configured or the op has no spans yet
+    — the row still shows its ledger + verbatim error, so this only *enriches*."""
+    from ..observability import read_spans_for_operation
+
+    obs = getattr(request.app.state, "observability", None)
+    if obs is None or getattr(obs, "span_db_path", None) is None:
+        return []
+    rows = await asyncio.to_thread(
+        read_spans_for_operation, obs.span_db_path, operation_id
+    )
+    return [dto.SpanDTO(**row) for row in rows]
+
+
+def downloads_dir() -> Path:
+    """The user's Downloads folder (patched in tests)."""
+    return Path.home() / "Downloads"
+
+
+@router.post("/api/export/pdf")
+async def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
+    """Render markdown → PDF into ~/Downloads (US-RES-03 slice, 2026-07-12).
+
+    The webview can neither print nor download, so "Export to PDF" posts here;
+    the sidecar renders with the same Chromium pipeline the Applier uploads
+    (real selectable text) and saves collision-safe. Returns the saved path."""
+    from ..registry.pdf import PdfRenderError, render_resume_pdf
+
+    if not payload.markdown.strip():
+        raise HTTPException(status_code=422, detail="nothing to export — the document is empty")
+    stem = re.sub(r"[^\w\- ]+", "", payload.filename).strip().replace(" ", "-") or "document"
+    target_dir = downloads_dir()
+    await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
+    path = target_dir / f"{stem}.pdf"
+    n = 1
+    while await asyncio.to_thread(path.exists) and n < 100:
+        path = target_dir / f"{stem}-{n}.pdf"
+        n += 1
+    try:
+        # Sync Playwright refuses to start inside a running asyncio loop (the
+        # exact 503 users saw) and would block the loop anyway — render in a
+        # worker thread, like the engine-verify probes.
+        await asyncio.to_thread(render_resume_pdf, payload.markdown, str(path))
+    except PdfRenderError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return dto.ExportPdfResult(path=str(path))
+
+
+@router.post("/api/system/install-browser", status_code=202)
+async def install_browser(request: Request) -> dto.BrowserInstallResult:
+    """Download Playwright's Chromium (never bundled — §4.5). Coarse progress is
+    published on the SSE stream as `browser_install` events. Idempotent: a second
+    call while one is running returns `already_running`."""
+    from .browser import start_install
+
+    hub = getattr(request.app.state, "hub", None)
+    publish = hub.publish if hub is not None else None
+    status = start_install(publish)
+    return dto.BrowserInstallResult(status=status)
+
+
+@router.post("/api/dev/operations/fail-running")
+async def dev_fail_running(request: Request) -> dict[str, Any]:
+    """Mark every currently-`running` operation failed with the boot-recovery
+    note — simulates the app crashing mid-generation so the Logs 'App restarted
+    while generating — Retry' path (US-LOG-01) can be exercised on demand."""
+    from ..runner.runner import RESTART_NOTE
+
+    hub = getattr(request.app.state, "hub", None)
+    failed: list[str] = []
+    with _db(request).repos() as repos:
+        for op in repos.operations.list_by_state("running"):
+            repos.operations.mark_failed(op.id, error=RESTART_NOTE)
+            failed.append(op.id)
+            if hub is not None:
+                hub.publish(
+                    {"type": "operation", "payload": {"operation_id": op.id, "kind": op.kind,
+                                                       "state": "failed", "error": RESTART_NOTE}}
+                )
+    return {"ok": True, "failed": failed, "count": len(failed)}
+
+
+@router.post("/api/dev/seed-application", status_code=201)
+async def dev_seed_application(request: Request) -> dict[str, Any]:
+    """Create a sample Job + Saved Application so the Tracker has a card to drive
+    (drag, generate, apply) without a live scrape/score. Dev-only."""
+    import uuid
+
+    suffix = uuid.uuid4().hex[:8]
+    with _db(request).repos() as repos:
+        job = repos.jobs.create(
+            canonical_url=f"https://example.com/dev/{suffix}",
+            title="Dev Sample Engineer",
+            company="Devbento",
+            location="Remote",
+            description="A seeded job for local testing (Dev tab).",
+            source_adapter="dev-seed",
+        )
+        app = repos.applications.create(job_id=job.id, column="saved", priority="P2")
+        return {"ok": True, "job_id": job.id, "application_id": app.id}
