@@ -82,7 +82,9 @@ def _seed_card(client: TestClient) -> tuple[str, str]:
     return job["id"], application["id"]
 
 
-def _wait_terminal(client: TestClient, run_id: str, timeout: float = 60.0) -> dict:
+# 120 s: the suite now carries several real-Chromium tests; a cold browser
+# spawn under a loaded suite can push a run past 60 s (2026-07-17 flake).
+def _wait_terminal(client: TestClient, run_id: str, timeout: float = 120.0) -> dict:
     deadline = time.monotonic() + timeout
     run: dict = {}
     while time.monotonic() < deadline:

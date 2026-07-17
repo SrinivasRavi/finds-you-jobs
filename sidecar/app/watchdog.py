@@ -19,6 +19,15 @@ from .logging_setup import get_logger
 POLL_INTERVAL_SECONDS = 2.0
 
 
+def pid_alive(pid: int) -> bool:
+    """Signal-0 liveness probe (POSIX + Windows via os.kill emulation)."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def is_orphaned(original_ppid: int, current_ppid: int) -> bool:
     """True when the sidecar has been reparented away from its original parent.
 
@@ -41,20 +50,42 @@ async def watch_parent(
     *,
     poll_interval: float = POLL_INTERVAL_SECONDS,
     get_ppid: Callable[[], int] = os.getppid,
+    shell_pid: int | None = None,
+    is_alive: Callable[[int], bool] = pid_alive,
 ) -> None:
-    """Poll the parent pid; call `on_orphaned` once, then stop, when reparented.
+    """Poll for orphaning; call `on_orphaned` once, then stop.
 
-    `get_ppid` is injectable for tests. The coroutine ends after firing the
-    callback (or when cancelled at shutdown).
+    Two independent triggers (2026-07-17 dogfood — dev left uv+uvicorn alive):
+    - the immediate parent changed (classic reparenting — covers the packaged
+      build, where the shell spawns the sidecar binary directly);
+    - `shell_pid` (FYJ_SHELL_PID, the Tauri shell's own pid) is no longer
+      alive — covers dev, where the immediate parent is the `uv run` wrapper
+      that survives the shell and keeps the ppid check blind.
+
+    `get_ppid`/`is_alive` are injectable for tests. The coroutine ends after
+    firing the callback (or when cancelled at shutdown).
     """
     log = get_logger()
-    log.debug("orphan watchdog started (original_ppid=%d)", original_ppid)
+    log.debug(
+        "orphan watchdog started (original_ppid=%d shell_pid=%s)",
+        original_ppid,
+        shell_pid,
+    )
     while True:
         current = get_ppid()
         if is_orphaned(original_ppid, current):
             log.warning(
                 "orphaned: parent pid changed %d -> %d; shutting down",
                 original_ppid,
+                current,
+            )
+            await on_orphaned()
+            return
+        if shell_pid is not None and not is_alive(shell_pid):
+            log.warning(
+                "orphaned: shell pid %d is gone (wrapper parent %d still alive); "
+                "shutting down",
+                shell_pid,
                 current,
             )
             await on_orphaned()

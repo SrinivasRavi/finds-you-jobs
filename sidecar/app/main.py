@@ -196,7 +196,14 @@ def create_app(
                     request_shutdown()
 
             watchdog_task = asyncio.create_task(
-                watch_parent(original_ppid, _on_orphaned)
+                watch_parent(
+                    original_ppid,
+                    _on_orphaned,
+                    # Dev spawns via a `uv run` wrapper, so the immediate
+                    # parent outlives the shell — the shell passes its own
+                    # pid so the watchdog can watch the process that matters.
+                    shell_pid=int(os.environ.get("FYJ_SHELL_PID", "0")) or None,
+                )
             )
 
         try:

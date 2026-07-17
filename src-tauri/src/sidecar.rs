@@ -89,6 +89,10 @@ fn build_command(cwd: &Path) -> Command {
 pub fn spawn_once(cwd: &Path) -> std::io::Result<(Child, SidecarInfo)> {
     let mut cmd = build_command(cwd);
     cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    // The sidecar's orphan watchdog watches THIS pid (not just its immediate
+    // parent, which in dev is the `uv run` wrapper that outlives us) — so a
+    // hard-killed shell always takes the sidecar down within one poll tick.
+    cmd.env("FYJ_SHELL_PID", std::process::id().to_string());
     // Put the child in its own process group so we can kill the whole tree.
     #[cfg(unix)]
     {

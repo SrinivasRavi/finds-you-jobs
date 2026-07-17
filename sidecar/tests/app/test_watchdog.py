@@ -59,3 +59,39 @@ async def test_watch_parent_cancellable_while_healthy() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_watch_parent_fires_when_shell_pid_dies() -> None:
+    """The 2026-07-17 dev orphan: the immediate parent (the `uv run` wrapper)
+    stays alive, but the SHELL pid passed via FYJ_SHELL_PID is gone — the
+    watchdog must fire on shell-pid death alone."""
+    fired = asyncio.Event()
+
+    async def on_orphaned() -> None:
+        fired.set()
+
+    alive: dict[int, bool] = {4242: True}
+    task = asyncio.create_task(
+        watch_parent(
+            999,  # immediate parent never changes…
+            on_orphaned,
+            poll_interval=0.01,
+            get_ppid=lambda: 999,
+            shell_pid=4242,
+            is_alive=lambda pid: alive.get(pid, False),
+        )
+    )
+    await asyncio.sleep(0.05)
+    assert not fired.is_set()  # shell alive → healthy
+    alive[4242] = False  # shell dies; wrapper parent still "alive"
+    await asyncio.wait_for(fired.wait(), timeout=2)
+    await task
+
+
+def test_pid_alive_probe() -> None:
+    import os
+
+    from sidecar.app.watchdog import pid_alive
+
+    assert pid_alive(os.getpid()) is True
+    assert pid_alive(2**22 + 12345) is False  # far beyond pid_max on macOS/Linux

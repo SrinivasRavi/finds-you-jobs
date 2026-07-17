@@ -39,10 +39,22 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
+// Hard-killed parent (reparented without a signal): clean up the children
+// rather than orphaning vite + the sidecar (2026-07-17 dogfood).
+const ORIGINAL_PPID = process.ppid;
+setInterval(() => {
+  if (process.ppid !== ORIGINAL_PPID || process.ppid === 1) shutdown(0);
+}, 2000).unref();
+
 const sidecar = spawn("uv", ["run", "python", "-m", "sidecar.app"], {
   cwd: repoRoot,
   detached: true,
   stdio: ["ignore", "pipe", "inherit"],
+  // The sidecar's orphan watchdog watches THIS pid (2026-07-17): if this
+  // script is hard-killed (SIGKILL — Playwright teardown, a crashed shell),
+  // the sidecar reaps itself within a poll tick instead of squatting on the
+  // port with the `uv` wrapper.
+  env: { ...process.env, FYJ_SHELL_PID: String(process.pid) },
 });
 children.push(sidecar);
 

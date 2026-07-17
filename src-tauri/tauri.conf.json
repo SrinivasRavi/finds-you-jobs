@@ -4,7 +4,7 @@
   "version": "0.1.0-dev",
   "identifier": "com.finds-you-jobs.app",
   "build": {
-    "beforeDevCommand": "pnpm --dir frontend dev",
+    "beforeDevCommand": "node scripts/dev-frontend.mjs",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm --dir frontend build",
     "frontendDist": "../frontend/dist"
