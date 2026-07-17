@@ -292,6 +292,49 @@ class ApplicationEvent(Base):
     __table_args__ = (Index("ix_appevent_application", "application_id", "created_at"),)
 
 
+class ApplyRun(Base):
+    """One durable Applier attempt (`docs/internal/applier.md` §9.1) — the
+    first-class replacement for the prior repository's `applications.apply_state`
+    overload. A retry/reopen NEVER mutates an old run: it creates a fresh row
+    linked by `retry_of_run_id`, and the old run stays immutable evidence
+    (§8.3). P1 terminal statuses come from the jobapplier package — there is
+    no `submitted` written by the agent; Applied requires confirmation
+    evidence or explicit user attestation (§8.4), recorded by the API layer."""
+
+    __tablename__ = "apply_runs"
+
+    id: Mapped[str] = _pk()
+    application_id: Mapped[str] = mapped_column(
+        String, ForeignKey("applications.id"), nullable=False
+    )
+    operation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    retry_of_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # waiting_for_packet | running | ready_for_human | blocked | timed_out |
+    # interrupted | failed | submitted (API-side, evidence/attested only)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="waiting_for_packet")
+    phase: Mapped[str] = mapped_column(String, nullable=False, default="waiting_for_packet")
+    source_url: Mapped[str] = mapped_column(String, nullable=False, default="")
+    final_url: Mapped[str] = mapped_column(String, nullable=False, default="")
+    resume_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    cover_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Redacted JSON evidence (labels/kinds/paths — never raw form values §9.1):
+    # blockers [{kind, detail, field_label}], fields [{label, action, ok, note}],
+    # screenshots [paths], usage {calls, tokens_in, tokens_out, cost_usd}.
+    blockers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    screenshots: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    usage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    steps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # submitted-evidence trail (§8.4): none | confirmation_detected | user_attested
+    submit_evidence: Mapped[str] = mapped_column(String, nullable=False, default="none")
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    deadline_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    __table_args__ = (Index("ix_applyrun_application", "application_id", "started_at"),)
+
+
 # ---------------------------------------------------------------------------
 # Settings (database-design §4/§6)
 # ---------------------------------------------------------------------------

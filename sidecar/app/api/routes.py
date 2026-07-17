@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from sidecar.modules.scraper import ScraperError, probe_url
 from sidecar.modules.scraper.canonical import canonicalize_url
@@ -581,6 +582,7 @@ def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
         discover_in_flight=discover_in_flight,
         has_candidates=has_candidates,
         latest_batch_outcomes=latest_batch_outcomes,
+        latest_apply_run=repos.apply_runs.latest_for_application(application.id),
     )
 
 
@@ -943,6 +945,11 @@ async def create_operation(
         raise HTTPException(
             status_code=422,
             detail="use POST /api/linkedin/connect to start a LinkedIn login",
+        )
+    if kind == "apply":
+        raise HTTPException(
+            status_code=422,
+            detail="use POST /api/applications/{id}/apply to start an apply run",
         )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
@@ -1560,3 +1567,145 @@ async def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
         "removed_cookies": expired,
         "note": "next LinkedIn action will fail on auth",
     }
+
+
+# ---------------------------------------------------------------------------
+# Applier (docs/internal/applier.md §8) — direct apply runs off the Tracker
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/applications/{application_id}/apply", status_code=202)
+async def start_apply(
+    request: Request,
+    application_id: str,
+    payload: dto.ApplyStartRequest | None = None,
+) -> dto.ApplyRunDTO:
+    """Create the durable ApplyRun and enqueue the `apply` op immediately —
+    no pre-Apply confirmation modal (§8.1); the click IS the action. Clicking
+    Apply also settles the exclusive intent to `apply` (roadmap §5.1)."""
+    payload = payload or dto.ApplyStartRequest()
+    runner = _runner(request)
+    with _db(request).repos() as repos:
+        app_row = repos.applications.get(application_id)
+        if app_row is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        job = repos.jobs.get(app_row.job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job row missing")
+        active = repos.apply_runs.latest_for_application(application_id)
+        if active is not None and active.status in ("waiting_for_packet", "running"):
+            # Single-flight per card: reopening the companion binds to the
+            # active run instead of double-launching a browser (§8.2).
+            return dto.apply_run_dto(active)
+        if app_row.intent != "apply":
+            repos.applications.update(application_id, intent="apply")
+        snapshot: dict[str, Any] = {"application_id": application_id}
+        if payload.retry_of_run_id:
+            snapshot["retry_of_run_id"] = payload.retry_of_run_id
+        if payload.dev:
+            snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
+        operation_id = runner.submit("apply", snapshot)
+        run = repos.apply_runs.create(
+            application_id,
+            operation_id=operation_id,
+            retry_of_run_id=payload.retry_of_run_id,
+            source_url=job.canonical_url,
+        )
+        return dto.apply_run_dto(run)
+
+
+@router.get("/api/applications/{application_id}/apply-runs")
+async def list_apply_runs(
+    request: Request, application_id: str
+) -> list[dto.ApplyRunDTO]:
+    with _db(request).repos() as repos:
+        if repos.applications.get(application_id) is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        return [
+            dto.apply_run_dto(r)
+            for r in repos.apply_runs.list_for_application(application_id)
+        ]
+
+
+@router.get("/api/apply-runs/{run_id}")
+async def get_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
+    """The run snapshot — a reopened companion fetches this instead of
+    depending on having seen every prior SSE event (§9.2)."""
+    with _db(request).repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        return dto.apply_run_dto(run)
+
+
+@router.get("/api/apply-runs/{run_id}/screenshots/{index}")
+async def get_apply_run_screenshot(
+    request: Request, run_id: str, index: int
+) -> FileResponse:
+    """Serve one evidence PNG by index. Paths come from the run row only —
+    never from the client — so this cannot read arbitrary files."""
+    with _db(request).repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        shots = list(run.screenshots)
+    if not (0 <= index < len(shots)):
+        raise HTTPException(status_code=404, detail="no such screenshot")
+    path = Path(shots[index])
+    exists = await asyncio.to_thread(path.is_file)
+    if not exists:
+        raise HTTPException(status_code=404, detail="screenshot file missing")
+    return FileResponse(path, media_type="image/png")
+
+
+@router.post("/api/apply-runs/{run_id}/cancel")
+async def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
+    """Cooperative cancel (§8.2). The loop notices between steps and lands the
+    run as `interrupted`; an already-terminal run is returned unchanged."""
+    from ..registry.apply_op import APPLY_CONTROL
+
+    with _db(request).repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        if run.operation_id and run.operation_id in APPLY_CONTROL:
+            APPLY_CONTROL[run.operation_id].cancel()
+        return dto.apply_run_dto(run)
+
+
+@router.post("/api/apply-runs/{run_id}/attest")
+async def attest_apply_run(
+    request: Request, run_id: str, payload: dto.ApplyAttestRequest
+) -> dto.ApplyRunDTO:
+    """The human's word after the P1 handoff (§8.4): 'I submitted' records a
+    user-attested submission and advances the card to Applied; 'didn't submit'
+    leaves the card in its pre-submission column with the honest run result."""
+    with _db(request).repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        if run.status not in ("ready_for_human", "interrupted", "timed_out", "blocked"):
+            if not (run.status == "submitted" and payload.submitted):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"run is {run.status!r}; attestation applies after the handoff",
+                )
+        if payload.submitted and run.status != "submitted":
+            run = repos.apply_runs.update(
+                run_id, status="submitted", submit_evidence="user_attested"
+            )
+            app_row = repos.applications.get(run.application_id)
+            if app_row is not None and app_row.column in ("saved", "seeking_referral"):
+                repos.applications.update(
+                    run.application_id, column="applied", applied_via="applier"
+                )
+                repos.application_events.create(
+                    run.application_id,
+                    "column_change",
+                    {"from": app_row.column, "to": "applied", "by": "user_attested"},
+                )
+        return dto.apply_run_dto(run)

@@ -23,6 +23,7 @@ import ipaddress
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 
 from .actions import Action
@@ -92,7 +93,17 @@ class Executor:
         handler = getattr(self, f"_do_{action.tool}", None)
         if handler is None:  # finish/report_blocked terminate in the loop
             raise DisallowedActionError(f"{action.tool} is not executable")
-        return await handler(action)
+        try:
+            return await handler(action)
+        except PlaywrightError as exc:
+            # A page-level failure of ONE action (timeout on a non-fillable
+            # element, a detached node mid-click) is a failed action the loop
+            # can recover from — not a dead browser. A truly closed page
+            # surfaces again on the next observe and lands as INTERRUPTED.
+            if self._page.is_closed():
+                raise
+            reason = str(exc).splitlines()[0][:200]
+            return ExecOutcome(ok=False, note=f"{action.tool} failed: {reason}")
 
     # -- element plumbing ---------------------------------------------------
 

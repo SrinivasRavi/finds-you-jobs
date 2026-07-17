@@ -946,6 +946,130 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications/{application_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Apply
+         * @description Create the durable ApplyRun and enqueue the `apply` op immediately —
+         *     no pre-Apply confirmation modal (§8.1); the click IS the action. Clicking
+         *     Apply also settles the exclusive intent to `apply` (roadmap §5.1).
+         */
+        post: operations["start_apply_api_applications__application_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/{application_id}/apply-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Apply Runs */
+        get: operations["list_apply_runs_api_applications__application_id__apply_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apply-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Apply Run
+         * @description The run snapshot — a reopened companion fetches this instead of
+         *     depending on having seen every prior SSE event (§9.2).
+         */
+        get: operations["get_apply_run_api_apply_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apply-runs/{run_id}/screenshots/{index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Apply Run Screenshot
+         * @description Serve one evidence PNG by index. Paths come from the run row only —
+         *     never from the client — so this cannot read arbitrary files.
+         */
+        get: operations["get_apply_run_screenshot_api_apply_runs__run_id__screenshots__index__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apply-runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Apply Run
+         * @description Cooperative cancel (§8.2). The loop notices between steps and lands the
+         *     run as `interrupted`; an already-terminal run is returned unchanged.
+         */
+        post: operations["cancel_apply_run_api_apply_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apply-runs/{run_id}/attest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attest Apply Run
+         * @description The human's word after the P1 handoff (§8.4): 'I submitted' records a
+         *     user-attested submission and advances the card to Applied; 'didn't submit'
+         *     leaves the card in its pre-submission column with the honest run result.
+         */
+        post: operations["attest_apply_run_api_apply_runs__run_id__attest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/engines/verify": {
         parameters: {
             query?: never;
@@ -1099,6 +1223,13 @@ export interface components {
              * @default 0
              */
             referralsCount: number;
+            /**
+             * Applyrunstatus
+             * @default none
+             */
+            applyRunStatus: string;
+            /** Applyrunid */
+            applyRunId?: string | null;
             /** Artifacts */
             artifacts?: components["schemas"]["ArtifactDTO"][];
         };
@@ -1116,6 +1247,89 @@ export interface components {
             applied_via?: string | null;
             /** Archived */
             archived?: boolean | null;
+        };
+        /**
+         * ApplyAttestRequest
+         * @description POST /api/apply-runs/{id}/attest — the human says what happened after
+         *     reviewing the P1 handoff (§8.4). `submitted=True` records a user-attested
+         *     submission and moves the card to Applied; False leaves the card where it
+         *     is with the honest run result.
+         */
+        ApplyAttestRequest: {
+            /** Submitted */
+            submitted: boolean;
+        };
+        /**
+         * ApplyRunDTO
+         * @description One durable Applier attempt (`docs/internal/applier.md` §9.1) for the
+         *     companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
+         *     never raw form values); `screenshots` counts the evidence PNGs served by
+         *     `GET /api/apply-runs/{id}/screenshots/{index}`.
+         */
+        ApplyRunDTO: {
+            /** Id */
+            id: string;
+            /** Application Id */
+            application_id: string;
+            /** Operation Id */
+            operation_id: string | null;
+            /** Retry Of Run Id */
+            retry_of_run_id: string | null;
+            /** Status */
+            status: string;
+            /** Phase */
+            phase: string;
+            /** Source Url */
+            source_url: string;
+            /** Final Url */
+            final_url: string;
+            /** Summary */
+            summary: string;
+            /** Blockers */
+            blockers: {
+                [key: string]: unknown;
+            }[];
+            /** Fields */
+            fields: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Screenshot Count
+             * @default 0
+             */
+            screenshot_count: number;
+            /** Usage */
+            usage: {
+                [key: string]: unknown;
+            };
+            /** Steps */
+            steps: number;
+            /** Submit Evidence */
+            submit_evidence: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Deadline At */
+            deadline_at: string | null;
+            /** Ended At */
+            ended_at: string | null;
+        };
+        /**
+         * ApplyStartRequest
+         * @description POST /api/applications/{id}/apply — no pre-confirm modal (§8.1); the
+         *     click IS the action. `retry_of_run_id` links a Retry / Reopen-and-refill
+         *     to the immutable prior run (§8.3). The `dev` knobs pass through to the op
+         *     and are honored only when the sidecar runs with FYJ_APPLY_DEV=1.
+         */
+        ApplyStartRequest: {
+            /** Retry Of Run Id */
+            retry_of_run_id?: string | null;
+            /** Dev */
+            dev?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ArtifactDTO */
         ArtifactDTO: {
@@ -3464,6 +3678,201 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    start_apply_api_applications__application_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApplyStartRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_apply_runs_api_applications__application_id__apply_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_apply_run_api_apply_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_apply_run_screenshot_api_apply_runs__run_id__screenshots__index__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_apply_run_api_apply_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attest_apply_run_api_apply_runs__run_id__attest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyAttestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

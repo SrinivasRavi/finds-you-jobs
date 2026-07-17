@@ -219,7 +219,59 @@ class ApplicationDTO(BaseModel):
     # `pending` | `sending` | `reachedOut` | `failed`. See derive_referrals_state.
     referrals_state: str = Field(default="none", serialization_alias="referralsState")
     referrals_count: int = Field(default=0, serialization_alias="referralsCount")
+    # Latest Applier run for the card's Apply slot (`docs/internal/applier.md`
+    # §8.2/§9.1): none | waiting_for_packet | running | ready_for_human |
+    # blocked | timed_out | interrupted | failed | submitted.
+    apply_run_status: str = Field(default="none", serialization_alias="applyRunStatus")
+    apply_run_id: str | None = Field(default=None, serialization_alias="applyRunId")
     artifacts: list[ArtifactDTO] = Field(default_factory=list)
+
+
+class ApplyRunDTO(BaseModel):
+    """One durable Applier attempt (`docs/internal/applier.md` §9.1) for the
+    companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
+    never raw form values); `screenshots` counts the evidence PNGs served by
+    `GET /api/apply-runs/{id}/screenshots/{index}`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    application_id: str
+    operation_id: str | None
+    retry_of_run_id: str | None
+    status: str
+    phase: str
+    source_url: str
+    final_url: str
+    summary: str
+    blockers: list[dict[str, Any]]
+    fields: list[dict[str, Any]]
+    screenshot_count: int = 0
+    usage: dict[str, Any]
+    steps: int
+    submit_evidence: str
+    started_at: datetime
+    deadline_at: datetime | None
+    ended_at: datetime | None
+
+
+class ApplyStartRequest(BaseModel):
+    """POST /api/applications/{id}/apply — no pre-confirm modal (§8.1); the
+    click IS the action. `retry_of_run_id` links a Retry / Reopen-and-refill
+    to the immutable prior run (§8.3). The `dev` knobs pass through to the op
+    and are honored only when the sidecar runs with FYJ_APPLY_DEV=1."""
+
+    retry_of_run_id: str | None = None
+    dev: dict[str, Any] | None = None
+
+
+class ApplyAttestRequest(BaseModel):
+    """POST /api/apply-runs/{id}/attest — the human says what happened after
+    reviewing the P1 handoff (§8.4). `submitted=True` records a user-attested
+    submission and moves the card to Applied; False leaves the card where it
+    is with the honest run result."""
+
+    submitted: bool
 
 
 class ApplicationCreate(BaseModel):
@@ -732,6 +784,7 @@ def application_dto(
     discover_in_flight: bool = False,
     has_candidates: bool = False,
     latest_batch_outcomes: list[str] | None = None,
+    latest_apply_run: Any | None = None,
 ) -> ApplicationDTO:
     # Built explicitly (not model_validate) so we never lazy-load the ORM
     # relationship and packetState stays purely derived.
@@ -766,7 +819,34 @@ def application_dto(
         packet_cover_letter_state=derive_artifact_state(cover_a, cover_state),
         referrals_state=referrals_state,
         referrals_count=referrals_count,
+        apply_run_status=(
+            latest_apply_run.status if latest_apply_run is not None else "none"
+        ),
+        apply_run_id=latest_apply_run.id if latest_apply_run is not None else None,
         artifacts=artifact_dtos,
+    )
+
+
+def apply_run_dto(run: Any) -> ApplyRunDTO:
+    return ApplyRunDTO(
+        id=run.id,
+        application_id=run.application_id,
+        operation_id=run.operation_id,
+        retry_of_run_id=run.retry_of_run_id,
+        status=run.status,
+        phase=run.phase,
+        source_url=run.source_url,
+        final_url=run.final_url,
+        summary=run.summary,
+        blockers=list(run.blockers),
+        fields=list(run.fields),
+        screenshot_count=len(run.screenshots),
+        usage=dict(run.usage),
+        steps=run.steps,
+        submit_evidence=run.submit_evidence,
+        started_at=run.started_at,
+        deadline_at=run.deadline_at,
+        ended_at=run.ended_at,
     )
 
 

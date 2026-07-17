@@ -36,6 +36,7 @@ _EXPECTED = {
     "sequence_steps",
     "outreach_logs",
     "linkedin_sessions",
+    "apply_runs",
 }
 
 

@@ -22,6 +22,7 @@ from .api.engines import router as engines_router
 from .api.routes import router
 from .auth import BearerAuthMiddleware
 from .db import Database, resolve_db_url
+from .db.base import now_utc
 from .db.database import resolve_data_dir
 from .db.migrate import upgrade_to_head
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub
@@ -101,6 +102,28 @@ def create_app(
         configure_engines(
             engines, routing, engine_rows=engine_rows, data_dir=resolved_data_dir
         )
+
+        # Applier boot recovery (`docs/internal/applier.md` §9.3): an active
+        # browser context cannot be silently restored after a restart. Mark
+        # orphaned active runs interrupted and cancel their pending ops BEFORE
+        # runner boot recovery, so a queued `apply` never relaunches a browser
+        # nobody asked for.
+        try:
+            with db.repos() as repos:
+                for run in repos.apply_runs.list_active():
+                    repos.apply_runs.update(
+                        run.id,
+                        status="interrupted",
+                        phase="interrupted",
+                        summary="app stopped before the browser run completed",
+                        ended_at=now_utc(),
+                    )
+                    if run.operation_id:
+                        op = repos.operations.get(run.operation_id)
+                        if op is not None and op.state in ("queued", "running"):
+                            repos.operations.mark_cancelled(run.operation_id)
+        except Exception:  # noqa: BLE001 — recovery must never block boot
+            log.exception("apply-run boot recovery failed")
 
         runner = OperationRunner(
             db, registry=operation_registry, engines=engines, publish=hub.publish

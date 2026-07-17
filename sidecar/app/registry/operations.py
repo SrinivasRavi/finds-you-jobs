@@ -395,6 +395,7 @@ def default_operation_registry() -> OperationRegistry:
     # Imported here (not at module top) so the operations module stays free of
     # the networking package's playwright import cost unless a networking kind is
     # actually wired.
+    from .apply_op import apply_entrypoints
     from .contact_sync_op import contact_sync_entrypoints
     from .linkedin_op import linkedin_entrypoints
     from .networker_ops import networker_entrypoints
@@ -410,5 +411,6 @@ def default_operation_registry() -> OperationRegistry:
             **networker_entrypoints(),  # discover / draft / send
             **linkedin_entrypoints(),  # linkedin_login / archive_stale_contacts
             **contact_sync_entrypoints(),  # contact_sync
+            **apply_entrypoints(),  # apply (the Applier agent)
         }
     )

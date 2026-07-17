@@ -51,7 +51,11 @@ DEFAULT_ENGINE = "claude-cli"
 # cheap model is fine. (The prior repository also routed `prep`; Save-time
 # form-prep is retired in this rebuild — `docs/internal/applier.md` §2 — so
 # the kind is deliberately absent.)
-LLM_KINDS = ("score", "tailor", "cover", "extract")
+# Every LLM-driven kind must be here or apply_routing never routes it and the
+# op dies EngineNotConfiguredError in production. `draft` (Networker) was
+# missing in the prior repository — a latent bug this rebuild fixes; `apply`
+# is the Applier agent loop.
+LLM_KINDS = ("score", "tailor", "cover", "extract", "draft", "apply")
 
 
 # ---------------------------------------------------------------------------

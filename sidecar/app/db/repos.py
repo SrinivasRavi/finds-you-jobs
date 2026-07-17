@@ -20,6 +20,7 @@ from .base import now_utc
 from .models import (
     Application,
     ApplicationEvent,
+    ApplyRun,
     Artifact,
     CompanyResolution,
     Contact,
@@ -1068,6 +1069,56 @@ class LinkedInSessionRepo:
         return row
 
 
+class ApplyRunsRepo:
+    """Durable Applier attempts (`docs/internal/applier.md` §9.1). Runs are
+    append-only evidence: `update` mutates only the LIVE run's progress
+    columns; a retry creates a new row via `create(retry_of_run_id=...)`."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def create(self, application_id: str, **fields: Any) -> ApplyRun:
+        run = ApplyRun(application_id=application_id, **fields)
+        self._s.add(run)
+        self._s.flush()
+        return run
+
+    def get(self, run_id: str) -> ApplyRun | None:
+        return self._s.get(ApplyRun, run_id)
+
+    def get_by_operation(self, operation_id: str) -> ApplyRun | None:
+        stmt = select(ApplyRun).where(ApplyRun.operation_id == operation_id)
+        return self._s.scalars(stmt).first()
+
+    def update(self, run_id: str, **fields: Any) -> ApplyRun:
+        run = self._s.get(ApplyRun, run_id)
+        if run is None:
+            raise ValueError(f"apply run {run_id!r} not found")
+        for key, value in fields.items():
+            setattr(run, key, value)
+        self._s.flush()
+        return run
+
+    def list_for_application(self, application_id: str) -> list[ApplyRun]:
+        stmt = (
+            select(ApplyRun)
+            .where(ApplyRun.application_id == application_id)
+            .order_by(ApplyRun.started_at.desc(), ApplyRun.id.desc())
+        )
+        return list(self._s.scalars(stmt))
+
+    def latest_for_application(self, application_id: str) -> ApplyRun | None:
+        runs = self.list_for_application(application_id)
+        return runs[0] if runs else None
+
+    def list_active(self) -> list[ApplyRun]:
+        """Runs a boot-recovery pass must mark interrupted (§9.3)."""
+        stmt = select(ApplyRun).where(
+            ApplyRun.status.in_(("waiting_for_packet", "running"))
+        )
+        return list(self._s.scalars(stmt))
+
+
 class Repos:
     """One session, every aggregate repo. Feature commits add their repos here."""
 
@@ -1090,6 +1141,7 @@ class Repos:
         self.outreach_logs = OutreachLogsRepo(session)
         self.sequences = SequencesRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
+        self.apply_runs = ApplyRunsRepo(session)
 
     def prune_ledger(self, keep: int) -> int:
         """Ledger retention that preserves all-time spend: fold the usd/tokens of
