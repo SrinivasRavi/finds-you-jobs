@@ -6,47 +6,104 @@ each, helps you ask for referrals, and fills application forms for you to review
 submit. Everything runs on **your** computer with **your** AI key; there is no
 company server in the middle.
 
-## Install & run
+Pick your operating system and follow only that section.
 
-You need a terminal for two commands. Here's how to open one:
+---
 
-- **macOS** — press `⌘ + Space`, type `Terminal`, press Enter.
-- **Windows** — press the `Windows` key, type `PowerShell`, press Enter.
-- **Linux** — press `Ctrl + Alt + T` (or open "Terminal" from your apps).
+## macOS
 
-Then copy-paste **one** command for your system. It installs everything (git, the
-runtimes, and all dependencies), downloading the project into a `finds-you-jobs`
-folder in your current directory:
+**Open a terminal:** press `⌘ + Space`, type `Terminal`, press Enter.
 
-**macOS / Linux**
+**Install** (one copy-paste — installs git and every dependency, and downloads the
+app into a `finds-you-jobs` folder in your current directory):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.sh | bash
 ```
 
-**Windows** (in PowerShell)
+If it asks you to install the "command line developer tools", click Install, wait,
+then run the same command again.
+
+**Start the app** (the script prints this exact line with your real path at the end):
+
+```bash
+cd finds-you-jobs && pnpm dev
+```
+
+**Everyday commands** (run inside the `finds-you-jobs` folder):
+
+```bash
+pnpm dev                                  # start the app
+git pull && pnpm run boot                 # update to the latest version
+FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev    # start with a separate, fresh profile
+```
+
+---
+
+## Windows
+
+**Open a terminal:** press the `Windows` key, type `PowerShell`, press Enter.
+
+**Install** (one copy-paste — installs git, the C++ build tools the desktop shell
+needs, and every dependency, and downloads the app into a `finds-you-jobs` folder
+in your current directory; the build-tools download is large, let it run):
+
 ```powershell
 irm https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.ps1 | iex
 ```
 
-When it finishes, start the app:
-```bash
+**Start the app** (the script prints this with your real path at the end; if a
+command is "not recognized", close PowerShell, open a new one, and try again):
+
+```powershell
 cd finds-you-jobs
 pnpm dev
 ```
 
-The first launch builds the desktop shell and can take a few minutes; later launches
-are fast. On first run the app walks you through onboarding (paste your resume, pick
-an AI provider, add your key).
+**Everyday commands** (run inside the `finds-you-jobs` folder — note PowerShell
+uses `;` between commands, not `&&`):
 
-> Already have git and just want the code? `git clone https://github.com/SrinivasRavi/finds-you-jobs.git`, then `cd finds-you-jobs && bash scripts/setup.sh` (or `scripts\setup.ps1` on Windows).
+```powershell
+pnpm dev                                    # start the app
+git pull; pnpm run boot                     # update to the latest version
+$env:FYJ_DATA_DIR="$HOME\fyj-test"; pnpm dev  # start with a separate, fresh profile
+```
 
-### Everyday commands
+---
 
-| Command | What it does |
-| --- | --- |
-| `pnpm dev` | Start the app. |
-| `FYJ_DATA_DIR=~/some-folder pnpm dev` | Start with a **fresh, separate profile** (its own board, settings, and data). Omit it to use your normal profile. |
-| `git pull && pnpm run boot` | Update to the latest version and refresh dependencies. |
+## Linux
+
+**Open a terminal:** press `Ctrl + Alt + T`, or open "Terminal" from your apps.
+
+**Install** (one copy-paste — installs git, the desktop-shell system libraries via
+your package manager (`sudo` will prompt), and every dependency, and downloads the
+app into a `finds-you-jobs` folder in your current directory):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.sh | bash
+```
+
+**Start the app** (the script prints this exact line with your real path at the end):
+
+```bash
+cd finds-you-jobs && pnpm dev
+```
+
+**Everyday commands** (run inside the `finds-you-jobs` folder):
+
+```bash
+pnpm dev                                  # start the app
+git pull && pnpm run boot                 # update to the latest version
+FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev    # start with a separate, fresh profile
+```
+
+---
+
+## First launch
+
+The first `pnpm dev` compiles the desktop shell and can take a few minutes; later
+launches are fast. The app then walks you through onboarding: paste your resume,
+set your job preferences, pick an AI provider, and add your key.
 
 ## What it does
 
