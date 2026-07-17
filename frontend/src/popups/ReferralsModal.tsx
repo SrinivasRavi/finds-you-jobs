@@ -192,14 +192,25 @@ export function ReferralsModal({
         // open) shows instantly — discovery only runs when there's nothing
         // yet (2026-07-12 feedback: it re-searched on every open).
         const existing = await candidatesQ.refetch();
-        if ((existing.data?.candidates?.length ?? 0) > 0) {
+        const data = existing.data;
+        if ((data?.candidates?.length ?? 0) > 0) {
           if (!cancelled) setPhase("review");
           return;
         }
-        // Empty roster: idle `start` screen with an explicit Find-referrals
-        // button — nothing scans until the user asks. Once discovery has been
-        // kicked off (bootedRef), a re-run of this effect must not yank us back.
         if (bootedRef.current) return;
+        // Recover the last discover's outcome (2026-07-17): a background
+        // Save-discover that needed company confirmation used to vanish into a
+        // blank start screen. Resurface the picker (or the honest empty state)
+        // instead of pretending nothing ran.
+        if (data?.discover_state === "confirm") {
+          setCompanyCandidates(data.company_confirm ?? []);
+          setUrlFailed(Boolean(data.confirm_url_failed));
+          if (!cancelled) setPhase("confirm");
+          return;
+        }
+        // Empty roster: idle `start` screen with an explicit Find-referrals
+        // button (its copy notes when a prior scan found nobody). Nothing
+        // scans until the user asks.
         if (!cancelled) setPhase("start");
       } else {
         setPhase("review");
@@ -625,13 +636,26 @@ export function ReferralsModal({
             >
               <div className="max-w-md">
                 <div className="text-[14px] font-semibold text-ink">
-                  Find people who can refer you
+                  {candidatesQ.data?.discover_state === "empty"
+                    ? "No one found — yet"
+                    : "Find people who can refer you"}
                 </div>
                 <div className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3">
-                  We'll scan LinkedIn via your session for people at{" "}
-                  <strong className="text-ink-2">{company}</strong> — peers, hiring
-                  managers, and recruiters — and draft a tailored outreach message for
-                  each. Nothing is sent until you review and confirm.
+                  {candidatesQ.data?.discover_state === "empty" ? (
+                    <>
+                      The last scan didn't turn up anyone at{" "}
+                      <strong className="text-ink-2">{company}</strong>. The company
+                      name may be ambiguous on LinkedIn — try again, and if it still
+                      finds nobody, paste the company's LinkedIn URL when prompted.
+                    </>
+                  ) : (
+                    <>
+                      We'll scan LinkedIn via your session for people at{" "}
+                      <strong className="text-ink-2">{company}</strong> — peers, hiring
+                      managers, and recruiters — and draft a tailored outreach message
+                      for each. Nothing is sent until you review and confirm.
+                    </>
+                  )}
                 </div>
               </div>
               <button

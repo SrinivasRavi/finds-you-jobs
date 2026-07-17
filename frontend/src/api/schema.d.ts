@@ -2373,6 +2373,20 @@ export interface components {
             candidates: components["schemas"]["ReferralCandidateDTO"][];
             /** Already Reached Count */
             already_reached_count: number;
+            /**
+             * Discover State
+             * @default never
+             */
+            discover_state: string;
+            /** Company Confirm */
+            company_confirm?: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Confirm Url Failed
+             * @default false
+             */
+            confirm_url_failed: boolean;
         };
         /** ScheduleDTO */
         ScheduleDTO: {

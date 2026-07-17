@@ -503,6 +503,19 @@ class ReferralCandidatesDTO(BaseModel):
     company: str
     candidates: list[ReferralCandidateDTO]
     already_reached_count: int
+    # The last discover op's outcome for this role, so a reopened popup can
+    # recover a background (Save-triggered) discover instead of showing a blank
+    # start screen (2026-07-17 dogfood: a Save-discover that ended in
+    # needs_company_confirm left no visible trace). One of:
+    #   never   — no discover has run for this job
+    #   found   — discover persisted candidates (they're in `candidates`)
+    #   empty   — discover ran but LinkedIn returned nobody at the company
+    #   confirm — discover needs the user to pick the company entity
+    discover_state: str = "never"
+    # When discover_state == "confirm": the entity candidates to choose from
+    # (may be empty → paste-URL only) and whether a pasted URL had failed.
+    company_confirm: list[dict[str, Any]] = Field(default_factory=list)
+    confirm_url_failed: bool = False
 
 
 class ReachOutContact(BaseModel):

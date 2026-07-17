@@ -390,6 +390,11 @@ export interface ReferralCandidates {
   company: string;
   candidates: ReferralCandidate[];
   already_reached_count: number;
+  // Last discover outcome (2026-07-17): never | found | empty | confirm — lets
+  // a reopened popup recover a background Save-discover instead of a blank start.
+  discover_state: "never" | "found" | "empty" | "confirm";
+  company_confirm: CompanyCandidate[];
+  confirm_url_failed: boolean;
 }
 
 /** One LinkedIn company entity a company name resolved to (FR-NW-02). Shown in

@@ -98,3 +98,53 @@ test("tracker shows a saved card and records activity", async ({
   });
   await page.screenshot({ path: `${DIR}/tracker-moved.png`, fullPage: true });
 });
+
+test("apply slot is inert once a card is in the Applied column", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "https://example.com/e2e-applied-job",
+        title: "Applied Already Engineer",
+        company: "Initech",
+        location: "Remote",
+        description: "Own the monolith.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  const application = await (
+    await request.post(`${base}/api/applications`, {
+      headers: auth,
+      data: { job_id: job.id, generate_resume: false, generate_cover: false },
+    })
+  ).json();
+  // Move it straight to Applied (never ran the applier — apply_run_status stays none).
+  await request.patch(`${base}/api/applications/${application.id}`, {
+    headers: auth,
+    data: { column: "applied" },
+  });
+
+  await page.goto("/applications");
+  const card = page.getByText("Applied Already Engineer").first();
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  // The Apply slot renders a static "Applied" tag on a NON-button span — you
+  // can't start a fresh apply run for a job you've already applied to.
+  // Scope to THIS card: other specs leave earlier cards with live Apply slots.
+  const slot = page
+    .getByTestId("tracker-card")
+    .filter({ hasText: "Applied Already Engineer" })
+    .getByTestId("card-apply-slot");
+  await expect(slot).toContainText("Applied");
+  await expect(slot).toHaveJSProperty("tagName", "SPAN");
+  await page.screenshot({ path: `${DIR}/apply-slot-inert.png`, fullPage: true });
+});

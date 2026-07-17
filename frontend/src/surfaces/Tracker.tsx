@@ -85,6 +85,10 @@ const APPLY_SLOT: Record<Application["apply_run_status"], { label: string; state
   failed: { label: "Retry", state: "failed" },
 };
 
+// Stages where the job has already been applied to — the Apply slot must not
+// start a fresh run there (2026-07-17 dogfood).
+const POST_APPLICATION: Stage[] = ["Applied", "Interviewing", "Offer", "Rejected"];
+
 const SLOT_SPINNER = new Set(["generating", "finding", "sending"]);
 const SLOT_CHECK = new Set(["ready", "approved"]);
 
@@ -186,13 +190,23 @@ function Card({
           <PacketSlotTag label="Referrals" state={REFERRALS_SLOT_STATE[app.referrals_state]} />
         </button>
         {/* Apply slot (applier.md §8.1/§8.2) — starts a run (or reopens the
-            bound one) and opens the companion panel. */}
-        <button onClick={() => onSlot("apply")} data-testid="card-apply-slot">
-          <PacketSlotTag
-            label={APPLY_SLOT[app.apply_run_status].label}
-            state={APPLY_SLOT[app.apply_run_status].state}
-          />
-        </button>
+            bound one) and opens the companion panel. A card already past
+            application (Applied/Interviewing/Offer/Rejected) with no run can't
+            start one — you don't apply to a job you've already applied to
+            (2026-07-17 dogfood); it shows a static "Applied" and is inert. An
+            existing run stays reviewable in any stage. */}
+        {POST_APPLICATION.includes(app.stage) && app.apply_run_status === "none" ? (
+          <span data-testid="card-apply-slot">
+            <PacketSlotTag label="Applied" state="approved" />
+          </span>
+        ) : (
+          <button onClick={() => onSlot("apply")} data-testid="card-apply-slot">
+            <PacketSlotTag
+              label={APPLY_SLOT[app.apply_run_status].label}
+              state={APPLY_SLOT[app.apply_run_status].state}
+            />
+          </button>
+        )}
       </div>
       {/* days-in-column + last-touched (US-TR-01) */}
       <div className="mt-2 font-mono text-[10px] text-ink-4" data-testid="card-timestamps">

@@ -1251,10 +1251,38 @@ async def list_referral_candidates(
             )
             for c in contacts
         ]
+        # Recover the last discover's outcome (2026-07-17) so a Save-triggered
+        # background discover that needed company confirmation — or found
+        # nobody — doesn't reopen as a blank start screen.
+        discover_state = "never"
+        company_confirm: list[dict[str, Any]] = []
+        confirm_url_failed = False
+        discover_ops = [
+            op
+            for op in repos.operations.list_by_kind_states(
+                "discover", {"succeeded"}
+            )
+            if (op.input_snapshot or {}).get("job_id") == job_id
+        ]
+        if discover_ops:
+            latest = max(discover_ops, key=lambda op: op.created_at)
+            ref = latest.result_ref or {}
+            if ref.get("needs_company_confirm"):
+                discover_state = "confirm"
+                company_confirm = list(ref.get("candidates") or [])
+                confirm_url_failed = bool(ref.get("url_failed"))
+            elif candidates:
+                discover_state = "found"
+            else:
+                discover_state = "empty"
+        elif candidates:
+            discover_state = "found"
     # 1st → 2nd → 3rd degree ordering (US-NW-09 sort).
     candidates.sort(key=lambda c: (c.degree if c.degree is not None else 99))
     return dto.ReferralCandidatesDTO(
         job_id=job_id, company=company, candidates=candidates,
+        discover_state=discover_state, company_confirm=company_confirm,
+        confirm_url_failed=confirm_url_failed,
         already_reached_count=len(reached_ids),
     )
 

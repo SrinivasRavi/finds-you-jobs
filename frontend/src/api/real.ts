@@ -1038,6 +1038,9 @@ export class RealApi {
       company: d.company,
       already_reached_count: d.already_reached_count,
       candidates: (d.candidates ?? []).map(toCandidate),
+      discover_state: (d.discover_state ?? "never") as ReferralCandidates["discover_state"],
+      company_confirm: (d.company_confirm ?? []) as unknown as ReferralCandidates["company_confirm"],
+      confirm_url_failed: Boolean(d.confirm_url_failed),
     };
   }
 
