@@ -23,13 +23,24 @@ import type {
   Application,
   ApplicationProfile,
   ActivityEntry,
+  AudienceTag,
   BoardPage,
+  CompanyConfirmPick,
+  ContactInput,
   EngineSaveInput,
   EngineVerifyResult,
   Job,
   JobDraft,
+  LinkedInSessionState,
+  NetContact,
+  NetworkingContact,
   PacketState,
   Priority,
+  ReachOutInput,
+  ReachOutResult,
+  ReferralCandidate,
+  ReferralCandidates,
+  ReferralQuota,
   Stage,
   TombstoneResult,
   LedgerEntry,
@@ -38,6 +49,7 @@ import type {
   OperationKind,
   Profile,
   Settings,
+  Warmth,
 } from "./types";
 
 type JobDTO = components["schemas"]["JobDTO"];
@@ -49,6 +61,13 @@ type ProfileDTO = components["schemas"]["ProfileDTO"];
 type OperationDTO = components["schemas"]["OperationDTO"];
 type ApplicationDTO = components["schemas"]["ApplicationDTO"];
 type ActivityEntryDTO = components["schemas"]["ActivityEntryDTO"];
+// Networking DTOs (restored 2026-07-16 — the referral-outreach backend now exists).
+type NetworkingContactDTO = components["schemas"]["NetworkingContactDTO"];
+type ContactDTO = components["schemas"]["ContactDTO"];
+type ReferralCandidateDTO = components["schemas"]["ReferralCandidateDTO"];
+type ReferralCandidatesDTO = components["schemas"]["ReferralCandidatesDTO"];
+type QuotaDTO = components["schemas"]["QuotaDTO"];
+type LinkedInSessionDTO = components["schemas"]["LinkedInSessionDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
@@ -158,10 +177,11 @@ function placeholderJob(jobId: string): JobDTO {
 }
 
 // Restored from the prior repo's real.ts, trimmed: no apply_state/form_prep/
-// active_apply_operation_id/referrals_state/referrals_count (no Applier, no
-// save-time prep, no referral-outreach surface on this sidecar yet) —
-// preview_screenshot and posting_closed stay in the Application type but have
-// no live source here, so they're hardcoded null/false.
+// active_apply_operation_id (no Applier, no save-time prep surface on this
+// sidecar yet) — preview_screenshot and posting_closed stay in the
+// Application type but have no live source here, so they're hardcoded
+// null/false. referrals_state/referrals_count restored 2026-07-16 (the
+// referral-outreach backend now stamps them on every ApplicationDTO).
 function toApplication(d: ApplicationDTO, job: Job): Application {
   const artifacts = d.artifacts ?? [];
   const resume = artifacts.find((a) => a.kind === "tailored_resume");
@@ -185,6 +205,8 @@ function toApplication(d: ApplicationDTO, job: Job): Application {
     cover_notes: (cover?.notes ?? []) as string[],
     preview_screenshot: null,
     posting_closed: false,
+    referrals_state: (d.referralsState as Application["referrals_state"]) ?? "none",
+    referrals_count: d.referralsCount ?? 0,
     archived: d.archived_at != null,
     created_at: d.saved_at,
     updated_at: d.last_touched_at,
@@ -434,6 +456,25 @@ export class RealApi {
       label: r.label,
       state: r.state ?? null,
       at: r.at ?? null,
+    }));
+  }
+
+  /** The role's referral contacts + statuses — detail-modal Networking tab
+   *  (US-TR-03), restored 2026-07-16. */
+  async getApplicationNetworking(id: string): Promise<NetworkingContact[]> {
+    const rows = await this.req<NetworkingContactDTO[]>(`/api/applications/${id}/networking`);
+    return rows.map((r) => ({
+      contact_id: r.contact_id,
+      name: r.name,
+      role: r.role,
+      company: r.company,
+      linkedin_url: r.linkedin_url,
+      connection_status: r.connection_status,
+      ask_status: r.ask_status ?? null,
+      audience_tag: r.audience_tag,
+      last_message: r.last_message ?? null,
+      last_message_at: r.last_message_at ?? null,
+      last_outcome: r.last_outcome ?? null,
     }));
   }
 
@@ -761,4 +802,198 @@ export class RealApi {
       created_at: new Date().toISOString(),
     };
   }
+
+  // ── networking (Track N3) — restored 2026-07-16 from the prior repo's
+  // real.ts: the referral-outreach backend now exists. ────────────────────
+  async listContacts(company?: string): Promise<NetContact[]> {
+    const q = company ? `?company=${encodeURIComponent(company)}` : "";
+    const rows = await this.req<ContactDTO[]>(`/api/contacts${q}`);
+    return rows.map(toContact);
+  }
+
+  /** The "Deleted Contacts" recovery roster — archived rows only (US-NW-02). */
+  async listArchivedContacts(): Promise<NetContact[]> {
+    const rows = await this.req<ContactDTO[]>("/api/contacts?archived=true");
+    return rows.map(toContact);
+  }
+
+  async addContact(input: ContactInput): Promise<NetContact> {
+    const d = (await this.json("POST", "/api/contacts", {
+      linkedin_url: input.linkedin_url,
+      name: input.name ?? "",
+      current_company: input.current_company ?? "",
+      current_role: input.current_role ?? "",
+      connection_status: input.connection_status ?? "sent",
+      audience_tag: input.audience_tag ?? "other",
+    })) as ContactDTO;
+    return toContact(d);
+  }
+
+  async updateContact(id: string, patch: Partial<NetContact> & { archived?: boolean }): Promise<NetContact> {
+    const body: Record<string, unknown> = {};
+    if (patch.connection_status !== undefined) body.connection_status = patch.connection_status;
+    if (patch.audience_tag !== undefined) body.audience_tag = patch.audience_tag;
+    if (patch.archived !== undefined) body.archived = patch.archived;
+    const d = (await this.json("PATCH", `/api/contacts/${id}`, body)) as ContactDTO;
+    return toContact(d);
+  }
+
+  async listReferralCandidates(jobId: string): Promise<ReferralCandidates> {
+    const d = await this.req<ReferralCandidatesDTO>(`/api/jobs/${jobId}/referrals/candidates`);
+    return {
+      job_id: d.job_id,
+      company: d.company,
+      already_reached_count: d.already_reached_count,
+      candidates: (d.candidates ?? []).map(toCandidate),
+    };
+  }
+
+  async discoverReferrals(
+    jobId: string,
+    limit = 10,
+    confirm?: CompanyConfirmPick,
+    page = 1,
+  ): Promise<string> {
+    const body: Record<string, unknown> = { limit, page };
+    if (confirm?.companyUrl) {
+      body.company_url = confirm.companyUrl;
+    } else if (confirm?.companyUrn) {
+      body.company_urn = confirm.companyUrn;
+      body.company_name = confirm.companyName ?? "";
+      body.company_vanity = confirm.companyVanity ?? "";
+      body.company_industry = confirm.companyIndustry ?? "";
+    }
+    const d = (await this.json(
+      "POST",
+      `/api/jobs/${jobId}/referrals/discover`,
+      body,
+    )) as { id: string };
+    return d.id;
+  }
+
+  /** Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate).
+   *  Enqueues a `draft` op; the drafted message lands in the operation's
+   *  `result_ref` — the caller reads it via `getOperation` (not returned here). */
+  async draftReferral(contactId: string, jobId?: string | null): Promise<string> {
+    const d = (await this.json(
+      "POST",
+      `/api/contacts/${contactId}/draft`,
+      { job_id: jobId ?? null },
+    )) as { id: string };
+    return d.id;
+  }
+
+  async reachOut(input: ReachOutInput): Promise<ReachOutResult> {
+    const d = (await this.json("POST", "/api/referrals/reach-out", {
+      job_id: input.job_id ?? null,
+      application_id: input.application_id ?? null,
+      dry_run: input.dry_run ?? false,
+      contacts: input.contacts,
+    })) as { enqueued: string[]; skippedContactIds?: string[] };
+    return { enqueued: d.enqueued, skipped_contact_ids: d.skippedContactIds ?? [] };
+  }
+
+  async getReferralQuota(): Promise<ReferralQuota> {
+    const d = await this.req<QuotaDTO>("/api/referrals/quota");
+    return {
+      connected: d.connected,
+      tier: d.tier as ReferralQuota["tier"],
+      daily_used: d.daily_used,
+      daily_limit: d.daily_limit,
+      weekly_used: d.weekly_used,
+      weekly_limit: d.weekly_limit,
+      dm_daily_sent: d.dm_daily_sent ?? 0,
+      dm_weekly_sent: d.dm_weekly_sent ?? 0,
+    };
+  }
+
+  async getLinkedInSession(): Promise<LinkedInSessionState> {
+    return toLinkedInSession(await this.req<LinkedInSessionDTO>("/api/linkedin/session"));
+  }
+
+  // ── LinkedIn session capture (US-SET-06 / N4) — the connect/enable controls
+  // live in Settings (not built on this repo yet); these methods are restored
+  // so Settings can wire them up without another real.ts pass. ─────────────
+  async connectLinkedIn(): Promise<string> {
+    const d = (await this.json("POST", "/api/linkedin/connect", {})) as { id: string };
+    return d.id;
+  }
+
+  async cancelLinkedInConnect(): Promise<void> {
+    await this.json("POST", "/api/linkedin/cancel", {});
+  }
+
+  async disconnectLinkedIn(): Promise<LinkedInSessionState> {
+    return toLinkedInSession((await this.json(
+      "POST", "/api/linkedin/disconnect", {},
+    )) as LinkedInSessionDTO);
+  }
+
+  async validateLinkedIn(): Promise<LinkedInSessionState> {
+    return toLinkedInSession((await this.json(
+      "POST", "/api/linkedin/validate", {},
+    )) as LinkedInSessionDTO);
+  }
+
+  async resumeLinkedIn(): Promise<LinkedInSessionState> {
+    return toLinkedInSession((await this.json(
+      "POST", "/api/linkedin/resume", {},
+    )) as LinkedInSessionDTO);
+  }
+
+  async setLinkedInTier(tier: "new" | "seasoned"): Promise<LinkedInSessionState> {
+    return toLinkedInSession((await this.json(
+      "POST", "/api/linkedin/tier", { account_tier: tier },
+    )) as LinkedInSessionDTO);
+  }
+}
+
+function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
+  return {
+    enabled: d.enabled,
+    status: d.status as LinkedInSessionState["status"],
+    account_tier: d.account_tier as LinkedInSessionState["account_tier"],
+    connected_as: d.connected_as ?? "",
+    li_at_expires_at: d.li_at_expires_at ?? null,
+    last_validated_at: d.last_validated_at ?? null,
+    paused_until: d.paused_until ?? null,
+    paused_reason: d.paused_reason ?? "",
+  };
+}
+
+function toContact(d: ContactDTO): NetContact {
+  return {
+    id: d.id,
+    linkedin_url: d.linkedin_url,
+    name: d.name,
+    current_role: d.current_role,
+    current_company: d.current_company,
+    headline: d.headline,
+    connection_degree: d.connection_degree,
+    is_first_degree: d.is_first_degree,
+    audience_tag: d.audience_tag as AudienceTag,
+    warmth: d.warmth as Warmth,
+    connection_status: d.connection_status as NetContact["connection_status"],
+    last_message: d.last_message ?? null,
+    last_message_at: d.last_message_at ?? null,
+    sent_at: d.sent_at ?? null,
+    accepted_at: d.accepted_at ?? null,
+  };
+}
+
+function toCandidate(d: ReferralCandidateDTO): ReferralCandidate {
+  return {
+    contact_id: d.contact_id,
+    name: d.name,
+    role: d.role,
+    company: d.company,
+    linkedin_url: d.linkedin_url,
+    degree: d.degree,
+    audience_tag: d.audience_tag as AudienceTag,
+    warmth: d.warmth as Warmth,
+    channel: d.channel as ReferralCandidate["channel"],
+    already_reached: d.already_reached,
+    already_selected: d.already_selected ?? false,
+    draft: d.draft,
+  };
 }

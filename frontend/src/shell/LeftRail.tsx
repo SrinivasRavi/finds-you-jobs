@@ -49,10 +49,10 @@ function Tile({ to, label, icon }: RailItem) {
 
 function BrandMark() {
   return (
-    <div className="mb-3 mt-1 flex flex-col items-center gap-1" aria-label="Finds You Jobs">
+    <div className="mb-3 mt-1 flex flex-col items-center gap-1" aria-label="finds-you-jobs">
       <img
         src={logoUrl}
-        alt="Finds You Jobs"
+        alt="finds-you-jobs"
         width={38}
         height={38}
         className="h-[38px] w-[38px] rounded-[10px] object-cover shadow-sm"

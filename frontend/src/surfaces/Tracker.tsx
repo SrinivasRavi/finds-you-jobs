@@ -1,20 +1,24 @@
 // Application Tracker (US-TR-01..10) — 6-column kanban, card moves w/ Applied
-// freeze guardrail, detail modal (Overview/Notes/Scoring/Activity), 3 per-card
-// action slots, 3-dot menu, archive modal, search/priority/hide-rejected
-// filters, priority chips. Ports jobs-tracker.html.
+// freeze guardrail, detail modal (Overview/Notes/Scoring/Activity/Networking),
+// 3 per-card action slots (incl. the find-referrals popup off the Referrals
+// slot), 3-dot menu, archive modal, search/priority/hide-rejected filters,
+// priority chips. Ports jobs-tracker.html.
 //
-// Trimmed from the prior repo (no Applier/networking/save-time-prep surface on
-// this sidecar yet): no Apply button, no Networking tab, no Applier preview
-// screenshot / run-summary block. See inline comments at each cut.
+// Trimmed from the prior repo (no Applier/save-time-prep surface on this
+// sidecar yet): no Apply button, no Applier preview screenshot / run-summary
+// block. See inline comments at each cut. The Referrals slot + Networking tab
+// were restored 2026-07-16 (the referral-outreach backend now exists).
 
 import { useMemo, useState } from "react";
 
 import {
   useApplicationActivity,
+  useApplicationNetworking,
   useApplications,
   useArchived,
   useArchiveApplication,
   useGeneratePacket,
+  useLinkedInSession,
   useMoveApplication,
   usePatchArtifact,
   useProfile,
@@ -26,6 +30,7 @@ import {
 import type { Application, Job, Priority, Stage } from "../api/types";
 import { STAGES } from "../api/types";
 import { GuidanceDialog } from "../popups/GuidanceDialog";
+import { ReferralsModal } from "../popups/ReferralsModal";
 import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
 import { Icon } from "../shell/icons";
 import { Markdown } from "../shell/Markdown";
@@ -46,6 +51,19 @@ function PriorityChip({ p }: { p: Priority }) {
     </span>
   );
 }
+
+// Referrals slot renders the canonical FR-NW-01 pill: grey=notStarted(none),
+// grey+spinner=finding, yellow=pending, yellow+spinner=sending, green=reachedOut,
+// red=failed. Maps the backend enum onto the shared PacketSlotTag state keys.
+// Restored 2026-07-16 (the referral-outreach backend now exists).
+const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
+  none: "none",
+  finding: "finding",
+  pending: "pending",
+  sending: "sending",
+  reachedOut: "approved",
+  failed: "failed",
+};
 
 const SLOT_SPINNER = new Set(["generating", "finding", "sending"]);
 const SLOT_CHECK = new Set(["ready", "approved"]);
@@ -88,7 +106,7 @@ function Card({
   onOpen: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
-  onSlot: (kind: ResumeModalKind) => void;
+  onSlot: (kind: ResumeModalKind | "refs") => void;
   onMenu: () => void;
 }) {
   const tier = app.job.score ? scoreTier(app.job.score.score_0_100) : null;
@@ -135,8 +153,8 @@ function Card({
         <PriorityChip p={app.priority} />
       </div>
       {/* Three action slots — Resume · Cover letter · Referrals (US-TR-05).
-          Referrals renders a static "none" tag — REMOVED the find-referrals
-          wiring (no networking/referral-outreach surface on this sidecar). */}
+          Referrals restored 2026-07-16 — wired to real referrals_state +
+          opens the find-referrals popup. */}
       <div className="mt-2 flex flex-wrap items-center gap-1" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => onSlot("tailored")}>
           <PacketSlotTag label="Resume" state={app.packet_resume_state} />
@@ -144,7 +162,9 @@ function Card({
         <button onClick={() => onSlot("cover")}>
           <PacketSlotTag label="Cover letter" state={app.packet_cover_state} />
         </button>
-        <PacketSlotTag label="Referrals" state="none" />
+        <button onClick={() => onSlot("refs")} data-testid="card-referrals-slot">
+          <PacketSlotTag label="Referrals" state={REFERRALS_SLOT_STATE[app.referrals_state]} />
+        </button>
       </div>
       {/* REMOVED: Apply button (no Applier surface on this sidecar yet). */}
       {/* days-in-column + last-touched (US-TR-01) */}
@@ -194,8 +214,9 @@ export function Tracker() {
   const [popup, setPopup] = useState<{ kind: ResumeModalKind; appId: string } | null>(null);
   const [guidance, setGuidance] = useState<{ appId: string; label: string } | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
-  // REMOVED: applyId/referralsAppId (ApplyModal + ReferralsModal — no Applier/
-  // networking surface on this sidecar yet).
+  // REMOVED: applyId (ApplyModal — no Applier surface on this sidecar yet).
+  // referralsAppId restored 2026-07-16 (the find-referrals popup).
+  const [referralsAppId, setReferralsAppId] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
   // Pending drag INTO a frozen column (Applied+), held for the confirm dialog
   // below — that move can't be dragged back (2026-07-15 maintainer request;
@@ -336,7 +357,15 @@ export function Tracker() {
                       onOpen={() => setDetailId(app.id)}
                       onDragStart={() => setDragId(app.id)}
                       onDragEnd={() => setDragId(null)}
-                      onSlot={(kind) => setPopup({ kind, appId: app.id })}
+                      onSlot={(kind) => {
+                        if (kind === "refs") {
+                          // Open the find-referrals popup (US-NW-09). It handles
+                          // connected / drafts-only / no-session states internally.
+                          setReferralsAppId(app.id);
+                          return;
+                        }
+                        setPopup({ kind, appId: app.id });
+                      }}
                       onMenu={() => setMenuId(app.id)}
                     />
                   ))
@@ -486,8 +515,25 @@ export function Tracker() {
         <ArchiveModal archived={archived} onClose={() => setShowArchive(false)} />
       ) : null}
 
-      {/* REMOVED: Applier live modal + find-referrals popup (no Applier/
-          networking surface on this sidecar yet). */}
+      {/* REMOVED: Applier live modal (no Applier surface on this sidecar yet). */}
+
+      {/* Find-referrals popup (US-NW-09) — off the Referrals slot, restored
+          2026-07-16. */}
+      {referralsAppId
+        ? (() => {
+            const a = apps.find((x) => x.id === referralsAppId);
+            if (!a) return null;
+            return (
+              <ReferralsModal
+                jobId={a.job.id}
+                jobTitle={a.job.title}
+                company={a.job.company}
+                applicationId={a.id}
+                onClose={() => setReferralsAppId(null)}
+              />
+            );
+          })()
+        : null}
     </>
   );
 }
@@ -565,15 +611,24 @@ function DetailModal({
   onReturn: () => void;
   onOpenPopup: (kind: ResumeModalKind) => void;
 }) {
-  // REMOVED: Networking tab (no LinkedIn/referral-outreach surface on this
-  // sidecar yet — the prior repo gated it on `useLinkedInSession().enabled`).
-  type Tab = "Overview" | "Notes" | "Scoring" | "Activity";
+  // Networking tab restored 2026-07-16 (the referral-outreach backend now
+  // exists) — shown only when the LinkedIn toggle is on (US-TR-03 / FR-TR-03),
+  // same gate the prior repo used.
+  type Tab = "Overview" | "Notes" | "Scoring" | "Activity" | "Networking";
   const [tab, setTab] = useState<Tab>("Overview");
   const [notes, setNotes] = useState(app.notes);
+  const linkedInOn = Boolean(useLinkedInSession().data?.enabled);
   const activity = useApplicationActivity(app.id);
+  const networking = useApplicationNetworking(tab === "Networking" ? app.id : null);
   // Activity sits last (maintainer, 2026-07-11) — it's the audit trail, not
   // the working surface.
-  const tabs: Tab[] = ["Overview", "Notes", "Scoring", "Activity"];
+  const tabs: Tab[] = [
+    "Overview",
+    "Notes",
+    "Scoring",
+    ...(linkedInOn ? (["Networking"] as const) : []),
+    "Activity",
+  ];
 
   return (
     <Modal title={`${app.job.title} · ${app.job.company}`} onClose={onClose} width={640}>
@@ -727,9 +782,44 @@ function DetailModal({
               ))
             )}
           </ul>
-        ) : null}
-        {/* REMOVED: Networking tab (no LinkedIn/referral-outreach surface on
-            this sidecar yet). */}
+        ) : (
+          // Networking tab (US-TR-03) — the role's referral contacts + statuses.
+          // Restored 2026-07-16.
+          <div data-testid="networking-tab">
+            {networking.isLoading ? (
+              <p className="text-[12.5px] text-ink-3">Loading contacts…</p>
+            ) : (networking.data ?? []).length === 0 ? (
+              <p className="text-[12.5px] text-ink-3">
+                No referral contacts for this role yet. Use the Referrals action to find some.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {(networking.data ?? []).map((c) => (
+                  <li
+                    key={c.contact_id}
+                    data-testid="networking-contact"
+                    className="rounded-md border border-border px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[12.5px] font-medium text-ink">{c.name || "Unknown"}</span>
+                      <span className="rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3">
+                        {c.connection_status}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-ink-3">
+                      {[c.role, c.company].filter(Boolean).join(" · ")}
+                    </div>
+                    {c.last_message ? (
+                      <div className="mt-1 truncate text-[11px] text-ink-4">
+                        Last: {c.last_message}
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );

@@ -6,6 +6,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 import { useMasterProfileExists, useSSEInvalidation } from "./api/queries";
 import { Dev } from "./surfaces/Dev";
 import { JobBoard } from "./surfaces/JobBoard";
+import { Networking } from "./surfaces/Networking";
 import { Placeholder } from "./surfaces/Placeholder";
 import { Tracker } from "./surfaces/Tracker";
 import { Layout } from "./shell/Layout";
@@ -61,7 +62,7 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/jobs" replace /> },
       { path: "jobs", element: <JobBoard /> },
       { path: "applications", element: <Tracker /> },
-      { path: "networking", element: <Placeholder name="Networking" commit="referral-outreach" /> },
+      { path: "networking", element: <Networking /> },
       { path: "dev", element: <Dev /> },
       { path: "analytics", element: <Placeholder name="Analytics" commit="observability" /> },
       { path: "logs", element: <Navigate to="/analytics" replace /> },

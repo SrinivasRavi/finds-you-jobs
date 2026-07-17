@@ -179,9 +179,11 @@ export interface ActivityEntry {
 
 /** A tracked application (one per saved/applied job). Trimmed from the prior
  *  repo's shape: no apply_state/form_prep/form_prep_summary/
- *  active_apply_operation_id/referrals_state/referrals_count — the Applier,
- *  save-time prep, and referral-outreach surfaces haven't landed on this
- *  sidecar. `intent` is new (§5.1 exclusive value on ApplicationUpdate). */
+ *  active_apply_operation_id — the Applier and save-time prep surfaces
+ *  haven't landed on this sidecar. `intent` is new (§5.1 exclusive value on
+ *  ApplicationUpdate). `referrals_state`/`referrals_count` restored
+ *  (2026-07-16, referral-outreach frontend) — the networking surface now
+ *  exists on this sidecar. */
 export interface Application {
   id: string;
   job: Job;
@@ -213,9 +215,190 @@ export interface Application {
   /** Save-time liveness (2026-07-11): true when a prep run found the posting
    *  dead. Always false on this sidecar (no save-time prep surface yet). */
   posting_closed: boolean;
+  /** Referral progress for the tracker Referrals slot (restored 2026-07-16) —
+   *  the canonical FR-NW-01 enum (backend `none` renders as `notStarted`):
+   *  `none` (grey) → `finding` (grey+spinner, discovery running) → `pending`
+   *  (yellow — roster found, or a partial/cap-stopped batch) → `sending`
+   *  (yellow+spinner, batch in flight) → `reachedOut` (green, all selected
+   *  sent). `failed` (red) = latest batch all-failed. */
+  referrals_state:
+    | "none"
+    | "finding"
+    | "pending"
+    | "sending"
+    | "reachedOut"
+    | "failed";
+  referrals_count: number;
   archived: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/** One referral contact for a role on the detail modal's Networking tab
+ *  (US-TR-03) — restored 2026-07-16 from the prior repo. Maps NetworkingContactDTO
+ *  (`GET /api/applications/{id}/networking`). */
+export interface NetworkingContact {
+  contact_id: string;
+  name: string;
+  role: string;
+  company: string;
+  linkedin_url: string;
+  connection_status: string;
+  ask_status: string | null;
+  audience_tag: string;
+  last_message: string | null;
+  last_message_at: string | null;
+  last_outcome: string | null;
+}
+
+// ─── Networking (Track N3 — contacts kanban, find-referrals, quota) ─────────
+// Restored 2026-07-16 from the prior repo's types.ts: the referral-outreach
+// backend now exists (GET/POST /api/contacts, /api/jobs/{id}/referrals/*,
+// /api/referrals/*, /api/linkedin/*) — see schema.d.ts for the live DTOs.
+
+/** The P1 4+1 audience taxonomy (US-NW-09 / US-REF-02). */
+export type AudienceTag = "peer" | "hm" | "recruiter" | "leadership" | "other";
+/** Warmth split (US-REF-10): 1st-degree → warm DM; else cold connection-note. */
+export type Warmth = "warm" | "cold";
+/** Contact lifecycle. `candidate` = discovered, off the kanban; the rest are the
+ *  kanban columns (US-NW-01). */
+export type ConnectionStatus =
+  | "candidate"
+  | "sent"
+  | "accepted"
+  | "engagement"
+  | "ghosted"
+  | "converted";
+
+/** One contact on the networking kanban / contact modal (US-NW-01/03). */
+export interface NetContact {
+  id: string;
+  linkedin_url: string;
+  name: string;
+  current_role: string;
+  current_company: string;
+  headline: string;
+  connection_degree: number | null;
+  is_first_degree: boolean;
+  audience_tag: AudienceTag;
+  warmth: Warmth;
+  connection_status: ConnectionStatus;
+  last_message: string | null;
+  last_message_at: string | null;
+  sent_at: string | null;
+  accepted_at: string | null;
+}
+
+/** One row in the find-referrals popup (US-NW-09 / US-REF-01/02/03/10). */
+export interface ReferralCandidate {
+  contact_id: string;
+  name: string;
+  role: string;
+  company: string;
+  linkedin_url: string;
+  degree: number | null;
+  audience_tag: AudienceTag;
+  warmth: Warmth;
+  channel: "dm" | "connection_note";
+  already_reached: boolean;
+  /** In the role's persisted selection (FR-NW-01) — restores the popup's picks
+   *  when a `pending` popup is reopened. */
+  already_selected: boolean;
+  /** Deterministic per-audience template draft, editable before send. */
+  draft: string;
+}
+
+export interface ReferralCandidates {
+  job_id: string;
+  company: string;
+  candidates: ReferralCandidate[];
+  already_reached_count: number;
+}
+
+/** One LinkedIn company entity a company name resolved to (FR-NW-02). Shown in
+ *  the company-confirm step when discovery can't auto-pick (ambiguous name /
+ *  no employer-domain match); the user taps the right one before discovery runs.
+ *  Streamed in the `needs_company_confirm` networker SSE event. */
+export interface CompanyCandidate {
+  urn: string;
+  company_id: string;
+  name: string;
+  vanity: string;
+  industry: string;
+  logo_url: string;
+  website: string;
+  domain_match: boolean;
+}
+
+/** The company the user confirmed in the picker — re-sent with discovery so the
+ *  op scopes by that entity's URN (and caches the choice for the employer).
+ *  Either a picked candidate (`companyUrn` + meta) OR a pasted LinkedIn company
+ *  URL (`companyUrl`), which the backend resolves to the exact entity. */
+export interface CompanyConfirmPick {
+  companyUrn?: string;
+  companyName?: string;
+  companyVanity?: string;
+  companyIndustry?: string;
+  companyUrl?: string;
+}
+
+/** Rolling outreach quota for the popup counter (US-NW-09/10). */
+export interface ReferralQuota {
+  connected: boolean;
+  tier: "new" | "seasoned";
+  daily_used: number;
+  daily_limit: number;
+  weekly_used: number;
+  weekly_limit: number;
+  /** 1st-degree DMs: tracked + displayed, never capped (FR-NW-04) — they do
+   *  not decrement the invite counters above. */
+  dm_daily_sent: number;
+  dm_weekly_sent: number;
+}
+
+/** LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+ *  The send path unlocks only when `enabled` AND `status === "valid"`. The
+ *  connect/enable controls live in Settings (not built on this repo yet —
+ *  Networking only reads this for a read-only status pill). */
+export interface LinkedInSessionState {
+  enabled: boolean;
+  status: "valid" | "expired" | "never_set" | "connecting" | "backing_off";
+  account_tier: "new" | "seasoned";
+  connected_as: string;
+  li_at_expires_at: string | null;
+  last_validated_at: string | null;
+  paused_until: string | null;
+  paused_reason: string;
+}
+
+/** Manual add-a-contact input (US-NW-02). */
+export interface ContactInput {
+  linkedin_url: string;
+  name?: string;
+  current_company?: string;
+  current_role?: string;
+  connection_status?: ConnectionStatus;
+  audience_tag?: AudienceTag;
+}
+
+export interface ReachOutContactInput {
+  contact_id: string;
+  message: string;
+}
+
+/** Batch reach-out (US-NW-09). Each contact carries its own edited message. */
+export interface ReachOutInput {
+  job_id?: string | null;
+  application_id?: string | null;
+  dry_run?: boolean;
+  contacts: ReachOutContactInput[];
+}
+
+/** Reach-out result: the enqueued send-op ids + the contacts skipped as
+ *  duplicates (already had an in-flight send — the idempotency guard). */
+export interface ReachOutResult {
+  enqueued: string[];
+  skipped_contact_ids: string[];
 }
 
 // ─── /api/profile ───────────────────────────────────────────────────────────
@@ -278,9 +461,23 @@ export interface OnboardingPrefsInput {
 // ─── /api/settings ──────────────────────────────────────────────────────────
 
 /** Operation kinds this repo's sidecar actually enqueues today (§4.2 long-op
- *  contract). Narrower than the full prior-repo union — apply/networking/
- *  prompt kinds return with their own commits. */
-export type OperationKind = "score" | "tailor" | "cover" | "extract" | "prep" | "scan";
+ *  contract). Narrower than the full prior-repo union — apply/prompt kinds
+ *  return with their own commits. Networking kinds restored 2026-07-16
+ *  (referral-outreach frontend): discover/draft/send (US-NW-09), linkedin_login
+ *  + archive_stale_contacts (N4 lifecycle), contact_sync (US-NW-12 status sync). */
+export type OperationKind =
+  | "score"
+  | "tailor"
+  | "cover"
+  | "extract"
+  | "prep"
+  | "scan"
+  | "discover"
+  | "draft"
+  | "send"
+  | "linkedin_login"
+  | "archive_stale_contacts"
+  | "contact_sync";
 
 export interface EngineRoute {
   kind: OperationKind;

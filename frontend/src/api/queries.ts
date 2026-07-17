@@ -4,9 +4,11 @@
 // "TanStack Query, invalidated by SSE events").
 //
 // Job Board / Dev status page / main.tsx guard hooks, plus the applications/
-// tracker hooks (restored — `/api/applications` now exists). Networking/apply/
-// prep/packet-prompts/spans/linkedin hooks return with their own commits, once
-// the sidecar grows that surface.
+// tracker hooks (restored — `/api/applications` now exists) and the
+// networking hooks (restored 2026-07-16 — the referral-outreach backend now
+// exists: /api/contacts, /api/jobs/{id}/referrals/*, /api/referrals/*,
+// /api/linkedin/*). Apply/prep/packet-prompts/spans hooks return with their
+// own commits, once the sidecar grows that surface.
 
 import {
   useInfiniteQuery,
@@ -20,7 +22,19 @@ import { useEffect } from "react";
 
 import { eventBus } from "./events";
 import { api } from "./index";
-import type { Application, BoardPage, Job, JobDraft, Priority, Stage } from "./types";
+import type {
+  Application,
+  BoardPage,
+  CompanyConfirmPick,
+  ContactInput,
+  Job,
+  JobDraft,
+  LinkedInSessionState,
+  NetContact,
+  Priority,
+  ReachOutInput,
+  Stage,
+} from "./types";
 
 export const qk = {
   jobs: ["jobs"] as const,
@@ -28,10 +42,16 @@ export const qk = {
   trash: ["trash"] as const,
   applications: ["applications"] as const,
   activity: ["activity"] as const,
+  networking: ["networking"] as const,
   archived: ["archived"] as const,
   profile: ["profile"] as const,
   onboarding: ["onboarding"] as const,
   settings: ["settings"] as const,
+  contacts: ["contacts"] as const,
+  archivedContacts: ["archivedContacts"] as const,
+  referralCandidates: ["referralCandidates"] as const,
+  referralQuota: ["referralQuota"] as const,
+  linkedinSession: ["linkedinSession"] as const,
 };
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
@@ -70,6 +90,15 @@ export function useApplicationActivity(id: string | null) {
   return useQuery({
     queryKey: [...qk.activity, id],
     queryFn: () => Promise.resolve(api.getApplicationActivity(id as string)),
+    enabled: id != null,
+  });
+}
+/** The role's referral contacts for the detail-modal Networking tab (US-TR-03),
+ *  restored 2026-07-16. */
+export function useApplicationNetworking(id: string | null) {
+  return useQuery({
+    queryKey: [...qk.networking, id],
+    queryFn: () => Promise.resolve(api.getApplicationNetworking(id as string)),
     enabled: id != null,
   });
 }
@@ -328,6 +357,152 @@ export function usePatchArtifact() {
   });
 }
 
+// ─── Networking (Track N3) — restored 2026-07-16 from the prior repo's
+// queries.ts: the referral-outreach backend now exists. ─────────────────────
+
+export function useContacts(company?: string) {
+  return useQuery({
+    queryKey: [...qk.contacts, company ?? "all"],
+    queryFn: () => api.listContacts(company),
+  });
+}
+
+/** The "Deleted Contacts" recovery roster — archived contacts only (US-NW-02). */
+export function useArchivedContacts() {
+  return useQuery({ queryKey: qk.archivedContacts, queryFn: () => api.listArchivedContacts() });
+}
+
+export function useReferralQuota() {
+  return useQuery({ queryKey: qk.referralQuota, queryFn: () => api.getReferralQuota() });
+}
+
+export function useLinkedInSession() {
+  return useQuery({ queryKey: qk.linkedinSession, queryFn: () => api.getLinkedInSession() });
+}
+
+/** Start the headed LinkedIn login (US-SET-06). The connect control itself
+ *  lives in Settings (not built on this repo yet); this hook is restored so
+ *  Settings can wire it up directly. SSE `linkedin` events repaint the status
+ *  chip + pill; the op finishing flips the session to `valid`. */
+export function useConnectLinkedIn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.connectLinkedIn()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.linkedinSession }),
+  });
+}
+
+function useLinkedInSessionMutation(fn: () => Promise<LinkedInSessionState> | LinkedInSessionState) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(fn()),
+    onSuccess: (session) => {
+      qc.setQueryData(qk.linkedinSession, session);
+      qc.invalidateQueries({ queryKey: qk.referralQuota });
+    },
+  });
+}
+
+export function useDisconnectLinkedIn() {
+  return useLinkedInSessionMutation(() => api.disconnectLinkedIn());
+}
+
+export function useValidateLinkedIn() {
+  return useLinkedInSessionMutation(() => api.validateLinkedIn());
+}
+
+export function useResumeLinkedIn() {
+  return useLinkedInSessionMutation(() => api.resumeLinkedIn());
+}
+
+export function useSetLinkedInTier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tier: "new" | "seasoned") => Promise.resolve(api.setLinkedInTier(tier)),
+    onSuccess: (session) => {
+      qc.setQueryData(qk.linkedinSession, session);
+      qc.invalidateQueries({ queryKey: qk.referralQuota });
+    },
+  });
+}
+
+/** The find-referrals popup candidate list for one job (US-NW-09). `enabled`
+ *  gates the fetch to when the popup is open for a specific job. */
+export function useReferralCandidates(jobId: string | null) {
+  return useQuery({
+    queryKey: [...qk.referralCandidates, jobId],
+    queryFn: () => api.listReferralCandidates(jobId as string),
+    enabled: jobId != null,
+  });
+}
+
+export function useAddContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ContactInput) => Promise.resolve(api.addContact(input)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.archivedContacts });
+    },
+  });
+}
+
+export function useUpdateContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<NetContact> & { archived?: boolean } }) =>
+      Promise.resolve(api.updateContact(id, patch)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.archivedContacts });
+    },
+  });
+}
+
+export function useDiscoverReferrals() {
+  const qc = useQueryClient();
+  return useMutation({
+    // `limit` bumps for the "find 10 more" / Load-more control (FR-NW-02);
+    // `confirm` re-runs discovery scoped to the company the user picked in the
+    // company-confirm step (after a `needs_company_confirm` event).
+    mutationFn: (
+      arg:
+        | string
+        | { jobId: string; limit?: number; page?: number; confirm?: CompanyConfirmPick },
+    ) =>
+      Promise.resolve(
+        typeof arg === "string"
+          ? api.discoverReferrals(arg)
+          : api.discoverReferrals(arg.jobId, arg.limit ?? 10, arg.confirm, arg.page ?? 1),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.referralCandidates }),
+  });
+}
+
+/** Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate) —
+ *  restored 2026-07-16. Not yet wired to a UI control (the prior repo's
+ *  ReferralsModal never called it either — the discover-time draft is the
+ *  live path); kept available for a future Regenerate affordance. */
+export function useDraftReferral() {
+  return useMutation({
+    mutationFn: ({ contactId, jobId }: { contactId: string; jobId?: string | null }) =>
+      Promise.resolve(api.draftReferral(contactId, jobId)),
+  });
+}
+
+export function useReachOut() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReachOutInput) => Promise.resolve(api.reachOut(input)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.referralCandidates });
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.applications });
+      qc.invalidateQueries({ queryKey: qk.referralQuota });
+    },
+  });
+}
+
 // ─── SSE invalidation bridge ─────────────────────────────────────────────────
 
 /** Wire the SSE bus (src/api/events.ts) to Query invalidation. Mount once near
@@ -352,6 +527,42 @@ export function useSSEInvalidation(qc: QueryClient): void {
           qc.invalidateQueries({ queryKey: qk.applications });
           qc.invalidateQueries({ queryKey: qk.activity });
         }
+        // Restored 2026-07-16: a terminal discover/send/linkedin_login/
+        // contact_sync op means the referral roster, the contact kanban, the
+        // card's Referrals slot, or the LinkedIn session may have changed —
+        // refresh contacts + referral quota + applications so the Tracker/
+        // Networking surfaces repaint without a manual reload. `draft` is
+        // deliberately excluded — nothing subscribes to its result yet
+        // (see useDraftReferral).
+        const networkingAffecting =
+          p.kind === "discover" ||
+          p.kind === "send" ||
+          p.kind === "linkedin_login" ||
+          p.kind === "contact_sync";
+        if (networkingAffecting && terminal) {
+          qc.invalidateQueries({ queryKey: qk.contacts });
+          qc.invalidateQueries({ queryKey: qk.archivedContacts });
+          qc.invalidateQueries({ queryKey: qk.referralQuota });
+          qc.invalidateQueries({ queryKey: qk.applications });
+          if (p.kind === "linkedin_login") {
+            qc.invalidateQueries({ queryKey: qk.linkedinSession });
+          }
+        }
+      }
+      // Networking live-updates (Track N3): discover/send progress for the
+      // popup + kanban (US-NW-09) — the popup's own SSE subscription (in
+      // ReferralsModal) reads company-confirm / per-contact send outcomes off
+      // this same event; here we just keep the cached lists honest.
+      if (ev.type === "networker") {
+        qc.invalidateQueries({ queryKey: qk.referralCandidates });
+        qc.invalidateQueries({ queryKey: qk.contacts });
+        qc.invalidateQueries({ queryKey: qk.applications });
+      }
+      // LinkedIn session capture (N4): connecting → connected/disconnected
+      // repaints the Networking pill (and, once built, the Settings status chip).
+      if (ev.type === "linkedin") {
+        qc.invalidateQueries({ queryKey: qk.linkedinSession });
+        qc.invalidateQueries({ queryKey: qk.referralQuota });
       }
     });
   }, [qc]);
