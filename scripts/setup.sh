@@ -67,6 +67,8 @@ echo "node $(node --version)  ·  pnpm $(pnpm --version)"
 step "Installing project dependencies (this pulls everything)"
 pnpm run boot
 
+# When piped via `curl | bash` the script's cd cannot change the user's own
+# shell — print the full path so the next command actually works (2026-07-17).
 echo
 echo "${GREEN}Done.${NC} Start the app with:"
-echo "    pnpm dev"
+echo "    cd $(pwd) && pnpm dev"

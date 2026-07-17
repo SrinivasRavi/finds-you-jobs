@@ -36,5 +36,7 @@ Step "Installing project dependencies (this pulls everything)"
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 pnpm run boot
 
+# The script's Set-Location doesn't persist into the user's shell when piped
+# via `irm | iex` from elsewhere — print the full path so the command works.
 Write-Host "`nDone. Start the app with:" -ForegroundColor Green
-Write-Host "    pnpm dev"
+Write-Host "    cd `"$((Get-Location).Path)`"; pnpm dev"
