@@ -30,10 +30,15 @@ When third-party material is added, the same change must:
 - **Deliberately NOT taken:** OpenOutreach's remote-controlled *freemium promotional actions* (connection requests + promo messages sent from the user's account) and its *auto-newsletter subscription* in non-GDPR jurisdictions, plus the Django/Celery CRM, ML qualifier/embeddings, and mem0 vendor tree.
 - **GPL source availability:** the GPLv3 source ships in this public repository at `sidecar/packages/referral_outreach/upstream/`, satisfying the source-availability requirement (reinforced by the whole aggregate being AGPL-3.0-only).
 
+### Skyvern — AGPL-3.0 (browser observation core, carried directly)
+
+- Upstream: [Skyvern-AI/skyvern](https://github.com/Skyvern-AI/skyvern) @ `28db09cb59d2f3c15b1a8e1a8405f1a9eaa36ca3` (2026-07-16). Upstream license: **GNU AGPL v3**. Full license text retained at `sidecar/packages/jobapplier/upstream/LICENSE`.
+- **What is carried:** a trimmed browser *observation* core under `sidecar/packages/jobapplier/upstream/` — the page-injected DOM walker `domUtils.js` (**verbatim**), and adapted subsets of the element-tree scraper (`scraper.py`), the tree→compact-HTML renderer (`scraped_page.py`), the frame/screenshot helpers (`page_utils.py`), plus only the constants/exceptions those reference. Each file carries an `SPDX-License-Identifier: AGPL-3.0-only` header and a per-file upstream-source line; `sidecar/packages/jobapplier/provenance.md` is the full take/trim table.
+- **Deliberately NOT taken:** Skyvern Cloud/API/dashboard, workflow builder, multi-tenant accounts, database/queue/orchestrator, proxy networks, CAPTCHA-solving/anti-bot services, telemetry, billing, credential injection, and the upstream agent loop/action handlers — the finds-you-jobs Applier agent is written new (AGPL, package root) against `docs/internal/applier.md`.
+- Skyvern and finds-you-jobs share the AGPL-3.0 license, so no additional combination terms arise; the upstream copyright and notices are retained per file.
+
 ## Planned upstream audits — no source carried yet
 
-| Upstream | Expected license | Intended scope | Status |
-| --- | --- | --- | --- |
-| [Skyvern](https://github.com/Skyvern-AI/skyvern) | AGPL-3.0 | A deliberately trimmed local screenshot/browser-agent core may be imported after a dependency feasibility spike. | No source carried yet. |
+*(none currently — career-ops, OpenOutreach, and Skyvern are carried above)*
 
 An AGPL aggregate does not erase upstream notices or change the original license of carried portions. In particular, retain MIT notices for MIT-derived material and GPL notices for GPL-derived material.

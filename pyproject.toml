@@ -21,6 +21,7 @@ dependencies = [
     # (Apache-2.0 Python client; the Chromium binary is fetched on first use,
     # never bundled). Also used by the Applier browser agent when it lands.
     "playwright>=1.48",
+    "markdown-it-py>=4.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -38,6 +39,10 @@ extend-exclude = [
     # linted to finds-you-jobs conventions (the facade at the package root IS
     # linted). See sidecar/packages/referral_outreach/provenance.md.
     "sidecar/packages/referral_outreach/upstream",
+    # AGPL Skyvern-derived observation subtree — carried close to upstream
+    # style, not linted to finds-you-jobs conventions (the facade at the package
+    # root IS linted). See sidecar/packages/jobapplier/provenance.md.
+    "sidecar/packages/jobapplier/upstream",
 ]
 
 [tool.ruff.lint]
