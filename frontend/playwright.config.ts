@@ -35,7 +35,10 @@ export default defineConfig({
     url: "http://127.0.0.1:1420",
     reuseExistingServer: true,
     timeout: 90_000,
-    env: { FYJ_DATA_DIR: E2E_DATA_DIR },
+    // FYJ_APPLY_DEV unlocks the apply op's dev knobs (scripted engine, local
+    // fixture URLs, headless) so the applier e2e runs with zero model calls
+    // and zero external traffic — same seam the sidecar tests use.
+    env: { FYJ_DATA_DIR: E2E_DATA_DIR, FYJ_APPLY_DEV: "1" },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

@@ -229,9 +229,85 @@ export interface Application {
     | "reachedOut"
     | "failed";
   referrals_count: number;
+  /** Latest Apply Run lifecycle for the tracker Apply slot (applier.md §8.2/§9):
+   *  `none` (no run — "Apply") → `waiting_for_packet`/`running` ("Applying…") →
+   *  `ready_for_human` (P1 handoff — "Review & submit") → `submitted` (advanced
+   *  to Applied). `blocked`/`timed_out`/`interrupted`/`failed` are the honest
+   *  non-success terminals that offer "Retry". Mirrors ApplicationDTO.applyRunStatus. */
+  apply_run_status: ApplyRunStatus;
+  /** The bound Apply Run id — reopening the companion fetches this run's
+   *  snapshot (§9.2). Null until the first Apply is started. */
+  apply_run_id: string | null;
   archived: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// ─── Apply Runs (the agentic Applier — applier.md §8/§9) ────────────────────
+
+/** One durable Apply Run's terminal/live status (applier.md §9.1). `none` is the
+ *  application-level "no run yet" marker; a real run is one of the others. */
+export type ApplyRunStatus =
+  | "none"
+  | "waiting_for_packet"
+  | "running"
+  | "ready_for_human"
+  | "blocked"
+  | "timed_out"
+  | "interrupted"
+  | "failed"
+  | "submitted";
+
+/** A redacted blocker the agent hit — kind/label only, never a raw form value
+ *  (applier.md §9.1). */
+export interface ApplyBlocker {
+  kind: string;
+  detail: string;
+  field_label: string;
+}
+
+/** A redacted per-field outcome — the truthful filled/struggled record shown in
+ *  the §8.4 handoff summary. `ok` is the verified read-back result. */
+export interface ApplyField {
+  label: string;
+  action: string;
+  ok: boolean;
+  note: string;
+}
+
+/** Exact model usage for one run — the companion's cost line (§8.2). */
+export interface ApplyUsage {
+  calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  /** Null when the provider's cost isn't known (e.g. a local model). */
+  cost_usd: number | null;
+}
+
+/** One Applier attempt (applier.md §9.1) backing the companion panel. Maps
+ *  ApplyRunDTO; `blockers`/`fields` are redacted evidence and `screenshot_count`
+ *  is the number of evidence PNGs served by
+ *  `GET /api/apply-runs/{id}/screenshots/{index}`. */
+export interface ApplyRun {
+  id: string;
+  application_id: string;
+  operation_id: string | null;
+  /** Links a Retry / Reopen-and-refill to the immutable prior run (§8.3). */
+  retry_of_run_id: string | null;
+  status: ApplyRunStatus;
+  phase: string;
+  source_url: string;
+  final_url: string;
+  summary: string;
+  blockers: ApplyBlocker[];
+  fields: ApplyField[];
+  screenshot_count: number;
+  usage: ApplyUsage;
+  steps: number;
+  submit_evidence: string;
+  started_at: string;
+  deadline_at: string | null;
+  ended_at: string | null;
 }
 
 /** One referral contact for a role on the detail modal's Networking tab

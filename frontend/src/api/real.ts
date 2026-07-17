@@ -23,6 +23,8 @@ import type {
   Application,
   ApplicationProfile,
   ActivityEntry,
+  ApplyRun,
+  ApplyUsage,
   AudienceTag,
   BoardPage,
   CompanyConfirmPick,
@@ -68,6 +70,7 @@ type ReferralCandidateDTO = components["schemas"]["ReferralCandidateDTO"];
 type ReferralCandidatesDTO = components["schemas"]["ReferralCandidatesDTO"];
 type QuotaDTO = components["schemas"]["QuotaDTO"];
 type LinkedInSessionDTO = components["schemas"]["LinkedInSessionDTO"];
+type ApplyRunDTO = components["schemas"]["ApplyRunDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
@@ -207,9 +210,61 @@ function toApplication(d: ApplicationDTO, job: Job): Application {
     posting_closed: false,
     referrals_state: (d.referralsState as Application["referrals_state"]) ?? "none",
     referrals_count: d.referralsCount ?? 0,
+    // Latest Apply Run lifecycle (applier.md §8.2) — drives the card's Apply slot
+    // + reopening the companion to the bound run's snapshot (§9.2).
+    apply_run_status: (d.applyRunStatus as Application["apply_run_status"]) ?? "none",
+    apply_run_id: d.applyRunId ?? null,
     archived: d.archived_at != null,
     created_at: d.saved_at,
     updated_at: d.last_touched_at,
+  };
+}
+
+// The run's usage dict is a redacted ledger snapshot (applier.md §9.1) — read
+// the applier field names, falling back to the shared Usage names so an early
+// sidecar shape still surfaces a cost line. `cost_usd` stays null when unknown.
+function toApplyUsage(u: Record<string, unknown>): ApplyUsage {
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const cost = num(u.cost_usd) ?? num(u.usd);
+  return {
+    calls: num(u.calls) ?? num(u.internal_calls) ?? 0,
+    tokens_in: num(u.tokens_in) ?? 0,
+    tokens_out: num(u.tokens_out) ?? 0,
+    cost_usd: cost,
+  };
+}
+
+function toApplyRun(d: ApplyRunDTO): ApplyRun {
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  return {
+    id: d.id,
+    application_id: d.application_id,
+    operation_id: d.operation_id ?? null,
+    retry_of_run_id: d.retry_of_run_id ?? null,
+    status: d.status as ApplyRun["status"],
+    phase: d.phase,
+    source_url: d.source_url,
+    final_url: d.final_url,
+    summary: d.summary,
+    blockers: (d.blockers ?? []).map((b) => ({
+      kind: str(b.kind),
+      detail: str(b.detail),
+      field_label: str(b.field_label),
+    })),
+    fields: (d.fields ?? []).map((f) => ({
+      label: str(f.label),
+      action: str(f.action),
+      ok: Boolean(f.ok),
+      note: str(f.note),
+    })),
+    screenshot_count: d.screenshot_count ?? 0,
+    usage: toApplyUsage(d.usage ?? {}),
+    steps: d.steps,
+    submit_evidence: d.submit_evidence,
+    started_at: d.started_at,
+    deadline_at: d.deadline_at ?? null,
+    ended_at: d.ended_at ?? null,
   };
 }
 
@@ -552,6 +607,54 @@ export class RealApi {
   async packetState(appId: string): Promise<PacketState> {
     const d = await this.req<ApplicationDTO>(`/api/applications/${appId}`);
     return (d.packetState as PacketState) ?? "none";
+  }
+
+  // ── apply runs (the agentic Applier — applier.md §8/§9) ───────────────────
+  // Starting Apply IS the action (§8.1): no pre-confirm modal, the run is
+  // created and the op enqueued immediately. `retryOfRunId` links a Retry /
+  // Reopen-and-refill to the immutable prior run (§8.3).
+  async startApply(applicationId: string, retryOfRunId?: string): Promise<ApplyRun> {
+    const body = retryOfRunId ? { retry_of_run_id: retryOfRunId } : {};
+    const d = (await this.json(
+      "POST", `/api/applications/${applicationId}/apply`, body,
+    )) as ApplyRunDTO;
+    return toApplyRun(d);
+  }
+
+  async listApplyRuns(applicationId: string): Promise<ApplyRun[]> {
+    const rows = await this.req<ApplyRunDTO[]>(`/api/applications/${applicationId}/apply-runs`);
+    return rows.map(toApplyRun);
+  }
+
+  /** The run snapshot — a reopened companion reads this instead of depending on
+   *  having seen every prior SSE event (§9.2). */
+  async getApplyRun(runId: string): Promise<ApplyRun> {
+    return toApplyRun(await this.req<ApplyRunDTO>(`/api/apply-runs/${runId}`));
+  }
+
+  /** Cooperative cancel (§8.2) — the loop lands the run as `interrupted`. */
+  async cancelApplyRun(runId: string): Promise<ApplyRun> {
+    return toApplyRun((await this.json("POST", `/api/apply-runs/${runId}/cancel`, {})) as ApplyRunDTO);
+  }
+
+  /** The human's word after the P1 handoff (§8.4): `true` records a user-attested
+   *  submission and advances the card to Applied; `false` leaves it in place. */
+  async attestApplyRun(runId: string, submitted: boolean): Promise<ApplyRun> {
+    return toApplyRun(
+      (await this.json("POST", `/api/apply-runs/${runId}/attest`, { submitted })) as ApplyRunDTO,
+    );
+  }
+
+  /** One evidence PNG as a Blob — the caller wraps it in an object URL for
+   *  `<img>` (SSE can't set the Authorization header, so this authed fetch is
+   *  the only way to load it). */
+  async fetchApplyScreenshot(runId: string, index: number): Promise<Blob> {
+    const info = await this.info();
+    const res = await apiFetch(info, `/api/apply-runs/${runId}/screenshots/${index}`);
+    if (!res.ok) {
+      throw new ApiError(res.status, `GET screenshot ${runId}/${index} → ${res.status}`);
+    }
+    return res.blob();
   }
 
   // ── profile ────────────────────────────────────────────────────────────

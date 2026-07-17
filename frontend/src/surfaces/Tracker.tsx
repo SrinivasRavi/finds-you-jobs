@@ -24,11 +24,13 @@ import {
   useProfile,
   useReturnToBoard,
   useSetPriority,
+  useStartApply,
   useUnarchiveApplication,
   useUpdateApplication,
 } from "../api/queries";
 import type { Application, Job, Priority, Stage } from "../api/types";
 import { STAGES } from "../api/types";
+import { ApplierPanel } from "../popups/ApplierPanel";
 import { GuidanceDialog } from "../popups/GuidanceDialog";
 import { ReferralsModal } from "../popups/ReferralsModal";
 import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
@@ -63,6 +65,23 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
   sending: "sending",
   reachedOut: "approved",
   failed: "failed",
+};
+
+// Apply slot maps the latest Apply Run's status (applier.md §8.2) onto the
+// shared PacketSlotTag state keys: none→"Apply" (grey), waiting_for_packet/
+// running→"Applying…" (grey+spinner), ready_for_human→"Review & submit"
+// (yellow), submitted→"Submitted" (green check), and the honest non-success
+// terminals→"Retry" (red).
+const APPLY_SLOT: Record<Application["apply_run_status"], { label: string; state: string }> = {
+  none: { label: "Apply", state: "none" },
+  waiting_for_packet: { label: "Applying…", state: "generating" },
+  running: { label: "Applying…", state: "generating" },
+  ready_for_human: { label: "Review & submit", state: "pending" },
+  submitted: { label: "Submitted", state: "approved" },
+  blocked: { label: "Retry", state: "failed" },
+  timed_out: { label: "Retry", state: "failed" },
+  interrupted: { label: "Retry", state: "failed" },
+  failed: { label: "Retry", state: "failed" },
 };
 
 const SLOT_SPINNER = new Set(["generating", "finding", "sending"]);
@@ -106,7 +125,7 @@ function Card({
   onOpen: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
-  onSlot: (kind: ResumeModalKind | "refs") => void;
+  onSlot: (kind: ResumeModalKind | "refs" | "apply") => void;
   onMenu: () => void;
 }) {
   const tier = app.job.score ? scoreTier(app.job.score.score_0_100) : null;
@@ -165,8 +184,15 @@ function Card({
         <button onClick={() => onSlot("refs")} data-testid="card-referrals-slot">
           <PacketSlotTag label="Referrals" state={REFERRALS_SLOT_STATE[app.referrals_state]} />
         </button>
+        {/* Apply slot (applier.md §8.1/§8.2) — starts a run (or reopens the
+            bound one) and opens the companion panel. */}
+        <button onClick={() => onSlot("apply")} data-testid="card-apply-slot">
+          <PacketSlotTag
+            label={APPLY_SLOT[app.apply_run_status].label}
+            state={APPLY_SLOT[app.apply_run_status].state}
+          />
+        </button>
       </div>
-      {/* REMOVED: Apply button (no Applier surface on this sidecar yet). */}
       {/* days-in-column + last-touched (US-TR-01) */}
       <div className="mt-2 font-mono text-[10px] text-ink-4" data-testid="card-timestamps">
         {daysIn(app.created_at)} in column · touched {app.updated_at.slice(5, 10).replace("-", "/")}
@@ -204,6 +230,7 @@ export function Tracker() {
   const returnToBoard = useReturnToBoard();
   const genPacket = useGeneratePacket();
   const patchArtifact = usePatchArtifact();
+  const startApply = useStartApply();
 
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "ALL">("ALL");
@@ -217,6 +244,8 @@ export function Tracker() {
   // REMOVED: applyId (ApplyModal — no Applier surface on this sidecar yet).
   // referralsAppId restored 2026-07-16 (the find-referrals popup).
   const [referralsAppId, setReferralsAppId] = useState<string | null>(null);
+  // The Applier companion panel, bound to one Apply Run (applier.md §8.2).
+  const [applierPanel, setApplierPanel] = useState<{ appId: string; runId: string } | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
   // Pending drag INTO a frozen column (Applied+), held for the confirm dialog
   // below — that move can't be dragged back (2026-07-15 maintainer request;
@@ -264,6 +293,19 @@ export function Tracker() {
     }
     move.mutate({ id: dragId, stage });
     setDragId(null);
+  }
+
+  // Apply slot (applier.md §8.1): a card with no run starts one (the click IS
+  // the action — no pre-Apply confirm) and binds the companion to the returned
+  // run; a card that already has a run just reopens the companion to it (its
+  // snapshot drives the panel, incl. the Retry / Review & submit states).
+  async function onApplyClick(app: Application) {
+    if (app.apply_run_id) {
+      setApplierPanel({ appId: app.id, runId: app.apply_run_id });
+      return;
+    }
+    const run = await Promise.resolve(startApply.mutateAsync({ applicationId: app.id }));
+    if (run) setApplierPanel({ appId: app.id, runId: run.id });
   }
 
   const detail = apps.find((a) => a.id === detailId) ?? null;
@@ -362,6 +404,10 @@ export function Tracker() {
                           // Open the find-referrals popup (US-NW-09). It handles
                           // connected / drafts-only / no-session states internally.
                           setReferralsAppId(app.id);
+                          return;
+                        }
+                        if (kind === "apply") {
+                          void onApplyClick(app);
                           return;
                         }
                         setPopup({ kind, appId: app.id });
@@ -515,7 +561,25 @@ export function Tracker() {
         <ArchiveModal archived={archived} onClose={() => setShowArchive(false)} />
       ) : null}
 
-      {/* REMOVED: Applier live modal (no Applier surface on this sidecar yet). */}
+      {/* Applier companion panel (applier.md §8.2) — off the Apply slot. Bound
+          to one Apply Run; Retry rebinds it to the fresh run (§8.3). Closing it
+          never cancels the run. */}
+      {applierPanel
+        ? (() => {
+            const a = apps.find((x) => x.id === applierPanel.appId);
+            if (!a) return null;
+            return (
+              <ApplierPanel
+                applicationId={a.id}
+                runId={applierPanel.runId}
+                role={a.job.title}
+                company={a.job.company}
+                onRebind={(newRunId) => setApplierPanel({ appId: a.id, runId: newRunId })}
+                onClose={() => setApplierPanel(null)}
+              />
+            );
+          })()
+        : null}
 
       {/* Find-referrals popup (US-NW-09) — off the Referrals slot, restored
           2026-07-16. */}

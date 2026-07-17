@@ -52,6 +52,8 @@ export const qk = {
   referralCandidates: ["referralCandidates"] as const,
   referralQuota: ["referralQuota"] as const,
   linkedinSession: ["linkedinSession"] as const,
+  applyRun: ["applyRun"] as const,
+  applyRuns: ["applyRuns"] as const,
 };
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
@@ -357,6 +359,94 @@ export function usePatchArtifact() {
   });
 }
 
+// ─── Apply Runs (the agentic Applier — applier.md §8/§9) ─────────────────────
+
+/** All Apply Runs for one application (§8.3 — the immutable attempt history). */
+export function useApplyRuns(applicationId: string | null) {
+  return useQuery({
+    queryKey: [...qk.applyRuns, applicationId],
+    queryFn: () => api.listApplyRuns(applicationId as string),
+    enabled: applicationId != null,
+  });
+}
+
+/** One Apply Run's live snapshot for the companion panel. Poll-light: the run
+ *  is refetched only when an `apply` SSE event for THIS run_id lands, or a
+ *  terminal apply operation fires — never on a timer (§9.2). Seeds/keeps the
+ *  panel honest whether it was open the whole time or reopened after the fact. */
+export function useApplyRun(runId: string | null) {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: [...qk.applyRun, runId],
+    queryFn: () => api.getApplyRun(runId as string),
+    enabled: runId != null,
+  });
+  useEffect(() => {
+    if (!runId) return;
+    return eventBus.subscribe((ev) => {
+      if (ev.type === "apply") {
+        const p = ev.payload as { run_id?: string };
+        if (p.run_id === runId) {
+          qc.invalidateQueries({ queryKey: [...qk.applyRun, runId] });
+        }
+        return;
+      }
+      // A terminal apply operation is the authoritative end-of-run signal — the
+      // run row is settled by then, so re-read its final snapshot.
+      if (ev.type === "operation") {
+        const p = ev.payload as { kind?: string; state?: string };
+        if (p.kind === "apply" && (p.state === "succeeded" || p.state === "failed")) {
+          qc.invalidateQueries({ queryKey: [...qk.applyRun, runId] });
+        }
+      }
+    });
+  }, [runId, qc]);
+  return query;
+}
+
+/** Start an Apply Run (§8.1) — no pre-confirm; the click IS the action.
+ *  `retryOfRunId` starts a fresh run linked to the prior one (§8.3). Seeds the
+ *  new run into the cache so the companion binds instantly. */
+export function useStartApply() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ applicationId, retryOfRunId }: { applicationId: string; retryOfRunId?: string }) =>
+      Promise.resolve(api.startApply(applicationId, retryOfRunId)),
+    onSuccess: (run) => {
+      qc.setQueryData([...qk.applyRun, run.id], run);
+      qc.invalidateQueries({ queryKey: qk.applyRuns });
+      qc.invalidateQueries({ queryKey: qk.applications });
+    },
+  });
+}
+
+/** Cooperative cancel (§8.2) — lands the run as `interrupted`. */
+export function useCancelApply() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => Promise.resolve(api.cancelApplyRun(runId)),
+    onSuccess: (run) => {
+      qc.setQueryData([...qk.applyRun, run.id], run);
+      qc.invalidateQueries({ queryKey: qk.applications });
+    },
+  });
+}
+
+/** The human's post-handoff attestation (§8.4). A `true` advances the card to
+ *  Applied — refresh applications + the Activity tab. */
+export function useAttestApply() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, submitted }: { runId: string; submitted: boolean }) =>
+      Promise.resolve(api.attestApplyRun(runId, submitted)),
+    onSuccess: (run) => {
+      qc.setQueryData([...qk.applyRun, run.id], run);
+      qc.invalidateQueries({ queryKey: qk.applications });
+      qc.invalidateQueries({ queryKey: qk.activity });
+    },
+  });
+}
+
 // ─── Networking (Track N3) — restored 2026-07-16 from the prior repo's
 // queries.ts: the referral-outreach backend now exists. ─────────────────────
 
@@ -548,6 +638,23 @@ export function useSSEInvalidation(qc: QueryClient): void {
             qc.invalidateQueries({ queryKey: qk.linkedinSession });
           }
         }
+        // A terminal apply op settles the run and the card's Apply slot
+        // (applyRunStatus) + writes an Activity event — refresh all three so the
+        // Tracker/companion repaint without a manual reload (applier.md §8.4).
+        if (p.kind === "apply" && terminal) {
+          qc.invalidateQueries({ queryKey: qk.applications });
+          qc.invalidateQueries({ queryKey: qk.applyRun });
+          qc.invalidateQueries({ queryKey: qk.applyRuns });
+          qc.invalidateQueries({ queryKey: qk.activity });
+        }
+      }
+      // Applier live-updates (applier.md §9.2): a phase/observe/screenshot/
+      // blocker event may change the card's Apply slot and the bound run. The
+      // companion's own useApplyRun subscription re-reads the run snapshot; here
+      // we keep the card's applyRunStatus honest as the run advances.
+      if (ev.type === "apply") {
+        qc.invalidateQueries({ queryKey: qk.applications });
+        qc.invalidateQueries({ queryKey: qk.applyRun });
       }
       // Networking live-updates (Track N3): discover/send progress for the
       // popup + kanban (US-NW-09) — the popup's own SSE subscription (in
