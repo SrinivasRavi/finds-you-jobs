@@ -1625,7 +1625,11 @@ async def start_apply(
     Apply also settles the exclusive intent to `apply` (roadmap §5.1)."""
     payload = payload or dto.ApplyStartRequest()
     runner = _runner(request)
-    with _db(request).repos() as repos:
+    db = _db(request)
+    # Read phase — NO writes in this session: a pending write would autoflush
+    # on the next query and hold SQLite's write lock while runner.submit
+    # inserts on its own connection (the 2026-07-17 "database is locked").
+    with db.repos() as repos:
         app_row = repos.applications.get(application_id)
         if app_row is None:
             raise HTTPException(
@@ -1639,22 +1643,28 @@ async def start_apply(
             # Single-flight per card: reopening the companion binds to the
             # active run instead of double-launching a browser (§8.2).
             return dto.apply_run_dto(active)
-        if app_row.intent != "apply":
+        needs_intent = app_row.intent != "apply"
+        job_url = job.canonical_url
+
+    snapshot: dict[str, Any] = {"application_id": application_id}
+    if payload.retry_of_run_id:
+        snapshot["retry_of_run_id"] = payload.retry_of_run_id
+    if payload.dev:
+        snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
+    operation_id = runner.submit("apply", snapshot)
+
+    # Write phase — settle the exclusive intent (roadmap §5.1) and create the
+    # durable run. Honest initial state: QUEUED until the op actually starts
+    # (the op flips it to waiting_for_packet/running) — the panel must not
+    # claim "waiting for résumé" while the dispatcher hasn't picked it up.
+    with db.repos() as repos:
+        if needs_intent:
             repos.applications.update(application_id, intent="apply")
-        snapshot: dict[str, Any] = {"application_id": application_id}
-        if payload.retry_of_run_id:
-            snapshot["retry_of_run_id"] = payload.retry_of_run_id
-        if payload.dev:
-            snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
-        operation_id = runner.submit("apply", snapshot)
-        # Honest initial state: the run is QUEUED until the op actually starts
-        # (the op flips it to waiting_for_packet/running) — the panel must not
-        # claim "waiting for résumé" while the dispatcher hasn't picked it up.
         run = repos.apply_runs.create(
             application_id,
             operation_id=operation_id,
             retry_of_run_id=payload.retry_of_run_id,
-            source_url=job.canonical_url,
+            source_url=job_url,
             status="queued",
             phase="queued",
         )

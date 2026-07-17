@@ -263,7 +263,7 @@ async def _wait_for_packet(
             heads = [
                 a
                 for a in repos.artifacts.list_for_application(application_id)
-                if a.kind == "resume" and a.superseded_by is None
+                if a.kind == "tailored_resume" and a.superseded_by is None
             ]
             head = heads[-1] if heads else None
             if head is not None and head.markdown:
