@@ -105,3 +105,5 @@ uv run playwright install chromium
 echo
 echo "${GREEN}Done.${NC} Start the app with:"
 echo "    cd $(pwd) && pnpm dev"
+echo
+echo "If 'pnpm' is not found, close this terminal, open a NEW one, and run the line above again."

@@ -24,7 +24,8 @@ curl -fsSL https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/sc
 If it asks you to install the "command line developer tools", click Install, wait,
 then run the same command again.
 
-**Start the app** (the script prints this exact line with your real path at the end):
+**Start the app** (the script prints this exact line with your real path at the end;
+if `pnpm` is "command not found", close Terminal, open a new one, and run it again):
 
 ```bash
 cd finds-you-jobs && pnpm dev
@@ -83,7 +84,8 @@ app into a `finds-you-jobs` folder in your current directory):
 curl -fsSL https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.sh | bash
 ```
 
-**Start the app** (the script prints this exact line with your real path at the end):
+**Start the app** (the script prints this exact line with your real path at the end;
+if `pnpm` is "command not found", close the terminal, open a new one, and run it again):
 
 ```bash
 cd finds-you-jobs && pnpm dev

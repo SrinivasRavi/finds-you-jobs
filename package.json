@@ -6,8 +6,8 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "boot": "cd frontend && pnpm install && cd .. && pnpm install && uv sync",
-    "dev": "node scripts/codegen.mjs && pnpm tauri dev",
-    "dev:web": "node scripts/codegen.mjs && node scripts/dev-web.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "node scripts/dev.mjs web",
     "tauri": "tauri",
     "build": "node scripts/codegen.mjs && cd frontend && pnpm build && cd .. && pnpm tauri build",
     "test": "node scripts/codegen.mjs && uv run pytest",
