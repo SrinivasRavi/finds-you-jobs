@@ -520,6 +520,15 @@ export interface Profile {
   };
 }
 
+/** Extracted resume text from an onboarding upload, held in the wizard draft for
+ *  review before it is persisted via `updateProfile` (FR-OB-04 / US-OB-02).
+ *  Mirrors the sidecar `ProfileIngestResult` (api/ingest.py). */
+export interface ProfileIngestResult {
+  text: string;
+  filename: string;
+  chars: number;
+}
+
 /** Onboarding/job-finder preferences (FR-OB-05 / US-OB-03 / US-SET-01). Maps to
  *  the `UserPreferences` columns via `POST /api/settings`; `scrape_cadence`
  *  rides in `ui_state` and the backend threads it into the `scan` schedule
@@ -548,6 +557,12 @@ export type OperationKind =
   | "extract"
   | "prep"
   | "scan"
+  // The agentic Applier's run op (applier.md §9) — lands in the ledger, so the
+  // Analytics filter groups must cover it or its rows get silently hidden.
+  | "apply"
+  // Grounded copilot answer + daily feed maintenance (FR-SYS-03/04) — also
+  // ledger'd, kept in the union for the same reason.
+  | "cleanup_trash"
   | "discover"
   | "draft"
   | "send"
@@ -559,6 +574,19 @@ export interface EngineRoute {
   kind: OperationKind;
   engine: string;
   model: string;
+}
+
+/** A user-editable LLM prompt (module skill markdown) — US-SET-12 / FR-SET-11.
+ *  `default_md` is the shipped text; `override_md` is the saved edit or null
+ *  (→ default). `routed` kinds also carry an engine/model selector; the one
+ *  unrouted kind (`networker_draft`) is prompt-only. The list is server-driven
+ *  (`GET /api/settings/prompts`), so whatever kinds the sidecar exposes render. */
+export interface PromptSetting {
+  kind: string;
+  title: string;
+  routed: boolean;
+  default_md: string;
+  override_md: string | null;
 }
 
 export interface ProviderConfig {
@@ -608,10 +636,8 @@ export interface Settings {
   auto_referrals_on_save: boolean;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
    *  the human — the default) or "auto" (legacy fill-and-submit). */
-  apply_mode: "assisted" | "auto";
   /** Save-time form prep (FR-APP-01, 2026-07-11): visit the job's real form,
    *  inventory it, draft answers — default ON; per-job override at Save. */
-  auto_prep_on_save: boolean;
   /** Per-tick cap on how many jobs `score_new` scores in one scheduler pass
    *  (audit P1-1) — 0 = uncapped (planner default). Read by
    *  `plan_score_new` via `thresholds["score_new_batch"]`. */
@@ -699,4 +725,43 @@ export interface LedgerEntry {
   /** Set on a failed row that was re-run (US-LOG-01 Retry): the new op's id.
    *  The row renders as "Retried" instead of a permanently nagging FAILED. */
   retried_as?: string | null;
+}
+
+/** Result envelope for the Dev-tab fault-injection actions (US-DEV-01). */
+export interface DevResult {
+  ok: boolean;
+  count?: number;
+  removed_cookies?: number;
+  note?: string;
+  detail?: string;
+  job_id?: string;
+  application_id?: string;
+}
+
+/** All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
+ *  Live-ledger sum + the pruned-ops aggregate, so the figures survive the ~250-op
+ *  ledger retention and stay honest as an install ages. Mirrors CostTotalsDTO. */
+export interface CostTotals {
+  usd: number;
+  tokens_in: number;
+  tokens_out: number;
+  operations: number;
+  failed: number;
+  by_kind: Record<string, number>;
+}
+
+// ─── Logfire spans (Logs drill-down — US-SYS-05 / A6) ───────────────────────
+
+/** One span from the local logfire.sqlite store, read for an operation's
+ *  drill-down: timings + the engine-call breakdown (cost/tokens/latency live in
+ *  `attributes`). Mirrors SpanDTO (sidecar/app/api/dto.py). */
+export interface Span {
+  span_id: string;
+  name: string;
+  operation_id: string | null;
+  op_kind: string | null;
+  duration_ms: number;
+  status: string; // "OK" | "UNSET" | "ERROR"
+  attributes: Record<string, unknown>;
+  events: { name: string; attributes: Record<string, unknown> }[];
 }

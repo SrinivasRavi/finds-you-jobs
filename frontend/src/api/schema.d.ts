@@ -1070,6 +1070,163 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Prompts
+         * @description Every editable prompt with its default + current override (US-SET-12).
+         */
+        get: operations["list_prompts_api_settings_prompts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/prompts/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Prompt
+         * @description Save an override for `kind` (404 unknown kind, 422 empty markdown).
+         */
+        put: operations["set_prompt_api_settings_prompts__kind__put"];
+        post?: never;
+        /**
+         * Reset Prompt
+         * @description Reset `kind` to its shipped default (delete the override file).
+         */
+        delete: operations["reset_prompt_api_settings_prompts__kind__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{operation_id}/spans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Operation Spans
+         * @description The Logfire spans for one operation — the Logs drill-down (US-SYS-05 / A6).
+         *
+         *     Reads the local `logfire.sqlite` span store (never the app schema). Returns
+         *     an empty list when observability isn't configured or the op has no spans yet
+         *     — the row still shows its ledger + verbatim error, so this only *enriches*.
+         */
+        get: operations["get_operation_spans_api_operations__operation_id__spans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/export/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Pdf
+         * @description Render markdown → PDF into ~/Downloads (US-RES-03 slice, 2026-07-12).
+         *
+         *     The webview can neither print nor download, so "Export to PDF" posts here;
+         *     the sidecar renders with the same Chromium pipeline the Applier uploads
+         *     (real selectable text) and saves collision-safe. Returns the saved path.
+         */
+        post: operations["export_pdf_api_export_pdf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/install-browser": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install Browser
+         * @description Download Playwright's Chromium (never bundled — §4.5). Coarse progress is
+         *     published on the SSE stream as `browser_install` events. Idempotent: a second
+         *     call while one is running returns `already_running`.
+         */
+        post: operations["install_browser_api_system_install_browser_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/operations/fail-running": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Fail Running
+         * @description Mark every currently-`running` operation failed with the boot-recovery
+         *     note — simulates the app crashing mid-generation so the Logs 'App restarted
+         *     while generating — Retry' path (US-LOG-01) can be exercised on demand.
+         */
+        post: operations["dev_fail_running_api_dev_operations_fail_running_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/seed-application": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Seed Application
+         * @description Create a sample Job + Saved Application so the Tracker has a card to drive
+         *     (drag, generate, apply) without a live scrape/score. Dev-only.
+         */
+        post: operations["dev_seed_application_api_dev_seed_application_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/engines/verify": {
         parameters: {
             query?: never;
@@ -1117,6 +1274,23 @@ export interface paths {
         post?: never;
         /** Delete Engine */
         delete: operations["delete_engine_api_engines__provider__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profile/ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest Resume */
+        post: operations["ingest_resume_api_profile_ingest_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1401,6 +1575,19 @@ export interface components {
             /** Job Id */
             job_id?: string | null;
         };
+        /** Body_ingest_resume_api_profile_ingest_post */
+        Body_ingest_resume_api_profile_ingest_post: {
+            /** File */
+            file: string;
+        };
+        /**
+         * BrowserInstallResult
+         * @description The `POST /api/system/install-browser` response (A5b / A0.6).
+         */
+        BrowserInstallResult: {
+            /** Status */
+            status: string;
+        };
         /**
          * ContactCreate
          * @description Manual add-a-contact (US-NW-02) — the rank-don't-gate escape hatch. The
@@ -1620,6 +1807,26 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "not_found" | "not_logged_in" | "error";
+        };
+        /**
+         * ExportPdfRequest
+         * @description Export a markdown document (resume / cover letter) as a PDF into the
+         *     user's Downloads folder (US-RES-03 slice, 2026-07-12 — the webview can't
+         *     print/download, so the sidecar renders and saves natively).
+         */
+        ExportPdfRequest: {
+            /** Markdown */
+            markdown: string;
+            /**
+             * Filename
+             * @default document
+             */
+            filename: string;
+        };
+        /** ExportPdfResult */
+        ExportPdfResult: {
+            /** Path */
+            path: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2005,10 +2212,48 @@ export interface components {
              */
             updated_at: string;
         };
+        /**
+         * ProfileIngestResult
+         * @description Extracted resume text held in the wizard draft for review (not persisted).
+         */
+        ProfileIngestResult: {
+            /** Text */
+            text: string;
+            /** Filename */
+            filename: string;
+            /** Chars */
+            chars: number;
+        };
         /** ProfileUpsert */
         ProfileUpsert: {
             /** Resume Markdown */
             resume_markdown: string;
+        };
+        /**
+         * PromptDTO
+         * @description One user-editable LLM prompt (module skill markdown). `default_md` is the
+         *     shipped text; `override_md` is the saved edit or None when unset (→ default).
+         *     `routed` marks the kinds that also carry an engine/model selector.
+         */
+        PromptDTO: {
+            /** Kind */
+            kind: string;
+            /** Title */
+            title: string;
+            /** Routed */
+            routed: boolean;
+            /** Default Md */
+            default_md: string;
+            /** Override Md */
+            override_md: string | null;
+        };
+        /**
+         * PromptUpdate
+         * @description PUT body for a prompt override — the full replacement markdown.
+         */
+        PromptUpdate: {
+            /** Markdown */
+            markdown: string;
         };
         /**
          * QuotaDTO
@@ -2171,6 +2416,44 @@ export interface components {
             preferences: components["schemas"]["PreferencesDTO"];
             /** Engines */
             engines: components["schemas"]["EngineSettingDTO"][];
+        };
+        /**
+         * SpanDTO
+         * @description One Logfire span row from the local span store (US-SYS-05 / A6).
+         *
+         *     Powers the Logs drill-down: per-operation timings + the engine-call breakdown
+         *     (cost / tokens / latency / model live in `attributes`). Read from
+         *     `logfire.sqlite` — never the app schema (no `Trace` table by design).
+         */
+        SpanDTO: {
+            /** Span Id */
+            span_id: string;
+            /** Trace Id */
+            trace_id: string;
+            /** Parent Span Id */
+            parent_span_id: string | null;
+            /** Name */
+            name: string;
+            /** Operation Id */
+            operation_id: string | null;
+            /** Op Kind */
+            op_kind: string | null;
+            /** Start Ns */
+            start_ns: number;
+            /** End Ns */
+            end_ns: number;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Status */
+            status: string;
+            /** Attributes */
+            attributes: {
+                [key: string]: unknown;
+            };
+            /** Events */
+            events: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * TombstoneResultDTO
@@ -3877,6 +4160,220 @@ export interface operations {
             };
         };
     };
+    list_prompts_api_settings_prompts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptDTO"][];
+                };
+            };
+        };
+    };
+    set_prompt_api_settings_prompts__kind__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_prompt_api_settings_prompts__kind__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_operation_spans_api_operations__operation_id__spans_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpanDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_pdf_api_export_pdf_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportPdfRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportPdfResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_browser_api_system_install_browser_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserInstallResult"];
+                };
+            };
+        };
+    };
+    dev_fail_running_api_dev_operations_fail_running_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    dev_seed_application_api_dev_seed_application_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     verify_engine_api_engines_verify_post: {
         parameters: {
             query?: never;
@@ -3980,6 +4477,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_resume_api_profile_ingest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_ingest_resume_api_profile_ingest_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileIngestResult"];
+                };
             };
             /** @description Validation Error */
             422: {

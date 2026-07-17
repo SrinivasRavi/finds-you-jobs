@@ -27,12 +27,14 @@ import type {
   BoardPage,
   CompanyConfirmPick,
   ContactInput,
+  EngineSaveInput,
   Job,
   JobDraft,
   LinkedInSessionState,
   NetContact,
   Priority,
   ReachOutInput,
+  Settings,
   Stage,
 } from "./types";
 
@@ -47,6 +49,10 @@ export const qk = {
   profile: ["profile"] as const,
   onboarding: ["onboarding"] as const,
   settings: ["settings"] as const,
+  prompts: ["prompts"] as const,
+  ledger: ["ledger"] as const,
+  costTotals: ["costTotals"] as const,
+  spans: ["spans"] as const,
   contacts: ["contacts"] as const,
   archivedContacts: ["archivedContacts"] as const,
   referralCandidates: ["referralCandidates"] as const,
@@ -116,6 +122,31 @@ export function useMasterProfileExists() {
 }
 export function useSettings() {
   return useQuery({ queryKey: qk.settings, queryFn: () => api.getSettings() });
+}
+/** The operations ledger — the Analytics table + cost source of truth (§10). */
+export function useLedger() {
+  return useQuery({ queryKey: qk.ledger, queryFn: () => api.listLedger() });
+}
+/** All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2):
+ *  live ledger + the pruned aggregate, so the tiles stay honest as an install ages. */
+export function useCostTotals() {
+  return useQuery({ queryKey: qk.costTotals, queryFn: () => api.getCostTotals() });
+}
+/** The Logfire spans for one operation — the Logs drill-down (US-SYS-05). Only
+ *  fetched when a row is expanded (`enabled`). */
+export function useOperationSpans(id: string | null) {
+  return useQuery({
+    queryKey: [...qk.spans, id],
+    queryFn: () => api.getOperationSpans(id as string),
+    enabled: id != null,
+  });
+}
+// ─── User-editable LLM prompts (FR-SET-11) ─────────────────────────────────
+// Each module's skill markdown, exposed + editable in Settings. The list is
+// server-driven; save/reset refresh the query so the row's "edited" badge +
+// textarea re-render.
+export function usePrompts() {
+  return useQuery({ queryKey: qk.prompts, queryFn: () => Promise.resolve(api.listPrompts()) });
 }
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
@@ -244,6 +275,99 @@ export function useUpdateProfile() {
   return useMutation({
     mutationFn: (master_md: string) => Promise.resolve(api.updateProfile(master_md)),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.profile }),
+  });
+}
+
+export function useUpdateSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<Settings>) => Promise.resolve(api.updateSettings(patch)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.settings }),
+  });
+}
+
+// BYOK provider surface (FR-SET-06 / US-SET-07). Verify is fire-and-read (no
+// cache write); save/delete refresh the settings query so the tiles re-render.
+export function useVerifyEngine() {
+  return useMutation({
+    mutationFn: (input: EngineSaveInput) => Promise.resolve(api.verifyEngine(input)),
+  });
+}
+
+export function useSaveEngine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: EngineSaveInput) => Promise.resolve(api.saveEngine(input)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.settings }),
+  });
+}
+
+export function useDeleteEngine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (provider: string) => Promise.resolve(api.deleteEngine(provider)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.settings }),
+  });
+}
+
+// User-editable LLM prompts (FR-SET-11) — save/reset refresh the prompts query.
+export function useSetPrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { kind: string; markdown: string }) =>
+      Promise.resolve(api.setPrompt(input.kind, input.markdown)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.prompts }),
+  });
+}
+
+export function useResetPrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (kind: string) => Promise.resolve(api.resetPrompt(kind)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.prompts }),
+  });
+}
+
+/** Retry a failed operation from the Analytics ledger (US-LOG-01). */
+export function useRetryOperation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => Promise.resolve(api.retryOperation(id)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.ledger });
+      qc.invalidateQueries({ queryKey: qk.applications });
+      qc.invalidateQueries({ queryKey: qk.jobs });
+    },
+  });
+}
+
+// ─── Dev tools (local fault injection — US-DEV-01) ───────────────────────────
+
+export function useDevExpireCookie() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.devExpireCookie()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.linkedinSession }),
+  });
+}
+export function useDevFailRunning() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.devFailRunning()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.ledger });
+      qc.invalidateQueries({ queryKey: qk.applications });
+    },
+  });
+}
+export function useDevSeedApplication() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.devSeedApplication()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.applications });
+      qc.invalidateQueries({ queryKey: qk.jobs });
+    },
   });
 }
 
@@ -601,6 +725,10 @@ export function useSSEInvalidation(qc: QueryClient): void {
   useEffect(() => {
     return eventBus.subscribe((ev) => {
       if (ev.type === "operation") {
+        // The Analytics ledger + cost tiles read every operation, so keep them
+        // live on any operation event (cheap queries; the surface is often open).
+        qc.invalidateQueries({ queryKey: qk.ledger });
+        qc.invalidateQueries({ queryKey: qk.costTotals });
         // Only feed-affecting kinds refetch the board, and only at a terminal
         // state (2026-07-11 Save-lag fix): each op bursts queued/running/
         // succeeded events and a naive handler would refetch every loaded

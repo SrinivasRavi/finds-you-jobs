@@ -4,10 +4,12 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { useMasterProfileExists, useSSEInvalidation } from "./api/queries";
+import { Analytics } from "./surfaces/Analytics";
 import { Dev } from "./surfaces/Dev";
 import { JobBoard } from "./surfaces/JobBoard";
 import { Networking } from "./surfaces/Networking";
-import { Placeholder } from "./surfaces/Placeholder";
+import { Onboarding } from "./surfaces/Onboarding";
+import { Settings } from "./surfaces/Settings";
 import { Tracker } from "./surfaces/Tracker";
 import { Layout } from "./shell/Layout";
 import { installExternalLinkInterceptor } from "./shell/openExternal";
@@ -48,7 +50,7 @@ function OnboardingRoute() {
   const { data: onboarded, isPending } = useMasterProfileExists();
   if (isPending) return null;
   if (onboarded) return <Navigate to="/jobs" replace />;
-  return <Placeholder name="Onboarding" commit="onboarding" />;
+  return <Onboarding />;
 }
 
 // Explicit React Router config (the pinned choice — architecture §6). Routes are
@@ -64,9 +66,9 @@ const router = createBrowserRouter([
       { path: "applications", element: <Tracker /> },
       { path: "networking", element: <Networking /> },
       { path: "dev", element: <Dev /> },
-      { path: "analytics", element: <Placeholder name="Analytics" commit="observability" /> },
+      { path: "analytics", element: <Analytics /> },
       { path: "logs", element: <Navigate to="/analytics" replace /> },
-      { path: "settings", element: <Placeholder name="Settings" commit="settings-surface" /> },
+      { path: "settings", element: <Settings /> },
     ],
   },
 ]);

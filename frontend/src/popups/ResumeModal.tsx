@@ -8,6 +8,8 @@
 
 import { useState } from "react";
 
+import { api } from "../api/index";
+
 import type { Application, PacketState, Profile } from "../api/types";
 import { Markdown } from "../shell/Markdown";
 import { Modal } from "../shell/Modal";
@@ -46,14 +48,16 @@ function PacketPill({ state }: { state: PacketState }) {
 
 /**
  * Share dropdown (US-RES-01/02, US-CL-01) — header button next to ×:
- * "Copy <this document> to clipboard" (Markdown, for ATS forms). `what` names
- * the document so the copy action is unambiguous ("Copy tailored resume to
- * clipboard"). REMOVED: "Export to PDF" — /api/export/pdf doesn't exist on
- * this sidecar yet.
+ * "Copy <this document> to clipboard" (Markdown, for ATS forms) + "Export to PDF"
+ * (browser print → Save as PDF; real selectable text). `what` names the document
+ * so the copy action is unambiguous ("Copy tailored resume to clipboard").
  */
 function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what: string }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [exported, setExported] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   return (
     <div className="relative">
       <button
@@ -80,6 +84,32 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
             {copied ? "Copied ✓" : `Copy ${what} to clipboard`}
             <span className="mt-0.5 block text-[10.5px] text-ink-4">
               Markdown — paste into ATS forms
+            </span>
+          </button>
+          <button
+            data-testid="share-export-pdf"
+            disabled={exporting}
+            onClick={() => {
+              // The webview can't print or download — the sidecar renders the
+              // PDF (real selectable text) straight into ~/Downloads.
+              setExporting(true);
+              setExportError(null);
+              void Promise.resolve(api.exportPdf(getMarkdown(), what))
+                .then((path) => setExported(path))
+                .catch((e: unknown) =>
+                  setExportError(e instanceof Error ? e.message : "export failed"),
+                )
+                .finally(() => setExporting(false));
+            }}
+            className="block w-full px-3 py-2 text-left text-[12.5px] text-ink-2 hover:bg-surface-2 disabled:opacity-50"
+          >
+            {exporting ? "Exporting…" : exported ? "Exported ✓" : "Export to PDF"}
+            <span className="mt-0.5 block break-all text-[10.5px] text-ink-4" data-testid="share-export-result">
+              {exportError
+                ? exportError
+                : exported
+                  ? `Saved to ${exported}`
+                  : "Saves the PDF to your Downloads folder"}
             </span>
           </button>
         </div>

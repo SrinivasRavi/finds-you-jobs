@@ -29,6 +29,8 @@ import type {
   BoardPage,
   CompanyConfirmPick,
   ContactInput,
+  CostTotals,
+  DevResult,
   EngineSaveInput,
   EngineVerifyResult,
   Job,
@@ -38,11 +40,14 @@ import type {
   NetworkingContact,
   PacketState,
   Priority,
+  ProfileIngestResult,
+  PromptSetting,
   ReachOutInput,
   ReachOutResult,
   ReferralCandidate,
   ReferralCandidates,
   ReferralQuota,
+  Span,
   Stage,
   TombstoneResult,
   LedgerEntry,
@@ -62,6 +67,8 @@ type SettingsDTO = components["schemas"]["SettingsDTO"];
 type ProfileDTO = components["schemas"]["ProfileDTO"];
 type OperationDTO = components["schemas"]["OperationDTO"];
 type ApplicationDTO = components["schemas"]["ApplicationDTO"];
+type CostTotalsDTO = components["schemas"]["CostTotalsDTO"];
+type SpanDTO = components["schemas"]["SpanDTO"];
 type ActivityEntryDTO = components["schemas"]["ActivityEntryDTO"];
 // Networking DTOs (restored 2026-07-16 — the referral-outreach backend now exists).
 type NetworkingContactDTO = components["schemas"]["NetworkingContactDTO"];
@@ -693,6 +700,37 @@ export class RealApi {
     return d !== null;
   }
 
+  /** Onboarding resume upload (FR-OB-04): multipart POST → extracted text for
+   *  review. On failure surfaces the sidecar's **verbatim** detail (the
+   *  paste-instead message) so the wizard can show it, never a silent empty draft. */
+  async ingestResume(file: File): Promise<ProfileIngestResult> {
+    const info = await this.info();
+    const form = new FormData();
+    form.append("file", file);
+    // No explicit Content-Type — the browser sets the multipart boundary.
+    const res = await apiFetch(info, "/api/profile/ingest", { method: "POST", body: form });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let detail = body;
+      try {
+        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
+      } catch {
+        /* non-JSON body — surface as-is */
+      }
+      throw new Error(detail || `ingest failed (${res.status})`);
+    }
+    return (await res.json()) as ProfileIngestResult;
+  }
+
+  /** Render markdown → PDF into ~/Downloads via the sidecar's Chromium
+   *  pipeline (US-RES-03 slice) — the webview can't print or download. */
+  async exportPdf(markdown: string, filename: string): Promise<string> {
+    const d = (await this.json("POST", "/api/export/pdf", { markdown, filename })) as {
+      path: string;
+    };
+    return d.path;
+  }
+
   /** Commit onboarding / Job-finder-preferences edits (FR-OB-05). Merges
    *  `scrape_cadence` into `ui_state` without clobbering the rest of the map. */
   async savePreferences(input: OnboardingPrefsInput): Promise<void> {
@@ -733,10 +771,7 @@ export class RealApi {
     // account-risk path) and only meaningful when Referral Outreach is enabled.
     const autoReferrals = Boolean(thresholds.auto_referrals_on_save);
     // Applier submit mode (FR-APP-01): assisted (fill + hand off) by default.
-    const applyMode = thresholds.apply_mode === "auto" ? "auto" : "assisted";
     // Save-time form prep — default ON.
-    const autoPrep =
-      "auto_prep_on_save" in thresholds ? Boolean(thresholds.auto_prep_on_save) : true;
     // Scoring batch cap (audit P1-1) — 0 = uncapped, the planner's own default.
     const scoreNewBatch = Number(thresholds.score_new_batch ?? 0);
     return {
@@ -744,8 +779,6 @@ export class RealApi {
       auto_resume_on_save: autoResume,
       auto_cover_on_save: autoCover,
       auto_referrals_on_save: autoReferrals,
-      apply_mode: applyMode,
-      auto_prep_on_save: autoPrep,
       score_new_batch: scoreNewBatch,
       providers: d.engines.map((e) => ({
         id: e.engine,
@@ -792,9 +825,6 @@ export class RealApi {
     if (patch.auto_referrals_on_save !== undefined)
       thresholdPatch.auto_referrals_on_save = patch.auto_referrals_on_save;
     if (patch.auto_packet_on_save !== undefined) thresholdPatch.auto_packet_on_save = patch.auto_packet_on_save;
-    if (patch.apply_mode !== undefined) thresholdPatch.apply_mode = patch.apply_mode;
-    if (patch.auto_prep_on_save !== undefined)
-      thresholdPatch.auto_prep_on_save = patch.auto_prep_on_save;
     if (patch.score_new_batch !== undefined)
       thresholdPatch.score_new_batch = patch.score_new_batch;
     if (Object.keys(thresholdPatch).length > 0) {
@@ -855,10 +885,62 @@ export class RealApi {
     await this.req(`/api/engines/${provider}`, { method: "DELETE" });
   }
 
+  // ── /api/settings/prompts (user-editable LLM prompts — FR-SET-11) ─────────
+  // Server-driven list: whatever kinds the sidecar exposes (score/tailor/cover/
+  // extract/draft/networker_draft — no prep) render in the Settings editor.
+  async listPrompts(): Promise<PromptSetting[]> {
+    return this.req<PromptSetting[]>("/api/settings/prompts");
+  }
+  async setPrompt(kind: string, markdown: string): Promise<PromptSetting> {
+    return (await this.json(
+      "PUT",
+      `/api/settings/prompts/${kind}`,
+      { markdown },
+    )) as PromptSetting;
+  }
+  async resetPrompt(kind: string): Promise<PromptSetting> {
+    return this.req<PromptSetting>(`/api/settings/prompts/${kind}`, { method: "DELETE" });
+  }
+
   // ── operations / ledger ────────────────────────────────────────────────
   async listLedger(): Promise<LedgerEntry[]> {
     const ops = await this.req<OperationDTO[]>("/api/operations?limit=200");
     return ops.map(toLedgerEntry);
+  }
+
+  /** All-time cost totals (FR-SET-07 / US-LOG-01 #2) — live ledger + the pruned
+   *  aggregate, so the Analytics tiles show lifetime spend, not the retained
+   *  window. */
+  async getCostTotals(): Promise<CostTotals> {
+    const d = await this.req<CostTotalsDTO>("/api/cost/totals");
+    return {
+      usd: d.usd,
+      tokens_in: d.tokens_in,
+      tokens_out: d.tokens_out,
+      operations: d.operations,
+      failed: d.failed,
+      by_kind: d.by_kind,
+    };
+  }
+
+  /** The Logfire spans for an operation — the Logs drill-down (US-SYS-05). Reads
+   *  the local logfire.sqlite store; [] when observability isn't configured. */
+  async getOperationSpans(id: string): Promise<Span[]> {
+    try {
+      const spans = await this.req<SpanDTO[]>(`/api/operations/${id}/spans`);
+      return spans.map((s) => ({
+        span_id: s.span_id,
+        name: s.name,
+        operation_id: s.operation_id,
+        op_kind: s.op_kind,
+        duration_ms: s.duration_ms,
+        status: s.status,
+        attributes: s.attributes as Record<string, unknown>,
+        events: (s.events as { name: string; attributes: Record<string, unknown> }[]) ?? [],
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /** Re-run a failed op with its original inputs (US-LOG-01 Retry). */
@@ -1048,6 +1130,17 @@ export class RealApi {
     return toLinkedInSession((await this.json(
       "POST", "/api/linkedin/tier", { account_tier: tier },
     )) as LinkedInSessionDTO);
+  }
+
+  // ── Dev tools (local fault injection — US-DEV-01) ──────────────────────────
+  async devExpireCookie(): Promise<DevResult> {
+    return (await this.json("POST", "/api/dev/linkedin/expire-cookie", {})) as DevResult;
+  }
+  async devFailRunning(): Promise<DevResult> {
+    return (await this.json("POST", "/api/dev/operations/fail-running", {})) as DevResult;
+  }
+  async devSeedApplication(): Promise<DevResult> {
+    return (await this.json("POST", "/api/dev/seed-application", {})) as DevResult;
   }
 }
 
