@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- Classic invite modal: the note field appears only AFTER clicking "Add a
+     note" (the layout in the maintainer's manual Premium screenshot). -->
+<html>
+  <head><meta charset="utf-8" /><title>Invite classic</title></head>
+  <body>
+    <div role="dialog" aria-label="Add a note to your invitation">
+      <button aria-label="Add a note"
+        onclick="document.getElementById('nb').style.display='block';">Add a note</button>
+      <textarea id="nb" name="message" style="display:none"
+        aria-label="Message" placeholder="Ex: We know each other from…"></textarea>
+      <button aria-label="Send now">Send now</button>
+      <button aria-label="Send invitation"
+        onclick="window.__sent = document.getElementById('nb').value;">Send</button>
+    </div>
+  </body>
+</html>

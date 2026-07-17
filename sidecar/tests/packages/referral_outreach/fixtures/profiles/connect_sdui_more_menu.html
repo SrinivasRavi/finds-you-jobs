@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- SDUI (server-driven-UI) profile — the 2026-07-13 live regression
+     (debug 20260713T093728-connect-no-affordance). LinkedIn now serves some
+     profiles as component-keyed SDUI: the top card is a
+     <section componentkey="…com.linkedin.sdui.profile.card…">, the primary
+     action is Message, and Connect lives INSIDE the "More" overflow menu as an
+     <a href="/preload/custom-invite/…" componentkey="ConnectButton…"> whose only
+     text is a nested <span><span>Connect</span></span> beside an
+     <svg id="connect-small">. It carries NO role and NO aria-label, so every
+     classic role/aria probe missed it and the send failed with "no Connect
+     affordance found" even though the menu was open with a visible Connect.
+     The anchor markup below is copied faithfully from the real capture (names
+     changed). Menu items are injected on More-click, mirroring LinkedIn's
+     on-demand portal dropdown. -->
+<html>
+  <head><meta charset="utf-8" /><title>Bikram 3rd</title></head>
+  <body>
+    <main>
+      <section class="a828e5c1 _23847e60" componentkey="urn:li:fs_sdui:com.linkedin.sdui.profile.card.TopCard">
+        <h1>Bikram Singh</h1>
+        <span>3rd</span>
+        <div class="actions">
+          <!-- SDUI Message primary (present, so message-primary COULD fire — but
+               more-menu-connect must win first for this connectable profile). -->
+          <a
+            href="https://www.linkedin.com/messaging/thread/new/?PROFILE_VIEW&interop=msgOverlay"
+            componentkey="b0141558-ce35-4904-b955-45ee817c151d"
+            aria-label="Message Bikram Singh"><span><span>Message</span></span></a>
+          <button
+            class="_7e0b65 bfbadfd0"
+            type="button"
+            componentkey="7a4d0fcd-cfa3-4d00-a027-15ba13febe4e"
+            aria-label="More"
+            aria-expanded="false"
+            onclick="
+              var m = document.getElementById('overflow-menu');
+              m.innerHTML =
+                '<div><a class=\'_3bc34f41 _5390511b\' aria-disabled=\'false\''
+                + ' href=\'/preload/custom-invite/?vanityName=bikram-singh-832a04411\''
+                + ' componentkey=\'ConnectButtonstate:invitation:urn:li:member:1761240998\''
+                + ' onclick=\'event.preventDefault(); window.__connectClicked = true;\'>'
+                + '<svg id=\'connect-small\' viewBox=\'0 0 16 16\' aria-hidden=\'true\'></svg>'
+                + '<div class=\'_4434babe\'><span class=\'e6590096\'><span>Connect</span></span></div>'
+                + '</a></div>'
+                + '<div><a href=\'/sales\' componentkey=\'x1\'><span><span>Save to PDF</span></span></a></div>'
+                + '<div><a href=\'/report\' componentkey=\'x2\'><span><span>Report / Block</span></span></a></div>';
+            "
+          ><span><span>More</span></span></button>
+          <div id="overflow-menu" role="menu"></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

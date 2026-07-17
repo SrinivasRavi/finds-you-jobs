@@ -1,9 +1,12 @@
 """Per-kind concurrency policy (architecture §5.3) — table-driven + tunable.
 
-Defaults: LLM kinds (`score`/`tailor`/`cover`) share a pool of ≤ 2 in flight;
-`scan` is single-flight; `apply` runs exclusively (nothing else concurrent).
-`can_start` is a pure decision function so the policy is unit-testable without
-touching threads or the DB.
+Defaults: LLM kinds (`score`/`tailor`/`cover`/`draft`) share a user-tunable
+pool (thresholds.llm_concurrency, default 4, 0 = unlimited); `scan` and the
+networking ops are single-flight; `apply` is single-flight but runs BESIDE
+the LLM pool (its packet wait depends on tailor); only the headed
+`linkedin_login` is exclusive. Dispatch is priority-ordered so interactive
+work never starves behind bulk fan-outs. `can_start` is a pure decision
+function so the policy is unit-testable without touching threads or the DB.
 """
 
 from __future__ import annotations
@@ -50,7 +53,9 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         "archive_stale_contacts": "archive_stale_contacts",
     },
     group_limits={
-        "llm": 2, "scan": 1, "cleanup_trash": 1, "apply": 1,
+        # 4 = DEFAULT_LLM_CONCURRENCY below; the boot wiring overrides from
+        # thresholds.llm_concurrency (Settings → Scoring → Parallel AI calls).
+        "llm": 4, "scan": 1, "cleanup_trash": 1, "apply": 1,
         "networker_discover": 1, "networker_send": 1,
         "linkedin_login": 1, "archive_stale_contacts": 1,
     },
@@ -79,6 +84,35 @@ DEFAULT_DISPATCH_PRIORITY = 5
 
 def dispatch_priority(kind: str) -> int:
     return DISPATCH_PRIORITY.get(kind, DEFAULT_DISPATCH_PRIORITY)
+
+
+# User-tunable LLM parallelism (2026-07-17 dogfood). 0 = unlimited — the
+# user owns the tradeoff (parallel spend, provider rate limits); the UI says
+# so in words. Bounded values clamp to [1, 20] so a typo can't zero the pool.
+DEFAULT_LLM_CONCURRENCY = 4
+_UNLIMITED = 1_000_000
+
+
+def llm_concurrency_from(thresholds: dict | None) -> int:
+    raw = (thresholds or {}).get("llm_concurrency", DEFAULT_LLM_CONCURRENCY)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_LLM_CONCURRENCY
+    if value == 0:
+        return _UNLIMITED
+    return max(1, min(20, value))
+
+
+def with_llm_limit(policy: ConcurrencyPolicy, limit: int) -> ConcurrencyPolicy:
+    """A copy of `policy` with the llm group's cap replaced (dataclass-frozen)."""
+    limits = dict(policy.group_limits)
+    limits["llm"] = limit
+    return ConcurrencyPolicy(
+        groups=policy.groups,
+        group_limits=limits,
+        exclusive_kinds=policy.exclusive_kinds,
+    )
 
 
 def can_start(kind: str, running_kinds: Iterable[str], policy: ConcurrencyPolicy) -> bool:

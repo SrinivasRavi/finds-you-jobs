@@ -527,14 +527,12 @@ def _thread_contact_sync_cadence(repos: Any, ui_state: dict[str, Any] | None) ->
 async def update_settings(
     request: Request, payload: dto.PreferencesUpdate
 ) -> dto.SettingsDTO:
-    # The prior repository also threads the contact-sync cadence and
-    # observability reconfiguration through this write; both return with their
-    # feature commits (Referral Outreach, observability).
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
         prefs = repos.preferences.update(**fields)
         routing = prefs.engine_routing
         ui_state = prefs.ui_state
+        prefs_thresholds = dict(prefs.thresholds or {})
         if "ui_state" in fields:
             _thread_scan_cadence(repos, ui_state)
             _thread_contact_sync_cadence(repos, ui_state)
@@ -543,6 +541,12 @@ async def update_settings(
     engines = _engines(request)
     if engines is not None and "engine_routing" in fields:
         apply_routing(engines, routing)
+    # LLM parallelism is re-capped live (2026-07-17): the runner swaps its
+    # policy on the next pump; running ops are never interrupted.
+    if "thresholds" in fields:
+        from ..runner.policy import llm_concurrency_from
+
+        _runner(request).set_llm_limit(llm_concurrency_from(prefs_thresholds))
     # A6: an observability change (content logging / OTLP opt-in / retention) is
     # re-applied live — turning OTLP export ON adds the exporter, OFF removes it
     # entirely (no exporter at all — the no-network-by-default invariant).

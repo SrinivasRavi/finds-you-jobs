@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- Message-primary / Follow-primary layout (the maintainer's screenshot): the
+     top card shows [Message] [Follow] [More] and Connect lives INSIDE the More
+     overflow menu. This fixture deliberately has NO matching top-card wrapper
+     selector, so it also exercises the page-wide fallback in `_action_scope`
+     (the fix for the "Top Card section not found" SkipProfile). The menu items
+     are injected on click, mirroring LinkedIn's on-demand/portal dropdown (so
+     the connect_option is genuinely absent from the DOM until More is opened). -->
+<html>
+  <head><meta charset="utf-8" /><title>Rahul 3rd</title></head>
+  <body>
+    <main>
+      <div class="unknown-sdui-shell">
+        <h1>Rahul Sharma</h1>
+        <span>3rd</span>
+        <div class="actions">
+          <button aria-label="Message Rahul"><span>Message</span></button>
+          <button aria-label="Follow Rahul"><span>Follow</span></button>
+          <button
+            aria-label="More actions"
+            onclick="
+              var m = document.getElementById('overflow-menu');
+              m.innerHTML =
+                '<div role=\'menuitem\' aria-label=\'Invite Rahul Sharma to connect\'>Connect</div>'
+                + '<div role=\'menuitem\'>Save to PDF</div>'
+                + '<div role=\'menuitem\'>Report / Block</div>';
+            "
+          ><span>More</span></button>
+          <div id="overflow-menu" role="menu"></div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

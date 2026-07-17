@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- Already-connected profile whose More menu carries "Remove connection" —
+     the 2026-07-12 live near-miss: a case-insensitive has-text("Connect")
+     probe MATCHED and CLICKED "Remove connection". The probe must (a) never
+     click it (the onclick flags window.__removeClicked) and (b) resolve to the
+     typed already-connected SkipProfile via the message-primary probe. -->
+<html>
+  <head><meta charset="utf-8" /><title>Srinivas 1st</title></head>
+  <body>
+    <main>
+      <div class="unknown-sdui-shell">
+        <h1>Srinivas Ravi</h1>
+        <span>1st</span>
+        <div class="actions">
+          <button aria-label="Message Srinivas"><span>Message</span></button>
+          <button
+            aria-label="More actions"
+            onclick="
+              var m = document.getElementById('overflow-menu');
+              m.innerHTML =
+                '<div role=\'menuitem\' onclick=\'window.__removeClicked = true\'>Remove connection</div>'
+                + '<div role=\'menuitem\'>Save to PDF</div>'
+                + '<div role=\'menuitem\'>Report / Block</div>';
+            "
+          ><span>More</span></button>
+          <div id="overflow-menu" role="menu"></div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

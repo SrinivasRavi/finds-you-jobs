@@ -1,0 +1,12 @@
+<!doctype html>
+<!-- No note field reachable and no Premium upsell: the flow must degrade to a
+     note-less send (click "Send now") rather than dead-end. -->
+<html>
+  <head><meta charset="utf-8" /><title>Invite note-less</title></head>
+  <body>
+    <div role="dialog">
+      <button aria-label="Send now"
+        onclick="window.__noteless = true;">Send now</button>
+    </div>
+  </body>
+</html>

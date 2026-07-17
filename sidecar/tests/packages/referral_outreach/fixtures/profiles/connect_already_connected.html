@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- Already a 1st-degree connection: a Message button is present and there is NO
+     Connect affordance anywhere (not in the top card, not in a More menu). The
+     probe must distinguish this from a genuine selector miss and raise a typed
+     "already connected" SkipProfile. -->
+<html>
+  <head><meta charset="utf-8" /><title>Sam Connected</title></head>
+  <body>
+    <main>
+      <section componentkey="com.linkedin.sdui.profile.card.TopCard">
+        <h1>Sam Rivera</h1>
+        <span>1st</span>
+        <div class="actions">
+          <button aria-label="Message Sam Rivera"><span>Message</span></button>
+          <button aria-label="More actions"><span>More</span></button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

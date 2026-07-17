@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- SDUI / Premium custom-invite surface: Connect opened the note compose
+     DIRECTLY. The note field (a bare contenteditable textbox, no [role=dialog]
+     wrapper, no "Add a note" button) is present immediately. The old code found
+     no "Add a note" button and degraded to a note-less send, dropping the ask. -->
+<html>
+  <head><meta charset="utf-8" /><title>Invite SDUI</title></head>
+  <body>
+    <main>
+      <div contenteditable="true" role="textbox" aria-label="Add a note"></div>
+      <a componentkey="SendInviteButton"
+         onclick="window.__sent = document.querySelector('[contenteditable]').innerText;">
+        <span><span>Send invitation</span></span></a>
+    </main>
+  </body>
+</html>

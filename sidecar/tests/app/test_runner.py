@@ -65,9 +65,10 @@ def _running_count(db: Database) -> int:
 # -- pure policy -----------------------------------------------------------
 
 
-def test_can_start_llm_group_caps_at_two() -> None:
-    assert can_start("score", ["score"], DEFAULT_POLICY) is True
-    assert can_start("tailor", ["score", "cover"], DEFAULT_POLICY) is False  # 2 LLM running
+def test_can_start_llm_group_caps_at_default() -> None:
+    # Default parallelism is 4 (user-tunable via thresholds.llm_concurrency).
+    assert can_start("score", ["score", "cover", "draft"], DEFAULT_POLICY) is True
+    assert can_start("tailor", ["score", "cover", "draft", "score"], DEFAULT_POLICY) is False
 
 
 def test_can_start_scan_is_single_flight() -> None:
@@ -203,10 +204,13 @@ def test_scan_is_single_flight_live(migrated_db: Database) -> None:
 
 
 def test_llm_group_caps_at_two_live(migrated_db: Database) -> None:
+    from sidecar.app.runner.policy import with_llm_limit
+
     db = migrated_db
     blocking = _Blocking()
     runner = OperationRunner(
         db,
+        policy=with_llm_limit(DEFAULT_POLICY, 2),
         registry=OperationRegistry(
             {"score": blocking, "tailor": blocking, "cover": blocking}
         ),
@@ -402,3 +406,28 @@ def test_usage_mapping_is_faithful_to_the_engine(migrated_db: Database) -> None:
         assert op.usage == reported  # verbatim, no rounding/loss
         assert op.model == "anthropic/claude-opus-4"
         assert op.engine == "openrouter"
+
+
+def test_llm_concurrency_setting_parses_and_clamps() -> None:
+    from sidecar.app.runner.policy import (
+        DEFAULT_LLM_CONCURRENCY,
+        llm_concurrency_from,
+        with_llm_limit,
+    )
+
+    assert llm_concurrency_from(None) == DEFAULT_LLM_CONCURRENCY
+    assert llm_concurrency_from({}) == DEFAULT_LLM_CONCURRENCY
+    assert llm_concurrency_from({"llm_concurrency": 8}) == 8
+    assert llm_concurrency_from({"llm_concurrency": 999}) == 20  # clamp high
+    assert llm_concurrency_from({"llm_concurrency": -3}) == 1  # clamp low
+    assert llm_concurrency_from({"llm_concurrency": "junk"}) == DEFAULT_LLM_CONCURRENCY
+    # 0 = Unlimited: effectively uncapped by policy (the worker pool is the
+    # practical ceiling).
+    unlimited = llm_concurrency_from({"llm_concurrency": 0})
+    assert unlimited >= 1_000_000
+
+    raised = with_llm_limit(DEFAULT_POLICY, 6)
+    assert can_start("tailor", ["score"] * 5, raised) is True
+    assert can_start("tailor", ["score"] * 6, raised) is False
+    # Only the llm group changed; scan stays single-flight.
+    assert can_start("scan", ["scan"], raised) is False

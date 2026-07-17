@@ -53,6 +53,24 @@ test("settings renders every restored section", async ({ page }) => {
   await page.screenshot({ path: `${DIR}/settings-scoring-off.png`, fullPage: true });
   await page.getByTestId("auto-score-toggle").click();
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
+  // Parallel-AI-calls control (2026-07-17): user-tunable 2-20 or Unlimited.
+  await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
+});
+
+test("linkedin session is nested inside referral outreach", async ({ page }) => {
+  await page.goto("/settings");
+  // Off: no session card, just the unlock hint inside the section.
+  await expect(page.getByTestId("linkedin-session-section")).toHaveCount(0);
+  // Enable via ack + toggle — the session card appears INSIDE the section as
+  // the explicit next step (2026-07-17 dogfood: separated, it read as an
+  // unrelated non-experimental setting).
+  await page.getByTestId("networking-ack").check();
+  await page.getByTestId("networking-toggle").click();
+  await expect(page.getByTestId("linkedin-session-section")).toBeVisible();
+  await expect(page.getByText("Next step — connect your LinkedIn session")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/referral-linkedin-nested.png`, fullPage: true });
+  // Turn it back off for later tests.
+  await page.getByTestId("networking-toggle").click();
 });
 
 test("prompts editor round-trips an override", async ({ page, request }) => {

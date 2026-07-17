@@ -1000,6 +1000,32 @@ export function Settings() {
                   turn this back on any time.
                 </div>
               )}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="text-[13px] font-medium text-ink">Parallel AI calls</div>
+                  <div className="text-[12px] text-ink-3">
+                    How many scoring / tailoring / drafting calls run at once. Higher =
+                    faster board, but the spend arrives just as fast and your provider may
+                    rate-limit bursts (429s). Unlimited removes the app's cap entirely —
+                    you own that tradeoff.
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5" data-testid="llm-concurrency-row">
+                  <select
+                    value={String(settings.llm_concurrency)}
+                    data-testid="llm-concurrency-select"
+                    onChange={(e) => patch({ llm_concurrency: Number(e.target.value) })}
+                    className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+                  >
+                    {[2, 3, 4, 6, 8, 10, 12, 16, 20].map((n) => (
+                      <option key={n} value={n}>
+                        {n} at once
+                      </option>
+                    ))}
+                    <option value={0}>Unlimited</option>
+                  </select>
+                </div>
+              </div>
             </div>
           </Section>
 
@@ -1109,11 +1135,20 @@ export function Settings() {
                   Acknowledged on {new Date(settings.networking_ack_at).toLocaleDateString()}
                 </div>
               ) : null}
+              {/* Step 2 — the LinkedIn session (US-SET-06) lives INSIDE this
+                  experimental section (2026-07-17 dogfood: shown separately it
+                  read as an unrelated, non-experimental setting and the user
+                  never connected). Rendered only when the toggle is on. */}
+              {settings.networking_enabled ? (
+                <LinkedInSessionSection />
+              ) : (
+                <div className="text-[11.5px] text-ink-4">
+                  Turn the toggle on to unlock the next step: connecting your LinkedIn
+                  session (required for auto-discovery and sending).
+                </div>
+              )}
             </div>
           </Section>
-
-          {/* LinkedIn session (US-SET-06) — only when the master toggle is ON */}
-          {settings.networking_enabled && <LinkedInSessionSection />}
 
           {/* Observability */}
           <Section title="Observability">
@@ -1276,7 +1311,10 @@ function LinkedInSessionSection() {
   const connected = status === "valid";
 
   return (
-    <Section title="LinkedIn session">
+    <div className="rounded-lg border border-border bg-surface-2 p-4">
+      <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
+        Next step — connect your LinkedIn session
+      </div>
       <div className="space-y-4" data-testid="linkedin-session-section">
         <p className="text-[12.5px] text-ink-3">
           Connect your LinkedIn account so finds-you-jobs can find referrers and reach out for you —
@@ -1419,6 +1457,6 @@ function LinkedInSessionSection() {
           </select>
         </div>
       </div>
-    </Section>
+    </div>
   );
 }

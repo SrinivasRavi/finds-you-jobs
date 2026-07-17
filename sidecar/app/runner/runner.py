@@ -32,7 +32,13 @@ from ..registry import (
     OperationRegistry,
     default_operation_registry,
 )
-from .policy import DEFAULT_POLICY, ConcurrencyPolicy, can_start, dispatch_priority
+from .policy import (
+    DEFAULT_POLICY,
+    ConcurrencyPolicy,
+    can_start,
+    dispatch_priority,
+    with_llm_limit,
+)
 
 RESTART_NOTE = (
     "operation was running when the sidecar restarted; marked failed on boot "
@@ -61,7 +67,11 @@ class OperationRunner:
         publish: PublishFn | None = None,
         on_success: OnSuccessFn | None = None,
         observability: ObservabilityHandle | None = None,
-        max_workers: int = 4,
+        # Worker threads bound REAL parallelism; the per-group policy bounds
+        # intended parallelism. Sized generously so a raised llm_concurrency
+        # setting isn't silently capped — idle threads cost nothing. 32 is the
+        # practical ceiling for the "Unlimited" setting.
+        max_workers: int = 32,
     ) -> None:
         self._db = db
         self._registry = registry or default_operation_registry()
@@ -139,6 +149,13 @@ class OperationRunner:
                 repos.operations.mark_cancelled(operation_id)
         self._publish(operation_id, kind, "cancelled")
         return True
+
+    def set_llm_limit(self, limit: int) -> None:
+        """Re-cap the llm group live (Settings → Scoring, 2026-07-17). Takes
+        effect on the next pump — running ops are never interrupted."""
+        with self._lock:
+            self._policy = with_llm_limit(self._policy, limit)
+        self._pump()
 
     # -- boot recovery -----------------------------------------------------
 

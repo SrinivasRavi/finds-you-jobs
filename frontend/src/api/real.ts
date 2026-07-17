@@ -781,6 +781,8 @@ export class RealApi {
       auto_referrals_on_save: autoReferrals,
       auto_score_on_scan:
         "auto_score_on_scan" in thresholds ? Boolean(thresholds.auto_score_on_scan) : true,
+      llm_concurrency:
+        typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
       score_new_batch: scoreNewBatch,
       providers: d.engines.map((e) => ({
         id: e.engine,
@@ -826,6 +828,8 @@ export class RealApi {
     if (patch.auto_cover_on_save !== undefined) thresholdPatch.auto_cover_on_save = patch.auto_cover_on_save;
     if (patch.auto_score_on_scan !== undefined)
       thresholdPatch.auto_score_on_scan = patch.auto_score_on_scan;
+    if (patch.llm_concurrency !== undefined)
+      thresholdPatch.llm_concurrency = patch.llm_concurrency;
     if (patch.auto_referrals_on_save !== undefined)
       thresholdPatch.auto_referrals_on_save = patch.auto_referrals_on_save;
     if (patch.auto_packet_on_save !== undefined) thresholdPatch.auto_packet_on_save = patch.auto_packet_on_save;

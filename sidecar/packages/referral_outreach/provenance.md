@@ -32,6 +32,12 @@ Consequences, all deliberate:
   fork and describe that origin, **not** this repository's architecture. This
   file is the authoritative current record.
 
+The upstream GPLv3 test suite (prior repo `voyager_py/tests/`) is carried under
+`sidecar/tests/packages/referral_outreach/`, imports rewritten to
+`sidecar.packages.referral_outreach.upstream.*`; the retired subprocess CLI tests
+(`test_cli_dry_run.py` and the `contact-sync` CLI cases) are dropped, everything
+else carried verbatim with its GPL-era headers retained.
+
 ## Upstream
 
 - **Project:** OpenOutreach — <https://github.com/eracle/OpenOutreach>
@@ -53,6 +59,7 @@ Consequences, all deliberate:
 | `secure_store.py` | *new (GPL)* | Fernet-sealed storage-state read/write; reads `FYJ_SESSION_KEY`. |
 | `pacing.py` | *new (GPL)*, derived from upstream `conf.py` limits + `session.random_sleep` | Tiered caps, jittered send delay, 24 h backoff — owned here. |
 | `worker.py` | *new (GPL)* | The bounded-operation layer the facade drives directly. |
+| `company.py` | `linkedin/actions/company.py` + `linkedin/api/company.py` | Company-entity resolution (typeahead/detail parsers, id/domain helpers). Missed in the original import; carried later under the same take/trim conventions. |
 
 ## Deliberately NOT taken (stripped as incompatible with the vision)
 

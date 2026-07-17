@@ -636,6 +636,8 @@ export interface Settings {
    *  effective when Referral Outreach (networking) is enabled. */
   auto_referrals_on_save: boolean;
   auto_score_on_scan: boolean;
+  // 0 = unlimited (runner ceiling applies); otherwise 2-20.
+  llm_concurrency: number;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
    *  the human — the default) or "auto" (legacy fill-and-submit). */
   /** Save-time form prep (FR-APP-01, 2026-07-11): visit the job's real form,
