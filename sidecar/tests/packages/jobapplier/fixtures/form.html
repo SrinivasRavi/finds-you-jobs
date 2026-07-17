@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head><title>Apply — Staff Engineer at Acme</title></head>
+<body>
+  <h1>Apply for Staff Engineer</h1>
+  <form id="application" action="#" method="post">
+    <label for="name">Full name</label>
+    <input id="name" name="name" type="text" required />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required />
+
+    <label for="source">How did you hear about us?</label>
+    <select id="source" name="source">
+      <option value="">Select one</option>
+      <option value="li">LinkedIn</option>
+      <option value="fr">A friend</option>
+    </select>
+
+    <label for="relocate">Willing to relocate</label>
+    <input id="relocate" name="relocate" type="checkbox" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <label for="portal-password">Portal password (existing candidates)</label>
+    <input id="portal-password" name="portal_password" type="password" />
+
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>
