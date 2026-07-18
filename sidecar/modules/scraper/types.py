@@ -69,6 +69,12 @@ class ScanPrefs:
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20
+    # Sources are independent, I/O-bound HTTP — fetched concurrently by a bounded
+    # pool so a 300-source scan is sub-minute, not ~8 min sequential. The cap
+    # keeps socket/latency pressure sane; `<= 1` forces the deterministic
+    # sequential path (debugging). Dedup order stays deterministic regardless
+    # (results merge in source order — see scraper.scan).
+    max_workers: int = 8
 
 
 @dataclass
