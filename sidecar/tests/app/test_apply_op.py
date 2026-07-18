@@ -84,7 +84,12 @@ def _seed_card(client: TestClient) -> tuple[str, str]:
 
 # 120 s: the suite now carries several real-Chromium tests; a cold browser
 # spawn under a loaded suite can push a run past 60 s (2026-07-17 flake).
-def _wait_terminal(client: TestClient, run_id: str, timeout: float = 120.0) -> dict:
+def _wait_terminal(client: TestClient, run_id: str, timeout: float = 300.0) -> dict:
+    """Poll the run to a terminal state. 300s ceiling (was 120s): a cold
+    Chromium launch on a loaded dev machine was observed at 122s (2026-07-18),
+    turning a fixed 120s wait into a pure load flake — a different test failed
+    on each run, all 5 pass in ~3s on an idle machine. The ceiling only binds
+    on genuine failure; idle runtime is unchanged."""
     deadline = time.monotonic() + timeout
     run: dict = {}
     while time.monotonic() < deadline:
