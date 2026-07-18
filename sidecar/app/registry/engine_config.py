@@ -20,6 +20,7 @@ The one-way rule holds: this is `app/` code reusing the module's shared
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -163,10 +164,41 @@ def verify_provider(
 # ---------------------------------------------------------------------------
 
 
+class FakeInstantEngine:
+    """FYJ_FAKE_LLM's engine: instant canned completion, zero subprocesses.
+
+    Exists because the Playwright suite was discovered (2026-07-18) making REAL
+    `claude -p` calls on the dev machine's logged-in subscription — every
+    spec's profile save enqueues an `extract` op, default-routed to claude-cli.
+    That broke the suite's zero-model contract, spent real tokens per run, and
+    the ~10s child subprocesses were the root of teardown hangs and shutdown-
+    drain flakes. Same dev-seam philosophy as FYJ_APPLY_DEV: env-gated, never
+    set by the shell, honest to the ledger (zero tokens recorded).
+    """
+
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model or "fake-instant"
+
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Any]:
+        from sidecar.modules._shared.claude_engine import EngineUsage
+
+        return "{}", EngineUsage(
+            internal_calls=1, tokens_in=0, tokens_out=0, usd=0.0, model=self.model
+        )
+
+
 def register_builtin_engines(registry: EngineRegistry) -> None:
     """Register the always-present subscription-CLI engines. `claude-cli` keeps
     its pinned default model; the other CLIs run their own configured default
-    when the routing entry names no model (`model=None` omits the flag)."""
+    when the routing entry names no model (`model=None` omits the flag).
+
+    FYJ_FAKE_LLM=1 (dev/e2e only) swaps every builtin CLI engine for
+    `FakeInstantEngine` so no test run ever drives a real subscription CLI.
+    BYOK rows are untouched — the e2e environment persists none."""
+    if os.environ.get("FYJ_FAKE_LLM"):
+        for name in CLI_PROVIDERS:
+            registry.register_factory(name, lambda model: FakeInstantEngine(model))
+        return
     registry.register_factory(
         DEFAULT_ENGINE, lambda model: ClaudeCliEngine(model=model or DEFAULT_MODEL)
     )

@@ -439,6 +439,32 @@ def test_save_rejects_cli_providers_as_byok(
         assert resp.status_code == 422, provider
 
 
+def test_fake_llm_env_swaps_every_cli_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FYJ_FAKE_LLM=1 (the e2e seam) must leave NO builtin path to a real CLI:
+    every CLI provider resolves to FakeInstantEngine and completes instantly
+    with zero-token usage — the 2026-07-18 zero-model-contract fix."""
+    from sidecar.app.registry.engine_config import FakeInstantEngine, configure_engines
+    from sidecar.app.registry.engines import EngineRegistry
+
+    monkeypatch.setenv("FYJ_FAKE_LLM", "1")
+    registry = EngineRegistry()
+    configure_engines(
+        registry,
+        {
+            "score": {"engine": "claude-cli"},
+            "tailor": {"engine": "codex-cli"},
+            "extract": {"engine": "antigravity-cli"},
+        },
+    )
+    for kind in ("score", "tailor", "extract"):
+        resolved = registry.resolve(kind)
+        assert resolved is not None, kind
+        assert isinstance(resolved.engine, FakeInstantEngine), kind
+        text, usage = resolved.engine.complete("sys", "user")
+        assert text == "{}"
+        assert usage.tokens_in == 0 and usage.usd == 0.0
+
+
 def test_cli_engines_always_registered_and_routable() -> None:
     """configure_engines registers the CLI family unconditionally, so a routing
     entry naming codex-cli/antigravity-cli resolves (call-time errors stay the

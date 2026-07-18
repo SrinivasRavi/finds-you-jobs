@@ -38,7 +38,11 @@ export default defineConfig({
     // FYJ_APPLY_DEV unlocks the apply op's dev knobs (scripted engine, local
     // fixture URLs, headless) so the applier e2e runs with zero model calls
     // and zero external traffic — same seam the sidecar tests use.
-    env: { FYJ_DATA_DIR: E2E_DATA_DIR, FYJ_APPLY_DEV: "1" },
+    // FYJ_FAKE_LLM swaps every builtin CLI engine for an instant fake: without
+    // it, each spec's profile save enqueued an `extract` op that ran a REAL
+    // `claude -p` on the dev machine's subscription (2026-07-18 finding) —
+    // real tokens, ~10s child subprocesses, shutdown-drain flakes.
+    env: { FYJ_DATA_DIR: E2E_DATA_DIR, FYJ_APPLY_DEV: "1", FYJ_FAKE_LLM: "1" },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

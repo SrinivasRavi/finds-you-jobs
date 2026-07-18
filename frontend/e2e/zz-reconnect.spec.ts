@@ -43,6 +43,9 @@ function respawnSidecar(port: string, token: string): ChildProcess {
       FYJ_PORT: port,
       FYJ_API_TOKEN: token,
       FYJ_DATA_DIR: E2E_DATA_DIR,
+      // The webServer env sets this for the primary sidecar; the respawned one
+      // must match — a real-CLI respawn would reintroduce the zero-model leak.
+      FYJ_FAKE_LLM: "1",
     },
   });
 }
