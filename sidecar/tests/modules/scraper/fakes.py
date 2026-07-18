@@ -22,7 +22,9 @@ class FakeFetcher(Fetcher):
     """Same surface as http.Fetcher; serves canned payloads keyed by URL substring.
 
     `routes` maps a URL substring → payload file name (under payloads/), a
-    dict/list (returned as-is), or an Exception instance (raised).
+    dict/list (returned as-is), an Exception instance (raised), or a callable
+    `(url, body) -> payload` — the seam for POST endpoints whose response
+    depends on the request body (Workday CxS pagination).
     """
 
     routes: dict[str, object] = {}
@@ -52,9 +54,19 @@ class FakeFetcher(Fetcher):
 
     def get_json(self, url: str) -> object:
         payload = self._lookup(url)
+        if callable(payload):
+            payload = payload(url, None)
         if isinstance(payload, str):
             return json.loads(payload)
         return payload
+
+    def post_json(self, url: str, payload: object) -> object:
+        route = self._lookup(url)
+        if callable(route):
+            route = route(url, payload)
+        if isinstance(route, str):
+            return json.loads(route)
+        return route
 
 
 def routed(routes: Mapping[str, object]) -> type[FakeFetcher]:

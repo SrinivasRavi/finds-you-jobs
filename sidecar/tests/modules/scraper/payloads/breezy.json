@@ -1,0 +1,20 @@
+[
+  {
+    "id": "p1",
+    "name": "Backend Engineer",
+    "url": "https://acme.breezy.hr/p/abc123-backend-engineer",
+    "location": {
+      "country": { "name": "India", "id": "IN" },
+      "state": { "id": "KA", "name": "Karnataka" },
+      "city": "Bengaluru",
+      "primary": true
+    },
+    "type": { "id": "fullTime", "name": "Full-Time" },
+    "published_date": "2026-07-10T09:00:00.130Z"
+  },
+  {
+    "id": "p2",
+    "name": "row without url — skipped",
+    "location": { "name": "Remote" }
+  }
+]

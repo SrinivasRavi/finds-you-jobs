@@ -11,7 +11,10 @@ from types import ModuleType
 
 from ..config import SourceEntry
 from . import (
+    arbeitnow,
     ashby,
+    bamboohr,
+    breezy,
     greenhouse,
     hackernews,
     lever,
@@ -22,7 +25,9 @@ from . import (
     rss,
     smartrecruiters,
     teamtailor,
+    themuse,
     workable,
+    workday,
 )
 
 ADAPTERS: list[ModuleType] = [
@@ -34,8 +39,13 @@ ADAPTERS: list[ModuleType] = [
     recruitee,
     teamtailor,
     personio,
+    workday,
+    bamboohr,
+    breezy,
     remoteok,
     remotive,
+    arbeitnow,
+    themuse,
     hackernews,
     rss,
 ]

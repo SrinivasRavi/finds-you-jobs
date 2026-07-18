@@ -38,6 +38,18 @@ company = "Acme"
 url = "https://acme.jobs.personio.de"  # DACH/EU; also .com → /xml feed
 company = "Acme"
 
+[[sources]]
+url = "https://acme.wd5.myworkdayjobs.com/en-US/AcmeCareers"  # Workday CxS (POST, paginated)
+company = "Acme"
+
+[[sources]]
+url = "https://acme.bamboohr.com/careers"
+company = "Acme"
+
+[[sources]]
+url = "https://acme.breezy.hr"
+company = "Acme"
+
 # --- board-wide feeds ---
 
 [[sources]]
@@ -48,6 +60,12 @@ board = "remotive"
 
 [[sources]]
 board = "hackernews"   # latest "Ask HN: Who is hiring?" thread
+
+[[sources]]
+board = "arbeitnow"    # keyless JSON API, JD body included
+
+[[sources]]
+board = "themuse"      # keyless JSON API, paginated (bounded), JD body included
 
 [[sources]]
 url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"

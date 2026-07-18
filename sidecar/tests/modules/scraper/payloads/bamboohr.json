@@ -1,0 +1,21 @@
+{
+  "result": [
+    {
+      "id": "41",
+      "jobOpeningName": "Senior Backend Engineer",
+      "departmentLabel": "Engineering",
+      "employmentStatusLabel": "Full-Time",
+      "location": { "city": "Pune", "state": "MH" },
+      "isRemote": false
+    },
+    {
+      "id": "42",
+      "jobOpeningName": "Platform Engineer",
+      "departmentLabel": "Engineering",
+      "employmentStatusLabel": "Full-Time",
+      "location": {},
+      "isRemote": true
+    },
+    { "jobOpeningName": "row without id — skipped" }
+  ]
+}

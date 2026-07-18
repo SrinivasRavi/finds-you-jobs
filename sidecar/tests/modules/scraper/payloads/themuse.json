@@ -1,0 +1,17 @@
+{
+  "page": 1,
+  "page_count": 1,
+  "results": [
+    {
+      "name": "Staff Software Engineer",
+      "company": { "name": "Example Corp" },
+      "locations": [{ "name": "Flexible / Remote" }, { "name": "New York, NY" }],
+      "refs": {
+        "landing_page": "https://www.themuse.com/jobs/examplecorp/staff-software-engineer"
+      },
+      "contents": "<p>Own the <i>platform</i>.</p>",
+      "publication_date": "2026-07-12T00:00:00Z"
+    },
+    { "name": "row without landing_page — skipped", "refs": {} }
+  ]
+}

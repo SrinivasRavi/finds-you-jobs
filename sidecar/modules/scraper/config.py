@@ -13,7 +13,8 @@ Shape (see `sidecar/modules/scraper/portals.example.toml`):
     company = "Glean"            # optional display-name override
 
     [[sources]]
-    board = "remoteok"           # keyword boards: remoteok | remotive | hackernews
+    board = "remoteok"           # boards: remoteok | remotive | hackernews |
+                                 #         arbeitnow | themuse
 
     [[sources]]
     url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"

@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "slug": "software-engineer-backend-berlin",
+      "company_name": "Beispiel GmbH",
+      "title": "Software Engineer (Backend)",
+      "description": "<p>Build <b>services</b>.</p>",
+      "remote": true,
+      "url": "https://www.arbeitnow.com/jobs/companies/beispiel/software-engineer-backend-berlin",
+      "tags": ["backend"],
+      "job_types": ["full-time"],
+      "location": "Berlin",
+      "created_at": 1784073600
+    },
+    { "title": "row without url — skipped", "location": "Munich" }
+  ],
+  "links": {},
+  "meta": {}
+}
