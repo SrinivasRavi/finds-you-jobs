@@ -24,6 +24,7 @@ import {
   useTrash,
   useTrashJob,
   useTriggerScan,
+  useWatchCompany,
 } from "../api/queries";
 import { JobTombstonedError, type BoardPage, type Job, type JobDraft } from "../api/types";
 import { Icon } from "../shell/icons";
@@ -260,10 +261,15 @@ function JobDetail({
   // on-Save op is queued async server-side — the button must not wait for the
   // refetch round-trip to acknowledge the click.
   const [justSaved, setJustSaved] = useState(false);
+  // Row-level watchlist (approved-plan #4): add this job's whole company
+  // board to the scan sources. null | "added" | "already" | "unsupported".
+  const watchCompany = useWatchCompany();
+  const [watchState, setWatchState] = useState<string | null>(null);
   const jobId = job?.id;
   useEffect(() => {
     setToggles({ ...packetDefaults });
     setJustSaved(false);
+    setWatchState(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset per job only
   }, [jobId]);
   if (!job) {
@@ -406,6 +412,29 @@ function JobDetail({
           </button>
         ) : null}
         <div className="flex-1" />
+        <button
+          data-testid="watch-company"
+          title="Scan this company's whole board on every future scan"
+          disabled={watchCompany.isPending || watchState === "added"}
+          onClick={() =>
+            watchCompany.mutate(
+              { job_id: job.id },
+              {
+                onSuccess: (r) => setWatchState(r.added ? "added" : "already"),
+                onError: () => setWatchState("unsupported"),
+              },
+            )
+          }
+          className="inline-flex h-[30px] items-center gap-1 rounded-7 px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 disabled:opacity-70"
+        >
+          {watchState === "added"
+            ? "Watching company ✓"
+            : watchState === "already"
+              ? "Already watched"
+              : watchState === "unsupported"
+                ? "Can't watch this source"
+                : "Watch company"}
+        </button>
         <a
           href={job.canonical_url}
           target="_blank"
@@ -665,7 +694,7 @@ export function JobBoard() {
             className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
           >
             <Icon name="plus" size={14} strokeWidth={2} />
-            Add a job by URL
+            Add a job or company
           </button>
         </div>
       </header>
@@ -1168,6 +1197,10 @@ function AddByUrlModal({
   // recoverable, a tombstone is final, so re-add is impossible (US-JB-07).
   const [tombstoned, setTombstoned] = useState(false);
   const preview = useJobPreview();
+  // Watchlist path (approved-plan #4): the same paste box also accepts a
+  // company careers URL — "watch" adds it as a permanent scan source.
+  const watchCompany = useWatchCompany();
+  const [watchMsg, setWatchMsg] = useState<string | null>(null);
 
   function fetchDetails() {
     setPhase("fetching");
@@ -1218,7 +1251,7 @@ function AddByUrlModal({
   }
 
   return (
-    <Modal title="Add a job by URL" onClose={onClose} width={520}>
+    <Modal title="Add a job or company" onClose={onClose} width={520}>
       {phase === "entry" ? (
         <form
           className="flex flex-col gap-3 px-5 py-4"
@@ -1228,7 +1261,8 @@ function AddByUrlModal({
           }}
         >
           <label className="text-[12.5px] text-ink-2">
-            Paste a job posting URL. We'll grab the title, company, location, and description.
+            Paste a job posting URL to add that job — or a company&apos;s careers page to
+            watch their whole board on every scan.
           </label>
           {tombstoned ? (
             <p
@@ -1252,6 +1286,14 @@ function AddByUrlModal({
             placeholder="https://company.com/careers/senior-engineer"
             className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
           />
+          {watchMsg ? (
+            <p
+              data-testid="watch-company-result"
+              className="rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-ink-2"
+            >
+              {watchMsg}
+            </p>
+          ) : null}
           <div className="mt-1 flex justify-end gap-2">
             <button
               type="button"
@@ -1259,6 +1301,29 @@ function AddByUrlModal({
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
             >
               Cancel
+            </button>
+            <button
+              type="button"
+              data-testid="watch-company-btn"
+              disabled={!url || watchCompany.isPending}
+              onClick={() =>
+                watchCompany.mutate(
+                  { url },
+                  {
+                    onSuccess: (r) =>
+                      setWatchMsg(
+                        r.added
+                          ? `Watching ${r.company || r.source_url} — every scan now covers this board (${r.adapter}).`
+                          : "Already watching this board.",
+                      ),
+                    onError: (err: unknown) =>
+                      setWatchMsg(err instanceof Error ? err.message : "Could not watch this URL."),
+                  },
+                )
+              }
+              className="rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12.5px] font-medium text-ink-2 hover:bg-surface-3 disabled:opacity-50"
+            >
+              Watch company board
             </button>
             <button
               type="submit"

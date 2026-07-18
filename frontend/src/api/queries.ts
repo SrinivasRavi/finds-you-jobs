@@ -27,6 +27,7 @@ import type {
   BoardPage,
   CompanyConfirmPick,
   ContactInput,
+  DiscoverySource,
   EngineSaveInput,
   Job,
   JobDraft,
@@ -49,6 +50,9 @@ export const qk = {
   profile: ["profile"] as const,
   onboarding: ["onboarding"] as const,
   settings: ["settings"] as const,
+  discoverySources: ["discoverySources"] as const,
+  discoveryCredentials: ["discoveryCredentials"] as const,
+  discoveryAnalytics: ["discoveryAnalytics"] as const,
   prompts: ["prompts"] as const,
   ledger: ["ledger"] as const,
   costTotals: ["costTotals"] as const,
@@ -122,6 +126,92 @@ export function useMasterProfileExists() {
 }
 export function useSettings() {
   return useQuery({ queryKey: qk.settings, queryFn: () => api.getSettings() });
+}
+/** The Discovery-sources catalog (Settings toggles) — every adapter family the
+ *  scraper ships, with the user's per-family opt-outs. */
+export function useDiscoverySources() {
+  return useQuery({
+    queryKey: qk.discoverySources,
+    queryFn: () => api.listDiscoverySources(),
+  });
+}
+export function useToggleDiscoverySource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.toggleDiscoverySource(id, enabled),
+    // Optimistic: the checkbox flips instantly (it's a controlled input — a
+    // POST round-trip delay reads as a dead click); rollback on error.
+    onMutate: async ({ id, enabled }) => {
+      await qc.cancelQueries({ queryKey: qk.discoverySources });
+      const prev = qc.getQueryData<DiscoverySource[]>(qk.discoverySources);
+      if (prev) {
+        qc.setQueryData(
+          qk.discoverySources,
+          prev.map((s) => (s.id === id ? { ...s, enabled } : s)),
+        );
+      }
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.discoverySources, ctx.prev);
+    },
+    // The POST returns the authoritative catalog — write it into the cache
+    // (family toggles cascade to actor rows server-side).
+    onSuccess: (rows) => {
+      qc.setQueryData(qk.discoverySources, rows);
+      qc.invalidateQueries({ queryKey: qk.settings }); // portals_config changed
+    },
+  });
+}
+/** BYO scraper keys (Apify / Brave) — Settings → Discovery sources. */
+export function useDiscoveryCredentials() {
+  return useQuery({
+    queryKey: qk.discoveryCredentials,
+    queryFn: () => api.listDiscoveryCredentials(),
+  });
+}
+export function useSaveDiscoveryCredential() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, key }: { id: string; key: string }) =>
+      api.saveDiscoveryCredential(id, key),
+    onSuccess: (rows) => {
+      qc.setQueryData(qk.discoveryCredentials, rows);
+      // Saving an Apify/Brave key seeds its [[sources]] entries server-side.
+      qc.invalidateQueries({ queryKey: qk.discoverySources });
+      qc.invalidateQueries({ queryKey: qk.settings });
+    },
+  });
+}
+export function useDeleteDiscoveryCredential() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteDiscoveryCredential(id),
+    onSuccess: (rows) => {
+      qc.setQueryData(qk.discoveryCredentials, rows);
+      qc.invalidateQueries({ queryKey: qk.discoverySources });
+    },
+  });
+}
+/** Watch a company's board — adds a [[sources]] row (approved-plan #4). */
+export function useWatchCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { url?: string; job_id?: string; company?: string }) =>
+      api.watchCompany(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.discoverySources });
+      qc.invalidateQueries({ queryKey: qk.settings });
+    },
+  });
+}
+/** Per-source efficacy aggregates — the Analytics Discovery tab. */
+export function useDiscoveryAnalytics() {
+  return useQuery({
+    queryKey: qk.discoveryAnalytics,
+    queryFn: () => api.getDiscoveryAnalytics(),
+  });
 }
 /** The operations ledger — the Analytics table + cost source of truth (§10). */
 export function useLedger() {

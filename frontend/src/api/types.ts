@@ -629,6 +629,54 @@ export interface EngineSaveInput {
   enabled?: boolean;
 }
 
+/** One row in Settings → Discovery sources (per-source opt-out toggles).
+ *  `id` is the adapter family ("greenhouse") or a full source key for
+ *  actor-granular sources ("apify:memo23/naukri-scraper"). */
+export interface DiscoverySource {
+  id: string;
+  label: string;
+  kind: "ats" | "board" | "search" | "fallback";
+  entries: number;
+  enabled: boolean;
+}
+
+/** A BYO scraper key row (Apify / Brave) — masked hint only, never the key. */
+export interface DiscoveryCredential {
+  id: string;
+  label: string;
+  has_key: boolean;
+  key_hint: string | null;
+}
+
+/** Per-source efficacy row (Analytics → Discovery). */
+export interface DiscoverySourceStats {
+  id: string;
+  label: string;
+  kind: string;
+  jobs: number;
+  saved: number;
+  scored: number;
+  avg_score: number | null;
+  fetched: number;
+  kept: number;
+  http_calls: number;
+  latency_ms: number;
+  errors: number;
+}
+
+export interface DiscoveryAnalytics {
+  sources: DiscoverySourceStats[];
+  scans: number;
+  last_scan_at: string | null;
+}
+
+export interface WatchCompanyResult {
+  added: boolean;
+  source_url: string;
+  adapter: string;
+  company: string;
+}
+
 export interface Settings {
   /** Legacy combined flag = resume && cover. Kept for consumers that read a
    *  single value (JobBoard per-job slider seed); the Settings UI drives the

@@ -7,7 +7,13 @@
 
 import { Fragment, useMemo, useState } from "react";
 
-import { useCostTotals, useLedger, useOperationSpans, useRetryOperation } from "../api/queries";
+import {
+  useCostTotals,
+  useDiscoveryAnalytics,
+  useLedger,
+  useOperationSpans,
+  useRetryOperation,
+} from "../api/queries";
 import type { CostTotals, LedgerEntry, OperationKind, OperationState, Span } from "../api/types";
 
 const STATE_CLS: Record<OperationState, string> = {
@@ -239,12 +245,58 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
   );
 }
 
+// Discovery tab (approved-plan #7): per-source efficacy from existing records
+// — stored jobs × saves × scores per family, plus recent-scan fetch/keep/
+// error/latency aggregates. Lets the user (and the maintainer dogfooding
+// sources) see which families actually yield for their role/location, and
+// which to untick in Settings → Discovery sources.
+function DiscoveryPanel() {
+  const { data } = useDiscoveryAnalytics();
+  if (!data) return null;
+  return (
+    <div className="space-y-3" data-testid="discovery-panel">
+      <div className="text-[11px] uppercase tracking-wider text-ink-4">
+        Source efficacy · last {data.scans} scan{data.scans === 1 ? "" : "s"}
+      </div>
+      {data.sources.length === 0 ? (
+        <div className="text-[12px] text-ink-3">
+          No discovery data yet — run a scan from the Job Board.
+        </div>
+      ) : (
+        data.sources.map((s) => (
+          <div
+            key={s.id}
+            data-testid={`discovery-source-${s.id}`}
+            className="rounded-lg border border-border bg-surface p-2.5"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-[12.5px] font-medium text-ink">{s.label}</span>
+              <span className="font-mono text-[12px] text-ink-2">{s.jobs} jobs</span>
+            </div>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-ink-3">
+              <span>saved {s.saved}</span>
+              <span>
+                avg score {s.avg_score !== null ? Math.round(s.avg_score) : "—"}
+              </span>
+              <span>
+                kept {s.kept}/{s.fetched}
+              </span>
+              <span className={s.errors > 0 ? "text-warn" : ""}>errors {s.errors}</span>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 export function Analytics() {
   const { data: ledger = [] } = useLedger();
   const { data: costTotals } = useCostTotals();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [active, setActive] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
+  const [tab, setTab] = useState<"costs" | "discovery">("costs");
 
   const filtered = useMemo(() => {
     // No group selected → show all; else keep rows whose group is selected.
@@ -275,9 +327,27 @@ export function Analytics() {
         </span>
       </header>
       <main className="flex min-h-0 flex-1 gap-5 overflow-hidden p-5">
-        {/* Left 25% — cost dashboard */}
+        {/* Left 25% — Costs | Discovery tabs (approved-plan #7) */}
         <aside className="w-1/4 min-w-[200px] shrink-0 overflow-y-auto">
-          <CostPanel totals={costTotals} />
+          <div className="mb-3 flex gap-1.5" data-testid="analytics-tabs">
+            {(["costs", "discovery"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                data-testid={`analytics-tab-${t}`}
+                aria-pressed={tab === t}
+                className={
+                  "h-7 rounded-full border px-3 text-[11.5px] capitalize transition " +
+                  (tab === t
+                    ? "border-accent bg-accent text-white"
+                    : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
+                }
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          {tab === "costs" ? <CostPanel totals={costTotals} /> : <DiscoveryPanel />}
         </aside>
 
         {/* Right 75% — operations ledger */}

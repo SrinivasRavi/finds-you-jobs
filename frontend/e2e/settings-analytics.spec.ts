@@ -133,3 +133,44 @@ test("analytics shows cost tiles and a real ledger row; /logs redirects", async 
   await expect(page.getByText("cleanup_trash").first()).toBeVisible();
   await page.screenshot({ path: `${DIR}/analytics-ledger.png`, fullPage: true });
 });
+
+test("discovery sources: all on by default, opt-out persists across reload", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
+  // Family rows render grouped; the big ones exist with entry counts.
+  const greenhouse = page.getByTestId("source-toggle-greenhouse");
+  await expect(greenhouse).toBeVisible();
+  await expect(page.getByTestId("source-toggle-linkedin")).toBeVisible();
+  await expect(greenhouse.locator("input")).toBeChecked();
+  await page.screenshot({ path: `${DIR}/discovery-sources-default.png`, fullPage: true });
+  // Opt out of Greenhouse → unchecked, and it survives a full reload (it lives
+  // in portals_config, not component state). click() + polling assertion, not
+  // uncheck(): a React controlled checkbox reverts the native flip until the
+  // state round-trips, which uncheck() misreads as "did not change state".
+  await greenhouse.locator("input").click();
+  await expect(greenhouse.locator("input")).not.toBeChecked();
+  await page.reload();
+  await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("source-toggle-greenhouse").locator("input")).not.toBeChecked();
+  await page.screenshot({ path: `${DIR}/discovery-sources-greenhouse-off.png`, fullPage: true });
+  // Back on — leave the shared e2e profile clean for other specs.
+  await page.getByTestId("source-toggle-greenhouse").locator("input").click();
+  await expect(page.getByTestId("source-toggle-greenhouse").locator("input")).toBeChecked();
+});
+
+test("BYO-key rows render and analytics has a Discovery tab", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
+  // Key inputs for both providers, no key stored → input + Save visible.
+  await expect(page.getByTestId("discovery-credential-apify")).toBeVisible();
+  await expect(page.getByTestId("discovery-credential-brave")).toBeVisible();
+  await expect(page.getByTestId("discovery-credential-input-apify")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/discovery-byok-rows.png`, fullPage: true });
+
+  // Analytics: Costs | Discovery tabs; Discovery renders per-source efficacy.
+  await page.goto("/analytics");
+  await expect(page.getByTestId("analytics-tabs")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("analytics-tab-discovery").click();
+  await expect(page.getByTestId("discovery-panel")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/analytics-discovery-tab.png`, fullPage: true });
+});

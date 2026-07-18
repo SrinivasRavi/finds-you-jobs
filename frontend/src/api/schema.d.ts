@@ -1279,6 +1279,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/discovery/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Discovery Sources */
+        get: operations["list_discovery_sources_api_discovery_sources_get"];
+        put?: never;
+        /** Toggle Discovery Source */
+        post: operations["toggle_discovery_source_api_discovery_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/discovery/watchlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Watch Company
+         * @description Add a company board to `portals_config` so every future scan covers it.
+         *     The watchlist IS the sources list — no second store, no special casing.
+         */
+        post: operations["watch_company_api_discovery_watchlist_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/discovery/analytics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discovery Analytics
+         * @description Aggregates existing records only (no migration): stored `jobs` ×
+         *     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
+         *     scans' `result_ref.per_source` fetch/keep/error/latency numbers.
+         */
+        get: operations["discovery_analytics_api_discovery_analytics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/discovery/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Discovery Credentials */
+        get: operations["list_discovery_credentials_api_discovery_credentials_get"];
+        put?: never;
+        /** Save Discovery Credential */
+        post: operations["save_discovery_credential_api_discovery_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/discovery/credentials/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Discovery Credential */
+        delete: operations["delete_discovery_credential_api_discovery_credentials__credential_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profile/ingest": {
         parameters: {
             query?: never;
@@ -1736,6 +1832,95 @@ export interface components {
             company_industry?: string | null;
             /** Company Url */
             company_url?: string | null;
+        };
+        /** DiscoveryAnalyticsDTO */
+        DiscoveryAnalyticsDTO: {
+            /** Sources */
+            sources: components["schemas"]["DiscoverySourceStatsDTO"][];
+            /** Scans */
+            scans: number;
+            /** Last Scan At */
+            last_scan_at: string | null;
+        };
+        /**
+         * DiscoveryCredentialDTO
+         * @description A BYO scraper key (Apify / Brave) — masked, never the key itself.
+         */
+        DiscoveryCredentialDTO: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Has Key */
+            has_key: boolean;
+            /** Key Hint */
+            key_hint: string | null;
+        };
+        /** DiscoveryCredentialSave */
+        DiscoveryCredentialSave: {
+            /** Id */
+            id: string;
+            /** Key */
+            key: string;
+        };
+        /**
+         * DiscoverySourceDTO
+         * @description One toggle row in Settings → Discovery sources. `id` is the adapter
+         *     family (`greenhouse`) or a full source key for actor-granular sources
+         *     (`apify:memo23/naukri-scraper`). `entries` counts the user's
+         *     `[[sources]]` rows the family claims (0 for search sources configured
+         *     implicitly).
+         */
+        DiscoverySourceDTO: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Kind */
+            kind: string;
+            /** Entries */
+            entries: number;
+            /** Enabled */
+            enabled: boolean;
+        };
+        /**
+         * DiscoverySourceStatsDTO
+         * @description Per-source-family efficacy row (Analytics → Discovery tab): what each
+         *     source has actually yielded — stored jobs, saves, score quality — plus the
+         *     recent-scan fetch/keep/error/latency aggregates.
+         */
+        DiscoverySourceStatsDTO: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Kind */
+            kind: string;
+            /** Jobs */
+            jobs: number;
+            /** Saved */
+            saved: number;
+            /** Scored */
+            scored: number;
+            /** Avg Score */
+            avg_score: number | null;
+            /** Fetched */
+            fetched: number;
+            /** Kept */
+            kept: number;
+            /** Http Calls */
+            http_calls: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Errors */
+            errors: number;
+        };
+        /** DiscoverySourceToggle */
+        DiscoverySourceToggle: {
+            /** Id */
+            id: string;
+            /** Enabled */
+            enabled: boolean;
         };
         /**
          * EngineSettingDTO
@@ -2492,6 +2677,34 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * WatchCompanyRequest
+         * @description Add a company's board to the scan watchlist (approved-plan #4). Either
+         *     a careers/board URL the user pasted, or a job_id whose board root we
+         *     derive (row-level "Watch company").
+         */
+        WatchCompanyRequest: {
+            /** Url */
+            url?: string | null;
+            /** Job Id */
+            job_id?: string | null;
+            /**
+             * Company
+             * @default
+             */
+            company: string;
+        };
+        /** WatchCompanyResult */
+        WatchCompanyResult: {
+            /** Added */
+            added: boolean;
+            /** Source Url */
+            source_url: string;
+            /** Adapter */
+            adapter: string;
+            /** Company */
+            company: string;
         };
     };
     responses: never;
@@ -4491,6 +4704,196 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_discovery_sources_api_discovery_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverySourceDTO"][];
+                };
+            };
+        };
+    };
+    toggle_discovery_source_api_discovery_sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverySourceToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverySourceDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    watch_company_api_discovery_watchlist_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchCompanyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchCompanyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discovery_analytics_api_discovery_analytics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryAnalyticsDTO"];
+                };
+            };
+        };
+    };
+    list_discovery_credentials_api_discovery_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryCredentialDTO"][];
+                };
+            };
+        };
+    };
+    save_discovery_credential_api_discovery_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoveryCredentialSave"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryCredentialDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_discovery_credential_api_discovery_credentials__credential_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryCredentialDTO"][];
+                };
             };
             /** @description Validation Error */
             422: {

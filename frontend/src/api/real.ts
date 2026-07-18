@@ -41,7 +41,11 @@ import type {
   PacketState,
   Priority,
   ProfileIngestResult,
+  DiscoveryAnalytics,
+  DiscoveryCredential,
+  DiscoverySource,
   PromptSetting,
+  WatchCompanyResult,
   ReachOutInput,
   ReachOutResult,
   ReferralCandidate,
@@ -908,6 +912,42 @@ export class RealApi {
   }
   async resetPrompt(kind: string): Promise<PromptSetting> {
     return this.req<PromptSetting>(`/api/settings/prompts/${kind}`, { method: "DELETE" });
+  }
+
+  // ── /api/discovery/* (source toggles, BYO keys, watchlist, analytics) ────
+  async listDiscoverySources(): Promise<DiscoverySource[]> {
+    return this.req<DiscoverySource[]>("/api/discovery/sources");
+  }
+  async toggleDiscoverySource(id: string, enabled: boolean): Promise<DiscoverySource[]> {
+    return (await this.json("POST", "/api/discovery/sources", {
+      id,
+      enabled,
+    })) as DiscoverySource[];
+  }
+  async listDiscoveryCredentials(): Promise<DiscoveryCredential[]> {
+    return this.req<DiscoveryCredential[]>("/api/discovery/credentials");
+  }
+  async saveDiscoveryCredential(id: string, key: string): Promise<DiscoveryCredential[]> {
+    return (await this.json("POST", "/api/discovery/credentials", {
+      id,
+      key,
+    })) as DiscoveryCredential[];
+  }
+  async deleteDiscoveryCredential(id: string): Promise<DiscoveryCredential[]> {
+    const res = await this.req<DiscoveryCredential[]>(`/api/discovery/credentials/${id}`, {
+      method: "DELETE",
+    });
+    return res;
+  }
+  async watchCompany(input: {
+    url?: string;
+    job_id?: string;
+    company?: string;
+  }): Promise<WatchCompanyResult> {
+    return (await this.json("POST", "/api/discovery/watchlist", input)) as WatchCompanyResult;
+  }
+  async getDiscoveryAnalytics(): Promise<DiscoveryAnalytics> {
+    return this.req<DiscoveryAnalytics>("/api/discovery/analytics");
   }
 
   // ── operations / ledger ────────────────────────────────────────────────

@@ -11,17 +11,22 @@ import { api } from "../api/index";
 import { qk } from "../api/queries";
 import {
   useConnectLinkedIn,
+  useDeleteDiscoveryCredential,
   useDeleteEngine,
   useDisconnectLinkedIn,
+  useDiscoveryCredentials,
+  useDiscoverySources,
   useLinkedInSession,
   useProfile,
   usePrompts,
   useResetPrompt,
   useResumeLinkedIn,
+  useSaveDiscoveryCredential,
   useSaveEngine,
   useSetPrompt,
   useSetLinkedInTier,
   useSettings,
+  useToggleDiscoverySource,
   useUpdateSettings,
   useValidateLinkedIn,
   useVerifyEngine,
@@ -162,6 +167,156 @@ function ScoreBatchCapControl({
           {p.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// Discovery sources (maintainer directive 2026-07-18): one checkbox per
+// scraper source family, all ON by default — pure opt-out. Lets a user drop a
+// family that yields nothing for their role/location, and lets source efficacy
+// be tested in isolation. Grouped by kind so the list of 18+ reads at a glance.
+const SOURCE_KIND_GROUPS: { kind: string; heading: string; blurb: string }[] = [
+  {
+    kind: "ats",
+    heading: "Company boards (ATS)",
+    blurb: "Direct company careers boards from your source registry.",
+  },
+  {
+    kind: "board",
+    heading: "Job boards",
+    blurb: "Public keyless boards, scanned whole and filtered locally.",
+  },
+  {
+    kind: "search",
+    heading: "Search sources",
+    blurb: "Queried with your role aliases × locations each scan.",
+  },
+  {
+    kind: "fallback",
+    heading: "Feeds",
+    blurb: "Any RSS/Atom feed URL you add as a source.",
+  },
+];
+
+// BYO-key rows (Apify / Brave): a key input per provider, sealed at rest
+// sidecar-side; saving the Apify key seeds its actor sources (Naukri/Indeed/
+// Seek/LinkedIn deep-JD), saving Brave seeds the meta-search source.
+function CredentialRow({ id, label, hint }: { id: string; label: string; hint: string }) {
+  const { data: creds } = useDiscoveryCredentials();
+  const save = useSaveDiscoveryCredential();
+  const remove = useDeleteDiscoveryCredential();
+  const [draft, setDraft] = useState("");
+  const row = creds?.find((c) => c.id === id);
+  if (!row) return null;
+  return (
+    <div className="flex items-center gap-3" data-testid={`discovery-credential-${id}`}>
+      <div className="flex-1">
+        <div className="text-[13px] font-medium text-ink">{label}</div>
+        <div className="text-[12px] text-ink-3">{hint}</div>
+      </div>
+      {row.has_key ? (
+        <>
+          <span className="font-mono text-[11px] text-ink-3">{row.key_hint ?? "•••"}</span>
+          <button
+            type="button"
+            data-testid={`discovery-credential-remove-${id}`}
+            onClick={() => remove.mutate(id)}
+            className="rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] text-ink-2 hover:border-border-2"
+          >
+            Remove
+          </button>
+        </>
+      ) : (
+        <>
+          <input
+            type="password"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="API key"
+            data-testid={`discovery-credential-input-${id}`}
+            className="h-[30px] w-44 rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink placeholder:text-ink-4"
+          />
+          <button
+            type="button"
+            disabled={!draft.trim() || save.isPending}
+            data-testid={`discovery-credential-save-${id}`}
+            onClick={() =>
+              save.mutate({ id, key: draft.trim() }, { onSuccess: () => setDraft("") })
+            }
+            className="rounded-md border border-accent bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:bg-accent-ink disabled:opacity-50"
+          >
+            Save
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DiscoverySourcesSection() {
+  const { data: sources } = useDiscoverySources();
+  const toggle = useToggleDiscoverySource();
+  if (!sources) return null;
+  return (
+    <div className="space-y-4" data-testid="discovery-sources">
+      <p className="text-[12px] text-ink-3">
+        Every source is on by default. Untick one to skip it on every future scan — for
+        example, if an ATS never carries roles for your field or location. Nothing else
+        changes: already-found jobs stay, and re-ticking picks the source back up on the
+        next scan.
+      </p>
+      {SOURCE_KIND_GROUPS.map(({ kind, heading, blurb }) => {
+        const rows = sources.filter((s) => s.kind === kind);
+        if (rows.length === 0) return null;
+        return (
+          <div key={kind} className="space-y-1.5">
+            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-4">
+              {heading}
+            </div>
+            <div className="text-[11.5px] text-ink-4">{blurb}</div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 pt-1">
+              {rows.map((s) => (
+                <label
+                  key={s.id}
+                  className="flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-2"
+                  data-testid={`source-toggle-${s.id}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={s.enabled}
+                    onChange={(e) => toggle.mutate({ id: s.id, enabled: e.target.checked })}
+                  />
+                  <span className={s.enabled ? "" : "text-ink-4 line-through"}>{s.label}</span>
+                  {s.entries > 0 ? (
+                    <span className="text-[11px] text-ink-4">
+                      {s.entries} board{s.entries === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <div className="space-y-3 border-t border-border pt-4">
+        <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-4">
+          Bring-your-own-key sources
+        </div>
+        <p className="text-[11.5px] text-ink-4">
+          Optional. These cover boards we can&apos;t scrape cleanly first-party (Indeed,
+          Naukri, Seek). Keys are encrypted at rest and only ever sent to that provider.
+        </p>
+        <CredentialRow
+          id="apify"
+          label="Apify"
+          hint="Runs job-scraper actors on your Apify account — a free account (~$5/mo credit, no card) covers roughly 5,000 jobs/month."
+        />
+        <CredentialRow
+          id="brave"
+          label="Brave Search"
+          hint="Finds fresh postings on ATS boards outside your registry via Brave's Search API — free tier is ~2,000 queries/month (we stop at the cap)."
+        />
+      </div>
     </div>
   );
 }
@@ -1002,6 +1157,13 @@ export function Settings() {
               Configure how finds-you-jobs scrapes, scores, and reaches out on your behalf.
             </p>
           </header>
+
+          {/* Discovery sources — per-family opt-out toggles (2026-07-18).
+              First section on purpose: discovery is the first stage of the
+              pipeline everything below feeds on. */}
+          <Section title="Discovery sources">
+            <DiscoverySourcesSection />
+          </Section>
 
           {/* Automation on Save — split defaults (FR-SET-02): Resume ON, Cover ON */}
           <Section title="Automation on Save">
