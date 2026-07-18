@@ -6,6 +6,8 @@ each, helps you ask for referrals, and fills application forms for you to review
 submit. Everything runs on **your** computer with **your** AI key; there is no
 company server in the middle.
 
+**Website: [findsyoujobs.com](https://findsyoujobs.com)**
+
 ## A quick tour
 
 ### Job Board — wake up to scored matches
