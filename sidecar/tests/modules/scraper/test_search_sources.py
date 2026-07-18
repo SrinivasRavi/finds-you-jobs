@@ -9,6 +9,8 @@ discipline (queries × pages bounded, every call counted in Usage).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from sidecar.modules.scraper import adapters
@@ -165,6 +167,24 @@ def test_linkedin_sends_browser_headers() -> None:
     linkedin_guest.search(SourceEntry(board="linkedin"), prefs, fetcher)
     assert fetcher.seen_headers
     assert all(h == BROWSER_HEADERS for h in fetcher.seen_headers)
+
+
+def test_guest_search_is_sessionless_and_isolated_from_voyager() -> None:
+    """The guest adapter can never ride the user's logged-in LinkedIn session:
+    the fetcher is stateless (no cookie jar), BROWSER_HEADERS carries no
+    Cookie/Authorization, and nothing under modules/scraper/ references
+    voyager or cookie-jar machinery. Logged-in LinkedIn lives only in the
+    networking module behind its default-off toggle."""
+    assert not {"cookie", "authorization"} & {k.lower() for k in BROWSER_HEADERS}
+
+    import sidecar.modules.scraper as scraper_pkg
+
+    scraper_root = Path(scraper_pkg.__file__).parent
+    banned = ("voyager", "CookieJar", "cookiejar", "cookielib")
+    for py in scraper_root.rglob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        for token in banned:
+            assert token not in text, f"{py.relative_to(scraper_root)} references {token!r}"
 
 
 def test_scan_routes_search_adapters_through_search_seam() -> None:
