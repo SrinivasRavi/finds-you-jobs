@@ -804,6 +804,10 @@ export class RealApi {
       })),
       networking_enabled: p.voyager_risk_marker_on,
       networking_ack_at: (ui.networking_ack_at as string | undefined) ?? null,
+      // LinkedIn one-shot per-query fetch budget (discovery-expansion #6);
+      // persisted so the user's choice sticks. Default 50 (2 pages).
+      linkedin_search_limit:
+        typeof ui.linkedin_search_limit === "number" ? ui.linkedin_search_limit : 50,
       job_prefs: {
         role_aliases: (p.role_aliases ?? []).map(String),
         locations: (p.locations ?? []).map(String),
@@ -854,6 +858,10 @@ export class RealApi {
     let uiTouched = false;
     if (patch.networking_ack_at !== undefined) {
       ui.networking_ack_at = patch.networking_ack_at;
+      uiTouched = true;
+    }
+    if (patch.linkedin_search_limit !== undefined) {
+      ui.linkedin_search_limit = patch.linkedin_search_limit;
       uiTouched = true;
     }
     if (patch.observability !== undefined) {
@@ -942,12 +950,12 @@ export class RealApi {
   /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Returns
    *  the enqueued op; results land in the normal feed. 403 (toggle off) / 409
    *  (not connected) surface as errors. */
-  async linkedinSearch(): Promise<{ id: string; kind: string; state: string }> {
-    return (await this.json("POST", "/api/linkedin/search", {})) as {
-      id: string;
-      kind: string;
-      state: string;
-    };
+  async linkedinSearch(limit?: number): Promise<{ id: string; kind: string; state: string }> {
+    return (await this.json(
+      "POST",
+      "/api/linkedin/search",
+      limit !== undefined ? { limit } : {},
+    )) as { id: string; kind: string; state: string };
   }
   async watchCompany(input: {
     url?: string;

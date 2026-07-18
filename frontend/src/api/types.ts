@@ -702,6 +702,9 @@ export interface Settings {
   providers: ProviderConfig[];
   routing: EngineRoute[];
   networking_enabled: boolean;
+  /** LinkedIn one-shot per-query fetch budget (discovery-expansion #6),
+   *  persisted in ui_state. Server clamps to [25, 250]; default 50. */
+  linkedin_search_limit: number;
   /** ISO timestamp of the last time the user checked the Referral Outreach
    *  ToS-risk acknowledgment box and turned the toggle on (audit P2-5) — a
    *  durable record, so re-opening Settings shows *when* the risk was

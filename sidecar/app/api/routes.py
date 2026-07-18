@@ -1493,8 +1493,19 @@ async def linkedin_connect(
     return dto.OperationAccepted(id=operation_id, kind="linkedin_login", state="queued")
 
 
+# Per-query fetch budget for the one-shot (rows = limit × alias×location pairs,
+# deduped). A budget on the logged-in session (account-safety axis), NOT the
+# ethos volume rule — clamped so a typo can't fire hundreds of pages at the
+# user's own account in one burst.
+LINKEDIN_SEARCH_LIMIT_MIN = 25
+LINKEDIN_SEARCH_LIMIT_MAX = 250
+LINKEDIN_SEARCH_LIMIT_DEFAULT = 50
+
+
 @router.post("/api/linkedin/search", status_code=202)
-async def linkedin_search(request: Request) -> dto.OperationAccepted:
+async def linkedin_search(
+    request: Request, payload: dto.LinkedInSearchRequest | None = None
+) -> dto.OperationAccepted:
     """Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
 
     User-clicked only — never a scheduled scan (scheduled scans must never touch
@@ -1509,7 +1520,11 @@ async def linkedin_search(request: Request) -> dto.OperationAccepted:
                 status_code=409,
                 detail="LinkedIn is not connected — connect your session in Settings first.",
             )
-    operation_id = _runner(request).submit("linkedin_search", {})
+    requested = payload.limit if payload is not None and payload.limit is not None else (
+        LINKEDIN_SEARCH_LIMIT_DEFAULT
+    )
+    limit = max(LINKEDIN_SEARCH_LIMIT_MIN, min(LINKEDIN_SEARCH_LIMIT_MAX, int(requested)))
+    operation_id = _runner(request).submit("linkedin_search", {"limit": limit})
     return dto.OperationAccepted(id=operation_id, kind="linkedin_search", state="queued")
 
 

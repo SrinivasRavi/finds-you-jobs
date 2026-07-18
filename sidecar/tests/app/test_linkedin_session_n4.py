@@ -332,6 +332,35 @@ def test_linkedin_search_persists_into_the_feed(search_client) -> None:
     )
 
 
+def test_linkedin_search_limit_is_configurable_and_clamped(search_client) -> None:
+    _app, client = search_client
+    _connect(_app, client)
+    _set_prefs(client)
+
+    # A custom limit flows into the op snapshot verbatim (within range).
+    resp = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 100})
+    assert resp.status_code == 202
+    op_id = resp.json()["id"]
+    wait_for_state(_app.state.db, op_id, "succeeded")
+    with _app.state.db.repos() as repos:
+        assert repos.operations.get(op_id).input_snapshot["limit"] == 100
+
+    # Out-of-range values are clamped to [25, 250], never passed raw.
+    hi = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 9999})
+    wait_for_state(_app.state.db, hi.json()["id"], "succeeded")
+    lo = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 1})
+    wait_for_state(_app.state.db, lo.json()["id"], "succeeded")
+    with _app.state.db.repos() as repos:
+        assert repos.operations.get(hi.json()["id"]).input_snapshot["limit"] == 250
+        assert repos.operations.get(lo.json()["id"]).input_snapshot["limit"] == 25
+
+    # Omitted → the server default.
+    d = client.post("/api/linkedin/search", headers=AUTH, json={})
+    wait_for_state(_app.state.db, d.json()["id"], "succeeded")
+    with _app.state.db.repos() as repos:
+        assert repos.operations.get(d.json()["id"]).input_snapshot["limit"] == 50
+
+
 def test_linkedin_search_dedups_against_existing_guest_row(search_client) -> None:
     _app, client = search_client
     _connect(_app, client)

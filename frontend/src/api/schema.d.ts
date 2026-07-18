@@ -2186,6 +2186,16 @@ export interface components {
             timeout_s?: number | null;
         };
         /**
+         * LinkedInSearchRequest
+         * @description One-shot logged-in job search (discovery-expansion #6). `limit` is the
+         *     per-query fetch budget (rows per role-alias × location pair); the route
+         *     clamps it to a safe range. Omitted → the server default.
+         */
+        LinkedInSearchRequest: {
+            /** Limit */
+            limit?: number | null;
+        };
+        /**
          * LinkedInSessionDTO
          * @description LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
          *
@@ -4087,7 +4097,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["LinkedInSearchRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -4096,6 +4110,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

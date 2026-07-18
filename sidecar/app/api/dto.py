@@ -687,6 +687,14 @@ class LinkedInConnectRequest(BaseModel):
     timeout_s: float | None = None
 
 
+class LinkedInSearchRequest(BaseModel):
+    """One-shot logged-in job search (discovery-expansion #6). `limit` is the
+    per-query fetch budget (rows per role-alias × location pair); the route
+    clamps it to a safe range. Omitted → the server default."""
+
+    limit: int | None = None
+
+
 class LinkedInTierRequest(BaseModel):
     """Set the account-tier the app passes to the outreach package (US-REF-08)."""
 

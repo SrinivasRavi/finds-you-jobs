@@ -199,7 +199,7 @@ export function useDeleteDiscoveryCredential() {
 export function useLinkedinSearch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.linkedinSearch(),
+    mutationFn: (limit?: number) => api.linkedinSearch(limit),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.jobs });
       qc.invalidateQueries({ queryKey: qk.board });

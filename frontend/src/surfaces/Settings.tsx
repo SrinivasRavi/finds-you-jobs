@@ -1744,39 +1744,72 @@ function LinkedInSessionSection() {
   );
 }
 
+// Server clamps to this range; keep the UI honest to it.
+const LI_LIMIT_MIN = 25;
+const LI_LIMIT_MAX = 250;
+
 function LinkedInJobSearchBlock() {
   const search = useLinkedinSearch();
+  const { data: settings } = useSettings();
+  const update = useUpdateSettings();
+  const limit = settings?.linkedin_search_limit ?? 50;
+  const onChangeLimit = (v: number) => update.mutate({ linkedin_search_limit: v });
   return (
     <div
-      className="flex items-center gap-3 border-t border-border pt-4"
+      className="space-y-3 border-t border-border pt-4"
       data-testid="linkedin-jobsearch-block"
     >
-      <div className="flex-1">
-        <div className="text-[13px] font-medium text-ink">Search LinkedIn jobs now</div>
-        <div className="text-[12px] text-ink-3">
-          Run a one-off logged-in job search using your saved roles and locations. Results
-          appear in your Job Board, deduped against everything else. This uses your session
-          only when you click — scheduled scans never do.
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <div className="text-[13px] font-medium text-ink">Search LinkedIn jobs now</div>
+          <div className="text-[12px] text-ink-3">
+            Run a one-off logged-in job search using your saved roles and locations. Results
+            appear in your Job Board, deduped against everything else. This uses your session
+            only when you click — scheduled scans never do.
+          </div>
         </div>
-        {search.isSuccess ? (
-          <div className="mt-1 text-[11.5px] text-good" data-testid="linkedin-jobsearch-started">
-            Search started — new matches will appear in the Job Board shortly.
-          </div>
-        ) : null}
-        {search.isError ? (
-          <div className="mt-1 text-[11.5px] text-bad" data-testid="linkedin-jobsearch-error">
-            {search.error instanceof Error ? search.error.message : "Search failed."}
-          </div>
-        ) : null}
+        <button
+          data-testid="linkedin-jobsearch-btn"
+          onClick={() => search.mutate(limit)}
+          disabled={search.isPending}
+          className="inline-flex h-[30px] shrink-0 items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
+        >
+          {search.isPending ? "Searching…" : "Search LinkedIn jobs"}
+        </button>
       </div>
-      <button
-        data-testid="linkedin-jobsearch-btn"
-        onClick={() => search.mutate()}
-        disabled={search.isPending}
-        className="inline-flex h-[30px] shrink-0 items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
-      >
-        {search.isPending ? "Searching…" : "Search LinkedIn jobs"}
-      </button>
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <div className="text-[12.5px] text-ink-2">Results per search</div>
+          <div className="text-[11.5px] text-ink-4">
+            How many jobs to pull per role × location, in pages of 25. Higher means more
+            results — but also more requests fired on <strong>your own</strong> LinkedIn
+            account in one burst, which raises rate-limit / account risk. Keep it modest.
+          </div>
+        </div>
+        <input
+          type="number"
+          min={LI_LIMIT_MIN}
+          max={LI_LIMIT_MAX}
+          step={25}
+          value={limit}
+          data-testid="linkedin-jobsearch-limit"
+          onChange={(e) => {
+            const n = Number(e.target.value) || LI_LIMIT_MIN;
+            onChangeLimit(Math.max(LI_LIMIT_MIN, Math.min(LI_LIMIT_MAX, n)));
+          }}
+          className="h-[30px] w-20 rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+        />
+      </div>
+      {search.isSuccess ? (
+        <div className="text-[11.5px] text-good" data-testid="linkedin-jobsearch-started">
+          Search started — new matches will appear in the Job Board shortly.
+        </div>
+      ) : null}
+      {search.isError ? (
+        <div className="text-[11.5px] text-bad" data-testid="linkedin-jobsearch-error">
+          {search.error instanceof Error ? search.error.message : "Search failed."}
+        </div>
+      ) : null}
     </div>
   );
 }
