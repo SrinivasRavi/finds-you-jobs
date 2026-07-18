@@ -6,8 +6,10 @@
 # actions.py, discovery.py) and returns plain dicts the CLI serialises to JSON.
 # Caps + backoff are ENFORCED here, inside the subprocess (ROADMAP §66,
 # NFR-LI-01/02/03) — the MIT host never re-implements them.
-"""The four+one bounded operations: discover, send-connection, send-dm, status,
-quota. Every operation supports dry_run (no browser, no network — plan only)."""
+"""The bounded operations: discover, send-connection, send-dm, status, quota,
+contact-sync, login, and search-jobs (the read-only logged-in job search —
+finds-you-jobs discovery-expansion #6). Every operation supports dry_run (no
+browser, no network — plan only)."""
 
 from __future__ import annotations
 
@@ -172,6 +174,66 @@ def discover(
         )
         return {"op": "discover", "ok": True, "company": company, "company_urn": company_urn,
                 "count": len(contacts), "contacts": contacts}
+    finally:
+        session.close()
+
+
+def search_jobs(
+    keywords: str,
+    location: str = "",
+    limit: int = 50,
+    *,
+    storage_state: str | None = None,
+    user_data_dir: str | None = None,
+    headed: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Logged-in LinkedIn job search (read-only) → up to `limit` normalized-ish
+    plain job dicts. NEW for finds-you-jobs — the one-shot job-discovery entry
+    point; never a background scan source. Read-only: no send, no caps decrement
+    (caps govern outreach *sends*, not reads — same stance as `contact_sync`).
+
+    Paginates in pages of 25 (LinkedIn's page size) until `limit` or exhaustion.
+    A page failure keeps what earlier pages returned (rank-don't-gate)."""
+    if not keywords:
+        raise VoyagerError("search_jobs requires keywords")
+    if dry_run:
+        return {
+            "op": "search-jobs", "ok": True, "dry_run": True,
+            "keywords": keywords, "location": location,
+            "plan": f"would run logged-in LinkedIn job search for {keywords!r}"
+                    f"{f' in {location!r}' if location else ''}, page through ≤{limit} results",
+            "jobs": [], "total": 0,
+        }
+    from .client import PlaywrightLinkedinAPI
+    from .session import AccountSession
+
+    _PAGE = 25
+    session = AccountSession(
+        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
+    )
+    jobs: list[dict] = []
+    total = 0
+    try:
+        session.ensure_browser()
+        client = PlaywrightLinkedinAPI(session)
+        seen: set[str] = set()
+        for start in range(0, max(limit, 1), _PAGE):
+            page = client.search_jobs(keywords, location, start=start, count=_PAGE)
+            total = page.get("total", total) or total
+            batch = page.get("jobs", [])
+            if not batch:
+                break
+            for job in batch:
+                jid = job.get("id")
+                if jid and jid not in seen:
+                    seen.add(jid)
+                    jobs.append(job)
+            if len(jobs) >= limit:
+                jobs = jobs[:limit]
+                break
+        return {"op": "search-jobs", "ok": True, "keywords": keywords,
+                "location": location, "count": len(jobs), "total": total, "jobs": jobs}
     finally:
         session.close()
 

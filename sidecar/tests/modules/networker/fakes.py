@@ -23,6 +23,7 @@ class FakeVoyagerDriver:
         connection_result: dict | None = None,
         dm_result: dict | None = None,
         status_result: dict | None = None,
+        search_jobs_result: dict | None = None,
         contact_sync_result: dict | None = None,
         quota_result: dict | None = None,
         login_result: dict | None = None,
@@ -44,6 +45,9 @@ class FakeVoyagerDriver:
         self._connection = connection_result or {"op": "send-connection", "ok": True, "sent": True}
         self._dm = dm_result or {"op": "send-dm", "ok": True, "sent": True}
         self._status = status_result or {"op": "status", "ok": True, "status": "qualified"}
+        self._search_jobs = search_jobs_result or {
+            "op": "search-jobs", "ok": True, "count": 0, "total": 0, "jobs": [],
+        }
         self._contact_sync = contact_sync_result or {
             "op": "contact-sync", "ok": True, "degree": None, "is_first_degree": False,
             "last_message_direction": None, "last_message_at": None,
@@ -82,6 +86,11 @@ class FakeVoyagerDriver:
         self.calls.append(("discover", company, limit, company_urn, page, dry_run))
         self._maybe_raise("discover")
         return self._discover
+
+    def search_jobs(self, keywords, location="", *, limit: int = 50, dry_run: bool = False) -> dict:
+        self.calls.append(("search_jobs", keywords, location, limit, dry_run))
+        self._maybe_raise("search_jobs")
+        return self._search_jobs
 
     def send_connection(self, public_identifier, note, tier, *, dry_run) -> dict:
         self.calls.append(("send_connection", public_identifier, note, tier, dry_run))

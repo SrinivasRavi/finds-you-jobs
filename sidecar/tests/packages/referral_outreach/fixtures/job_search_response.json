@@ -1,0 +1,82 @@
+{
+  "data": {
+    "elements": [
+      {
+        "$recipeTypes": [
+          "com.linkedin.deco.recipe.anonymous.Anon111170762"
+        ],
+        "jobCardUnion": {
+          "*jobPostingCard": "urn:li:fsd_jobPostingCard:(4441285164,JOBS_SEARCH)"
+        },
+        "$type": "com.linkedin.voyager.dash.jobs.JobCard"
+      },
+      {
+        "$recipeTypes": [
+          "com.linkedin.deco.recipe.anonymous.Anon111170762"
+        ],
+        "jobCardUnion": {
+          "*jobPostingCard": "urn:li:fsd_jobPostingCard:(4434393799,JOBS_SEARCH)"
+        },
+        "$type": "com.linkedin.voyager.dash.jobs.JobCard"
+      },
+      {
+        "$recipeTypes": [
+          "com.linkedin.deco.recipe.anonymous.Anon111170762"
+        ],
+        "jobCardUnion": {
+          "*jobPostingCard": "urn:li:fsd_jobPostingCard:(4423877183,JOBS_SEARCH)"
+        },
+        "$type": "com.linkedin.voyager.dash.jobs.JobCard"
+      }
+    ],
+    "paging": {
+      "total": 7653,
+      "count": 25,
+      "start": 0
+    }
+  },
+  "included": [
+    {
+      "$type": "com.linkedin.voyager.dash.jobs.JobPostingCard",
+      "entityUrn": "urn:li:fsd_jobPostingCard:(4441285164,JOBS_SEARCH)",
+      "jobPostingUrn": "urn:li:fsd_jobPosting:4441285164",
+      "title": {
+        "text": "Java Developer\u00a0 "
+      },
+      "primaryDescription": {
+        "text": "Capgemini"
+      },
+      "secondaryDescription": {
+        "text": "Sion, Maharashtra, India (On-site)"
+      }
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.jobs.JobPostingCard",
+      "entityUrn": "urn:li:fsd_jobPostingCard:(4434393799,JOBS_SEARCH)",
+      "jobPostingUrn": "urn:li:fsd_jobPosting:4434393799",
+      "title": {
+        "text": "Junior Java Developer"
+      },
+      "primaryDescription": {
+        "text": "Miko"
+      },
+      "secondaryDescription": {
+        "text": "Mumbai Metropolitan Region (On-site)"
+      }
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.jobs.JobPostingCard",
+      "entityUrn": "urn:li:fsd_jobPostingCard:(4423877183,JOBS_SEARCH)",
+      "jobPostingUrn": "urn:li:fsd_jobPosting:4423877183",
+      "title": {
+        "text": "Senior Backend Developer (Remote)"
+      },
+      "primaryDescription": {
+        "text": "Stealth Startup"
+      },
+      "secondaryDescription": {
+        "text": "India (Remote)"
+      }
+    }
+  ]
+}

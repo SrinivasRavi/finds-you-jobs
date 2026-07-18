@@ -48,6 +48,9 @@ class VoyagerDriver(Protocol):
         self, company: str, limit: int, *, company_urn: str | None = None,
         page: int = 1, dry_run: bool
     ) -> dict: ...
+    def search_jobs(
+        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+    ) -> dict: ...
     def send_connection(
         self, public_identifier: str, note: str, tier: str | None, *, dry_run: bool
     ) -> dict: ...
@@ -162,6 +165,20 @@ class DirectVoyagerDriver:
             limit=limit,
             page=page,
             company_urn=company_urn,
+            storage_state=self.storage_state,
+            user_data_dir=self.user_data_dir,
+            headed=self.headed,
+            dry_run=dry_run,
+        )
+
+    def search_jobs(
+        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+    ) -> dict:
+        return self._call(
+            self._worker().search_jobs,
+            keywords=keywords,
+            location=location,
+            limit=limit,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,

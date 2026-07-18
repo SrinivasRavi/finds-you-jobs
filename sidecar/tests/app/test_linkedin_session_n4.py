@@ -241,3 +241,114 @@ def test_archive_stale_contacts_op(app_client) -> None:
     assert stale["id"] not in live      # archived
     assert fresh["id"] in live          # too recent
     assert accepted["id"] in live       # ever accepted → never auto-archived
+
+
+# --- linkedin_search one-shot (discovery-expansion #6) ---------------------
+
+
+def _connect(app, client) -> None:  # noqa: ANN001
+    _enable_networking(client)
+    op_id = client.post("/api/linkedin/connect", headers=AUTH, json={}).json()["id"]
+    wait_for_state(app.state.db, op_id, "succeeded")
+
+
+def _search_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    """A client whose fake driver ALSO returns two search-jobs rows."""
+    yield from _make_client(
+        tmp_path,
+        lambda tier: FakeVoyagerDriver(
+            login_result={
+                "op": "login", "ok": True, "connected": True,
+                "connected_as": "Ada Lovelace", "li_at_expires": None, "cookie_count": 4,
+            },
+            search_jobs_result={
+                "op": "search-jobs", "ok": True, "count": 2, "total": 2,
+                "jobs": [
+                    {"id": "111", "url": "https://www.linkedin.com/jobs/view/111",
+                     "title": "Backend Engineer", "company": "Acme",
+                     "location": "Bengaluru, India (Remote)"},
+                    {"id": "222", "url": "https://www.linkedin.com/jobs/view/222",
+                     "title": "Platform Engineer", "company": "Beta",
+                     "location": "Remote, India"},
+                ],
+            },
+        ),
+    )
+
+
+@pytest.fixture
+def search_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    yield from _search_client(tmp_path)
+
+
+def _set_prefs(client: TestClient) -> None:
+    resp = client.post("/api/settings", headers=AUTH, json={
+        "role_aliases": ["backend engineer"], "locations": ["India"],
+    })
+    assert resp.status_code == 200
+
+
+def test_linkedin_search_requires_networking_enabled(search_client) -> None:
+    _app, client = search_client
+    # Toggle OFF → 403 (defense-in-depth server gate).
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    assert resp.status_code == 403
+
+
+def test_linkedin_search_requires_connected_session(search_client) -> None:
+    _app, client = search_client
+    _enable_networking(client)  # enabled but never connected
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    assert resp.status_code == 409
+    assert "not connected" in resp.json()["detail"]
+
+
+def test_linkedin_search_cannot_be_enqueued_generically(search_client) -> None:
+    _app, client = search_client
+    resp = client.post("/api/operations/linkedin_search", headers=AUTH, json={})
+    assert resp.status_code == 422
+    assert "search" in resp.json()["detail"]
+
+
+def test_linkedin_search_persists_into_the_feed(search_client) -> None:
+    _app, client = search_client
+    _connect(_app, client)
+    _set_prefs(client)
+
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    assert resp.status_code == 202
+    assert resp.json()["kind"] == "linkedin_search"
+    wait_for_state(_app.state.db, resp.json()["id"], "succeeded")
+
+    # Both jobs landed in the feed, tagged source_adapter="linkedin", same funnel.
+    jobs = client.get("/api/jobs", headers=AUTH).json()
+    urls = {j["canonical_url"] for j in jobs}
+    assert "https://www.linkedin.com/jobs/view/111" in urls
+    assert "https://www.linkedin.com/jobs/view/222" in urls
+    assert all(
+        j["source_adapter"] == "linkedin"
+        for j in jobs
+        if j["canonical_url"].endswith(("/111", "/222"))
+    )
+
+
+def test_linkedin_search_dedups_against_existing_guest_row(search_client) -> None:
+    _app, client = search_client
+    _connect(_app, client)
+    _set_prefs(client)
+    # A job the guest adapter already stored at the same canonical URL.
+    db = _app.state.db
+    with db.repos() as repos:
+        repos.jobs.create(
+            canonical_url="https://www.linkedin.com/jobs/view/111",
+            title="Backend Engineer", company="Acme", location="Remote",
+            description="", source_adapter="linkedin",
+        )
+        repos.commit()
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    wait_for_state(_app.state.db, resp.json()["id"], "succeeded")
+    op = client.get(f"/api/operations/{resp.json()['id']}", headers=AUTH).json()
+    # 2 found, 1 deduped (the pre-existing guest row), 1 newly persisted.
+    scan = op["result_ref"]["scan"]
+    assert scan["deduped"] == 1
+    assert scan["persisted"] == 1

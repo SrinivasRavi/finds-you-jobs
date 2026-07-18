@@ -174,3 +174,17 @@ test("BYO-key rows render and analytics has a Discovery tab", async ({ page }) =
   await expect(page.getByTestId("discovery-panel")).toBeVisible();
   await page.screenshot({ path: `${DIR}/analytics-discovery-tab.png`, fullPage: true });
 });
+
+test("linkedin one-shot job search button gates on a connected session", async ({ page }) => {
+  await page.goto("/settings");
+  // Enable Referral Outreach so the LinkedIn session section reveals.
+  await page.getByTestId("networking-ack").check();
+  await page.getByTestId("networking-toggle").click();
+  await expect(page.getByTestId("linkedin-session-section")).toBeVisible({ timeout: 15_000 });
+  // Not connected → the one-shot job-search block must NOT be offered (it uses
+  // the logged-in session; no session, no button).
+  await expect(page.getByTestId("linkedin-jobsearch-block")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/linkedin-jobsearch-gated.png`, fullPage: true });
+  // Leave the shared profile clean.
+  await page.getByTestId("networking-toggle").click();
+});

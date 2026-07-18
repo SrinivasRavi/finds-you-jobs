@@ -809,6 +809,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/linkedin/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Search
+         * @description Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
+         *
+         *     User-clicked only — never a scheduled scan (scheduled scans must never touch
+         *     a logged-in session). Gated server-side: Referral Outreach must be enabled
+         *     AND the session must be connected; otherwise a clear error, not a silent
+         *     no-op. Results land in the same discovery funnel as every other source.
+         */
+        post: operations["linkedin_search_api_linkedin_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/linkedin/cancel": {
         parameters: {
             query?: never;
@@ -4051,6 +4076,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    linkedin_search_api_linkedin_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
                 };
             };
         };

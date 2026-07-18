@@ -1003,6 +1003,11 @@ async def create_operation(
             status_code=422,
             detail="use POST /api/applications/{id}/apply to start an apply run",
         )
+    if kind == "linkedin_search":
+        raise HTTPException(
+            status_code=422,
+            detail="use POST /api/linkedin/search to run a logged-in LinkedIn job search",
+        )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
     operation_id = runner.submit(kind, input_snapshot or {})
@@ -1486,6 +1491,26 @@ async def linkedin_connect(
         snap["timeout_s"] = payload.timeout_s
     operation_id = _runner(request).submit("linkedin_login", snap)
     return dto.OperationAccepted(id=operation_id, kind="linkedin_login", state="queued")
+
+
+@router.post("/api/linkedin/search", status_code=202)
+async def linkedin_search(request: Request) -> dto.OperationAccepted:
+    """Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
+
+    User-clicked only — never a scheduled scan (scheduled scans must never touch
+    a logged-in session). Gated server-side: Referral Outreach must be enabled
+    AND the session must be connected; otherwise a clear error, not a silent
+    no-op. Results land in the same discovery funnel as every other source."""
+    with _db(request).repos() as repos:
+        _require_networking_enabled(repos)
+        session = repos.linkedin_session.get()
+        if session is None or session.status != "valid":
+            raise HTTPException(
+                status_code=409,
+                detail="LinkedIn is not connected — connect your session in Settings first.",
+            )
+    operation_id = _runner(request).submit("linkedin_search", {})
+    return dto.OperationAccepted(id=operation_id, kind="linkedin_search", state="queued")
 
 
 @router.post("/api/linkedin/cancel", status_code=202)

@@ -22,6 +22,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 
 from .errors import AuthenticationError, BrowserUnresponsiveError, ProfileInaccessibleError
+from .jobs import parse_job_search_response
 from .url_utils import url_to_public_id
 from .voyager import parse_connection_degree, parse_last_message, parse_linkedin_voyager_response
 
@@ -220,3 +221,51 @@ class PlaywrightLinkedinAPI:
             return {"direction": None, "sent_at": None}
         direction, sent_at = parse_last_message(res.json(), target_urn)
         return {"direction": direction, "sent_at": sent_at}
+
+    # LinkedIn's own logged-in jobs-search endpoint (derived by observing the
+    # web client — see jobs.py). The REST `voyagerJobsDashJobCards` collection
+    # (q=jobSearch) is used over the graphql queryId variant: no hashed queryId
+    # to track, free-text `seoLocation` (no geoId lookup), and the normalized
+    # data/included shape our client already speaks.
+    _JOB_SEARCH_URL = "https://www.linkedin.com/voyager/api/voyagerJobsDashJobCards"
+    _JOB_SEARCH_DECORATION = (
+        "com.linkedin.voyager.dash.deco.jobs.search.JobSearchCardsCollection-220"
+    )
+
+    @_retry_io()
+    def search_jobs(
+        self, keywords: str, location: str = "", *, start: int = 0, count: int = 25
+    ) -> dict:
+        """One page of logged-in job search → `{"jobs": [...], "total": int}`.
+
+        `keywords` and `location` are the user's own role alias + location (the
+        same inputs the guest adapter uses). `location` is free text via
+        `seoLocation` — LinkedIn resolves it server-side, so no geoId call is
+        needed. Read-only: this never writes to the account (no search-history
+        POST, unlike the SPA)."""
+        loc_clause = (
+            f",locationUnion:(seoLocation:(location:{location}))" if location.strip() else ""
+        )
+        query = (
+            f"(origin:JOB_SEARCH_PAGE_OTHER_ENTRY,keywords:{keywords}{loc_clause}"
+            f",spellCorrectionEnabled:true)"
+        )
+        # The voyager `query=(…)` grammar is not URL-encoded by LinkedIn's own
+        # client beyond the value tokens; build the URL directly rather than via
+        # urlencode (which would percent-encode the parentheses/colons the API
+        # requires literally). Only the free-text tokens need encoding.
+        from urllib.parse import quote
+
+        safe_query = query.replace(keywords, quote(keywords, safe=""))
+        if location.strip():
+            safe_query = safe_query.replace(location, quote(location, safe=""))
+        url = (
+            f"{self._JOB_SEARCH_URL}?decorationId={self._JOB_SEARCH_DECORATION}"
+            f"&count={count}&q=jobSearch&query={safe_query}&start={start}"
+        )
+        res = self.get(url)
+        if res.status == 401:
+            raise AuthenticationError("Jobs search API returned 401 Unauthorized.")
+        if not res.ok:
+            raise OSError(f"Jobs search API error {res.status}: {res.text()[:500]}")
+        return parse_job_search_response(res.json())

@@ -16,6 +16,7 @@ import {
   useDisconnectLinkedIn,
   useDiscoveryCredentials,
   useDiscoverySources,
+  useLinkedinSearch,
   useLinkedInSession,
   useProfile,
   usePrompts,
@@ -1731,7 +1732,51 @@ function LinkedInSessionSection() {
             <option value="seasoned">Seasoned account</option>
           </select>
         </div>
+
+        {/* One-shot logged-in job search (discovery-expansion #6). A
+            user-clicked entry point ONLY — scheduled scans never touch the
+            logged-in session (that's what the guest adapter is for). Uses your
+            saved roles × locations; results land in the normal Job Board feed,
+            deduped against guest/Apify finds. Read-only against LinkedIn. */}
+        {connected ? <LinkedInJobSearchBlock /> : null}
       </div>
+    </div>
+  );
+}
+
+function LinkedInJobSearchBlock() {
+  const search = useLinkedinSearch();
+  return (
+    <div
+      className="flex items-center gap-3 border-t border-border pt-4"
+      data-testid="linkedin-jobsearch-block"
+    >
+      <div className="flex-1">
+        <div className="text-[13px] font-medium text-ink">Search LinkedIn jobs now</div>
+        <div className="text-[12px] text-ink-3">
+          Run a one-off logged-in job search using your saved roles and locations. Results
+          appear in your Job Board, deduped against everything else. This uses your session
+          only when you click — scheduled scans never do.
+        </div>
+        {search.isSuccess ? (
+          <div className="mt-1 text-[11.5px] text-good" data-testid="linkedin-jobsearch-started">
+            Search started — new matches will appear in the Job Board shortly.
+          </div>
+        ) : null}
+        {search.isError ? (
+          <div className="mt-1 text-[11.5px] text-bad" data-testid="linkedin-jobsearch-error">
+            {search.error instanceof Error ? search.error.message : "Search failed."}
+          </div>
+        ) : null}
+      </div>
+      <button
+        data-testid="linkedin-jobsearch-btn"
+        onClick={() => search.mutate()}
+        disabled={search.isPending}
+        className="inline-flex h-[30px] shrink-0 items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
+      >
+        {search.isPending ? "Searching…" : "Search LinkedIn jobs"}
+      </button>
     </div>
   );
 }

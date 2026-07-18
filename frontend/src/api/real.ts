@@ -939,6 +939,16 @@ export class RealApi {
     });
     return res;
   }
+  /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Returns
+   *  the enqueued op; results land in the normal feed. 403 (toggle off) / 409
+   *  (not connected) surface as errors. */
+  async linkedinSearch(): Promise<{ id: string; kind: string; state: string }> {
+    return (await this.json("POST", "/api/linkedin/search", {})) as {
+      id: string;
+      kind: string;
+      state: string;
+    };
+  }
   async watchCompany(input: {
     url?: string;
     job_id?: string;

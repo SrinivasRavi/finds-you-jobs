@@ -194,6 +194,18 @@ export function useDeleteDiscoveryCredential() {
     },
   });
 }
+/** One-shot logged-in LinkedIn job search (discovery-expansion #6). Invalidates
+ *  the feed on success so the newly-found rows appear. */
+export function useLinkedinSearch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.linkedinSearch(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.jobs });
+      qc.invalidateQueries({ queryKey: qk.board });
+    },
+  });
+}
 /** Watch a company's board — adds a [[sources]] row (approved-plan #4). */
 export function useWatchCompany() {
   const qc = useQueryClient();
