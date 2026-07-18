@@ -88,6 +88,29 @@ def _posted_iso(text: str, today: datetime | None = None) -> str:
     return ""
 
 
+def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
+    """The posting's JD from the public CxS detail endpoint (approved-plan #8)
+    — `GET /wday/cxs/{tenant}/{site}{externalPath}` →
+    `jobPostingInfo.jobDescription` (HTML). "" when the shape is unexpected."""
+    from ..htmltext import strip_html
+
+    parts = urlsplit(job.canonical_url)
+    host = parts.netloc.lower()
+    m = _HOST_RE.match(host)
+    if not m:
+        return ""
+    segments = [s for s in parts.path.split("/") if s]
+    if len(segments) < 2:
+        return ""
+    site, external_path = segments[0], "/" + "/".join(segments[1:])
+    payload = fetcher.get_json(f"https://{host}/wday/cxs/{m.group(1)}/{site}{external_path}")
+    if isinstance(payload, dict):
+        info = payload.get("jobPostingInfo")
+        if isinstance(info, dict):
+            return strip_html(str(info.get("jobDescription") or ""))
+    return ""
+
+
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
     host, tenant, site = _parse_site(entry.url)
     if not host:

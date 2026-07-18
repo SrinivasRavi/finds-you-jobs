@@ -44,12 +44,14 @@ from .types import ScanPrefs, ScraperError
 
 @dataclass
 class SourceEntry:
-    """One `[[sources]]` row. `url` or `board` required; `type` forces an adapter."""
+    """One `[[sources]]` row. `url` or `board` required; `type` forces an
+    adapter. `actor` names the Apify actor for `board = "apify"` rows."""
 
     url: str = ""
     board: str = ""
     type: str = ""
     company: str = ""
+    actor: str = ""
 
 
 @dataclass
@@ -78,6 +80,7 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
             board=str(raw.get("board", "")),
             type=str(raw.get("type", "")),
             company=str(raw.get("company", "")),
+            actor=str(raw.get("actor", "")),
         )
         if not entry.url and not entry.board:
             raise ScraperError("portals-config", f"sources[{i}] needs `url` or `board`")
@@ -101,6 +104,7 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
         max_age_days=int(scan_opts.get("max_age_days", 0)),
         per_source_cap=int(scan_opts.get("per_source_cap", 0)),
         timeout_s=int(scan_opts.get("timeout_s", 20)),
+        disabled_sources=_str_list(data.get("disabled_sources", []), "disabled_sources"),
     )
     return PortalsConfig(sources=sources, prefs=prefs)
 

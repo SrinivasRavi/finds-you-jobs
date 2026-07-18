@@ -45,12 +45,13 @@ class _FetchOutcome:
 
     `key`/`report` mirror the sequential design; `fetched` is the raw adapter
     output (filtering/dedup happen later, in source order). A resolution or
-    fetch failure is captured in `report.errors` with `fetched=[]`.
-    """
+    fetch failure is captured in `report.errors` with `fetched=[]`. `adapter`
+    rides along for the enrichment phase (`fetch_detail`)."""
 
     key: str
     report: SourceReport
     fetched: list[NormalizedJob] = field(default_factory=list)
+    adapter: object | None = None
 
 
 def _fetch_source(
@@ -83,8 +84,54 @@ def _fetch_source(
             fetched = adapter.fetch(entry, fetcher)
     except ScraperError as e:
         report.errors.append(str(e))
-        return _FetchOutcome(key=key, report=report)
-    return _FetchOutcome(key=key, report=report, fetched=fetched)
+        return _FetchOutcome(key=key, report=report, adapter=adapter)
+    return _FetchOutcome(key=key, report=report, fetched=fetched, adapter=adapter)
+
+
+def _is_disabled(entry: object, disabled: set[str]) -> bool:
+    """True when the entry's adapter family (`greenhouse`) or its full source
+    key (`greenhouse:gleanwork`) is in the user's opt-out list."""
+    resolved = adapters.resolve(entry)  # type: ignore[arg-type]
+    if resolved is None:
+        return False
+    adapter, key = resolved
+    return adapter.ID in disabled or key in disabled
+
+
+# Per-source ceiling on JD detail fetches per scan (enrichment is one HTTP
+# call per JD-less row — the cap keeps a 200-row Workday tenant from turning
+# one scan into 200 detail requests). Rows past the cap keep their missing-JD
+# flag and score via the lenient path.
+ENRICH_CAP = 20
+
+
+@dataclass
+class _EnrichBucket:
+    """One source's JD-less kept rows, awaiting `fetch_detail`."""
+
+    adapter: object
+    report: SourceReport
+    jobs: list[NormalizedJob] = field(default_factory=list)
+
+
+def _enrich_source(
+    bucket: _EnrichBucket,
+    prefs: ScanPrefs,
+    now: datetime,
+    fetcher_factory: Callable[..., Fetcher],
+) -> None:
+    """Fill JDs for one source's rows (worker-thread body). A failed detail
+    fetch records the error and keeps the row — enrichment never drops."""
+    fetcher = fetcher_factory(timeout_s=prefs.timeout_s, usage=bucket.report.usage)
+    for job in bucket.jobs[:ENRICH_CAP]:
+        try:
+            detail = bucket.adapter.fetch_detail(job, fetcher)  # type: ignore[attr-defined]
+        except ScraperError as e:
+            bucket.report.errors.append(f"enrich {job.canonical_url}: {e}")
+            continue
+        if detail:
+            job.description = detail
+            assess(job, now=now)  # re-annotate: JD-dependent flags now real
 
 
 def _merge_report(result: ScanResult, outcome: _FetchOutcome) -> SourceReport:
@@ -125,7 +172,13 @@ def scan(
     now = datetime.now(UTC)
 
     # -- fetch phase (parallel; order-preserving) --------------------------
+    # Source opt-outs (Settings → Discovery sources): a disabled family/entry
+    # is skipped before any fetch — zero requests, no per-source row. An entry
+    # no adapter claims is kept so its "unresolved" diagnostic stays visible.
     sources = config.sources
+    if prefs.disabled_sources:
+        disabled = set(prefs.disabled_sources)
+        sources = [e for e in sources if not _is_disabled(e, disabled)]
     if prefs.max_workers > 1 and len(sources) > 1:
         with ThreadPoolExecutor(max_workers=prefs.max_workers) as pool:
             # executor.map preserves input order → deterministic merge below.
@@ -138,6 +191,7 @@ def scan(
     # -- merge phase (sequential, in source order → deterministic dedup) ---
     result = ScanResult()
     seen: set[str] = set()
+    enrich_buckets: dict[str, _EnrichBucket] = {}
     for outcome in outcomes:
         report = _merge_report(result, outcome)
         if not outcome.fetched:
@@ -163,6 +217,7 @@ def scan(
         if prefs.per_source_cap > 0:
             kept = kept[: prefs.per_source_cap]
 
+        can_enrich = outcome.adapter is not None and hasattr(outcome.adapter, "fetch_detail")
         for job in kept:
             if job.canonical_url in seen:
                 continue
@@ -170,5 +225,24 @@ def scan(
             assess(job, now=now)
             result.jobs.append(job)
             report.kept += 1
+            if can_enrich and not job.description:
+                bucket = enrich_buckets.setdefault(
+                    outcome.key, _EnrichBucket(outcome.adapter, report)
+                )
+                bucket.jobs.append(job)
+
+    # -- enrich phase (JD-missing rows only; approved-plan #8) --------------
+    # Kept rows with no JD get their real description fetched per adapter
+    # (`fetch_detail`) so scoring runs normally — the optimal path. Bounded at
+    # ENRICH_CAP per source; a failed detail fetch keeps the row (the lenient
+    # alias+location match already admitted it) and records the error.
+    if enrich_buckets:
+        buckets = list(enrich_buckets.values())
+        if prefs.max_workers > 1 and len(buckets) > 1:
+            with ThreadPoolExecutor(max_workers=prefs.max_workers) as pool:
+                list(pool.map(lambda b: _enrich_source(b, prefs, now, fetcher_factory), buckets))
+        else:
+            for bucket in buckets:
+                _enrich_source(bucket, prefs, now, fetcher_factory)
 
     return result

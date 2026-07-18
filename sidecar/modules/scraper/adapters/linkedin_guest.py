@@ -99,6 +99,27 @@ def _parse_cards(html: str, company_override: str) -> list[NormalizedJob]:
     return jobs
 
 
+# JD enrichment (approved-plan #8): the guest cards carry no JD body, but the
+# guest per-posting endpoint does — same no-login surface as the search.
+_DETAIL_BASE = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting"
+_VIEW_ID_RE = re.compile(r"/jobs/view/(\d+)")
+_DESC_RE = re.compile(
+    r'class="show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>', re.DOTALL
+)
+
+
+def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
+    """The posting's real JD text, from the guest jobPosting endpoint. ""
+    when the page has no description block (authwalled/expired) — the caller
+    keeps the row with its missing-JD flag rather than failing it."""
+    m = _VIEW_ID_RE.search(job.canonical_url)
+    if not m:
+        return ""
+    html = fetcher.get_text(f"{_DETAIL_BASE}/{m.group(1)}", headers=BROWSER_HEADERS)
+    d = _DESC_RE.search(html)
+    return strip_html(d.group(1)) if d else ""
+
+
 def search(entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher) -> list[NormalizedJob]:
     queries = build_queries(prefs)
     if not queries:

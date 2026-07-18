@@ -64,7 +64,15 @@ class FakeFetcher(Fetcher):
             return json.loads(payload)
         return payload
 
-    def post_json(self, url: str, payload: object) -> object:
+    def post_json(
+        self,
+        url: str,
+        payload: object,
+        headers: dict[str, str] | None = None,
+        timeout_s: int | None = None,
+    ) -> object:
+        self.last_post_headers = headers
+        self.last_post_timeout = timeout_s
         route = self._lookup(url)
         if callable(route):
             route = route(url, payload)

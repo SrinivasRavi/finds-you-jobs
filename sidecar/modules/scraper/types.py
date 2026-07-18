@@ -69,6 +69,15 @@ class ScanPrefs:
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20
+    # Source opt-outs (Settings → Discovery sources). Entries are adapter ids
+    # ("greenhouse" disables the family) or full source keys
+    # ("apify:memo23/naukri-scraper" disables one entry). Empty = everything on
+    # (the default; the user opts out, never in).
+    disabled_sources: list[str] = field(default_factory=list)
+    # BYO-key credentials for keyed sources ({"apify": token, "brave": key}).
+    # Injected IN MEMORY by the scan entrypoint from the sealed store — never
+    # part of a durable operation snapshot, never serialized into results.
+    credentials: dict[str, str] = field(default_factory=dict)
     # Sources are independent, I/O-bound HTTP — fetched concurrently by a bounded
     # pool so a 300-source scan is sub-minute, not ~8 min sequential. The cap
     # keeps socket/latency pressure sane; `<= 1` forces the deterministic

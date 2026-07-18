@@ -48,6 +48,7 @@ class Fetcher:
         data: bytes | None = None,
         content_type: str = "",
         headers: dict[str, str] | None = None,
+        timeout_s: int | None = None,
     ) -> str:
         if not url.startswith(("http://", "https://")):
             raise ScraperError("fetch", f"refusing non-http(s) URL: {url}")
@@ -60,7 +61,9 @@ class Fetcher:
         req = urllib.request.Request(url, data=data, headers=merged)  # noqa: S310
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:  # noqa: S310
+            with urllib.request.urlopen(  # noqa: S310
+                req, timeout=timeout_s if timeout_s is not None else self.timeout_s
+            ) as resp:
                 body = resp.read(MAX_BYTES + 1)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise ScraperError("fetch", f"could not fetch {url}: {e}") from e
@@ -78,12 +81,28 @@ class Fetcher:
     def get_json(self, url: str, headers: dict[str, str] | None = None) -> object:
         return self._parse_json(url, self.get_text(url, headers=headers))
 
-    def post_json(self, url: str, payload: object) -> object:
+    def post_json(
+        self,
+        url: str,
+        payload: object,
+        headers: dict[str, str] | None = None,
+        timeout_s: int | None = None,
+    ) -> object:
         """POST a JSON body, return parsed JSON. Exists for Workday-style CxS
         endpoints whose public job lists answer only to POST — same guards,
-        same usage accounting as GET (one internal_call per request)."""
+        same usage accounting as GET (one internal_call per request).
+
+        `headers` lets a keyed source send its bearer token (Apify — in a
+        header, NEVER a query param: fetch errors quote the URL verbatim and
+        land in persisted per-source diagnostics). `timeout_s` overrides the
+        per-request budget for endpoints that legitimately run long (an Apify
+        run-sync call blocks until the actor finishes)."""
         body = self._read(
-            url, data=json.dumps(payload).encode(), content_type="application/json"
+            url,
+            data=json.dumps(payload).encode(),
+            content_type="application/json",
+            headers=headers,
+            timeout_s=timeout_s,
         )
         return self._parse_json(url, body)
 

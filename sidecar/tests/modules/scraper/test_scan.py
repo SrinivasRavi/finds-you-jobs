@@ -227,3 +227,76 @@ def test_example_portals_config_parses_and_resolves():
     for entry in config.sources:
         # every example entry must be claimed once all adapters land
         assert adapters.resolve(entry) is not None, f"unclaimed example source: {entry}"
+
+
+# ---------------------------------------------------------------------------
+# Source opt-outs (Settings → Discovery sources)
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_family_is_skipped_before_any_fetch():
+    config = _config(
+        SourceEntry(url="https://boards.greenhouse.io/acme", company="Acme"),
+        SourceEntry(board="remoteok"),
+    )
+    prefs = ScanPrefs(
+        title_allow=["backend engineer"],
+        disabled_sources=["greenhouse"],
+    )
+    # No greenhouse route on purpose: a disabled family must never be fetched,
+    # so its absence can't produce an error row either.
+    result = scan(
+        config,
+        prefs,
+        fetcher_factory=routed(
+            {"remoteok.com/api": [{"legal": ""}, {
+                "position": "Backend Engineer",
+                "url": "https://remoteok.com/remote-jobs/1",
+                "company": "Acme",
+                "location": "Remote",
+            }]}
+        ),
+    )
+    assert list(result.per_source) == ["remoteok:remoteok.com"]
+    assert [j.source_adapter for j in result.jobs] == ["remoteok"]
+
+
+def test_disabled_full_source_key_skips_only_that_entry():
+    config = _config(
+        SourceEntry(url="https://boards.greenhouse.io/one", company="One"),
+        SourceEntry(url="https://boards.greenhouse.io/two", company="Two"),
+    )
+    prefs = ScanPrefs(
+        title_allow=["software engineer"], disabled_sources=["greenhouse:two"]
+    )
+    result = scan(
+        config,
+        prefs,
+        fetcher_factory=routed(
+            {
+                "/boards/one/jobs": {
+                    "jobs": [
+                        {
+                            "absolute_url": "https://example.com/jobs/a",
+                            "title": "Software Engineer",
+                            "location": {"name": "Remote"},
+                        }
+                    ]
+                }
+            }
+        ),
+    )
+    assert list(result.per_source) == ["greenhouse:one"]
+    assert len(result.jobs) == 1
+
+
+def test_disabled_sources_parse_from_portals_config():
+    from sidecar.modules.scraper.config import parse_portals
+
+    config = parse_portals(
+        {
+            "sources": [{"board": "remoteok"}],
+            "disabled_sources": ["greenhouse", "apify:memo23/naukri-scraper"],
+        }
+    )
+    assert config.prefs.disabled_sources == ["greenhouse", "apify:memo23/naukri-scraper"]
