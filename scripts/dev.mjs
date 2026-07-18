@@ -29,7 +29,13 @@ const web = process.argv[2] === "web";
 
 function run(cmd, args) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "inherit", env: process.env });
+    // shell on Windows: pnpm is pnpm.cmd there, and Node can't spawn .cmd
+    // files directly (ENOENT — observed on a real install 2026-07-18).
+    const child = spawn(cmd, args, {
+      stdio: "inherit",
+      env: process.env,
+      shell: process.platform === "win32",
+    });
     // Lifecycle: forward Ctrl-C/kill to the child, and if OUR parent dies
     // without signalling us (reparented), take the child down too — the same
     // no-orphans discipline as scripts/dev-frontend.mjs.

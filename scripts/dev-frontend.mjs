@@ -16,10 +16,17 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ORIGINAL_PPID = process.ppid;
+const IS_WIN = process.platform === "win32";
 
-const vite = spawn("pnpm", ["--dir", join(ROOT, "frontend"), "dev"], {
+// Windows: pnpm is pnpm.cmd (needs a shell to spawn), `cwd` instead of a
+// --dir path argument (shell arg-joining breaks on spaces), and no POSIX
+// process groups (detached + kill(-pid) are Unix-only; the catch blocks
+// below fall through harmlessly).
+const vite = spawn("pnpm", ["dev"], {
+  cwd: join(ROOT, "frontend"),
   stdio: "inherit",
-  detached: true, // its own process group → we can kill the whole tree
+  shell: IS_WIN,
+  detached: !IS_WIN, // its own process group → we can kill the whole tree
 });
 
 let closing = false;
@@ -29,7 +36,11 @@ function shutdown(code = 0) {
   try {
     process.kill(-vite.pid, "SIGTERM");
   } catch {
-    /* already gone */
+    try {
+      vite.kill("SIGTERM"); // Windows (no process groups) or already gone
+    } catch {
+      /* already gone */
+    }
   }
   const hardKill = setTimeout(() => {
     try {

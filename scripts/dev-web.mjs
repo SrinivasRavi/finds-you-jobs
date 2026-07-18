@@ -82,9 +82,11 @@ sidecar.stdout.on("data", (chunk) => {
         `VITE_SIDECAR_PORT=${port}\nVITE_SIDECAR_TOKEN=${token}\n`,
       );
       console.log(`[dev-web] sidecar up on ${port}; starting vite…`);
+      // Windows: pnpm is pnpm.cmd (needs a shell); no POSIX process groups.
       const vite = spawn("pnpm", ["dev"], {
         cwd: join(repoRoot, "frontend"),
-        detached: true,
+        detached: process.platform !== "win32",
+        shell: process.platform === "win32",
         stdio: "inherit",
       });
       children.push(vite);
