@@ -33,30 +33,40 @@ fn open_external(url: String) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| format!("could not open browser: {e}"))
 }
 
-/// Open the user's terminal running `claude` so they can log into their Claude
-/// subscription for the CLI provider. The terminal's own login shell resolves
-/// `claude` on PATH (the same env the sidecar's login-shell probe uses), and
-/// `claude` persists auth to `~/.claude`, so onboarding's Verify — which reads
-/// that persisted auth — confirms success after they log in. Shown only when
-/// Verify reports `not_logged_in`, so an already-logged-in user never lands here.
+/// Open the user's terminal running the named subscription CLI's login flow.
+/// The terminal's own login shell resolves the binary on PATH (the same env
+/// the sidecar's login-shell probe uses), and each CLI persists its auth
+/// locally, so onboarding's Verify — which reads that persisted auth —
+/// confirms success after they log in. Shown only when Verify reports
+/// `not_logged_in`, so an already-logged-in user never lands here.
+///
+/// `cli` maps through a fixed allowlist to the exact command line — the
+/// frontend can name a CLI, never inject a command. Unknown ids fall back to
+/// `claude` (the historical behavior) rather than erroring: worst case the
+/// user gets a terminal, not silence.
 #[tauri::command]
-fn open_login_terminal() -> Result<(), String> {
+fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
+    let login_cmd = match cli.as_deref() {
+        Some("codex") => "codex login",
+        Some("agy") => "agy", // first run triggers Antigravity's browser OAuth
+        _ => "claude",
+    };
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("osascript")
         .args([
             "-e",
             "tell application \"Terminal\" to activate",
             "-e",
-            "tell application \"Terminal\" to do script \"claude\"",
+            &format!("tell application \"Terminal\" to do script \"{login_cmd}\""),
         ])
         .spawn();
     #[cfg(target_os = "windows")]
     let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "cmd", "/K", "claude"])
+        .args(["/C", "start", "cmd", "/K", login_cmd])
         .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = std::process::Command::new("x-terminal-emulator")
-        .args(["-e", "claude"])
+        .args(["-e", login_cmd])
         .spawn();
     result.map(|_| ()).map_err(|e| format!("could not open terminal: {e}"))
 }

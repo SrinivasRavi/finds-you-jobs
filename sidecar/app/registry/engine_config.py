@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from sidecar.modules._shared.claude_engine import DEFAULT_MODEL, ClaudeCliEngine
+from sidecar.modules._shared.cli_engines import AntigravityCliEngine, CodexCliEngine
 
 from ..logging_setup import get_logger
 from ..security import get_app_key, open_secret
@@ -45,6 +46,14 @@ from .engines_http import (
 # The dev engine of record (architecture §9). Stays the routing default — the
 # BYOK engines are opt-in via the Settings routing map, never auto-selected.
 DEFAULT_ENGINE = "claude-cli"
+
+# The subscription-CLI provider family (2026-07-17 expansion): always-registered
+# builtin engines driven through the user's logged-in coding CLI — no key, no
+# EngineSettings row, nothing to persist. NOT in PROVIDERS below on purpose:
+# POST /api/engines must keep rejecting them as BYOK configs. Routing to one
+# that isn't installed fails at call time with a clear EngineError, matching
+# claude-cli's long-standing behavior.
+CLI_PROVIDERS = (DEFAULT_ENGINE, "codex-cli", "antigravity-cli")
 
 # The LLM-backed operation kinds that need a routed engine. `extract` is the
 # application-profile extraction at master-save (FR-APP-01) — a small call; a
@@ -155,9 +164,15 @@ def verify_provider(
 
 
 def register_builtin_engines(registry: EngineRegistry) -> None:
-    """Register the always-present dev engine (`claude-cli`)."""
+    """Register the always-present subscription-CLI engines. `claude-cli` keeps
+    its pinned default model; the other CLIs run their own configured default
+    when the routing entry names no model (`model=None` omits the flag)."""
     registry.register_factory(
         DEFAULT_ENGINE, lambda model: ClaudeCliEngine(model=model or DEFAULT_MODEL)
+    )
+    registry.register_factory("codex-cli", lambda model: CodexCliEngine(model=model))
+    registry.register_factory(
+        "antigravity-cli", lambda model: AntigravityCliEngine(model=model)
     )
 
 

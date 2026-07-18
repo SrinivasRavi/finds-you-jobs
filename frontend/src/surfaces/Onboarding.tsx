@@ -34,7 +34,51 @@ const PROVIDERS = [
   { id: "anthropic", label: "Direct Anthropic", hint: "Anthropic API key" },
   { id: "openai", label: "Direct OpenAI", hint: "OpenAI API key" },
   { id: "claude-cli", label: "Claude subscription (CLI)", hint: "Uses your Claude CLI — no key needed" },
+  { id: "codex-cli", label: "ChatGPT subscription (Codex CLI)", hint: "Uses your Codex CLI login — no key needed" },
+  { id: "antigravity-cli", label: "Google subscription (Antigravity CLI)", hint: "Experimental — uses your agy login, no key needed" },
 ];
+
+// The subscription-CLI providers (no key, verify-only — mirrors the backend's
+// engine_config.CLI_PROVIDERS). Per-provider guidance for the not_found /
+// not_logged_in verify outcomes.
+const CLI_PROVIDERS: Record<
+  string,
+  {
+    name: string; // short name for guidance copy ("Claude CLI", …)
+    verifyHint: string;
+    loginCli: "claude" | "codex" | "agy";
+    loginLabel: string;
+    installUrl: string;
+    installName: string;
+  }
+> = {
+  "claude-cli": {
+    name: "Claude CLI",
+    verifyHint: "No key needed — we verify your Claude CLI is reachable.",
+    loginCli: "claude",
+    loginLabel: "Log in to Claude",
+    installUrl: "https://docs.claude.com/en/docs/claude-code/overview",
+    installName: "Claude Code",
+  },
+  "codex-cli": {
+    name: "Codex CLI",
+    verifyHint: "No key needed — we verify your Codex CLI is logged in.",
+    loginCli: "codex",
+    loginLabel: "Log in to Codex",
+    installUrl: "https://developers.openai.com/codex/cli",
+    installName: "OpenAI Codex CLI",
+  },
+  "antigravity-cli": {
+    name: "Antigravity CLI (agy)",
+    verifyHint:
+      "No key needed — we run a real test prompt through agy. Experimental: agy's non-interactive mode has known rough edges; Verify tells you honestly if it fails.",
+    loginCli: "agy",
+    loginLabel: "Log in to Antigravity",
+    installUrl: "https://antigravity.google/",
+    installName: "Google Antigravity",
+  },
+};
+const isCliProvider = (id: string) => id in CLI_PROVIDERS;
 
 const FRESHNESS_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30 };
 
@@ -141,7 +185,7 @@ export function Onboarding() {
     verifyState,
   ]);
 
-  const needsInput = provider !== "claude-cli";
+  const needsInput = !isCliProvider(provider);
   const canVerify = !needsInput || providerInput.trim().length > 0;
 
   const canContinue =
@@ -184,7 +228,7 @@ export function Onboarding() {
   }
 
   function providerVerifyInput(): EngineSaveInput {
-    if (provider === "claude-cli") return { provider };
+    if (isCliProvider(provider)) return { provider };
     if (provider === "local") return { provider, base_url: providerInput.trim() };
     return { provider, key: providerInput.trim() };
   }
@@ -201,12 +245,11 @@ export function Onboarding() {
         // Persist the verified config (BYOK key sealed server-side); this is NOT
         // the final commit — that is Finish. Saving here means a resumed wizard
         // (or a Finish after a quit) already has a working engine.
-        // claude-cli has nothing to persist: it's the default engine of record
-        // (no key, no URL) and POST /api/engines rejects it as a BYOK config —
-        // verify alone is the gate for it.
-        if (provider !== "claude-cli") await api.saveEngine(input);
-        // claude-cli's detail names the account ("Logged in as …") — show it.
-        if (provider === "claude-cli") setVerifyDetail(res.detail);
+        // Subscription CLIs have nothing to persist: no key, no URL — POST
+        // /api/engines rejects them as BYOK configs; verify alone is the gate.
+        if (!isCliProvider(provider)) await api.saveEngine(input);
+        // A CLI's detail names the account ("Logged in as …") — show it.
+        if (isCliProvider(provider)) setVerifyDetail(res.detail);
         setVerifyState("verified");
       } else {
         setVerifyState("failed");
@@ -239,7 +282,9 @@ export function Onboarding() {
       // otherwise the routing default (claude-cli) silently runs the whole
       // pipeline on a CLI the user may not even have (2026-07-12 fix: an
       // OpenRouter onboarding was billing the user's Claude session instead).
-      // Empty model → the engine row's default_model (filled at save).
+      // Empty model → the engine row's default_model (BYOK) or the CLI's own
+      // configured default (codex-cli / antigravity-cli). claude-cli alone
+      // skips this: it IS the routing default.
       if (provider !== "claude-cli") {
         await api.updateSettings({
           routing: LLM_KINDS.map((kind) => ({ kind, engine: provider, model: "" })),
@@ -485,7 +530,7 @@ export function Onboarding() {
                   />
                 ) : (
                   <span className="flex-1 text-[12px] text-ink-3">
-                    No key needed — we verify your Claude CLI is reachable.
+                    {CLI_PROVIDERS[provider]?.verifyHint ?? "No key needed."}
                   </span>
                 )}
                 <button
@@ -519,16 +564,16 @@ export function Onboarding() {
                   data-testid="verify-login-needed"
                 >
                   <div className="mb-2">
-                    Your Claude CLI is installed but not logged in. Log in to your Claude
-                    subscription, then Verify.
+                    Your {CLI_PROVIDERS[provider]?.name ?? "CLI"} is installed but not logged in.
+                    Log in to your subscription, then Verify.
                   </div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => openLoginTerminal()}
+                      onClick={() => openLoginTerminal(CLI_PROVIDERS[provider]?.loginCli)}
                       data-testid="claude-login-btn"
                       className="rounded-md border border-accent bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:bg-accent-ink"
                     >
-                      Log in to Claude
+                      {CLI_PROVIDERS[provider]?.loginLabel ?? "Log in"}
                     </button>
                     <button
                       onClick={() => void verify()}
@@ -544,14 +589,14 @@ export function Onboarding() {
                   data-testid="verify-not-found"
                 >
                   <div className="mb-2">
-                    Claude CLI not found. Install{" "}
+                    {CLI_PROVIDERS[provider]?.name ?? "CLI"} not found. Install{" "}
                     <a
-                      href="https://docs.claude.com/en/docs/claude-code/overview"
+                      href={CLI_PROVIDERS[provider]?.installUrl ?? "#"}
                       target="_blank"
                       rel="noreferrer"
                       className="underline"
                     >
-                      Claude Code
+                      {CLI_PROVIDERS[provider]?.installName ?? "the CLI"}
                     </a>
                     , then Verify.
                   </div>

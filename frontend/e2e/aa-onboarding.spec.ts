@@ -32,6 +32,52 @@ test("fresh install gates every route to /onboarding and renders the wizard", as
   await page.screenshot({ path: `${DIR}/onboarding-step0.png`, fullPage: true });
 });
 
+test("provider step offers the subscription-CLI family beside BYOK", async ({ page }) => {
+  await page.goto("/onboarding");
+  // Step 0 → 1: paste a resume.
+  await page.getByTestId("resume-text").fill("# E2E Candidate\n\nBackend engineer.");
+  await page.getByTestId("onboarding-continue").click();
+  // Step 1 → 2: one alias + one location.
+  await page.getByTestId("alias-input").fill("Backend Engineer");
+  await page.getByTestId("alias-input").press("Enter");
+  await page.getByTestId("location-input").fill("Remote");
+  await page.getByTestId("location-input").press("Enter");
+  await page.getByTestId("onboarding-continue").click();
+  await expect(page.getByTestId("onboarding-step-2")).toBeVisible();
+
+  // The full provider menu: 4 BYOK + 3 subscription CLIs.
+  for (const id of [
+    "openrouter",
+    "local",
+    "anthropic",
+    "openai",
+    "claude-cli",
+    "codex-cli",
+    "antigravity-cli",
+  ]) {
+    await expect(page.getByTestId(`provider-${id}`)).toBeVisible();
+  }
+
+  // A CLI selection swaps the key input for the no-key hint (verify-only path).
+  await page.getByTestId("provider-codex-cli").click();
+  await expect(page.getByTestId("api-key")).toHaveCount(0);
+  await expect(page.getByText("we verify your Codex CLI is logged in")).toBeVisible();
+  // Exactly one tile is selected (accent-wash) — and wait out the global
+  // 240ms theme-fade transition (index.css) so the screenshot shows settled
+  // colors, not the previous tile mid-fade.
+  await expect(page.getByTestId("provider-codex-cli")).toHaveClass(/bg-accent-wash/);
+  await expect(page.getByTestId("provider-openrouter")).not.toHaveClass(/bg-accent-wash/);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${DIR}/onboarding-step2-codex-cli.png`, fullPage: true });
+
+  await page.getByTestId("provider-antigravity-cli").click();
+  await expect(page.getByText(/Experimental: agy's non-interactive mode/)).toBeVisible();
+  await expect(page.getByTestId("provider-antigravity-cli")).toHaveClass(/bg-accent-wash/);
+  await expect(page.getByTestId("provider-codex-cli")).not.toHaveClass(/bg-accent-wash/);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${DIR}/onboarding-step2-antigravity-cli.png`, fullPage: true });
+});
+
 test("onboarded install redirects /onboarding back to the board", async ({
   page,
   request,

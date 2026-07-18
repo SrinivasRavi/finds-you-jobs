@@ -303,6 +303,168 @@ def test_subscription_env_scrubs_api_key(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 # ---------------------------------------------------------------------------
+# codex-cli / antigravity-cli verify dispatch (mocked cli_engines — no subprocess)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_codex_cli_not_found(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sidecar.modules._shared.cli_engines as ce
+
+    _app, client = app_client
+    monkeypatch.setattr(ce, "resolve_cli", lambda binary, refresh=False: None)
+    resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "codex-cli"})
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["status"] == "not_found"
+    assert "Install" in body["detail"]
+
+
+def test_verify_codex_cli_login_status_ok(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`codex login status` answers → ok with the account line, NO completion."""
+    import sidecar.modules._shared.cli_engines as ce
+
+    _app, client = app_client
+    monkeypatch.setattr(ce, "resolve_cli", lambda binary, refresh=False: "/fake/bin/codex")
+    monkeypatch.setattr(
+        ce,
+        "codex_login_status",
+        lambda exe=None: ce.CliProbe(status="ok", detail="Logged in using ChatGPT (jane@x.com)"),
+    )
+
+    def _never(self: object, system: str, user: str) -> tuple[str, object]:
+        raise AssertionError("completion must not run when login status answers")
+
+    monkeypatch.setattr(ce.CodexCliEngine, "complete", _never)
+    resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "codex-cli"})
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["status"] == "ok"
+    assert "jane@x.com" in body["detail"]
+
+
+def test_verify_codex_cli_logged_out(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sidecar.modules._shared.cli_engines as ce
+
+    _app, client = app_client
+    monkeypatch.setattr(ce, "resolve_cli", lambda binary, refresh=False: "/fake/bin/codex")
+    monkeypatch.setattr(
+        ce,
+        "codex_login_status",
+        lambda exe=None: ce.CliProbe(status="not_logged_in", detail="Not logged in."),
+    )
+    resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "codex-cli"})
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["status"] == "not_logged_in"
+
+
+def test_verify_codex_cli_fallback_completion(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No login-status answer (older CLI) → the minimal real completion decides."""
+    import sidecar.modules._shared.cli_engines as ce
+
+    _app, client = app_client
+    monkeypatch.setattr(ce, "resolve_cli", lambda binary, refresh=False: "/fake/bin/codex")
+    monkeypatch.setattr(ce, "codex_login_status", lambda exe=None: None)
+    monkeypatch.setattr(
+        ce.CodexCliEngine,
+        "complete",
+        lambda self, system, user: ("OK", None),
+    )
+    resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "codex-cli"})
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["status"] == "ok"
+
+
+def test_verify_antigravity_runs_real_completion_path(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agy has NO cheap probe by design: verify must prove the non-TTY path."""
+    import sidecar.modules._shared.cli_engines as ce
+
+    _app, client = app_client
+    monkeypatch.setattr(ce, "resolve_cli", lambda binary, refresh=False: "/fake/bin/agy")
+    monkeypatch.setattr(
+        ce.AntigravityCliEngine,
+        "complete",
+        lambda self, system, user: ("OK", None),
+    )
+    resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "antigravity-cli"})
+    body = resp.json()
+    assert body["ok"] is True
+    assert "non-interactive" in body["detail"]
+
+
+def test_verify_antigravity_stdout_bug_is_honest_error(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The upstream non-TTY stdout drop surfaces at Verify as a clear failure —
+    the whole reason the provider is labeled experimental."""
+    import sidecar.modules._shared.claude_engine as claude_ce
+    import sidecar.modules._shared.cli_engines as ce
+
+    _app, client = app_client
+    monkeypatch.setattr(ce, "resolve_cli", lambda binary, refresh=False: "/fake/bin/agy")
+
+    def _bug(self: object, system: str, user: str) -> tuple[str, object]:
+        raise claude_ce.EngineError(
+            "agy CLI returned no output — Antigravity's non-interactive (-p) mode "
+            "currently drops its response when not attached to a terminal"
+        )
+
+    monkeypatch.setattr(ce.AntigravityCliEngine, "complete", _bug)
+    resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "antigravity-cli"})
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["status"] == "error"
+    assert "drops its response" in body["detail"]
+
+
+def test_save_rejects_cli_providers_as_byok(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """CLI subscriptions have nothing to persist — POST /api/engines keeps
+    rejecting them exactly like claude-cli (422, unknown provider)."""
+    _app, client = app_client
+    for provider in ("claude-cli", "codex-cli", "antigravity-cli"):
+        resp = client.post("/api/engines", headers=AUTH, json={"provider": provider})
+        assert resp.status_code == 422, provider
+
+
+def test_cli_engines_always_registered_and_routable() -> None:
+    """configure_engines registers the CLI family unconditionally, so a routing
+    entry naming codex-cli/antigravity-cli resolves (call-time errors stay the
+    honest failure for a missing binary)."""
+    from sidecar.app.registry.engine_config import configure_engines
+    from sidecar.app.registry.engines import EngineRegistry
+    from sidecar.modules._shared.cli_engines import AntigravityCliEngine, CodexCliEngine
+
+    registry = EngineRegistry()
+    configure_engines(
+        registry,
+        {
+            "score": {"engine": "codex-cli"},
+            "tailor": {"engine": "antigravity-cli", "model": ""},
+        },
+    )
+    scored = registry.resolve("score")
+    assert scored is not None
+    assert isinstance(scored.engine, CodexCliEngine)
+    assert scored.engine.model is None  # no model routed → CLI's own default
+    tailored = registry.resolve("tailor")
+    assert tailored is not None
+    assert isinstance(tailored.engine, AntigravityCliEngine)
+
+
+# ---------------------------------------------------------------------------
 # registration → routing
 # ---------------------------------------------------------------------------
 

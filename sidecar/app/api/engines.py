@@ -169,6 +169,92 @@ def _verify_claude_cli() -> dto.EngineVerifyResult:
     )
 
 
+def _verify_codex_cli() -> dto.EngineVerifyResult:
+    """Verify the ChatGPT-subscription Codex CLI, cheapest-first — mirrors
+    `_verify_claude_cli`: resolve binary → instant `codex login status` probe →
+    minimal real completion only when the probe can't answer."""
+    from sidecar.modules._shared import cli_engines as ce
+    from sidecar.modules._shared.claude_engine import EngineError
+
+    exe = ce.resolve_cli("codex", refresh=True)
+    if exe is None:
+        return dto.EngineVerifyResult(
+            ok=False,
+            status="not_found",
+            detail="Codex CLI not found. Install OpenAI Codex, then Verify.",
+            provider="codex-cli",
+        )
+    probe = ce.codex_login_status(exe)
+    if probe is not None:
+        if probe.status == "ok":
+            return dto.EngineVerifyResult(
+                ok=True, status="ok", detail=probe.detail, provider="codex-cli"
+            )
+        return dto.EngineVerifyResult(
+            ok=False, status="not_logged_in", detail=probe.detail, provider="codex-cli"
+        )
+    try:
+        text, _usage = ce.CodexCliEngine(timeout_s=60).complete(
+            "Reply with the single word OK.", "OK"
+        )
+    except EngineError as e:
+        detail = str(e)
+        status = "not_logged_in" if _looks_like_auth_error(detail) else "error"
+        return dto.EngineVerifyResult(
+            ok=False, status=status, detail=detail, provider="codex-cli"
+        )
+    ok = bool(text.strip())
+    return dto.EngineVerifyResult(
+        ok=ok,
+        status="ok" if ok else "error",
+        detail="Codex CLI reachable",
+        provider="codex-cli",
+    )
+
+
+def _verify_antigravity_cli() -> dto.EngineVerifyResult:
+    """Verify the Antigravity CLI (experimental) with a minimal REAL completion
+    through the exact non-TTY subprocess path the engine uses — deliberately no
+    cheap auth probe: `agy`'s known non-interactive stdout bug must be caught
+    here at setup, not later mid-pipeline (design decision 2026-07-17)."""
+    from sidecar.modules._shared import cli_engines as ce
+    from sidecar.modules._shared.claude_engine import EngineError
+
+    exe = ce.resolve_cli("agy", refresh=True)
+    if exe is None:
+        return dto.EngineVerifyResult(
+            ok=False,
+            status="not_found",
+            detail="Antigravity CLI (agy) not found. Install Antigravity, then Verify.",
+            provider="antigravity-cli",
+        )
+    try:
+        text, _usage = ce.AntigravityCliEngine(timeout_s=90).complete(
+            "Reply with the single word OK.", "OK"
+        )
+    except EngineError as e:
+        detail = str(e)
+        status = "not_logged_in" if _looks_like_auth_error(detail) else "error"
+        return dto.EngineVerifyResult(
+            ok=False, status=status, detail=detail, provider="antigravity-cli"
+        )
+    ok = bool(text.strip())
+    return dto.EngineVerifyResult(
+        ok=ok,
+        status="ok" if ok else "error",
+        detail="Antigravity CLI reachable (non-interactive mode verified)",
+        provider="antigravity-cli",
+    )
+
+
+# Subscription-CLI verify dispatch (mirrors engine_config.CLI_PROVIDERS).
+_CLI_VERIFIERS = {
+    "claude-cli": _verify_claude_cli,
+    "codex-cli": _verify_codex_cli,
+    "antigravity-cli": _verify_antigravity_cli,
+}
+
+
 @router.post("/api/engines/verify")
 async def verify_engine(
     request: Request, payload: dto.EngineVerifyRequest
@@ -176,8 +262,9 @@ async def verify_engine(
     # Both probes block (subprocess / synchronous HTTP); run them in a worker
     # thread so a slow verify never stalls uvicorn's event loop (the SSE
     # heartbeat and every concurrent request) — the "Load failed" root cause.
-    if payload.provider == "claude-cli":
-        return await run_in_threadpool(_verify_claude_cli)
+    cli_verifier = _CLI_VERIFIERS.get(payload.provider)
+    if cli_verifier is not None:
+        return await run_in_threadpool(cli_verifier)
     result = await run_in_threadpool(
         verify_provider,
         payload.provider,

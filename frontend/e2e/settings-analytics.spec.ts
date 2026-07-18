@@ -55,6 +55,15 @@ test("settings renders every restored section", async ({ page }) => {
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
   // Parallel-AI-calls control (2026-07-17): user-tunable 2-20 or Unlimited.
   await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
+  // Subscription-CLI family (2026-07-18): the three verify-only rows render,
+  // Antigravity carries its Experimental badge, and each row has a Verify.
+  await expect(page.getByTestId("cli-providers-panel")).toBeVisible();
+  for (const id of ["claude-cli", "codex-cli", "antigravity-cli"]) {
+    await expect(page.getByTestId(`cli-provider-${id}`)).toBeVisible();
+    await expect(page.getByTestId(`cli-verify-${id}`)).toBeVisible();
+  }
+  await expect(page.getByTestId("cli-provider-antigravity-cli")).toContainText("Experimental");
+  await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
 });
 
 test("linkedin session is nested inside referral outreach", async ({ page }) => {

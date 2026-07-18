@@ -692,8 +692,8 @@ class EngineVerifyResult(BaseModel):
     provider: str
     # Onboarding branches on this: `not_found` (install the CLI) vs
     # `not_logged_in` (open a terminal, log in) vs `error` (show detail). Only
-    # `claude-cli` uses the non-`ok`/`error` values; every other provider maps
-    # ok→"ok" / not-ok→"error".
+    # the subscription CLIs (claude-cli / codex-cli / antigravity-cli) use the
+    # non-`ok`/`error` values; every BYOK provider maps ok→"ok" / not-ok→"error".
     status: Literal["ok", "not_found", "not_logged_in", "error"] = "ok"
 
 

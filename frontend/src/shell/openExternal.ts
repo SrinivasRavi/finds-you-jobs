@@ -28,14 +28,15 @@ export function openExternal(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/** Open the user's terminal running `claude` so they can log into their Claude
- *  subscription (onboarding's `not_logged_in` guidance). Routes through the
- *  shell's `open_login_terminal` command; a no-op outside the Tauri app (the
- *  browser-dev path has no terminal to open). */
-export function openLoginTerminal(): void {
+/** Open the user's terminal running the named subscription CLI's login flow so
+ *  they can sign in (onboarding's `not_logged_in` guidance). The shell command
+ *  maps the id through an allowlist (claude | codex | agy) — JS never passes a
+ *  raw command line. A no-op outside the Tauri app (the browser-dev path has
+ *  no terminal to open). */
+export function openLoginTerminal(cli: "claude" | "codex" | "agy" = "claude"): void {
   if (!inTauri()) return;
   void import("@tauri-apps/api/core").then(({ invoke }) =>
-    invoke("open_login_terminal").catch(() => {
+    invoke("open_login_terminal", { cli }).catch(() => {
       /* best-effort: the failure surfaces as Verify still reporting not-logged-in */
     }),
   );

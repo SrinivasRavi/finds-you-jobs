@@ -296,6 +296,16 @@ export function LifecycleSection({
 // claude_engine.py) — shown as the effective model when a kind routes there.
 const CLAUDE_CLI_DEFAULT_MODEL = "claude-opus-4-8";
 
+// The subscription-CLI engine family — always routable, no EngineSettings row
+// (mirrors the backend's engine_config.CLI_PROVIDERS). codex/agy run their
+// CLI's own configured default model when the routing entry names none.
+const CLI_ENGINE_OPTIONS = [
+  { id: "claude-cli", label: "Claude subscription (CLI)" },
+  { id: "codex-cli", label: "ChatGPT subscription (Codex CLI)" },
+  { id: "antigravity-cli", label: "Google subscription (Antigravity CLI)" },
+];
+const isCliEngine = (id: string) => CLI_ENGINE_OPTIONS.some((o) => o.id === id);
+
 // ─── Engine routing + editable prompts (FR-SET-11) ──────────────────────────
 // Each LLM operation is a collapsible row: header shows the engine/model
 // summary + an "edited" badge; expanded reveals the engine selector (routed
@@ -331,14 +341,16 @@ export function PromptRoutingRow({
     route?.model ||
     (engine === "claude-cli"
       ? CLAUDE_CLI_DEFAULT_MODEL
-      : settings.providers.find((p) => p.id === engine)?.default_model) ||
+      : isCliEngine(engine)
+        ? "CLI default model"
+        : settings.providers.find((p) => p.id === engine)?.default_model) ||
     "provider default";
   const engineLabel =
-    engine === "claude-cli"
-      ? "Claude subscription (CLI)"
-      : settings.providers.find((p) => p.id === engine)?.label || engine;
+    CLI_ENGINE_OPTIONS.find((o) => o.id === engine)?.label ||
+    settings.providers.find((p) => p.id === engine)?.label ||
+    engine;
   const options = [
-    { id: "claude-cli", label: "Claude subscription (CLI)" },
+    ...CLI_ENGINE_OPTIONS,
     ...settings.providers.filter((p) => p.configured).map((p) => ({ id: p.id, label: p.label })),
   ];
 
@@ -657,6 +669,23 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
 const INPUT_CLS =
   "w-full rounded-md border border-border bg-surface px-2 py-1.5 text-[12.5px] text-ink placeholder:text-ink-4";
 
+// Subscription-CLI rows in the AI Providers panel (verify-only — no key, no
+// persisted row; routing under "Engine routing & prompts" selects them).
+const SUBSCRIPTION_CLIS: { id: string; label: string; desc: string; experimental?: boolean }[] = [
+  { id: "claude-cli", label: "Claude subscription (CLI)", desc: "Your logged-in Claude Code CLI." },
+  {
+    id: "codex-cli",
+    label: "ChatGPT subscription (Codex CLI)",
+    desc: "Your logged-in OpenAI Codex CLI.",
+  },
+  {
+    id: "antigravity-cli",
+    label: "Google subscription (Antigravity CLI)",
+    desc: "Uses your agy login. Verify runs a real test prompt — agy's non-interactive mode has known rough edges upstream.",
+    experimental: true,
+  },
+];
+
 function AIProvidersPanel({ settings }: { settings: SettingsT }) {
   const verify = useVerifyEngine();
   const save = useSaveEngine();
@@ -670,6 +699,29 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
   const [baseUrl, setBaseUrl] = useState(savedRow?.base_url ?? "");
   const [model, setModel] = useState(savedRow?.default_model ?? "");
   const [result, setResult] = useState<EngineVerifyResult | null>(null);
+  // Per-CLI verify outcome/busy — independent of the BYOK verify flow above.
+  const [cliResults, setCliResults] = useState<Record<string, EngineVerifyResult>>({});
+  const [cliBusy, setCliBusy] = useState<string | null>(null);
+
+  async function verifyCli(id: string) {
+    setCliBusy(id);
+    try {
+      const res = await verify.mutateAsync({ provider: id });
+      setCliResults((prev) => ({ ...prev, [id]: res }));
+    } catch (e) {
+      setCliResults((prev) => ({
+        ...prev,
+        [id]: {
+          ok: false,
+          status: "error",
+          detail: e instanceof Error ? e.message : String(e),
+          provider: id,
+        },
+      }));
+    } finally {
+      setCliBusy(null);
+    }
+  }
 
   const entry = PROVIDER_CATALOG.find((e) => e.id === selected) ?? PROVIDER_CATALOG[0];
 
@@ -742,6 +794,67 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
           <div className="mt-1 font-mono text-[9.5px] uppercase tracking-wider text-ink-4">
             coming soon
           </div>
+        </div>
+      </div>
+
+      {/* Subscription CLIs — verify-only providers (no key, nothing persisted);
+          route operations to one under "Engine routing & prompts" below. */}
+      <div
+        className="rounded-lg border border-border bg-surface-2 p-3"
+        data-testid="cli-providers-panel"
+      >
+        <div className="text-[13px] font-medium text-ink">Subscription CLIs</div>
+        <p className="mt-1 text-[12px] text-ink-3">
+          Use a coding CLI you're already logged into — no API key, your subscription pays. Verify
+          checks the login; pick one per operation under Engine routing &amp; prompts.
+        </p>
+        <div className="mt-2 space-y-1.5">
+          {SUBSCRIPTION_CLIS.map((c) => {
+            const res = cliResults[c.id];
+            const busy = cliBusy === c.id;
+            return (
+              <div
+                key={c.id}
+                data-testid={`cli-provider-${c.id}`}
+                className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-2"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[12.5px] font-medium text-ink">{c.label}</span>
+                    {c.experimental ? (
+                      <span className="rounded-full bg-warn-wash px-1.5 py-0.5 text-[9px] font-medium uppercase text-warn">
+                        Experimental
+                      </span>
+                    ) : null}
+                    {settings.routing.some((r) => r.engine === c.id) ? (
+                      <span className="rounded-full bg-good-wash px-1.5 py-0.5 text-[9px] font-medium uppercase text-good">
+                        In use
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="block truncate text-[11px] text-ink-3">{c.desc}</span>
+                  {res ? (
+                    <span
+                      data-testid={`cli-verify-result-${c.id}`}
+                      className={
+                        "block truncate text-[11px] " + (res.ok ? "text-good" : "text-bad")
+                      }
+                    >
+                      {res.detail}
+                    </span>
+                  ) : null}
+                </span>
+                <button
+                  onClick={() => void verifyCli(c.id)}
+                  disabled={busy}
+                  data-testid={`cli-verify-${c.id}`}
+                  className="rounded-md border border-border px-2.5 py-1 text-[12px] text-ink-2 hover:border-border-2 disabled:opacity-40"
+                >
+                  {busy ? "Verifying…" : res?.ok ? "Verified ✓" : "Verify"}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 
