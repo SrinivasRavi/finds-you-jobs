@@ -387,6 +387,81 @@ class PreferencesUpdate(BaseModel):
     ui_state: dict[str, Any] | None = None
 
 
+class DiscoverySourceDTO(BaseModel):
+    """One toggle row in Settings → Discovery sources. `id` is the adapter
+    family (`greenhouse`) or a full source key for actor-granular sources
+    (`apify:memo23/naukri-scraper`). `entries` counts the user's
+    `[[sources]]` rows the family claims (0 for search sources configured
+    implicitly)."""
+
+    id: str
+    label: str
+    kind: str  # ats | board | search | fallback
+    entries: int
+    enabled: bool
+
+
+class DiscoverySourceToggle(BaseModel):
+    id: str
+    enabled: bool
+
+
+class DiscoveryCredentialDTO(BaseModel):
+    """A BYO scraper key (Apify / Brave) — masked, never the key itself."""
+
+    id: str
+    label: str
+    has_key: bool
+    key_hint: str | None
+
+
+class DiscoveryCredentialSave(BaseModel):
+    id: str
+    key: str
+
+
+class WatchCompanyRequest(BaseModel):
+    """Add a company's board to the scan watchlist (approved-plan #4). Either
+    a careers/board URL the user pasted, or a job_id whose board root we
+    derive (row-level "Watch company")."""
+
+    url: str | None = None
+    job_id: str | None = None
+    company: str = ""
+
+
+class WatchCompanyResult(BaseModel):
+    added: bool  # False = already watched
+    source_url: str
+    adapter: str
+    company: str
+
+
+class DiscoverySourceStatsDTO(BaseModel):
+    """Per-source-family efficacy row (Analytics → Discovery tab): what each
+    source has actually yielded — stored jobs, saves, score quality — plus the
+    recent-scan fetch/keep/error/latency aggregates."""
+
+    id: str
+    label: str
+    kind: str
+    jobs: int
+    saved: int
+    scored: int
+    avg_score: float | None
+    fetched: int
+    kept: int
+    http_calls: int
+    latency_ms: int
+    errors: int
+
+
+class DiscoveryAnalyticsDTO(BaseModel):
+    sources: list[DiscoverySourceStatsDTO]
+    scans: int
+    last_scan_at: datetime | None
+
+
 class EngineSettingDTO(BaseModel):
     """Engine config sans secret — `has_key` reports presence, `key_hint` is a
     masked display fragment (e.g. `sk-…abc4`), never the key itself."""

@@ -137,6 +137,116 @@ def _config_prefs(portals: str | PortalsConfig | None) -> ScanPrefs:
     return ScanPrefs()
 
 
+SCRAPER_CREDENTIAL_IDS = ("apify", "brave")
+SCRAPER_ENGINE_PREFIX = "scraper:"
+
+
+def load_scraper_credentials(repos: Repos) -> dict[str, str]:
+    """Open the sealed BYO scraper keys (Apify/Brave) for THIS scan only.
+
+    The keys live as `scraper:<id>` rows in `engine_settings` (same sealed-BLOB
+    discipline as BYOK LLM keys — NFR-SEC-01) but are invisible to the engine
+    registry (`PROVIDERS.get` skips unknown ids) and to the Settings engines
+    list. The opened secrets go into the in-memory `ScanPrefs.credentials`
+    only — never into the durable operation snapshot, a result_ref, or a log.
+
+    Key resolution uses `resolve_data_dir()` (env/platform), matching the boot
+    path; hermetic tests set `FYJ_SESSION_KEY` so no keychain is touched."""
+    from ..db.database import resolve_data_dir
+    from ..security import get_app_key, open_secret
+
+    creds: dict[str, str] = {}
+    app_key: str | None = None
+    for cid in SCRAPER_CREDENTIAL_IDS:
+        row = repos.engine_settings.get_by_engine(f"{SCRAPER_ENGINE_PREFIX}{cid}")
+        if row is None or not row.key_encrypted or not row.enabled:
+            continue
+        if app_key is None:
+            app_key = get_app_key(resolve_data_dir())
+        try:
+            creds[cid] = open_secret(row.key_encrypted, app_key)
+        except Exception:  # noqa: BLE001 — a corrupt key must not kill the scan
+            import logging
+
+            logging.getLogger("fyj.sidecar").exception(
+                "could not open sealed scraper credential %r", cid
+            )
+    return creds
+
+
+def with_credentials(
+    prefs: ScanPrefs | None,
+    portals: str | PortalsConfig | None,
+    creds: dict[str, str],
+) -> ScanPrefs | None:
+    """Attach opened scraper credentials to the effective scan prefs. When the
+    user set no prefs at all (`prefs=None`), the config's own filter tables
+    become the base so behavior stays identical apart from the credentials."""
+    if not creds:
+        return prefs
+    base = prefs if prefs is not None else _config_prefs(portals)
+    return replace(base, credentials=dict(creds))
+
+
+# Brave free tier ≈ 2,000 queries/month. The ledger stops the scan spending
+# past it (approved-plan commit 5); the counter lives in
+# `UserPreferences.thresholds["brave_query_ledger"]` = {"month": "YYYY-MM",
+# "used": N} and resets on month rollover.
+BRAVE_MONTHLY_BUDGET = 2000
+BRAVE_LEDGER_KEY = "brave_query_ledger"
+
+
+def _brave_ledger(row: Any, now: datetime) -> dict[str, Any]:
+    ledger = (row.thresholds or {}).get(BRAVE_LEDGER_KEY) or {}
+    month = now.strftime("%Y-%m")
+    if not isinstance(ledger, dict) or ledger.get("month") != month:
+        return {"month": month, "used": 0}
+    return {"month": month, "used": int(ledger.get("used", 0) or 0)}
+
+
+def apply_brave_budget(
+    prefs: ScanPrefs | None,
+    portals: str | PortalsConfig | None,
+    repos: Repos,
+    *,
+    now: datetime | None = None,
+) -> ScanPrefs | None:
+    """Disable the Brave source for THIS scan once the month's free-tier query
+    budget is spent (in-memory only — the user's own toggle state is
+    untouched, and next month it resumes by itself)."""
+    now = now or now_utc()
+    ledger = _brave_ledger(repos.preferences.get_or_create(), now)
+    if ledger["used"] < BRAVE_MONTHLY_BUDGET:
+        return prefs
+    base = prefs if prefs is not None else _config_prefs(portals)
+    if "brave" in base.disabled_sources:
+        return prefs
+    return replace(base, disabled_sources=[*base.disabled_sources, "brave"])
+
+
+def record_brave_usage(
+    db: Database | None, result_ref: dict[str, Any], *, now: datetime | None = None
+) -> None:
+    """Add this scan's Brave HTTP calls to the monthly ledger."""
+    if db is None:
+        return
+    calls = sum(
+        int(r.get("http_calls") or 0)
+        for key, r in (result_ref.get("per_source") or {}).items()
+        if key.startswith("brave:")
+    )
+    if not calls:
+        return
+    now = now or now_utc()
+    with db.repos() as repos:
+        row = repos.preferences.get_or_create()
+        ledger = _brave_ledger(row, now)
+        ledger["used"] += calls
+        thresholds = dict(row.thresholds or {})
+        thresholds[BRAVE_LEDGER_KEY] = ledger
+        repos.preferences.update(thresholds=thresholds)
+
+
 def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
     """Persist scanned jobs (dedup + tombstone suppression) and build the
     per-source `result_ref`. Returns the result_ref payload."""

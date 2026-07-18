@@ -108,18 +108,34 @@ def scan_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Zero-LLM job scan (Scraper module) → persisted `Job` rows. No engine."""
     from sidecar.modules.scraper import scan
 
-    from .persistence import persist_scan, resolve_portals, resolve_scan_prefs, scan_usage
+    from .persistence import (
+        apply_brave_budget,
+        load_scraper_credentials,
+        persist_scan,
+        record_brave_usage,
+        resolve_portals,
+        resolve_scan_prefs,
+        scan_usage,
+        with_credentials,
+    )
 
     snap = ctx.input_snapshot
     if ctx.db is not None:
         with ctx.db.repos() as repos:
             portals = resolve_portals(snap, repos)
             prefs = resolve_scan_prefs(snap, repos=repos, portals=portals)
+            # Sealed BYO keys (Apify/Brave) open here, into memory only — the
+            # durable snapshot and result_ref never carry a secret.
+            prefs = with_credentials(prefs, portals, load_scraper_credentials(repos))
+            # Free-tier discipline: past ~2,000 Brave queries this month, the
+            # Brave source sits out until the month rolls over.
+            prefs = apply_brave_budget(prefs, portals, repos)
     else:
         portals = snap["portals_config"]
         prefs = resolve_scan_prefs(snap)
     result = scan(portals, prefs=prefs)
     result_ref = persist_scan(ctx.db, result)
+    record_brave_usage(ctx.db, result_ref)
     return OperationOutcome(result_ref=result_ref, usage=scan_usage(result))
 
 

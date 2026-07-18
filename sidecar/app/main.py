@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
 from .api.routes import router
@@ -246,6 +247,7 @@ def create_app(
 
     app.include_router(router)
     app.include_router(engines_router)
+    app.include_router(discovery_router)
     app.include_router(ingest_router)
     return app
 

@@ -446,11 +446,19 @@ async def patch_application_profile(
 
 
 def _settings_dto(repos: Any) -> dto.SettingsDTO:
+    from ..registry.persistence import SCRAPER_ENGINE_PREFIX
+
     prefs = repos.preferences.get_or_create()
     engines = repos.engine_settings.list()
     return dto.SettingsDTO(
         preferences=dto.preferences_dto(prefs),
-        engines=[dto.engine_setting_dto(e) for e in engines],
+        # `scraper:*` rows are BYO scraper keys (Apify/Brave) riding the same
+        # sealed store — never LLM engines; they surface via /api/discovery.
+        engines=[
+            dto.engine_setting_dto(e)
+            for e in engines
+            if not e.engine.startswith(SCRAPER_ENGINE_PREFIX)
+        ],
     )
 
 
