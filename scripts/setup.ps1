@@ -35,8 +35,42 @@ if ((Test-Path package.json) -and (Select-String -Path package.json -Pattern '"n
   Set-Location finds-you-jobs
   git pull --ff-only
 } else {
-  git clone https://github.com/SrinivasRavi/finds-you-jobs.git
-  Set-Location finds-you-jobs
+  # `irm | iex` runs from wherever the shell happens to sit — an elevated
+  # PowerShell starts in C:\WINDOWS\System32, where a clone fails with
+  # "Permission denied" (observed 2026-07-18). Clone somewhere sane: keep the
+  # current directory only when it is writable and not a system path.
+  $cwd = (Get-Location).Path
+  $isSystemPath = $false
+  foreach ($root in @($env:WINDIR, $env:ProgramFiles)) {
+    if (-not [string]::IsNullOrEmpty($root) -and
+        $cwd.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $isSystemPath = $true
+    }
+  }
+  $canWrite = $true
+  try {
+    $probe = Join-Path $cwd ([System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType File -Path $probe -ErrorAction Stop | Out-Null
+    Remove-Item $probe -ErrorAction SilentlyContinue
+  } catch { $canWrite = $false }
+  if ($isSystemPath -or -not $canWrite) {
+    Write-Host "Current directory ($cwd) is not a good home for the code — using $HOME instead." -ForegroundColor Yellow
+    Set-Location $HOME
+  }
+  if (Test-Path finds-you-jobs\.git) {
+    Set-Location finds-you-jobs
+    git pull --ff-only
+  } else {
+    git clone https://github.com/SrinivasRavi/finds-you-jobs.git
+    # PowerShell 5.1 does not stop on a native command's exit code even with
+    # ErrorActionPreference=Stop — check explicitly so a failed clone doesn't
+    # cascade into confusing Set-Location errors.
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "git clone failed (see the error above). Fix that and re-run this script." -ForegroundColor Red
+      exit 1
+    }
+    Set-Location finds-you-jobs
+  }
 }
 
 Step "Microsoft C++ Build Tools (the desktop shell is compiled with these — a big one-time download)"

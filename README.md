@@ -47,7 +47,9 @@ FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev    # start with a separate, fresh profile
 
 **Install** (one copy-paste — installs git, the C++ build tools the desktop shell
 needs, and every dependency, and downloads the app into a `finds-you-jobs` folder
-in your current directory; the build-tools download is large, let it run):
+in your current directory — or in your home folder if the current directory isn't
+writable, e.g. an admin PowerShell that starts in `System32`; the build-tools
+download is large, let it run):
 
 ```powershell
 irm https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.ps1 | iex
