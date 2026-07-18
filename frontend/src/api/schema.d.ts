@@ -1940,10 +1940,17 @@ export interface components {
             /** Errors */
             errors: number;
         };
-        /** DiscoverySourceToggle */
+        /**
+         * DiscoverySourceToggle
+         * @description Flip one source (`id`) or a whole Settings section at once (`ids` —
+         *     the section-title checkboxes, maintainer directive 2026-07-18). Exactly
+         *     one of the two must be set.
+         */
         DiscoverySourceToggle: {
             /** Id */
-            id: string;
+            id?: string | null;
+            /** Ids */
+            ids?: string[] | null;
             /** Enabled */
             enabled: boolean;
         };

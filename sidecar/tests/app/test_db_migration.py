@@ -65,3 +65,51 @@ def test_operations_indices_exist(tmp_path: Path) -> None:
     upgrade_to_head(url)
     index_names = {ix["name"] for ix in inspect(create_engine(url)).get_indexes("operations")}
     assert {"ix_operations_state_created", "ix_operations_kind_created"} <= index_names
+
+
+def test_apify_identity_backfill_restamps_by_board_host(tmp_path: Path) -> None:
+    """d7b2a91c4e58 (data-only): pre-existing rows the Apify adapter stored as
+    `source_adapter='apify'` are re-stamped with the real board (by canonical
+    host); unknown hosts keep 'apify'; non-apify rows are untouched."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'db.sqlite'}"
+    # Stop at the revision just before the backfill, seed pre-fix rows, then
+    # run the backfill by continuing to head.
+    command.upgrade(make_alembic_config(url), "a33c46cd3118")
+
+    engine = create_engine(url)
+    rows = [
+        ("https://www.naukri.com/job-listings-backend-1", "apify", "naukri"),
+        ("https://www.linkedin.com/jobs/view/42", "apify", "linkedin"),
+        ("https://www.seek.com.au/job/7", "apify", "seek"),
+        ("https://www.indeed.com/viewjob?jk=abc", "apify", "indeed"),
+        ("https://weird.example.com/job/1", "apify", "apify"),  # unknown host
+        ("https://boards.greenhouse.io/acme/jobs/1", "greenhouse", "greenhouse"),
+    ]
+    with engine.begin() as conn:
+        for i, (curl, adapter, _expected) in enumerate(rows):
+            conn.execute(
+                text(
+                    "INSERT INTO jobs (id, canonical_url, title, company, location,"
+                    " description, source_adapter, trust_score, trust_flags,"
+                    " feed_state, ingested_at)"
+                    " VALUES (:id, :url, 'T', 'C', 'L', '', :adapter, 0, '[]',"
+                    " 'active', '2026-07-18T00:00:00')"
+                ),
+                {"id": f"job-{i}", "url": curl, "adapter": adapter},
+            )
+
+    upgrade_to_head(url)
+    with engine.connect() as conn:
+        stored = {
+            r[0]: r[1]
+            for r in conn.execute(
+                text("SELECT canonical_url, source_adapter FROM jobs")
+            ).fetchall()
+        }
+    for curl, _adapter, expected in rows:
+        assert stored[curl] == expected, curl

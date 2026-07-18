@@ -402,7 +402,12 @@ class DiscoverySourceDTO(BaseModel):
 
 
 class DiscoverySourceToggle(BaseModel):
-    id: str
+    """Flip one source (`id`) or a whole Settings section at once (`ids` —
+    the section-title checkboxes, maintainer directive 2026-07-18). Exactly
+    one of the two must be set."""
+
+    id: str | None = None
+    ids: list[str] | None = None
     enabled: bool
 
 

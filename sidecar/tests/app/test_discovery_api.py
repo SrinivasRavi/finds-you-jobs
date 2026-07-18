@@ -94,6 +94,42 @@ def test_unknown_source_404s(app_client: tuple[FastAPI, TestClient]) -> None:
     assert resp.status_code == 404
 
 
+def test_bulk_section_toggle_is_atomic(app_client: tuple[FastAPI, TestClient]) -> None:
+    """The Settings section-title checkboxes flip a whole kind group in one
+    POST (`ids`); an invalid id anywhere in the batch flips nothing."""
+    _app, client = app_client
+    ats = ["greenhouse", "lever", "ashby", "workable"]
+    off = client.post(
+        "/api/discovery/sources", headers=AUTH, json={"ids": ats, "enabled": False}
+    )
+    assert off.status_code == 200
+    rows = {r["id"]: r for r in off.json()}
+    assert all(not rows[i]["enabled"] for i in ats)
+
+    # Atomic: one bad id → 404 and NO state change.
+    bad = client.post(
+        "/api/discovery/sources",
+        headers=AUTH,
+        json={"ids": ["remoteok", "monster"], "enabled": False},
+    )
+    assert bad.status_code == 404
+    rows = {r["id"]: r for r in client.get("/api/discovery/sources", headers=AUTH).json()}
+    assert rows["remoteok"]["enabled"]
+
+    # Re-enable the section round-trips clean.
+    on = client.post(
+        "/api/discovery/sources", headers=AUTH, json={"ids": ats, "enabled": True}
+    )
+    rows = {r["id"]: r for r in on.json()}
+    assert all(rows[i]["enabled"] for i in ats)
+
+    # Neither id nor ids → 422.
+    neither = client.post(
+        "/api/discovery/sources", headers=AUTH, json={"enabled": False}
+    )
+    assert neither.status_code == 422
+
+
 def test_full_key_toggle_validates_family_prefix(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
@@ -351,6 +387,50 @@ def test_discovery_analytics_aggregates_jobs_and_scan_reports(
     assert (li["jobs"], li["saved"], li["errors"]) == (1, 0, 1)
     assert gh["label"] == "Greenhouse" and gh["kind"] == "ats"
     assert data["scans"] == 1
+
+
+def test_discovery_analytics_shows_real_boards_behind_apify_actors(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Maintainer directive 2026-07-18 (#6): the user sees "Naukri", never the
+    "Apify" plumbing — stored rows are stamped with the real board id at parse
+    time, and per-scan `apify:<actor>` reports bucket to the same identity."""
+    app, client = app_client
+    db = app.state.db
+    with db.repos() as repos:
+        repos.jobs.create(
+            canonical_url="https://www.naukri.com/job-listings-backend-91011",
+            title="Backend Engineer", company="Acme India", location="Bengaluru",
+            description="", source_adapter="naukri",
+        )
+        repos.operations.create("scan", {})
+    with db.repos() as repos:
+        ops = repos.operations.list_by_kind_states("scan", {"queued"})
+        repos.operations.mark_running(ops[0].id)
+        repos.operations.mark_succeeded(
+            ops[0].id,
+            result_ref={
+                "per_source": {
+                    "apify:memo23/naukri-scraper": {
+                        "fetched": 40, "kept": 12, "http_calls": 3,
+                        "latency_ms": 8000, "errors": [],
+                    },
+                    "apify:epicscrapers/seek-job-scraper": {
+                        "fetched": 5, "kept": 0, "http_calls": 1,
+                        "latency_ms": 2000, "errors": [],
+                    },
+                }
+            },
+        )
+
+    data = client.get("/api/discovery/analytics", headers=AUTH).json()
+    rows = {r["id"]: r for r in data["sources"]}
+    assert "apify" not in rows  # the plumbing never surfaces as a source
+    naukri = rows["naukri"]
+    assert naukri["label"] == "Naukri (via Apify)"
+    assert (naukri["jobs"], naukri["fetched"], naukri["kept"]) == (1, 40, 12)
+    assert rows["seek"]["label"] == "Seek (via Apify)"
+    assert rows["seek"]["fetched"] == 5
 
 
 def test_watch_company_from_url_and_job_row(

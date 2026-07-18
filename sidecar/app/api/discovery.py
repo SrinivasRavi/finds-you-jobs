@@ -120,20 +120,28 @@ async def list_discovery_sources(request: Request) -> list[dto.DiscoverySourceDT
 async def toggle_discovery_source(
     request: Request, payload: dto.DiscoverySourceToggle
 ) -> list[dto.DiscoverySourceDTO]:
+    ids = payload.ids if payload.ids is not None else ([payload.id] if payload.id else [])
+    if not ids:
+        raise HTTPException(status_code=422, detail="id or ids required")
     # A family id must exist in the shipped catalog; a full source key
     # ("greenhouse:acme", "apify:<actor>") is accepted as-is — its family
     # prefix is validated instead, so a typo can't silently disable nothing.
-    family = payload.id.split(":", 1)[0]
-    if family not in adapters.CATALOG:
-        raise HTTPException(status_code=404, detail=f"unknown discovery source {payload.id!r}")
+    # Validate ALL ids before flipping any (a section toggle is atomic).
+    for source_id in ids:
+        family = source_id.split(":", 1)[0]
+        if family not in adapters.CATALOG:
+            raise HTTPException(
+                status_code=404, detail=f"unknown discovery source {source_id!r}"
+            )
     with _db(request).repos() as repos:
         prefs = repos.preferences.get_or_create()
         portals = dict(prefs.portals_config or {})
         disabled = set(portals.get("disabled_sources", []))
-        if payload.enabled:
-            disabled.discard(payload.id)
-        else:
-            disabled.add(payload.id)
+        for source_id in ids:
+            if payload.enabled:
+                disabled.discard(source_id)
+            else:
+                disabled.add(source_id)
         portals["disabled_sources"] = sorted(disabled)
         repos.preferences.update(portals_config=portals)
     return _catalog(portals)
@@ -223,6 +231,30 @@ async def watch_company(
 
 _RECENT_SCANS = 30
 
+# Display identities for source ids that aren't adapter families in CATALOG:
+# the real boards behind the Apify actors (rows are stamped with these as
+# `source_adapter` — maintainer directive 2026-07-18: show "Naukri", never the
+# "Apify" plumbing), plus friendlier analytics labels for the search families.
+_ANALYTICS_LABELS: dict[str, tuple[str, str]] = {
+    "naukri": ("Naukri (via Apify)", "search"),
+    "indeed": ("Indeed (via Apify)", "search"),
+    "seek": ("Seek (via Apify)", "search"),
+    # One LinkedIn identity regardless of path (guest / logged-in / Apify actor)
+    # — the paths already share canonical URLs and dedup.
+    "linkedin": ("LinkedIn", "search"),
+    "paste-url": ("Added by URL", "other"),
+}
+
+
+def _analytics_bucket_id(source_key: str) -> str:
+    """Map a per-scan source key to its user-facing analytics identity.
+    `apify:<actor>` buckets as the actor's real board (naukri/indeed/seek/
+    linkedin); every other key buckets by its family prefix."""
+    family, _, rest = source_key.partition(":")
+    if family == "apify" and rest:
+        return apify.ACTOR_SOURCE_IDS.get(rest, "apify")
+    return family
+
 
 @router.get("/api/discovery/analytics")
 async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
@@ -271,7 +303,7 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
             for key, r in per_source.items():
                 if not isinstance(r, dict):
                     continue
-                b = _bucket(str(key).split(":", 1)[0])
+                b = _bucket(_analytics_bucket_id(str(key)))
                 b["fetched"] += int(r.get("fetched") or 0)
                 b["kept"] += int(r.get("kept") or 0)
                 b["http_calls"] += int(r.get("http_calls") or 0)
@@ -280,7 +312,9 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
 
     rows = []
     for family, b in per.items():
-        label, kind = adapters.CATALOG.get(family, (family, "other"))
+        label, kind = _ANALYTICS_LABELS.get(
+            family, adapters.CATALOG.get(family, (family, "other"))
+        )
         rows.append(
             dto.DiscoverySourceStatsDTO(
                 id=family,
