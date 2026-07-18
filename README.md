@@ -6,11 +6,48 @@ each, helps you ask for referrals, and fills application forms for you to review
 submit. Everything runs on **your** computer with **your** AI key; there is no
 company server in the middle.
 
+## A quick tour
+
+### Job Board — wake up to scored matches
+
+![The Job Board: a feed of discovered jobs ranked by match score, with the score explained](.github/screenshots/job-board.png)
+
+finds-you-jobs scans hundreds of company career boards and job sources for you —
+Greenhouse, Lever, Ashby, Workday and other ATS boards, remote-job boards, Hacker
+News "Who is hiring", LinkedIn, and more — then scores every posting against your
+resume and explains the score, so the roles worth your time sit at the top. Open a
+role to read the posting, generate a tailored resume and cover letter for it, or
+watch a company you care about so its new postings always show up.
+
+### Applications — your whole pipeline on one board
+
+![The Applications tracker: a kanban board from Saved through Offer](.github/screenshots/applications.png)
+
+Every role you save becomes a card that moves from Saved through Seeking Referral,
+Applied, Interviewing, and Offer. A card carries its tailored resume, cover letter,
+referral status, and a full activity history — so "where was I with this company?"
+always has an answer. When you're ready to apply, the app fills the application form
+and hands you the browser for the final review and Submit.
+
+### Networking — referrals without the spreadsheet
+
+![The Networking board: referral contacts tracked from Sent to Converted](.github/screenshots/networking.png)
+
+A warm referral multiplies your odds of a callback, so finds-you-jobs treats it as a
+first-class step: find the right people at a target company, draft a personalized
+referral ask for each, and track every relationship from first contact to converted
+referral. If you want, it can even send the connection requests and follow-ups for
+you from your own LinkedIn account.★
+
+★ Read the disclaimer in Settings before enabling LinkedIn automation.
+
+## Install
+
 Follow steps as per your OS:
 
 ---
 
-## macOS
+### macOS
 
 **Open a terminal:** press `⌘ + Space`, type `Terminal`, press Enter.
 
@@ -41,7 +78,7 @@ FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev    # start with a separate, fresh profile
 
 ---
 
-## Windows
+### Windows
 
 **Open a terminal:** press the `Windows` key, type `PowerShell`, press Enter.
 
@@ -74,7 +111,7 @@ $env:FYJ_DATA_DIR="$HOME\fyj-test"; pnpm dev  # start with a separate, fresh pro
 
 ---
 
-## Linux
+### Linux
 
 **Open a terminal:** press `Ctrl + Alt + T`, or open "Terminal" from your apps.
 
@@ -111,7 +148,7 @@ set your job preferences, pick an AI provider, and add your key.
 
 ## What it does
 
-- A scored daily feed of jobs from many sources (all public — no search-engine key, nothing of yours is shared).
+- A scored daily feed of jobs from 20 source families and 300+ preconfigured company boards (all public by default — no key needed; optional bring-your-own-key sources like Apify actors and Brave Search add more).
 - AI-tailored resumes and cover letters per posting, which you review before you use them.
 - A pipeline tracker: Saved → Seeking Referral → Applied → Interviewing → Offer → Rejected.
 - Referral outreach: find people at a target company and message them from **your own** LinkedIn account (experimental, off by default — the account risk is yours).
