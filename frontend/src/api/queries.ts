@@ -138,17 +138,20 @@ export function useDiscoverySources() {
 export function useToggleDiscoverySource() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.toggleDiscoverySource(id, enabled),
+    // `id` flips one source; `ids` flips a whole section (the section-title
+    // checkboxes) in one atomic POST.
+    mutationFn: ({ id, ids, enabled }: { id?: string; ids?: string[]; enabled: boolean }) =>
+      api.toggleDiscoverySource(ids ?? id ?? "", enabled),
     // Optimistic: the checkbox flips instantly (it's a controlled input — a
     // POST round-trip delay reads as a dead click); rollback on error.
-    onMutate: async ({ id, enabled }) => {
+    onMutate: async ({ id, ids, enabled }) => {
       await qc.cancelQueries({ queryKey: qk.discoverySources });
       const prev = qc.getQueryData<DiscoverySource[]>(qk.discoverySources);
       if (prev) {
+        const targets = new Set(ids ?? (id ? [id] : []));
         qc.setQueryData(
           qk.discoverySources,
-          prev.map((s) => (s.id === id ? { ...s, enabled } : s)),
+          prev.map((s) => (targets.has(s.id) ? { ...s, enabled } : s)),
         );
       }
       return { prev };

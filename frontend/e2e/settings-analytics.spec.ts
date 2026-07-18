@@ -158,6 +158,58 @@ test("discovery sources: all on by default, opt-out persists across reload", asy
   await expect(page.getByTestId("source-toggle-greenhouse").locator("input")).toBeChecked();
 });
 
+test("section-title checkboxes flip whole discovery sections at once", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
+  // Every section renders its own master checkbox — Apify as its OWN section
+  // (2026-07-18 #5), separate from the other search sources.
+  for (const kind of ["ats", "board", "search", "apify", "fallback"]) {
+    await expect(page.getByTestId(`source-section-toggle-${kind}`)).toBeVisible();
+  }
+  // No Apify key stored → the section explains how to get actor sources.
+  await expect(page.getByText("Save your Apify key below")).toBeVisible();
+
+  // Untick "Job boards": every board family flips off in one click…
+  const master = page.getByTestId("source-section-toggle-board");
+  await expect(master).toBeChecked();
+  await master.click();
+  for (const id of ["remoteok", "remotive", "arbeitnow", "themuse", "hackernews"]) {
+    await expect(page.getByTestId(`source-toggle-${id}`).locator("input")).not.toBeChecked();
+  }
+  await page.screenshot({ path: `${DIR}/discovery-section-boards-off.png`, fullPage: true });
+  // …persists across reload (portals_config, not component state)…
+  await page.reload();
+  await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("source-section-toggle-board")).not.toBeChecked();
+  // …and one re-ticked row makes the master read mixed (indeterminate).
+  await page.getByTestId("source-toggle-remoteok").locator("input").click();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("source-section-toggle-board")
+        .evaluate((el) => (el as HTMLInputElement).indeterminate),
+    )
+    .toBe(true);
+  // Master back on restores the whole section for later specs.
+  await page.getByTestId("source-section-toggle-board").click();
+  await expect(page.getByTestId("source-section-toggle-board")).toBeChecked();
+  for (const id of ["remoteok", "remotive", "arbeitnow", "themuse", "hackernews"]) {
+    await expect(page.getByTestId(`source-toggle-${id}`).locator("input")).toBeChecked();
+  }
+});
+
+test("analytics ledger has a Scraper filter chip", async ({ page }) => {
+  await page.goto("/analytics");
+  await expect(page.getByTestId("agent-filters")).toBeVisible({ timeout: 15_000 });
+  // Scraper sits beside Scoring/Tailoring (2026-07-18 #5) and filters to scans.
+  await expect(page.getByTestId("agent-chip-scraper")).toBeVisible();
+  await expect(page.getByTestId("agent-chip-scoring")).toBeVisible();
+  await expect(page.getByTestId("agent-chip-tailoring")).toBeVisible();
+  await page.getByTestId("agent-chip-scraper").click();
+  await expect(page.getByTestId("agent-chip-scraper")).toHaveAttribute("aria-pressed", "true");
+  await page.screenshot({ path: `${DIR}/analytics-scraper-chip.png`, fullPage: true });
+});
+
 test("BYO-key rows render and analytics has a Discovery tab", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });

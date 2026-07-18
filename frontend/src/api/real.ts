@@ -926,11 +926,16 @@ export class RealApi {
   async listDiscoverySources(): Promise<DiscoverySource[]> {
     return this.req<DiscoverySource[]>("/api/discovery/sources");
   }
-  async toggleDiscoverySource(id: string, enabled: boolean): Promise<DiscoverySource[]> {
-    return (await this.json("POST", "/api/discovery/sources", {
-      id,
-      enabled,
-    })) as DiscoverySource[];
+  /** Flip one source (string) or a whole Settings section (string[] — the
+   *  section-title checkboxes; one atomic POST server-side). */
+  async toggleDiscoverySource(
+    idOrIds: string | string[],
+    enabled: boolean,
+  ): Promise<DiscoverySource[]> {
+    const body = Array.isArray(idOrIds)
+      ? { ids: idOrIds, enabled }
+      : { id: idOrIds, enabled };
+    return (await this.json("POST", "/api/discovery/sources", body)) as DiscoverySource[];
   }
   async listDiscoveryCredentials(): Promise<DiscoveryCredential[]> {
     return this.req<DiscoveryCredential[]>("/api/discovery/credentials");

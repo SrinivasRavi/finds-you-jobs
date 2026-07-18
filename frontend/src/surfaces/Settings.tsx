@@ -176,6 +176,9 @@ function ScoreBatchCapControl({
 // scraper source family, all ON by default — pure opt-out. Lets a user drop a
 // family that yields nothing for their role/location, and lets source efficacy
 // be tested in isolation. Grouped by kind so the list of 18+ reads at a glance.
+// Each section title carries its own master checkbox (2026-07-18 #5) that
+// flips the whole section in one atomic POST; Apify actors are their own
+// section (`sectionOf` routes their rows past the kind grouping).
 const SOURCE_KIND_GROUPS: { kind: string; heading: string; blurb: string }[] = [
   {
     kind: "ats",
@@ -193,11 +196,22 @@ const SOURCE_KIND_GROUPS: { kind: string; heading: string; blurb: string }[] = [
     blurb: "Queried with your role aliases × locations each scan.",
   },
   {
+    kind: "apify",
+    heading: "Apify",
+    blurb: "Actor-run boards on your own Apify key (Naukri, Indeed, Seek…).",
+  },
+  {
     kind: "fallback",
     heading: "Feeds",
     blurb: "Any RSS/Atom feed URL you add as a source.",
   },
 ];
+
+/** Which Settings section a catalog row belongs to. The Apify family row and
+ *  its per-actor rows form their own section regardless of catalog kind. */
+function sectionOf(s: { id: string; kind: string }): string {
+  return s.id === "apify" || s.id.startsWith("apify:") ? "apify" : s.kind;
+}
 
 // BYO-key rows (Apify / Brave): a key input per provider, sealed at rest
 // sidecar-side; saving the Apify key seeds its actor sources (Naukri/Indeed/
@@ -254,6 +268,33 @@ function CredentialRow({ id, label, hint }: { id: string; label: string; hint: s
   );
 }
 
+/** The master checkbox in a section title — checked when every row in the
+ *  section is on, unchecked when every row is off, indeterminate when mixed. */
+function SectionMasterCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  testid,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: (enabled: boolean) => void;
+  testid: string;
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      ref={(el) => {
+        if (el) el.indeterminate = indeterminate;
+      }}
+      onChange={(e) => onChange(e.target.checked)}
+      data-testid={testid}
+      title="Enable or disable every source in this section"
+    />
+  );
+}
+
 function DiscoverySourcesSection() {
   const { data: sources } = useDiscoverySources();
   const toggle = useToggleDiscoverySource();
@@ -262,19 +303,47 @@ function DiscoverySourcesSection() {
     <div className="space-y-4" data-testid="discovery-sources">
       <p className="text-[12px] text-ink-3">
         Every source is on by default. Untick one to skip it on every future scan — for
-        example, if an ATS never carries roles for your field or location. Nothing else
-        changes: already-found jobs stay, and re-ticking picks the source back up on the
-        next scan.
+        example, if an ATS never carries roles for your field or location. The checkbox
+        on a section title flips the whole section at once. Nothing else changes:
+        already-found jobs stay, and re-ticking picks the source back up on the next
+        scan.
       </p>
       {SOURCE_KIND_GROUPS.map(({ kind, heading, blurb }) => {
-        const rows = sources.filter((s) => s.kind === kind);
-        if (rows.length === 0) return null;
+        const isApify = kind === "apify";
+        const sectionRows = sources.filter((s) => sectionOf(s) === kind);
+        // Apify: the family row IS the section master; list only actor rows.
+        const rows = isApify ? sectionRows.filter((s) => s.id !== "apify") : sectionRows;
+        const family = isApify ? sectionRows.find((s) => s.id === "apify") : undefined;
+        if (sectionRows.length === 0) return null;
+        const allOn = rows.length > 0 && rows.every((s) => s.enabled);
+        const anyOn = rows.some((s) => s.enabled);
+        const masterChecked = isApify ? Boolean(family?.enabled) : allOn;
+        const masterMixed = isApify
+          ? Boolean(family?.enabled) && rows.length > 0 && !allOn
+          : anyOn && !allOn;
         return (
           <div key={kind} className="space-y-1.5">
-            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-4">
-              {heading}
-            </div>
+            <label className="flex cursor-pointer items-center gap-2">
+              <SectionMasterCheckbox
+                checked={masterChecked}
+                indeterminate={masterMixed}
+                testid={`source-section-toggle-${kind}`}
+                onChange={(enabled) =>
+                  isApify
+                    ? toggle.mutate({ id: "apify", enabled })
+                    : toggle.mutate({ ids: rows.map((s) => s.id), enabled })
+                }
+              />
+              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-4">
+                {heading}
+              </span>
+            </label>
             <div className="text-[11.5px] text-ink-4">{blurb}</div>
+            {isApify && rows.length === 0 ? (
+              <div className="text-[11.5px] text-ink-4">
+                Save your Apify key below to add its actor sources.
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 pt-1">
               {rows.map((s) => (
                 <label
