@@ -117,11 +117,16 @@ export function useApplicationNetworking(id: string | null) {
 export function useProfile() {
   return useQuery({ queryKey: qk.profile, queryFn: () => api.getProfile() });
 }
-/** First-launch guard (FR-OB-01): whether a MasterProfile exists ⟺ onboarded. */
+/** First-launch guard (FR-OB-01): whether a MasterProfile exists ⟺ onboarded.
+ *  Retries forever: this query gates the whole app, and while the sidecar is
+ *  still booting (seconds on a cold Windows start) the right behavior is
+ *  "keep showing the boot splash and self-heal", never an error dead-end. */
 export function useMasterProfileExists() {
   return useQuery({
     queryKey: qk.onboarding,
     queryFn: () => Promise.resolve(api.hasMasterProfile()),
+    retry: true,
+    retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 3_000),
   });
 }
 export function useSettings() {

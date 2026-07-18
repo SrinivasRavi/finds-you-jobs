@@ -37,10 +37,33 @@ const queryClient = new QueryClient({
 // (or pre-existing) profile → the wizard can't reopen and `/` lands on the board.
 // The query resolves before first paint (returns null while pending, so no board
 // flash before the redirect).
+// Visible boot state instead of a silent white window (2026-07-19: on Windows
+// the backend can take seconds on first launch, and a blank window reads as
+// "broken" — users Ctrl-C a healthy boot). The profile-gate query retries
+// forever (queries.ts), so this self-heals the moment the sidecar answers.
+// eslint-disable-next-line react-refresh/only-export-components -- entry-file boot state, not HMR'd
+function BootSplash() {
+  return (
+    <div
+      data-testid="boot-splash"
+      className="grid h-screen place-items-center bg-surface-2"
+    >
+      <div className="text-center">
+        <div className="font-[Quicksand] text-[18px] font-semibold text-ink">
+          finds you jobs.
+        </div>
+        <div className="mt-2 text-[12.5px] text-ink-3">
+          Starting the local backend… first launch can take a moment.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // eslint-disable-next-line react-refresh/only-export-components -- entry-file guard, not HMR'd
 function GuardedLayout() {
   const { data: onboarded, isPending } = useMasterProfileExists();
-  if (isPending) return null;
+  if (isPending) return <BootSplash />;
   if (!onboarded) return <Navigate to="/onboarding" replace />;
   return <Layout />;
 }
@@ -48,7 +71,7 @@ function GuardedLayout() {
 // eslint-disable-next-line react-refresh/only-export-components -- entry-file guard, not HMR'd
 function OnboardingRoute() {
   const { data: onboarded, isPending } = useMasterProfileExists();
-  if (isPending) return null;
+  if (isPending) return <BootSplash />;
   if (onboarded) return <Navigate to="/jobs" replace />;
   return <Onboarding />;
 }
