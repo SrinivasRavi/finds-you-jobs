@@ -86,7 +86,14 @@ def main() -> int:
     emit_handshake(port, token)
     _maybe_write_dev_handshake(port, token)
 
-    server.run()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        # Windows console Ctrl-C reaches every process in the console group and
+        # asyncio re-raises it here — a normal shutdown, not an error. Exit
+        # quietly instead of spraying a traceback (observed 2026-07-18).
+        log.info("sidecar stopped by Ctrl-C")
+        return 0
     log.info("sidecar exited cleanly")
     return 0
 
