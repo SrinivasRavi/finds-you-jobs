@@ -67,6 +67,13 @@ board = "arbeitnow"    # keyless JSON API, JD body included
 [[sources]]
 board = "themuse"      # keyless JSON API, paginated (bounded), JD body included
 
+# --- search boards (no login; queried from your role aliases × locations) ---
+
+[[sources]]
+board = "linkedin"     # public guest job search — no account, no ban risk
+                       # (the authenticated Voyager path is a separate opt-in).
+                       # Needs role aliases + locations set in [filters]/prefs.
+
 [[sources]]
 url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
 type = "rss"

@@ -25,7 +25,7 @@ class _RawTextFetcher(Fetcher):
         self.text = text
         self.usage = Usage()
 
-    def get_text(self, url: str) -> str:
+    def get_text(self, url: str, headers: dict[str, str] | None = None) -> str:
         self.usage.internal_calls += 1
         return self.text
 

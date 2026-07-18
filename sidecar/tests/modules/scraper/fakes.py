@@ -23,8 +23,10 @@ class FakeFetcher(Fetcher):
 
     `routes` maps a URL substring → payload file name (under payloads/), a
     dict/list (returned as-is), an Exception instance (raised), or a callable
-    `(url, body) -> payload` — the seam for POST endpoints whose response
-    depends on the request body (Workday CxS pagination).
+    `(url, body) -> payload` — the seam for endpoints whose response depends on
+    the request (Workday CxS pagination; LinkedIn per-page results). A bare
+    string route is a *filename*; a callable returns already-resolved content
+    (literal text or a dict/list), never a filename.
     """
 
     routes: dict[str, object] = {}
@@ -46,13 +48,15 @@ class FakeFetcher(Fetcher):
                 return payload
         raise ScraperError("fetch", f"FakeFetcher has no route for {url}")
 
-    def get_text(self, url: str) -> str:
+    def get_text(self, url: str, headers: dict[str, str] | None = None) -> str:
         payload = self._lookup(url)
+        if callable(payload):
+            payload = payload(url, None)
         if isinstance(payload, str):
             return payload
         return json.dumps(payload)
 
-    def get_json(self, url: str) -> object:
+    def get_json(self, url: str, headers: dict[str, str] | None = None) -> object:
         payload = self._lookup(url)
         if callable(payload):
             payload = payload(url, None)

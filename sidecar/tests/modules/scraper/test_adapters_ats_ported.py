@@ -100,7 +100,7 @@ def test_smartrecruiters_pagination_stops_on_short_page():
     class Paged(FakeFetcher):
         calls = 0
 
-        def get_json(self, url: str) -> object:
+        def get_json(self, url: str, headers: dict[str, str] | None = None) -> object:
             Paged.calls += 1
             self.usage.internal_calls += 1
             return full if "offset=0" in url else short

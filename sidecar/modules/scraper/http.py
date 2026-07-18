@@ -18,6 +18,22 @@ from .types import ScraperError, Usage
 USER_AGENT = "findsyoujobs/0.0 (+https://github.com/findsyoujobs)"
 MAX_BYTES = 20 * 1024 * 1024  # refuse absurd payloads before json.loads
 
+# Header policy (discovery-expansion decision 2026-07-17). The keyless ATS/board
+# adapters send the honest `findsyoujobs/0.0` UA above and never need more. The
+# big *search* boards (LinkedIn/Indeed/Naukri) refuse that UA, so search
+# adapters send browser-standard headers via `BROWSER_HEADERS`. The line we hold:
+# browser-standard headers at one user's personal desktop volume is defensible
+# (it is the user's own machine running their own search); proxy rotation,
+# CAPTCHA solving, and TLS-fingerprint forgery are the arms race we stay out of.
+BROWSER_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 class Fetcher:
     """GET text/JSON over http(s), recording call count + latency into `usage`."""
@@ -26,14 +42,22 @@ class Fetcher:
         self.timeout_s = timeout_s
         self.usage = usage if usage is not None else Usage()
 
-    def _read(self, url: str, data: bytes | None = None, content_type: str = "") -> str:
+    def _read(
+        self,
+        url: str,
+        data: bytes | None = None,
+        content_type: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> str:
         if not url.startswith(("http://", "https://")):
             raise ScraperError("fetch", f"refusing non-http(s) URL: {url}")
-        headers = {"User-Agent": USER_AGENT}
+        # `headers` (e.g. BROWSER_HEADERS for search adapters) replaces the
+        # default honest UA; callers own the policy choice (see module notes).
+        merged = dict(headers) if headers else {"User-Agent": USER_AGENT}
         if content_type:
-            headers["Content-Type"] = content_type
+            merged["Content-Type"] = content_type
         # Scheme constrained to http(s) above (same rationale as job_input.py).
-        req = urllib.request.Request(url, data=data, headers=headers)  # noqa: S310
+        req = urllib.request.Request(url, data=data, headers=merged)  # noqa: S310
         started = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:  # noqa: S310
@@ -48,11 +72,11 @@ class Fetcher:
             raise ScraperError("fetch", f"{url} returned more than {MAX_BYTES} bytes; refusing")
         return body.decode("utf-8", errors="replace")
 
-    def get_text(self, url: str) -> str:
-        return self._read(url)
+    def get_text(self, url: str, headers: dict[str, str] | None = None) -> str:
+        return self._read(url, headers=headers)
 
-    def get_json(self, url: str) -> object:
-        return self._parse_json(url, self.get_text(url))
+    def get_json(self, url: str, headers: dict[str, str] | None = None) -> object:
+        return self._parse_json(url, self.get_text(url, headers=headers))
 
     def post_json(self, url: str, payload: object) -> object:
         """POST a JSON body, return parsed JSON. Exists for Workday-style CxS

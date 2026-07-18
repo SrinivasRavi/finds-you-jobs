@@ -72,7 +72,13 @@ def scan(
         fetcher = fetcher_factory(timeout_s=prefs.timeout_s, usage=report.usage)
 
         try:
-            fetched = adapter.fetch(entry, fetcher)
+            # Search adapters (LinkedIn/Indeed/Naukri) build queries from prefs;
+            # enumerate adapters list a whole feed. Same downstream chain either
+            # way (adapters/base.py — the two source shapes).
+            if hasattr(adapter, "search"):
+                fetched = adapter.search(entry, prefs, fetcher)
+            else:
+                fetched = adapter.fetch(entry, fetcher)
         except ScraperError as e:
             report.errors.append(str(e))
             continue

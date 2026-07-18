@@ -18,6 +18,7 @@ from . import (
     greenhouse,
     hackernews,
     lever,
+    linkedin_guest,
     personio,
     recruitee,
     remoteok,
@@ -46,6 +47,7 @@ ADAPTERS: list[ModuleType] = [
     remotive,
     arbeitnow,
     themuse,
+    linkedin_guest,
     hackernews,
     rss,
 ]
