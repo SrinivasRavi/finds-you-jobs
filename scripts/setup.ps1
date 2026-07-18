@@ -21,6 +21,24 @@ if (-not (Have winget)) {
   exit 1
 }
 
+Step "PowerShell script policy"
+# Windows ships with policy 'Restricted', which blocks the uv installer AND
+# the pnpm/npm command shims (they are .ps1 files) — observed on a real
+# install 2026-07-18. RemoteSigned (Microsoft's own suggestion in that error)
+# lets local scripts run; set it for this user only, and only when needed.
+$policy = Get-ExecutionPolicy
+if ($policy -eq "Restricted" -or $policy -eq "AllSigned" -or $policy -eq "Undefined") {
+  try {
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Write-Host "Set your user's execution policy to RemoteSigned (local scripts can run)."
+  } catch {
+    Write-Host "Could not set the execution policy (it may be locked by your organization). If later steps fail with 'running scripts is disabled', run:" -ForegroundColor Yellow
+    Write-Host "    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser"
+  }
+} else {
+  Write-Host "Execution policy is $policy — fine as is."
+}
+
 Step "git"
 if (-not (Have git)) {
   winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
@@ -99,7 +117,9 @@ cargo --version
 
 Step "uv (Python package manager)"
 if (-not (Have uv)) {
-  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+  # -ExecutionPolicy Bypass: the child shell would otherwise inherit the
+  # machine default and the uv installer refuses to run under 'Restricted'.
+  powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
   RefreshPath
 }
 uv --version
@@ -111,6 +131,12 @@ if (-not (Have node)) {
 }
 if (-not (Have pnpm)) {
   corepack enable pnpm
+  RefreshPath
+}
+if (-not (Have pnpm)) {
+  # corepack writes shims into Node's install dir (Program Files) and fails
+  # without admin rights; npm's global dir is per-user, so this always works.
+  npm install -g pnpm
   RefreshPath
 }
 node --version
@@ -128,3 +154,4 @@ Write-Host "`nDone. Start the app with:" -ForegroundColor Green
 Write-Host ("    cd `"" + (Get-Location).Path + "`"")
 Write-Host "    pnpm dev"
 Write-Host "`nIf 'pnpm' or 'cargo' is not recognized, close this window, open a NEW PowerShell, and run the two commands above again." -ForegroundColor Yellow
+Write-Host "If an installer above said 'Restart your PC to finish installation' (the C++ Build Tools often do), restart before the first 'pnpm dev'." -ForegroundColor Yellow
