@@ -24,11 +24,23 @@ function inTauri(): boolean {
 async function fromTauri(): Promise<SidecarInfo | null> {
   if (!inTauri()) return null;
   const { invoke } = await import("@tauri-apps/api/core");
-  const [port, token] = await Promise.all([
-    invoke<number>("get_sidecar_port"),
-    invoke<string>("get_api_token"),
-  ]);
-  return { port, token };
+  // The shell answers "sidecar not ready" until it has read the PORT/TOKEN
+  // handshake off the sidecar's stdout. The webview regularly wins that race
+  // (observed on Windows 2026-07-19: white window on roughly every other
+  // launch), so poll until the sidecar is up instead of failing the app.
+  const deadline = Date.now() + 120_000; // generous: first boot on a slow disk
+  for (;;) {
+    try {
+      const [port, token] = await Promise.all([
+        invoke<number>("get_sidecar_port"),
+        invoke<string>("get_api_token"),
+      ]);
+      return { port, token };
+    } catch (e) {
+      if (Date.now() >= deadline) throw e;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
 }
 
 function fromEnv(): SidecarInfo | null {

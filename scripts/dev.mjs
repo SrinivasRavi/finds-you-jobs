@@ -30,12 +30,13 @@ const web = process.argv[2] === "web";
 function run(cmd, args) {
   return new Promise((resolve) => {
     // shell on Windows: pnpm is pnpm.cmd there, and Node can't spawn .cmd
-    // files directly (ENOENT — observed on a real install 2026-07-18).
-    const child = spawn(cmd, args, {
-      stdio: "inherit",
-      env: process.env,
-      shell: process.platform === "win32",
-    });
+    // files directly (ENOENT — observed on a real install 2026-07-18). With a
+    // shell, pass ONE command string — an args array there is deprecated
+    // (DEP0190) and would break on values needing escaping.
+    const isWin = process.platform === "win32";
+    const child = isWin
+      ? spawn([cmd, ...args].join(" "), { stdio: "inherit", env: process.env, shell: true })
+      : spawn(cmd, args, { stdio: "inherit", env: process.env });
     // Lifecycle: forward Ctrl-C/kill to the child, and if OUR parent dies
     // without signalling us (reparented), take the child down too — the same
     // no-orphans discipline as scripts/dev-frontend.mjs.

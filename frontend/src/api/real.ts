@@ -344,7 +344,13 @@ export class RealApi {
   private infoP: Promise<SidecarInfo> | null = null;
 
   private info(): Promise<SidecarInfo> {
-    this.infoP ??= getSidecarInfo();
+    // Never cache a rejected handshake: `??=` would pin the rejection and every
+    // later call would fail even after the sidecar comes up (the Windows
+    // white-window bug, 2026-07-19). Clear on failure so the next call retries.
+    this.infoP ??= getSidecarInfo().catch((e: unknown) => {
+      this.infoP = null;
+      throw e;
+    });
     return this.infoP;
   }
 

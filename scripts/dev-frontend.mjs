@@ -18,16 +18,17 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ORIGINAL_PPID = process.ppid;
 const IS_WIN = process.platform === "win32";
 
-// Windows: pnpm is pnpm.cmd (needs a shell to spawn), `cwd` instead of a
-// --dir path argument (shell arg-joining breaks on spaces), and no POSIX
-// process groups (detached + kill(-pid) are Unix-only; the catch blocks
-// below fall through harmlessly).
-const vite = spawn("pnpm", ["dev"], {
-  cwd: join(ROOT, "frontend"),
-  stdio: "inherit",
-  shell: IS_WIN,
-  detached: !IS_WIN, // its own process group → we can kill the whole tree
-});
+// Windows: pnpm is pnpm.cmd (needs a shell; one command string — an args
+// array with a shell is deprecated, DEP0190), `cwd` instead of a --dir path
+// argument (shell arg-joining breaks on spaces), and no POSIX process groups
+// (detached + kill(-pid) are Unix-only; the catch blocks below fall through).
+const vite = IS_WIN
+  ? spawn("pnpm dev", { cwd: join(ROOT, "frontend"), stdio: "inherit", shell: true })
+  : spawn("pnpm", ["dev"], {
+      cwd: join(ROOT, "frontend"),
+      stdio: "inherit",
+      detached: true, // its own process group → we can kill the whole tree
+    });
 
 let closing = false;
 function shutdown(code = 0) {
