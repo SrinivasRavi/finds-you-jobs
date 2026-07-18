@@ -123,7 +123,7 @@ def _naukri_item(item: dict) -> NormalizedJob | None:
         location=_locations_list(item.get("locations")),
         description=strip_html(_s(item.get("description"))),
         posted_at=created.replace(" ", "T") if created else "",
-        source_adapter=ID,
+        source_adapter="naukri",
     )
 
 
@@ -159,7 +159,7 @@ def _linkedin_item(item: dict) -> NormalizedJob | None:
         description=_s(item.get("descriptionText")),
         posted_at=_s(item.get("postedAt")),
         salary=" – ".join(_s(p) for p in salary if _s(p)) if isinstance(salary, list) else "",
-        source_adapter=ID,
+        source_adapter="linkedin",
     )
 
 
@@ -190,7 +190,7 @@ def _seek_item(item: dict) -> NormalizedJob | None:
         description=_s(item.get("teaser")),
         posted_at=posted,
         salary=_s(item.get("salaryLabel")),
-        source_adapter=ID,
+        source_adapter="seek",
     )
 
 
@@ -231,7 +231,7 @@ def _indeed_item(item: dict) -> NormalizedJob | None:
         # empty so quality flags it rather than storing junk dates.
         posted_at=posted if posted[:4].isdigit() else "",
         salary=_s(item.get("salary")),
-        source_adapter=ID,
+        source_adapter="indeed",
     )
 
 
@@ -240,6 +240,21 @@ ACTORS: dict[str, _ActorSpec] = {
     "curious_coder/linkedin-jobs-scraper": _ActorSpec(_linkedin_runs, _linkedin_item),
     "epicscrapers/seek-job-scraper": _ActorSpec(_seek_runs, _seek_item),
     "misceres/indeed-scraper": _ActorSpec(_indeed_runs, _indeed_item),
+}
+
+# The real board each actor scrapes. Rows are stamped with THIS as their
+# `source_adapter` (maintainer directive 2026-07-18: the user sees "Naukri",
+# never the "Apify" plumbing) — the board pill, deep search, and the Analytics
+# Discovery tab all key off it. `apify` remains only the *adapter/toggle*
+# identity (`board = "apify"` entries, `apify:<actor>` source keys). The
+# LinkedIn actor deliberately stamps "linkedin" so its rows share one identity
+# with the guest adapter + logged-in one-shot (they already share canonical
+# URLs and dedup).
+ACTOR_SOURCE_IDS: dict[str, str] = {
+    "memo23/naukri-scraper": "naukri",
+    "curious_coder/linkedin-jobs-scraper": "linkedin",
+    "epicscrapers/seek-job-scraper": "seek",
+    "misceres/indeed-scraper": "indeed",
 }
 
 # The entries seeded into portals_config when the user saves an Apify key —

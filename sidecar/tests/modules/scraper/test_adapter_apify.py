@@ -76,7 +76,9 @@ def test_naukri_run_normalizes_and_sends_token_in_header_only():
     assert job.location == "Bengaluru, Pune"
     assert job.description == "Build APIs."
     assert job.posted_at == "2026-07-10T09:30:00"
-    assert job.source_adapter == "apify"
+    # Rows carry the REAL board's identity, not the Apify plumbing (maintainer
+    # directive 2026-07-18): board pill + deep search + analytics say "naukri".
+    assert job.source_adapter == "naukri"
     # The token travels as a bearer header with the honest UA — never in the
     # URL (fetch errors quote URLs verbatim into persisted diagnostics).
     headers = fetcher.last_post_headers
@@ -118,6 +120,8 @@ def test_linkedin_actor_is_one_batched_run_with_guest_canonical_urls():
     assert jobs[0].canonical_url == "https://www.linkedin.com/jobs/view/4012345678"
     assert jobs[0].salary == "₹30L – ₹45L"
     assert jobs[0].description == "Full JD text."
+    # One LinkedIn identity across guest/logged-in/actor paths.
+    assert jobs[0].source_adapter == "linkedin"
 
 
 def test_seek_builds_url_from_id_and_indeed_drops_relative_dates():
@@ -142,6 +146,7 @@ def test_seek_builds_url_from_id_and_indeed_drops_relative_dates():
     )
     assert seek_jobs[0].canonical_url == "https://www.seek.com.au/job/87654321"
     assert seek_jobs[0].salary == "$150k"
+    assert seek_jobs[0].source_adapter == "seek"
 
     indeed_jobs = apify.search(
         _entry("misceres/indeed-scraper"),
@@ -164,6 +169,7 @@ def test_seek_builds_url_from_id_and_indeed_drops_relative_dates():
     )
     assert indeed_jobs[0].posted_at == ""  # relative text is not a date
     assert indeed_jobs[0].salary == "$140,000 a year"
+    assert indeed_jobs[0].source_adapter == "indeed"
 
 
 def test_partial_run_failure_keeps_other_runs_and_schema_drift_is_loud():
@@ -223,7 +229,7 @@ def test_scan_integration_runs_apify_beside_other_sources():
     report = result.per_source["apify:memo23/naukri-scraper"]
     assert report.fetched == 1
     assert report.kept == 1
-    assert result.jobs[0].source_adapter == "apify"
+    assert result.jobs[0].source_adapter == "naukri"
 
 
 def test_missing_key_is_a_per_source_error_not_a_scan_failure():
