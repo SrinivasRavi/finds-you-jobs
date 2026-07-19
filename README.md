@@ -45,7 +45,8 @@ you from your own LinkedIn account.★
 
 ## Install
 
-Follow steps as per your OS:
+Follow steps as per your OS. (Changed your mind later? Everything below can be
+removed cleanly — see [Uninstall](#uninstall).)
 
 ---
 
@@ -162,6 +163,173 @@ set your job preferences, pick an AI provider, and add your key.
 - **You stay in control.** The app never submits an application on its own — it fills the form and hands you the open browser to review and click Submit yourself.
 - **No AI slop.** Tailored output is grounded in your real resume and shown to you before it's used.
 - **Open source.** [AGPL-3.0-only](LICENSE) — inspect it, fork it, improve it, share it back.
+
+## Uninstall
+
+Removing finds-you-jobs is as clean as installing it. Quit the app first, then
+work through the steps for your OS: **step 1** removes the app, **step 2**
+removes your data, **step 3** removes the developer tools the installer set up.
+Steps 1 and 2 are always safe. In step 3, each line says what it removes —
+**skip any tool you also use for something else**, because those are shared
+tools, not part of the app.
+
+One more rule for a machine that isn't yours (a friend's, a work laptop): the
+installer only installs a tool when it's missing, so if the machine already had
+git or Node, those belong to its owner — in step 3, remove only what the
+install actually printed it was installing.
+
+---
+
+### macOS
+
+**1. Delete the app.** Everything the app built lives inside the one folder the
+installer created. In the folder where you ran the install command:
+
+```bash
+rm -rf finds-you-jobs
+```
+
+**2. Delete your data** — the database, tailored resumes, settings, window
+caches, and the app's saved encryption key:
+
+```bash
+rm -rf "$HOME/Library/Application Support/finds-you-jobs"
+rm -rf "$HOME/Library/WebKit/com.finds-you-jobs.app" "$HOME/Library/Caches/com.finds-you-jobs.app" "$HOME/Library/Saved Application State/com.finds-you-jobs.app.savedState"
+security delete-generic-password -s finds-you-jobs
+```
+
+The last line removes the app's key from your macOS Keychain — it's fine if it
+says the item can't be found. If you ever started the app with a custom
+`FYJ_DATA_DIR` profile (like the `$HOME/fyj-test` example above), delete those
+folders too.
+
+**3. Remove the tools the installer set up** — skip any line for a tool you use
+elsewhere:
+
+```bash
+rm -rf "$HOME/Library/Caches/ms-playwright"       # the app's private Chromium (~150 MB); shared with any other Playwright tools you have
+rustup self uninstall -y                          # the Rust toolchain
+rm -rf "$HOME/.cache/uv" "$HOME/.local/share/uv" "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx"   # uv and the Python it installed
+corepack disable pnpm 2>/dev/null; npm uninstall -g pnpm 2>/dev/null    # pnpm
+rm -rf "$HOME/Library/pnpm" "$HOME/.npm" "$HOME/.cache/node/corepack"   # pnpm's store, npm + corepack caches
+```
+
+If the installer added Node via Homebrew (it only does this when Node was
+missing and Homebrew was present): `brew uninstall node`. The Xcode command-line
+tools (which provide git) are Apple's shared developer tools used by many other
+things, so we don't suggest removing them.
+
+Last trace: the Rust and uv installers each added a PATH line to your shell
+profile (`~/.zshenv`, `~/.zshrc`, `~/.profile`, or `~/.bashrc`). They're
+harmless after the step above, but for zero trace, open those files and delete
+the lines mentioning `.cargo/env` or `.local/bin/env`.
+
+---
+
+### Windows
+
+**1. Delete the app.** Everything the app built lives inside the one folder the
+installer created. In the folder where you ran the install command (the
+installer may have used your home folder instead — run `cd $HOME` first if the
+folder isn't found):
+
+```powershell
+cmd /c "rmdir /s /q finds-you-jobs"
+```
+
+**2. Delete your data** — the database, tailored resumes, settings, window
+cache, and the app's saved encryption key:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\finds-you-jobs" -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\com.finds-you-jobs.app" -ErrorAction SilentlyContinue
+cmdkey /delete:finds-you-jobs
+```
+
+The last line removes the app's key from Windows Credential Manager — it's fine
+if it says the entry doesn't exist (you can also do it in Control Panel →
+Credential Manager → Windows Credentials). If you ever started the app with a
+custom `FYJ_DATA_DIR` profile (like the `$HOME\fyj-test` example above), delete
+those folders too.
+
+**3. Remove the tools the installer set up** — skip any line for a tool you use
+elsewhere:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\ms-playwright" -ErrorAction SilentlyContinue   # the app's private Chromium (~150 MB)
+rustup self uninstall -y                                    # the Rust toolchain
+uv cache clean
+Remove-Item -Recurse -Force "$env:APPDATA\uv","$env:LOCALAPPDATA\uv" -ErrorAction SilentlyContinue        # uv and the Python it installed
+Remove-Item -Force "$HOME\.local\bin\uv.exe","$HOME\.local\bin\uvx.exe" -ErrorAction SilentlyContinue
+corepack disable pnpm; npm uninstall -g pnpm                # pnpm
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\pnpm","$env:APPDATA\npm","$env:LOCALAPPDATA\npm-cache","$env:LOCALAPPDATA\node\corepack","$HOME\.cache\node\corepack" -ErrorAction SilentlyContinue  # pnpm's store, npm + corepack caches
+winget uninstall OpenJS.NodeJS.LTS                          # Node — skip if you use Node elsewhere
+winget uninstall Microsoft.VisualStudio.2022.BuildTools     # C++ Build Tools — skip if you build other software
+winget uninstall Git.Git                                    # git — skip if you use git elsewhere
+```
+
+Two things we deliberately leave alone: the **WebView2 runtime** is a shared
+Windows component other apps rely on (the installer only added it if Windows
+didn't have it), and your **PowerShell execution policy** — the installer set it
+to `RemoteSigned` for your user only if it was locked down, and putting it back
+(`Set-ExecutionPolicy -ExecutionPolicy Undefined -Scope CurrentUser`) would
+block other local scripts again. Restore it only if you know you want that.
+
+---
+
+### Linux
+
+**1. Delete the app.** Everything the app built lives inside the one folder the
+installer created. In the folder where you ran the install command:
+
+```bash
+rm -rf finds-you-jobs
+```
+
+**2. Delete your data** — the database, tailored resumes, settings, window
+caches, and the app's saved encryption key:
+
+```bash
+rm -rf "$HOME/.local/share/finds-you-jobs"
+rm -rf "$HOME/.local/share/com.finds-you-jobs.app" "$HOME/.cache/com.finds-you-jobs.app"
+secret-tool clear service finds-you-jobs
+```
+
+(If you've set `$XDG_DATA_HOME`, the first folder lives under it instead.) The
+last line removes the app's key from your keyring — if `secret-tool` isn't
+installed, use your desktop's "Passwords and Keys" app, and if there's no
+keyring at all the key lived in a file already deleted with your data folder.
+If you ever started the app with a custom `FYJ_DATA_DIR` profile (like the
+`$HOME/fyj-test` example above), delete those folders too.
+
+**3. Remove the tools the installer set up** — skip any line for a tool you use
+elsewhere:
+
+```bash
+rm -rf "$HOME/.cache/ms-playwright"               # the app's private Chromium (~150 MB); shared with any other Playwright tools you have
+rustup self uninstall -y                          # the Rust toolchain
+rm -rf "$HOME/.cache/uv" "$HOME/.local/share/uv" "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx"   # uv and the Python it installed
+corepack disable pnpm 2>/dev/null; sudo npm uninstall -g pnpm 2>/dev/null   # pnpm
+rm -rf "$HOME/.local/share/pnpm" "$HOME/.npm" "$HOME/.cache/node/corepack"   # pnpm's store, npm + corepack caches
+```
+
+If the installer added Node (Debian/Ubuntu only, via the NodeSource repository)
+and you don't use Node elsewhere:
+
+```bash
+sudo apt-get remove -y nodejs
+sudo rm -f /etc/apt/sources.list.d/nodesource.list*
+```
+
+The system libraries the installer added via your package manager (webkit2gtk,
+GTK, build tools, git) are shared with the rest of your desktop, so we don't suggest force-removing
+them — many other programs use them. `sudo apt autoremove` will clean up
+whatever nothing else needs.
+
+Last trace: the Rust and uv installers each added a PATH line to your shell
+profile (`~/.profile`, `~/.bashrc`, or `~/.zshrc`). They're harmless after the
+step above, but for zero trace, open those files and delete the lines mentioning
+`.cargo/env` or `.local/bin/env`.
 
 ## For developers & contributors
 
