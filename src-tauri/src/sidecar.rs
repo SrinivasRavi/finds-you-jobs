@@ -24,6 +24,14 @@ const RESTART_WINDOW: Duration = Duration::from_secs(30); // AM2
 const MAX_FAILURES: u32 = 3; // AM2
 const HEALTHY_RESET: Duration = Duration::from_secs(60); // AM2
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10); // AM3
+// Startup grace: the sidecar prints its handshake BEFORE the Python lifespan
+// runs (migrations on first boot), and uvicorn only LISTENS after the lifespan
+// finishes — on a cold Windows laptop with antivirus scanning every .py file
+// that is tens of seconds. "Not listening yet" right after a (re)spawn is a
+// boot phase, not a crash: counting it killed healthy booting sidecars in a
+// 2.5 s loop on three real Windows installs (2026-07-19). A dead PROCESS is
+// still detected immediately via try_wait inside the grace.
+const STARTUP_GRACE: Duration = Duration::from_secs(180);
 
 /// PROD sidecar binary (PyInstaller onedir) relative to the app resource dir.
 /// Wired at packaging time (A0.6 / Track A5); placeholder constant for now —
@@ -195,11 +203,49 @@ fn emit_fatal(app: &AppHandle, message: &str) {
     );
 }
 
+/// Block until the sidecar answers /healthz once after a (re)spawn, or the
+/// startup grace runs out, or the PROCESS exits (a real crash — detected
+/// immediately, no grace). Returns true when healthy or the app is stopping.
+fn wait_until_healthy(child: &mut Child, port: u16, state: &Arc<Mutex<Inner>>) -> bool {
+    let deadline = Instant::now() + STARTUP_GRACE;
+    while Instant::now() < deadline {
+        if state.lock().unwrap().stopping {
+            return true; // the caller's loop observes `stopping` and exits
+        }
+        if let Ok(Some(_)) = child.try_wait() {
+            return false; // process died during boot — genuine failure
+        }
+        if health_ok(port) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
 /// The supervision loop (runs on its own thread). Owns the child handle.
 pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd: PathBuf) {
     let mut failures: u32 = 0;
     let mut first_failure_at: Option<Instant> = None;
     let mut healthy_since: Option<Instant> = None;
+
+    // Startup grace for the initial spawn: the health loop below treats an
+    // unanswered /healthz as a crash signal, which is only fair once the
+    // sidecar has finished booting (migrations) and answered once.
+    {
+        let port = state.lock().unwrap().info.as_ref().map(|i| i.port);
+        if let Some(port) = port {
+            if wait_until_healthy(&mut child, port, &state) {
+                // Loud + human: the dev console otherwise goes silent at the
+                // exact moment boot SUCCEEDS, which reads as a hang (three
+                // real installs Ctrl-C'd healthy boots, 2026-07-18/19).
+                eprintln!("finds-you-jobs: backend ready on 127.0.0.1:{port} — the app window is live.");
+                emit_status(&app, &state, "ready", port);
+            }
+            // On false: fall through — the loop's checks now fail fast and
+            // drive the existing restart/fatal machinery.
+        }
+    }
 
     loop {
         thread::sleep(HEALTH_POLL_INTERVAL);
@@ -269,7 +315,13 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
                     s.info = Some(info.clone());
                 }
                 child = new_child;
-                emit_status(&app, &state, "restarted", info.port);
+                // The respawned sidecar gets the same boot grace before the
+                // failure counting resumes — a restart re-runs the lifespan.
+                if wait_until_healthy(&mut child, info.port, &state) {
+                    emit_status(&app, &state, "restarted", info.port);
+                } else {
+                    emit_status(&app, &state, "reconnecting", info.port);
+                }
             }
             Err(err) => {
                 emit_fatal(&app, &format!("backend restart failed: {err}"));
