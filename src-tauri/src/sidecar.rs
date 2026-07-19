@@ -185,6 +185,26 @@ pub fn kill_group(pid: u32) {
     }
 }
 
+/// Append one timestamped line to `logs/shell.log` (dev diagnostics — the
+/// remote-debugging channel for real installs: the console can't say who
+/// initiated an exit, this file can). Best-effort, never fails the caller.
+pub fn shell_log(msg: &str) {
+    use std::io::Write;
+    let dir = dev_cwd().join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("shell.log"))
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{ts}] {msg}");
+    }
+}
+
 fn emit_status(app: &AppHandle, state: &Arc<Mutex<Inner>>, status: &str, port: u16) {
     {
         let mut s = state.lock().unwrap();
@@ -238,9 +258,17 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
             if wait_until_healthy(&mut child, port, &state) {
                 // Loud + human: the dev console otherwise goes silent at the
                 // exact moment boot SUCCEEDS, which reads as a hang (three
-                // real installs Ctrl-C'd healthy boots, 2026-07-18/19).
-                eprintln!("finds-you-jobs: backend ready on 127.0.0.1:{port} — the app window is live.");
+                // real installs Ctrl-C'd healthy boots, 2026-07-18/19). Say
+                // explicitly what this terminal is for — Ctrl-C here QUITS
+                // the app, which is not obvious.
+                eprintln!(
+                    "finds-you-jobs: backend ready on 127.0.0.1:{port} — use the app window.\n\
+                     finds-you-jobs: keep this terminal open while the app runs; press Ctrl-C HERE only when you want to quit the app."
+                );
+                shell_log(&format!("ready: backend healthy on port {port}"));
                 emit_status(&app, &state, "ready", port);
+            } else {
+                shell_log("startup grace expired or sidecar exited before first healthy answer");
             }
             // On false: fall through — the loop's checks now fail fast and
             // drive the existing restart/fatal machinery.
@@ -283,9 +311,11 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
             }
         }
         failures += 1;
+        shell_log(&format!("unhealthy: /healthz failed (failure {failures}/{MAX_FAILURES})"));
         emit_status(&app, &state, "reconnecting", port);
 
         if failures >= MAX_FAILURES {
+            shell_log("fatal: restart cap hit — giving up and killing the sidecar");
             emit_fatal(
                 &app,
                 "backend crashed repeatedly (3 failures within 30s) — giving up",
@@ -315,6 +345,7 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
                     s.info = Some(info.clone());
                 }
                 child = new_child;
+                shell_log(&format!("restarted: new sidecar on port {}", info.port));
                 // The respawned sidecar gets the same boot grace before the
                 // failure counting resumes — a restart re-runs the lifespan.
                 if wait_until_healthy(&mut child, info.port, &state) {
@@ -333,6 +364,10 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
 
 /// Graceful shutdown on quit: drain (POST /shutdown, wait ≤ 10 s), then force-kill.
 pub fn shutdown(state: &Arc<Mutex<Inner>>) {
+    // The one place every intentional exit funnels through — window closed,
+    // console Ctrl-C, quit menu. Its presence in shell.log separates "user
+    // quit" from "something died" when reading a report from a real install.
+    shell_log("quit requested (window closed / console Ctrl-C / quit) — draining sidecar");
     let (pid, info) = {
         let mut s = state.lock().unwrap();
         s.stopping = true;
