@@ -95,3 +95,34 @@ def test_pid_alive_probe() -> None:
 
     assert pid_alive(os.getpid()) is True
     assert pid_alive(2**22 + 12345) is False  # far beyond pid_max on macOS/Linux
+
+
+def test_pid_alive_detects_a_died_child() -> None:
+    import subprocess
+    import sys
+
+    from sidecar.app.watchdog import pid_alive
+
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert pid_alive(proc.pid) is True
+    finally:
+        proc.kill()
+        proc.wait()
+    assert pid_alive(proc.pid) is False
+
+
+def test_pid_alive_never_reaches_os_kill_on_windows() -> None:
+    """The 2026-07-19 Windows install killer, pinned: `os.kill(pid, 0)` on
+    Windows does not probe — `signal.CTRL_C_EVENT == 0` there, so it SENDS a
+    real Ctrl-C to the whole console (Tauri shell died with
+    STATUS_CONTROL_C_EXIT on every watchdog tick). The Windows branch must
+    come first and the POSIX os.kill probe must sit behind it."""
+    import inspect
+
+    from sidecar.app import watchdog
+
+    src = inspect.getsource(watchdog.pid_alive)
+    body = src.split('"""')[2]  # code after the docstring (which cites the bug)
+    assert 'os.name == "nt"' in body
+    assert body.index('os.name == "nt"') < body.index("os.kill(")

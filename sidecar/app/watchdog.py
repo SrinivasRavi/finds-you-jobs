@@ -20,7 +20,34 @@ POLL_INTERVAL_SECONDS = 2.0
 
 
 def pid_alive(pid: int) -> bool:
-    """Signal-0 liveness probe (POSIX + Windows via os.kill emulation)."""
+    """Liveness probe for `pid`.
+
+    POSIX: the classic signal-0 no-op check. Windows: NEVER `os.kill(pid, 0)` —
+    `signal.CTRL_C_EVENT == 0` there, so that call does not probe anything, it
+    SENDS a real Ctrl-C to the whole console. This exact call was the
+    2026-07-19 Windows killer: the watchdog's first 2-second "is the shell
+    alive?" tick Ctrl-C'd the console group — Tauri exe dead with
+    STATUS_CONTROL_C_EXIT, cargo/pnpm wrappers interrupted, on every install.
+    Use OpenProcess + GetExitCodeProcess instead (access-denied counts as
+    alive: the process exists, we just can't open it)."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        ERROR_ACCESS_DENIED = 5
+        STILL_ACTIVE = 259
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True  # exists but unreadable — treat as alive, never kill on doubt
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except OSError:
