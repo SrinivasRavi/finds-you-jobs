@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import MAX_ATTEMPTS
 from sidecar.modules.scorer.engine import Engine  # noqa: F401  (protocol import sanity)
 from sidecar.modules.scorer.job_input import resolve_job
 from sidecar.modules.scorer.output_parse import parse_output
@@ -127,6 +129,72 @@ def test_score_end_to_end_with_fake_engine():
 def test_score_surfaces_engine_error_verbatim():
     with pytest.raises(ScoreError, match="rate limited, retry later"):
         score("# Master", "responsibilities " * 20, engine=FailingEngine())
+
+
+class FlakyThenGoodEngine:
+    """Raises a bare EngineError (an empty-content-style provider hiccup) the
+    first `fail_times` calls, then returns GOOD_OUTPUT."""
+
+    def __init__(self, fail_times: int) -> None:
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise EngineError("LLM API returned empty content")
+        return GOOD_OUTPUT, Usage(
+            internal_calls=1, tokens_in=10, tokens_out=5, usd=0.01, model="fake"
+        )
+
+
+def test_score_retries_transient_engine_error_and_succeeds():
+    eng = FlakyThenGoodEngine(fail_times=1)
+    result = score("# Master", "responsibilities " * 20, engine=eng)
+    assert result.score == 82
+    assert eng.calls == 2  # one failed attempt + the successful retry
+    # A call that raised before returning has no usage to bill — only the
+    # winning attempt's usage counts here.
+    assert result.usage.usd == pytest.approx(0.01)
+    assert result.usage.internal_calls == 1
+
+
+def test_score_exhausts_retries_and_raises_last_engine_error():
+    eng = FlakyThenGoodEngine(fail_times=MAX_ATTEMPTS)
+    with pytest.raises(EngineError, match="empty content"):
+        score("# Master", "responsibilities " * 20, engine=eng)
+    assert eng.calls == MAX_ATTEMPTS
+
+
+class BadThenGoodOutputEngine:
+    """Returns a contract-violating response once (billed — a real completion
+    happened), then GOOD_OUTPUT."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+        self.calls += 1
+        if self.calls == 1:
+            return "not the contract", Usage(
+                internal_calls=1, tokens_in=10, tokens_out=3, usd=0.02
+            )
+        return GOOD_OUTPUT, Usage(
+            internal_calls=1, tokens_in=10, tokens_out=40, usd=0.05, model="fake"
+        )
+
+
+def test_score_retries_parse_contract_failure_and_sums_billed_usage():
+    eng = BadThenGoodOutputEngine()
+    result = score("# Master", "responsibilities " * 20, engine=eng)
+    assert eng.calls == 2
+    # Cost honesty: the failed-but-billed first attempt's spend must not
+    # vanish from the ledger just because the retry succeeded.
+    assert result.usage.usd == pytest.approx(0.07)
+    assert result.usage.tokens_in == 20
+    assert result.usage.tokens_out == 43
+    assert result.usage.internal_calls == 2
+    assert result.usage.model == "fake"  # the winning attempt's model
 
 
 def test_dry_run_prompt_contains_skill_and_inputs_without_llm():

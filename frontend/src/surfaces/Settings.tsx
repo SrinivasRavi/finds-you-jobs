@@ -549,6 +549,7 @@ export function PromptRoutingRow({
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
+  const [modelDraft, setModelDraft] = useState<string | null>(null);
   const setPrompt = useSetPrompt();
   const resetPrompt = useResetPrompt();
 
@@ -623,14 +624,15 @@ export function PromptRoutingRow({
               <select
                 value={engine}
                 data-testid={`route-${prompt.kind}`}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setModelDraft(null);
                   patch({
                     routing: [
                       ...settings.routing.filter((r) => r.kind !== prompt.kind),
                       { kind: prompt.kind as OperationKind, engine: e.target.value, model: "" },
                     ],
-                  })
-                }
+                  });
+                }}
                 className="flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
               >
                 {options.map((o) => (
@@ -639,12 +641,27 @@ export function PromptRoutingRow({
                   </option>
                 ))}
               </select>
-              <span
-                className="w-40 truncate text-right text-[11px] text-ink-4"
+              <input
+                value={modelDraft ?? (route?.model || "")}
+                placeholder={effectiveModel}
                 data-testid={`route-${prompt.kind}-model`}
-              >
-                {effectiveModel}
-              </span>
+                title={`Model this operation uses on ${engineLabel}. Blank = ${effectiveModel} (the provider/CLI default).`}
+                onChange={(e) => setModelDraft(e.target.value)}
+                onBlur={() => {
+                  if (modelDraft == null || modelDraft === (route?.model || "")) return;
+                  patch({
+                    routing: [
+                      ...settings.routing.filter((r) => r.kind !== prompt.kind),
+                      { kind: prompt.kind as OperationKind, engine, model: modelDraft },
+                    ],
+                  });
+                  setModelDraft(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+                className="w-44 truncate rounded-md border border-border bg-surface px-2 py-1 text-right text-[11px] text-ink-2"
+              />
             </div>
           ) : null}
           <textarea

@@ -154,6 +154,124 @@ def test_openai_compatible_no_key_omits_auth_header():
     assert "authorization" not in transport.calls[0].headers
 
 
+def test_openrouter_requests_and_uses_exact_reported_cost():
+    # openrouter/auto routes to a different concrete model per call, so a
+    # static pricing table can never keep up — OpenRouter's own `usage.cost`
+    # (requested via `usage.include=true`) is the only way this stays honest.
+    transport = FakeTransport(
+        [
+            _resp(
+                200,
+                {
+                    # A model with no entry in the static pricing map at all —
+                    # if the static table were consulted, usd would come back None.
+                    "model": "openai/gpt-5.6-sol",
+                    "choices": [{"message": {"content": "Tailored resume text"}}],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 50, "cost": 0.0034},
+                },
+            )
+        ]
+    )
+    engine = OpenAICompatibleEngine(
+        base_url="https://openrouter.ai/api/v1",
+        model="openrouter/auto",
+        api_key="sk-or-123",
+        transport=transport,
+    )
+    text, usage = engine.complete("sys", "user")
+
+    assert text == "Tailored resume text"
+    assert usage.usd == pytest.approx(0.0034)
+    assert usage.model == "openai/gpt-5.6-sol"
+    body = transport.calls[0].body
+    assert body is not None
+    sent = json.loads(body)
+    assert sent["usage"] == {"include": True}
+
+
+def test_openrouter_falls_back_to_static_map_when_cost_absent():
+    # Some OpenRouter responses (or a request that didn't ask for usage.cost)
+    # omit it — fall back to the static map for a model that IS in it.
+    transport = FakeTransport(
+        [
+            _resp(
+                200,
+                {
+                    "model": "anthropic/claude-opus-4-8",
+                    "choices": [{"message": {"content": "hi"}}],
+                    "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0},
+                },
+            )
+        ]
+    )
+    engine = OpenAICompatibleEngine(
+        base_url="https://openrouter.ai/api/v1",
+        model="anthropic/claude-opus-4-8",
+        transport=transport,
+    )
+    _, usage = engine.complete("", "hi")
+    assert usage.usd == pytest.approx(15.0)
+
+
+def test_non_openrouter_endpoint_does_not_request_usage_cost():
+    # A local Ollama/LM Studio server may not tolerate an unrecognized
+    # `usage.include` field — only send it to OpenRouter.
+    transport = FakeTransport(
+        [_resp(200, {"choices": [{"message": {"content": "ok"}}], "usage": {}})]
+    )
+    engine = OpenAICompatibleEngine(
+        base_url="http://localhost:11434/v1", model="llama3.1", transport=transport
+    )
+    engine.complete("", "hi")
+    body = transport.calls[0].body
+    assert body is not None
+    sent = json.loads(body)
+    assert "usage" not in sent
+
+
+def test_openai_compatible_empty_content_reports_finish_reason_not_bare_message():
+    # A reasoning model can spend its whole token budget on hidden reasoning
+    # and return empty visible content — the error should say so, not just
+    # "empty content" with no way to tell why.
+    transport = FakeTransport(
+        [
+            _resp(
+                200,
+                {
+                    "model": "openai/o-reasoner",
+                    "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 8192},
+                },
+            )
+        ]
+    )
+    engine = OpenAICompatibleEngine(
+        base_url="https://api.openai.com/v1", model="o-reasoner", transport=transport
+    )
+    with pytest.raises(EngineError, match="reasoning"):
+        engine.complete("", "hi")
+
+
+def test_openai_compatible_empty_content_surfaces_refusal():
+    transport = FakeTransport(
+        [
+            _resp(
+                200,
+                {
+                    "choices": [
+                        {"message": {"content": "", "refusal": "cannot help with that"}}
+                    ],
+                },
+            )
+        ]
+    )
+    engine = OpenAICompatibleEngine(
+        base_url="https://api.openai.com/v1", model="gpt-5", transport=transport
+    )
+    with pytest.raises(EngineError, match="cannot help with that"):
+        engine.complete("", "hi")
+
+
 # ---------------------------------------------------------------------------
 # Pricing honesty
 # ---------------------------------------------------------------------------

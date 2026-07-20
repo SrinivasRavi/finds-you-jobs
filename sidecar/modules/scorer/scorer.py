@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import tempfile
 
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import MAX_ATTEMPTS, merge_usage
+
 from .engine import ClaudeCliEngine, Engine
 from .job_input import resolve_job
 from .output_parse import parse_output
 from .prompt import build_user_prompt, load_skill
-from .types import ScoreResult
+from .types import ScoreError, ScoreResult, Usage
 
 
 def score(
@@ -41,9 +44,37 @@ def score(
     try:
         # v0 engine needs no interim files; the scratch dir is the seam future
         # multi-step internals (checkpoints, sub-agent handoffs) write into.
-        raw, usage = engine.complete(system_prompt, user_prompt)
-        value, reasons, breakdown_md = parse_output(raw)
-        return ScoreResult(score=value, reasons=reasons, breakdown_md=breakdown_md, usage=usage)
+        #
+        # A single completion is non-deterministic enough that an empty
+        # response (EngineError) or a contract-drifted response (ScoreError,
+        # stage="parse") is worth one immediate re-ask before the whole
+        # operation fails onto the user's Retry button. Every attempt that
+        # actually produced billable output — even one that then failed to
+        # parse — is folded into the final usage (cost honesty: a retry must
+        # never make a real spend vanish from the ledger).
+        billed: list[Usage] = []
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                raw, usage = engine.complete(system_prompt, user_prompt)
+            except EngineError:
+                if attempt == MAX_ATTEMPTS:
+                    raise
+                continue
+            try:
+                value, reasons, breakdown_md = parse_output(raw)
+            except ScoreError as e:
+                billed.append(usage)
+                if e.stage != "parse" or attempt == MAX_ATTEMPTS:
+                    raise
+                continue
+            billed.append(usage)
+            return ScoreResult(
+                score=value,
+                reasons=reasons,
+                breakdown_md=breakdown_md,
+                usage=Usage(**merge_usage(billed)),
+            )
+        raise AssertionError("unreachable — loop always returns or raises")
     finally:
         if not keep_scratch:
             scratch.cleanup()

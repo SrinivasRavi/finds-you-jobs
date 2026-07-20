@@ -440,8 +440,11 @@ export function Analytics() {
                         <td className="px-3 py-2 text-right font-mono text-ink-2">
                           {e.latency_ms ? `${(e.latency_ms / 1000).toFixed(1)}s` : "—"}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-ink-2">
-                          ${e.usd.toFixed(2)}
+                        <td
+                          className="px-3 py-2 text-right font-mono text-ink-2"
+                          title={e.usd == null ? "cost unknown for this model" : undefined}
+                        >
+                          {e.usd != null ? `$${e.usd.toFixed(2)}` : "—"}
                         </td>
                       </tr>
                       {open ? (

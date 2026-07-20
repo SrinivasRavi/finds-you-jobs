@@ -18,11 +18,14 @@ import datetime as _dt
 import tempfile
 from pathlib import Path
 
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import MAX_ATTEMPTS, merge_usage
+
 from .engine import ClaudeCliEngine, Engine
 from .job_input import resolve_job
 from .output_parse import parse_output
 from .prompt import build_user_prompt, load_skill, load_writing_samples
-from .types import CoverResult
+from .types import CoverError, CoverResult, Usage
 
 
 def cover(
@@ -49,11 +52,38 @@ def cover(
     try:
         # v0 engine needs no interim files; the scratch dir is the seam future
         # multi-step internals (checkpoints, sub-agent handoffs) write into.
-        raw, usage = engine.complete(system_prompt, user_prompt)
-        cover_letter_md, notes = parse_output(raw)
-        # The skill writes {{DATE}} — the module, not the model, knows the date.
-        cover_letter_md = cover_letter_md.replace("{{DATE}}", _dt.date.today().isoformat())
-        return CoverResult(cover_letter_md=cover_letter_md, notes=notes, usage=usage)
+        #
+        # A single completion is non-deterministic enough that an empty
+        # response (EngineError) or a contract-drifted response (CoverError,
+        # stage="parse") is worth one immediate re-ask before the whole
+        # operation fails onto the user's Retry button. A deliberate JD-gate
+        # refusal (stage="jd-gate") is NOT transient and must never be
+        # retried. Every attempt that actually produced billable output —
+        # even one that then failed to parse — is folded into the final usage
+        # (cost honesty: a retry must never make a real spend vanish from the
+        # ledger).
+        billed: list[Usage] = []
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                raw, usage = engine.complete(system_prompt, user_prompt)
+            except EngineError:
+                if attempt == MAX_ATTEMPTS:
+                    raise
+                continue
+            try:
+                cover_letter_md, notes = parse_output(raw)
+            except CoverError as e:
+                billed.append(usage)
+                if e.stage != "parse" or attempt == MAX_ATTEMPTS:
+                    raise
+                continue
+            billed.append(usage)
+            # The skill writes {{DATE}} — the module, not the model, knows the date.
+            cover_letter_md = cover_letter_md.replace("{{DATE}}", _dt.date.today().isoformat())
+            return CoverResult(
+                cover_letter_md=cover_letter_md, notes=notes, usage=Usage(**merge_usage(billed))
+            )
+        raise AssertionError("unreachable — loop always returns or raises")
     finally:
         if not keep_scratch:
             scratch.cleanup()

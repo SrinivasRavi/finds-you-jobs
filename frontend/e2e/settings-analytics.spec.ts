@@ -92,6 +92,35 @@ test("prompts editor round-trips an override", async ({ page, request }) => {
   await expect(page.getByTestId("route-score")).toBeVisible();
   await page.screenshot({ path: `${DIR}/prompts-editor-open.png`, fullPage: true });
 
+  // Per-operation-kind model override (the routing map already supported a
+  // model per kind on the backend; this input is what exposes it — a user can
+  // now pick, say, a strong model for tailor and a cheap one for score without
+  // that being tied to whatever the provider's single connect-time default is).
+  const modelInput = page.getByTestId("route-score-model");
+  await expect(modelInput).toBeVisible();
+  await modelInput.fill("claude-opus-4-8-e2e-test");
+  await modelInput.blur();
+  await expect
+    .poll(async () => {
+      const settings = await (
+        await request.get(`${base}/api/settings`, { headers: auth })
+      ).json();
+      return settings.preferences.engine_routing?.score?.model;
+    })
+    .toBe("claude-opus-4-8-e2e-test");
+  await page.screenshot({ path: `${DIR}/prompts-editor-model-override.png`, fullPage: true });
+  // Clear it back to "provider default" — leave the shared e2e profile clean.
+  await modelInput.fill("");
+  await modelInput.blur();
+  await expect
+    .poll(async () => {
+      const settings = await (
+        await request.get(`${base}/api/settings`, { headers: auth })
+      ).json();
+      return settings.preferences.engine_routing?.score?.model;
+    })
+    .toBe("");
+
   // Round-trip via the API (the editor uses the same PUT): override then reset.
   const put = await request.put(`${base}/api/settings/prompts/score`, {
     headers: auth,
@@ -131,6 +160,11 @@ test("analytics shows cost tiles and a real ledger row; /logs redirects", async 
   await expect(page.getByTestId("cost-tiles")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("agent-filters")).toBeVisible();
   await expect(page.getByText("cleanup_trash").first()).toBeVisible();
+  // cleanup_trash is a zero-LLM op with no usage record at all — its cost is
+  // genuinely unknown, not "verified free". The ledger row must render that
+  // as "—", never a misleading "$0.00" (cost-honesty ethos).
+  const row = page.getByTestId("log-row").filter({ hasText: "cleanup_trash" }).first();
+  await expect(row.locator("td").last()).toHaveText("—");
   await page.screenshot({ path: `${DIR}/analytics-ledger.png`, fullPage: true });
 });
 

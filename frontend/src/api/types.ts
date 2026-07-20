@@ -9,12 +9,14 @@
 
 // ─── Module result shapes (sidecar/modules/*/types.py) ──────────────────────
 
-/** Usage/cost record every module call returns (the ledger row source). */
+/** Usage/cost record every module call returns (the ledger row source).
+ *  `usd` is null when the model's cost is unknown (never a guessed 0 — cost
+ *  honesty: an unpriced model must never read as "verified free"). */
 export interface Usage {
   internal_calls: number;
   tokens_in: number;
   tokens_out: number;
-  usd: number;
+  usd: number | null;
   latency_ms: number | null;
   model: string | null;
 }
@@ -772,7 +774,8 @@ export interface LedgerEntry {
   id: string;
   kind: OperationKind;
   state: OperationState;
-  usd: number;
+  /** null when the model's cost is unknown — render as "unknown", never $0.00. */
+  usd: number | null;
   tokens_in: number;
   tokens_out: number;
   model: string | null;

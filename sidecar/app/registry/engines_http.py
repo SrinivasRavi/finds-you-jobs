@@ -13,7 +13,12 @@ registry never learn which engine they hold. HTTP is stdlib `urllib` (httpx is
 dev-only; mirrors the scraper's `Fetcher`), reached through an injectable
 `HttpTransport` seam so tests never touch the network.
 
-Cost (`usd`) is a best-effort lookup in a small pricing map for well-known
+Cost (`usd`): OpenRouter reports the *exact* per-call cost when asked (request
+`usage.include=true`; the response's `usage.cost` is authoritative — this is
+what makes cost tracking work regardless of which concrete model
+`openrouter/auto` ends up routing to, since a static table can never keep pace
+with that). Anthropic/OpenAI direct and local servers don't return a cost, so
+those fall back to a best-effort lookup in a small pricing map for well-known
 models — **`None` when the model is unknown, never a guessed number** (ethos:
 cost honesty). Token counts come straight from the provider response.
 
@@ -112,10 +117,15 @@ def _default_transport() -> HttpTransport:
 # ---------------------------------------------------------------------------
 
 # Small curated map for common models. Absent → usd is None (never guessed).
+# Only reached by providers that don't hand back a real cost themselves
+# (Anthropic/OpenAI direct, local servers) — OpenRouter reports its own exact
+# `usage.cost` instead (see `_openrouter_cost` below), so this map does not
+# need to track OpenRouter's ever-changing catalog.
 _PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
     # Anthropic (public list prices)
     "claude-opus-4-8": (15.0, 75.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-5": (3.0, 15.0),
+    "claude-sonnet-4-6": (3.0, 15.0),  # superseded id, kept for installs still routed to it
     "claude-haiku-4-5": (0.80, 4.0),
     # OpenAI
     "gpt-5": (1.25, 10.0),
@@ -283,7 +293,18 @@ class OpenAICompatibleEngine:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_prompt})
-        payload = {"model": self.model, "messages": messages, "max_tokens": self.max_tokens}
+        payload: dict[str, object] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+        }
+        is_openrouter = "openrouter.ai" in self.base_url
+        if is_openrouter:
+            # Ask OpenRouter to hand back the exact per-call cost on the response's
+            # `usage.cost` — the only way cost tracking stays accurate when the
+            # routed model is `openrouter/auto` (a different concrete model per
+            # call; see module docstring).
+            payload["usage"] = {"include": True}
         started = time.monotonic()
         resp = self.transport.request(
             "POST",
@@ -300,20 +321,40 @@ class OpenAICompatibleEngine:
             raise EngineError("LLM API returned a non-object response")
         choices = data.get("choices") or []
         text = ""
+        message: dict[str, object] = {}
         if choices and isinstance(choices[0], dict):
             message = choices[0].get("message") or {}
-            text = message.get("content") or ""
+            text = str(message.get("content") or "")
         if not text.strip():
-            raise EngineError("LLM API returned empty content")
+            # A reasoning model can spend its whole `max_tokens` budget on hidden
+            # reasoning and return an empty visible `content` — surface that
+            # instead of a bare "empty content" so it's actionable, not a mystery.
+            finish_reason = choices[0].get("finish_reason") if choices else None
+            refusal = message.get("refusal") if isinstance(message, dict) else None
+            detail = f"LLM API returned empty content (finish_reason={finish_reason!r})"
+            if refusal:
+                detail = f"LLM API refused: {refusal}"
+            elif finish_reason == "length":
+                detail += (
+                    " — the model likely spent its token budget on reasoning before any "
+                    "visible output; try a smaller prompt or a higher max_tokens"
+                )
+            raise EngineError(detail)
         usage_raw = data.get("usage") or {}
         tokens_in = usage_raw.get("prompt_tokens")
         tokens_out = usage_raw.get("completion_tokens")
         model = data.get("model", self.model)
+        cost = usage_raw.get("cost") if is_openrouter else None
+        usd = (
+            float(cost)
+            if isinstance(cost, int | float)
+            else price_usd(model, tokens_in, tokens_out)
+        )
         return text, EngineUsage(
             internal_calls=1,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
-            usd=price_usd(model, tokens_in, tokens_out),
+            usd=usd,
             latency_ms=latency_ms,
             model=model,
         )

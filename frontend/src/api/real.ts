@@ -292,7 +292,9 @@ function toOperation(d: OperationDTO): Operation {
           internal_calls: Number(d.usage.internal_calls ?? 0),
           tokens_in: Number(d.usage.tokens_in ?? 0),
           tokens_out: Number(d.usage.tokens_out ?? 0),
-          usd: Number(d.usage.usd ?? 0),
+          // null (unknown cost, e.g. an unpriced model) must stay null, never
+          // collapse to 0 — a real paid call must never read as verified-free.
+          usd: typeof d.usage.usd === "number" ? d.usage.usd : null,
           latency_ms: (d.usage.latency_ms as number | null) ?? null,
           model: (d.usage.model as string | null) ?? null,
         }
@@ -308,7 +310,9 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
     id: d.id,
     kind: d.kind as OperationKind,
     state: d.state as LedgerEntry["state"],
-    usd: Number(usage.usd ?? 0),
+    // null (unknown cost, e.g. an unpriced model) must stay null, never
+    // collapse to 0 — a real paid call must never read as verified-free.
+    usd: typeof usage.usd === "number" ? usage.usd : null,
     tokens_in: Number(usage.tokens_in ?? 0),
     tokens_out: Number(usage.tokens_out ?? 0),
     model: (usage.model as string | null) ?? d.model ?? null,
