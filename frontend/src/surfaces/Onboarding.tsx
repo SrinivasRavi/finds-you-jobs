@@ -312,7 +312,20 @@ export function Onboarding() {
   }
 
   return (
-    <div className="grid h-screen place-items-center bg-canvas p-6">
+    // Small windows (a VMware Fusion guest capped at 1024×768 with display
+    // scaling unavailable, a laptop with a tall taskbar + zoomed text, …)
+    // can be shorter than the card's content — the LLM-provider step alone
+    // lists eight options. #root is locked to `height:100vh; overflow:hidden`
+    // app-wide, so scrolling has to happen HERE, not at the page level.
+    // `overflow-y-auto` + `place-items-center` on the SAME element clips the
+    // top of the overflow (a well-known CSS trap: centering shifts content
+    // into negative scroll-position space that a scrollbar can't reach) — so
+    // the outer div only scrolls, and a separate `min-h-full` (not `h-full`)
+    // inner grid does the centering. `min-h-full` can grow past 100%, so
+    // when the card is taller than the window there's no excess space left
+    // to center within, and nothing gets clipped.
+    <div className="h-screen overflow-y-auto bg-canvas">
+      <div className="grid min-h-full place-items-center p-6">
       <div className="w-full max-w-xl rounded-2xl border border-border bg-surface p-6 shadow-lg">
         {/* Stepper */}
         <ol className="mb-6 flex items-center gap-2" data-testid="onboarding-stepper">
@@ -681,6 +694,7 @@ export function Onboarding() {
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
