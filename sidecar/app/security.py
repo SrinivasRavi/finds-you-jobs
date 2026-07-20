@@ -65,13 +65,13 @@ def _key_from_file(data_dir: Path) -> str:
     """App-managed key file, owner-only perms (0600) — the NFR-SEC-01 fallback."""
     path = data_dir / KEY_FILE_NAME
     if path.exists():
-        key = path.read_text().strip()
+        key = path.read_text(encoding="utf-8").strip()
         if key:
             return key
     data_dir.mkdir(parents=True, exist_ok=True)
     fresh = _new_key()
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(fresh)
     logger.info("created app-managed key at %s (0600)", path)
     return fresh
@@ -137,7 +137,7 @@ def seal_session_file(path: Path, key: str) -> bool:
     if not path.exists():
         return False
     try:
-        raw = path.read_text()
+        raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError) as e:
         logger.warning("session file %s unreadable (%s) — not migrating", path, e)
@@ -155,7 +155,7 @@ def seal_session_file(path: Path, key: str) -> bool:
     payload = json.dumps({SEALED_MARKER: 1, "token": token.decode()})
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as out:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(payload)
         os.replace(tmp_name, path)
     except BaseException:
@@ -175,7 +175,7 @@ def read_session_state(path: Path, key: str) -> tuple[dict, bool]:
     plaintext files come back with `was_sealed=False`. Raises on missing/corrupt/
     undecryptable input: callers (the dev fault-injection tool) surface that
     honestly rather than silently no-op'ing on a sealed file."""
-    raw = path.read_text()
+    raw = path.read_text(encoding="utf-8")
     data = json.loads(raw)
     was_sealed = bool(isinstance(data, dict) and data.get(SEALED_MARKER))
     if was_sealed:
@@ -203,7 +203,7 @@ def write_session_state(path: Path, state: dict, key: str, *, sealed: bool) -> N
         payload = json.dumps(state)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as out:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(payload)
         os.replace(tmp_name, path)
     except BaseException:

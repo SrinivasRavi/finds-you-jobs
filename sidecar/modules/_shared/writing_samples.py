@@ -13,5 +13,5 @@ def load_writing_samples(samples_dir: Path | None) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for p in sorted(samples_dir.iterdir()):
         if p.is_file() and p.suffix.lower() in {".md", ".txt"} and p.name.lower() != "readme.md":
-            out.append((p.name, p.read_text()))
+            out.append((p.name, p.read_text(encoding="utf-8")))
     return out

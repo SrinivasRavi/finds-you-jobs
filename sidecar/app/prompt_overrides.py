@@ -120,13 +120,13 @@ def get_override(kind: str, data_dir: Path | None = None) -> str | None:
     path = _override_path(kind, data_dir)
     if not path.exists():
         return None
-    return path.read_text()
+    return path.read_text(encoding="utf-8")
 
 
 def set_override(kind: str, markdown: str, data_dir: Path | None = None) -> None:
     path = _override_path(kind, data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(markdown)
+    path.write_text(markdown, encoding="utf-8")
 
 
 def reset(kind: str, data_dir: Path | None = None) -> None:

@@ -115,9 +115,9 @@ def load_portals(path: str | Path) -> PortalsConfig:
         raise ScraperError("portals-config", f"no such file: {p}")
     try:
         if p.suffix.lower() == ".json":
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
         else:
-            data = tomllib.loads(p.read_text())
+            data = tomllib.loads(p.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, json.JSONDecodeError) as e:
         raise ScraperError("portals-config", f"could not parse {p}: {e}") from e
     if not isinstance(data, dict):

@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "draft":
             contact = _build_contact(args)
-            master_md = Path(args.master).read_text() if args.master else ""
+            master_md = Path(args.master).read_text(encoding="utf-8") if args.master else ""
             if args.dry_run:
                 print(dry_run_prompt(contact, args.job, master_md=master_md,
                                      guidance=args.guidance))

@@ -65,7 +65,7 @@ def resolve_job(job: str) -> str:
 
     p = Path(job)
     if p.suffix.lower() in {".md", ".txt"} and p.exists():
-        return p.read_text()
+        return p.read_text(encoding="utf-8")
 
     if len(job.strip()) < 80:
         raise JobInputError(

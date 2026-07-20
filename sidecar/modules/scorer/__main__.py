@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="print assembled prompt; no LLM call")
     args = ap.parse_args(argv)
 
-    master_md = args.master.read_text()
+    master_md = args.master.read_text(encoding="utf-8")
 
     try:
         if args.dry_run:
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(report)
+        args.out.write_text(report, encoding="utf-8")
         print(f"wrote {args.out}", file=sys.stderr)
     else:
         print(report)

@@ -36,7 +36,7 @@ def _default_portals() -> dict[str, Any]:
     if not _REGISTRY_TOML.exists():
         return {}
     try:
-        return tomllib.loads(_REGISTRY_TOML.read_text())
+        return tomllib.loads(_REGISTRY_TOML.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         get_logger().warning("seed: could not read %s", _REGISTRY_TOML)
         return {}

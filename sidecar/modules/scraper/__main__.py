@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     lines = "".join(json.dumps(job.to_dict(), ensure_ascii=False) + "\n" for job in result.jobs)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(lines)
+        args.out.write_text(lines, encoding="utf-8")
         print(f"wrote {len(result.jobs)} job(s) to {args.out}", file=sys.stderr)
     else:
         sys.stdout.write(lines)

@@ -15,4 +15,4 @@ _HTML_COMMENT = re.compile(r"<!--.*?-->\n?", re.DOTALL)
 
 
 def load_skill_md(path: Path) -> str:
-    return _HTML_COMMENT.sub("", path.read_text())
+    return _HTML_COMMENT.sub("", path.read_text(encoding="utf-8"))
