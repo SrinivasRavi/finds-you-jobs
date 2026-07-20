@@ -174,10 +174,39 @@ pnpm run boot
 Step "Downloading the app's local Chromium (one-time, ~150 MB)"
 uv run playwright install chromium
 
+# Every real install so far (2026-07-18/19/20) ended here: a wall of setup
+# output, two commands printed as "do this next", and — from a fresh
+# terminal — no visible signal whether the reader actually ran them. Stop
+# leaving that as homework: start the app for them, unless Windows itself
+# has a restart pending (the standard reboot-pending registry markers —
+# Windows Update and CBS servicing flags, and a nonempty
+# PendingFileRenameOperations, the same three checks tools like sccm/psexec
+# use). The C++ Build Tools installer is the one step in this script that can
+# set these; a build against half-installed tools fails confusingly, so
+# restart first in that case instead of launching into it.
+function Test-PendingReboot {
+  if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { return $true }
+  if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { return $true }
+  $pfro = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+  return $null -ne $pfro
+}
+
 # The script's Set-Location doesn't persist into the user's shell when piped
-# via `irm | iex` — print the full path so the next command actually works.
-Write-Host "`nDone. Start the app with:" -ForegroundColor Green
-Write-Host ("    cd `"" + (Get-Location).Path + "`"")
-Write-Host "    pnpm dev"
-Write-Host "`nIf 'pnpm' or 'cargo' is not recognized, close this window, open a NEW PowerShell, and run the two commands above again." -ForegroundColor Yellow
-Write-Host "If an installer above said 'Restart your PC to finish installation' (the C++ Build Tools often do), restart before the first 'pnpm dev'." -ForegroundColor Yellow
+# via `irm | iex` — print the full path so a later manual run still works.
+$repoPath = (Get-Location).Path
+if (Test-PendingReboot) {
+  Write-Host "`nSetup finished — but Windows needs a restart first (an installer above requested it)." -ForegroundColor Yellow
+  Write-Host "Restart your PC, then open PowerShell and run:"
+  Write-Host ("    cd `"$repoPath`"")
+  Write-Host "    pnpm dev"
+} else {
+  Write-Host "`nSetup finished. Starting the app now — first launch compiles the desktop shell (a few minutes, one-time only)." -ForegroundColor Green
+  Write-Host "Keep THIS window open while the app runs (closing it or pressing Ctrl-C here quits the app). To start it again later:"
+  Write-Host ("    cd `"$repoPath`"")
+  Write-Host "    pnpm dev`n"
+  if (-not (Have pnpm)) {
+    Write-Host "'pnpm' isn't recognized in this window. Close it, open a NEW PowerShell, and run the two commands above." -ForegroundColor Yellow
+  } else {
+    pnpm dev
+  }
+}

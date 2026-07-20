@@ -86,17 +86,24 @@ FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev    # start with a separate, fresh profile
 **Open a terminal:** press the `Windows` key, type `PowerShell`, press Enter.
 
 **Install** (one copy-paste — installs git, the C++ build tools the desktop shell
-needs, and every dependency, and downloads the app into a `finds-you-jobs` folder
-in your current directory — or in your home folder if the current directory isn't
-writable, e.g. an admin PowerShell that starts in `System32`; the build-tools
-download is large, let it run):
+needs, and every dependency, downloads the app into a `finds-you-jobs` folder in
+your current directory (or your home folder if the current directory isn't
+writable, e.g. an admin PowerShell that starts in `System32`), then **starts the
+app automatically** — the build-tools download is large and the first launch
+compiles the desktop shell, so let it run, this can take a while):
 
 ```powershell
 irm https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.ps1 | iex
 ```
 
-**Start the app** (the script prints this with your real path at the end; if a
-command is "not recognized", close PowerShell, open a new one, and try again):
+Keep that PowerShell window open while the app runs — closing it or pressing
+Ctrl-C there quits the app. (The one exception: if an installer above asked you
+to restart your PC first, the script tells you and stops there instead of
+starting the app — restart, then run the two commands it prints.)
+
+**Start the app again later** (after the first install, from inside the
+`finds-you-jobs` folder; if a command is "not recognized", close PowerShell,
+open a new one, and try again):
 
 ```powershell
 cd finds-you-jobs
