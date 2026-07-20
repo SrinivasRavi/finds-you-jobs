@@ -44,6 +44,10 @@ if (-not (Have git)) {
   winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
   RefreshPath
 }
+if (-not (Have git)) {
+  Write-Host "`ngit is still not on PATH after installing it. Close this window, open a NEW PowerShell, and re-run the install command." -ForegroundColor Red
+  exit 1
+}
 git --version
 
 Step "Getting the code"
@@ -99,19 +103,29 @@ if (Test-Path $vsWhere) {
   if ($found) { $hasVc = $true }
 }
 if (-not $hasVc) {
-  winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+  # --source winget (not the default multi-source search): winget's OTHER
+  # source, msstore, needs a Microsoft Store account/region handshake and its
+  # certificate check has been observed failing outright on a fresh Windows
+  # VM (0x8a15005e, 2026-07-20) — a store-account problem with nothing to do
+  # with us. Every winget call below pins the source for the same reason
+  # (`git`, above, already did).
+  winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 }
 
 Step "WebView2 runtime (the app's window engine; usually already present on Windows 11)"
 $wv = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 if (-not (Test-Path $wv)) {
-  winget install --id Microsoft.EdgeWebView2Runtime -e --accept-package-agreements --accept-source-agreements
+  winget install --id Microsoft.EdgeWebView2Runtime -e --source winget --accept-package-agreements --accept-source-agreements
 }
 
 Step "Rust toolchain"
 if (-not (Have cargo)) {
-  winget install --id Rustlang.Rustup -e --accept-package-agreements --accept-source-agreements
+  winget install --id Rustlang.Rustup -e --source winget --accept-package-agreements --accept-source-agreements
   RefreshPath
+}
+if (-not (Have cargo)) {
+  Write-Host "`ncargo is still not on PATH after installing Rust. Close this window, open a NEW PowerShell, and re-run the install command." -ForegroundColor Red
+  exit 1
 }
 cargo --version
 
@@ -122,12 +136,20 @@ if (-not (Have uv)) {
   powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
   RefreshPath
 }
+if (-not (Have uv)) {
+  Write-Host "`nuv is still not on PATH after installing it. Close this window, open a NEW PowerShell, and re-run the install command." -ForegroundColor Red
+  exit 1
+}
 uv --version
 
 Step "Node + pnpm (for the UI)"
 if (-not (Have node)) {
-  winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
+  winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-package-agreements --accept-source-agreements
   RefreshPath
+}
+if (-not (Have node)) {
+  Write-Host "`nnode is still not on PATH after installing it. Close this window, open a NEW PowerShell, and re-run the install command." -ForegroundColor Red
+  exit 1
 }
 if (-not (Have pnpm)) {
   corepack enable pnpm
@@ -138,6 +160,10 @@ if (-not (Have pnpm)) {
   # without admin rights; npm's global dir is per-user, so this always works.
   npm install -g pnpm
   RefreshPath
+}
+if (-not (Have pnpm)) {
+  Write-Host "`npnpm is still not on PATH after installing it. Close this window, open a NEW PowerShell, and re-run the install command." -ForegroundColor Red
+  exit 1
 }
 node --version
 pnpm --version
