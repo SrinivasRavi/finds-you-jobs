@@ -96,10 +96,27 @@ if ((Test-Path package.json) -and (Select-String -Path package.json -Pattern '"n
 }
 
 Step "Microsoft C++ Build Tools (the desktop shell is compiled with these — a big one-time download)"
+# rustup's default host toolchain on ARM64 Windows is aarch64-pc-windows-msvc,
+# which needs the ARM64 MSVC toolset — a DIFFERENT component from the classic
+# x86/x64 one. Missing it produces "linker `link.exe` not found" at the first
+# `cargo run`, even after this step reports Build Tools present — the old
+# check only ever asked vswhere for the x86.x64 component, so on a machine
+# that already had that one (from an earlier attempt) it kept saying "done"
+# forever while cargo stayed broken (observed live, 2026-07-20/21). Require
+# whichever component this machine's real host architecture needs.
+# PROCESSOR_ARCHITEW6432 (only set when this PowerShell itself is running
+# under x64 emulation) carries the TRUE OS arch in that case; otherwise
+# PROCESSOR_ARCHITECTURE already is the true arch.
+$hostArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+$vcComponent = if ($hostArch -eq "ARM64") {
+  "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
+} else {
+  "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+}
 $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $hasVc = $false
 if (Test-Path $vsWhere) {
-  $found = & $vsWhere -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+  $found = & $vsWhere -products '*' -requires $vcComponent -property installationPath
   if ($found) { $hasVc = $true }
 }
 if (-not $hasVc) {
@@ -109,7 +126,12 @@ if (-not $hasVc) {
   # VM (0x8a15005e, 2026-07-20) — a store-account problem with nothing to do
   # with us. Every winget call below pins the source for the same reason
   # (`git`, above, already did).
-  winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+  # --force: without it, winget can skip re-invoking the installer entirely
+  # when it considers Build Tools "already installed" (a earlier attempt put
+  # it there) — but the VS bootstrapper itself correctly treats being run
+  # again with a different --add as a MODIFY of the existing install, adding
+  # just the missing component, not a reinstall of everything.
+  winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --force --accept-package-agreements --accept-source-agreements --override "--wait --passive --add $vcComponent --includeRecommended"
 }
 
 Step "WebView2 runtime (the app's window engine; usually already present on Windows 11)"
