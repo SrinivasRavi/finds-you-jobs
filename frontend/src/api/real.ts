@@ -46,6 +46,7 @@ import type {
   DiscoverySource,
   PromptSetting,
   WatchCompanyResult,
+  WatchlistEntry,
   ReachOutInput,
   ReachOutResult,
   ReferralCandidate,
@@ -759,6 +760,16 @@ export class RealApi {
       freshness_days: input.freshness_days,
       ui_state: ui,
     };
+    // Personal excludes merge over the stored map (a future key like
+    // `description` must survive a modal save that doesn't know about it).
+    if (input.excluded_companies !== undefined || input.excluded_keywords !== undefined) {
+      const stored = (cur.preferences.hard_excludes ?? {}) as Record<string, unknown>;
+      body.hard_excludes = {
+        ...stored,
+        ...(input.excluded_companies !== undefined ? { companies: input.excluded_companies } : {}),
+        ...(input.excluded_keywords !== undefined ? { keywords: input.excluded_keywords } : {}),
+      };
+    }
     // Only sent when the caller owns the decision (onboarding); the finder-
     // preferences modal edits scan prefs without touching the networking opt-in.
     if (input.networking_enabled !== undefined) {
@@ -823,6 +834,12 @@ export class RealApi {
         locations: (p.locations ?? []).map(String),
         freshness_days: p.freshness_days ?? 7,
         scrape_cadence: String(ui.scrape_cadence ?? "Every 24h"),
+        excluded_companies: (
+          ((p.hard_excludes ?? {}) as { companies?: unknown[] }).companies ?? []
+        ).map(String),
+        excluded_keywords: (
+          ((p.hard_excludes ?? {}) as { keywords?: unknown[] }).keywords ?? []
+        ).map(String),
       },
       observability: {
         content_logging: Boolean(ui.content_logging),
@@ -978,6 +995,17 @@ export class RealApi {
     company?: string;
   }): Promise<WatchCompanyResult> {
     return (await this.json("POST", "/api/discovery/watchlist", input)) as WatchCompanyResult;
+  }
+  async getWatchlist(): Promise<WatchlistEntry[]> {
+    const d = await this.req<{ entries: WatchlistEntry[] }>("/api/discovery/watchlist");
+    return d.entries;
+  }
+  async unwatchCompany(url: string): Promise<boolean> {
+    const d = await this.req<{ removed: boolean }>(
+      `/api/discovery/watchlist?url=${encodeURIComponent(url)}`,
+      { method: "DELETE" },
+    );
+    return d.removed;
   }
   async getDiscoveryAnalytics(): Promise<DiscoveryAnalytics> {
     return this.req<DiscoveryAnalytics>("/api/discovery/analytics");

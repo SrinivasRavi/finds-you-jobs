@@ -516,3 +516,42 @@ def test_watch_company_from_url_and_job_row(
     )
     assert bad.status_code == 422
     assert "no adapter recognizes" in bad.json()["detail"]
+
+
+def test_watchlist_roster_lists_and_removes_watched_rows_only(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _, client = app_client
+    client.post(
+        "/api/discovery/watchlist",
+        headers=AUTH,
+        json={"url": "https://boards.greenhouse.io/rosterco/jobs/1", "company": "RosterCo"},
+    )
+    roster = client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"]
+    assert roster == [
+        {
+            "url": "https://boards.greenhouse.io/rosterco",
+            "company": "RosterCo",
+            "adapter": "greenhouse",
+        }
+    ]
+    # Seeded (non-watched) registry rows never appear in the roster.
+    settings = client.get("/api/settings", headers=AUTH).json()
+    assert len(settings["preferences"]["portals_config"]["sources"]) > 1
+
+    removed = client.delete(
+        "/api/discovery/watchlist?url=https://boards.greenhouse.io/rosterco",
+        headers=AUTH,
+    ).json()
+    assert removed == {"removed": True}
+    assert client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"] == []
+    # Removing again is honest about the no-op; seeded rows stay intact.
+    again = client.delete(
+        "/api/discovery/watchlist?url=https://boards.greenhouse.io/rosterco",
+        headers=AUTH,
+    ).json()
+    assert again == {"removed": False}
+    after = client.get("/api/settings", headers=AUTH).json()
+    assert len(after["preferences"]["portals_config"]["sources"]) == len(
+        settings["preferences"]["portals_config"]["sources"]
+    ) - 1

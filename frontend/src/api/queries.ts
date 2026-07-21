@@ -51,6 +51,7 @@ export const qk = {
   onboarding: ["onboarding"] as const,
   settings: ["settings"] as const,
   discoverySources: ["discoverySources"] as const,
+  watchlist: ["watchlist"] as const,
   discoveryCredentials: ["discoveryCredentials"] as const,
   discoveryAnalytics: ["discoveryAnalytics"] as const,
   prompts: ["prompts"] as const,
@@ -221,6 +222,22 @@ export function useWatchCompany() {
     mutationFn: (input: { url?: string; job_id?: string; company?: string }) =>
       api.watchCompany(input),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.discoverySources });
+      qc.invalidateQueries({ queryKey: qk.settings });
+      qc.invalidateQueries({ queryKey: qk.watchlist });
+    },
+  });
+}
+/** The tracked-companies roster (Job finder preferences) — `watched` rows. */
+export function useWatchlist() {
+  return useQuery({ queryKey: qk.watchlist, queryFn: () => api.getWatchlist() });
+}
+export function useUnwatchCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) => api.unwatchCompany(url),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.watchlist });
       qc.invalidateQueries({ queryKey: qk.discoverySources });
       qc.invalidateQueries({ queryKey: qk.settings });
     },

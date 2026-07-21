@@ -24,7 +24,9 @@ import {
   useTrash,
   useTrashJob,
   useTriggerScan,
+  useUnwatchCompany,
   useWatchCompany,
+  useWatchlist,
 } from "../api/queries";
 import { JobTombstonedError, type BoardPage, type Job, type JobDraft } from "../api/types";
 import { Icon } from "../shell/icons";
@@ -1028,6 +1030,102 @@ function RadioRow({
   );
 }
 
+// Tracked companies (job-finder-preferences design 2026-07-21): the roster
+// view of the `watched` [[sources]] rows the per-job "Watch company" action
+// writes — same data, now listable/removable/addable from one place.
+function TrackedCompanies() {
+  const { data: entries } = useWatchlist();
+  const watchCompany = useWatchCompany();
+  const unwatch = useUnwatchCompany();
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState("");
+
+  async function add() {
+    if (!url.trim()) return;
+    setError("");
+    try {
+      await watchCompany.mutateAsync({ url: url.trim() });
+      setUrl("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <section className="space-y-2" data-testid="fp-tracked-companies">
+      <header>
+        <h3 className="text-[13px] font-semibold text-ink">Tracked companies</h3>
+        <p className="text-[11.5px] text-ink-3">
+          Boards every scan covers. Add one by pasting a careers page on a supported ATS, or use
+          “Watch company” on any job.
+        </p>
+      </header>
+      <ul className="space-y-1">
+        {(entries ?? []).map((e) => (
+          <li
+            key={e.url}
+            className="flex items-center justify-between gap-2 rounded-7 border border-border-2 bg-surface px-2.5 py-1.5"
+            data-testid="fp-tracked-row"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-[12.5px] font-medium text-ink">
+                {e.company || e.url}
+              </div>
+              <div className="truncate font-mono text-[11px] text-ink-3">
+                {e.adapter ? `${e.adapter} · ` : ""}
+                {e.url}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => unwatch.mutate(e.url)}
+              className="text-ink-3 hover:text-bad"
+              aria-label="Stop tracking"
+              data-testid="fp-tracked-remove"
+            >
+              ×
+            </button>
+          </li>
+        ))}
+        {(entries ?? []).length === 0 ? (
+          <li className="rounded-7 border border-dashed border-border-2 px-2.5 py-1.5 text-[12px] text-ink-3">
+            Nothing tracked yet.
+          </li>
+        ) : null}
+      </ul>
+      <div className="flex items-center gap-2">
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void add();
+            }
+          }}
+          placeholder="https://boards.greenhouse.io/…"
+          data-testid="fp-tracked-url"
+          className="h-[30px] flex-1 rounded-7 border border-border-2 bg-surface px-2 text-[12.5px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => void add()}
+          disabled={watchCompany.isPending || !url.trim()}
+          data-testid="fp-tracked-add"
+          className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {watchCompany.isPending ? "Adding…" : "Track"}
+        </button>
+      </div>
+      {error ? (
+        <p className="text-[11.5px] text-bad" data-testid="fp-tracked-error">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 // Freshness label ⇄ days (0 = "Any" = no freshness window, ScanPrefs semantics).
 const FINDER_FRESHNESS_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, Any: 0 };
 const FINDER_FRESHNESS_LABEL: Record<number, string> = { 1: "24h", 7: "7d", 30: "30d", 0: "Any" };
@@ -1049,6 +1147,12 @@ function FinderPrefsModal({
     FINDER_FRESHNESS_LABEL[settings?.job_prefs.freshness_days ?? 7] ?? "7d",
   );
   const [cadence, setCadence] = useState(settings?.job_prefs.scrape_cadence ?? "Every 24h");
+  const [excludedCompanies, setExcludedCompanies] = useState<string[]>(
+    settings?.job_prefs.excluded_companies ?? [],
+  );
+  const [excludedKeywords, setExcludedKeywords] = useState<string[]>(
+    settings?.job_prefs.excluded_keywords ?? [],
+  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const { data: profile } = useProfile();
@@ -1065,6 +1169,8 @@ function FinderPrefsModal({
         locations,
         freshness_days: FINDER_FRESHNESS_DAYS[freshness] ?? 7,
         scrape_cadence: cadence,
+        excluded_companies: excludedCompanies,
+        excluded_keywords: excludedKeywords,
       });
       await qc.invalidateQueries({ queryKey: qk.settings });
       triggerScan.mutate(); // rescan now runs against the values just saved
@@ -1106,6 +1212,24 @@ function FinderPrefsModal({
           placeholder="Add a location…"
           testid="fp-locations"
         />
+        <PrefChipInput
+          label="Excluded companies"
+          hint="Never show jobs from these companies (current employer, blocklist). Word-boundary match."
+          items={excludedCompanies}
+          onAdd={(v) => setExcludedCompanies((r) => (r.includes(v) ? r : [...r, v]))}
+          onRemove={(v) => setExcludedCompanies((r) => r.filter((x) => x !== v))}
+          placeholder="Add a company…"
+          testid="fp-exclude-companies"
+        />
+        <PrefChipInput
+          label="Excluded keywords"
+          hint="Skip postings whose description contains any of these (e.g. “unpaid”, “clearance required”)."
+          items={excludedKeywords}
+          onAdd={(v) => setExcludedKeywords((r) => (r.includes(v) ? r : [...r, v]))}
+          onRemove={(v) => setExcludedKeywords((r) => r.filter((x) => x !== v))}
+          placeholder="Add a keyword…"
+          testid="fp-exclude-keywords"
+        />
         <section className="space-y-2">
           <header>
             <h3 className="text-[13px] font-semibold text-ink">Posting freshness</h3>
@@ -1136,6 +1260,7 @@ function FinderPrefsModal({
             testid="fp-cadence"
           />
         </section>
+        <TrackedCompanies />
         <section className="space-y-2">
           <header>
             <h3 className="text-[13px] font-semibold text-ink">Master resume</h3>

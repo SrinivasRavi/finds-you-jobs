@@ -216,7 +216,10 @@ async def watch_company(
             for raw in sources
         )
         if not already:
-            row: dict = {"url": source_url}
+            # `watched` marks the row as user-tracked so the roster view can
+            # tell it apart from the seeded registry. Unknown keys are ignored
+            # by the portals parser, so scans are unaffected.
+            row: dict = {"url": source_url, "watched": True}
             if company:
                 row["company"] = company
             sources.append(row)
@@ -225,6 +228,55 @@ async def watch_company(
     return dto.WatchCompanyResult(
         added=not already, source_url=source_url, adapter=adapter_id, company=company
     )
+
+
+@router.get("/api/discovery/watchlist")
+async def list_watched_companies(request: Request) -> dto.WatchlistDTO:
+    """The tracked-companies roster: user-added (`watched`) board rows from
+    `portals_config.sources`. Rows added before the marker existed don't
+    appear — they keep scanning; re-watching stamps them."""
+    with _db(request).repos() as repos:
+        prefs = repos.preferences.get_or_create()
+        sources = (prefs.portals_config or {}).get("sources", [])
+    entries = []
+    for raw in sources:
+        if not (isinstance(raw, dict) and raw.get("watched") and raw.get("url")):
+            continue
+        resolved = adapters.resolve(SourceEntry(url=str(raw["url"])))
+        entries.append(
+            dto.WatchlistEntryDTO(
+                url=str(raw["url"]),
+                company=str(raw.get("company", "")),
+                adapter=resolved[0].ID if resolved else "",
+            )
+        )
+    return dto.WatchlistDTO(entries=entries)
+
+
+@router.delete("/api/discovery/watchlist")
+async def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
+    """Remove a tracked company board (by its source URL). Only `watched`
+    rows are removable here — the seeded registry isn't editable from the
+    roster; source families are toggled in Settings → Discovery sources."""
+    target = url.rstrip("/")
+    with _db(request).repos() as repos:
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        sources = list(portals.get("sources", []))
+        kept = [
+            raw
+            for raw in sources
+            if not (
+                isinstance(raw, dict)
+                and raw.get("watched")
+                and str(raw.get("url", "")).rstrip("/") == target
+            )
+        ]
+        removed = len(kept) != len(sources)
+        if removed:
+            portals["sources"] = kept
+            repos.preferences.update(portals_config=portals)
+    return dto.WatchRemoveResult(removed=removed)
 
 
 # -- per-source efficacy analytics (Analytics → Discovery tab) ---------------
