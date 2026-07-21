@@ -15,7 +15,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Emitter, Manager};
 
 // --- Decided lifecycle numbers (architecture §4.4 / ROADMAP §A0.5) ---
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20); // AM1
@@ -33,9 +34,13 @@ const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10); // AM3
 // still detected immediately via try_wait inside the grace.
 const STARTUP_GRACE: Duration = Duration::from_secs(180);
 
-/// PROD sidecar binary (PyInstaller onedir) relative to the app resource dir.
-/// Wired at packaging time (A0.6 / Track A5); placeholder constant for now —
-/// dev uses `uv run python -m sidecar.app` instead.
+/// PROD sidecar binary (PyInstaller onedir), resolved against the packaged
+/// app's resource dir at spawn time — resolve_prod_sidecar_bin() below.
+/// Matches `bundle.resources` in tauri.conf.json and the onedir COLLECT name
+/// in sidecar/fyj-sidecar.spec (docs/internal/distribution.md §8).
+#[cfg(windows)]
+const PROD_SIDECAR_REL: &str = "sidecar/fyj-sidecar.exe";
+#[cfg(not(windows))]
 const PROD_SIDECAR_REL: &str = "sidecar/fyj-sidecar";
 
 #[derive(Clone, Debug, Serialize)]
@@ -81,21 +86,30 @@ pub fn dev_cwd() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn build_command(cwd: &Path) -> Command {
+/// The packaged sidecar binary's absolute path, resolved from the app's
+/// bundled resource dir (`bundle.resources` in tauri.conf.json ships the
+/// PyInstaller onedir output as `sidecar/`). Dev never calls this — it runs
+/// `uv run python -m sidecar.app` instead, which needs no resource dir.
+fn resolve_prod_sidecar_bin(app: &AppHandle) -> std::io::Result<PathBuf> {
+    app.path()
+        .resolve(PROD_SIDECAR_REL, BaseDirectory::Resource)
+        .map_err(|err| Error::other(format!("resolve sidecar resource path: {err}")))
+}
+
+fn build_command(cwd: &Path, app: &AppHandle) -> std::io::Result<Command> {
     if cfg!(debug_assertions) {
         let mut cmd = Command::new("uv");
         cmd.args(["run", "python", "-m", "sidecar.app"])
             .current_dir(cwd);
-        cmd
+        Ok(cmd)
     } else {
-        // PROD path finalized at packaging (A0.6). Constant kept clearly marked.
-        Command::new(PROD_SIDECAR_REL)
+        Ok(Command::new(resolve_prod_sidecar_bin(app)?))
     }
 }
 
 /// Spawn the sidecar and block until the handshake arrives or 20 s elapses.
-pub fn spawn_once(cwd: &Path) -> std::io::Result<(Child, SidecarInfo)> {
-    let mut cmd = build_command(cwd);
+pub fn spawn_once(cwd: &Path, app: &AppHandle) -> std::io::Result<(Child, SidecarInfo)> {
+    let mut cmd = build_command(cwd, app)?;
     cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
     // The sidecar's orphan watchdog watches THIS pid (not just its immediate
     // parent, which in dev is the `uv run` wrapper that outlives us) — so a
@@ -337,7 +351,7 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
         // Restart: kill the old group, respawn, publish the new handshake.
         kill_group(child.id());
         let _ = child.wait();
-        match spawn_once(&cwd) {
+        match spawn_once(&cwd, &app) {
             Ok((new_child, info)) => {
                 {
                     let mut s = state.lock().unwrap();

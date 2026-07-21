@@ -176,7 +176,7 @@ pub fn run() {
             let inner = state.inner.clone();
             let cwd = dev_cwd();
 
-            match spawn_once(&cwd) {
+            match spawn_once(&cwd, app.handle()) {
                 Ok((child, info)) => {
                     {
                         let mut guard = inner.lock().unwrap();
