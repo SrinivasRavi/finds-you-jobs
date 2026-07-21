@@ -45,10 +45,34 @@ you from your own LinkedIn account.★
 
 ## Install
 
-Follow steps as per your OS. (Changed your mind later? Everything below can be
-removed cleanly — see [Uninstall](#uninstall).)
+**Download the installer for your OS** — no terminal, no build steps:
+
+### [⬇ Download finds-you-jobs v0.5.1-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.1-beta)
+
+| Your computer | Download this file | On first launch |
+|---|---|---|
+| **Windows** 10/11 | `finds-you-jobs_0.5.1-beta_x64-setup.exe` | SmartScreen warns because the beta isn't code-signed yet: click **More info → Run anyway** |
+| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.1-beta_aarch64.dmg` | Gatekeeper blocks unsigned apps: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** |
+| **Mac** (Intel) | `finds-you-jobs_0.5.1-beta_x64.dmg` | same as above |
+| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.1-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
+| **Linux** (any distro, portable) | `finds-you-jobs_0.5.1-beta_amd64.AppImage` | `chmod +x` the file, then run it |
+
+The warnings exist only because the installers aren't code-signed yet — signing
+is paid for and in progress (waiting on Apple/Microsoft identity review, not on
+the code). Every release is built in public by [GitHub Actions](.github/workflows/release.yml)
+from the source in this repo. All versions live on the
+[releases page](https://github.com/SrinivasRavi/finds-you-jobs/releases).
+
+The app then walks you through onboarding: paste your resume, set your job
+preferences, pick an AI provider, and add your key.
+
+(Changed your mind later? Everything can be removed cleanly — see
+[Uninstall](#uninstall).)
 
 ---
+
+<details>
+<summary><strong>Install from source instead</strong> (developers, or any platform the installers don't cover yet)</summary>
 
 ### macOS
 
@@ -148,13 +172,10 @@ git fetch --tags && git checkout v0.5.1 && pnpm run boot   # update to the lates
 FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev               # start with a separate, fresh profile
 ```
 
----
+**First launch from source:** the first `pnpm dev` compiles the desktop shell and
+can take a few minutes; later launches are fast.
 
-## First launch
-
-The first `pnpm dev` compiles the desktop shell and can take a few minutes; later
-launches are fast. The app then walks you through onboarding: paste your resume,
-set your job preferences, pick an AI provider, and add your key.
+</details>
 
 ## What it does
 
@@ -173,7 +194,14 @@ set your job preferences, pick an AI provider, and add your key.
 
 ## Uninstall
 
-Removing finds-you-jobs is as clean as installing it. Quit the app first, then
+**Installed from a downloaded installer?** Quit the app, then: on **Windows**,
+uninstall it from Settings → Apps (or Control Panel → Programs); on **macOS**,
+drag `finds-you-jobs.app` from Applications to the Trash; on **Linux**,
+`sudo apt remove finds-you-jobs` (or delete the AppImage file). To also remove
+your data, run the "Delete your data" step for your OS below — the rest of the
+steps below only apply to source installs.
+
+**Installed from source?** Removing finds-you-jobs is as clean as installing it. Quit the app first, then
 work through the steps for your OS: **step 1** removes the app, **step 2**
 removes your data, **step 3** removes the developer tools the installer set up.
 Steps 1 and 2 are always safe. In step 3, each line says what it removes —
