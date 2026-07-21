@@ -75,7 +75,7 @@ cd finds-you-jobs && pnpm dev
 
 ```bash
 pnpm dev                                             # start the app
-git fetch --tags && git checkout v0.6.0 && pnpm run boot   # update to the latest release
+git fetch --tags && git checkout v0.5.1 && pnpm run boot   # update to the latest release
 FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev               # start with a separate, fresh profile
 ```
 
@@ -115,7 +115,7 @@ uses `;` between commands, not `&&`):
 
 ```powershell
 pnpm dev                                              # start the app
-git fetch --tags; git checkout v0.6.0; pnpm run boot  # update to the latest release
+git fetch --tags; git checkout v0.5.1; pnpm run boot  # update to the latest release
 $env:FYJ_DATA_DIR="$HOME\fyj-test"; pnpm dev           # start with a separate, fresh profile
 ```
 
@@ -144,7 +144,7 @@ cd finds-you-jobs && pnpm dev
 
 ```bash
 pnpm dev                                             # start the app
-git fetch --tags && git checkout v0.6.0 && pnpm run boot   # update to the latest release
+git fetch --tags && git checkout v0.5.1 && pnpm run boot   # update to the latest release
 FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev               # start with a separate, fresh profile
 ```
 

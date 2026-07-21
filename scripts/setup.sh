@@ -13,7 +13,7 @@ REPO_URL="https://github.com/SrinivasRavi/finds-you-jobs.git"
 # Pinned to a tagged release, not `main` — `main` is a live dev branch and a
 # bad push there must not be able to brick every fresh install on the next
 # curl. Bump this on every release (see RELEASING.md).
-LATEST_TAG="v0.6.0"
+LATEST_TAG="v0.5.1"
 BLUE=$'\033[1;34m'; GREEN=$'\033[1;32m'; NC=$'\033[0m'
 step() { echo; echo "${BLUE}==> $1${NC}"; }
 have() { command -v "$1" >/dev/null 2>&1; }
