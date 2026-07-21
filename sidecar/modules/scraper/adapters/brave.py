@@ -22,7 +22,7 @@ from urllib.parse import quote
 from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import USER_AGENT, Fetcher
-from ..searchquery import build_queries
+from ..searchquery import build_queries, select_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "brave"
@@ -76,8 +76,8 @@ def search(entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher) -> list[Norma
     if not queries:
         raise ScraperError(
             ID,
-            "Brave search needs at least one role alias — set roles in "
-            "onboarding/preferences",
+            "Brave search needs at least one role alias or search term — set "
+            "roles in onboarding/preferences",
         )
 
     headers = {
@@ -87,7 +87,7 @@ def search(entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher) -> list[Norma
     }
     jobs: list[NormalizedJob] = []
     errors: list[str] = []
-    for q in queries[:MAX_PAIRS]:
+    for q in select_queries(queries, MAX_PAIRS):
         for site in ATS_SITES:
             term = f"site:{site} {q.keyword}"
             if q.location:

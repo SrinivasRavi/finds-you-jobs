@@ -108,6 +108,12 @@ class ScanPrefs:
     salary_min: int = 0
     salary_max: int = 0
     salary_currency: str = ""
+    # User-authored search terms (constrained free-form `search_queries` —
+    # design locked 2026-07-21): each term rides the search adapters' existing
+    # query templates as an extra location-less keyword (Brave keeps its
+    # ATS_SITES allowlist; parsers keep their graceful fallbacks). Never raw
+    # query syntax with its own `site:` targets.
+    search_terms: list[str] = field(default_factory=list)
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20

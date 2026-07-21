@@ -47,6 +47,7 @@ Shape (see `sidecar/modules/scraper/portals.example.toml`):
     [scan]
     max_age_days = 0             # 0 = off
     per_source_cap = 0           # 0 = uncapped (never self-throttle by default)
+    search_terms = []            # extra user-authored terms for search sources
 """
 
 from __future__ import annotations
@@ -154,6 +155,7 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
         salary_min=int(salary.get("min", 0)),
         salary_max=int(salary.get("max", 0)),
         salary_currency=str(salary.get("currency", "")),
+        search_terms=_str_list(scan_opts.get("search_terms", []), "scan.search_terms"),
         max_age_days=int(scan_opts.get("max_age_days", 0)),
         per_source_cap=int(scan_opts.get("per_source_cap", 0)),
         timeout_s=int(scan_opts.get("timeout_s", 20)),
