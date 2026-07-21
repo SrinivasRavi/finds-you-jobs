@@ -21,6 +21,7 @@ When third-party material is added, the same change must:
 - **What is not carried:** no career-ops runtime code. The module `.py` implementations are independently written; behavioral inspiration is documented, not copied.
 - Verbatim source snapshots of the six distilled upstream files ship publicly at `third_party/career-ops@8369b40/` (with the upstream MIT LICENSE and a provenance README) so every distillation is reviewable against its source in the distributed tree.
 - The MIT grant and copyright notice for the carried portions remain with career-ops; nothing here relabels that material as AGPL-only.
+- **Referenced — NOT carried (design):** the discovery module's filter/config/quality layer (`sidecar/modules/scraper/{config,filters,types,quality,salary}.py` and several adapters) follows career-ops's `portals.yml` filter model and named heuristics (the #1169/#1101 word-boundary lessons; `content_filter`/`visa_filter`/`salary_filter` semantics), and `sidecar/modules/scraper/fingerprint.py` reimplements the SimHash cross-posting-detection technique documented by career-ops's `fingerprint-core.mjs` (64-bit SimHash over 3-token shingles, 0.92 similarity threshold). These are design references with inline citations; no career-ops source text or code is copied, so nothing additional is license-carried.
 
 ### OpenOutreach — GPL-3.0-only (LinkedIn/Voyager core, carried directly)
 

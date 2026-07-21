@@ -29,6 +29,7 @@ from .filters import (
     passes_title,
     passes_visa,
 )
+from .fingerprint import is_probable_cross_listing, simhash64
 from .http import Fetcher
 from .quality import assess, is_structurally_broken
 from .types import NormalizedJob, ScanPrefs, ScanResult, ScraperError, SourceReport
@@ -155,6 +156,21 @@ def _merge_report(result: ScanResult, outcome: _FetchOutcome) -> SourceReport:
     return existing
 
 
+def _flag_cross_listings(jobs: list[NormalizedJob]) -> None:
+    """Annotate probable cross-listings (same JD text, different canonical
+    URL — the dedup layer URL identity can't catch). Flag both rows with the
+    first counterpart's URL; never drop or merge — collapsing genuinely
+    distinct postings is the failure mode this deliberately avoids."""
+    printed = [(job, simhash64(job.description)) for job in jobs if job.description]
+    for i, (job_a, fp_a) in enumerate(printed):
+        for job_b, fp_b in printed[i + 1 :]:
+            if not is_probable_cross_listing(fp_a, fp_b):
+                continue
+            for job, other in ((job_a, job_b), (job_b, job_a)):
+                if not any(f.startswith("probable-cross-listing:") for f in job.trust_flags):
+                    job.trust_flags.append(f"probable-cross-listing:{other.canonical_url}")
+
+
 def scan(
     portals_config: str | Path | PortalsConfig,
     prefs: ScanPrefs | None = None,
@@ -264,5 +280,11 @@ def scan(
         else:
             for bucket in buckets:
                 _enrich_source(bucket, prefs, now, fetcher_factory)
+
+    # -- cross-posting annotation (content identity; after enrich so late-
+    # arriving JDs participate). Within-scan only for now — the 90-day
+    # scan-history window needs a fingerprint column (schema change, gated
+    # on a maintainer checkpoint).
+    _flag_cross_listings(result.jobs)
 
     return result
