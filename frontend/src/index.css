@@ -56,8 +56,10 @@
   --border: #374151;
   --border-2: #4b5563;
 
-  --accent: #4dc2c2;
-  --accent-ink: #8be0e0;
+  /* Dimmer than light mode's relative pop on purpose (maintainer 2026-07-22:
+     full-brightness #4dc2c2 buttons glare against the dark surfaces). */
+  --accent: #379b9b;
+  --accent-ink: #7ed0d0;
   --accent-wash: #103b3b;
 
   --good: #34d399;
