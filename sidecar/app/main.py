@@ -43,10 +43,15 @@ from .watchdog import watch_parent
 # §4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
 SHUTDOWN_DRAIN_SECONDS = 10.0
 
-# The webview loads from tauri://localhost (prod) / a locked CSP; the
-# browser-dev path serves from 127.0.0.1:1420. Loopback-only regex — the whole
-# surface is 127.0.0.1 by design (§4.2).
-_LOOPBACK_ORIGIN_RE = r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$"
+# The webview loads from tauri://localhost (macOS/Linux) or
+# http://tauri.localhost (Windows/Android) in prod; the browser-dev path
+# serves from 127.0.0.1:1420. The comment above already documented the prod
+# origin, but the regex itself never actually matched it (only http(s)://
+# loopback) — every real fetch from a packaged build failed CORS silently,
+# invisible until now because no packaged build had ever been run+tested
+# (docs/internal/distribution.md §2/§7). Loopback-only by design otherwise
+# (§4.2) — this only widens it to the exact schemes Tauri itself uses.
+_LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
 def create_app(
