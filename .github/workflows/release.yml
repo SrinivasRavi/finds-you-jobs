@@ -1,0 +1,172 @@
+name: Release (beta, unsigned)
+
+# Push to the `release` branch → native builds on every OS → one GitHub
+# Release tagged `v<version>-beta`, marked pre-release, with every installer
+# attached. "Merge and forget": nothing here needs a manual re-run once the
+# push lands (docs/internal/distribution.md §7).
+#
+# Why it looks the way it does:
+# - Native runners per OS/arch, never cross-compiled: PyInstaller cannot
+#   cross-compile the sidecar at all, and macOS universal2 is a gamble this
+#   dependency set doesn't support (distribution.md §1).
+# - `-beta` lives in the tag and the *filenames only*. The embedded bundle
+#   version stays strictly numeric ("0.5.1") because WiX/MSI rejects
+#   non-numeric pre-release suffixes outright — that was a real build
+#   failure, not a hypothetical (distribution.md §2a).
+# - Everything is unsigned for now, deliberately: ship unsigned before ship
+#   late (distribution.md §1). Signing env vars slot into the build step
+#   later without changing this workflow's shape.
+# - fail-fast off + release publishes whatever legs succeeded: one broken
+#   leg (Linux is the least-proven) must not block the download button for
+#   the platforms that work. The failed leg still shows red in CI.
+on:
+  push:
+    branches:
+      - release
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon, native
+            label: macos-arm64
+          - os: macos-13 # Intel, native
+            label: macos-x64
+          - os: windows-latest
+            label: windows-x64
+          - os: ubuntu-22.04
+            label: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (Tauri prerequisites)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl \
+            wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      - name: Install uv
+        # No `python-version:` input — astral-sh/setup-uv doesn't have one;
+        # `.python-version` (3.13) is the source of truth (see
+        # build-windows.yml for the history).
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install pnpm
+        # No explicit `version:` — package.json's `packageManager` field is
+        # the single source of truth; pnpm/action-setup errors if both are
+        # given.
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install project dependencies
+        run: pnpm boot
+
+      - name: Build the PyInstaller sidecar
+        # Build-only tooling (pyproject.toml's `build` dependency group),
+        # kept out of the default dev install.
+        run: |
+          uv sync --group build
+          uv run pyinstaller sidecar/fyj-sidecar.spec --noconfirm
+
+      - name: Build the app (codegen + frontend + tauri bundle)
+        run: pnpm run build
+
+      - name: Collect installers, stamp -beta into filenames
+        # `-beta` is added HERE, to the distributed filenames only — the
+        # embedded version must stay numeric for MSI (see header comment).
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          mkdir -p dist-beta
+          shopt -s nullglob
+          for f in src-tauri/target/release/bundle/nsis/*.exe \
+                   src-tauri/target/release/bundle/msi/*.msi \
+                   src-tauri/target/release/bundle/dmg/*.dmg \
+                   src-tauri/target/release/bundle/deb/*.deb \
+                   src-tauri/target/release/bundle/appimage/*.AppImage \
+                   src-tauri/target/release/bundle/rpm/*.rpm; do
+            base=$(basename "$f")
+            cp "$f" "dist-beta/${base/${VERSION}/${VERSION}-beta}"
+          done
+          ls -la dist-beta
+          [ -n "$(ls -A dist-beta)" ] # fail loudly if nothing was bundled
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-${{ matrix.label }}
+          path: dist-beta/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    # Publish whatever legs succeeded even if one failed (header comment) —
+    # but never on cancellation.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Refuse to publish an empty release
+        run: |
+          ls -la dist
+          [ -n "$(ls -A dist)" ]
+
+      - name: Create/update the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}-beta
+          name: finds-you-jobs v${{ steps.ver.outputs.version }}-beta
+          prerelease: true
+          files: dist/*
+          body: |
+            **Beta build — unsigned installers.** Your OS will warn you the
+            first time; that's expected until code signing lands (it's
+            funded and in progress, waiting on Apple/Microsoft identity
+            review — not on the code).
+
+            | OS | Download | First-launch note |
+            |---|---|---|
+            | Windows | the `*-setup.exe` (NSIS) — or the `.msi` if you prefer | SmartScreen: **More info → Run anyway** |
+            | macOS (Apple Silicon) | the `*_aarch64.dmg` | Gatekeeper: **System Settings → Privacy & Security → Open Anyway** |
+            | macOS (Intel) | the `*_x64.dmg` | same as above |
+            | Linux | the `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` (Fedora) | `chmod +x` the AppImage |
+
+            The app is fully local: your data stays on your machine, and LLM
+            calls go directly to the provider whose key you bring.

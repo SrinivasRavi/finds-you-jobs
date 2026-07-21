@@ -8,15 +8,6 @@ name: Build Windows installer (unsigned)
 # whole packaging effort is built around (distribution.md §1).
 on:
   workflow_dispatch:
-  # TEMPORARY, remove before merge: `workflow_dispatch` only becomes
-  # dispatchable once a workflow file exists on the repo's default branch
-  # (a GitHub platform constraint, not something this branch can route
-  # around) — this push trigger is the only way to run it from a feature
-  # branch to get the first real build. Scoped to this exact branch so it
-  # doesn't linger as a trigger once merged.
-  push:
-    branches:
-      - packaging/windows-installer
 
 permissions:
   contents: read
