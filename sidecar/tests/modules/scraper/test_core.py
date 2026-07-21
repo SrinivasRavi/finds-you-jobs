@@ -15,7 +15,13 @@ import pytest
 
 from sidecar.modules.scraper.canonical import canonicalize_url
 from sidecar.modules.scraper.config import load_portals, parse_portals
-from sidecar.modules.scraper.filters import keyword_match, passes_location, passes_title
+from sidecar.modules.scraper.filters import (
+    keyword_match,
+    passes_company,
+    passes_content,
+    passes_location,
+    passes_title,
+)
 from sidecar.modules.scraper.quality import assess, is_structurally_broken
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScraperError
 
@@ -94,6 +100,30 @@ def test_location_unknown_passes():
     assert passes_location("", ScanPrefs(location_allow=["india"]))
 
 
+def test_company_block_excludes_matching_company():
+    prefs = ScanPrefs(company_block=["Meta"])
+    assert not passes_company("Meta", prefs)
+    assert passes_company("Metabase", prefs)  # word-boundary — no substring hit
+
+
+def test_company_unknown_passes():
+    assert passes_company("", ScanPrefs(company_block=["Meta"]))
+
+
+def test_content_block_wins_over_allow():
+    prefs = ScanPrefs(content_allow=["python"], content_block=["unpaid"])
+    assert passes_content("Python backend role, full pay", prefs)
+    assert not passes_content("Python role, unpaid trial period", prefs)
+
+
+def test_content_empty_allow_passes_everything():
+    assert passes_content("Anything at all", ScanPrefs())
+
+
+def test_content_unknown_description_passes():
+    assert passes_content("", ScanPrefs(content_allow=["python"]))
+
+
 # --- quality (annotate, never drop valid rows) ---
 
 
@@ -153,6 +183,10 @@ allow = ["software engineer"]
 [filters.location]
 allow = ["india"]
 always_allow = ["remote"]
+[filters.company]
+block = ["Example Corp"]
+[filters.content]
+block = ["unpaid internship"]
 [scan]
 max_age_days = 30
 """
@@ -163,6 +197,8 @@ max_age_days = 30
     assert config.sources[1].board == "remoteok"
     assert config.prefs.title_allow == ["software engineer"]
     assert config.prefs.location_always_allow == ["remote"]
+    assert config.prefs.company_block == ["Example Corp"]
+    assert config.prefs.content_block == ["unpaid internship"]
     assert config.prefs.max_age_days == 30
     assert config.prefs.per_source_cap == 0  # default: never self-throttle
 

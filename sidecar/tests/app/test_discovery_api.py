@@ -51,6 +51,37 @@ def test_catalog_lists_every_family_enabled_by_default(
     assert by_id["linkedin"]["kind"] == "search"
 
 
+def test_hard_excludes_wire_into_effective_scan_prefs(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """`UserPreferences.hard_excludes` (companies/keywords) reaches the real
+    scan's `ScanPrefs.company_block`/`content_block` — job-finder-preferences
+    design, docs/internal/discovery.md. Also covers the "excludes only, no
+    other preferences set" edge case that `resolve_scan_prefs` used to miss
+    entirely (it returned None and dropped everything from the DB)."""
+    app, client = app_client
+    resp = client.post(
+        "/api/settings",
+        headers=AUTH,
+        json={"hard_excludes": {"companies": ["Meta"], "keywords": ["unpaid"]}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["preferences"]["hard_excludes"] == {
+        "companies": ["Meta"],
+        "keywords": ["unpaid"],
+    }
+
+    from sidecar.app.registry.persistence import resolve_portals, resolve_scan_prefs
+
+    db = app.state.db
+    with db.repos() as repos:
+        portals = resolve_portals({}, repos)
+        prefs = resolve_scan_prefs({}, repos=repos, portals=portals)
+    assert prefs is not None  # excludes alone must not fall through to None
+    assert "Meta" in prefs.company_block
+    assert "unpaid" in prefs.content_block
+
+
 def test_toggle_persists_and_scan_skips_family(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:

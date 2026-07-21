@@ -50,3 +50,24 @@ def passes_location(location: str, prefs: ScanPrefs) -> bool:
     if not prefs.location_allow or not location.strip():
         return True
     return keyword_match(location, prefs.location_allow)
+
+
+def passes_company(company: str, prefs: ScanPrefs) -> bool:
+    """Block-only gate. Unknown (empty) company always passes — can't exclude
+    what we don't know (rank-don't-gate, same stance as unknown location)."""
+    if not company.strip():
+        return True
+    return not keyword_match(company, prefs.company_block)
+
+
+def passes_content(description: str, prefs: ScanPrefs) -> bool:
+    """Block wins over allow; empty allow-list means everything passes.
+    Empty description always passes — no signal to filter on, not a reason to
+    drop a row (rank-don't-gate)."""
+    if not description.strip():
+        return True
+    if keyword_match(description, prefs.content_block):
+        return False
+    if not prefs.content_allow:
+        return True
+    return keyword_match(description, prefs.content_allow)

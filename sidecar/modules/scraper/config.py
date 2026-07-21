@@ -27,6 +27,12 @@ Shape (see `sidecar/modules/scraper/portals.example.toml`):
     allow = ["india", "remote"]
     block = []
     always_allow = []
+    [filters.company]
+    block = ["Example Corp"]     # cross-cutting exclude, not a curated-list removal —
+                                 # see ScanPrefs.company_block
+    [filters.content]
+    allow = []                  # description keywords; block wins over allow
+    block = ["unpaid internship"]
     [scan]
     max_age_days = 0             # 0 = off
     per_source_cap = 0           # 0 = uncapped (never self-throttle by default)
@@ -89,6 +95,8 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
     filters = data.get("filters", {})
     title = filters.get("title", {}) if isinstance(filters, dict) else {}
     location = filters.get("location", {}) if isinstance(filters, dict) else {}
+    company = filters.get("company", {}) if isinstance(filters, dict) else {}
+    content = filters.get("content", {}) if isinstance(filters, dict) else {}
     scan_opts = data.get("scan", {})
     if not isinstance(scan_opts, dict):
         raise ScraperError("portals-config", "[scan] must be a table")
@@ -101,6 +109,9 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
         location_always_allow=_str_list(
             location.get("always_allow", []), "filters.location.always_allow"
         ),
+        company_block=_str_list(company.get("block", []), "filters.company.block"),
+        content_allow=_str_list(content.get("allow", []), "filters.content.allow"),
+        content_block=_str_list(content.get("block", []), "filters.content.block"),
         max_age_days=int(scan_opts.get("max_age_days", 0)),
         per_source_cap=int(scan_opts.get("per_source_cap", 0)),
         timeout_s=int(scan_opts.get("timeout_s", 20)),

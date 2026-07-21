@@ -21,7 +21,7 @@ from pathlib import Path
 from . import adapters
 from .canonical import canonicalize_url
 from .config import PortalsConfig, load_portals
-from .filters import passes_location, passes_title
+from .filters import passes_company, passes_content, passes_location, passes_title
 from .http import Fetcher
 from .quality import assess, is_structurally_broken
 from .types import NormalizedJob, ScanPrefs, ScanResult, ScraperError, SourceReport
@@ -207,6 +207,15 @@ def scan(
             if not passes_title(job.title, prefs):
                 continue
             if not passes_location(job.location, prefs):
+                continue
+            if not passes_company(job.company, prefs):
+                continue
+            # Description may not be populated yet for sources that need the
+            # in-scan enrich phase (guest HTML) — empty always passes, so this
+            # filter only has effect where the description already arrived
+            # with the initial fetch (most ATS adapters). Same partial-coverage
+            # stance career-ops's own content_filter documents.
+            if not passes_content(job.description, prefs):
                 continue
             if not _fresh_enough(job, prefs, now):
                 continue

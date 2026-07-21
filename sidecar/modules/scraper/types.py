@@ -66,6 +66,18 @@ class ScanPrefs:
     location_allow: list[str] = field(default_factory=list)
     location_block: list[str] = field(default_factory=list)
     location_always_allow: list[str] = field(default_factory=list)
+    # Company exclude — a cross-cutting gate like title/location, not a
+    # curated-list-removal like career-ops's tracked_companies: a meaningful
+    # slice of our adapters are open/uncurated (RemoteOK, TheMuse, Brave,
+    # search-shaped adapters), so an unwanted company can surface dynamically
+    # the same way an unwanted title or location can (job-finder-preferences
+    # design, docs/internal/discovery.md).
+    company_block: list[str] = field(default_factory=list)
+    # Content filter — description keywords, career-ops's `content_filter`.
+    # Empty description always passes (no signal to filter on, same stance as
+    # unknown location); block wins over allow.
+    content_allow: list[str] = field(default_factory=list)
+    content_block: list[str] = field(default_factory=list)
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20
