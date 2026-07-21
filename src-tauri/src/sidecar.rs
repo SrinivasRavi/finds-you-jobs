@@ -121,6 +121,19 @@ pub fn spawn_once(cwd: &Path, app: &AppHandle) -> std::io::Result<(Child, Sideca
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    // The sidecar binary is a console-subsystem executable (it prints the
+    // PORT=/TOKEN= handshake to stdout), but the packaged shell is a GUI app
+    // with no console of its own — spawning a console child from a
+    // console-less GUI parent makes Windows create a new, briefly *visible*
+    // console window unless told not to. In dev, a console already exists
+    // (the terminal `pnpm dev` runs in), so the child attaches to it either
+    // way and CREATE_NO_WINDOW has no effect there — safe to set unconditionally.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
     let mut child = cmd.spawn()?;
     let stdout = child

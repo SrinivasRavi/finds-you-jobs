@@ -27,10 +27,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv (Python 3.13)
+      - name: Install uv
+        # No `python-version:` input — astral-sh/setup-uv doesn't have one
+        # (observed on the first real run: "Unexpected input(s)
+        # 'python-version'"). `.python-version` (3.13) is the actual source
+        # of truth; `uv sync`/`uv run` provision that version on their own.
         uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.13"
 
       - name: Install pnpm
         # No explicit `version:` — package.json's `packageManager: pnpm@9.0.0`
