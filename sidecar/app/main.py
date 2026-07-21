@@ -225,7 +225,7 @@ def create_app(
             log.info("sidecar app stopped")
 
     app = FastAPI(
-        title="finds-you-jobs sidecar", version="0.1.0-dev", lifespan=lifespan
+        title="finds-you-jobs sidecar", version="0.5.1", lifespan=lifespan
     )
 
     app.state.token = token
