@@ -642,6 +642,48 @@ def test_watch_pasted_url_is_liveness_probed(
     assert ok.json()["added"] is True
 
 
+def test_slow_watch_probe_never_blocks_the_event_loop(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (2026-07-22): the liveness probe ran synchronously inside an
+    async endpoint, freezing the event loop for the probe's duration — /healthz
+    went dark, and the Tauri shell's supervisor (2 s poll, 3 strikes) killed a
+    healthy sidecar mid-session. The probe must run off-loop (to_thread):
+    /healthz answers fast WHILE a slow probe is in flight."""
+    import threading
+    import time
+
+    class _SlowFetcher(_ProbeOkFetcher):
+        def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
+            time.sleep(1.2)
+            return "<html>board</html>"
+
+    _, client = app_client
+    monkeypatch.setattr(discovery_api, "Fetcher", _SlowFetcher)
+
+    result: dict = {}
+
+    def _watch() -> None:
+        result["resp"] = client.post(
+            "/api/discovery/watchlist",
+            headers=AUTH,
+            json={"url": "https://boards.greenhouse.io/slow-probe-tenant"},
+        )
+
+    t = threading.Thread(target=_watch)
+    t.start()
+    time.sleep(0.3)  # the probe is now sleeping inside the request
+    t0 = time.monotonic()
+    health = client.get("/healthz")
+    elapsed = time.monotonic() - t0
+    t.join()
+    assert health.status_code == 200
+    # Blocked-loop behavior waits out the remaining ~0.9 s of the probe; the
+    # off-loop probe answers in milliseconds. 0.6 s keeps CI slack.
+    assert elapsed < 0.6, f"/healthz stalled {elapsed:.2f}s behind the watch probe"
+    assert result["resp"].json()["added"] is True
+
+
 def test_watchlist_roster_lists_and_removes_watched_rows_only(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:

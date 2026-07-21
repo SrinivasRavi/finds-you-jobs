@@ -1179,7 +1179,18 @@ function TrackedCompanies() {
             </div>
             <button
               type="button"
-              onClick={() => unwatch.mutate(e.url)}
+              onClick={() => {
+                setError("");
+                unwatch.mutate(e.url, {
+                  // A failed removal was silently swallowed here — the ×
+                  // just did nothing (maintainer 2026-07-22). Reuse the
+                  // section's error line so the reason is visible.
+                  onError: (err) =>
+                    setError(
+                      `couldn't remove — ${err instanceof Error ? err.message : String(err)}`,
+                    ),
+                });
+              }}
               className="text-ink-3 hover:text-bad"
               aria-label="Stop tracking"
               data-testid="fp-tracked-remove"

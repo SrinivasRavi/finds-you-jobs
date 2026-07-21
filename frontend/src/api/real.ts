@@ -362,7 +362,22 @@ export class RealApi {
 
   private async req<T>(path: string, init: RequestInit = {}): Promise<T> {
     const info = await this.info();
-    const res = await apiFetch(info, path, init);
+    let res: Response;
+    try {
+      res = await apiFetch(info, path, init);
+    } catch (e) {
+      // Network-level failure (WebKit reports it as the bare "Load failed"):
+      // the shell may have kill-restarted the sidecar on a NEW port/token
+      // while we kept the old handshake — every request then dies against a
+      // dead port for the rest of the session (observed 2026-07-22). Drop the
+      // cached handshake and retry ONCE, but only when the re-resolved
+      // handshake actually changed (restart evidence): the old port is dead,
+      // so the retry cannot double-apply the original request.
+      this.infoP = null;
+      const fresh = await this.info();
+      if (fresh.port === info.port && fresh.token === info.token) throw e;
+      res = await apiFetch(fresh, path, init);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new ApiError(res.status, `${init.method ?? "GET"} ${path} → ${res.status}: ${body}`);

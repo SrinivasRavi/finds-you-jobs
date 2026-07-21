@@ -21,6 +21,7 @@ toggle takes effect on the next scan with no schema change and no restart.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections import Counter
 
@@ -273,61 +274,70 @@ async def watch_company(
             raise HTTPException(status_code=422, detail="url or job_id required")
         snapshot = {"url": url, "company": company, "job_id": payload.job_id or ""}
         prefs = repos.preferences.get_or_create()
-        portals = dict(prefs.portals_config or {})
-        sources = list(portals.get("sources", []))
+        sources = list((prefs.portals_config or {}).get("sources", []))
 
-        source_url = _board_root(url)
-        entry = SourceEntry(url=source_url, company=company)
-        resolved = adapters.resolve(entry)
-        if resolved is None and job_adapter:
-            # Company-domain posting URL (no derivable board root) — the board
-            # that found this job is already a sources row; watch THAT.
-            covering = _find_source_by_company(sources, company, job_adapter)
-            if covering is not None:
-                source_url = str(covering["url"])
-                resolved = adapters.resolve(SourceEntry(url=source_url))
-            else:
-                # No covering row (e.g. it was just unwatched): guess the
-                # tenant board from the company name and keep the first
-                # candidate that actually opens.
-                for cand in _guess_board_urls(job_adapter, company):
-                    try:
-                        Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text(cand)
-                    except ScraperError:
-                        continue
-                    cand_resolved = adapters.resolve(SourceEntry(url=cand))
-                    if cand_resolved is not None:
-                        source_url, resolved = cand, cand_resolved
-                        break
-        fail: str | None = None
-        adapter_id = ""
-        if resolved is None:
-            if job_adapter in ("naukri", "indeed", "seek", "linkedin", "brave"):
-                fail = (
-                    f"this job came from a search source ({job_adapter}) — there is "
-                    "no company board to watch. Paste the company's careers page "
-                    "on a supported ATS in Job finder preferences → Tracked "
-                    "companies instead"
-                )
-            else:
-                fail = (
-                    "no adapter recognizes this URL as a scannable board — paste the "
-                    "company's careers page on a supported ATS (Greenhouse, Lever, "
-                    "Ashby, Workable, SmartRecruiters, Recruitee, Teamtailor, "
-                    "Personio, Workday, BambooHR, Breezy) or an RSS feed"
-                )
+    # Network probes run OUTSIDE any DB session and OFF the event loop
+    # (asyncio.to_thread — the routes.py `probe_url` pattern). A synchronous
+    # probe here blocked the loop, so /healthz went dark and the shell's
+    # supervisor kill-restarted a healthy sidecar mid-session (found
+    # 2026-07-22: every mutation after that failed as WebKit "Load failed"
+    # while the UI kept rendering cached data).
+    source_url = _board_root(url)
+    entry = SourceEntry(url=source_url, company=company)
+    resolved = adapters.resolve(entry)
+    if resolved is None and job_adapter:
+        # Company-domain posting URL (no derivable board root) — the board
+        # that found this job is already a sources row; watch THAT.
+        covering = _find_source_by_company(sources, company, job_adapter)
+        if covering is not None:
+            source_url = str(covering["url"])
+            resolved = adapters.resolve(SourceEntry(url=source_url))
         else:
-            adapter_id = resolved[0].ID
-            # Liveness gate for USER-PASTED urls only (a job-derived board was
-            # just scanned — it's known real): one GET, ~a second, catches
-            # typos like a nonexistent tenant before it pollutes the roster
-            # (maintainer 2026-07-22). Existence, not job-content —
-            # deliberately shallow.
-            if not payload.job_id:
+            # No covering row (e.g. it was just unwatched): guess the
+            # tenant board from the company name and keep the first
+            # candidate that actually opens.
+            for cand in _guess_board_urls(job_adapter, company):
                 try:
-                    Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text(source_url)
-                except ScraperError as e:
-                    fail = f"that URL doesn't open — {e}"
+                    await asyncio.to_thread(
+                        Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text, cand
+                    )
+                except ScraperError:
+                    continue
+                cand_resolved = adapters.resolve(SourceEntry(url=cand))
+                if cand_resolved is not None:
+                    source_url, resolved = cand, cand_resolved
+                    break
+    fail: str | None = None
+    adapter_id = ""
+    if resolved is None:
+        if job_adapter in ("naukri", "indeed", "seek", "linkedin", "brave"):
+            fail = (
+                f"this job came from a search source ({job_adapter}) — there is "
+                "no company board to watch. Paste the company's careers page "
+                "on a supported ATS in Job finder preferences → Tracked "
+                "companies instead"
+            )
+        else:
+            fail = (
+                "no adapter recognizes this URL as a scannable board — paste the "
+                "company's careers page on a supported ATS (Greenhouse, Lever, "
+                "Ashby, Workable, SmartRecruiters, Recruitee, Teamtailor, "
+                "Personio, Workday, BambooHR, Breezy) or an RSS feed"
+            )
+    else:
+        adapter_id = resolved[0].ID
+        # Liveness gate for USER-PASTED urls only (a job-derived board was
+        # just scanned — it's known real): one GET, ~a second, catches
+        # typos like a nonexistent tenant before it pollutes the roster
+        # (maintainer 2026-07-22). Existence, not job-content —
+        # deliberately shallow.
+        if not payload.job_id:
+            try:
+                await asyncio.to_thread(
+                    Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text, source_url
+                )
+            except ScraperError as e:
+                fail = f"that URL doesn't open — {e}"
     if fail is not None:
         # Recorded OUTSIDE the request session: raising through `repos()`
         # rolls its transaction back, which silently discarded the ledger row
