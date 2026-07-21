@@ -2133,6 +2133,7 @@ export interface components {
              */
             workStyle: string;
             score?: components["schemas"]["JobScoreDTO"] | null;
+            deterministicScore?: components["schemas"]["JobScoreDTO"] | null;
             /**
              * Scorestatus
              * @default pending
@@ -2183,6 +2184,11 @@ export interface components {
             reasons: unknown[];
             /** Breakdown Md */
             breakdown_md: string;
+            /**
+             * Scorer Impl
+             * @default scorer-llm
+             */
+            scorer_impl: string;
         };
         /**
          * JobUpdate

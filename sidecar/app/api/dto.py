@@ -39,6 +39,11 @@ class JobScoreDTO(BaseModel):
     score_0_100: int
     reasons: list[Any]
     breakdown_md: str
+    # Which scorer produced this ("scorer-llm" | "scorer-deterministic") — lets
+    # the frontend render a deterministic score visibly differently (grey,
+    # never styled identically to an LLM score). Deterministic-scoring
+    # experiment, docs/internal/discovery.md.
+    scorer_impl: str = "scorer-llm"
 
 
 class JobDTO(BaseModel):
@@ -65,6 +70,13 @@ class JobDTO(BaseModel):
     work_style: str = Field(default="", serialization_alias="workStyle")
     # The board serves jobs *with* their score (null while unscored).
     score: JobScoreDTO | None = None
+    # Deterministic-scoring experiment only (experiment/deterministic-scoring
+    # branch, not on main): the zero-LLM second opinion, shown alongside
+    # `score` for comparison. Always grey in the UI — never styled like an
+    # LLM score, since it is not one.
+    deterministic_score: JobScoreDTO | None = Field(
+        default=None, serialization_alias="deterministicScore"
+    )
     # Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): `scored` (a real 0–100) /
     # `pending` (queued or not yet attempted) / `failed` (the score op errored and
     # none is in flight — the `Score failed` pill, never a perpetual spinner).
@@ -864,6 +876,7 @@ def job_score_dto(score: JobScore | None) -> JobScoreDTO | None:
         score_0_100=score.score_0_100,
         reasons=list(score.reasons),
         breakdown_md=score.breakdown_md,
+        scorer_impl=score.scorer_impl,
     )
 
 
@@ -904,10 +917,15 @@ def derive_work_style(location: str, description: str) -> str:
 
 
 def job_dto(
-    job: Job, score: JobScore | None = None, *, score_op_states: set[str] | None = None
+    job: Job,
+    score: JobScore | None = None,
+    *,
+    score_op_states: set[str] | None = None,
+    deterministic_score: JobScore | None = None,
 ) -> JobDTO:
     dto = JobDTO.model_validate(job)
     dto.score = job_score_dto(score)
+    dto.deterministic_score = job_score_dto(deterministic_score)
     dto.score_status = derive_score_status(score is not None, score_op_states or set())
     dto.work_style = derive_work_style(job.location, job.description)
     return dto

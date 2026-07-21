@@ -192,7 +192,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from sidecar.modules.scorer.scorer import score
 
     from ..prompt_overrides import get_override
-    from .persistence import SCORER_IMPL, load_job_and_master
+    from .persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC, load_job_and_master
 
     snap = ctx.input_snapshot
     job_id = snap.get("job_id")
@@ -235,6 +235,35 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                     thresholds.get(STATS_KEY), float(result.score)
                 )
                 repos.preferences.update(thresholds=thresholds)
+
+        # Deterministic-scoring experiment (SCORER_IMPL_DETERMINISTIC) — a
+        # second, zero-LLM opinion computed alongside the real score for
+        # side-by-side comparison. Never lets a bug here fail the real LLM
+        # score the user is waiting on; a failure is logged, not raised
+        # ("loud, never silent" — but this is a secondary signal, not the
+        # operation the caller asked for).
+        try:
+            from sidecar.modules.scorer.deterministic import score_deterministic
+
+            det_result = score_deterministic(master_md, job_text)
+            with ctx.db.repos() as repos:
+                repos.job_scores.upsert(
+                    job_id=job_id,
+                    profile_version=profile_version,
+                    score_0_100=det_result.score,
+                    reasons=list(det_result.reasons),
+                    breakdown_md=det_result.breakdown_md,
+                    scorer_impl=SCORER_IMPL_DETERMINISTIC,
+                    operation_id=ctx.operation_id,
+                )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "deterministic-scoring experiment: failed to compute/persist "
+                "second-opinion score for job_id=%s (LLM score unaffected)",
+                job_id,
+            )
     return OperationOutcome(
         result_ref={"score": result.score, "job_id": job_id, "score_id": score_id},
         usage=_usage_to_dict(result.usage),

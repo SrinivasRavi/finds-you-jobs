@@ -246,8 +246,23 @@ function JobRow({
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         {job.score ? (
-          <span className={`font-mono text-[15px] font-semibold ${tier?.text}`}>
-            {job.score.score_0_100}
+          <span className="flex items-center gap-1.5">
+            <span className={`font-mono text-[15px] font-semibold ${tier?.text}`}>
+              {job.score.score_0_100}
+            </span>
+            {/* Deterministic-scoring experiment (experiment/deterministic-scoring
+                branch, not on main): the zero-LLM second opinion, always grey —
+                never styled like the LLM score above, so the two are never
+                mistakable for each other at a glance. */}
+            {job.deterministic_score ? (
+              <span
+                data-testid="deterministic-score-badge"
+                title="Deterministic (zero-LLM) score — side-by-side comparison, experiment/deterministic-scoring branch only. See the job detail panel for what this means."
+                className="font-mono text-[12px] font-medium text-ink-3"
+              >
+                {job.deterministic_score.score_0_100}
+              </span>
+            ) : null}
           </span>
         ) : job.score_status === "failed" ? (
           <span
@@ -385,6 +400,26 @@ function JobDetail({
           <div className="flex flex-col items-center">
             <MatchRing score={job.score.score_0_100} />
             <span className="mt-1 text-[10.5px] uppercase tracking-wide text-ink-3">match</span>
+          </div>
+        ) : null}
+        {/* Deterministic-scoring experiment (experiment/deterministic-scoring
+            branch, not on main): a visually distinct grey ring (dashed border,
+            not the tier-colored conic gradient MatchRing uses) so it can never
+            read as a second real match score — this panel is where "what does
+            the grey number mean" gets answered. */}
+        {job.deterministic_score ? (
+          <div className="flex flex-col items-center" data-testid="deterministic-score-panel">
+            <div className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-border-2 bg-surface-2">
+              <span className="font-mono text-[13px] font-semibold text-ink-3">
+                {job.deterministic_score.score_0_100}
+              </span>
+            </div>
+            <span
+              className="mt-1 max-w-[68px] text-center text-[9.5px] uppercase leading-tight tracking-wide text-ink-3"
+              title="Zero-LLM keyword/rubric score computed alongside the real match score, for accuracy comparison. Experiment branch only — not part of the shipped product, and never used as the real score unless it's shown to be reliable."
+            >
+              deterministic (test)
+            </span>
           </div>
         ) : null}
       </div>
@@ -593,6 +628,26 @@ function JobDetail({
               ) : (
                 <p className="text-[12px] text-ink-3">Scoring this job — refresh in a moment.</p>
               )}
+              {/* Deterministic-scoring experiment (experiment/deterministic-scoring
+                  branch, not on main): the zero-LLM second opinion's own
+                  breakdown, greyed and explicitly labeled so it reads as
+                  "a second, different kind of signal" rather than a correction
+                  to the real score above it. */}
+              {job.deterministic_score ? (
+                <div
+                  className="mt-3 rounded-7 border border-dashed border-border-2 bg-surface-2 p-3"
+                  data-testid="deterministic-score-breakdown"
+                >
+                  <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">
+                    Deterministic score (test) — {job.deterministic_score.score_0_100}/100
+                  </p>
+                  <p className="mb-2 text-[11px] text-ink-3">
+                    Zero-LLM keyword/rubric score, computed for accuracy comparison only.
+                    Not the real match score.
+                  </p>
+                  <Markdown md={job.deterministic_score.breakdown_md} className="text-[12px] text-ink-3" />
+                </div>
+              ) : null}
             </div>
           </aside>
         </div>

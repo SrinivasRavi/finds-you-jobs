@@ -26,6 +26,9 @@ export interface ScoreResult {
   score_0_100: number;
   reasons: string[];
   breakdown_md: string;
+  /** "scorer-llm" | "scorer-deterministic" — lets the UI style a deterministic
+   *  score visibly differently (always grey; never identical to an LLM score). */
+  scorer_impl: string;
 }
 
 // ─── /api/jobs ──────────────────────────────────────────────────────────────
@@ -88,6 +91,10 @@ export interface Job {
   applicants: number | null;
   /** null while the scorer operation is still in flight. */
   score: ScoreResult | null;
+  /** Deterministic-scoring experiment only (experiment/deterministic-scoring
+   *  branch, not on main): the zero-LLM second opinion shown alongside `score`
+   *  for comparison. Always render grey — never styled like an LLM score. */
+  deterministic_score: ScoreResult | null;
   /** Score lifecycle — resolves a null score to `pending` vs `failed` (US-JB-06). */
   score_status: ScoreStatus;
   saved: boolean;

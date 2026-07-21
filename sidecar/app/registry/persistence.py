@@ -25,6 +25,11 @@ from ..db import Database, Repos
 from ..db.base import now_utc
 
 SCORER_IMPL = "scorer-llm"
+# Deterministic-scoring experiment (branch `experiment/deterministic-scoring`,
+# not on main) — a second, zero-LLM opinion computed alongside the real score
+# so the two can be compared side by side. See
+# sidecar/modules/scorer/deterministic.py.
+SCORER_IMPL_DETERMINISTIC = "scorer-deterministic"
 
 # Trash TTL — a removed job is tombstoned this many days after it entered Trash
 # (FR-JB-12 / FR-SYS-04: "permanently removed after 7 days").

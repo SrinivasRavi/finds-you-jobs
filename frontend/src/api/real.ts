@@ -156,6 +156,18 @@ function toJob(d: JobDTO, saved: boolean): Job {
           score_0_100: d.score.score_0_100,
           reasons: d.score.reasons as string[],
           breakdown_md: d.score.breakdown_md,
+          scorer_impl: d.score.scorer_impl,
+        }
+      : null,
+    // Deterministic-scoring experiment (experiment/deterministic-scoring
+    // branch, not on main) — same shape as `score`, a separate field so the
+    // UI can render both side by side without conflating them.
+    deterministic_score: d.deterministicScore
+      ? {
+          score_0_100: d.deterministicScore.score_0_100,
+          reasons: d.deterministicScore.reasons as string[],
+          breakdown_md: d.deterministicScore.breakdown_md,
+          scorer_impl: d.deterministicScore.scorer_impl,
         }
       : null,
     score_status: (d.scoreStatus as Job["score_status"] | undefined) ?? (d.score ? "scored" : "pending"),

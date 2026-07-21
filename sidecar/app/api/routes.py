@@ -126,9 +126,20 @@ async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.Jo
         jobs = repos.jobs.list(feed_state=feed_state or None)
         version = _current_profile_version(repos)
         scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], version)
+        # Deterministic-scoring experiment (experiment/deterministic-scoring
+        # branch, not on main) — the zero-LLM second opinion, joined the same
+        # way as the real score, for side-by-side comparison.
+        det_scores = repos.job_scores.latest_for_jobs(
+            [j.id for j in jobs], version, scorer_impl="scorer-deterministic"
+        )
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
-            dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
+            dto.job_dto(
+                j,
+                scores.get(j.id),
+                score_op_states=score_op_states.get(j.id),
+                deterministic_score=det_scores.get(j.id),
+            )
             for j in jobs
         ]
     _sort_board(dtos)
@@ -218,9 +229,20 @@ async def board(
             jobs = [j for j in jobs if j.id not in suppressed]
         version = _current_profile_version(repos)
         scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], version)
+        # Deterministic-scoring experiment (experiment/deterministic-scoring
+        # branch, not on main) — the zero-LLM second opinion, joined the same
+        # way as the real score, for side-by-side comparison in the board.
+        det_scores = repos.job_scores.latest_for_jobs(
+            [j.id for j in jobs], version, scorer_impl="scorer-deterministic"
+        )
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
-            dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
+            dto.job_dto(
+                j,
+                scores.get(j.id),
+                score_op_states=score_op_states.get(j.id),
+                deterministic_score=det_scores.get(j.id),
+            )
             for j in jobs
         ]
         # Scrape status/meta (FR-JB-10) — from the operations ledger, live via SSE.
