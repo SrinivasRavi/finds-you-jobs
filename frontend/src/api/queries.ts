@@ -52,6 +52,7 @@ export const qk = {
   settings: ["settings"] as const,
   discoverySources: ["discoverySources"] as const,
   watchlist: ["watchlist"] as const,
+  schedules: ["schedules"] as const,
   discoveryCredentials: ["discoveryCredentials"] as const,
   discoveryAnalytics: ["discoveryAnalytics"] as const,
   prompts: ["prompts"] as const,
@@ -227,6 +228,11 @@ export function useWatchCompany() {
       qc.invalidateQueries({ queryKey: qk.watchlist });
     },
   });
+}
+/** Background schedules — the preferences modal shows the scan schedule's
+ *  next_due_at so the cadence is visibly real. */
+export function useSchedules() {
+  return useQuery({ queryKey: qk.schedules, queryFn: () => api.getSchedules() });
 }
 /** The tracked-companies roster (Job finder preferences) — `watched` rows. */
 export function useWatchlist() {

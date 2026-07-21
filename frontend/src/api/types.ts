@@ -687,6 +687,17 @@ export interface WatchCompanyResult {
 
 /** One tracked company board (a `watched` [[sources]] row) — the roster view
  *  in Job finder preferences of the same data "Watch company" writes. */
+/** One background schedule row (GET /api/schedules) — surfaced so the
+ *  preferences modal can show WHEN the next automatic scan fires (the cadence
+ *  was invisible before: it worked, but nothing proved it — 2026-07-22). */
+export interface ScheduleRow {
+  id: string;
+  kind: string;
+  interval_minutes: number;
+  enabled: boolean;
+  next_due_at: string;
+}
+
 export interface WatchlistEntry {
   url: string;
   company: string;

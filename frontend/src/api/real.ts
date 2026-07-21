@@ -45,6 +45,7 @@ import type {
   DiscoveryCredential,
   DiscoverySource,
   PromptSetting,
+  ScheduleRow,
   WatchCompanyResult,
   WatchlistEntry,
   ReachOutInput,
@@ -335,7 +336,7 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
 
 /** An HTTP error carrying the sidecar status code, so callers can branch on it
  * (e.g. 409 → tombstoned URL → `JobTombstonedError`). */
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -995,6 +996,9 @@ export class RealApi {
     company?: string;
   }): Promise<WatchCompanyResult> {
     return (await this.json("POST", "/api/discovery/watchlist", input)) as WatchCompanyResult;
+  }
+  async getSchedules(): Promise<ScheduleRow[]> {
+    return this.req<ScheduleRow[]>("/api/schedules");
   }
   async getWatchlist(): Promise<WatchlistEntry[]> {
     const d = await this.req<{ entries: WatchlistEntry[] }>("/api/discovery/watchlist");

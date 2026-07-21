@@ -3,7 +3,7 @@
 // Save/Remove, Add-by-URL, Trash, source filter, master-resume popup.
 // Ports design/prototype/prototype-modal/jobs.html.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api";
@@ -23,11 +23,13 @@ import {
   useTombstoneJob,
   useTrash,
   useTrashJob,
+  useSchedules,
   useTriggerScan,
   useUnwatchCompany,
   useWatchCompany,
   useWatchlist,
 } from "../api/queries";
+import { ApiError } from "../api/real";
 import { JobTombstonedError, type BoardPage, type Job, type JobDraft } from "../api/types";
 import { Icon } from "../shell/icons";
 import { Modal } from "../shell/Modal";
@@ -145,7 +147,43 @@ function MatchRing({ score }: { score: number }) {
   );
 }
 
-function JobRow({ job, selected, onClick }: { job: Job; selected: boolean; onClick: () => void }) {
+// Search-match highlighting (maintainer 2026-07-22): wherever the board search
+// found text, show it — list rows and the open JD alike.
+function highlight(text: string, q: string): ReactNode {
+  if (!q || !text) return text;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  if (!lower.includes(needle)) return text;
+  const parts: ReactNode[] = [];
+  let i = 0;
+  for (;;) {
+    const at = lower.indexOf(needle, i);
+    if (at === -1) {
+      parts.push(text.slice(i));
+      break;
+    }
+    if (at > i) parts.push(text.slice(i, at));
+    parts.push(
+      <mark key={at} className="rounded-[2px] bg-warn-wash text-inherit">
+        {text.slice(at, at + q.length)}
+      </mark>,
+    );
+    i = at + q.length;
+  }
+  return <>{parts}</>;
+}
+
+function JobRow({
+  job,
+  selected,
+  onClick,
+  q = "",
+}: {
+  job: Job;
+  selected: boolean;
+  onClick: () => void;
+  q?: string;
+}) {
   const tier = job.score ? scoreTier(job.score.score_0_100) : null;
   const expired = job.board_state === "expired";
   return (
@@ -168,11 +206,16 @@ function JobRow({ job, selected, onClick }: { job: Job; selected: boolean; onCli
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="truncate text-[13px] font-semibold text-ink">{job.title}</span>
+          <span className="truncate text-[13px] font-semibold text-ink">
+            {highlight(job.title, q)}
+          </span>
         </div>
         {/* US-JB-01 row: company · location · work-style */}
         <div className="truncate text-[11.5px] text-ink-2">
-          {[job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · ")}
+          {highlight(
+            [job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · "),
+            q,
+          )}
         </div>
         {/* salary · time-ago · N applicants */}
         <div className="text-[11.5px] text-ink-3">
@@ -245,6 +288,7 @@ function JobDetail({
   networkingEnabled,
   onFindReferrals,
   packetDefaults,
+  searchQ = "",
 }: {
   job: Job | null;
   onSave: (j: Job, gen: { resume: boolean; cover: boolean }) => void;
@@ -255,6 +299,7 @@ function JobDetail({
   networkingEnabled: boolean;
   onFindReferrals: (j: Job) => void;
   packetDefaults: { resume: boolean; cl: boolean; refs: boolean };
+  searchQ?: string;
 }) {
   // Per-job automation toggles (US-JB-03), seeded from the Settings default
   // (auto-packet-on-save) and reset per job — prototype jobs.html semantics.
@@ -263,17 +308,25 @@ function JobDetail({
   // on-Save op is queued async server-side — the button must not wait for the
   // refetch round-trip to acknowledge the click.
   const [justSaved, setJustSaved] = useState(false);
-  // Row-level watchlist (approved-plan #4): add this job's whole company
-  // board to the scan sources. null | "added" | "already" | "unsupported".
+  // Row-level watchlist (approved-plan #4): a real toggle over the tracked-
+  // companies roster — state derives from the watchlist itself, never from a
+  // local flag, so it survives reload and matches the preferences modal.
   const watchCompany = useWatchCompany();
-  const [watchState, setWatchState] = useState<string | null>(null);
+  const unwatchCompany = useUnwatchCompany();
+  const { data: watchlist } = useWatchlist();
+  const [watchError, setWatchError] = useState<Error | null>(null);
   const jobId = job?.id;
   useEffect(() => {
     setToggles({ ...packetDefaults });
     setJustSaved(false);
-    setWatchState(null);
+    setWatchError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset per job only
   }, [jobId]);
+  const watchedEntry = job
+    ? watchlist?.find(
+        (e) => job.canonical_url === e.url || job.canonical_url.startsWith(`${e.url}/`),
+      )
+    : undefined;
   if (!job) {
     return (
       <div className="grid h-full place-items-center text-[12.5px] text-ink-3">
@@ -414,29 +467,66 @@ function JobDetail({
           </button>
         ) : null}
         <div className="flex-1" />
-        <button
-          data-testid="watch-company"
-          title="Scan this company's whole board on every future scan"
-          disabled={watchCompany.isPending || watchState === "added"}
-          onClick={() =>
-            watchCompany.mutate(
-              { job_id: job.id },
-              {
-                onSuccess: (r) => setWatchState(r.added ? "added" : "already"),
-                onError: () => setWatchState("unsupported"),
-              },
-            )
-          }
-          className="inline-flex h-[30px] items-center gap-1 rounded-7 px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 disabled:opacity-70"
-        >
-          {watchState === "added"
-            ? "Watching company ✓"
-            : watchState === "already"
-              ? "Already watched"
-              : watchState === "unsupported"
-                ? "Can't watch this source"
-                : "Watch company"}
-        </button>
+        {watchError && watchError instanceof ApiError && watchError.status === 422 ? (
+          // The board genuinely can't be watched (self-hosted portal, no
+          // adapter) — say so, with the server's verbatim reason on hover.
+          <span
+            data-testid="watch-company-unsupported"
+            title={watchError.message}
+            className="inline-flex h-[30px] items-center px-3 text-[12px] text-ink-3"
+          >
+            Can't watch this source
+          </span>
+        ) : (
+          <button
+            data-testid="watch-company"
+            data-on={!!watchedEntry}
+            title={
+              watchError
+                ? `Watch failed — check connection and retry. (${watchError.message})`
+                : watchedEntry
+                  ? "Scanning this company's board on every scan — click to stop"
+                  : "Scan this company's whole board on every future scan"
+            }
+            disabled={watchCompany.isPending || unwatchCompany.isPending}
+            onClick={() => {
+              setWatchError(null);
+              if (watchedEntry) {
+                unwatchCompany.mutate(watchedEntry.url, {
+                  onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
+                });
+              } else {
+                watchCompany.mutate(
+                  { job_id: job.id },
+                  {
+                    onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
+                  },
+                );
+              }
+            }}
+            className={
+              "inline-flex h-[30px] items-center gap-1.5 rounded-7 border px-2 text-[11.5px] font-medium disabled:opacity-70 " +
+              (watchedEntry
+                ? "border-accent bg-accent-wash text-accent-ink"
+                : "border-border-2 bg-surface text-ink-3 hover:bg-surface-3")
+            }
+          >
+            <span
+              className={
+                "relative inline-block h-3.5 w-6 rounded-full transition-colors " +
+                (watchedEntry ? "bg-accent" : "bg-border-2")
+              }
+            >
+              <span
+                className={
+                  "absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all " +
+                  (watchedEntry ? "left-[13px]" : "left-0.5")
+                }
+              />
+            </span>
+            {watchError ? "Watch failed — retry" : "Watch company"}
+          </button>
+        )}
         <a
           href={job.canonical_url}
           target="_blank"
@@ -452,7 +542,19 @@ function JobDetail({
         {/* JD | Scoring as equal columns (maintainer, 2026-07-11) — the scoring
             table needs real width, matching the detail modal's Scoring tab. */}
         <div className="grid grid-cols-2 gap-6 px-6 py-5">
-          <Markdown md={job.description} />
+          {searchQ && job.description.toLowerCase().includes(searchQ.toLowerCase()) ? (
+            // Active search hit inside this JD: render it plain with the
+            // matches marked — seeing WHERE it matched beats markdown niceties
+            // while a search is live (maintainer 2026-07-22).
+            <div
+              data-testid="jd-search-highlighted"
+              className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink-2"
+            >
+              {highlight(job.description, searchQ)}
+            </div>
+          ) : (
+            <Markdown md={job.description} />
+          )}
           <aside className="flex flex-col gap-4">
             <div className="rounded-lg border border-border bg-surface-2 p-4">
               <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-ink-3">
@@ -544,15 +646,14 @@ function BoardEmptyState({
 }
 
 export function JobBoard() {
-  // Board search (FR-JB-13): listSearch = shallow title/company/location match
-  // above the list; textSearch = deep all-text match (JD + score texts) next to
-  // Sort. Both run server-side (the feed is paginated — filtering loaded pages
-  // client-side would miss matches on unloaded pages), debounced per keystroke.
-  const [listSearch, setListSearch] = useState("");
+  // Board search (FR-JB-13, consolidated 2026-07-22): ONE bar next to Sort,
+  // deep all-text match (title/company/location + JD + score texts), matches
+  // highlighted in the list and the open JD. Server-side (the feed is
+  // paginated — filtering loaded pages client-side would miss matches on
+  // unloaded pages), debounced per keystroke.
   const [textSearch, setTextSearch] = useState("");
-  const listQ = useDebounced(listSearch.trim(), 250);
   const textQ = useDebounced(textSearch.trim(), 250);
-  const board = useBoard(listQ, textQ);
+  const board = useBoard("", textQ);
   const { data: trashed = [] } = useTrash();
   const saveJob = useSaveJob();
   const trashJob = useTrashJob();
@@ -782,11 +883,12 @@ export function JobBoard() {
           </div>
         </div>
         <span className="mx-1 h-4 w-px bg-border-2" />
-        {/* Deep all-text search (FR-JB-13): titles, JD bodies + match-score texts. */}
+        {/* THE board search (FR-JB-13): titles, companies, JD bodies +
+            match-score texts; matches highlighted below. */}
         <SearchBox
           value={textSearch}
           onChange={setTextSearch}
-          placeholder="Search everything — JDs, scores…"
+          placeholder="Search jobs — title, company, JD…"
           testid="board-text-search"
           className="w-[260px]"
         />
@@ -805,16 +907,6 @@ export function JobBoard() {
                 · last refresh {shortAgo(meta?.last_scan_at)}
               </span>
             </span>
-          </div>
-          {/* List search (FR-JB-13): shallow title/company/location match over the
-              whole feed (server-side); clearing restores the full list. */}
-          <div className="border-b border-border px-3 py-2">
-            <SearchBox
-              value={listSearch}
-              onChange={setListSearch}
-              placeholder="Search this list — title, company, location…"
-              testid="board-list-search"
-            />
           </div>
           <div
             role="listbox"
@@ -838,7 +930,7 @@ export function JobBoard() {
                 loading={board.isLoading}
                 // A server-side search miss returns zero rows with scan_status
                 // "idle" — that's a filter miss, never an empty scrape (FR-JB-13).
-                filteredOut={boardJobs.length > 0 || Boolean(listQ || textQ)}
+                filteredOut={boardJobs.length > 0 || Boolean(textQ)}
               />
             ) : (
               <>
@@ -848,6 +940,7 @@ export function JobBoard() {
                     job={j}
                     selected={selected?.id === j.id}
                     onClick={() => setSelectedId(j.id)}
+                    q={textQ}
                   />
                 ))}
                 {board.hasNextPage ? (
@@ -895,6 +988,7 @@ export function JobBoard() {
             onToggleSource={(a) => setSourceFilter((cur) => (cur === a ? null : a))}
             networkingEnabled={Boolean(session.data?.enabled)}
             onFindReferrals={(j) => discoverReferrals.mutate(j.id)}
+            searchQ={textQ}
             packetDefaults={{
               resume: settings?.auto_resume_on_save ?? true,
               cl: settings?.auto_cover_on_save ?? true,
@@ -1126,6 +1220,16 @@ function TrackedCompanies() {
   );
 }
 
+// "in 5h" / "in 2d" for the next-automatic-scan line; "overdue — any minute"
+// when the tick hasn't caught up yet.
+function nextScanLabel(iso: string): string {
+  const mins = Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
+  if (mins <= 0) return "is overdue — it will fire within a minute";
+  if (mins < 60) return `in ${mins}m`;
+  if (mins < 48 * 60) return `in ${Math.round(mins / 60)}h`;
+  return `in ${Math.round(mins / (24 * 60))}d`;
+}
+
 // Freshness label ⇄ days (0 = "Any" = no freshness window, ScanPrefs semantics).
 const FINDER_FRESHNESS_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, Any: 0 };
 const FINDER_FRESHNESS_LABEL: Record<number, string> = { 1: "24h", 7: "7d", 30: "30d", 0: "Any" };
@@ -1158,6 +1262,8 @@ function FinderPrefsModal({
   const { data: profile } = useProfile();
   const triggerScan = useTriggerScan();
   const masterName = firstHeading(profile?.master_md);
+  const { data: schedules } = useSchedules();
+  const scanSchedule = schedules?.find((s) => s.kind === "scan");
 
   async function saveAndRescan() {
     setSaving(true);
@@ -1173,6 +1279,7 @@ function FinderPrefsModal({
         excluded_keywords: excludedKeywords,
       });
       await qc.invalidateQueries({ queryKey: qk.settings });
+      void qc.invalidateQueries({ queryKey: qk.schedules }); // next-scan line
       triggerScan.mutate(); // rescan now runs against the values just saved
       onClose();
     } catch (e) {
@@ -1230,6 +1337,7 @@ function FinderPrefsModal({
           placeholder="Add a keyword…"
           testid="fp-exclude-keywords"
         />
+        <TrackedCompanies />
         <section className="space-y-2">
           <header>
             <h3 className="text-[13px] font-semibold text-ink">Posting freshness</h3>
@@ -1259,8 +1367,17 @@ function FinderPrefsModal({
             onChange={setCadence}
             testid="fp-cadence"
           />
+          {/* Proof the cadence is real (2026-07-22): the scan schedule's actual
+              next firing time. Saving here also rescans now, which pushes this
+              out one full interval — by design, to avoid a double scan. */}
+          {scanSchedule ? (
+            <p className="text-[11.5px] text-ink-3" data-testid="fp-next-scan">
+              {scanSchedule.enabled
+                ? `Next automatic scan ${nextScanLabel(scanSchedule.next_due_at)}.`
+                : "Automatic scanning is off — saving a cadence turns it on."}
+            </p>
+          ) : null}
         </section>
-        <TrackedCompanies />
         <section className="space-y-2">
           <header>
             <h3 className="text-[13px] font-semibold text-ink">Master resume</h3>

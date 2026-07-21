@@ -211,10 +211,23 @@ async def watch_company(
         prefs = repos.preferences.get_or_create()
         portals = dict(prefs.portals_config or {})
         sources = list(portals.get("sources", []))
-        already = any(
-            isinstance(raw, dict) and str(raw.get("url", "")).rstrip("/") == source_url.rstrip("/")
-            for raw in sources
-        )
+        already = False
+        for raw in sources:
+            if (
+                isinstance(raw, dict)
+                and str(raw.get("url", "")).rstrip("/") == source_url.rstrip("/")
+            ):
+                already = True
+                # A registry-seeded row the user explicitly watches becomes a
+                # managed roster entry (watched=True) — so the watch toggle
+                # reflects it and unwatch can remove it.
+                if not raw.get("watched"):
+                    raw["watched"] = True
+                    if company and not raw.get("company"):
+                        raw["company"] = company
+                    portals["sources"] = sources
+                    repos.preferences.update(portals_config=portals)
+                break
         if not already:
             # `watched` marks the row as user-tracked so the roster view can
             # tell it apart from the seeded registry. Unknown keys are ignored
