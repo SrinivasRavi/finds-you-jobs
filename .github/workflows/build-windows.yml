@@ -33,9 +33,10 @@ jobs:
           python-version: "3.13"
 
       - name: Install pnpm
+        # No explicit `version:` — package.json's `packageManager: pnpm@9.0.0`
+        # is the single source of truth; pnpm/action-setup errors out if both
+        # are given (observed on the first real run of this workflow).
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - name: Install Node
         uses: actions/setup-node@v4
