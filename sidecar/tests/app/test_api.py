@@ -51,3 +51,41 @@ def test_shutdown_invokes_hook() -> None:
         resp = client.post("/shutdown", headers={"Authorization": f"Bearer {TOKEN}"})
     assert resp.status_code == 200
     assert fired["value"] is True
+
+
+# Regression coverage for a packaged-build-only bug (distribution.md §2/§7):
+# every real fetch from the packaged app's actual webview origin was silently
+# rejected by CORS, because the origin regex only ever matched http(s)://
+# loopback — never the tauri://localhost / http://tauri.localhost origins the
+# packaged webview actually loads from. Invisible until the first packaged
+# build was ever run, since dev's origin (http://localhost:1420) did match.
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://localhost:1420",  # browser-dev (Vite)
+        "tauri://localhost",  # packaged webview: macOS / Linux
+        "http://tauri.localhost",  # packaged webview: Windows / Android
+    ],
+)
+def test_cors_preflight_allows_real_webview_origins(client: TestClient, origin: str) -> None:
+    resp = client.options(
+        "/healthz",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == origin
+
+
+def test_cors_preflight_rejects_other_origins(client: TestClient) -> None:
+    resp = client.options(
+        "/healthz",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 400
+    assert "access-control-allow-origin" not in resp.headers

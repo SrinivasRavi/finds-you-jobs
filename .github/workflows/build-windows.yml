@@ -1,0 +1,66 @@
+name: Build Windows installer (unsigned)
+
+# Manual for now, deliberately — no signing secrets exist yet
+# (docs/internal/distribution.md §5), so this produces an honest unsigned
+# NSIS/MSI installer. Windows is built on a native windows-latest runner, not
+# cross-compiled: PyInstaller cannot cross-compile the sidecar at all (it must
+# run on the target OS), and native builds are the reliability baseline this
+# whole packaging effort is built around (distribution.md §1).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        # No `python-version:` input — astral-sh/setup-uv doesn't have one
+        # (observed on the first real run: "Unexpected input(s)
+        # 'python-version'"). `.python-version` (3.13) is the actual source
+        # of truth; `uv sync`/`uv run` provision that version on their own.
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install pnpm
+        # No explicit `version:` — package.json's `packageManager: pnpm@9.0.0`
+        # is the single source of truth; pnpm/action-setup errors out if both
+        # are given (observed on the first real run of this workflow).
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install project dependencies
+        run: pnpm boot
+
+      - name: Build the PyInstaller sidecar
+        # Not part of `pnpm boot` — build-only tooling (pyproject.toml's
+        # `build` dependency group), kept out of the default dev install.
+        run: |
+          uv sync --group build
+          uv run pyinstaller sidecar/fyj-sidecar.spec --noconfirm
+
+      - name: Build the app (codegen + frontend + tauri bundle)
+        # Same `pnpm build` a human would run (package.json) — the sidecar
+        # must exist first so tauri.conf.json's bundle.resources has
+        # something to copy.
+        run: pnpm run build
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: finds-you-jobs-windows-unsigned
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
