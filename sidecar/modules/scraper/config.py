@@ -40,6 +40,10 @@ Shape (see `sidecar/modules/scraper/portals.example.toml`):
     [filters.visa]
     enabled = false              # drop explicit sponsorship denials
     phrases = []                 # empty = filters.DEFAULT_VISA_PHRASES
+    [filters.salary]
+    min = 0                      # annual, 0 = off; unstated salary passes
+    max = 0
+    currency = "USD"             # postings in a different currency pass
     [scan]
     max_age_days = 0             # 0 = off
     per_source_cap = 0           # 0 = uncapped (never self-throttle by default)
@@ -126,6 +130,7 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
     company = filters.get("company", {}) if isinstance(filters, dict) else {}
     content = filters.get("content", {}) if isinstance(filters, dict) else {}
     visa = filters.get("visa", {}) if isinstance(filters, dict) else {}
+    salary = filters.get("salary", {}) if isinstance(filters, dict) else {}
     scan_opts = data.get("scan", {})
     if not isinstance(scan_opts, dict):
         raise ScraperError("portals-config", "[scan] must be a table")
@@ -146,6 +151,9 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
         ),
         visa_filter=bool(visa.get("enabled", False)),
         visa_phrases=_str_list(visa.get("phrases", []), "filters.visa.phrases"),
+        salary_min=int(salary.get("min", 0)),
+        salary_max=int(salary.get("max", 0)),
+        salary_currency=str(salary.get("currency", "")),
         max_age_days=int(scan_opts.get("max_age_days", 0)),
         per_source_cap=int(scan_opts.get("per_source_cap", 0)),
         timeout_s=int(scan_opts.get("timeout_s", 20)),

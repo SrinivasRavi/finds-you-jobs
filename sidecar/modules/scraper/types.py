@@ -99,6 +99,15 @@ class ScanPrefs:
     # For seekers who need sponsorship; empty description passes.
     visa_filter: bool = False
     visa_phrases: list[str] = field(default_factory=list)
+    # Salary filter — career-ops's `salary_filter`, gated on `salary.py`'s
+    # parser. 0 = off for both bounds; amounts are ANNUAL in `salary_currency`
+    # (defaults to comparing against any currency-less posting; a posting in
+    # a *different* stated currency always passes — can't compare, can't gate).
+    # Unparsable/absent salary text always passes (rank-don't-gate: most
+    # postings state no salary at all).
+    salary_min: int = 0
+    salary_max: int = 0
+    salary_currency: str = ""
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20

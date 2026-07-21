@@ -236,6 +236,9 @@ title = ["manager"]
 block = ["on-site"]
 [filters.visa]
 enabled = true
+[filters.salary]
+min = 100000
+currency = "USD"
 [scan]
 max_age_days = 30
 """
@@ -253,6 +256,9 @@ max_age_days = 30
     ]
     assert config.prefs.visa_filter is True
     assert config.prefs.visa_phrases == []  # empty = DEFAULT_VISA_PHRASES
+    assert config.prefs.salary_min == 100_000
+    assert config.prefs.salary_max == 0
+    assert config.prefs.salary_currency == "USD"
     assert config.prefs.max_age_days == 30
     assert config.prefs.per_source_cap == 0  # default: never self-throttle
 

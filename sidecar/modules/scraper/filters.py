@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 
+from .salary import parse_salary
 from .types import ScanPrefs
 
 
@@ -79,6 +80,29 @@ def passes_visa(description: str, prefs: ScanPrefs) -> bool:
     if not prefs.visa_filter or not description.strip():
         return True
     return not keyword_match(description, prefs.visa_phrases or DEFAULT_VISA_PHRASES)
+
+
+def passes_salary(salary_text: str, prefs: ScanPrefs) -> bool:
+    """Range-overlap gate over the parsed annualized salary. Passes whenever
+    there's no basis to compare: filter off, no/unparsable salary text, or a
+    stated currency different from the user's (rank-don't-gate throughout —
+    most postings state no salary at all, and those must never be dropped)."""
+    if prefs.salary_min <= 0 and prefs.salary_max <= 0:
+        return True
+    parsed = parse_salary(salary_text)
+    if parsed is None:
+        return True  # no signal → pass
+    if (
+        prefs.salary_currency
+        and parsed.currency
+        and parsed.currency.upper() != prefs.salary_currency.upper()
+    ):
+        return True
+    if prefs.salary_min > 0 and parsed.amount_max < prefs.salary_min:
+        return False
+    if prefs.salary_max > 0 and parsed.amount_min > prefs.salary_max:
+        return False
+    return True
 
 
 def passes_company(company: str, prefs: ScanPrefs) -> bool:

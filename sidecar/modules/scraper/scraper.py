@@ -25,6 +25,7 @@ from .filters import (
     passes_company,
     passes_content,
     passes_location,
+    passes_salary,
     passes_title,
     passes_visa,
 )
@@ -224,6 +225,8 @@ def scan(
             if not passes_content(job.title, job.description, prefs):
                 continue
             if not passes_visa(job.description, prefs):
+                continue
+            if not passes_salary(job.salary, prefs):
                 continue
             if not _fresh_enough(job, prefs, now):
                 continue
