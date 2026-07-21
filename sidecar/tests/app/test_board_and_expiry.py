@@ -429,3 +429,47 @@ def test_saved_job_never_auto_expires_or_deletes(migrated_db: Database) -> None:
     with db.repos() as repos:
         assert _job(repos, active_id).feed_state == "active"
         assert repos.jobs.get(expired_id) is not None
+
+
+# ---------------------------------------------------------------------------
+# Retroactive hard excludes (maintainer 2026-07-22): excludes hide
+# already-discovered rows from the board — hidden, never deleted.
+# ---------------------------------------------------------------------------
+
+
+def test_hard_excludes_hide_existing_board_rows_and_restore(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    _seed_search_jobs(app)  # Stripe (payments JD) + Acme
+
+    board = client.get("/api/board", headers=AUTH).json()
+    assert board["total"] == 2
+
+    # Adding a company exclude hides the Stripe row retroactively…
+    client.post(
+        "/api/settings",
+        headers=AUTH,
+        json={"hard_excludes": {"companies": ["Stripe"]}},
+    )
+    board = client.get("/api/board", headers=AUTH).json()
+    assert board["total"] == 1
+    assert board["jobs"][0]["company"] != "Stripe"
+    # …but the row is hidden, not deleted: the DB still has it.
+    with _db(app).repos() as repos:
+        assert any(j.company == "Stripe" for j in repos.jobs.list())
+
+    # A description keyword hides by JD content (word-boundary, like the scan).
+    client.post(
+        "/api/settings",
+        headers=AUTH,
+        json={"hard_excludes": {"companies": [], "keywords": ["payments"]}},
+    )
+    board = client.get("/api/board", headers=AUTH).json()
+    assert board["total"] == 1
+    assert board["jobs"][0]["company"] == "Acme"
+
+    # Clearing the excludes brings everything straight back.
+    client.post("/api/settings", headers=AUTH, json={"hard_excludes": {}})
+    board = client.get("/api/board", headers=AUTH).json()
+    assert board["total"] == 2

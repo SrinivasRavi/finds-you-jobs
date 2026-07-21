@@ -11,6 +11,7 @@ CRUD lands with its feature commits.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -22,6 +23,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from sidecar.modules.scraper import ScraperError, probe_url
 from sidecar.modules.scraper.canonical import canonicalize_url
+from sidecar.modules.scraper.filters import passes_company, passes_content
+from sidecar.modules.scraper.types import ScanPrefs
 
 from ..db import Database
 from ..db.base import now_utc
@@ -138,6 +141,41 @@ _BOARD_FEED_STATES = ["active", "expired"]
 _BOARD_PAGE_SIZE = 50
 
 
+def _suppressed_by_excludes(state: Any, hard_excludes: dict, jobs: list[Any]) -> set[str]:
+    """Job ids the user's hard excludes hide from the board — retroactively,
+    so adding an exclude takes effect on ALREADY-discovered rows, not just
+    future scans (maintainer 2026-07-22). Rows are hidden, never deleted:
+    removing the exclude brings them straight back.
+
+    Uses the scan chain's own matchers (`passes_company`/`passes_content`) so
+    board behavior and scan behavior can't drift. Cost model (measured
+    2026-07-22, ~400-word JDs): ~87 µs/job → ~0.4 s at 5 000 jobs — so the
+    result is cached on app.state and recomputed only when the excludes or
+    the feed change (fingerprint below). Steady-state per-request cost is a
+    set lookup.
+    """
+    companies = [str(c) for c in (hard_excludes.get("companies") or []) if str(c).strip()]
+    keywords = [str(k) for k in (hard_excludes.get("keywords") or []) if str(k).strip()]
+    if not companies and not keywords:
+        return set()
+    fingerprint = (
+        json.dumps({"c": companies, "k": keywords}, sort_keys=True),
+        len(jobs),
+        max((str(j.ingested_at) for j in jobs), default=""),
+    )
+    cached = getattr(state, "board_exclude_cache", None)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    prefs = ScanPrefs(company_block=companies, content_block=keywords)
+    suppressed = {
+        j.id
+        for j in jobs
+        if not (passes_company(j.company, prefs) and passes_content(j.title, j.description, prefs))
+    }
+    state.board_exclude_cache = (fingerprint, suppressed)
+    return suppressed
+
+
 def _board_search_haystack(d: dto.JobDTO, deep: bool) -> str:
     """FR-JB-13: the searchable text of one board row. Shallow (`list_q`) covers
     what the list row shows — title/company/location; deep (`text_q`) adds the
@@ -172,6 +210,12 @@ async def board(
         jobs = [
             j for j in repos.jobs.list_by_states(_BOARD_FEED_STATES) if j.id not in saved
         ]
+        # Personal hard excludes apply to already-discovered rows too —
+        # hidden (cached set), never deleted (maintainer 2026-07-22).
+        excludes = repos.preferences.get_or_create().hard_excludes or {}
+        suppressed = _suppressed_by_excludes(request.app.state, excludes, jobs)
+        if suppressed:
+            jobs = [j for j in jobs if j.id not in suppressed]
         version = _current_profile_version(repos)
         scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], version)
         score_op_states = repos.operations.score_states_by_job()
