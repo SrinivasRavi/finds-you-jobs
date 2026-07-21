@@ -21,7 +21,13 @@ from pathlib import Path
 from . import adapters
 from .canonical import canonicalize_url
 from .config import PortalsConfig, load_portals
-from .filters import passes_company, passes_content, passes_location, passes_title
+from .filters import (
+    passes_company,
+    passes_content,
+    passes_location,
+    passes_title,
+    passes_visa,
+)
 from .http import Fetcher
 from .quality import assess, is_structurally_broken
 from .types import NormalizedJob, ScanPrefs, ScanResult, ScraperError, SourceReport
@@ -216,6 +222,8 @@ def scan(
             # with the initial fetch (most ATS adapters). Same partial-coverage
             # stance career-ops's own content_filter documents.
             if not passes_content(job.title, job.description, prefs):
+                continue
+            if not passes_visa(job.description, prefs):
                 continue
             if not _fresh_enough(job, prefs, now):
                 continue

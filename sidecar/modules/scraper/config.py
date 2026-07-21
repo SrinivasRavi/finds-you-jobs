@@ -37,6 +37,9 @@ Shape (see `sidecar/modules/scraper/portals.example.toml`):
     title = ["manager"]          # rule applies only when title matches
     allow = []
     block = ["on-site"]
+    [filters.visa]
+    enabled = false              # drop explicit sponsorship denials
+    phrases = []                 # empty = filters.DEFAULT_VISA_PHRASES
     [scan]
     max_age_days = 0             # 0 = off
     per_source_cap = 0           # 0 = uncapped (never self-throttle by default)
@@ -122,6 +125,7 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
     location = filters.get("location", {}) if isinstance(filters, dict) else {}
     company = filters.get("company", {}) if isinstance(filters, dict) else {}
     content = filters.get("content", {}) if isinstance(filters, dict) else {}
+    visa = filters.get("visa", {}) if isinstance(filters, dict) else {}
     scan_opts = data.get("scan", {})
     if not isinstance(scan_opts, dict):
         raise ScraperError("portals-config", "[scan] must be a table")
@@ -140,6 +144,8 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
         content_by_title=_content_rules(
             content.get("by_title_keyword", []), "filters.content.by_title_keyword"
         ),
+        visa_filter=bool(visa.get("enabled", False)),
+        visa_phrases=_str_list(visa.get("phrases", []), "filters.visa.phrases"),
         max_age_days=int(scan_opts.get("max_age_days", 0)),
         per_source_cap=int(scan_opts.get("per_source_cap", 0)),
         timeout_s=int(scan_opts.get("timeout_s", 20)),

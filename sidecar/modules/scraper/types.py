@@ -93,6 +93,12 @@ class ScanPrefs:
     # each rule's allow/block applies only to jobs whose title matches the
     # rule's `title` keywords ("for 'manager' roles, block 'on-site'").
     content_by_title: list[ContentRule] = field(default_factory=list)
+    # Visa filter — career-ops's `visa_filter`, off by default. When on,
+    # drops postings whose description states sponsorship is unavailable
+    # (filters.DEFAULT_VISA_PHRASES unless the user supplies their own).
+    # For seekers who need sponsorship; empty description passes.
+    visa_filter: bool = False
+    visa_phrases: list[str] = field(default_factory=list)
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20

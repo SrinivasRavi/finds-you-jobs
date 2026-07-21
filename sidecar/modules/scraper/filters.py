@@ -52,6 +52,35 @@ def passes_location(location: str, prefs: ScanPrefs) -> bool:
     return keyword_match(location, prefs.location_allow)
 
 
+# Curated default sponsorship-denial vocabulary (career-ops `visa_filter`
+# model — ships a working default, user list replaces it wholesale).
+# Multi-word phrases match across whitespace runs; deliberately conservative:
+# only explicit denials, never ambiguous phrasing like "must be authorized to
+# work" (which many sponsoring employers also print).
+DEFAULT_VISA_PHRASES = [
+    "no visa sponsorship",
+    "no sponsorship",
+    "cannot sponsor",
+    "can not sponsor",
+    "unable to sponsor",
+    "not able to sponsor",
+    "will not sponsor",
+    "does not sponsor",
+    "we do not sponsor",
+    "sponsorship is not available",
+    "sponsorship not available",
+    "without sponsorship now or in the future",
+]
+
+
+def passes_visa(description: str, prefs: ScanPrefs) -> bool:
+    """Off by default; when on, an explicit sponsorship denial in the
+    description drops the row. Empty description passes (no signal)."""
+    if not prefs.visa_filter or not description.strip():
+        return True
+    return not keyword_match(description, prefs.visa_phrases or DEFAULT_VISA_PHRASES)
+
+
 def passes_company(company: str, prefs: ScanPrefs) -> bool:
     """Block-only gate. Unknown (empty) company always passes — can't exclude
     what we don't know (rank-don't-gate, same stance as unknown location)."""

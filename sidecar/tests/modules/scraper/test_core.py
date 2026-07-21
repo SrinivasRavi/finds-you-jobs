@@ -21,6 +21,7 @@ from sidecar.modules.scraper.filters import (
     passes_content,
     passes_location,
     passes_title,
+    passes_visa,
 )
 from sidecar.modules.scraper.quality import assess, is_structurally_broken
 from sidecar.modules.scraper.types import (
@@ -138,6 +139,26 @@ def test_content_by_title_rule_applies_only_to_matching_titles():
     assert passes_content("Engineering Manager", "Fully remote", prefs)
 
 
+def test_visa_filter_off_by_default():
+    assert passes_visa("Unfortunately we cannot sponsor visas", ScanPrefs())
+
+
+def test_visa_filter_drops_explicit_denials_with_default_vocabulary():
+    prefs = ScanPrefs(visa_filter=True)
+    assert not passes_visa("We are unable to sponsor visas at this time", prefs)
+    assert not passes_visa("No visa sponsorship available for this role", prefs)
+    # Ambiguous phrasing many sponsoring employers also print — passes.
+    assert passes_visa("Must be authorized to work in the US", prefs)
+    assert passes_visa("Visa sponsorship offered for exceptional candidates", prefs)
+    assert passes_visa("", prefs)  # no signal → no gate
+
+
+def test_visa_filter_user_phrases_replace_default_vocabulary():
+    prefs = ScanPrefs(visa_filter=True, visa_phrases=["h1b transfer not supported"])
+    assert not passes_visa("Note: H1B transfer not supported", prefs)
+    assert passes_visa("We cannot sponsor", prefs)  # default list replaced
+
+
 def test_content_by_title_allow_requires_match_in_scope():
     prefs = ScanPrefs(
         content_by_title=[ContentRule(title=["intern"], allow=["paid"])]
@@ -213,6 +234,8 @@ block = ["unpaid internship"]
 [[filters.content.by_title_keyword]]
 title = ["manager"]
 block = ["on-site"]
+[filters.visa]
+enabled = true
 [scan]
 max_age_days = 30
 """
@@ -228,6 +251,8 @@ max_age_days = 30
     assert config.prefs.content_by_title == [
         ContentRule(title=["manager"], block=["on-site"])
     ]
+    assert config.prefs.visa_filter is True
+    assert config.prefs.visa_phrases == []  # empty = DEFAULT_VISA_PHRASES
     assert config.prefs.max_age_days == 30
     assert config.prefs.per_source_cap == 0  # default: never self-throttle
 
