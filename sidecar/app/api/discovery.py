@@ -21,6 +21,7 @@ toggle takes effect on the next scan with no schema change and no restart.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,8 +29,11 @@ from fastapi import APIRouter, HTTPException, Request
 from sidecar.modules.scraper import adapters
 from sidecar.modules.scraper.adapters import apify
 from sidecar.modules.scraper.config import SourceEntry
+from sidecar.modules.scraper.http import Fetcher
+from sidecar.modules.scraper.types import ScraperError
 
 from ..db import Database
+from ..db.base import now_utc
 from ..registry.persistence import SCRAPER_ENGINE_PREFIX
 from ..security import get_app_key, mask_key, seal_secret
 from . import dto
@@ -177,6 +181,77 @@ def _board_root(url: str) -> str:
     return url
 
 
+def _slugish(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _find_source_by_company(sources: list, company: str, source_adapter: str) -> dict | None:
+    """The `[[sources]]` row already covering `company`, matched by company
+    name or URL tenant slug against rows the job's own adapter family claims.
+
+    Why: several ATSes publish postings on the COMPANY's domain (Greenhouse
+    `absolute_url` → `www.coupang.jobs/…`), so the job's canonical URL can't
+    be walked back to a board root — but the board that FOUND the job is
+    already in the sources list; watching should find it there, not 422
+    (maintainer 2026-07-22, the Coupang/Roku "Can't watch this source" bug).
+    """
+    want = _slugish(company)
+    if not want:
+        return None
+    for raw in sources:
+        if not (isinstance(raw, dict) and raw.get("url")):
+            continue
+        resolved = adapters.resolve(SourceEntry(url=str(raw["url"])))
+        if resolved is None or resolved[0].ID != source_adapter:
+            continue
+        row_company = _slugish(str(raw.get("company", "")))
+        row_slug = _slugish(str(raw["url"]).rstrip("/").rsplit("/", 1)[-1])
+        if want in (row_company, row_slug) or (row_company and want == row_company):
+            return raw
+    return None
+
+
+# Board-URL templates per enumerate family — the last-resort watch fallback:
+# guess the tenant slug from the company name and PROBE (one GET per
+# candidate). This is the reverse-ATS pattern discovery.md already blesses,
+# scoped to one user-initiated action. Needed so a company-domain job stays
+# watchable after its covering sources row was unwatched (found live
+# 2026-07-22 — watch→unwatch→rewatch dead-ended in a 422).
+_BOARD_URL_TEMPLATES: dict[str, list[str]] = {
+    "greenhouse": [
+        "https://boards.greenhouse.io/{}",
+        "https://job-boards.greenhouse.io/{}",
+    ],
+    "lever": ["https://jobs.lever.co/{}"],
+    "ashby": ["https://jobs.ashbyhq.com/{}"],
+    "workable": ["https://apply.workable.com/{}"],
+    "smartrecruiters": ["https://jobs.smartrecruiters.com/{}"],
+}
+
+
+def _guess_board_urls(job_adapter: str, company: str) -> list[str]:
+    templates = _BOARD_URL_TEMPLATES.get(job_adapter, [])
+    slugs: list[str] = []
+    for candidate in (_slugish(company), _slugish(company.split()[0] if company else "")):
+        if candidate and candidate not in slugs:
+            slugs.append(candidate)
+    return [t.format(s) for s in slugs for t in templates]
+
+
+def _ledger_watch(repos, snapshot: dict, error: str | None) -> None:
+    """Record the watch attempt in the operations ledger — Analytics → Logs
+    shows the row (kind `watch_company`) with the verbatim failure, so a
+    refused watch is diagnosable after the tooltip is gone (maintainer
+    2026-07-22)."""
+    op = repos.operations.create("watch_company", snapshot)
+    op.state = "failed" if error else "succeeded"
+    op.error = error
+    op.started_at = op.finished_at = now_utc()
+
+
+_WATCH_PROBE_TIMEOUT_S = 8
+
+
 @router.post("/api/discovery/watchlist")
 async def watch_company(
     request: Request, payload: dto.WatchCompanyRequest
@@ -186,33 +261,86 @@ async def watch_company(
     with _db(request).repos() as repos:
         url = (payload.url or "").strip()
         company = payload.company.strip()
+        job_adapter = ""
         if not url and payload.job_id:
             job = repos.jobs.get(payload.job_id)
             if job is None:
                 raise HTTPException(status_code=404, detail=f"job {payload.job_id!r} not found")
             url = job.canonical_url
             company = company or job.company
+            job_adapter = job.source_adapter
         if not url:
             raise HTTPException(status_code=422, detail="url or job_id required")
+        snapshot = {"url": url, "company": company, "job_id": payload.job_id or ""}
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        sources = list(portals.get("sources", []))
+
         source_url = _board_root(url)
         entry = SourceEntry(url=source_url, company=company)
         resolved = adapters.resolve(entry)
+        if resolved is None and job_adapter:
+            # Company-domain posting URL (no derivable board root) — the board
+            # that found this job is already a sources row; watch THAT.
+            covering = _find_source_by_company(sources, company, job_adapter)
+            if covering is not None:
+                source_url = str(covering["url"])
+                resolved = adapters.resolve(SourceEntry(url=source_url))
+            else:
+                # No covering row (e.g. it was just unwatched): guess the
+                # tenant board from the company name and keep the first
+                # candidate that actually opens.
+                for cand in _guess_board_urls(job_adapter, company):
+                    try:
+                        Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text(cand)
+                    except ScraperError:
+                        continue
+                    cand_resolved = adapters.resolve(SourceEntry(url=cand))
+                    if cand_resolved is not None:
+                        source_url, resolved = cand, cand_resolved
+                        break
+        fail: str | None = None
+        adapter_id = ""
         if resolved is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
+            if job_adapter in ("naukri", "indeed", "seek", "linkedin", "brave"):
+                fail = (
+                    f"this job came from a search source ({job_adapter}) — there is "
+                    "no company board to watch. Paste the company's careers page "
+                    "on a supported ATS in Job finder preferences → Tracked "
+                    "companies instead"
+                )
+            else:
+                fail = (
                     "no adapter recognizes this URL as a scannable board — paste the "
                     "company's careers page on a supported ATS (Greenhouse, Lever, "
                     "Ashby, Workable, SmartRecruiters, Recruitee, Teamtailor, "
                     "Personio, Workday, BambooHR, Breezy) or an RSS feed"
-                ),
-            )
-        adapter_id = resolved[0].ID
+                )
+        else:
+            adapter_id = resolved[0].ID
+            # Liveness gate for USER-PASTED urls only (a job-derived board was
+            # just scanned — it's known real): one GET, ~a second, catches
+            # typos like a nonexistent tenant before it pollutes the roster
+            # (maintainer 2026-07-22). Existence, not job-content —
+            # deliberately shallow.
+            if not payload.job_id:
+                try:
+                    Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text(source_url)
+                except ScraperError as e:
+                    fail = f"that URL doesn't open — {e}"
+    if fail is not None:
+        # Recorded OUTSIDE the request session: raising through `repos()`
+        # rolls its transaction back, which silently discarded the ledger row
+        # (found 2026-07-22).
+        with _db(request).repos() as ledger_repos:
+            _ledger_watch(ledger_repos, snapshot, fail)
+        raise HTTPException(status_code=422, detail=fail)
+    with _db(request).repos() as repos:
         prefs = repos.preferences.get_or_create()
         portals = dict(prefs.portals_config or {})
         sources = list(portals.get("sources", []))
         already = False
-        for raw in sources:
+        for i, raw in enumerate(sources):
             if (
                 isinstance(raw, dict)
                 and str(raw.get("url", "")).rstrip("/") == source_url.rstrip("/")
@@ -220,11 +348,16 @@ async def watch_company(
                 already = True
                 # A registry-seeded row the user explicitly watches becomes a
                 # managed roster entry (watched=True) — so the watch toggle
-                # reflects it and unwatch can remove it.
+                # reflects it and unwatch can remove it. REPLACE the row dict,
+                # never mutate it in place: the loaded JSON shares these nested
+                # dicts, so an in-place edit changes "old" and "new" alike and
+                # SQLAlchemy sees no change to flush (found 2026-07-22 — the
+                # silent "toggle never turns on" bug).
                 if not raw.get("watched"):
-                    raw["watched"] = True
+                    stamped = {**raw, "watched": True}
                     if company and not raw.get("company"):
-                        raw["company"] = company
+                        stamped["company"] = company
+                    sources[i] = stamped
                     portals["sources"] = sources
                     repos.preferences.update(portals_config=portals)
                 break
@@ -238,6 +371,7 @@ async def watch_company(
             sources.append(row)
             portals["sources"] = sources
             repos.preferences.update(portals_config=portals)
+        _ledger_watch(repos, snapshot, None)
     return dto.WatchCompanyResult(
         added=not already, source_url=source_url, adapter=adapter_id, company=company
     )

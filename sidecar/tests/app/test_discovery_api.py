@@ -16,11 +16,35 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from sidecar.app.api import discovery as discovery_api
 from sidecar.app.main import create_app
 from sidecar.modules.scraper import adapters
+from sidecar.modules.scraper.types import ScraperError
 
 TOKEN = "test-token-discovery"  # noqa: S105 — test fixture, not a real secret
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
+
+class _ProbeOkFetcher:
+    """Offline stand-in for the watch liveness probe — every URL 'opens'."""
+
+    def __init__(self, timeout_s: int = 0) -> None:  # noqa: ARG002 — seam parity
+        pass
+
+    def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
+        return "<html>board</html>"
+
+
+class _ProbeDeadFetcher(_ProbeOkFetcher):
+    def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
+        raise ScraperError("http", f"GET {url} -> 404")
+
+
+@pytest.fixture(autouse=True)
+def _offline_watch_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test in this file may hit the network: the watch liveness probe uses
+    a fake fetcher unless a test swaps in its own."""
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
 
 
 @pytest.fixture
@@ -516,6 +540,106 @@ def test_watch_company_from_url_and_job_row(
     )
     assert bad.status_code == 422
     assert "no adapter recognizes" in bad.json()["detail"]
+
+
+def test_watch_company_domain_url_falls_back_to_covering_source(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Greenhouse `absolute_url` postings live on the COMPANY's domain — the
+    board root can't be derived from the job URL, but the sources row that
+    found the job can cover the watch (the Coupang/Roku 2026-07-22 bug)."""
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        # The covering board is already a (seeded-style) sources row.
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        portals["sources"] = [
+            *portals.get("sources", []),
+            {"url": "https://boards.greenhouse.io/coupang", "company": "Coupang"},
+        ]
+        repos.preferences.update(portals_config=portals)
+        job = repos.jobs.create(
+            canonical_url="https://www.coupang.jobs/en/jobs/12345/senior-staff",
+            title="Senior Staff Backend Engineer", company="Coupang",
+            location="Bengaluru", description="", source_adapter="greenhouse",
+        )
+    r = client.post(
+        "/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id}
+    ).json()
+    assert r["source_url"] == "https://boards.greenhouse.io/coupang"
+    assert r["adapter"] == "greenhouse"
+    # The covering row is now a managed roster entry.
+    roster = client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"]
+    assert any(e["url"] == "https://boards.greenhouse.io/coupang" for e in roster)
+
+
+def test_watch_company_domain_url_guesses_board_when_no_covering_row(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """watch → unwatch → rewatch must not dead-end: with no covering sources
+    row left, the board is guessed from the company slug and probed (found
+    live 2026-07-22)."""
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        # No coupang row anywhere: strip sources down to one unrelated board.
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        portals["sources"] = [{"url": "https://boards.greenhouse.io/unrelated-co"}]
+        repos.preferences.update(portals_config=portals)
+        job = repos.jobs.create(
+            canonical_url="https://careers.coupang.example/jobs/1",
+            title="Senior Staff Backend Engineer", company="Coupang",
+            location="Bengaluru", description="", source_adapter="greenhouse",
+        )
+    r = client.post("/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id})
+    assert r.status_code == 200
+    body = r.json()
+    # First guessed candidate that "opens" (probe fetcher is offline-OK).
+    assert body["source_url"] == "https://boards.greenhouse.io/coupang"
+    assert body["added"] is True
+    roster = client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"]
+    assert any(e["url"] == "https://boards.greenhouse.io/coupang" for e in roster)
+
+
+def test_watch_search_source_job_explains_no_board(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        job = repos.jobs.create(
+            canonical_url="https://www.naukri.com/job-listings-senior-backend-1",
+            title="Senior Backend Engineer", company="Algoleap Technologies",
+            location="Hyderabad", description="", source_adapter="naukri",
+        )
+    bad = client.post("/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id})
+    assert bad.status_code == 422
+    assert "search source (naukri)" in bad.json()["detail"]
+    # The refusal is durable: Analytics → Logs (operations ledger) has it.
+    with app.state.db.repos() as repos:
+        ops = [o for o in repos.operations.list_recent() if o.kind == "watch_company"]
+    assert ops and ops[0].state == "failed" and "search source" in (ops[0].error or "")
+
+
+def test_watch_pasted_url_is_liveness_probed(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, client = app_client
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeDeadFetcher)
+    bad = client.post(
+        "/api/discovery/watchlist",
+        headers=AUTH,
+        json={"url": "https://boards.greenhouse.io/no-such-tenant-xyz"},
+    )
+    assert bad.status_code == 422
+    assert "doesn't open" in bad.json()["detail"]
+    # A job-derived watch skips the probe (the board was just scanned).
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
+    ok = client.post(
+        "/api/discovery/watchlist",
+        headers=AUTH,
+        json={"url": "https://boards.greenhouse.io/live-tenant"},
+    )
+    assert ok.json()["added"] is True
 
 
 def test_watchlist_roster_lists_and_removes_watched_rows_only(

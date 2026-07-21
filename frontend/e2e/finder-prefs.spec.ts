@@ -48,6 +48,26 @@ test("excludes and tracked companies round-trip through the modal", async ({
     },
   });
 
+  // Seed a job on a watchable board and watch it via the job path (no
+  // liveness probe — the board is job-derived) so the roster has one entry.
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "https://boards.greenhouse.io/e2e-watch-co/jobs/99",
+        title: "Watch Me",
+        company: "E2E Watch Co",
+        location: "Remote",
+        description: "",
+        source_adapter: "greenhouse",
+      },
+    })
+  ).json();
+  await request.post(`${base}/api/discovery/watchlist`, {
+    headers: auth,
+    data: { job_id: job.id },
+  });
+
   await page.goto("/jobs");
   await page.getByTestId("finder-prefs").click();
 
@@ -59,14 +79,17 @@ test("excludes and tracked companies round-trip through the modal", async ({
   await expect(page.getByTestId("fp-exclude-companies").getByText("Evil Corp")).toBeVisible();
   await expect(page.getByTestId("fp-exclude-keywords").getByText("unpaid")).toBeVisible();
 
-  // Tracked companies: add a Greenhouse board by URL, see it listed.
-  await page
-    .getByTestId("fp-tracked-url")
-    .fill("https://boards.greenhouse.io/e2e-watch-co/jobs/99");
-  await page.getByTestId("fp-tracked-add").click();
+  // The job-derived watch shows in the roster; a pasted URL that doesn't
+  // open is refused by the liveness probe (offline-safe: unroutable host,
+  // claimed by the RSS adapter's shape check).
   await expect(page.getByTestId("fp-tracked-row")).toContainText(
     "boards.greenhouse.io/e2e-watch-co",
   );
+  await page.getByTestId("fp-tracked-url").fill("https://e2e-invalid.localhost/jobs.rss");
+  await page.getByTestId("fp-tracked-add").click();
+  await expect(page.getByTestId("fp-tracked-error")).toContainText("doesn't open", {
+    timeout: 15_000,
+  });
   await page.screenshot({ path: `${DIR}/finder-prefs-filled.png`, fullPage: true });
 
   // Save persists the excludes (rescan fires against them server-side).

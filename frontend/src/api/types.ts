@@ -582,7 +582,10 @@ export type OperationKind =
   | "send"
   | "linkedin_login"
   | "archive_stale_contacts"
-  | "contact_sync";
+  | "contact_sync"
+  // Watch-company attempts (2026-07-22): synchronous API action recorded into
+  // the ledger so Analytics → Logs keeps the verbatim refusal reason.
+  | "watch_company";
 
 export interface EngineRoute {
   kind: OperationKind;

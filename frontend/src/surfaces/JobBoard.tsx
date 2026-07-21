@@ -322,9 +322,16 @@ function JobDetail({
     setWatchError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset per job only
   }, [jobId]);
+  // Match by board-root URL prefix OR by company (several ATSes publish
+  // postings on the company's own domain — Greenhouse absolute_url — so the
+  // job URL never contains the board root; same fallback the backend uses).
+  const slugish = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const watchedEntry = job
     ? watchlist?.find(
-        (e) => job.canonical_url === e.url || job.canonical_url.startsWith(`${e.url}/`),
+        (e) =>
+          job.canonical_url === e.url ||
+          job.canonical_url.startsWith(`${e.url}/`) ||
+          (!!e.company && !!job.company && slugish(e.company) === slugish(job.company)),
       )
     : undefined;
   if (!job) {
