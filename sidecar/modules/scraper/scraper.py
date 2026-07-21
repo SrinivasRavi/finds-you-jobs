@@ -215,7 +215,7 @@ def scan(
             # filter only has effect where the description already arrived
             # with the initial fetch (most ATS adapters). Same partial-coverage
             # stance career-ops's own content_filter documents.
-            if not passes_content(job.description, prefs):
+            if not passes_content(job.title, job.description, prefs):
                 continue
             if not _fresh_enough(job, prefs, now):
                 continue

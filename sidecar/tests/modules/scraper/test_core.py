@@ -23,7 +23,12 @@ from sidecar.modules.scraper.filters import (
     passes_title,
 )
 from sidecar.modules.scraper.quality import assess, is_structurally_broken
-from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScraperError
+from sidecar.modules.scraper.types import (
+    ContentRule,
+    NormalizedJob,
+    ScanPrefs,
+    ScraperError,
+)
 
 # --- canonical ---
 
@@ -112,16 +117,34 @@ def test_company_unknown_passes():
 
 def test_content_block_wins_over_allow():
     prefs = ScanPrefs(content_allow=["python"], content_block=["unpaid"])
-    assert passes_content("Python backend role, full pay", prefs)
-    assert not passes_content("Python role, unpaid trial period", prefs)
+    assert passes_content("Engineer", "Python backend role, full pay", prefs)
+    assert not passes_content("Engineer", "Python role, unpaid trial period", prefs)
 
 
 def test_content_empty_allow_passes_everything():
-    assert passes_content("Anything at all", ScanPrefs())
+    assert passes_content("Engineer", "Anything at all", ScanPrefs())
 
 
 def test_content_unknown_description_passes():
-    assert passes_content("", ScanPrefs(content_allow=["python"]))
+    assert passes_content("Engineer", "", ScanPrefs(content_allow=["python"]))
+
+
+def test_content_by_title_rule_applies_only_to_matching_titles():
+    prefs = ScanPrefs(
+        content_by_title=[ContentRule(title=["manager"], block=["on-site"])]
+    )
+    assert not passes_content("Engineering Manager", "Hybrid, mostly on-site", prefs)
+    assert passes_content("Backend Engineer", "Hybrid, mostly on-site", prefs)
+    assert passes_content("Engineering Manager", "Fully remote", prefs)
+
+
+def test_content_by_title_allow_requires_match_in_scope():
+    prefs = ScanPrefs(
+        content_by_title=[ContentRule(title=["intern"], allow=["paid"])]
+    )
+    assert passes_content("SWE Intern", "This is a paid internship", prefs)
+    assert not passes_content("SWE Intern", "Great learning opportunity", prefs)
+    assert passes_content("SWE", "Great learning opportunity", prefs)
 
 
 # --- quality (annotate, never drop valid rows) ---
@@ -187,6 +210,9 @@ always_allow = ["remote"]
 block = ["Example Corp"]
 [filters.content]
 block = ["unpaid internship"]
+[[filters.content.by_title_keyword]]
+title = ["manager"]
+block = ["on-site"]
 [scan]
 max_age_days = 30
 """
@@ -199,8 +225,26 @@ max_age_days = 30
     assert config.prefs.location_always_allow == ["remote"]
     assert config.prefs.company_block == ["Example Corp"]
     assert config.prefs.content_block == ["unpaid internship"]
+    assert config.prefs.content_by_title == [
+        ContentRule(title=["manager"], block=["on-site"])
+    ]
     assert config.prefs.max_age_days == 30
     assert config.prefs.per_source_cap == 0  # default: never self-throttle
+
+
+def test_content_by_title_rule_without_scope_is_rejected(tmp_path):
+    bad = tmp_path / "bad.toml"
+    bad.write_text(
+        """
+[[sources]]
+board = "remoteok"
+[[filters.content.by_title_keyword]]
+block = ["on-site"]
+"""
+    )
+    with pytest.raises(ScraperError) as ei:
+        load_portals(bad)
+    assert "non-empty `title`" in str(ei.value)
 
 
 def test_portals_config_errors_are_typed_and_verbatim(tmp_path):

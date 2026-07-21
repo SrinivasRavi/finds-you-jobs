@@ -52,6 +52,17 @@ class NormalizedJob:
 
 
 @dataclass
+class ContentRule:
+    """One `content_filter.by_title_keyword` rule: description allow/block
+    lists that apply only when the job title matches `title` (word-boundary,
+    same matcher as every other filter)."""
+
+    title: list[str] = field(default_factory=list)
+    allow: list[str] = field(default_factory=list)
+    block: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ScanPrefs:
     """User preferences applied by the shared pipeline (not by adapters).
 
@@ -78,6 +89,10 @@ class ScanPrefs:
     # unknown location); block wins over allow.
     content_allow: list[str] = field(default_factory=list)
     content_block: list[str] = field(default_factory=list)
+    # Scoped content rules — career-ops's `content_filter.by_title_keyword`:
+    # each rule's allow/block applies only to jobs whose title matches the
+    # rule's `title` keywords ("for 'manager' roles, block 'on-site'").
+    content_by_title: list[ContentRule] = field(default_factory=list)
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20

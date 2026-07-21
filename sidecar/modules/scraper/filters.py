@@ -60,14 +60,23 @@ def passes_company(company: str, prefs: ScanPrefs) -> bool:
     return not keyword_match(company, prefs.company_block)
 
 
-def passes_content(description: str, prefs: ScanPrefs) -> bool:
+def passes_content(title: str, description: str, prefs: ScanPrefs) -> bool:
     """Block wins over allow; empty allow-list means everything passes.
     Empty description always passes — no signal to filter on, not a reason to
-    drop a row (rank-don't-gate)."""
+    drop a row (rank-don't-gate). Scoped rules (`content_by_title`,
+    career-ops's `content_filter.by_title_keyword`) apply the same semantics
+    but only to jobs whose title matches the rule's keywords."""
     if not description.strip():
         return True
     if keyword_match(description, prefs.content_block):
         return False
-    if not prefs.content_allow:
-        return True
-    return keyword_match(description, prefs.content_allow)
+    if prefs.content_allow and not keyword_match(description, prefs.content_allow):
+        return False
+    for rule in prefs.content_by_title:
+        if not keyword_match(title, rule.title):
+            continue
+        if keyword_match(description, rule.block):
+            return False
+        if rule.allow and not keyword_match(description, rule.allow):
+            return False
+    return True

@@ -33,6 +33,10 @@ Shape (see `sidecar/modules/scraper/portals.example.toml`):
     [filters.content]
     allow = []                  # description keywords; block wins over allow
     block = ["unpaid internship"]
+    [[filters.content.by_title_keyword]]
+    title = ["manager"]          # rule applies only when title matches
+    allow = []
+    block = ["on-site"]
     [scan]
     max_age_days = 0             # 0 = off
     per_source_cap = 0           # 0 = uncapped (never self-throttle by default)
@@ -45,7 +49,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .types import ScanPrefs, ScraperError
+from .types import ContentRule, ScanPrefs, ScraperError
 
 
 @dataclass
@@ -64,6 +68,27 @@ class SourceEntry:
 class PortalsConfig:
     sources: list[SourceEntry] = field(default_factory=list)
     prefs: ScanPrefs = field(default_factory=ScanPrefs)
+
+
+def _content_rules(raw: object, where: str) -> list[ContentRule]:
+    if not isinstance(raw, list):
+        raise ScraperError("portals-config", f"{where} must be a list of tables, got {raw!r}")
+    rules: list[ContentRule] = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ScraperError("portals-config", f"{where}[{i}] is not a table: {entry!r}")
+        rule = ContentRule(
+            title=_str_list(entry.get("title", []), f"{where}[{i}].title"),
+            allow=_str_list(entry.get("allow", []), f"{where}[{i}].allow"),
+            block=_str_list(entry.get("block", []), f"{where}[{i}].block"),
+        )
+        if not rule.title:
+            raise ScraperError(
+                "portals-config",
+                f"{where}[{i}] needs a non-empty `title` list (the rule's scope)",
+            )
+        rules.append(rule)
+    return rules
 
 
 def _str_list(raw: object, where: str) -> list[str]:
@@ -112,6 +137,9 @@ def parse_portals(data: dict, where: str = "portals config") -> PortalsConfig:
         company_block=_str_list(company.get("block", []), "filters.company.block"),
         content_allow=_str_list(content.get("allow", []), "filters.content.allow"),
         content_block=_str_list(content.get("block", []), "filters.content.block"),
+        content_by_title=_content_rules(
+            content.get("by_title_keyword", []), "filters.content.by_title_keyword"
+        ),
         max_age_days=int(scan_opts.get("max_age_days", 0)),
         per_source_cap=int(scan_opts.get("per_source_cap", 0)),
         timeout_s=int(scan_opts.get("timeout_s", 20)),
