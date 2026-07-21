@@ -9,6 +9,10 @@
 #   or, if you already cloned the repo:
 #     powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 $ErrorActionPreference = "Stop"
+# Pinned to a tagged release, not `main` — `main` is a live dev branch and a
+# bad push there must not be able to brick every fresh install on the next
+# `irm | iex`. Bump this on every release (see RELEASING.md).
+$LatestTag = "v0.6.0"
 function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Have($c) { $null -ne (Get-Command $c -ErrorAction SilentlyContinue) }
 function RefreshPath {
@@ -52,10 +56,14 @@ git --version
 
 Step "Getting the code"
 if ((Test-Path package.json) -and (Select-String -Path package.json -Pattern '"name": "finds-you-jobs"' -Quiet)) {
-  git pull --ff-only
+  Write-Host "Already inside the repo — updating to $LatestTag…"
+  git fetch --tags origin
+  git checkout $LatestTag
 } elseif (Test-Path finds-you-jobs\.git) {
   Set-Location finds-you-jobs
-  git pull --ff-only
+  Write-Host "Found existing clone — updating to $LatestTag…"
+  git fetch --tags origin
+  git checkout $LatestTag
 } else {
   # `irm | iex` runs from wherever the shell happens to sit — an elevated
   # PowerShell starts in C:\WINDOWS\System32, where a clone fails with
@@ -81,9 +89,10 @@ if ((Test-Path package.json) -and (Select-String -Path package.json -Pattern '"n
   }
   if (Test-Path finds-you-jobs\.git) {
     Set-Location finds-you-jobs
-    git pull --ff-only
+    git fetch --tags origin
+    git checkout $LatestTag
   } else {
-    git clone https://github.com/SrinivasRavi/finds-you-jobs.git
+    git clone --branch $LatestTag https://github.com/SrinivasRavi/finds-you-jobs.git
     # PowerShell 5.1 does not stop on a native command's exit code even with
     # ErrorActionPreference=Stop — check explicitly so a failed clone doesn't
     # cascade into confusing Set-Location errors.

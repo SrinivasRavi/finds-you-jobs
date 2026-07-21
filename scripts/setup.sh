@@ -10,6 +10,10 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/SrinivasRavi/finds-you-jobs.git"
+# Pinned to a tagged release, not `main` — `main` is a live dev branch and a
+# bad push there must not be able to brick every fresh install on the next
+# curl. Bump this on every release (see RELEASING.md).
+LATEST_TAG="v0.6.0"
 BLUE=$'\033[1;34m'; GREEN=$'\033[1;32m'; NC=$'\033[0m'
 step() { echo; echo "${BLUE}==> $1${NC}"; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -55,11 +59,14 @@ fi
 # --- 2. clone or update the repo ---------------------------------------------
 step "Getting the code"
 if [ -f "package.json" ] && grep -q '"name": "finds-you-jobs"' package.json 2>/dev/null; then
-  echo "Already inside the repo — pulling latest…"; git pull --ff-only || true
+  echo "Already inside the repo — updating to $LATEST_TAG…"
+  git fetch --tags origin && git checkout "$LATEST_TAG" || true
 elif [ -d "finds-you-jobs/.git" ]; then
-  cd finds-you-jobs; echo "Found existing clone — pulling latest…"; git pull --ff-only || true
+  cd finds-you-jobs
+  echo "Found existing clone — updating to $LATEST_TAG…"
+  git fetch --tags origin && git checkout "$LATEST_TAG" || true
 else
-  git clone "$REPO_URL"; cd finds-you-jobs
+  git clone --branch "$LATEST_TAG" "$REPO_URL"; cd finds-you-jobs
 fi
 
 # --- 3. Rust (Tauri shell) ---------------------------------------------------

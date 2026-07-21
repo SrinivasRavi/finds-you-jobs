@@ -20,7 +20,15 @@ pnpm dev            # manual boot check: full Tauri window, graceful quit
 The e2e suite must be run with its screenshots *looked at*, not just green —
 "done means verified" includes the pixels.
 
-## 2. Provenance / notice audit (per release)
+## 2. Bump the pinned install tag (per release)
+
+`scripts/setup.sh`, `scripts/setup.ps1`, and README.md's three "Everyday commands"
+blocks all pin end-user installs to a specific release tag (not `main` — see
+`docs/internal/audit-and-adoption.md` P0-2-1) so a bad push to `main` can't brick
+every install worldwide. Bump `LATEST_TAG`/`$LatestTag` in both scripts and the
+`v0.5.0` references in README.md to the new tag in the same commit as the release.
+
+## 3. Provenance / notice audit (per release)
 
 - `UPSTREAMS.md` rows match reality: every carried subtree's pin, license,
   and path (career-ops @ `8369b40` MIT prompt distillations; OpenOutreach @
@@ -33,15 +41,16 @@ The e2e suite must be run with its screenshots *looked at*, not just green —
 - No `docs/internal/` content staged; `docs/.gitignore` unchanged unless a
   public doc was deliberately unignored in a reviewed change.
 
-## 3. Build
+## 4. Build
 
 Per-OS packaged builds (`pnpm tauri build`) target macOS, Windows, and Linux.
 Build on each OS natively where available; document any platform not built
 in the release notes rather than shipping an untested binary. The packaged
 build spawns the sidecar binary directly, so the orphan-watchdog chain holds
 (the known dev-only `uv run` wrapper edge does not apply to packaged builds).
+See `docs/internal/distribution.md` for the full packaging/signing/CI plan.
 
-## 4. Release notes must state honestly
+## 5. Release notes must state honestly
 
 - What the Applier does in P1: it navigates, fills, and verifies — it opens
   the form and hands off; **it never submits**. Submission is the human's
@@ -51,7 +60,7 @@ build spawns the sidecar binary directly, so the orphan-watchdog chain holds
 - The BYOK-cloud path sends data to the user's own model provider; only the
   local-model path keeps everything on the machine.
 
-## 5. The P2 submit boundary (design record — NOT a P1 feature)
+## 6. The P2 submit boundary (design record — NOT a P1 feature)
 
 P1 ships **no auto-submit**: the agent's tool vocabulary
 (`sidecar/packages/jobapplier/actions.py`) contains no `submit` tool, so no
