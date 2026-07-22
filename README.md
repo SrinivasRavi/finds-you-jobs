@@ -100,6 +100,6 @@ OS keychain under `finds-you-jobs` if you want to remove that as well.
 - Third-party provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [UPSTREAMS.md](UPSTREAMS.md). Release process: [RELEASING.md](RELEASING.md). Contributing (DCO sign-off required): [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Discord
-Join the discord for job search discussions and beta testing - https://discord.gg/hQRjKw6QS. If there is something that bothers you in the app, there is a limited time offer till July 25, 2026 to submit your thoughts and wishlist and get a chance to have your very own custom finds-you-jobs branch. For free of course!
+Join the discord for job search discussions and beta testing - https://discord.gg/hQRjKw6QS
 
 Licensed [AGPL-3.0-only](LICENSE); carried upstream portions keep their own notices.
