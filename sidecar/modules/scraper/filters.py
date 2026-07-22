@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 
+from .salary import parse_salary
 from .types import ScanPrefs
 
 
@@ -50,3 +51,85 @@ def passes_location(location: str, prefs: ScanPrefs) -> bool:
     if not prefs.location_allow or not location.strip():
         return True
     return keyword_match(location, prefs.location_allow)
+
+
+# Curated default sponsorship-denial vocabulary (career-ops `visa_filter`
+# model — ships a working default, user list replaces it wholesale).
+# Multi-word phrases match across whitespace runs; deliberately conservative:
+# only explicit denials, never ambiguous phrasing like "must be authorized to
+# work" (which many sponsoring employers also print).
+DEFAULT_VISA_PHRASES = [
+    "no visa sponsorship",
+    "no sponsorship",
+    "cannot sponsor",
+    "can not sponsor",
+    "unable to sponsor",
+    "not able to sponsor",
+    "will not sponsor",
+    "does not sponsor",
+    "we do not sponsor",
+    "sponsorship is not available",
+    "sponsorship not available",
+    "without sponsorship now or in the future",
+]
+
+
+def passes_visa(description: str, prefs: ScanPrefs) -> bool:
+    """Off by default; when on, an explicit sponsorship denial in the
+    description drops the row. Empty description passes (no signal)."""
+    if not prefs.visa_filter or not description.strip():
+        return True
+    return not keyword_match(description, prefs.visa_phrases or DEFAULT_VISA_PHRASES)
+
+
+def passes_salary(salary_text: str, prefs: ScanPrefs) -> bool:
+    """Range-overlap gate over the parsed annualized salary. Passes whenever
+    there's no basis to compare: filter off, no/unparsable salary text, or a
+    stated currency different from the user's (rank-don't-gate throughout —
+    most postings state no salary at all, and those must never be dropped)."""
+    if prefs.salary_min <= 0 and prefs.salary_max <= 0:
+        return True
+    parsed = parse_salary(salary_text)
+    if parsed is None:
+        return True  # no signal → pass
+    if (
+        prefs.salary_currency
+        and parsed.currency
+        and parsed.currency.upper() != prefs.salary_currency.upper()
+    ):
+        return True
+    if prefs.salary_min > 0 and parsed.amount_max < prefs.salary_min:
+        return False
+    if prefs.salary_max > 0 and parsed.amount_min > prefs.salary_max:
+        return False
+    return True
+
+
+def passes_company(company: str, prefs: ScanPrefs) -> bool:
+    """Block-only gate. Unknown (empty) company always passes — can't exclude
+    what we don't know (rank-don't-gate, same stance as unknown location)."""
+    if not company.strip():
+        return True
+    return not keyword_match(company, prefs.company_block)
+
+
+def passes_content(title: str, description: str, prefs: ScanPrefs) -> bool:
+    """Block wins over allow; empty allow-list means everything passes.
+    Empty description always passes — no signal to filter on, not a reason to
+    drop a row (rank-don't-gate). Scoped rules (`content_by_title`,
+    career-ops's `content_filter.by_title_keyword`) apply the same semantics
+    but only to jobs whose title matches the rule's keywords."""
+    if not description.strip():
+        return True
+    if keyword_match(description, prefs.content_block):
+        return False
+    if prefs.content_allow and not keyword_match(description, prefs.content_allow):
+        return False
+    for rule in prefs.content_by_title:
+        if not keyword_match(title, rule.title):
+            continue
+        if keyword_match(description, rule.block):
+            return False
+        if rule.allow and not keyword_match(description, rule.allow):
+            return False
+    return True

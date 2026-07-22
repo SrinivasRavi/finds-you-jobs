@@ -44,7 +44,7 @@ const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
     kinds: ["discover", "draft", "send", "linkedin_login", "archive_stale_contacts"],
   },
   { key: "apply", label: "Applying", kinds: ["apply", "extract", "prep"] },
-  { key: "system", label: "System", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts"] },
+  { key: "system", label: "System", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
 ];
 
 const KIND_TO_GROUP: Record<string, string> = Object.fromEntries(

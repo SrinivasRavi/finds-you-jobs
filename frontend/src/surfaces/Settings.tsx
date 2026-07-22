@@ -38,9 +38,11 @@ import type {
   LinkedInSessionState,
   OperationKind,
   PromptSetting,
+  RescorePreview,
   Settings as SettingsT,
 } from "../api/types";
 import { InfoDot } from "../shell/InfoDot";
+import { RescoreAiDialog } from "../shell/RescoreAiDialog";
 import { type ThemeMode, useThemeMode } from "../shell/theme";
 
 const NETWORKING_WARNING =
@@ -1226,11 +1228,31 @@ export function Settings() {
   const update = useUpdateSettings();
   const [themeMode, , setThemeMode] = useThemeMode();
   const [ack, setAck] = useState(false);
+  // Switching Scoring keyword → AI: the server never spends on its own, so
+  // preview the cache misses and ask before any token goes out (maintainer
+  // 2026-07-23). Jobs already AI-scored at the current resume are skipped.
+  const [rescoreAsk, setRescoreAsk] = useState<RescorePreview | null>(null);
 
   if (!settings) return null;
 
   function patch(p: Partial<SettingsT>) {
     update.mutate(p);
+  }
+
+  function pickScoringMode(mode: SettingsT["scoring_mode"]) {
+    const was = settings?.scoring_mode;
+    update.mutate(
+      { scoring_mode: mode },
+      {
+        onSuccess: () => {
+          if (mode === "llm" && was === "keyword") {
+            void api.rescorePreview().then((preview) => {
+              if (preview.to_score > 0) setRescoreAsk(preview);
+            });
+          }
+        },
+      },
+    );
   }
 
   return (
@@ -1319,30 +1341,48 @@ export function Settings() {
             </div>
           </Section>
 
-          {/* Auto-score master switch (2026-07-17 dogfood) + batch cap (audit
-              P1-1). Scoring costs real tokens — the user can turn the whole
-              scan→score chain off; the cap only matters while it's on, so it
-              hides when disabled. */}
+          {/* Scoring MODE (maintainer design 2026-07-22): every scanned job is
+              scored — the old off-switch is retired ("a user can always sort
+              by recency and ignore the scoring anyways"); the choice is HOW.
+              AI failures fall back to a grey keyword score (retry in Logs). */}
           <Section title="Scoring">
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="text-[13px] font-medium text-ink">
-                    Score scanned jobs automatically
-                  </div>
-                  <div className="text-[12px] text-ink-3">
-                    Every new job is scored against your master resume (one AI call per
-                    job) so the board ranks by fit. Turn off to skip scoring — new jobs
-                    land unscored and the board sorts by recency.
-                  </div>
+              <div>
+                <div className="text-[13px] font-medium text-ink">How jobs are scored</div>
+                <div className="mb-2 text-[12px] text-ink-3">
+                  Every new job gets a fit score against your master resume. If an AI score
+                  fails, the keyword score fills in (grey) and you can retry from
+                  Analytics → Logs.
                 </div>
-                <Toggle
-                  on={settings.auto_score_on_scan}
-                  onChange={(v) => patch({ auto_score_on_scan: v })}
-                  testid="auto-score-toggle"
-                />
+                <div className="flex flex-col gap-1.5" data-testid="scoring-mode-picker">
+                  {(
+                    [
+                      [
+                        "llm",
+                        "AI scoring — best quality, but costs LLM tokens and some time",
+                      ],
+                      ["keyword", "Keyword scoring — lower quality, but free and instant"],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      data-testid={`scoring-mode-${mode}`}
+                      data-on={settings.scoring_mode === mode}
+                      onClick={() => pickScoringMode(mode)}
+                      className={
+                        "rounded-md border px-3 py-2 text-left text-[12.5px] " +
+                        (settings.scoring_mode === mode
+                          ? "border-accent bg-accent-wash text-accent-ink"
+                          : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              {settings.auto_score_on_scan ? (
+              {settings.scoring_mode === "llm" ? (
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
                     <div className="text-[13px] font-medium text-ink">Scoring batch cap</div>
@@ -1356,12 +1396,7 @@ export function Settings() {
                     onChange={(v) => patch({ score_new_batch: v })}
                   />
                 </div>
-              ) : (
-                <div className="text-[12px] text-ink-3" data-testid="scoring-disabled-note">
-                  Scoring is off — scans still run, and new jobs appear unscored. You can
-                  turn this back on any time.
-                </div>
-              )}
+              ) : null}
               <div className="flex items-center gap-3">
                 <div className="flex-1">
                   <div className="text-[13px] font-medium text-ink">Parallel AI calls</div>
@@ -1624,6 +1659,13 @@ export function Settings() {
           </Section>
         </div>
       </main>
+      {rescoreAsk !== null ? (
+        <RescoreAiDialog
+          preview={rescoreAsk}
+          reason="mode-switch"
+          onClose={() => setRescoreAsk(null)}
+        />
+      ) : null}
     </>
   );
 }

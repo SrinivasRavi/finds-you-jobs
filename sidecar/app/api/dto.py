@@ -39,6 +39,10 @@ class JobScoreDTO(BaseModel):
     score_0_100: int
     reasons: list[Any]
     breakdown_md: str
+    # Which scorer produced this ("scorer-llm" | "scorer-deterministic") — the
+    # frontend renders a keyword score visibly grey, never styled like an AI
+    # score (Scoring modes, maintainer design 2026-07-22).
+    scorer_impl: str = "scorer-llm"
 
 
 class JobDTO(BaseModel):
@@ -69,6 +73,10 @@ class JobDTO(BaseModel):
     # `pending` (queued or not yet attempted) / `failed` (the score op errored and
     # none is in flight — the `Score failed` pill, never a perpetual spinner).
     score_status: str = Field(default="pending", serialization_alias="scoreStatus")
+    # True when this row was inserted by the LATEST succeeded scan — the board's
+    # "NEW" badge (maintainer 2026-07-23). Stamped by the board/list routes from
+    # that scan op's recorded new_job_ids; manual adds are never flagged.
+    is_new: bool = Field(default=False, serialization_alias="isNew")
 
 
 class BoardPageDTO(BaseModel):
@@ -85,6 +93,17 @@ class BoardPageDTO(BaseModel):
     scan_status: str = Field(serialization_alias="scanStatus")
     last_scan_at: datetime | None = Field(default=None, serialization_alias="lastScanAt")
     scan_error: str | None = Field(default=None, serialization_alias="scanError")
+
+
+class RescorePreviewDTO(BaseModel):
+    """GET /api/jobs/rescore/preview — the AI re-score consent numbers: how
+    many active jobs miss an AI score at the current resume version (what a
+    confirmed run would enqueue) vs already carry one (never re-spent). Both
+    come from the same miss query the run uses, so the prompt's N always
+    equals what actually runs."""
+
+    to_score: int = Field(serialization_alias="toScore")
+    cached: int
 
 
 class JobCreate(BaseModel):
@@ -440,6 +459,24 @@ class WatchCompanyResult(BaseModel):
     source_url: str
     adapter: str
     company: str
+
+
+class WatchlistEntryDTO(BaseModel):
+    """One user-tracked company board (a `watched` row in
+    `portals_config.sources` — the roster view of the same data the
+    watch-company action writes; no second store)."""
+
+    url: str
+    company: str
+    adapter: str
+
+
+class WatchlistDTO(BaseModel):
+    entries: list[WatchlistEntryDTO]
+
+
+class WatchRemoveResult(BaseModel):
+    removed: bool  # False = wasn't in the list
 
 
 class DiscoverySourceStatsDTO(BaseModel):
@@ -846,6 +883,7 @@ def job_score_dto(score: JobScore | None) -> JobScoreDTO | None:
         score_0_100=score.score_0_100,
         reasons=list(score.reasons),
         breakdown_md=score.breakdown_md,
+        scorer_impl=score.scorer_impl,
     )
 
 

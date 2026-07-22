@@ -1,6 +1,6 @@
 [project]
 name = "finds-you-jobs"
-version = "0.5.1"
+version = "0.5.2"
 description = "Open-source AI job-search desktop tool"
 readme = "README.md"
 requires-python = ">=3.13"

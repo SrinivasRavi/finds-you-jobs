@@ -9,7 +9,7 @@
 // block. See inline comments at each cut. The Referrals slot + Networking tab
 // were restored 2026-07-16 (the referral-outreach backend now exists).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   useApplicationActivity,
@@ -35,6 +35,7 @@ import { GuidanceDialog } from "../popups/GuidanceDialog";
 import { ReferralsModal } from "../popups/ReferralsModal";
 import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
 import { Icon } from "../shell/icons";
+import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Markdown } from "../shell/Markdown";
 import { Modal } from "../shell/Modal";
 import { initials, scoreTier, workLabel } from "./jobFormat";
@@ -125,13 +126,15 @@ function Card({
   onDragEnd,
   onSlot,
   onMenu,
+  menuOpen,
 }: {
   app: Application;
   onOpen: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onSlot: (kind: ResumeModalKind | "refs" | "apply") => void;
-  onMenu: () => void;
+  onMenu: (anchor: DOMRect) => void;
+  menuOpen: boolean;
 }) {
   const tier = app.job.score ? scoreTier(app.job.score.score_0_100) : null;
   return (
@@ -141,7 +144,14 @@ function Card({
       onDragEnd={onDragEnd}
       onClick={onOpen}
       data-testid="tracker-card"
-      className="group cursor-pointer rounded-lg border border-border bg-surface p-3 shadow-sm transition hover:border-border-2"
+      className={
+        "group cursor-pointer rounded-lg border bg-surface p-3 shadow-sm transition " +
+        // While its menu is open, the card lifts above the dim layer so only
+        // it and the menu read highlighted (maintainer 2026-07-22 #5).
+        (menuOpen
+          ? "relative z-50 border-accent ring-1 ring-accent"
+          : "border-border hover:border-border-2")
+      }
     >
       <div className="flex items-start gap-2">
         <div className="grid h-8 w-8 shrink-0 place-items-center rounded bg-surface-2 text-[11px] font-semibold text-ink-2">
@@ -153,15 +163,18 @@ function Card({
           </div>
           <div className="truncate text-[11px] text-ink-3">{app.job.company}</div>
         </div>
+        {/* Persistent vertical ⋮ (maintainer 2026-07-22 #5) — always visible,
+            never hover-revealed; long titles wrap around it fine. */}
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onMenu();
+            onMenu(e.currentTarget.getBoundingClientRect());
           }}
-          className="text-ink-4 opacity-0 group-hover:opacity-100 hover:text-ink"
+          data-testid="card-menu-btn"
+          className="text-ink-4 hover:text-ink"
           aria-label="Card menu"
         >
-          <Icon name="moreH" size={16} strokeWidth={2} />
+          <Icon name="moreV" size={16} strokeWidth={2} />
         </button>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -255,7 +268,9 @@ export function Tracker() {
   const [showArchive, setShowArchive] = useState(false);
   const [popup, setPopup] = useState<{ kind: ResumeModalKind; appId: string } | null>(null);
   const [guidance, setGuidance] = useState<{ appId: string; label: string } | null>(null);
-  const [menuId, setMenuId] = useState<string | null>(null);
+  // Card ⋮ menu: id + the button's viewport rect, so the menu opens anchored
+  // beside the button (popover, not a modal — maintainer 2026-07-22 #5).
+  const [menu, setMenu] = useState<{ id: string; anchor: DOMRect } | null>(null);
   // REMOVED: applyId (ApplyModal — no Applier surface on this sidecar yet).
   // referralsAppId restored 2026-07-16 (the find-referrals popup).
   const [referralsAppId, setReferralsAppId] = useState<string | null>(null);
@@ -328,49 +343,15 @@ export function Tracker() {
 
   return (
     <>
-      {/* Topbar */}
-      <header className="flex min-h-[48px] items-center gap-3 border-b border-border bg-surface px-5">
+      {/* Row 1 — actions that change what LEAVES this board (mirrors the Job
+          Board's top row). Applications only removes via the archive. */}
+      <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
         <h1 className="text-[14px] font-semibold text-ink">Applications</h1>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search title, company, location…"
-          data-testid="tracker-search"
-          className="h-[30px] w-64 rounded-7 border border-border-2 bg-surface px-3 text-[12px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
-        />
-        <div className="ml-auto flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            {(["ALL", "P0", "P1", "P2", "P3"] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPriorityFilter(p)}
-                className={
-                  "h-7 rounded-full border px-2.5 text-[11.5px] " +
-                  (priorityFilter === p
-                    ? "border-accent bg-accent text-white"
-                    : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
-                }
-              >
-                {p === "ALL" ? "All priorities" : p}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => setHideRejected((v) => !v)}
-            data-testid="hide-rejected"
-            className={
-              "h-7 rounded-full border px-2.5 text-[11.5px] " +
-              (hideRejected
-                ? "border-accent bg-accent-wash text-accent-ink"
-                : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
-            }
-          >
-            Hide Rejected
-          </button>
+        <div className="ml-auto flex items-center gap-3 py-1.5">
           <button
             onClick={() => setShowArchive(true)}
             data-testid="archive-btn"
-            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
+            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
           >
             <Icon name="trash" size={14} strokeWidth={2} />
             Deleted Applications
@@ -382,6 +363,37 @@ export function Tracker() {
           </button>
         </div>
       </header>
+
+      {/* Row 2 — view modifiers (mirrors the Job Board filter row): labeled
+          chip groups + "|" separators + trailing Search, all right-aligned. */}
+      <FilterBar>
+        <FilterGroup label="Priorities" id="filter-priorities">
+          {(["ALL", "P0", "P1", "P2", "P3"] as const).map((p) => (
+            <Chip
+              key={p}
+              active={priorityFilter === p}
+              onClick={() => setPriorityFilter(p)}
+            >
+              {p === "ALL" ? "All" : p}
+            </Chip>
+          ))}
+        </FilterGroup>
+        <FilterSep />
+        <Chip
+          active={hideRejected}
+          onClick={() => setHideRejected((v) => !v)}
+          testid="hide-rejected"
+        >
+          Hide Rejected
+        </Chip>
+        <FilterSep />
+        <SearchBox
+          value={search}
+          onChange={setSearch}
+          placeholder="Search"
+          testid="tracker-search"
+        />
+      </FilterBar>
 
       {/* Kanban */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto bg-canvas p-4 no-scrollbar">
@@ -427,7 +439,8 @@ export function Tracker() {
                         }
                         setPopup({ kind, appId: app.id });
                       }}
-                      onMenu={() => setMenuId(app.id)}
+                      onMenu={(anchor) => setMenu({ id: app.id, anchor })}
+                      menuOpen={menu?.id === app.id}
                     />
                   ))
                 )}
@@ -508,21 +521,22 @@ export function Tracker() {
       ) : null}
 
       {/* 3-dot menu */}
-      {menuId ? (
+      {menu ? (
         <CardMenu
-          app={apps.find((a) => a.id === menuId)!}
-          onClose={() => setMenuId(null)}
+          app={apps.find((a) => a.id === menu.id)!}
+          anchor={menu.anchor}
+          onClose={() => setMenu(null)}
           onGenerate={(label) => {
-            setGuidance({ appId: menuId, label });
-            setMenuId(null);
+            setGuidance({ appId: menu.id, label });
+            setMenu(null);
           }}
           onArchive={() => {
-            archive.mutate(menuId);
-            setMenuId(null);
+            archive.mutate(menu.id);
+            setMenu(null);
           }}
           onReturn={() => {
-            returnToBoard.mutate(menuId);
-            setMenuId(null);
+            returnToBoard.mutate(menu.id);
+            setMenu(null);
           }}
         />
       ) : null}
@@ -906,12 +920,14 @@ function DetailModal({
 
 function CardMenu({
   app,
+  anchor,
   onClose,
   onGenerate,
   onArchive,
   onReturn,
 }: {
   app: Application;
+  anchor: DOMRect;
   onClose: () => void;
   onGenerate: (label: string) => void;
   onArchive: () => void;
@@ -919,9 +935,31 @@ function CardMenu({
 }) {
   const canGen = app.packet_state === "none" || app.packet_state === "failed";
   const canRegen = app.packet_state === "ready" || app.packet_state === "approved";
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  // Anchored popover, not a modal (maintainer 2026-07-22 #5): opens flush to
+  // the ⋮'s right — over the neighbouring column, never its own card — and
+  // clamps to the viewport. The dim layer below sits under the open card
+  // (z-50) so only the card + menu read highlighted.
+  const W = 232;
+  const left = Math.min(anchor.right + 6, window.innerWidth - W - 8);
+  const top = Math.min(anchor.top - 4, window.innerHeight - 260);
   return (
-    <Modal title="Card actions" onClose={onClose} width={360}>
-      <div className="flex flex-col p-2 text-[13px]">
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-black/20"
+        onClick={onClose}
+        data-testid="card-menu-backdrop"
+      />
+      <div
+        role="menu"
+        data-testid="card-menu"
+        style={{ left, top, width: W }}
+        className="fixed z-50 flex flex-col rounded-lg border border-border bg-surface p-1.5 text-[13px] shadow-xl"
+      >
         {app.stage === "Saved" ? (
           <button onClick={onReturn} className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3">
             Move to Job Board
@@ -963,7 +1001,7 @@ function CardMenu({
           Archive
         </button>
       </div>
-    </Modal>
+    </>
   );
 }
 

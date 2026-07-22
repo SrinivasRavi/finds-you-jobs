@@ -224,6 +224,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/rescore/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rescore Preview
+         * @description The consent numbers behind every "Re-score with AI?" prompt (resume
+         *     edit, scoring-mode switch). Counts only — never enqueues, never spends.
+         *     A grey keyword score is not "cached" here; only a real AI score at the
+         *     current resume version is.
+         */
+        get: operations["rescore_preview_api_jobs_rescore_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/rescore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rescore Board
+         * @description Re-score the active board against the CURRENT master resume — the action
+         *     behind every "Re-score with AI?" confirm (resume edit, scoring-mode
+         *     switch). Keyword mode refreshes the whole board inline (free). AI mode
+         *     enqueues one LLM score op per cache MISS only — a job already AI-scored at
+         *     the current resume version is never re-spent (maintainer 2026-07-23) — so
+         *     the call is idempotent and safe from any entry point.
+         */
+        post: operations["rescore_board_api_jobs_rescore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profile/extract": {
         parameters: {
             query?: never;
@@ -1329,7 +1377,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Watched Companies
+         * @description The tracked-companies roster: user-added (`watched`) board rows from
+         *     `portals_config.sources`. Rows added before the marker existed don't
+         *     appear — they keep scanning; re-watching stamps them.
+         */
+        get: operations["list_watched_companies_api_discovery_watchlist_get"];
         put?: never;
         /**
          * Watch Company
@@ -1337,7 +1391,13 @@ export interface paths {
          *     The watchlist IS the sources list — no second store, no special casing.
          */
         post: operations["watch_company_api_discovery_watchlist_post"];
-        delete?: never;
+        /**
+         * Unwatch Company
+         * @description Remove a tracked company board (by its source URL). Only `watched`
+         *     rows are removable here — the seeded registry isn't editable from the
+         *     roster; source families are toggled in Settings → Discovery sources.
+         */
+        delete: operations["unwatch_company_api_discovery_watchlist_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2126,6 +2186,11 @@ export interface components {
              * @default pending
              */
             scoreStatus: string;
+            /**
+             * Isnew
+             * @default false
+             */
+            isNew: boolean;
         };
         /**
          * JobPreviewDTO
@@ -2171,6 +2236,11 @@ export interface components {
             reasons: unknown[];
             /** Breakdown Md */
             breakdown_md: string;
+            /**
+             * Scorer Impl
+             * @default scorer-llm
+             */
+            scorer_impl: string;
         };
         /**
          * JobUpdate
@@ -2615,6 +2685,20 @@ export interface components {
              */
             confirm_url_failed: boolean;
         };
+        /**
+         * RescorePreviewDTO
+         * @description GET /api/jobs/rescore/preview — the AI re-score consent numbers: how
+         *     many active jobs miss an AI score at the current resume version (what a
+         *     confirmed run would enqueue) vs already carry one (never re-spent). Both
+         *     come from the same miss query the run uses, so the prompt's N always
+         *     equals what actually runs.
+         */
+        RescorePreviewDTO: {
+            /** Toscore */
+            toScore: number;
+            /** Cached */
+            cached: number;
+        };
         /** ScheduleDTO */
         ScheduleDTO: {
             /** Id */
@@ -2747,6 +2831,30 @@ export interface components {
             adapter: string;
             /** Company */
             company: string;
+        };
+        /** WatchRemoveResult */
+        WatchRemoveResult: {
+            /** Removed */
+            removed: boolean;
+        };
+        /** WatchlistDTO */
+        WatchlistDTO: {
+            /** Entries */
+            entries: components["schemas"]["WatchlistEntryDTO"][];
+        };
+        /**
+         * WatchlistEntryDTO
+         * @description One user-tracked company board (a `watched` row in
+         *     `portals_config.sources` — the roster view of the same data the
+         *     watch-company action writes; no second store).
+         */
+        WatchlistEntryDTO: {
+            /** Url */
+            url: string;
+            /** Company */
+            company: string;
+            /** Adapter */
+            adapter: string;
         };
     };
     responses: never;
@@ -3116,6 +3224,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rescore_preview_api_jobs_rescore_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RescorePreviewDTO"];
+                };
+            };
+        };
+    };
+    rescore_board_api_jobs_rescore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
                 };
             };
         };
@@ -4844,6 +4994,26 @@ export interface operations {
             };
         };
     };
+    list_watched_companies_api_discovery_watchlist_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistDTO"];
+                };
+            };
+        };
+    };
     watch_company_api_discovery_watchlist_post: {
         parameters: {
             query?: never;
@@ -4864,6 +5034,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WatchCompanyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unwatch_company_api_discovery_watchlist_delete: {
+        parameters: {
+            query: {
+                url: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchRemoveResult"];
                 };
             };
             /** @description Validation Error */

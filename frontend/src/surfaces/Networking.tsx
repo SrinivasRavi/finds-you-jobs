@@ -21,6 +21,7 @@ import {
 } from "../api/queries";
 import type { AudienceTag, ConnectionStatus, NetContact } from "../api/types";
 import { Icon } from "../shell/icons";
+import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
@@ -50,6 +51,7 @@ export function Networking() {
   const update = useUpdateContact();
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
   const [audienceFilter, setAudienceFilter] = useState<AudienceTag | null>(null);
+  const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [deletedOpen, setDeletedOpen] = useState(false);
   const [active, setActive] = useState<NetContact | null>(null);
@@ -86,8 +88,15 @@ export function Networking() {
     let rows = contacts;
     if (companyFilter) rows = rows.filter((c) => c.current_company === companyFilter);
     if (audienceFilter) rows = rows.filter((c) => c.audience_tag === audienceFilter);
+    const q = search.trim().toLowerCase();
+    if (q)
+      rows = rows.filter((c) =>
+        [c.name, c.current_company, c.current_role]
+          .filter(Boolean)
+          .some((s) => s!.toLowerCase().includes(q)),
+      );
     return rows;
-  }, [contacts, companyFilter, audienceFilter]);
+  }, [contacts, companyFilter, audienceFilter, search]);
 
   const firstDeg = scoped.filter((c) => c.connection_degree === 1).length;
   const secondDeg = scoped.filter((c) => c.connection_degree === 2).length;
@@ -120,7 +129,7 @@ export function Networking() {
           <button
             data-testid="deleted-contacts-btn"
             onClick={() => setDeletedOpen(true)}
-            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
+            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
           >
             <Icon name="trash" size={14} strokeWidth={2} />
             Deleted Contacts
@@ -130,55 +139,73 @@ export function Networking() {
               </span>
             ) : null}
           </button>
+          {/* Sized identically to Job Board's "+ Add a job by URL" (icon +
+              rounded-7 + same paddings) for cross-tab consistency. */}
           <button
             data-testid="add-contact-by-url-button"
             onClick={() => setAddOpen(true)}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
           >
+            <Icon name="plus" size={14} strokeWidth={2} />
             Add contact by URL
           </button>
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col gap-3 overflow-hidden px-4 py-3">
-        {/* Scope row */}
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2" data-testid="scope-row">
-          <span className="font-mono text-[10.5px] uppercase tracking-wider text-ink-4">Scoped to</span>
+      {/* Row 2 — view modifiers, styled like the Job Board / Applications
+          filter row: connection-count context on the left, labeled filter
+          groups + "|" separators + trailing Search on the right. */}
+      <FilterBar
+        left={
+          <>
+            <span className="inline-flex h-[22px] items-center gap-[5px] rounded-full border border-good bg-good-wash px-2 text-[11.5px] font-medium text-good">
+              <span className="h-1.5 w-1.5 rounded-full bg-good" />
+              {scoped.length} connection{scoped.length === 1 ? "" : "s"}
+            </span>
+            <span className="inline-flex h-[22px] items-center rounded-full border border-border bg-surface-3 px-2 font-mono text-[11px] text-ink-2">
+              {firstDeg} 1st · {secondDeg} 2nd
+            </span>
+          </>
+        }
+      >
+        <FilterGroup label="Company">
           <select
             value={companyFilter ?? ""}
             onChange={(e) => setCompanyFilter(e.target.value || null)}
-            className="rounded-full border border-border-2 bg-surface px-2 py-1 text-[12.5px] text-ink focus:border-accent focus:outline-none"
+            className="h-7 rounded-full border border-border-2 bg-surface px-2 text-[11.5px] text-ink focus:border-accent focus:outline-none"
             data-testid="scope-company-select"
           >
-            <option value="">All companies</option>
+            <option value="">All</option>
             {companies.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
-          <span className="inline-flex h-[22px] items-center gap-[5px] rounded-full border border-good bg-good-wash px-2 text-[11.5px] font-medium text-good">
-            <span className="h-1.5 w-1.5 rounded-full bg-good" />
-            {scoped.length} connection{scoped.length === 1 ? "" : "s"}
-          </span>
-          <span className="inline-flex h-[22px] items-center rounded-full border border-border bg-surface-3 px-2 font-mono text-[11px] text-ink-2">
-            {firstDeg} 1st · {secondDeg} 2nd
-          </span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(["hm", "recruiter", "leadership"] as AudienceTag[]).map((a) => {
-              const n = scoped.filter((c) => c.audience_tag === a).length;
-              const on = audienceFilter === a;
-              return (
-                <button
-                  key={a}
-                  onClick={() => setAudienceFilter(on ? null : a)}
-                  className={`inline-flex h-6 items-center rounded-md border px-[9px] text-xs ${on ? "border-border-2 bg-surface-3 text-ink shadow-sm" : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3"}`}
-                >
-                  {TAG_LABEL[a]} ({n})
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        </FilterGroup>
+        <FilterSep />
+        <FilterGroup label="Audience">
+          {(["hm", "recruiter", "leadership"] as AudienceTag[]).map((a) => {
+            const n = scoped.filter((c) => c.audience_tag === a).length;
+            return (
+              <Chip
+                key={a}
+                active={audienceFilter === a}
+                onClick={() => setAudienceFilter(audienceFilter === a ? null : a)}
+              >
+                {TAG_LABEL[a]} ({n})
+              </Chip>
+            );
+          })}
+        </FilterGroup>
+        <FilterSep />
+        <SearchBox
+          value={search}
+          onChange={setSearch}
+          placeholder="Search"
+          testid="networking-search"
+        />
+      </FilterBar>
 
+      <main className="flex flex-1 flex-col gap-3 overflow-hidden px-4 py-3">
         {/* Kanban */}
         <div className="min-h-0 flex-1">
           <div className="flex h-full gap-3 overflow-x-auto pb-2" data-testid="networking-kanban">

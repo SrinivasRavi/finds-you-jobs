@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -33,6 +34,7 @@ from .observability import ObservabilityHandle, configure_observability
 from .observability.config import observability_config
 from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
+from .registry.operations import backfill_keyword_scores
 from .runner import OperationRunner
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
@@ -161,18 +163,40 @@ def create_app(
             observability=observability,
         )
 
-        # Scan → score chain (US-JB-02): every successful scan fans out one
-        # `score` op per unscored job (idempotent planner — cache + pending
-        # skipped; capped by thresholds.score_new_batch; no-op without a master
-        # profile). Scores land one by one and the board re-ranks per SSE event.
+        # Scan → score chain (US-JB-02). Every successful scan (1) gives every
+        # still-unscored job an INSTANT on-device keyword floor so it never
+        # shows as "Pending" — the board always has at least a grey keyword
+        # score (maintainer 2026-07-22), then (2) in AI mode fans out one LLM
+        # `score` op per job to upgrade that floor (idempotent planner; capped
+        # by thresholds.score_new_batch). Scores land via SSE and re-rank.
         def _chain_scan_to_scores(_operation_id: str, kind: str) -> None:
             if kind != "scan":
                 return
+            try:
+                backfill_keyword_scores(db)
+            except Exception:  # noqa: BLE001 — the floor must never break the chain
+                log.exception("keyword floor after scan failed")
             for op_kind, snapshot in plan_score_new(db):
                 runner.submit(op_kind, snapshot)
 
         runner.on_success = _chain_scan_to_scores
         runner.start()  # boot recovery (NFR-LONG-02) + first pump
+
+        # Boot keyword floor: existing jobs scored before this landed (or left
+        # unscored by a failed/absent LLM) get their grey keyword score now, so
+        # no board row is stuck on "Pending" after an update. Off the event
+        # loop (async-first rule); never blocks or fails boot.
+        def _boot_keyword_floor() -> None:
+            try:
+                n = backfill_keyword_scores(db)
+                if n:
+                    log.info("keyword floor: scored %d previously-unscored job(s)", n)
+            except Exception:  # noqa: BLE001 — must never hurt boot
+                log.exception("boot keyword floor failed")
+
+        threading.Thread(
+            target=_boot_keyword_floor, name="keyword-floor", daemon=True
+        ).start()
 
         app.state.db = db
         app.state.hub = hub
@@ -230,7 +254,7 @@ def create_app(
             log.info("sidecar app stopped")
 
     app = FastAPI(
-        title="finds-you-jobs sidecar", version="0.5.1", lifespan=lifespan
+        title="finds-you-jobs sidecar", version="0.5.2", lifespan=lifespan
     )
 
     app.state.token = token

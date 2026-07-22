@@ -26,6 +26,19 @@ from ..db.base import now_utc
 
 SCORER_IMPL = "scorer-llm"
 
+# The zero-LLM keyword scorer (Settings → Scoring "Keyword scoring" mode, and
+# the grey fallback when an LLM score fails) — sidecar/modules/scorer/
+# deterministic.py. Same JobScore table, distinct impl tag so the two are
+# never confusable.
+SCORER_IMPL_DETERMINISTIC = "scorer-deterministic"
+
+
+def scoring_mode(prefs: Any) -> str:
+    """The Settings → Scoring mode: `"llm"` (default) or `"keyword"`. The ONE
+    reader of `thresholds["scoring_mode"]` — every call site resolves the mode
+    through here so the default and the key can never drift apart."""
+    return str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "llm")
+
 # Trash TTL — a removed job is tombstoned this many days after it entered Trash
 # (FR-JB-12 / FR-SYS-04: "permanently removed after 7 days").
 TRASH_TTL_DAYS = 7
@@ -67,7 +80,11 @@ def resolve_scan_prefs(
        knows what to look for") merged over the config's own filter tables:
        role aliases → `title_allow`; locations → `location_allow` **and**
        `location_always_allow` (the multi-location rescue names the user's
-       places, not the shipped defaults); freshness window → `max_age_days`.
+       places, not the shipped defaults); freshness window → `max_age_days`;
+       `hard_excludes.companies`/`.keywords` → `company_block`/`content_block`,
+       **unioned** with the config's own block lists rather than replacing them
+       — a personal exclude should never silently drop a registry's own
+       curated blocks (job-finder-preferences design, docs/internal/discovery.md).
        Dimensions the user left empty keep the config's values.
     3. None — the config's own filters as-is (the seeded registry's tuned
        defaults; only reached when the user set no preferences at all).
@@ -81,7 +98,20 @@ def resolve_scan_prefs(
     aliases = [str(a) for a in (row.role_aliases or []) if str(a).strip()]
     locations = [str(loc) for loc in (row.locations or []) if str(loc).strip()]
     freshness = row.freshness_days or 0
-    if not aliases and not locations and freshness <= 0:
+    hard_excludes = row.hard_excludes or {}
+    company_block = [
+        str(c) for c in (hard_excludes.get("companies") or []) if str(c).strip()
+    ]
+    content_block = [
+        str(k) for k in (hard_excludes.get("keywords") or []) if str(k).strip()
+    ]
+    if (
+        not aliases
+        and not locations
+        and freshness <= 0
+        and not company_block
+        and not content_block
+    ):
         return None
     base = _config_prefs(portals)
     expanded = _expand_locations(locations)
@@ -91,6 +121,8 @@ def resolve_scan_prefs(
         location_allow=expanded or base.location_allow,
         location_always_allow=expanded or base.location_always_allow,
         max_age_days=freshness if freshness > 0 else base.max_age_days,
+        company_block=list(dict.fromkeys([*base.company_block, *company_block])),
+        content_block=list(dict.fromkeys([*base.content_block, *content_block])),
     )
 
 
@@ -251,6 +283,7 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
     """Persist scanned jobs (dedup + tombstone suppression) and build the
     per-source `result_ref`. Returns the result_ref payload."""
     persisted = deduped = tombstoned = 0
+    new_job_ids: list[str] = []
     if db is not None:
         with db.repos() as repos:
             for job in result.jobs:
@@ -260,7 +293,7 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
                 if repos.jobs.get_by_canonical_url(job.canonical_url) is not None:
                     deduped += 1  # first-seen wins (FR-SYS-01)
                     continue
-                repos.jobs.create(**_job_columns(job))
+                new_job_ids.append(repos.jobs.create(**_job_columns(job)).id)
                 persisted += 1
 
     fetched = sum(r.fetched for r in result.per_source.values())
@@ -283,6 +316,9 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
             "persisted": persisted,
             "deduped": deduped,
             "tombstoned": tombstoned,
+            # The ids this scan actually inserted — the board flags the latest
+            # succeeded scan's set as "NEW" (maintainer 2026-07-23).
+            "new_job_ids": new_job_ids,
             "sources": len(result.per_source),
             "errors": sum(len(r.errors) for r in result.per_source.values()),
         },

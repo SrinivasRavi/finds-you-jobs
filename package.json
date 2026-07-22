@@ -1,6 +1,6 @@
 {
   "name": "finds-you-jobs",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Open-source AI job-search desktop tool",
   "license": "AGPL-3.0-only",

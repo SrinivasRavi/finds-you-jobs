@@ -21,7 +21,10 @@ from sidecar.modules.scraper.scraper import scan
 from sidecar.modules.scraper.searchquery import (
     MAX_ALIASES,
     MAX_LOCATIONS,
+    MAX_TERMS,
+    SearchQuery,
     build_queries,
+    select_queries,
 )
 from sidecar.modules.scraper.types import ScanPrefs, ScraperError
 
@@ -54,6 +57,33 @@ def test_build_queries_no_location_is_location_agnostic() -> None:
     queries = build_queries(ScanPrefs(title_allow=["backend engineer"], location_allow=[]))
     assert len(queries) == 1
     assert queries[0].location == ""
+
+
+def test_build_queries_user_terms_ride_along_location_less() -> None:
+    prefs = ScanPrefs(
+        title_allow=["backend engineer"],
+        location_allow=["remote"],
+        search_terms=["golang site reliability", " ", "rust", "zig", "one-too-many"],
+    )
+    queries = build_queries(prefs)
+    terms = [q for q in queries if q.user_term]
+    # Blank entries dropped, then capped.
+    assert [q.keyword for q in terms] == ["golang site reliability", "rust", "zig"]
+    assert len(terms) == MAX_TERMS
+    assert all(q.location == "" for q in terms)
+
+
+def test_build_queries_terms_alone_suffice() -> None:
+    queries = build_queries(ScanPrefs(search_terms=["golang sre"]))
+    assert len(queries) == 1
+    assert queries[0].user_term
+
+
+def test_select_queries_terms_never_crowd_out_pairs() -> None:
+    pairs = [SearchQuery(keyword=f"p{i}", location="x") for i in range(3)]
+    terms = [SearchQuery(keyword=f"t{i}", location="", user_term=True) for i in range(3)]
+    picked = select_queries(pairs + terms, 2)
+    assert [q.keyword for q in picked] == ["p0", "p1", "t0", "t1"]
 
 
 # ---------------------------------------------------------------------------

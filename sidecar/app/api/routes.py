@@ -11,6 +11,7 @@ CRUD lands with its feature commits.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -22,6 +23,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from sidecar.modules.scraper import ScraperError, probe_url
 from sidecar.modules.scraper.canonical import canonicalize_url
+from sidecar.modules.scraper.filters import passes_company, passes_content
+from sidecar.modules.scraper.types import ScanPrefs
 
 from ..db import Database
 from ..db.base import now_utc
@@ -36,6 +39,11 @@ from ..registry.company_anchor import resolution_key
 from ..registry.engine_config import apply_routing
 from ..registry.linkedin_op import LOGIN_CONTROL
 from ..registry.networker_ops import linkedin_storage_path
+from ..registry.persistence import (
+    SCORER_IMPL,
+    SCORER_IMPL_DETERMINISTIC,
+    scoring_mode,
+)
 from ..runner import OperationRunner
 from ..scheduler.planner import plan_schedule
 from . import dto
@@ -117,25 +125,81 @@ def _saved_job_ids(repos: Any) -> set[str]:
     return set(repos.applications.job_ids())
 
 
+def _scan_new_ids(last_scan: Any) -> set[str]:
+    """Job ids inserted by one succeeded scan op (recorded in its result_ref) —
+    the "NEW" badge set (maintainer 2026-07-23). Manual adds and rows from
+    older scans are never in it; a scan recorded before `new_job_ids` existed
+    yields the empty set (no badge, never an error)."""
+    if last_scan is None:
+        return set()
+    scan_ref = (last_scan.result_ref or {}).get("scan") or {}
+    return {str(job_id) for job_id in (scan_ref.get("new_job_ids") or [])}
+
+
 @router.get("/api/jobs")
 async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
     with _db(request).repos() as repos:
         jobs = repos.jobs.list(feed_state=feed_state or None)
-        version = _current_profile_version(repos)
-        scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], version)
+        scores = _display_scores(repos, [j.id for j in jobs])
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
             dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
             for j in jobs
         ]
+        new_ids = _scan_new_ids(repos.operations.latest_succeeded_by_kind("scan"))
+    for d in dtos:
+        d.is_new = d.id in new_ids
     _sort_board(dtos)
     return dtos
+
+
+def _display_scores(repos, job_ids: list[str]) -> dict:
+    """The score each job DISPLAYS — the latest one (highest version; AI over
+    keyword within a version), version-agnostic so a resume edit never blanks
+    the board and a stale score stays visible until a re-score lands (maintainer
+    2026-07-22). scorer_impl rides on the DTO so keyword scores render grey."""
+    return repos.job_scores.latest_scores(job_ids)
 
 
 # Board-eligible feed states: active + expired (Expired stays on the board,
 # greyed — FR-SYS-03). `removed` (Trash) and hard-deletes are off the board.
 _BOARD_FEED_STATES = ["active", "expired"]
 _BOARD_PAGE_SIZE = 50
+
+
+def _suppressed_by_excludes(state: Any, hard_excludes: dict, jobs: list[Any]) -> set[str]:
+    """Job ids the user's hard excludes hide from the board — retroactively,
+    so adding an exclude takes effect on ALREADY-discovered rows, not just
+    future scans (maintainer 2026-07-22). Rows are hidden, never deleted:
+    removing the exclude brings them straight back.
+
+    Uses the scan chain's own matchers (`passes_company`/`passes_content`) so
+    board behavior and scan behavior can't drift. Cost model (measured
+    2026-07-22, ~400-word JDs): ~87 µs/job → ~0.4 s at 5 000 jobs — so the
+    result is cached on app.state and recomputed only when the excludes or
+    the feed change (fingerprint below). Steady-state per-request cost is a
+    set lookup.
+    """
+    companies = [str(c) for c in (hard_excludes.get("companies") or []) if str(c).strip()]
+    keywords = [str(k) for k in (hard_excludes.get("keywords") or []) if str(k).strip()]
+    if not companies and not keywords:
+        return set()
+    fingerprint = (
+        json.dumps({"c": companies, "k": keywords}, sort_keys=True),
+        len(jobs),
+        max((str(j.ingested_at) for j in jobs), default=""),
+    )
+    cached = getattr(state, "board_exclude_cache", None)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    prefs = ScanPrefs(company_block=companies, content_block=keywords)
+    suppressed = {
+        j.id
+        for j in jobs
+        if not (passes_company(j.company, prefs) and passes_content(j.title, j.description, prefs))
+    }
+    state.board_exclude_cache = (fingerprint, suppressed)
+    return suppressed
 
 
 def _board_search_haystack(d: dto.JobDTO, deep: bool) -> str:
@@ -172,8 +236,13 @@ async def board(
         jobs = [
             j for j in repos.jobs.list_by_states(_BOARD_FEED_STATES) if j.id not in saved
         ]
-        version = _current_profile_version(repos)
-        scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], version)
+        # Personal hard excludes apply to already-discovered rows too —
+        # hidden (cached set), never deleted (maintainer 2026-07-22).
+        excludes = repos.preferences.get_or_create().hard_excludes or {}
+        suppressed = _suppressed_by_excludes(request.app.state, excludes, jobs)
+        if suppressed:
+            jobs = [j for j in jobs if j.id not in suppressed]
+        scores = _display_scores(repos, [j.id for j in jobs])
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
             dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
@@ -183,6 +252,9 @@ async def board(
         scan_running = repos.operations.any_in_flight("scan")
         last_scan = repos.operations.latest_succeeded_by_kind("scan")
         latest_scan = repos.operations.latest_by_kind("scan")
+        new_ids = _scan_new_ids(last_scan)
+    for d in dtos:
+        d.is_new = d.id in new_ids
     _sort_board(dtos)
     # `empty` means the scrape found nothing — judged before search filtering,
     # so a search miss reads as a filter miss, not an empty scrape (FR-JB-13).
@@ -289,12 +361,16 @@ async def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
             if existing.feed_state != "removed":
                 return dto.job_dto(existing)  # already active — dedup, first-seen wins
             # Restore-from-Trash: un-trash + keep its score/history ("put it back
-            # to its prior state"). Only re-score when it has no cached score —
-            # so a `Score failed`/unscored job re-scores (the retry path,
-            # US-JB-06), while a good score is preserved (no wasted spend).
+            # to its prior state"). Re-score only when the CURRENT mode has no
+            # score at the current version — an AI-mode job carrying just the
+            # grey keyword floor re-enqueues its AI upgrade (the retry path,
+            # US-JB-06), while a good score of the active mode is preserved
+            # (no wasted spend).
             job = repos.jobs.set_trash_state(existing.id, trashed=False)
             version = _current_profile_version(repos)
-            score = repos.job_scores.get_cached(job.id, version)
+            mode = scoring_mode(repos.preferences.get_or_create())
+            impl = SCORER_IMPL if mode == "llm" else SCORER_IMPL_DETERMINISTIC
+            score = repos.job_scores.get_cached(job.id, version, impl)
             result = dto.job_dto(job, score)
             if score is None:
                 profile = repos.profile.get_current()
@@ -407,13 +483,71 @@ async def get_profile(request: Request) -> dto.ProfileDTO | None:
 @router.post("/api/profile")
 async def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileDTO:
     with _db(request).repos() as repos:
+        before = repos.profile.get_current()
+        changed = before is None or before.resume_markdown != payload.resume_markdown
         profile = repos.profile.upsert(payload.resume_markdown)
         result = dto.profile_dto(profile)
+        mode = scoring_mode(repos.preferences.get_or_create())
     # Always extract the application profile at master-save (FR-APP-01;
     # maintainer removed the toggle — it's one small cheap call and the record
     # is load-bearing for every form fill).
     _runner(request).submit("extract", {"profile_version": result.version})
+    # Re-scoring on a resume edit (maintainer 2026-07-23): keyword mode is free,
+    # so re-score the whole board now (off the event loop). AI mode costs
+    # tokens, so it does NOT auto-run — the frontend previews the cache misses
+    # and calls /api/jobs/rescore only if the user confirms; otherwise the
+    # prior scores stay visible (the board shows the latest available version).
+    # An unchanged save keeps its version (no bump), so nothing is stale and
+    # nothing re-scores.
+    if changed and mode == "keyword":
+        from ..registry.operations import rescore_all_keyword
+
+        await asyncio.to_thread(rescore_all_keyword, _db(request))
     return result
+
+
+def _rescore_missing(repos: Any) -> tuple[list[str], int, int]:
+    """The AI re-score candidate set: active jobs MISSING an AI score at the
+    current profile version (cache misses), plus the active total and the
+    version. ONE helper for the preview and the run, so the prompt's N always
+    equals what a confirmed run enqueues."""
+    version = _current_profile_version(repos)
+    job_ids = [j.id for j in repos.jobs.list(feed_state="active")]
+    missing = repos.job_scores.job_ids_missing_llm_score(job_ids, version)
+    return missing, len(job_ids), version
+
+
+@router.get("/api/jobs/rescore/preview")
+async def rescore_preview(request: Request) -> dto.RescorePreviewDTO:
+    """The consent numbers behind every "Re-score with AI?" prompt (resume
+    edit, scoring-mode switch). Counts only — never enqueues, never spends.
+    A grey keyword score is not "cached" here; only a real AI score at the
+    current resume version is."""
+    with _db(request).repos() as repos:
+        missing, total, _version = _rescore_missing(repos)
+    return dto.RescorePreviewDTO(to_score=len(missing), cached=total - len(missing))
+
+
+@router.post("/api/jobs/rescore")
+async def rescore_board(request: Request) -> dict[str, int]:
+    """Re-score the active board against the CURRENT master resume — the action
+    behind every "Re-score with AI?" confirm (resume edit, scoring-mode
+    switch). Keyword mode refreshes the whole board inline (free). AI mode
+    enqueues one LLM score op per cache MISS only — a job already AI-scored at
+    the current resume version is never re-spent (maintainer 2026-07-23) — so
+    the call is idempotent and safe from any entry point."""
+    with _db(request).repos() as repos:
+        mode = scoring_mode(repos.preferences.get_or_create())
+        missing, total, version = _rescore_missing(repos)
+    if mode == "keyword":
+        from ..registry.operations import rescore_all_keyword
+
+        n = await asyncio.to_thread(rescore_all_keyword, _db(request))
+        return {"rescored": n}
+    runner = _runner(request)
+    for job_id in missing:
+        runner.submit("score", {"job_id": job_id, "profile_version": version})
+    return {"queued": len(missing), "skipped": total - len(missing)}
 
 
 @router.post("/api/profile/extract", status_code=202)
@@ -537,6 +671,7 @@ async def update_settings(
 ) -> dto.SettingsDTO:
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
+        before_mode = scoring_mode(repos.preferences.get_or_create())
         prefs = repos.preferences.update(**fields)
         routing = prefs.engine_routing
         ui_state = prefs.ui_state
@@ -545,6 +680,16 @@ async def update_settings(
             _thread_scan_cadence(repos, ui_state)
             _thread_contact_sync_cadence(repos, ui_state)
         result = _settings_dto(repos)
+    # Switching Scoring to keyword mode scores the whole board right here —
+    # ~0.5 ms/job, no LLM — so the change is visible on the next board fetch
+    # instead of waiting for a scan. Off the event loop (async-first rule).
+    # Switching to AI mode enqueues NOTHING server-side: the frontend fetches
+    # /api/jobs/rescore/preview and asks before any token is spent.
+    after_mode = str(prefs_thresholds.get("scoring_mode") or "llm")
+    if after_mode == "keyword" and before_mode != "keyword":
+        from ..registry.operations import backfill_keyword_scores
+
+        await asyncio.to_thread(backfill_keyword_scores, _db(request))
     # Re-apply the routing map so a Settings change takes effect immediately.
     engines = _engines(request)
     if engines is not None and "engine_routing" in fields:
@@ -1554,7 +1699,10 @@ async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
     except OSError as exc:
         get_logger().warning("linkedin disconnect: could not delete session file: %s", exc)
     try:
-        shutil.rmtree(linkedin_profile_dir(), ignore_errors=False)
+        # Off the loop (async-first rule): a populated Chromium profile is
+        # hundreds of MB across thousands of files — seconds of filesystem
+        # work that must not starve /healthz.
+        await asyncio.to_thread(shutil.rmtree, linkedin_profile_dir())
     except FileNotFoundError:
         pass
     except OSError as exc:
@@ -1576,11 +1724,17 @@ async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
         tier = session.account_tier if session is not None else "new"
-    driver = networker_ops.DRIVER_FACTORY(tier)
-    try:
-        info = driver.session_status()
-    finally:
-        driver.close()
+    # Off the loop (async-first rule): session_status is local-only, but the
+    # first call lazily imports playwright.sync_api — up to ~1 s on a cold
+    # packaged build.
+    def _local_status() -> dict:
+        driver = networker_ops.DRIVER_FACTORY(tier)
+        try:
+            return driver.session_status()
+        finally:
+            driver.close()
+
+    info = await asyncio.to_thread(_local_status)
     status = info.get("status", "never_set")
     with _db(request).repos() as repos:
         fields: dict[str, Any] = {"status": status, "last_validated_at": now_utc()}
@@ -1598,12 +1752,17 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
         tier = session.account_tier if session is not None else "new"
-    driver = networker_ops.DRIVER_FACTORY(tier)
-    try:
-        driver.resume()
-        info = driver.session_status()
-    finally:
-        driver.close()
+    # Off the loop (async-first rule): same first-call playwright import cost
+    # as validate, plus the pacing-ledger file writes.
+    def _resume_and_status() -> dict:
+        driver = networker_ops.DRIVER_FACTORY(tier)
+        try:
+            driver.resume()
+            return driver.session_status()
+        finally:
+            driver.close()
+
+    info = await asyncio.to_thread(_resume_and_status)
     status = info.get("status", "never_set")
     with _db(request).repos() as repos:
         session = repos.linkedin_session.update(

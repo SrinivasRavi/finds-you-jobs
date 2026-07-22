@@ -26,6 +26,9 @@ export interface ScoreResult {
   score_0_100: number;
   reasons: string[];
   breakdown_md: string;
+  /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
+   *  never styled like an AI score). Scoring modes, 2026-07-22. */
+  scorer_impl: string;
 }
 
 // ─── /api/jobs ──────────────────────────────────────────────────────────────
@@ -90,8 +93,18 @@ export interface Job {
   score: ScoreResult | null;
   /** Score lifecycle — resolves a null score to `pending` vs `failed` (US-JB-06). */
   score_status: ScoreStatus;
+  /** True when this row was inserted by the LATEST succeeded scan — the "NEW" badge. */
+  is_new: boolean;
   saved: boolean;
   board_state: BoardState;
+}
+
+/** GET /api/jobs/rescore/preview — the AI re-score consent numbers: cache
+ *  misses a confirmed run would enqueue vs jobs already AI-scored at the
+ *  current resume version (never re-spent). */
+export interface RescorePreview {
+  to_score: number;
+  cached: number;
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */
@@ -549,6 +562,12 @@ export interface OnboardingPrefsInput {
   /** Omitted → the stored value is left untouched (the job-finder-preferences
    *  modal edits scan prefs without flipping the networking opt-in). */
   networking_enabled?: boolean;
+  /** Personal hard excludes (job-finder-preferences design, 2026-07-21):
+   *  companies to never surface + keywords that disqualify a posting by its
+   *  description. Server-side they union with the registry's own block lists
+   *  (never replace them). Omitted → stored values left untouched. */
+  excluded_companies?: string[];
+  excluded_keywords?: string[];
 }
 
 // ─── /api/settings ──────────────────────────────────────────────────────────
@@ -576,7 +595,10 @@ export type OperationKind =
   | "send"
   | "linkedin_login"
   | "archive_stale_contacts"
-  | "contact_sync";
+  | "contact_sync"
+  // Watch-company attempts (2026-07-22): synchronous API action recorded into
+  // the ledger so Analytics → Logs keeps the verbatim refusal reason.
+  | "watch_company";
 
 export interface EngineRoute {
   kind: OperationKind;
@@ -679,6 +701,25 @@ export interface WatchCompanyResult {
   company: string;
 }
 
+/** One tracked company board (a `watched` [[sources]] row) — the roster view
+ *  in Job finder preferences of the same data "Watch company" writes. */
+/** One background schedule row (GET /api/schedules) — surfaced so the
+ *  preferences modal can show WHEN the next automatic scan fires (the cadence
+ *  was invisible before: it worked, but nothing proved it — 2026-07-22). */
+export interface ScheduleRow {
+  id: string;
+  kind: string;
+  interval_minutes: number;
+  enabled: boolean;
+  next_due_at: string;
+}
+
+export interface WatchlistEntry {
+  url: string;
+  company: string;
+  adapter: string;
+}
+
 export interface Settings {
   /** Legacy combined flag = resume && cover. Kept for consumers that read a
    *  single value (JobBoard per-job slider seed); the Settings UI drives the
@@ -690,7 +731,10 @@ export interface Settings {
   /** Find referrals on Save — default OFF (experimental, account-risk); only
    *  effective when Referral Outreach (networking) is enabled. */
   auto_referrals_on_save: boolean;
-  auto_score_on_scan: boolean;
+  /** Scoring mode (2026-07-22): "llm" — AI scoring, best quality, costs
+   *  tokens; "keyword" — on-device keyword scorer, free and instant. Scoring
+   *  itself is always on (the old off-switch is retired). */
+  scoring_mode: "llm" | "keyword";
   // 0 = unlimited (runner ceiling applies); otherwise 2-20.
   llm_concurrency: number;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
@@ -721,6 +765,10 @@ export interface Settings {
     locations: string[];
     freshness_days: number;
     scrape_cadence: string;
+    /** `hard_excludes.companies` / `.keywords` — the personal excludes the
+     *  finder-preferences modal edits (empty until the user adds some). */
+    excluded_companies: string[];
+    excluded_keywords: string[];
   };
   observability: {
     content_logging: boolean;

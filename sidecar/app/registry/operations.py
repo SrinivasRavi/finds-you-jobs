@@ -186,61 +186,249 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     )
 
 
-def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
-    """Fit-score one job (Scorer module) → a cached `JobScore`. Routed engine."""
-    resolved = _require_engine(ctx)
-    from sidecar.modules.scorer.scorer import score
+def _persist_score(
+    ctx: OperationContext,
+    *,
+    job_id: str,
+    profile_version: int,
+    score_0_100: int,
+    reasons: list[str],
+    breakdown_md: str,
+    scorer_impl: str,
+    feed_priority_stats: bool,
+) -> str | None:
+    """Upsert one `JobScore` row; optionally feed the running priority
+    distribution (FR-TR-09) exactly once per *new* score of that impl — a
+    recompute of an existing cache key must not double count."""
+    if ctx.db is None:
+        return None
+    from ..priority import STATS_KEY, welford_update
 
+    with ctx.db.repos() as repos:
+        is_new_score = (
+            repos.job_scores.get_cached(job_id, profile_version, scorer_impl) is None
+        )
+        row = repos.job_scores.upsert(
+            job_id=job_id,
+            profile_version=profile_version,
+            score_0_100=score_0_100,
+            reasons=reasons,
+            breakdown_md=breakdown_md,
+            scorer_impl=scorer_impl,
+            operation_id=ctx.operation_id,
+        )
+        if feed_priority_stats and is_new_score:
+            prefs = repos.preferences.get_or_create()
+            thresholds = dict(prefs.thresholds or {})
+            thresholds[STATS_KEY] = welford_update(
+                thresholds.get(STATS_KEY), float(score_0_100)
+            )
+            repos.preferences.update(thresholds=thresholds)
+        return row.id
+
+
+def _ensure_keyword_floor(
+    ctx: OperationContext,
+    *,
+    job_id: str | None,
+    profile_version: int,
+    master_md: str,
+    job_text: str,
+) -> None:
+    """Guarantee a keyword score exists for this (job, version) — idempotent:
+    a no-op if the floor is already there (the usual case, since the post-scan
+    and boot floor passes run first). Pure offline compute (~0.5 ms, no
+    network). Best-effort: a compute error is logged, never raised — the floor
+    is a safety net, not the caller's operation."""
+    from sidecar.modules.scorer.deterministic import score_deterministic
+
+    from .persistence import SCORER_IMPL_DETERMINISTIC
+
+    if ctx.db is None or job_id is None:
+        return
+    with ctx.db.repos() as repos:
+        if repos.job_scores.get_cached(job_id, profile_version, SCORER_IMPL_DETERMINISTIC):
+            return
+    try:
+        det = score_deterministic(master_md, job_text)
+        _persist_score(
+            ctx,
+            job_id=job_id,
+            profile_version=profile_version,
+            score_0_100=det.score,
+            reasons=list(det.reasons),
+            breakdown_md=det.breakdown_md,
+            scorer_impl=SCORER_IMPL_DETERMINISTIC,
+            feed_priority_stats=False,
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "keyword floor failed for job_id=%s", job_id
+        )
+
+
+def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
+    """Fit-score one job → a cached `JobScore`.
+
+    Two modes (Settings → Scoring, maintainer design 2026-07-22):
+    - "keyword": the zero-LLM keyword scorer — free, instant, keyless. This IS
+      the score.
+    - "llm" (default): the routed-engine Scorer, an UPGRADE over the keyword
+      floor every job already carries (`_ensure_keyword_floor`, run post-scan
+      and at boot). On success the LLM score outranks the floor (display
+      precedence LLM > keyword). On FAILURE the op raises — it stays failed and
+      retryable in Logs, is not auto-retried, and the grey keyword floor is the
+      fallback the board shows (ensured here in case this op raced the floor
+      pass). No hidden re-scoring; nothing to fall back below keyword.
+    """
     from ..prompt_overrides import get_override
-    from .persistence import SCORER_IMPL, load_job_and_master
+    from .persistence import (
+        SCORER_IMPL,
+        SCORER_IMPL_DETERMINISTIC,
+        load_job_and_master,
+        scoring_mode,
+    )
 
     snap = ctx.input_snapshot
     job_id = snap.get("job_id")
 
+    mode = "llm"
     if ctx.db is not None:
         with ctx.db.repos() as repos:
             job_text, master_md, profile_version = load_job_and_master(repos, snap)
+            mode = scoring_mode(repos.preferences.get_or_create())
     else:
         job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+        mode = str(snap.get("scoring_mode") or "llm")
 
-    result = score(
-        master_md, job_text, engine=resolved.engine, skill_md=get_override("score")
-    )
+    if mode == "keyword":
+        from sidecar.modules.scorer.deterministic import score_deterministic
 
-    score_id: str | None = None
-    if ctx.db is not None and job_id is not None:
-        from ..priority import STATS_KEY, welford_update
-
-        with ctx.db.repos() as repos:
-            # Feed the running priority distribution (FR-TR-09) exactly once per
-            # *new* score — a recompute of an existing cache key must not double
-            # count (μ/σ are over jobs ever scored, not scoring attempts).
-            is_new_score = (
-                repos.job_scores.get_cached(job_id, profile_version, SCORER_IMPL) is None
-            )
-            row = repos.job_scores.upsert(
+        det = score_deterministic(master_md, job_text)
+        score_id = None
+        if job_id is not None:
+            score_id = _persist_score(
+                ctx,
                 job_id=job_id,
                 profile_version=profile_version,
-                score_0_100=result.score,
-                reasons=list(result.reasons),
-                breakdown_md=result.breakdown_md,
-                scorer_impl=SCORER_IMPL,
-                operation_id=ctx.operation_id,
+                score_0_100=det.score,
+                reasons=list(det.reasons),
+                breakdown_md=det.breakdown_md,
+                scorer_impl=SCORER_IMPL_DETERMINISTIC,
+                # In keyword mode these ARE the displayed scores — they drive
+                # the priority distribution.
+                feed_priority_stats=True,
             )
-            score_id = row.id
-            if is_new_score:
-                prefs = repos.preferences.get_or_create()
-                thresholds = dict(prefs.thresholds or {})
-                thresholds[STATS_KEY] = welford_update(
-                    thresholds.get(STATS_KEY), float(result.score)
-                )
-                repos.preferences.update(thresholds=thresholds)
+        return OperationOutcome(
+            result_ref={"score": det.score, "job_id": job_id, "score_id": score_id},
+            usage=None,
+            engine="on-device",
+            model="keyword",
+        )
+
+    resolved = _require_engine(ctx)
+    from sidecar.modules.scorer.scorer import score
+
+    try:
+        result = score(
+            master_md, job_text, engine=resolved.engine, skill_md=get_override("score")
+        )
+    except Exception:
+        # The keyword floor is the fallback; guarantee it exists (idempotent)
+        # then re-raise so the op stays failed + retryable.
+        _ensure_keyword_floor(
+            ctx,
+            job_id=job_id,
+            profile_version=profile_version,
+            master_md=master_md,
+            job_text=job_text,
+        )
+        raise
+
+    score_id = None
+    if job_id is not None:
+        score_id = _persist_score(
+            ctx,
+            job_id=job_id,
+            profile_version=profile_version,
+            score_0_100=result.score,
+            reasons=list(result.reasons),
+            breakdown_md=result.breakdown_md,
+            scorer_impl=SCORER_IMPL,
+            feed_priority_stats=True,
+        )
     return OperationOutcome(
         result_ref={"score": result.score, "job_id": job_id, "score_id": score_id},
         usage=_usage_to_dict(result.usage),
         engine=resolved.name,
         model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
     )
+
+
+def _keyword_sweep(db: Database, *, refresh: bool) -> int:
+    """The ONE keyword sweep over the active board (~0.5 ms/job, no LLM) —
+    both policies below share this walker so their loop bodies can't drift:
+
+    - `refresh=False` — the FLOOR: only jobs with NO score at ANY version get
+      a keyword row. A stale score from a prior resume version is left
+      untouched (declining an AI re-score keeps it visible — maintainer
+      2026-07-22); nothing is ever deleted or overwritten.
+    - `refresh=True` — a fresh keyword row at the CURRENT profile version for
+      every active job, so the board reflects a new resume. (The scorer is
+      deterministic: same inputs recompute to the same row, so "overwrite"
+      semantics are never needed beyond writing at the newest version.)
+    """
+    from sidecar.modules.scorer.deterministic import score_deterministic
+
+    from .persistence import SCORER_IMPL_DETERMINISTIC, compose_job_text
+
+    with db.repos() as repos:
+        profile = repos.profile.get_current()
+        if profile is None:
+            return 0
+        master_md, version = profile.resume_markdown, profile.version
+        jobs = repos.jobs.list(feed_state="active")
+        if not refresh:
+            already = repos.job_scores.job_ids_with_any_score([j.id for j in jobs])
+            jobs = [j for j in jobs if j.id not in already]
+        todo = [(j.id, compose_job_text(j)) for j in jobs]
+
+    done = 0
+    for job_id, job_text in todo:
+        try:
+            det = score_deterministic(master_md, job_text)
+            with db.repos() as repos:
+                repos.job_scores.upsert(
+                    job_id=job_id,
+                    profile_version=version,
+                    score_0_100=det.score,
+                    reasons=list(det.reasons),
+                    breakdown_md=det.breakdown_md,
+                    scorer_impl=SCORER_IMPL_DETERMINISTIC,
+                )
+            done += 1
+        except Exception:  # noqa: BLE001 — one bad job never aborts the sweep
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "keyword sweep (refresh=%s) failed for job_id=%s", refresh, job_id
+            )
+    return done
+
+
+def backfill_keyword_scores(db: Database) -> int:
+    """The keyword FLOOR: score only never-scored jobs so no board row is ever
+    stuck on "Pending". Runs on boot, after every scan, and on switching
+    Settings → Scoring to keyword mode."""
+    return _keyword_sweep(db, refresh=False)
+
+
+def rescore_all_keyword(db: Database) -> int:
+    """Fresh keyword scores at the CURRENT profile version for the whole
+    board — run automatically after a resume edit in keyword mode (free)."""
+    return _keyword_sweep(db, refresh=True)
 
 
 def _persist_artifact(

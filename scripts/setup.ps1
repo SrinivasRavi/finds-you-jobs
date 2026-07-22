@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 # Pinned to a tagged release, not `main` — `main` is a live dev branch and a
 # bad push there must not be able to brick every fresh install on the next
 # `irm | iex`. Bump this on every release (see RELEASING.md).
-$LatestTag = "v0.5.1"
+$LatestTag = "v0.5.2"
 function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Have($c) { $null -ne (Get-Command $c -ErrorAction SilentlyContinue) }
 function RefreshPath {

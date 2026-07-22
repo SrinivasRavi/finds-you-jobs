@@ -34,7 +34,7 @@ from urllib.parse import quote
 from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import USER_AGENT, Fetcher
-from ..searchquery import SearchQuery, build_queries
+from ..searchquery import SearchQuery, build_queries, select_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "apify"
@@ -92,7 +92,7 @@ def _locations_list(raw: object) -> str:
 
 def _naukri_runs(queries: list[SearchQuery]) -> list[dict]:
     runs = []
-    for q in queries[:MAX_RUNS]:
+    for q in select_queries(queries, MAX_RUNS):
         payload: dict = {
             "platform": "naukri",
             "searchQuery": q.keyword,
@@ -168,7 +168,7 @@ def _linkedin_item(item: dict) -> NormalizedJob | None:
 
 def _seek_runs(queries: list[SearchQuery]) -> list[dict]:
     runs = []
-    for q in queries[:MAX_RUNS]:
+    for q in select_queries(queries, MAX_RUNS):
         payload: dict = {"keywords": q.keyword, "maxPages": 2}
         if q.location:
             payload["where"] = q.location
@@ -203,7 +203,7 @@ def _indeed_runs(queries: list[SearchQuery]) -> list[dict]:
     # a city name still get city-scoped results in most cases; a country knob
     # can ride the source entry later if the field data says it's needed.
     runs = []
-    for q in queries[:MAX_RUNS]:
+    for q in select_queries(queries, MAX_RUNS):
         payload: dict = {
             "position": q.keyword,
             "maxItemsPerSearch": MAX_ITEMS,

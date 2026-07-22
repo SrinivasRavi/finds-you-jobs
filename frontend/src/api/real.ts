@@ -45,7 +45,9 @@ import type {
   DiscoveryCredential,
   DiscoverySource,
   PromptSetting,
+  ScheduleRow,
   WatchCompanyResult,
+  WatchlistEntry,
   ReachOutInput,
   ReachOutResult,
   ReferralCandidate,
@@ -59,6 +61,7 @@ import type {
   OnboardingPrefsInput,
   OperationKind,
   Profile,
+  RescorePreview,
   Settings,
   Warmth,
 } from "./types";
@@ -82,6 +85,7 @@ type ReferralCandidatesDTO = components["schemas"]["ReferralCandidatesDTO"];
 type QuotaDTO = components["schemas"]["QuotaDTO"];
 type LinkedInSessionDTO = components["schemas"]["LinkedInSessionDTO"];
 type ApplyRunDTO = components["schemas"]["ApplyRunDTO"];
+type RescorePreviewDTO = components["schemas"]["RescorePreviewDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
@@ -154,9 +158,11 @@ function toJob(d: JobDTO, saved: boolean): Job {
           score_0_100: d.score.score_0_100,
           reasons: d.score.reasons as string[],
           breakdown_md: d.score.breakdown_md,
+          scorer_impl: d.score.scorer_impl ?? "scorer-llm",
         }
       : null,
     score_status: (d.scoreStatus as Job["score_status"] | undefined) ?? (d.score ? "scored" : "pending"),
+    is_new: d.isNew ?? false,
     saved,
     board_state:
       d.feed_state === "removed"
@@ -187,6 +193,7 @@ function placeholderJob(jobId: string): JobDTO {
     workStyle: "",
     score: null,
     scoreStatus: "pending",
+    isNew: false,
   };
 }
 
@@ -334,7 +341,7 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
 
 /** An HTTP error carrying the sidecar status code, so callers can branch on it
  * (e.g. 409 → tombstoned URL → `JobTombstonedError`). */
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -360,7 +367,22 @@ export class RealApi {
 
   private async req<T>(path: string, init: RequestInit = {}): Promise<T> {
     const info = await this.info();
-    const res = await apiFetch(info, path, init);
+    let res: Response;
+    try {
+      res = await apiFetch(info, path, init);
+    } catch (e) {
+      // Network-level failure (WebKit reports it as the bare "Load failed"):
+      // the shell may have kill-restarted the sidecar on a NEW port/token
+      // while we kept the old handshake — every request then dies against a
+      // dead port for the rest of the session (observed 2026-07-22). Drop the
+      // cached handshake and retry ONCE, but only when the re-resolved
+      // handshake actually changed (restart evidence): the old port is dead,
+      // so the retry cannot double-apply the original request.
+      this.infoP = null;
+      const fresh = await this.info();
+      if (fresh.port === info.port && fresh.token === info.token) throw e;
+      res = await apiFetch(fresh, path, init);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new ApiError(res.status, `${init.method ?? "GET"} ${path} → ${res.status}: ${body}`);
@@ -707,6 +729,22 @@ export class RealApi {
     return this.getProfile();
   }
 
+  /** The AI re-score consent numbers behind every "Re-score with AI?" prompt:
+   *  cache misses at the current resume version (what a confirmed run
+   *  enqueues) vs already-AI-scored jobs (skipped, never re-spent). */
+  async rescorePreview(): Promise<RescorePreview> {
+    const d = await this.req<RescorePreviewDTO>("/api/jobs/rescore/preview");
+    return { to_score: d.toScore, cached: d.cached };
+  }
+
+  /** Re-score the active board against the current master resume (the AI-mode
+   *  confirm after a resume edit or a switch to AI scoring). The server fills
+   *  cache MISSES only — jobs already AI-scored at the current version are
+   *  skipped. Keyword mode re-scores server-side already at save time. */
+  async rescoreBoard(): Promise<void> {
+    await this.json("POST", "/api/jobs/rescore", {});
+  }
+
   /** First-launch guard (FR-OB-01): a `MasterProfile` row exists ⟺ onboarded.
    *  `GET /api/profile` returns null before Finish. */
   async hasMasterProfile(): Promise<boolean> {
@@ -759,6 +797,16 @@ export class RealApi {
       freshness_days: input.freshness_days,
       ui_state: ui,
     };
+    // Personal excludes merge over the stored map (a future key like
+    // `description` must survive a modal save that doesn't know about it).
+    if (input.excluded_companies !== undefined || input.excluded_keywords !== undefined) {
+      const stored = (cur.preferences.hard_excludes ?? {}) as Record<string, unknown>;
+      body.hard_excludes = {
+        ...stored,
+        ...(input.excluded_companies !== undefined ? { companies: input.excluded_companies } : {}),
+        ...(input.excluded_keywords !== undefined ? { keywords: input.excluded_keywords } : {}),
+      };
+    }
     // Only sent when the caller owns the decision (onboarding); the finder-
     // preferences modal edits scan prefs without touching the networking opt-in.
     if (input.networking_enabled !== undefined) {
@@ -793,8 +841,7 @@ export class RealApi {
       auto_resume_on_save: autoResume,
       auto_cover_on_save: autoCover,
       auto_referrals_on_save: autoReferrals,
-      auto_score_on_scan:
-        "auto_score_on_scan" in thresholds ? Boolean(thresholds.auto_score_on_scan) : true,
+      scoring_mode: thresholds.scoring_mode === "keyword" ? "keyword" : "llm",
       llm_concurrency:
         typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
       score_new_batch: scoreNewBatch,
@@ -823,6 +870,12 @@ export class RealApi {
         locations: (p.locations ?? []).map(String),
         freshness_days: p.freshness_days ?? 7,
         scrape_cadence: String(ui.scrape_cadence ?? "Every 24h"),
+        excluded_companies: (
+          ((p.hard_excludes ?? {}) as { companies?: unknown[] }).companies ?? []
+        ).map(String),
+        excluded_keywords: (
+          ((p.hard_excludes ?? {}) as { keywords?: unknown[] }).keywords ?? []
+        ).map(String),
       },
       observability: {
         content_logging: Boolean(ui.content_logging),
@@ -844,8 +897,7 @@ export class RealApi {
     const thresholdPatch: Record<string, unknown> = {};
     if (patch.auto_resume_on_save !== undefined) thresholdPatch.auto_resume_on_save = patch.auto_resume_on_save;
     if (patch.auto_cover_on_save !== undefined) thresholdPatch.auto_cover_on_save = patch.auto_cover_on_save;
-    if (patch.auto_score_on_scan !== undefined)
-      thresholdPatch.auto_score_on_scan = patch.auto_score_on_scan;
+    if (patch.scoring_mode !== undefined) thresholdPatch.scoring_mode = patch.scoring_mode;
     if (patch.llm_concurrency !== undefined)
       thresholdPatch.llm_concurrency = patch.llm_concurrency;
     if (patch.auto_referrals_on_save !== undefined)
@@ -978,6 +1030,20 @@ export class RealApi {
     company?: string;
   }): Promise<WatchCompanyResult> {
     return (await this.json("POST", "/api/discovery/watchlist", input)) as WatchCompanyResult;
+  }
+  async getSchedules(): Promise<ScheduleRow[]> {
+    return this.req<ScheduleRow[]>("/api/schedules");
+  }
+  async getWatchlist(): Promise<WatchlistEntry[]> {
+    const d = await this.req<{ entries: WatchlistEntry[] }>("/api/discovery/watchlist");
+    return d.entries;
+  }
+  async unwatchCompany(url: string): Promise<boolean> {
+    const d = await this.req<{ removed: boolean }>(
+      `/api/discovery/watchlist?url=${encodeURIComponent(url)}`,
+      { method: "DELETE" },
+    );
+    return d.removed;
   }
   async getDiscoveryAnalytics(): Promise<DiscoveryAnalytics> {
     return this.req<DiscoveryAnalytics>("/api/discovery/analytics");
