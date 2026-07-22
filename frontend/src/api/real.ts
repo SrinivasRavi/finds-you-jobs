@@ -725,6 +725,13 @@ export class RealApi {
     return this.getProfile();
   }
 
+  /** Re-score every active job against the current master resume (the AI-mode
+   *  "Re-score all" confirm after a resume edit). Keyword mode re-scores
+   *  server-side already at save time; this drives the AI path. */
+  async rescoreBoard(): Promise<void> {
+    await this.json("POST", "/api/jobs/rescore", {});
+  }
+
   /** First-launch guard (FR-OB-01): a `MasterProfile` row exists ⟺ onboarded.
    *  `GET /api/profile` returns null before Finish. */
   async hasMasterProfile(): Promise<boolean> {

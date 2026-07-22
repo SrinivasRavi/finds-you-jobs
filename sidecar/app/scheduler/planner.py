@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import Database
-from ..registry.persistence import SCORER_IMPL
 
 # A score op already attempted at the current version: queued/running (in
 # flight) or failed (a failure is NOT auto-retried — it fell back to a grey
@@ -61,7 +60,11 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
             limit = int(raw or 0)
 
         jobs = repos.jobs.list(feed_state="active", limit=1000)
-        scored = repos.job_scores.scored_job_ids(version, SCORER_IMPL)
+        ids = [j.id for j in jobs]
+        # A job with an AI score at ANY version is done — a resume edit never
+        # auto-spends tokens re-scoring it on the next scan (re-scoring is the
+        # explicit "Re-score all" prompt). Only never-AI-scored jobs are planned.
+        scored = repos.job_scores.job_ids_with_llm_score(ids)
         # Jobs whose LLM score is in flight or already failed at THIS version —
         # excluded so a failure isn't auto-retried every scan and an in-flight
         # op isn't double-enqueued.

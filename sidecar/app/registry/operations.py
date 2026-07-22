@@ -372,7 +372,7 @@ def backfill_keyword_scores(db: Database) -> int:
     LLM > keyword); this never deletes or overwrites anything."""
     from sidecar.modules.scorer.deterministic import score_deterministic
 
-    from .persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC, compose_job_text
+    from .persistence import SCORER_IMPL_DETERMINISTIC, compose_job_text
 
     with db.repos() as repos:
         profile = repos.profile.get_current()
@@ -381,15 +381,10 @@ def backfill_keyword_scores(db: Database) -> int:
         master_md, version = profile.resume_markdown, int(profile.version)
         jobs = repos.jobs.list(feed_state="active")
         ids = [j.id for j in jobs]
-        llm = repos.job_scores.latest_for_jobs(ids, version, scorer_impl=SCORER_IMPL)
-        det = repos.job_scores.latest_for_jobs(
-            ids, version, scorer_impl=SCORER_IMPL_DETERMINISTIC
-        )
-        todo = [
-            (j.id, compose_job_text(j))
-            for j in jobs
-            if j.id not in llm and j.id not in det
-        ]
+        # Floor only jobs with NO score at ANY version — a stale score from a
+        # prior resume version is left untouched (maintainer 2026-07-22).
+        already = repos.job_scores.job_ids_with_any_score(ids)
+        todo = [(j.id, compose_job_text(j)) for j in jobs if j.id not in already]
 
     done = 0
     for job_id, job_text in todo:
@@ -410,6 +405,45 @@ def backfill_keyword_scores(db: Database) -> int:
 
             logging.getLogger(__name__).exception(
                 "keyword-score backfill failed for job_id=%s", job_id
+            )
+    return done
+
+
+def rescore_all_keyword(db: Database) -> int:
+    """Force a fresh keyword score at the CURRENT profile version for every
+    active job — the free/instant re-score run automatically after a resume
+    edit in keyword mode (unlike the floor, this overwrites older-version
+    scores so the board reflects the new resume). Pure offline compute."""
+    from sidecar.modules.scorer.deterministic import score_deterministic
+
+    from .persistence import SCORER_IMPL_DETERMINISTIC, compose_job_text
+
+    with db.repos() as repos:
+        profile = repos.profile.get_current()
+        if profile is None:
+            return 0
+        master_md, version = profile.resume_markdown, int(profile.version)
+        todo = [(j.id, compose_job_text(j)) for j in repos.jobs.list(feed_state="active")]
+
+    done = 0
+    for job_id, job_text in todo:
+        try:
+            det = score_deterministic(master_md, job_text)
+            with db.repos() as repos:
+                repos.job_scores.upsert(
+                    job_id=job_id,
+                    profile_version=version,
+                    score_0_100=det.score,
+                    reasons=list(det.reasons),
+                    breakdown_md=det.breakdown_md,
+                    scorer_impl=SCORER_IMPL_DETERMINISTIC,
+                )
+            done += 1
+        except Exception:  # noqa: BLE001 — one bad job never aborts the sweep
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "keyword rescore failed for job_id=%s", job_id
             )
     return done
 

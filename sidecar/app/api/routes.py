@@ -39,7 +39,6 @@ from ..registry.company_anchor import resolution_key
 from ..registry.engine_config import apply_routing
 from ..registry.linkedin_op import LOGIN_CONTROL
 from ..registry.networker_ops import linkedin_storage_path
-from ..registry.persistence import SCORER_IMPL_DETERMINISTIC
 from ..runner import OperationRunner
 from ..scheduler.planner import plan_schedule
 from . import dto
@@ -125,8 +124,7 @@ def _saved_job_ids(repos: Any) -> set[str]:
 async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
     with _db(request).repos() as repos:
         jobs = repos.jobs.list(feed_state=feed_state or None)
-        version = _current_profile_version(repos)
-        scores = _display_scores(repos, [j.id for j in jobs], version)
+        scores = _display_scores(repos, [j.id for j in jobs])
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
             dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
@@ -136,15 +134,12 @@ async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.Jo
     return dtos
 
 
-def _display_scores(repos, job_ids: list[str], version: int) -> dict:
-    """The score each job DISPLAYS: the AI score when one exists, else the
-    keyword score (Scoring modes, maintainer design 2026-07-22). scorer_impl
-    rides on the DTO so the frontend can render keyword scores grey."""
-    llm = repos.job_scores.latest_for_jobs(job_ids, version)
-    det = repos.job_scores.latest_for_jobs(
-        job_ids, version, scorer_impl=SCORER_IMPL_DETERMINISTIC
-    )
-    return {jid: llm.get(jid) or det[jid] for jid in {*llm, *det}}
+def _display_scores(repos, job_ids: list[str]) -> dict:
+    """The score each job DISPLAYS — the latest one (highest version; AI over
+    keyword within a version), version-agnostic so a resume edit never blanks
+    the board and a stale score stays visible until a re-score lands (maintainer
+    2026-07-22). scorer_impl rides on the DTO so keyword scores render grey."""
+    return repos.job_scores.latest_scores(job_ids)
 
 
 # Board-eligible feed states: active + expired (Expired stays on the board,
@@ -228,8 +223,7 @@ async def board(
         suppressed = _suppressed_by_excludes(request.app.state, excludes, jobs)
         if suppressed:
             jobs = [j for j in jobs if j.id not in suppressed]
-        version = _current_profile_version(repos)
-        scores = _display_scores(repos, [j.id for j in jobs], version)
+        scores = _display_scores(repos, [j.id for j in jobs])
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
             dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
@@ -465,11 +459,44 @@ async def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.Pr
     with _db(request).repos() as repos:
         profile = repos.profile.upsert(payload.resume_markdown)
         result = dto.profile_dto(profile)
+        prefs = repos.preferences.get_or_create()
+        mode = str((prefs.thresholds or {}).get("scoring_mode") or "llm")
     # Always extract the application profile at master-save (FR-APP-01;
     # maintainer removed the toggle — it's one small cheap call and the record
     # is load-bearing for every form fill).
     _runner(request).submit("extract", {"profile_version": result.version})
+    # Re-scoring on a resume edit (maintainer 2026-07-23): keyword mode is free,
+    # so re-score the whole board now (off the event loop). AI mode costs
+    # tokens, so it does NOT auto-run — the frontend prompts and calls
+    # /api/jobs/rescore only if the user confirms; otherwise the prior scores
+    # stay visible (the board shows the latest available version).
+    if mode == "keyword":
+        from ..registry.operations import rescore_all_keyword
+
+        await asyncio.to_thread(rescore_all_keyword, _db(request))
     return result
+
+
+@router.post("/api/jobs/rescore")
+async def rescore_board(request: Request) -> dict[str, int]:
+    """Re-score every active job against the CURRENT master resume — the action
+    behind the "Re-score all N jobs with AI?" prompt after a resume edit
+    (maintainer 2026-07-23). Keyword mode re-scores inline (free); AI mode
+    enqueues one LLM score op per job at the current version. Returns the count."""
+    with _db(request).repos() as repos:
+        version = _current_profile_version(repos)
+        prefs = repos.preferences.get_or_create()
+        mode = str((prefs.thresholds or {}).get("scoring_mode") or "llm")
+        job_ids = [j.id for j in repos.jobs.list(feed_state="active")]
+    if mode == "keyword":
+        from ..registry.operations import rescore_all_keyword
+
+        n = await asyncio.to_thread(rescore_all_keyword, _db(request))
+        return {"rescored": n}
+    runner = _runner(request)
+    for job_id in job_ids:
+        runner.submit("score", {"job_id": job_id, "profile_version": version})
+    return {"queued": len(job_ids)}
 
 
 @router.post("/api/profile/extract", status_code=202)

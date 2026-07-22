@@ -16,13 +16,18 @@ from fastapi.testclient import TestClient
 from sidecar.app.db import Database
 from sidecar.app.main import create_app
 from sidecar.app.registry import EngineRegistry, OperationContext
-from sidecar.app.registry.operations import backfill_keyword_scores, score_entrypoint
+from sidecar.app.registry.operations import (
+    backfill_keyword_scores,
+    rescore_all_keyword,
+    score_entrypoint,
+)
 from sidecar.app.registry.persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC
 from sidecar.app.scheduler.planner import plan_score_new
 from sidecar.modules._shared.claude_engine import EngineUsage
 
 TOKEN = "test-token-scoring-modes"  # noqa: S105 — test fixture, not a real secret
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
+RESUME = "# Test Candidate\n\nBackend engineer. Python, FastAPI, SQL, Kafka."
 
 SCORE_OUT = (
     "===SCORE===\n77\n===REASONS===\n- Strong backend overlap\n"
@@ -173,6 +178,87 @@ def test_backfill_scores_only_unscored_jobs(migrated_db: Database) -> None:
     assert backfill_keyword_scores(db) == 1  # only b
     assert SCORER_IMPL_DETERMINISTIC not in _scores(db, a)
     assert SCORER_IMPL_DETERMINISTIC in _scores(db, b)
+
+
+def test_display_shows_latest_version_and_stale_survives_a_resume_edit(
+    migrated_db: Database,
+) -> None:
+    """A resume edit bumps the profile version but does NOT blank the board:
+    the score from the highest available version is displayed, so a job scored
+    at v1 keeps that score at v2 until a re-score lands (maintainer 2026-07-23)."""
+    db = migrated_db
+    job_id = _seed(db)
+    score_entrypoint(_ctx(db, job_id, engine=_OkEngine()))  # AI score at v1
+    with db.repos() as repos:
+        v1 = repos.profile.get_current().version  # type: ignore[union-attr]
+        disp = repos.job_scores.latest_scores([job_id])[job_id]
+        assert disp.profile_version == v1 and disp.scorer_impl == SCORER_IMPL
+        # Edit the resume → v2. No re-score yet.
+        repos.profile.upsert("# Test Candidate\n\nBackend engineer. Now with Go.")
+        v2 = repos.profile.get_current().version  # type: ignore[union-attr]
+        assert v2 == v1 + 1
+        still = repos.job_scores.latest_scores([job_id])[job_id]
+        assert still.profile_version == v1  # stale v1 AI score still shown
+    # A keyword re-score at v2 now wins (latest version).
+    rescore_all_keyword(db)
+    with db.repos() as repos:
+        after = repos.job_scores.latest_scores([job_id])[job_id]
+        assert after.profile_version == v2
+        assert after.scorer_impl == SCORER_IMPL_DETERMINISTIC
+
+
+def test_llm_planner_does_not_auto_rescore_after_a_resume_edit(
+    migrated_db: Database,
+) -> None:
+    """AI mode: a job already AI-scored at any version is not re-planned after a
+    resume edit — re-scoring costs tokens and only happens via the explicit
+    prompt, never silently on the next scan."""
+    db = migrated_db
+    job_id = _seed(db)
+    score_entrypoint(_ctx(db, job_id, engine=_OkEngine()))
+    with db.repos() as repos:
+        repos.profile.upsert("# Test Candidate\n\nBackend engineer. Kafka, Go.")
+    assert plan_score_new(db) == []  # no auto re-score at the new version
+
+
+def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) -> None:
+    """Through the real app: editing the resume re-scores the whole board for
+    free in keyword mode, but leaves prior scores untouched in AI mode (the
+    frontend prompts and calls /api/jobs/rescore only on confirm)."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        job_id = _seed(db)
+        client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME})
+        with db.repos() as repos:
+            v0 = repos.profile.get_current().version  # type: ignore[union-attr]
+
+        # AI mode (default): edit resume → NO new score; the board keeps prior.
+        # (No score existed here, so it simply stays unscored — the point is no
+        # keyword rescore is forced.)
+        client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME + "\nGo."})
+        with db.repos() as repos:
+            assert repos.job_scores.latest_scores([job_id]) == {}
+
+        # Switch to keyword mode, edit again → the board is re-scored for free.
+        client.post(
+            "/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "keyword"}}
+        )
+        client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME + "\nRust."})
+        with db.repos() as repos:
+            v_new = repos.profile.get_current().version  # type: ignore[union-attr]
+            disp = repos.job_scores.latest_scores([job_id])[job_id]
+            assert v_new > v0
+            assert disp.profile_version == v_new
+            assert disp.scorer_impl == SCORER_IMPL_DETERMINISTIC
+
+        # AI re-score endpoint enqueues one score op per active job.
+        client.post("/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "llm"}})
+        r = client.post("/api/jobs/rescore", headers=AUTH)
+        assert r.status_code == 200 and r.json()["queued"] == 1
 
 
 def test_api_serves_llm_over_keyword_and_settings_switch_backfills(tmp_path) -> None:

@@ -224,6 +224,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/rescore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rescore Board
+         * @description Re-score every active job against the CURRENT master resume — the action
+         *     behind the "Re-score all N jobs with AI?" prompt after a resume edit
+         *     (maintainer 2026-07-23). Keyword mode re-scores inline (free); AI mode
+         *     enqueues one LLM score op per job at the current version. Returns the count.
+         */
+        post: operations["rescore_board_api_jobs_rescore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profile/extract": {
         parameters: {
             query?: never;
@@ -3157,6 +3180,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rescore_board_api_jobs_rescore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
                 };
             };
         };

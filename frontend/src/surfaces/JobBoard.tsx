@@ -34,6 +34,7 @@ import { JobTombstonedError, type BoardPage, type Job, type JobDraft } from "../
 import { Icon } from "../shell/icons";
 import { Chip, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
+import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { Markdown } from "../shell/Markdown";
 import { ResumeModal } from "../popups/ResumeModal";
 import {
@@ -671,6 +672,12 @@ export function JobBoard() {
   const [showTrash, setShowTrash] = useState(false);
   const [showMaster, setShowMaster] = useState(false);
   const [showPrefs, setShowPrefs] = useState(false);
+  // After a master-resume edit in AI mode, ask before spending tokens to
+  // re-score the whole board (maintainer 2026-07-23). Holds the job count to
+  // re-score, or null when hidden.
+  const [rescoreAsk, setRescoreAsk] = useState<number | null>(null);
+  const [rescoring, setRescoring] = useState(false);
+  const qc = useQueryClient();
   const dragging = useRef(false);
 
   // The board feed is served paginated + saved-excluded server-side (FR-JB-02);
@@ -891,7 +898,6 @@ export function JobBoard() {
           onChange={setTextSearch}
           placeholder="Search"
           testid="board-text-search"
-          className="min-w-[88px] max-w-[176px] grow shrink basis-[88px]"
         />
       </div>
 
@@ -1016,7 +1022,41 @@ export function JobBoard() {
           kind="master"
           profile={profile}
           onClose={() => setShowMaster(false)}
-          onSaveMaster={(md: string) => updateProfile.mutate(md)}
+          onSaveMaster={(md: string) => {
+            // Save the resume; the board's scores are now against an older
+            // resume version. Keyword mode re-scores server-side for free at
+            // save; AI mode costs tokens, so ask first (declining keeps the
+            // prior scores visible — the board shows the latest version).
+            void updateProfile.mutateAsync(md).then(() => {
+              const n = meta?.total ?? boardJobs.length;
+              if (settings?.scoring_mode === "llm" && n > 0) {
+                setShowMaster(false); // close the editor so the prompt stands alone
+                setRescoreAsk(n);
+              } else {
+                invalidateFeed(qc); // keyword mode already re-scored
+              }
+            });
+          }}
+        />
+      ) : null}
+      {rescoreAsk !== null ? (
+        <ConfirmDialog
+          title="Re-score jobs with AI?"
+          body={`Your resume changed. Re-score all ${rescoreAsk} job${rescoreAsk === 1 ? "" : "s"} against it with AI scoring? This uses your LLM key — one call per job. Or keep the current scores; you can re-score anytime by editing your resume again.`}
+          confirmLabel={rescoring ? "Re-scoring…" : "Re-score all"}
+          cancelLabel="Keep current scores"
+          busy={rescoring}
+          onConfirm={() => {
+            setRescoring(true);
+            void api
+              .rescoreBoard()
+              .then(() => invalidateFeed(qc))
+              .finally(() => {
+                setRescoring(false);
+                setRescoreAsk(null);
+              });
+          }}
+          onCancel={() => setRescoreAsk(null)}
         />
       ) : null}
       {showPrefs ? <FinderPrefsModal onClose={() => setShowPrefs(false)} /> : null}

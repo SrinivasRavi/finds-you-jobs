@@ -77,10 +77,8 @@ export function Chip({
 /** The board search box — identical sizing/behavior in every tab: shrinks to
  *  fit the space the groups leave (down to icon + "Search"), only wraps to its
  *  own line when even that can't fit. */
-// Default sizing for tabs whose filter row has room (Applications, Networking):
-// a fixed 200 px box, right-aligned. The Job Board's crowded row passes its own
-// shrink-to-fit className instead; at the maintainer's window width all three
-// land at 200 px, and only the Job Board box shrinks on a narrow window.
+// The board search — a fixed 176 px box, right-aligned, identical in every tab
+// (maintainer 2026-07-22: keep it simple, no per-tab gymnastics).
 export function SearchBox({
   value,
   onChange,
