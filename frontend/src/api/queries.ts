@@ -37,6 +37,7 @@ import type {
   ReachOutInput,
   Settings,
   Stage,
+  WatchlistEntry,
 } from "./types";
 
 export const qk = {
@@ -222,7 +223,26 @@ export function useWatchCompany() {
   return useMutation({
     mutationFn: (input: { url?: string; job_id?: string; company?: string }) =>
       api.watchCompany(input),
-    onSuccess: () => {
+    // Optimistic ONLY for job-derived watches (maintainer 2026-07-22: the
+    // toggle lagged the server round-trip — worst case a live board probe).
+    // The row toggle matches roster entries by company, so a provisional
+    // company-only entry flips it instantly; rolled back on error. Pasted-URL
+    // Tracks stay pessimistic — there the probe IS the validation and the
+    // button already shows "Adding…".
+    onMutate: async (input) => {
+      if (!input.job_id || !input.company) return undefined;
+      await qc.cancelQueries({ queryKey: qk.watchlist });
+      const prev = qc.getQueryData<WatchlistEntry[]>(qk.watchlist);
+      qc.setQueryData<WatchlistEntry[]>(qk.watchlist, (cur) => [
+        ...(cur ?? []),
+        { url: `optimistic:${input.job_id}`, company: input.company ?? "", adapter: "" },
+      ]);
+      return { prev };
+    },
+    onError: (_e, _input, ctx) => {
+      if (ctx?.prev !== undefined) qc.setQueryData(qk.watchlist, ctx.prev);
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: qk.discoverySources });
       qc.invalidateQueries({ queryKey: qk.settings });
       qc.invalidateQueries({ queryKey: qk.watchlist });
@@ -242,7 +262,20 @@ export function useUnwatchCompany() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (url: string) => api.unwatchCompany(url),
-    onSuccess: () => {
+    // Optimistic removal — the DELETE is a fast local write; rolled back on
+    // error (the toggle then shows its retry label).
+    onMutate: async (url) => {
+      await qc.cancelQueries({ queryKey: qk.watchlist });
+      const prev = qc.getQueryData<WatchlistEntry[]>(qk.watchlist);
+      qc.setQueryData<WatchlistEntry[]>(qk.watchlist, (cur) =>
+        (cur ?? []).filter((e) => e.url !== url),
+      );
+      return { prev };
+    },
+    onError: (_e, _url, ctx) => {
+      if (ctx?.prev !== undefined) qc.setQueryData(qk.watchlist, ctx.prev);
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: qk.watchlist });
       qc.invalidateQueries({ queryKey: qk.discoverySources });
       qc.invalidateQueries({ queryKey: qk.settings });
@@ -285,7 +318,7 @@ export function usePrompts() {
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 /** Invalidate every board-feed view (list, paginated board, trash) at once. */
-function invalidateFeed(qc: QueryClient): void {
+export function invalidateFeed(qc: QueryClient): void {
   qc.invalidateQueries({ queryKey: qk.jobs });
   qc.invalidateQueries({ queryKey: qk.board });
   qc.invalidateQueries({ queryKey: qk.trash });

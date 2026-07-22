@@ -252,6 +252,12 @@ def _ledger_watch(repos, snapshot: dict, error: str | None) -> None:
 
 _WATCH_PROBE_TIMEOUT_S = 8
 
+# Confirmed slug-guess probes, keyed "<adapter>:<company-slug>" → board URL.
+# A rewatch after an unwatch re-ran the live probe every time (1-2 s of real
+# toggle latency — maintainer 2026-07-22); a board that answered once this
+# process is not re-probed. Process-lifetime, tiny (one URL per company).
+_GUESS_CACHE: dict[str, str] = {}
+
 
 @router.post("/api/discovery/watchlist")
 async def watch_company(
@@ -295,18 +301,27 @@ async def watch_company(
         else:
             # No covering row (e.g. it was just unwatched): guess the
             # tenant board from the company name and keep the first
-            # candidate that actually opens.
-            for cand in _guess_board_urls(job_adapter, company):
-                try:
-                    await asyncio.to_thread(
-                        Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text, cand
-                    )
-                except ScraperError:
-                    continue
-                cand_resolved = adapters.resolve(SourceEntry(url=cand))
+            # candidate that actually opens. Confirmed guesses are cached
+            # so a rewatch never re-probes.
+            cache_key = f"{job_adapter}:{_slugish(company)}"
+            cached = _GUESS_CACHE.get(cache_key)
+            if cached is not None:
+                cand_resolved = adapters.resolve(SourceEntry(url=cached))
                 if cand_resolved is not None:
-                    source_url, resolved = cand, cand_resolved
-                    break
+                    source_url, resolved = cached, cand_resolved
+            if resolved is None:
+                for cand in _guess_board_urls(job_adapter, company):
+                    try:
+                        await asyncio.to_thread(
+                            Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text, cand
+                        )
+                    except ScraperError:
+                        continue
+                    cand_resolved = adapters.resolve(SourceEntry(url=cand))
+                    if cand_resolved is not None:
+                        source_url, resolved = cand, cand_resolved
+                        _GUESS_CACHE[cache_key] = cand
+                        break
     fail: str | None = None
     adapter_id = ""
     if resolved is None:

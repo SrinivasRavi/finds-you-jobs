@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api";
-import { qk } from "../api/queries";
+import { invalidateFeed, qk } from "../api/queries";
 
 import {
   useAddJobByUrl,
@@ -503,8 +503,11 @@ function JobDetail({
                   onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
                 });
               } else {
+                // company rides along so the optimistic roster entry (matched
+                // by company slug) flips the toggle instantly — the server
+                // still resolves the real board root.
                 watchCompany.mutate(
-                  { job_id: job.id },
+                  { job_id: job.id, company: job.company },
                   {
                     onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
                   },
@@ -804,7 +807,7 @@ export function JobBoard() {
             className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
           >
             <Icon name="plus" size={14} strokeWidth={2} />
-            Add a job or company
+            Add a job by URL
           </button>
         </div>
       </header>
@@ -889,17 +892,17 @@ export function JobBoard() {
             ))}
           </div>
         </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
         {/* THE board search (FR-JB-13): titles, companies, JD bodies +
-            match-score texts; matches highlighted below. */}
+            match-score texts; matches highlighted below. Right-aligned into
+            the filter row's free space (maintainer 2026-07-22 #4) — it only
+            wraps under the chips when the window is genuinely too narrow. */}
         <SearchBox
           value={textSearch}
           onChange={setTextSearch}
           placeholder="Search jobs — title, company, JD…"
           testid="board-text-search"
-          className="w-[260px]"
+          className="ml-auto w-[230px]"
         />
-        <span className="ml-auto" />
       </div>
 
       {/* Split */}
@@ -1277,28 +1280,65 @@ function FinderPrefsModal({
   );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [savedFlash, setSavedFlash] = useState(false);
   const { data: profile } = useProfile();
   const triggerScan = useTriggerScan();
   const masterName = firstHeading(profile?.master_md);
   const { data: schedules } = useSchedules();
   const scanSchedule = schedules?.find((s) => s.kind === "scan");
 
-  async function saveAndRescan() {
-    setSaving(true);
+  // Autosave (maintainer 2026-07-22 #2): edits persist on their own, matching
+  // the rest of the app's instant-persist controls (Settings toggles, the
+  // Tracked companies roster right above). "Rescan now" only triggers the
+  // scan — flushing any still-debouncing edit first so it never scans stale
+  // values. The description carries the "auto saved" promise; the footer-left
+  // "Changes saved!" is the per-edit confirmation.
+  const snapshot = JSON.stringify({
+    roles,
+    locations,
+    freshness,
+    cadence,
+    excludedCompanies,
+    excludedKeywords,
+  });
+  const lastSaved = useRef(snapshot);
+
+  async function persist(snap: string): Promise<void> {
     setSaveError("");
+    // networking_enabled deliberately omitted — this modal never touches it.
+    await api.savePreferences({
+      role_aliases: roles,
+      locations,
+      freshness_days: FINDER_FRESHNESS_DAYS[freshness] ?? 7,
+      scrape_cadence: cadence,
+      excluded_companies: excludedCompanies,
+      excluded_keywords: excludedKeywords,
+    });
+    lastSaved.current = snap;
+    setSavedFlash(true);
+    void qc.invalidateQueries({ queryKey: qk.settings });
+    void qc.invalidateQueries({ queryKey: qk.schedules }); // next-scan line
+    invalidateFeed(qc); // excludes hide board rows without waiting for a scan
+  }
+
+  const dirty = snapshot !== lastSaved.current;
+  const valid = roles.length > 0 && locations.length > 0;
+  useEffect(() => {
+    if (!dirty || !valid) return;
+    const t = setTimeout(() => {
+      persist(snapshot).catch((e: unknown) =>
+        setSaveError(e instanceof Error ? e.message : String(e)),
+      );
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot encodes every field
+  }, [snapshot]);
+
+  async function rescanNow() {
+    setSaving(true);
     try {
-      // networking_enabled deliberately omitted — this modal never touches it.
-      await api.savePreferences({
-        role_aliases: roles,
-        locations,
-        freshness_days: FINDER_FRESHNESS_DAYS[freshness] ?? 7,
-        scrape_cadence: cadence,
-        excluded_companies: excludedCompanies,
-        excluded_keywords: excludedKeywords,
-      });
-      await qc.invalidateQueries({ queryKey: qk.settings });
-      void qc.invalidateQueries({ queryKey: qk.schedules }); // next-scan line
-      triggerScan.mutate(); // rescan now runs against the values just saved
+      if (dirty && valid) await persist(snapshot);
+      triggerScan.mutate(); // runs against the values just saved
       onClose();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -1312,12 +1352,13 @@ function FinderPrefsModal({
         className="flex flex-col gap-5 px-5 py-5"
         onSubmit={(e) => {
           e.preventDefault();
-          void saveAndRescan();
+          void rescanNow();
         }}
       >
         <p className="-mt-2 text-[12px] text-ink-3">
           Controls the background scraper that fills your Job Board. Every match is scored against
-          your master resume when it lands.
+          your master resume when it lands. Changes here are auto saved — “Rescan now” applies
+          them to a fresh scan.
         </p>
         <PrefChipInput
           label="Roles to search"
@@ -1415,25 +1456,34 @@ function FinderPrefsModal({
           </div>
         </section>
         <div className="-mx-5 -mb-5 mt-2 flex items-center justify-end gap-2 border-t border-border bg-surface-2 px-5 py-3">
+          {/* Footer-left: the autosave confirmation (maintainer's ss1 spot);
+              an error takes its place — never both. */}
+          {saveError ? (
+            <span className="mr-auto text-[11.5px] text-bad" data-testid="finder-prefs-error">
+              {saveError}
+            </span>
+          ) : savedFlash && !dirty ? (
+            <span className="mr-auto text-[11.5px] text-good" data-testid="finder-prefs-saved">
+              Changes saved!
+            </span>
+          ) : dirty && valid ? (
+            <span className="mr-auto text-[11.5px] text-ink-3">Saving…</span>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
             className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2 hover:text-ink"
           >
-            Cancel
+            Close
           </button>
-          {saveError ? (
-            <span className="text-[11.5px] text-bad" data-testid="finder-prefs-error">
-              {saveError}
-            </span>
-          ) : null}
           <button
             type="submit"
-            disabled={saving || roles.length === 0 || locations.length === 0}
+            disabled={saving || !valid}
             data-testid="finder-prefs-save"
+            title="Save is automatic — this starts a fresh scan with the current preferences"
             className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Save & rescan"}
+            {saving ? "Starting…" : "Rescan now"}
           </button>
         </div>
       </form>
@@ -1459,9 +1509,6 @@ function AddByUrlModal({
   const preview = useJobPreview();
   // Watchlist path (approved-plan #4): the same paste box also accepts a
   // company careers URL — "watch" adds it as a permanent scan source.
-  const watchCompany = useWatchCompany();
-  const [watchMsg, setWatchMsg] = useState<string | null>(null);
-
   function fetchDetails() {
     setPhase("fetching");
     setTombstoned(false);
@@ -1511,7 +1558,7 @@ function AddByUrlModal({
   }
 
   return (
-    <Modal title="Add a job or company" onClose={onClose} width={520}>
+    <Modal title="Add a job by URL" onClose={onClose} width={520}>
       {phase === "entry" ? (
         <form
           className="flex flex-col gap-3 px-5 py-4"
@@ -1520,9 +1567,12 @@ function AddByUrlModal({
             fetchDetails();
           }}
         >
+          {/* One modal, one job (maintainer 2026-07-22): the "watch a whole
+              board" path moved out — that's "Watch company" on any job row, or
+              Job finder preferences → Tracked companies. */}
           <label className="text-[12.5px] text-ink-2">
-            Paste a job posting URL to add that job — or a company&apos;s careers page to
-            watch their whole board on every scan.
+            Paste a job posting URL. (To follow a whole company board, use “Watch company” on a
+            job, or Job finder preferences → Tracked companies.)
           </label>
           {tombstoned ? (
             <p
@@ -1546,14 +1596,6 @@ function AddByUrlModal({
             placeholder="https://company.com/careers/senior-engineer"
             className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
           />
-          {watchMsg ? (
-            <p
-              data-testid="watch-company-result"
-              className="rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-ink-2"
-            >
-              {watchMsg}
-            </p>
-          ) : null}
           <div className="mt-1 flex justify-end gap-2">
             <button
               type="button"
@@ -1561,29 +1603,6 @@ function AddByUrlModal({
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
             >
               Cancel
-            </button>
-            <button
-              type="button"
-              data-testid="watch-company-btn"
-              disabled={!url || watchCompany.isPending}
-              onClick={() =>
-                watchCompany.mutate(
-                  { url },
-                  {
-                    onSuccess: (r) =>
-                      setWatchMsg(
-                        r.added
-                          ? `Watching ${r.company || r.source_url} — every scan now covers this board (${r.adapter}).`
-                          : "Already watching this board.",
-                      ),
-                    onError: (err: unknown) =>
-                      setWatchMsg(err instanceof Error ? err.message : "Could not watch this URL."),
-                  },
-                )
-              }
-              className="rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12.5px] font-medium text-ink-2 hover:bg-surface-3 disabled:opacity-50"
-            >
-              Watch company board
             </button>
             <button
               type="submit"
