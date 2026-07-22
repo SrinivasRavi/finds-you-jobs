@@ -227,20 +227,62 @@ def _persist_score(
         return row.id
 
 
+def _ensure_keyword_floor(
+    ctx: OperationContext,
+    *,
+    job_id: str | None,
+    profile_version: int,
+    master_md: str,
+    job_text: str,
+) -> None:
+    """Guarantee a keyword score exists for this (job, version) — idempotent:
+    a no-op if the floor is already there (the usual case, since the post-scan
+    and boot floor passes run first). Pure offline compute (~0.5 ms, no
+    network). Best-effort: a compute error is logged, never raised — the floor
+    is a safety net, not the caller's operation."""
+    from sidecar.modules.scorer.deterministic import score_deterministic
+
+    from .persistence import SCORER_IMPL_DETERMINISTIC
+
+    if ctx.db is None or job_id is None:
+        return
+    with ctx.db.repos() as repos:
+        if repos.job_scores.get_cached(job_id, profile_version, SCORER_IMPL_DETERMINISTIC):
+            return
+    try:
+        det = score_deterministic(master_md, job_text)
+        _persist_score(
+            ctx,
+            job_id=job_id,
+            profile_version=profile_version,
+            score_0_100=det.score,
+            reasons=list(det.reasons),
+            breakdown_md=det.breakdown_md,
+            scorer_impl=SCORER_IMPL_DETERMINISTIC,
+            feed_priority_stats=False,
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "keyword floor failed for job_id=%s", job_id
+        )
+
+
 def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Fit-score one job → a cached `JobScore`.
 
     Two modes (Settings → Scoring, maintainer design 2026-07-22):
-    - "llm" (default): the routed-engine Scorer module. If it FAILS, the free
-      keyword score is persisted first as a visible grey fallback — the board
-      shows a number instead of a dead "Score failed" pill — and the failure
-      still propagates, so the op stays failed and retryable in Logs. A
-      successful retry outranks the fallback (board precedence LLM > keyword).
-    - "keyword": the zero-LLM keyword scorer only — free, instant, no engine
-      required (works keyless).
+    - "keyword": the zero-LLM keyword scorer — free, instant, keyless. This IS
+      the score.
+    - "llm" (default): the routed-engine Scorer, an UPGRADE over the keyword
+      floor every job already carries (`_ensure_keyword_floor`, run post-scan
+      and at boot). On success the LLM score outranks the floor (display
+      precedence LLM > keyword). On FAILURE the op raises — it stays failed and
+      retryable in Logs, is not auto-retried, and the grey keyword floor is the
+      fallback the board shows (ensured here in case this op raced the floor
+      pass). No hidden re-scoring; nothing to fall back below keyword.
     """
-    from sidecar.modules.scorer.deterministic import score_deterministic
-
     from ..prompt_overrides import get_override
     from .persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC, load_job_and_master
 
@@ -258,6 +300,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         mode = str(snap.get("scoring_mode") or "llm")
 
     if mode == "keyword":
+        from sidecar.modules.scorer.deterministic import score_deterministic
+
         det = score_deterministic(master_md, job_text)
         score_id = None
         if job_id is not None:
@@ -288,30 +332,15 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             master_md, job_text, engine=resolved.engine, skill_md=get_override("score")
         )
     except Exception:
-        # Grey fallback before the failure propagates. Never feeds priority
-        # stats (a retried LLM score would replace it) and never masks the
-        # real error.
-        if job_id is not None:
-            try:
-                det = score_deterministic(master_md, job_text)
-                _persist_score(
-                    ctx,
-                    job_id=job_id,
-                    profile_version=profile_version,
-                    score_0_100=det.score,
-                    reasons=list(det.reasons),
-                    breakdown_md=det.breakdown_md,
-                    scorer_impl=SCORER_IMPL_DETERMINISTIC,
-                    feed_priority_stats=False,
-                )
-            except Exception:
-                import logging
-
-                logging.getLogger(__name__).exception(
-                    "keyword fallback score failed for job_id=%s "
-                    "(the LLM failure below is the real error)",
-                    job_id,
-                )
+        # The keyword floor is the fallback; guarantee it exists (idempotent)
+        # then re-raise so the op stays failed + retryable.
+        _ensure_keyword_floor(
+            ctx,
+            job_id=job_id,
+            profile_version=profile_version,
+            master_md=master_md,
+            job_text=job_text,
+        )
         raise
 
     score_id = None

@@ -270,7 +270,7 @@ function JobRow({
             data-keyword={job.score.scorer_impl === "scorer-deterministic"}
             title={
               job.score.scorer_impl === "scorer-deterministic"
-                ? "Keyword scored (free, on-device) — grey, not an AI score"
+                ? "Keywords scored (free, on-device) — grey, not an AI score"
                 : undefined
             }
             className={
@@ -413,7 +413,7 @@ function JobDetail({
               keyword={job.score.scorer_impl === "scorer-deterministic"}
             />
             <span className="mt-1 text-[10.5px] uppercase tracking-wide text-ink-3">
-              {job.score.scorer_impl === "scorer-deterministic" ? "keyword scored" : "match"}
+              {job.score.scorer_impl === "scorer-deterministic" ? "keywords scored" : "match"}
             </span>
           </div>
         ) : null}
@@ -607,7 +607,7 @@ function JobDetail({
             <div className="rounded-lg border border-border bg-surface-2 p-4">
               <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-ink-3">
                 {job.score?.scorer_impl === "scorer-deterministic"
-                  ? "Keyword scored"
+                  ? "Keywords scored"
                   : "Match score"}
               </h3>
               {job.score?.scorer_impl === "scorer-deterministic" ? (
@@ -916,7 +916,7 @@ export function JobBoard() {
             [
               ["ALL", "All"],
               ["AI", "AI Scored"],
-              ["KEYWORD", "Keyword scored"],
+              ["KEYWORD", "Keywords scored"],
             ] as [StatusFilter, string][]
           ).map(([s, label]) => (
             <Chip key={s} active={status === s} onClick={() => setStatus(s)}>
@@ -945,17 +945,18 @@ export function JobBoard() {
             ))}
           </div>
         </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
-        {/* THE board search (FR-JB-13): a normal-width peer of the filter
-            groups, sitting right after SORT — never stretched to fill the row
-            (maintainer 2026-07-22). flex-wrap moves it to the next line only
-            when the window is genuinely too narrow. */}
+        {/* THE board search (FR-JB-13): sits right after SORT (no divider —
+            it saves ~17px and the bordered box already reads as its own
+            control). A SMALL flex-basis + min-width means it shrinks to fit
+            the space the filter groups leave — down to icon + "Search"
+            (~88px) — and only wraps to its own line when even that can't fit
+            (maintainer 2026-07-22). */}
         <SearchBox
           value={textSearch}
           onChange={setTextSearch}
           placeholder="Search"
           testid="board-text-search"
-          className="w-[200px]"
+          className="min-w-[88px] max-w-[200px] grow shrink basis-[88px]"
         />
       </div>
 
