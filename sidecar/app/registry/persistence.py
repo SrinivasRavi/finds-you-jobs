@@ -26,6 +26,12 @@ from ..db.base import now_utc
 
 SCORER_IMPL = "scorer-llm"
 
+# The zero-LLM keyword scorer (Settings → Scoring "Keyword scoring" mode, and
+# the grey fallback when an LLM score fails) — sidecar/modules/scorer/
+# deterministic.py. Same JobScore table, distinct impl tag so the two are
+# never confusable.
+SCORER_IMPL_DETERMINISTIC = "scorer-deterministic"
+
 # Trash TTL — a removed job is tombstoned this many days after it entered Trash
 # (FR-JB-12 / FR-SYS-04: "permanently removed after 7 days").
 TRASH_TTL_DAYS = 7

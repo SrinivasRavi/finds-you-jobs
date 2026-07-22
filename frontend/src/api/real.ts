@@ -156,6 +156,7 @@ function toJob(d: JobDTO, saved: boolean): Job {
           score_0_100: d.score.score_0_100,
           reasons: d.score.reasons as string[],
           breakdown_md: d.score.breakdown_md,
+          scorer_impl: d.score.scorer_impl ?? "scorer-llm",
         }
       : null,
     score_status: (d.scoreStatus as Job["score_status"] | undefined) ?? (d.score ? "scored" : "pending"),
@@ -820,8 +821,7 @@ export class RealApi {
       auto_resume_on_save: autoResume,
       auto_cover_on_save: autoCover,
       auto_referrals_on_save: autoReferrals,
-      auto_score_on_scan:
-        "auto_score_on_scan" in thresholds ? Boolean(thresholds.auto_score_on_scan) : true,
+      scoring_mode: thresholds.scoring_mode === "keyword" ? "keyword" : "llm",
       llm_concurrency:
         typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
       score_new_batch: scoreNewBatch,
@@ -877,8 +877,7 @@ export class RealApi {
     const thresholdPatch: Record<string, unknown> = {};
     if (patch.auto_resume_on_save !== undefined) thresholdPatch.auto_resume_on_save = patch.auto_resume_on_save;
     if (patch.auto_cover_on_save !== undefined) thresholdPatch.auto_cover_on_save = patch.auto_cover_on_save;
-    if (patch.auto_score_on_scan !== undefined)
-      thresholdPatch.auto_score_on_scan = patch.auto_score_on_scan;
+    if (patch.scoring_mode !== undefined) thresholdPatch.scoring_mode = patch.scoring_mode;
     if (patch.llm_concurrency !== undefined)
       thresholdPatch.llm_concurrency = patch.llm_concurrency;
     if (patch.auto_referrals_on_save !== undefined)

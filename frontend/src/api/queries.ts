@@ -419,7 +419,12 @@ export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (patch: Partial<Settings>) => Promise.resolve(api.updateSettings(patch)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.settings }),
+    onSuccess: (_r, patch) => {
+      qc.invalidateQueries({ queryKey: qk.settings });
+      // Switching to keyword mode backfills scores server-side in the same
+      // request — refetch the board so the grey scores appear immediately.
+      if (patch.scoring_mode !== undefined) invalidateFeed(qc);
+    },
   });
 }
 

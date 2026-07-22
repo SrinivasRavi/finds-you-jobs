@@ -39,6 +39,10 @@ class JobScoreDTO(BaseModel):
     score_0_100: int
     reasons: list[Any]
     breakdown_md: str
+    # Which scorer produced this ("scorer-llm" | "scorer-deterministic") — the
+    # frontend renders a keyword score visibly grey, never styled like an AI
+    # score (Scoring modes, maintainer design 2026-07-22).
+    scorer_impl: str = "scorer-llm"
 
 
 class JobDTO(BaseModel):
@@ -864,6 +868,7 @@ def job_score_dto(score: JobScore | None) -> JobScoreDTO | None:
         score_0_100=score.score_0_100,
         reasons=list(score.reasons),
         breakdown_md=score.breakdown_md,
+        scorer_impl=score.scorer_impl,
     )
 
 

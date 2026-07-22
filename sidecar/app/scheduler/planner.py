@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import Database
-from ..registry.persistence import SCORER_IMPL
+from ..registry.persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC
 
 _PENDING = {"queued", "running"}
 
@@ -40,18 +40,23 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
 
         prefs = repos.preferences.get_or_create()
         thresholds = prefs.thresholds or {}
-        # Auto-score opt-out (2026-07-17 dogfood): scoring every scanned job
-        # spends real tokens; the user can turn the whole chain off and jobs
-        # land unscored (Pending). Default ON — scoring is the product's
-        # rank-don't-gate backbone.
-        if not thresholds.get("auto_score_on_scan", True):
-            return []
+        # Scoring is always on (maintainer 2026-07-22 — the old
+        # auto_score_on_scan opt-out is retired and any stored value ignored):
+        # the cost lever is now Settings → Scoring's MODE — "llm" spends
+        # tokens, "keyword" is free/on-device — so there is no reason left to
+        # land jobs unscored.
         if limit is None:
             raw = thresholds.get("score_new_batch", 0)
             limit = int(raw or 0)
 
         jobs = repos.jobs.list(feed_state="active", limit=1000)
-        scored = repos.job_scores.scored_job_ids(version, SCORER_IMPL)
+        # A job counts as scored when EITHER impl has a current-version score:
+        # in keyword mode det scores are the scores; in llm mode a det row is
+        # the failure fallback and retry is deliberately manual (Logs → Retry),
+        # not an auto-requeue on every scan.
+        scored = repos.job_scores.scored_job_ids(
+            version, SCORER_IMPL
+        ) | repos.job_scores.scored_job_ids(version, SCORER_IMPL_DETERMINISTIC)
         pending_ops = repos.operations.list_by_kind_states("score", _PENDING)
         pending_job_ids = {
             op.input_snapshot.get("job_id")

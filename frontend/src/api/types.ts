@@ -26,6 +26,9 @@ export interface ScoreResult {
   score_0_100: number;
   reasons: string[];
   breakdown_md: string;
+  /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
+   *  never styled like an AI score). Scoring modes, 2026-07-22. */
+  scorer_impl: string;
 }
 
 // ─── /api/jobs ──────────────────────────────────────────────────────────────
@@ -718,7 +721,10 @@ export interface Settings {
   /** Find referrals on Save — default OFF (experimental, account-risk); only
    *  effective when Referral Outreach (networking) is enabled. */
   auto_referrals_on_save: boolean;
-  auto_score_on_scan: boolean;
+  /** Scoring mode (2026-07-22): "llm" — AI scoring, best quality, costs
+   *  tokens; "keyword" — on-device keyword scorer, free and instant. Scoring
+   *  itself is always on (the old off-switch is retired). */
+  scoring_mode: "llm" | "keyword";
   // 0 = unlimited (runner ceiling applies); otherwise 2-20.
   llm_concurrency: number;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to

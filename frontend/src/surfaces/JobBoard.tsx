@@ -132,7 +132,20 @@ function Chip({
   );
 }
 
-function MatchRing({ score }: { score: number }) {
+function MatchRing({ score, keyword = false }: { score: number; keyword?: boolean }) {
+  // Keyword scores render grey with a dashed ring — never the tier-colored
+  // conic gradient — so they can't be mistaken for an AI score (Scoring
+  // modes, 2026-07-22).
+  if (keyword) {
+    return (
+      <div
+        className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-border-2 bg-surface-2"
+        data-testid="keyword-score-ring"
+      >
+        <span className="font-mono text-[13px] font-semibold text-ink-3">{score}</span>
+      </div>
+    );
+  }
   const tier = scoreTier(score);
   const deg = (score / 100) * 360;
   return (
@@ -246,7 +259,20 @@ function JobRow({
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         {job.score ? (
-          <span className={`font-mono text-[15px] font-semibold ${tier?.text}`}>
+          <span
+            data-keyword={job.score.scorer_impl === "scorer-deterministic"}
+            title={
+              job.score.scorer_impl === "scorer-deterministic"
+                ? "Keyword score (free, on-device) — grey, not an AI score"
+                : undefined
+            }
+            className={
+              "font-mono text-[15px] font-semibold " +
+              (job.score.scorer_impl === "scorer-deterministic"
+                ? "text-ink-3"
+                : (tier?.text ?? ""))
+            }
+          >
             {job.score.score_0_100}
           </span>
         ) : job.score_status === "failed" ? (
@@ -383,8 +409,13 @@ function JobDetail({
         </div>
         {job.score ? (
           <div className="flex flex-col items-center">
-            <MatchRing score={job.score.score_0_100} />
-            <span className="mt-1 text-[10.5px] uppercase tracking-wide text-ink-3">match</span>
+            <MatchRing
+              score={job.score.score_0_100}
+              keyword={job.score.scorer_impl === "scorer-deterministic"}
+            />
+            <span className="mt-1 text-[10.5px] uppercase tracking-wide text-ink-3">
+              {job.score.scorer_impl === "scorer-deterministic" ? "keyword" : "match"}
+            </span>
           </div>
         ) : null}
       </div>
@@ -576,8 +607,16 @@ function JobDetail({
           <aside className="flex flex-col gap-4">
             <div className="rounded-lg border border-border bg-surface-2 p-4">
               <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-ink-3">
-                Match score
+                {job.score?.scorer_impl === "scorer-deterministic"
+                  ? "Keyword score"
+                  : "Match score"}
               </h3>
+              {job.score?.scorer_impl === "scorer-deterministic" ? (
+                <p className="mb-2 text-[11.5px] text-ink-3" data-testid="keyword-score-note">
+                  Scored on-device by keyword overlap — free and instant, lower quality than AI
+                  scoring. Switch modes in Settings → Scoring.
+                </p>
+              ) : null}
               {job.score ? (
                 <>
                   <ul data-testid="match-reasons" className="space-y-1.5 text-[12.5px] text-ink-2">

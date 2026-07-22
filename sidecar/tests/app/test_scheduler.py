@@ -96,10 +96,10 @@ def test_double_enqueue_guard_skips_pending(migrated_db: Database) -> None:
         assert len(repos.operations.list_by_state("queued")) == 1  # no duplicate
 
 
-def test_plan_score_new_respects_auto_score_opt_out(migrated_db: Database) -> None:
-    """`thresholds.auto_score_on_scan = False` turns the scan→score chain off
-    (2026-07-17): plan_score_new returns nothing, and flipping it back on
-    plans the unscored job again."""
+def test_plan_score_new_ignores_retired_auto_score_opt_out(migrated_db: Database) -> None:
+    """Scoring is always on (2026-07-22 — the auto_score_on_scan opt-out is
+    retired): a stored False from an old profile is ignored and the unscored
+    job is still planned. The cost lever is thresholds.scoring_mode now."""
     from sidecar.app.scheduler.planner import plan_score_new
 
     db = migrated_db
@@ -110,7 +110,4 @@ def test_plan_score_new_respects_auto_score_opt_out(migrated_db: Database) -> No
             location="Remote", description="d" * 60, source_adapter="greenhouse",
         )
         repos.preferences.update(thresholds={"auto_score_on_scan": False})
-    assert plan_score_new(db) == []
-    with db.repos() as repos:
-        repos.preferences.update(thresholds={"auto_score_on_scan": True})
     assert len(plan_score_new(db)) == 1

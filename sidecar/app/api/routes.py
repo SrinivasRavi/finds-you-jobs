@@ -39,6 +39,7 @@ from ..registry.company_anchor import resolution_key
 from ..registry.engine_config import apply_routing
 from ..registry.linkedin_op import LOGIN_CONTROL
 from ..registry.networker_ops import linkedin_storage_path
+from ..registry.persistence import SCORER_IMPL_DETERMINISTIC
 from ..runner import OperationRunner
 from ..scheduler.planner import plan_schedule
 from . import dto
@@ -125,7 +126,7 @@ async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.Jo
     with _db(request).repos() as repos:
         jobs = repos.jobs.list(feed_state=feed_state or None)
         version = _current_profile_version(repos)
-        scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], version)
+        scores = _display_scores(repos, [j.id for j in jobs], version)
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
             dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
@@ -133,6 +134,17 @@ async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.Jo
         ]
     _sort_board(dtos)
     return dtos
+
+
+def _display_scores(repos, job_ids: list[str], version: int) -> dict:
+    """The score each job DISPLAYS: the AI score when one exists, else the
+    keyword score (Scoring modes, maintainer design 2026-07-22). scorer_impl
+    rides on the DTO so the frontend can render keyword scores grey."""
+    llm = repos.job_scores.latest_for_jobs(job_ids, version)
+    det = repos.job_scores.latest_for_jobs(
+        job_ids, version, scorer_impl=SCORER_IMPL_DETERMINISTIC
+    )
+    return {jid: llm.get(jid) or det[jid] for jid in {*llm, *det}}
 
 
 # Board-eligible feed states: active + expired (Expired stays on the board,
@@ -217,7 +229,7 @@ async def board(
         if suppressed:
             jobs = [j for j in jobs if j.id not in suppressed]
         version = _current_profile_version(repos)
-        scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], version)
+        scores = _display_scores(repos, [j.id for j in jobs], version)
         score_op_states = repos.operations.score_states_by_job()
         dtos = [
             dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
@@ -581,6 +593,10 @@ async def update_settings(
 ) -> dto.SettingsDTO:
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
+        before_mode = str(
+            (repos.preferences.get_or_create().thresholds or {}).get("scoring_mode")
+            or "llm"
+        )
         prefs = repos.preferences.update(**fields)
         routing = prefs.engine_routing
         ui_state = prefs.ui_state
@@ -589,6 +605,14 @@ async def update_settings(
             _thread_scan_cadence(repos, ui_state)
             _thread_contact_sync_cadence(repos, ui_state)
         result = _settings_dto(repos)
+    # Switching Scoring to keyword mode scores the whole board right here —
+    # ~0.5 ms/job, no LLM — so the change is visible on the next board fetch
+    # instead of waiting for a scan. Off the event loop (async-first rule).
+    after_mode = str(prefs_thresholds.get("scoring_mode") or "llm")
+    if after_mode == "keyword" and before_mode != "keyword":
+        from ..registry.operations import backfill_keyword_scores
+
+        await asyncio.to_thread(backfill_keyword_scores, _db(request))
     # Re-apply the routing map so a Settings change takes effect immediately.
     engines = _engines(request)
     if engines is not None and "engine_routing" in fields:

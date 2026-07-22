@@ -2183,6 +2183,11 @@ export interface components {
             reasons: unknown[];
             /** Breakdown Md */
             breakdown_md: string;
+            /**
+             * Scorer Impl
+             * @default scorer-llm
+             */
+            scorer_impl: string;
         };
         /**
          * JobUpdate

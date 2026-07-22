@@ -97,7 +97,7 @@ interface Draft {
   locations: string[];
   freshness: string;
   cadence: string;
-  autoScore: boolean;
+  scoringMode: "llm" | "keyword";
   provider: string;
   verified: boolean;
 }
@@ -132,7 +132,12 @@ export function Onboarding() {
   const [locInput, setLocInput] = useState("");
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
-  const [autoScore, setAutoScore] = useState(d0.autoScore ?? true);
+  // Scoring mode (2026-07-22): "llm" | "keyword" — replaces the retired
+  // scoring off-switch. An old draft's autoScore=false maps to keyword (the
+  // closest cost-saving equivalent now that unscored boards are gone).
+  const [scoringMode, setScoringMode] = useState<"llm" | "keyword">(
+    d0.scoringMode ?? ((d0 as { autoScore?: boolean }).autoScore === false ? "keyword" : "llm"),
+  );
 
   // Draft — provider. The raw key/base-URL is NOT persisted (it is sealed
   // server-side on Verify success); `verified` is, so a resumed wizard whose
@@ -163,7 +168,7 @@ export function Onboarding() {
       locations,
       freshness,
       cadence,
-      autoScore,
+      scoringMode,
       provider,
       verified: verifyState === "verified",
     };
@@ -180,7 +185,7 @@ export function Onboarding() {
     locations,
     freshness,
     cadence,
-    autoScore,
+    scoringMode,
     provider,
     verifyState,
   ]);
@@ -290,10 +295,10 @@ export function Onboarding() {
           routing: LLM_KINDS.map((kind) => ({ kind, engine: provider, model: "" })),
         });
       }
-      // Scoring opt-out (2026-07-17): committed only when the user turned it
-      // off — the backend default is on.
-      if (!autoScore) {
-        await api.updateSettings({ auto_score_on_scan: false });
+      // Scoring mode: committed only when it differs from the backend
+      // default (llm).
+      if (scoringMode !== "llm") {
+        await api.updateSettings({ scoring_mode: scoringMode });
       }
       // Cold-start scan (US-JB-09) — fire-and-forget, never blocks the redirect.
       await api.enqueueOperation("scan");
@@ -464,15 +469,21 @@ export function Onboarding() {
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-[12px] text-ink-3">
-                  Score scanned jobs automatically
-                </div>
+                <div className="mb-1 text-[12px] text-ink-3">How jobs are scored</div>
                 <div className="flex flex-wrap gap-1.5">
-                  <Pill active={autoScore} onClick={() => setAutoScore(true)}>
-                    On — rank the board by fit (one AI call per job)
+                  <Pill
+                    active={scoringMode === "llm"}
+                    onClick={() => setScoringMode("llm")}
+                    data-testid="ob-scoring-llm"
+                  >
+                    AI scoring — best quality, but costs LLM tokens and some time
                   </Pill>
-                  <Pill active={!autoScore} onClick={() => setAutoScore(false)}>
-                    Off — no scoring cost, sort by recency
+                  <Pill
+                    active={scoringMode === "keyword"}
+                    onClick={() => setScoringMode("keyword")}
+                    data-testid="ob-scoring-keyword"
+                  >
+                    Keyword scoring — lower quality, but free and instant
                   </Pill>
                 </div>
                 <div className="mt-1 text-[11.5px] text-ink-4">
@@ -704,14 +715,17 @@ function Pill({
   active,
   onClick,
   children,
+  "data-testid": testid,
 }: {
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  "data-testid"?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      data-testid={testid}
       className={
         "h-7 rounded-full border px-2.5 text-[11.5px] " +
         (active ? "border-accent bg-accent text-white" : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
