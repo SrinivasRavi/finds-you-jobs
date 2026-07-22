@@ -272,6 +272,58 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     )
 
 
+def backfill_deterministic_scores(db: Database) -> int:
+    """Deterministic-scoring experiment: one-shot boot backfill.
+
+    Jobs scored BEFORE this branch existed have no zero-LLM second opinion —
+    without this, checking the branch out shows an unchanged board until some
+    job happens to be re-scored (maintainer 2026-07-22). Fills the
+    deterministic row for every job that has a real score at the current
+    profile version but no deterministic one. No LLM, ~ms per job; runs on a
+    daemon thread at boot, never on the event loop."""
+    from sidecar.modules.scorer.deterministic import score_deterministic
+
+    from .persistence import SCORER_IMPL_DETERMINISTIC, compose_job_text
+
+    with db.repos() as repos:
+        profile = repos.profile.get_current()
+        if profile is None:
+            return 0
+        master_md, version = profile.resume_markdown, int(profile.version)
+        jobs = repos.jobs.list(feed_state=None)
+        ids = [j.id for j in jobs]
+        scored = repos.job_scores.latest_for_jobs(ids, version)
+        have = repos.job_scores.latest_for_jobs(
+            ids, version, scorer_impl=SCORER_IMPL_DETERMINISTIC
+        )
+        todo = [
+            (j.id, compose_job_text(j)) for j in jobs if j.id in scored and j.id not in have
+        ]
+
+    done = 0
+    for job_id, job_text in todo:
+        try:
+            det_result = score_deterministic(master_md, job_text)
+            with db.repos() as repos:
+                repos.job_scores.upsert(
+                    job_id=job_id,
+                    profile_version=version,
+                    score_0_100=det_result.score,
+                    reasons=list(det_result.reasons),
+                    breakdown_md=det_result.breakdown_md,
+                    scorer_impl=SCORER_IMPL_DETERMINISTIC,
+                )
+            done += 1
+        except Exception:  # noqa: BLE001 — a bad job never aborts the sweep
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "deterministic-scoring experiment: backfill failed for job_id=%s",
+                job_id,
+            )
+    return done
+
+
 def _persist_artifact(
     ctx: OperationContext,
     *,

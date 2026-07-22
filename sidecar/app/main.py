@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -33,6 +34,7 @@ from .observability import ObservabilityHandle, configure_observability
 from .observability.config import observability_config
 from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
+from .registry.operations import backfill_deterministic_scores
 from .runner import OperationRunner
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
@@ -173,6 +175,23 @@ def create_app(
 
         runner.on_success = _chain_scan_to_scores
         runner.start()  # boot recovery (NFR-LONG-02) + first pump
+
+        # Deterministic-scoring experiment (experiment/deterministic-scoring
+        # branch, not on main): backfill the zero-LLM second opinion for jobs
+        # scored before the branch existed, so the side-by-side comparison has
+        # data on an existing board. Daemon thread — off the event loop
+        # (async-first rule), never blocks or fails boot.
+        def _det_backfill() -> None:
+            try:
+                n = backfill_deterministic_scores(db)
+                if n:
+                    log.info(
+                        "deterministic-scoring experiment: backfilled %d score(s)", n
+                    )
+            except Exception:  # noqa: BLE001 — experiment must never hurt boot
+                log.exception("deterministic-scoring backfill failed (experiment only)")
+
+        threading.Thread(target=_det_backfill, name="det-backfill", daemon=True).start()
 
         app.state.db = db
         app.state.hub = hub
