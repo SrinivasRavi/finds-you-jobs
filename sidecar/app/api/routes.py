@@ -1598,7 +1598,10 @@ async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
     except OSError as exc:
         get_logger().warning("linkedin disconnect: could not delete session file: %s", exc)
     try:
-        shutil.rmtree(linkedin_profile_dir(), ignore_errors=False)
+        # Off the loop (async-first rule): a populated Chromium profile is
+        # hundreds of MB across thousands of files — seconds of filesystem
+        # work that must not starve /healthz.
+        await asyncio.to_thread(shutil.rmtree, linkedin_profile_dir())
     except FileNotFoundError:
         pass
     except OSError as exc:
@@ -1620,11 +1623,17 @@ async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
         tier = session.account_tier if session is not None else "new"
-    driver = networker_ops.DRIVER_FACTORY(tier)
-    try:
-        info = driver.session_status()
-    finally:
-        driver.close()
+    # Off the loop (async-first rule): session_status is local-only, but the
+    # first call lazily imports playwright.sync_api — up to ~1 s on a cold
+    # packaged build.
+    def _local_status() -> dict:
+        driver = networker_ops.DRIVER_FACTORY(tier)
+        try:
+            return driver.session_status()
+        finally:
+            driver.close()
+
+    info = await asyncio.to_thread(_local_status)
     status = info.get("status", "never_set")
     with _db(request).repos() as repos:
         fields: dict[str, Any] = {"status": status, "last_validated_at": now_utc()}
@@ -1642,12 +1651,17 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
         tier = session.account_tier if session is not None else "new"
-    driver = networker_ops.DRIVER_FACTORY(tier)
-    try:
-        driver.resume()
-        info = driver.session_status()
-    finally:
-        driver.close()
+    # Off the loop (async-first rule): same first-call playwright import cost
+    # as validate, plus the pacing-ledger file writes.
+    def _resume_and_status() -> dict:
+        driver = networker_ops.DRIVER_FACTORY(tier)
+        try:
+            driver.resume()
+            return driver.session_status()
+        finally:
+            driver.close()
+
+    info = await asyncio.to_thread(_resume_and_status)
     status = info.get("status", "never_set")
     with _db(request).repos() as repos:
         session = repos.linkedin_session.update(
