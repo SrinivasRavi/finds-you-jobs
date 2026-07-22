@@ -62,7 +62,7 @@ test("board lists discovered jobs from the live sidecar", async ({
   await page.screenshot({ path: `${DIR}/board-detail.png`, fullPage: true });
 });
 
-test("both board search boxes filter server-side and clear back (FR-JB-13)", async ({
+test("the board search filters server-side and highlights matches (FR-JB-13)", async ({
   page,
 }) => {
   // Uses the two jobs the previous test seeded (Stripe / Acme).
@@ -72,31 +72,30 @@ test("both board search boxes filter server-side and clear back (FR-JB-13)", asy
   const initial = await rows.count();
   expect(initial).toBeGreaterThanOrEqual(2);
 
-  // List search (title/company/location): company hit narrows to one row.
-  const list = page.getByTestId("board-list-search");
-  await list.fill("stripe");
+  // One search bar (consolidated 2026-07-22): company hit narrows to one row,
+  // with the match highlighted in the row.
+  const search = page.getByTestId("board-text-search");
+  await search.fill("stripe");
   await expect(rows).toHaveCount(1, { timeout: 10_000 });
   await expect(page.getByText("Backend Engineer").first()).toBeVisible();
-  await page.screenshot({ path: `${DIR}/board-list-search-hit.png`, fullPage: true });
+  await expect(rows.first().locator("mark")).toHaveText(/stripe/i);
+  await page.screenshot({ path: `${DIR}/board-search-hit.png`, fullPage: true });
+
+  // A JD-only phrase matches both rows; the open JD shows the highlight.
+  await search.fill("reliable systems");
+  await expect(rows).toHaveCount(2, { timeout: 10_000 });
+  await rows.first().click();
+  await expect(
+    page.getByTestId("jd-search-highlighted").locator("mark").first(),
+  ).toHaveText(/reliable systems/i);
+  await page.screenshot({ path: `${DIR}/board-search-jd-highlight.png`, fullPage: true });
+
   // A miss shows the explained filter-miss state, never a blank.
-  await list.fill("zzz-no-such-job");
+  await search.fill("zzz-no-such-job");
   await expect(rows).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByText("No jobs match these filters or search.")).toBeVisible();
-  await page.screenshot({ path: `${DIR}/board-list-search-miss.png`, fullPage: true });
+  await page.screenshot({ path: `${DIR}/board-search-miss.png`, fullPage: true });
   // Clearing restores the unfiltered feed.
-  await page.getByTestId("board-list-search-clear").click();
-  await expect(rows).toHaveCount(initial, { timeout: 10_000 });
-
-  // Deep search (JD bodies too): a JD-only phrase matches both seeded rows —
-  // and the same phrase misses via the shallow list search, proving the split.
-  const deep = page.getByTestId("board-text-search");
-  await deep.fill("reliable systems");
-  await expect(rows).toHaveCount(2, { timeout: 10_000 });
-  await page.screenshot({ path: `${DIR}/board-deep-search-hit.png`, fullPage: true });
   await page.getByTestId("board-text-search-clear").click();
-  await expect(rows).toHaveCount(initial, { timeout: 10_000 });
-  await list.fill("reliable systems");
-  await expect(rows).toHaveCount(0, { timeout: 10_000 });
-  await page.getByTestId("board-list-search-clear").click();
   await expect(rows).toHaveCount(initial, { timeout: 10_000 });
 });

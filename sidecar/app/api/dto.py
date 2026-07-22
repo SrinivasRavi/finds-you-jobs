@@ -442,6 +442,24 @@ class WatchCompanyResult(BaseModel):
     company: str
 
 
+class WatchlistEntryDTO(BaseModel):
+    """One user-tracked company board (a `watched` row in
+    `portals_config.sources` — the roster view of the same data the
+    watch-company action writes; no second store)."""
+
+    url: str
+    company: str
+    adapter: str
+
+
+class WatchlistDTO(BaseModel):
+    entries: list[WatchlistEntryDTO]
+
+
+class WatchRemoveResult(BaseModel):
+    removed: bool  # False = wasn't in the list
+
+
 class DiscoverySourceStatsDTO(BaseModel):
     """Per-source-family efficacy row (Analytics → Discovery tab): what each
     source has actually yielded — stored jobs, saves, score quality — plus the

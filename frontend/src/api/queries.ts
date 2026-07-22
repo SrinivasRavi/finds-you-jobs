@@ -51,6 +51,8 @@ export const qk = {
   onboarding: ["onboarding"] as const,
   settings: ["settings"] as const,
   discoverySources: ["discoverySources"] as const,
+  watchlist: ["watchlist"] as const,
+  schedules: ["schedules"] as const,
   discoveryCredentials: ["discoveryCredentials"] as const,
   discoveryAnalytics: ["discoveryAnalytics"] as const,
   prompts: ["prompts"] as const,
@@ -220,7 +222,32 @@ export function useWatchCompany() {
   return useMutation({
     mutationFn: (input: { url?: string; job_id?: string; company?: string }) =>
       api.watchCompany(input),
+    // No optimistic cache-faking (maintainer 2026-07-22: a fake pre-flip is a
+    // one-off patch, not a pattern). Speed comes from the server remembering
+    // resolved boards (rewatch skips the probe); the toggle shows an honest
+    // in-flight label for the rare genuinely-slow first probe.
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.discoverySources });
+      qc.invalidateQueries({ queryKey: qk.settings });
+      qc.invalidateQueries({ queryKey: qk.watchlist });
+    },
+  });
+}
+/** Background schedules — the preferences modal shows the scan schedule's
+ *  next_due_at so the cadence is visibly real. */
+export function useSchedules() {
+  return useQuery({ queryKey: qk.schedules, queryFn: () => api.getSchedules() });
+}
+/** The tracked-companies roster (Job finder preferences) — `watched` rows. */
+export function useWatchlist() {
+  return useQuery({ queryKey: qk.watchlist, queryFn: () => api.getWatchlist() });
+}
+export function useUnwatchCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) => api.unwatchCompany(url),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.watchlist });
       qc.invalidateQueries({ queryKey: qk.discoverySources });
       qc.invalidateQueries({ queryKey: qk.settings });
     },
@@ -262,7 +289,7 @@ export function usePrompts() {
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 /** Invalidate every board-feed view (list, paginated board, trash) at once. */
-function invalidateFeed(qc: QueryClient): void {
+export function invalidateFeed(qc: QueryClient): void {
   qc.invalidateQueries({ queryKey: qk.jobs });
   qc.invalidateQueries({ queryKey: qk.board });
   qc.invalidateQueries({ queryKey: qk.trash });

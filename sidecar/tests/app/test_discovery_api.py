@@ -16,11 +16,37 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from sidecar.app.api import discovery as discovery_api
 from sidecar.app.main import create_app
 from sidecar.modules.scraper import adapters
+from sidecar.modules.scraper.types import ScraperError
 
 TOKEN = "test-token-discovery"  # noqa: S105 — test fixture, not a real secret
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
+
+class _ProbeOkFetcher:
+    """Offline stand-in for the watch liveness probe — every URL 'opens'."""
+
+    def __init__(self, timeout_s: int = 0) -> None:  # noqa: ARG002 — seam parity
+        pass
+
+    def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
+        return "<html>board</html>"
+
+
+class _ProbeDeadFetcher(_ProbeOkFetcher):
+    def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
+        raise ScraperError("http", f"GET {url} -> 404")
+
+
+@pytest.fixture(autouse=True)
+def _offline_watch_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test in this file may hit the network: the watch liveness probe uses
+    a fake fetcher unless a test swaps in its own. The resolved-board memory
+    is cleared so no test sees another's cache."""
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
+    discovery_api._GUESS_CACHE.clear()
 
 
 @pytest.fixture
@@ -49,6 +75,37 @@ def test_catalog_lists_every_family_enabled_by_default(
     assert by_id["greenhouse"]["entries"] > 0
     assert by_id["greenhouse"]["kind"] == "ats"
     assert by_id["linkedin"]["kind"] == "search"
+
+
+def test_hard_excludes_wire_into_effective_scan_prefs(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """`UserPreferences.hard_excludes` (companies/keywords) reaches the real
+    scan's `ScanPrefs.company_block`/`content_block` — job-finder-preferences
+    design, docs/internal/discovery.md. Also covers the "excludes only, no
+    other preferences set" edge case that `resolve_scan_prefs` used to miss
+    entirely (it returned None and dropped everything from the DB)."""
+    app, client = app_client
+    resp = client.post(
+        "/api/settings",
+        headers=AUTH,
+        json={"hard_excludes": {"companies": ["Meta"], "keywords": ["unpaid"]}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["preferences"]["hard_excludes"] == {
+        "companies": ["Meta"],
+        "keywords": ["unpaid"],
+    }
+
+    from sidecar.app.registry.persistence import resolve_portals, resolve_scan_prefs
+
+    db = app.state.db
+    with db.repos() as repos:
+        portals = resolve_portals({}, repos)
+        prefs = resolve_scan_prefs({}, repos=repos, portals=portals)
+    assert prefs is not None  # excludes alone must not fall through to None
+    assert "Meta" in prefs.company_block
+    assert "unpaid" in prefs.content_block
 
 
 def test_toggle_persists_and_scan_skips_family(
@@ -485,3 +542,223 @@ def test_watch_company_from_url_and_job_row(
     )
     assert bad.status_code == 422
     assert "no adapter recognizes" in bad.json()["detail"]
+
+
+def test_watch_company_domain_url_falls_back_to_covering_source(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Greenhouse `absolute_url` postings live on the COMPANY's domain — the
+    board root can't be derived from the job URL, but the sources row that
+    found the job can cover the watch (the Coupang/Roku 2026-07-22 bug)."""
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        # The covering board is already a (seeded-style) sources row.
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        portals["sources"] = [
+            *portals.get("sources", []),
+            {"url": "https://boards.greenhouse.io/coupang", "company": "Coupang"},
+        ]
+        repos.preferences.update(portals_config=portals)
+        job = repos.jobs.create(
+            canonical_url="https://www.coupang.jobs/en/jobs/12345/senior-staff",
+            title="Senior Staff Backend Engineer", company="Coupang",
+            location="Bengaluru", description="", source_adapter="greenhouse",
+        )
+    r = client.post(
+        "/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id}
+    ).json()
+    assert r["source_url"] == "https://boards.greenhouse.io/coupang"
+    assert r["adapter"] == "greenhouse"
+    # The covering row is now a managed roster entry.
+    roster = client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"]
+    assert any(e["url"] == "https://boards.greenhouse.io/coupang" for e in roster)
+
+
+def test_watch_company_domain_url_guesses_board_when_no_covering_row(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """watch → unwatch → rewatch must not dead-end: with no covering sources
+    row left, the board is guessed from the company slug and probed (found
+    live 2026-07-22)."""
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        # No coupang row anywhere: strip sources down to one unrelated board.
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        portals["sources"] = [{"url": "https://boards.greenhouse.io/unrelated-co"}]
+        repos.preferences.update(portals_config=portals)
+        job = repos.jobs.create(
+            canonical_url="https://careers.coupang.example/jobs/1",
+            title="Senior Staff Backend Engineer", company="Coupang",
+            location="Bengaluru", description="", source_adapter="greenhouse",
+        )
+    r = client.post("/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id})
+    assert r.status_code == 200
+    body = r.json()
+    # First guessed candidate that "opens" (probe fetcher is offline-OK).
+    assert body["source_url"] == "https://boards.greenhouse.io/coupang"
+    assert body["added"] is True
+    roster = client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"]
+    assert any(e["url"] == "https://boards.greenhouse.io/coupang" for e in roster)
+
+
+def test_rewatch_uses_remembered_board_without_reprobing(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unwatch deletes the roster row, not the knowledge: after any successful
+    resolution the board is remembered, so watch → unwatch → rewatch is one
+    fast lookup — no live probe (maintainer 2026-07-22 #3, replacing the
+    optimistic-UI approach). Proven by making the prober DEAD for the rewatch."""
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        portals["sources"] = [
+            {"url": "https://boards.greenhouse.io/coupang", "company": "Coupang"},
+        ]
+        repos.preferences.update(portals_config=portals)
+        job = repos.jobs.create(
+            canonical_url="https://www.coupang.jobs/en/jobs/12345/senior-staff",
+            title="Senior Staff Backend Engineer", company="Coupang",
+            location="Bengaluru", description="", source_adapter="greenhouse",
+        )
+    first = client.post(
+        "/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id}
+    ).json()
+    assert first["source_url"] == "https://boards.greenhouse.io/coupang"
+    removed = client.delete(
+        "/api/discovery/watchlist?url=https://boards.greenhouse.io/coupang",
+        headers=AUTH,
+    ).json()
+    assert removed == {"removed": True}
+    # Rewatch with every probe failing: only the remembered board can satisfy it.
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeDeadFetcher)
+    again = client.post(
+        "/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id}
+    )
+    assert again.status_code == 200
+    assert again.json()["source_url"] == "https://boards.greenhouse.io/coupang"
+    assert again.json()["added"] is True
+
+
+def test_watch_search_source_job_explains_no_board(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        job = repos.jobs.create(
+            canonical_url="https://www.naukri.com/job-listings-senior-backend-1",
+            title="Senior Backend Engineer", company="Algoleap Technologies",
+            location="Hyderabad", description="", source_adapter="naukri",
+        )
+    bad = client.post("/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id})
+    assert bad.status_code == 422
+    assert "search source (naukri)" in bad.json()["detail"]
+    # The refusal is durable: Analytics → Logs (operations ledger) has it.
+    with app.state.db.repos() as repos:
+        ops = [o for o in repos.operations.list_recent() if o.kind == "watch_company"]
+    assert ops and ops[0].state == "failed" and "search source" in (ops[0].error or "")
+
+
+def test_watch_pasted_url_is_liveness_probed(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, client = app_client
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeDeadFetcher)
+    bad = client.post(
+        "/api/discovery/watchlist",
+        headers=AUTH,
+        json={"url": "https://boards.greenhouse.io/no-such-tenant-xyz"},
+    )
+    assert bad.status_code == 422
+    assert "doesn't open" in bad.json()["detail"]
+    # A job-derived watch skips the probe (the board was just scanned).
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
+    ok = client.post(
+        "/api/discovery/watchlist",
+        headers=AUTH,
+        json={"url": "https://boards.greenhouse.io/live-tenant"},
+    )
+    assert ok.json()["added"] is True
+
+
+def test_slow_watch_probe_never_blocks_the_event_loop(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (2026-07-22): the liveness probe ran synchronously inside an
+    async endpoint, freezing the event loop for the probe's duration — /healthz
+    went dark, and the Tauri shell's supervisor (2 s poll, 3 strikes) killed a
+    healthy sidecar mid-session. The probe must run off-loop (to_thread):
+    /healthz answers fast WHILE a slow probe is in flight."""
+    import threading
+    import time
+
+    class _SlowFetcher(_ProbeOkFetcher):
+        def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
+            time.sleep(1.2)
+            return "<html>board</html>"
+
+    _, client = app_client
+    monkeypatch.setattr(discovery_api, "Fetcher", _SlowFetcher)
+
+    result: dict = {}
+
+    def _watch() -> None:
+        result["resp"] = client.post(
+            "/api/discovery/watchlist",
+            headers=AUTH,
+            json={"url": "https://boards.greenhouse.io/slow-probe-tenant"},
+        )
+
+    t = threading.Thread(target=_watch)
+    t.start()
+    time.sleep(0.3)  # the probe is now sleeping inside the request
+    t0 = time.monotonic()
+    health = client.get("/healthz")
+    elapsed = time.monotonic() - t0
+    t.join()
+    assert health.status_code == 200
+    # Blocked-loop behavior waits out the remaining ~0.9 s of the probe; the
+    # off-loop probe answers in milliseconds. 0.6 s keeps CI slack.
+    assert elapsed < 0.6, f"/healthz stalled {elapsed:.2f}s behind the watch probe"
+    assert result["resp"].json()["added"] is True
+
+
+def test_watchlist_roster_lists_and_removes_watched_rows_only(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _, client = app_client
+    client.post(
+        "/api/discovery/watchlist",
+        headers=AUTH,
+        json={"url": "https://boards.greenhouse.io/rosterco/jobs/1", "company": "RosterCo"},
+    )
+    roster = client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"]
+    assert roster == [
+        {
+            "url": "https://boards.greenhouse.io/rosterco",
+            "company": "RosterCo",
+            "adapter": "greenhouse",
+        }
+    ]
+    # Seeded (non-watched) registry rows never appear in the roster.
+    settings = client.get("/api/settings", headers=AUTH).json()
+    assert len(settings["preferences"]["portals_config"]["sources"]) > 1
+
+    removed = client.delete(
+        "/api/discovery/watchlist?url=https://boards.greenhouse.io/rosterco",
+        headers=AUTH,
+    ).json()
+    assert removed == {"removed": True}
+    assert client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"] == []
+    # Removing again is honest about the no-op; seeded rows stay intact.
+    again = client.delete(
+        "/api/discovery/watchlist?url=https://boards.greenhouse.io/rosterco",
+        headers=AUTH,
+    ).json()
+    assert again == {"removed": False}
+    after = client.get("/api/settings", headers=AUTH).json()
+    assert len(after["preferences"]["portals_config"]["sources"]) == len(
+        settings["preferences"]["portals_config"]["sources"]
+    ) - 1

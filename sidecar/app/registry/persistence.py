@@ -67,7 +67,11 @@ def resolve_scan_prefs(
        knows what to look for") merged over the config's own filter tables:
        role aliases → `title_allow`; locations → `location_allow` **and**
        `location_always_allow` (the multi-location rescue names the user's
-       places, not the shipped defaults); freshness window → `max_age_days`.
+       places, not the shipped defaults); freshness window → `max_age_days`;
+       `hard_excludes.companies`/`.keywords` → `company_block`/`content_block`,
+       **unioned** with the config's own block lists rather than replacing them
+       — a personal exclude should never silently drop a registry's own
+       curated blocks (job-finder-preferences design, docs/internal/discovery.md).
        Dimensions the user left empty keep the config's values.
     3. None — the config's own filters as-is (the seeded registry's tuned
        defaults; only reached when the user set no preferences at all).
@@ -81,7 +85,20 @@ def resolve_scan_prefs(
     aliases = [str(a) for a in (row.role_aliases or []) if str(a).strip()]
     locations = [str(loc) for loc in (row.locations or []) if str(loc).strip()]
     freshness = row.freshness_days or 0
-    if not aliases and not locations and freshness <= 0:
+    hard_excludes = row.hard_excludes or {}
+    company_block = [
+        str(c) for c in (hard_excludes.get("companies") or []) if str(c).strip()
+    ]
+    content_block = [
+        str(k) for k in (hard_excludes.get("keywords") or []) if str(k).strip()
+    ]
+    if (
+        not aliases
+        and not locations
+        and freshness <= 0
+        and not company_block
+        and not content_block
+    ):
         return None
     base = _config_prefs(portals)
     expanded = _expand_locations(locations)
@@ -91,6 +108,8 @@ def resolve_scan_prefs(
         location_allow=expanded or base.location_allow,
         location_always_allow=expanded or base.location_always_allow,
         max_age_days=freshness if freshness > 0 else base.max_age_days,
+        company_block=list(dict.fromkeys([*base.company_block, *company_block])),
+        content_block=list(dict.fromkeys([*base.content_block, *content_block])),
     )
 
 

@@ -1329,7 +1329,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Watched Companies
+         * @description The tracked-companies roster: user-added (`watched`) board rows from
+         *     `portals_config.sources`. Rows added before the marker existed don't
+         *     appear — they keep scanning; re-watching stamps them.
+         */
+        get: operations["list_watched_companies_api_discovery_watchlist_get"];
         put?: never;
         /**
          * Watch Company
@@ -1337,7 +1343,13 @@ export interface paths {
          *     The watchlist IS the sources list — no second store, no special casing.
          */
         post: operations["watch_company_api_discovery_watchlist_post"];
-        delete?: never;
+        /**
+         * Unwatch Company
+         * @description Remove a tracked company board (by its source URL). Only `watched`
+         *     rows are removable here — the seeded registry isn't editable from the
+         *     roster; source families are toggled in Settings → Discovery sources.
+         */
+        delete: operations["unwatch_company_api_discovery_watchlist_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2747,6 +2759,30 @@ export interface components {
             adapter: string;
             /** Company */
             company: string;
+        };
+        /** WatchRemoveResult */
+        WatchRemoveResult: {
+            /** Removed */
+            removed: boolean;
+        };
+        /** WatchlistDTO */
+        WatchlistDTO: {
+            /** Entries */
+            entries: components["schemas"]["WatchlistEntryDTO"][];
+        };
+        /**
+         * WatchlistEntryDTO
+         * @description One user-tracked company board (a `watched` row in
+         *     `portals_config.sources` — the roster view of the same data the
+         *     watch-company action writes; no second store).
+         */
+        WatchlistEntryDTO: {
+            /** Url */
+            url: string;
+            /** Company */
+            company: string;
+            /** Adapter */
+            adapter: string;
         };
     };
     responses: never;
@@ -4844,6 +4880,26 @@ export interface operations {
             };
         };
     };
+    list_watched_companies_api_discovery_watchlist_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistDTO"];
+                };
+            };
+        };
+    };
     watch_company_api_discovery_watchlist_post: {
         parameters: {
             query?: never;
@@ -4864,6 +4920,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WatchCompanyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unwatch_company_api_discovery_watchlist_delete: {
+        parameters: {
+            query: {
+                url: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchRemoveResult"];
                 };
             };
             /** @description Validation Error */

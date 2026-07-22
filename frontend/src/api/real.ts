@@ -45,7 +45,9 @@ import type {
   DiscoveryCredential,
   DiscoverySource,
   PromptSetting,
+  ScheduleRow,
   WatchCompanyResult,
+  WatchlistEntry,
   ReachOutInput,
   ReachOutResult,
   ReferralCandidate,
@@ -334,7 +336,7 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
 
 /** An HTTP error carrying the sidecar status code, so callers can branch on it
  * (e.g. 409 → tombstoned URL → `JobTombstonedError`). */
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -360,7 +362,22 @@ export class RealApi {
 
   private async req<T>(path: string, init: RequestInit = {}): Promise<T> {
     const info = await this.info();
-    const res = await apiFetch(info, path, init);
+    let res: Response;
+    try {
+      res = await apiFetch(info, path, init);
+    } catch (e) {
+      // Network-level failure (WebKit reports it as the bare "Load failed"):
+      // the shell may have kill-restarted the sidecar on a NEW port/token
+      // while we kept the old handshake — every request then dies against a
+      // dead port for the rest of the session (observed 2026-07-22). Drop the
+      // cached handshake and retry ONCE, but only when the re-resolved
+      // handshake actually changed (restart evidence): the old port is dead,
+      // so the retry cannot double-apply the original request.
+      this.infoP = null;
+      const fresh = await this.info();
+      if (fresh.port === info.port && fresh.token === info.token) throw e;
+      res = await apiFetch(fresh, path, init);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new ApiError(res.status, `${init.method ?? "GET"} ${path} → ${res.status}: ${body}`);
@@ -759,6 +776,16 @@ export class RealApi {
       freshness_days: input.freshness_days,
       ui_state: ui,
     };
+    // Personal excludes merge over the stored map (a future key like
+    // `description` must survive a modal save that doesn't know about it).
+    if (input.excluded_companies !== undefined || input.excluded_keywords !== undefined) {
+      const stored = (cur.preferences.hard_excludes ?? {}) as Record<string, unknown>;
+      body.hard_excludes = {
+        ...stored,
+        ...(input.excluded_companies !== undefined ? { companies: input.excluded_companies } : {}),
+        ...(input.excluded_keywords !== undefined ? { keywords: input.excluded_keywords } : {}),
+      };
+    }
     // Only sent when the caller owns the decision (onboarding); the finder-
     // preferences modal edits scan prefs without touching the networking opt-in.
     if (input.networking_enabled !== undefined) {
@@ -823,6 +850,12 @@ export class RealApi {
         locations: (p.locations ?? []).map(String),
         freshness_days: p.freshness_days ?? 7,
         scrape_cadence: String(ui.scrape_cadence ?? "Every 24h"),
+        excluded_companies: (
+          ((p.hard_excludes ?? {}) as { companies?: unknown[] }).companies ?? []
+        ).map(String),
+        excluded_keywords: (
+          ((p.hard_excludes ?? {}) as { keywords?: unknown[] }).keywords ?? []
+        ).map(String),
       },
       observability: {
         content_logging: Boolean(ui.content_logging),
@@ -978,6 +1011,20 @@ export class RealApi {
     company?: string;
   }): Promise<WatchCompanyResult> {
     return (await this.json("POST", "/api/discovery/watchlist", input)) as WatchCompanyResult;
+  }
+  async getSchedules(): Promise<ScheduleRow[]> {
+    return this.req<ScheduleRow[]>("/api/schedules");
+  }
+  async getWatchlist(): Promise<WatchlistEntry[]> {
+    const d = await this.req<{ entries: WatchlistEntry[] }>("/api/discovery/watchlist");
+    return d.entries;
+  }
+  async unwatchCompany(url: string): Promise<boolean> {
+    const d = await this.req<{ removed: boolean }>(
+      `/api/discovery/watchlist?url=${encodeURIComponent(url)}`,
+      { method: "DELETE" },
+    );
+    return d.removed;
   }
   async getDiscoveryAnalytics(): Promise<DiscoveryAnalytics> {
     return this.req<DiscoveryAnalytics>("/api/discovery/analytics");

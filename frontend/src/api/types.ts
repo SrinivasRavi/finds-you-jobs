@@ -549,6 +549,12 @@ export interface OnboardingPrefsInput {
   /** Omitted → the stored value is left untouched (the job-finder-preferences
    *  modal edits scan prefs without flipping the networking opt-in). */
   networking_enabled?: boolean;
+  /** Personal hard excludes (job-finder-preferences design, 2026-07-21):
+   *  companies to never surface + keywords that disqualify a posting by its
+   *  description. Server-side they union with the registry's own block lists
+   *  (never replace them). Omitted → stored values left untouched. */
+  excluded_companies?: string[];
+  excluded_keywords?: string[];
 }
 
 // ─── /api/settings ──────────────────────────────────────────────────────────
@@ -576,7 +582,10 @@ export type OperationKind =
   | "send"
   | "linkedin_login"
   | "archive_stale_contacts"
-  | "contact_sync";
+  | "contact_sync"
+  // Watch-company attempts (2026-07-22): synchronous API action recorded into
+  // the ledger so Analytics → Logs keeps the verbatim refusal reason.
+  | "watch_company";
 
 export interface EngineRoute {
   kind: OperationKind;
@@ -679,6 +688,25 @@ export interface WatchCompanyResult {
   company: string;
 }
 
+/** One tracked company board (a `watched` [[sources]] row) — the roster view
+ *  in Job finder preferences of the same data "Watch company" writes. */
+/** One background schedule row (GET /api/schedules) — surfaced so the
+ *  preferences modal can show WHEN the next automatic scan fires (the cadence
+ *  was invisible before: it worked, but nothing proved it — 2026-07-22). */
+export interface ScheduleRow {
+  id: string;
+  kind: string;
+  interval_minutes: number;
+  enabled: boolean;
+  next_due_at: string;
+}
+
+export interface WatchlistEntry {
+  url: string;
+  company: string;
+  adapter: string;
+}
+
 export interface Settings {
   /** Legacy combined flag = resume && cover. Kept for consumers that read a
    *  single value (JobBoard per-job slider seed); the Settings UI drives the
@@ -721,6 +749,10 @@ export interface Settings {
     locations: string[];
     freshness_days: number;
     scrape_cadence: string;
+    /** `hard_excludes.companies` / `.keywords` — the personal excludes the
+     *  finder-preferences modal edits (empty until the user adds some). */
+    excluded_companies: string[];
+    excluded_keywords: string[];
   };
   observability: {
     content_logging: boolean;

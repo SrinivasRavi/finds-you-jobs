@@ -52,6 +52,17 @@ class NormalizedJob:
 
 
 @dataclass
+class ContentRule:
+    """One `content_filter.by_title_keyword` rule: description allow/block
+    lists that apply only when the job title matches `title` (word-boundary,
+    same matcher as every other filter)."""
+
+    title: list[str] = field(default_factory=list)
+    allow: list[str] = field(default_factory=list)
+    block: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ScanPrefs:
     """User preferences applied by the shared pipeline (not by adapters).
 
@@ -66,6 +77,43 @@ class ScanPrefs:
     location_allow: list[str] = field(default_factory=list)
     location_block: list[str] = field(default_factory=list)
     location_always_allow: list[str] = field(default_factory=list)
+    # Company exclude — a cross-cutting gate like title/location, not a
+    # curated-list-removal like career-ops's tracked_companies: a meaningful
+    # slice of our adapters are open/uncurated (RemoteOK, TheMuse, Brave,
+    # search-shaped adapters), so an unwanted company can surface dynamically
+    # the same way an unwanted title or location can (job-finder-preferences
+    # design, docs/internal/discovery.md).
+    company_block: list[str] = field(default_factory=list)
+    # Content filter — description keywords, career-ops's `content_filter`.
+    # Empty description always passes (no signal to filter on, same stance as
+    # unknown location); block wins over allow.
+    content_allow: list[str] = field(default_factory=list)
+    content_block: list[str] = field(default_factory=list)
+    # Scoped content rules — career-ops's `content_filter.by_title_keyword`:
+    # each rule's allow/block applies only to jobs whose title matches the
+    # rule's `title` keywords ("for 'manager' roles, block 'on-site'").
+    content_by_title: list[ContentRule] = field(default_factory=list)
+    # Visa filter — career-ops's `visa_filter`, off by default. When on,
+    # drops postings whose description states sponsorship is unavailable
+    # (filters.DEFAULT_VISA_PHRASES unless the user supplies their own).
+    # For seekers who need sponsorship; empty description passes.
+    visa_filter: bool = False
+    visa_phrases: list[str] = field(default_factory=list)
+    # Salary filter — career-ops's `salary_filter`, gated on `salary.py`'s
+    # parser. 0 = off for both bounds; amounts are ANNUAL in `salary_currency`
+    # (defaults to comparing against any currency-less posting; a posting in
+    # a *different* stated currency always passes — can't compare, can't gate).
+    # Unparsable/absent salary text always passes (rank-don't-gate: most
+    # postings state no salary at all).
+    salary_min: int = 0
+    salary_max: int = 0
+    salary_currency: str = ""
+    # User-authored search terms (constrained free-form `search_queries` —
+    # design locked 2026-07-21): each term rides the search adapters' existing
+    # query templates as an extra location-less keyword (Brave keeps its
+    # ATS_SITES allowlist; parsers keep their graceful fallbacks). Never raw
+    # query syntax with its own `site:` targets.
+    search_terms: list[str] = field(default_factory=list)
     max_age_days: int = 0
     per_source_cap: int = 0
     timeout_s: int = 20

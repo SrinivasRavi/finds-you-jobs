@@ -430,7 +430,7 @@ export function Onboarding() {
                 onAdd={() => addChip(aliases, setAliases, aliasInput, () => setAliasInput(""))}
                 onRemove={(v) => setAliases(aliases.filter((a) => a !== v))}
                 placeholder="e.g. Backend Engineer"
-                hint="Type a role and press Enter to add it. Add several — each becomes a chip below."
+                hint="Type a role and press Enter or comma to add it. Add several — each becomes a chip below."
               />
               <ChipField
                 label="Locations (at least one; Remote is valid)"
@@ -440,8 +440,8 @@ export function Onboarding() {
                 setInput={setLocInput}
                 onAdd={() => addChip(locations, setLocations, locInput, () => setLocInput(""))}
                 onRemove={(v) => setLocations(locations.filter((a) => a !== v))}
-                placeholder="e.g. Mumbai, India"
-                hint="Type a location and press Enter to add it. Remote is valid."
+                placeholder="e.g. Mumbai"
+                hint="Type a location and press Enter or comma to add it. Remote is valid."
               />
               <div>
                 <div className="mb-1 text-[12px] text-ink-3">Freshness window</div>
@@ -764,7 +764,9 @@ function ChipField({
           data-testid={`${testid}-input`}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            // Comma adds too — parity with the Job-finder-preferences chip
+            // fields (maintainer 2026-07-22 #6).
+            if (e.key === "Enter" || e.key === ",") {
               e.preventDefault();
               onAdd();
             }

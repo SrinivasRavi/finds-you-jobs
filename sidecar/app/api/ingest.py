@@ -17,6 +17,7 @@ paste their resume instead, rather than yielding an empty/garbled draft.
 
 from __future__ import annotations
 
+import asyncio
 import io
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -93,7 +94,10 @@ async def ingest_resume(file: UploadFile = File(...)) -> ProfileIngestResult:  #
                 ),
             ) from exc
     elif suffix in _PDF_SUFFIXES:
-        text = _extract_pdf(data)
+        # Off the event loop (async-first rule, 2026-07-22 audit): pypdf parse
+        # of a 10 MiB resume is seconds of CPU — on the loop that starves
+        # /healthz and gets the sidecar kill-restarted mid-onboarding.
+        text = await asyncio.to_thread(_extract_pdf, data)
     else:
         raise HTTPException(
             status_code=422,
