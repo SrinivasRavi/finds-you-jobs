@@ -32,6 +32,7 @@ import {
 import { ApiError } from "../api/real";
 import { JobTombstonedError, type BoardPage, type Job, type JobDraft } from "../api/types";
 import { Icon } from "../shell/icons";
+import { Chip, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 import { Markdown } from "../shell/Markdown";
 import { ResumeModal } from "../popups/ResumeModal";
@@ -68,73 +69,6 @@ function useDebounced<T>(value: T, ms: number): T {
 
 /** One search input with a clear (×) button — clearing restores the unfiltered
  *  feed (FR-JB-13). Used for both the list search and the deep all-text search. */
-function SearchBox({
-  value,
-  onChange,
-  placeholder,
-  testid,
-  className = "",
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  testid: string;
-  className?: string;
-}) {
-  return (
-    <div
-      className={
-        "flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-2 focus-within:border-accent " +
-        className
-      }
-    >
-      <Icon name="search" size={13} strokeWidth={2} className="shrink-0 text-ink-4" />
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        data-testid={testid}
-        className="min-w-0 flex-1 bg-transparent text-[12px] text-ink placeholder:text-ink-4 focus:outline-none"
-      />
-      {value ? (
-        <button
-          type="button"
-          onClick={() => onChange("")}
-          data-testid={`${testid}-clear`}
-          aria-label="Clear search"
-          className="shrink-0 text-ink-3 hover:text-ink"
-        >
-          ×
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={
-        "fchip h-7 rounded-full border px-2.5 text-[11.5px] transition " +
-        (active
-          ? "border-accent bg-accent text-white"
-          : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
-      }
-    >
-      {children}
-    </button>
-  );
-}
-
 function MatchRing({ score, keyword = false }: { score: number; keyword?: boolean }) {
   // Keyword scores render grey with a dashed ring — never the tier-colored
   // conic gradient — so they can't be mistaken for an AI score (Scoring
@@ -869,7 +803,7 @@ export function JobBoard() {
           <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Work style</span>
           {(
             [
-              ["ALL", "All work styles"],
+              ["ALL", "All"],
               ["REMOTE", "Remote"],
               ["HYBRID", "Hybrid"],
               ["ONSITE", "Onsite"],
@@ -899,7 +833,7 @@ export function JobBoard() {
         <div className="flex items-center gap-1.5">
           <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Min salary</span>
           {[
-            [0, "Any salary"],
+            [0, "Any"],
             [50000, "≥ $50k"],
             [100000, "≥ $100k"],
             [150000, "≥ $150k"],
@@ -945,18 +879,19 @@ export function JobBoard() {
             ))}
           </div>
         </div>
-        {/* THE board search (FR-JB-13): sits right after SORT (no divider —
-            it saves ~17px and the bordered box already reads as its own
-            control). A SMALL flex-basis + min-width means it shrinks to fit
-            the space the filter groups leave — down to icon + "Search"
-            (~88px) — and only wraps to its own line when even that can't fit
+        <span className="mx-1 h-4 w-px bg-border-2" />
+        {/* THE board search (FR-JB-13): sits right after SORT, behind the same
+            "|" separator as the other groups. A SMALL flex-basis + min-width
+            means it shrinks to fit the space the filter groups leave — down to
+            icon + "Search" (~88px) — and only wraps when even that can't fit.
+            The shorter "All"/"Any" labels free up room so it stays inline
             (maintainer 2026-07-22). */}
         <SearchBox
           value={textSearch}
           onChange={setTextSearch}
           placeholder="Search"
           testid="board-text-search"
-          className="min-w-[88px] max-w-[200px] grow shrink basis-[88px]"
+          className="min-w-[88px] max-w-[176px] grow shrink basis-[88px]"
         />
       </div>
 

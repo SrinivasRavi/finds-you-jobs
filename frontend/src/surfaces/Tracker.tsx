@@ -35,6 +35,7 @@ import { GuidanceDialog } from "../popups/GuidanceDialog";
 import { ReferralsModal } from "../popups/ReferralsModal";
 import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
 import { Icon } from "../shell/icons";
+import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Markdown } from "../shell/Markdown";
 import { Modal } from "../shell/Modal";
 import { initials, scoreTier, workLabel } from "./jobFormat";
@@ -342,49 +343,15 @@ export function Tracker() {
 
   return (
     <>
-      {/* Topbar */}
-      <header className="flex min-h-[48px] items-center gap-3 border-b border-border bg-surface px-5">
+      {/* Row 1 — actions that change what LEAVES this board (mirrors the Job
+          Board's top row). Applications only removes via the archive. */}
+      <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
         <h1 className="text-[14px] font-semibold text-ink">Applications</h1>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search title, company, location…"
-          data-testid="tracker-search"
-          className="h-[30px] w-64 rounded-7 border border-border-2 bg-surface px-3 text-[12px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
-        />
-        <div className="ml-auto flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            {(["ALL", "P0", "P1", "P2", "P3"] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPriorityFilter(p)}
-                className={
-                  "h-7 rounded-full border px-2.5 text-[11.5px] " +
-                  (priorityFilter === p
-                    ? "border-accent bg-accent text-white"
-                    : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
-                }
-              >
-                {p === "ALL" ? "All priorities" : p}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => setHideRejected((v) => !v)}
-            data-testid="hide-rejected"
-            className={
-              "h-7 rounded-full border px-2.5 text-[11.5px] " +
-              (hideRejected
-                ? "border-accent bg-accent-wash text-accent-ink"
-                : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
-            }
-          >
-            Hide Rejected
-          </button>
+        <div className="ml-auto flex items-center gap-3 py-1.5">
           <button
             onClick={() => setShowArchive(true)}
             data-testid="archive-btn"
-            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
+            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
           >
             <Icon name="trash" size={14} strokeWidth={2} />
             Deleted Applications
@@ -396,6 +363,37 @@ export function Tracker() {
           </button>
         </div>
       </header>
+
+      {/* Row 2 — view modifiers (mirrors the Job Board filter row): labeled
+          chip groups + "|" separators + trailing Search, all right-aligned. */}
+      <FilterBar>
+        <FilterGroup label="Priorities" id="filter-priorities">
+          {(["ALL", "P0", "P1", "P2", "P3"] as const).map((p) => (
+            <Chip
+              key={p}
+              active={priorityFilter === p}
+              onClick={() => setPriorityFilter(p)}
+            >
+              {p === "ALL" ? "All" : p}
+            </Chip>
+          ))}
+        </FilterGroup>
+        <FilterSep />
+        <Chip
+          active={hideRejected}
+          onClick={() => setHideRejected((v) => !v)}
+          testid="hide-rejected"
+        >
+          Hide Rejected
+        </Chip>
+        <FilterSep />
+        <SearchBox
+          value={search}
+          onChange={setSearch}
+          placeholder="Search"
+          testid="tracker-search"
+        />
+      </FilterBar>
 
       {/* Kanban */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto bg-canvas p-4 no-scrollbar">
