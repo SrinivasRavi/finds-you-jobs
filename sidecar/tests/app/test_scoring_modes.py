@@ -67,9 +67,11 @@ def _ctx(db: Database, job_id: str, engine: Any | None) -> OperationContext:
         engines.route("score", engine="fake", model="fake-model")
         resolved = engines.resolve("score")
     with db.repos() as repos:
-        op = repos.operations.create("score", {"job_id": job_id}).id
+        version = repos.profile.get_current().version  # type: ignore[union-attr]
+        snap = {"job_id": job_id, "profile_version": version}
+        op = repos.operations.create("score", snap).id
     return OperationContext(
-        kind="score", input_snapshot={"job_id": job_id},
+        kind="score", input_snapshot=snap,
         engine=resolved, db=db, operation_id=op,
     )
 
@@ -119,16 +121,43 @@ def test_llm_failure_persists_keyword_fallback_and_still_fails(
     assert scores[SCORER_IMPL] == 77 and SCORER_IMPL_DETERMINISTIC in scores
 
 
-def test_planner_counts_keyword_scores_as_scored(migrated_db: Database) -> None:
-    """A job with only a keyword score (mode or fallback) is not re-planned on
-    every scan — retry is deliberately manual (Logs → Retry)."""
+def test_keyword_mode_plans_no_llm_the_floor_scores(migrated_db: Database) -> None:
+    """In keyword mode the LLM planner plans nothing — the on-device floor
+    (backfill_keyword_scores) does the scoring, no tokens spent."""
     db = migrated_db
-    job_id = _seed(db)
+    _seed(db)
     with db.repos() as repos:
         repos.preferences.update(thresholds={"scoring_mode": "keyword"})
-    assert len(plan_score_new(db)) == 1
-    score_entrypoint(_ctx(db, job_id, engine=None))
     assert plan_score_new(db) == []
+    assert backfill_keyword_scores(db) == 1  # the floor scores it
+
+
+def test_llm_planner_upgrades_keyword_floored_jobs_but_not_failures(
+    migrated_db: Database,
+) -> None:
+    """AI mode: a keyword-floored job is still planned for an LLM upgrade
+    (floor doesn't count as done); a job whose LLM attempt FAILED is not
+    auto-retried (its failed op excludes it — retry is manual)."""
+    db = migrated_db
+    a = _seed(db, url="https://ex.co/j/up-a")
+    with db.repos() as repos:
+        b = repos.jobs.create(
+            canonical_url="https://ex.co/j/up-b", title="Data Engineer",
+            company="Acme", location="Remote",
+            description=(
+                "Data Engineer to build and own batch and streaming pipelines in "
+                "Python and SQL over Postgres and Kafka. Requires 5+ years of data "
+                "engineering, strong modelling, and reliable delivery at scale."
+            ),
+            source_adapter="greenhouse",
+        ).id
+    # Floor both, then fail an LLM attempt on b.
+    backfill_keyword_scores(db)
+    with pytest.raises(RuntimeError):
+        score_entrypoint(_ctx(db, b, engine=_DeadEngine()))
+    planned = {p[1]["job_id"] for p in plan_score_new(db)}
+    assert a in planned  # keyword-floored → still gets an LLM upgrade
+    assert b not in planned  # failed attempt → not auto-retried
 
 
 def test_backfill_scores_only_unscored_jobs(migrated_db: Database) -> None:

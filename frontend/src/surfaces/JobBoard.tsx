@@ -46,7 +46,10 @@ import {
   workLabel,
 } from "./jobFormat";
 
-type StatusFilter = "ALL" | "SCORED" | "PENDING" | "FAILED";
+// Every job always carries at least a keyword score (the instant on-device
+// floor), so "Pending"/"Failed" are gone — the filter is now which scorer
+// produced the displayed score (maintainer 2026-07-22).
+type StatusFilter = "ALL" | "AI" | "KEYWORD";
 type WorkStyleFilter = "ALL" | "REMOTE" | "HYBRID" | "ONSITE" | "REMOTE_FRIENDLY";
 type SortMode = "match" | "recency";
 
@@ -258,12 +261,16 @@ function JobRow({
         </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
+        {/* Every job carries at least a keyword score (the instant on-device
+            floor), so there is no "Pending"/"Score failed" state — an AI
+            failure falls back to a grey keyword score. The muted "scoring…"
+            only shows in the sub-second window before the first floor lands. */}
         {job.score ? (
           <span
             data-keyword={job.score.scorer_impl === "scorer-deterministic"}
             title={
               job.score.scorer_impl === "scorer-deterministic"
-                ? "Keyword score (free, on-device) — grey, not an AI score"
+                ? "Keyword scored (free, on-device) — grey, not an AI score"
                 : undefined
             }
             className={
@@ -275,20 +282,12 @@ function JobRow({
           >
             {job.score.score_0_100}
           </span>
-        ) : job.score_status === "failed" ? (
-          <span
-            data-testid="score-failed-badge"
-            title="Scoring failed — usually the LLM provider was rate-limited or your key/session hit its usage cap. See Analytics → Scoring for the exact error; Remove and re-add to retry."
-            className="inline-flex items-center rounded-full border border-bad/40 bg-bad-wash px-2 py-0.5 font-mono text-[10px] font-semibold text-bad"
-          >
-            Score failed
-          </span>
         ) : (
           <span
-            data-testid="match-score-badge"
-            className="inline-flex items-center rounded-full border border-border-2 bg-surface-2 px-2 py-0.5 font-mono text-[10px] font-semibold text-ink-3"
+            data-testid="scoring-inflight"
+            className="font-mono text-[10px] font-medium text-ink-4"
           >
-            Pending
+            scoring…
           </span>
         )}
         {expired ? (
@@ -414,7 +413,7 @@ function JobDetail({
               keyword={job.score.scorer_impl === "scorer-deterministic"}
             />
             <span className="mt-1 text-[10.5px] uppercase tracking-wide text-ink-3">
-              {job.score.scorer_impl === "scorer-deterministic" ? "keyword" : "match"}
+              {job.score.scorer_impl === "scorer-deterministic" ? "keyword scored" : "match"}
             </span>
           </div>
         ) : null}
@@ -608,13 +607,13 @@ function JobDetail({
             <div className="rounded-lg border border-border bg-surface-2 p-4">
               <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-ink-3">
                 {job.score?.scorer_impl === "scorer-deterministic"
-                  ? "Keyword score"
+                  ? "Keyword scored"
                   : "Match score"}
               </h3>
               {job.score?.scorer_impl === "scorer-deterministic" ? (
                 <p className="mb-2 text-[11.5px] text-ink-3" data-testid="keyword-score-note">
                   Scored on-device by keyword overlap — free and instant, lower quality than AI
-                  scoring. Switch modes in Settings → Scoring.
+                  scoring. Choose the mode in Settings → Scoring.
                 </p>
               ) : null}
               {job.score ? (
@@ -760,9 +759,10 @@ export function JobBoard() {
     } else if (ws !== "ALL") {
       list = list.filter((j) => j.work_style === ws);
     }
-    if (status === "SCORED") list = list.filter((j) => j.score_status === "scored");
-    if (status === "PENDING") list = list.filter((j) => j.score_status === "pending");
-    if (status === "FAILED") list = list.filter((j) => j.score_status === "failed");
+    if (status === "AI")
+      list = list.filter((j) => j.score?.scorer_impl === "scorer-llm");
+    if (status === "KEYWORD")
+      list = list.filter((j) => j.score?.scorer_impl === "scorer-deterministic");
     if (posted > 0) {
       list = list.filter((j) => {
         if (!j.posted_at) return false;
@@ -912,9 +912,15 @@ export function JobBoard() {
         <span className="mx-1 h-4 w-px bg-border-2" />
         <div className="flex items-center gap-1.5" id="filter-status">
           <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Status</span>
-          {(["ALL", "SCORED", "PENDING", "FAILED"] as StatusFilter[]).map((s) => (
+          {(
+            [
+              ["ALL", "All"],
+              ["AI", "AI Scored"],
+              ["KEYWORD", "Keyword scored"],
+            ] as [StatusFilter, string][]
+          ).map(([s, label]) => (
             <Chip key={s} active={status === s} onClick={() => setStatus(s)}>
-              {s[0] + s.slice(1).toLowerCase()}
+              {label}
             </Chip>
           ))}
         </div>
@@ -939,16 +945,17 @@ export function JobBoard() {
             ))}
           </div>
         </div>
-        {/* THE board search (FR-JB-13): titles, companies, JD bodies +
-            match-score texts; matches highlighted below. Right-aligned into
-            the filter row's free space (maintainer 2026-07-22 #4) — it only
-            wraps under the chips when the window is genuinely too narrow. */}
+        <span className="mx-1 h-4 w-px bg-border-2" />
+        {/* THE board search (FR-JB-13): a normal-width peer of the filter
+            groups, sitting right after SORT — never stretched to fill the row
+            (maintainer 2026-07-22). flex-wrap moves it to the next line only
+            when the window is genuinely too narrow. */}
         <SearchBox
           value={textSearch}
           onChange={setTextSearch}
           placeholder="Search"
           testid="board-text-search"
-          className="min-w-[220px] flex-1"
+          className="w-[200px]"
         />
       </div>
 

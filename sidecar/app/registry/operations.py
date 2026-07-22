@@ -335,11 +335,12 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
 def backfill_keyword_scores(db: Database) -> int:
-    """Keyword scores for every job with NO score at the current profile
-    version — runs when the user switches Settings → Scoring to keyword mode,
-    so the whole board is scored instantly (~0.5 ms/job, no LLM). Jobs that
-    already earned an AI score keep it (display precedence is LLM > keyword);
-    switching modes never deletes anything."""
+    """The keyword FLOOR: give every active job with NO score at the current
+    profile version an instant on-device keyword score (~0.5 ms/job, no LLM),
+    so no board row is ever stuck on "Pending" (maintainer 2026-07-22). Runs on
+    boot, after every scan, and on switching Settings → Scoring to keyword
+    mode. Jobs that already earned an AI score keep it (display precedence is
+    LLM > keyword); this never deletes or overwrites anything."""
     from sidecar.modules.scorer.deterministic import score_deterministic
 
     from .persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC, compose_job_text
