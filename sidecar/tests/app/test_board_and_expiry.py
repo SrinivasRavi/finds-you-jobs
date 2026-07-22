@@ -473,3 +473,77 @@ def test_hard_excludes_hide_existing_board_rows_and_restore(
     client.post("/api/settings", headers=AUTH, json={"hard_excludes": {}})
     board = client.get("/api/board", headers=AUTH).json()
     assert board["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# "New in last scan" (maintainer 2026-07-23): the scan records the job ids it
+# actually inserted in its result_ref; the board flags exactly those rows —
+# from the LATEST succeeded scan only — as isNew. Manual adds and rows from
+# older scans never carry the badge.
+# ---------------------------------------------------------------------------
+
+
+def test_persist_scan_records_new_job_ids(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    from sidecar.app.registry.persistence import persist_scan
+    from sidecar.modules.scraper.types import NormalizedJob, ScanResult
+
+    app, _client = app_client
+    result = ScanResult(
+        jobs=[
+            NormalizedJob(
+                title="X", canonical_url="https://ex.co/x", source_adapter="lever"
+            )
+        ]
+    )
+    ref = persist_scan(_db(app), result)
+    with _db(app).repos() as repos:
+        job = repos.jobs.get_by_canonical_url("https://ex.co/x")
+        assert job is not None
+        assert ref["scan"]["new_job_ids"] == [job.id]
+    # Dedup: re-scanning the same URL inserts nothing and records nothing.
+    ref2 = persist_scan(_db(app), result)
+    assert ref2["scan"]["persisted"] == 0
+    assert ref2["scan"]["new_job_ids"] == []
+
+
+def test_board_flags_only_last_scans_jobs_as_new(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        old = repos.jobs.create(canonical_url="u-old", title="Old", source_adapter="lever")
+        fresh = repos.jobs.create(canonical_url="u-new", title="Fresh", source_adapter="lever")
+        manual = repos.jobs.create(
+            canonical_url="u-manual", title="Manual", source_adapter="paste-url"
+        )
+        op1 = repos.operations.create("scan", {})
+        repos.operations.mark_succeeded(
+            op1.id, result_ref={"scan": {"persisted": 1, "new_job_ids": [old.id]}}
+        )
+        op2 = repos.operations.create("scan", {})
+        repos.operations.mark_succeeded(
+            op2.id, result_ref={"scan": {"persisted": 1, "new_job_ids": [fresh.id]}}
+        )
+        old_id, fresh_id, manual_id = old.id, fresh.id, manual.id
+
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    assert rows[fresh_id]["isNew"] is True  # last succeeded scan's insert
+    assert rows[old_id]["isNew"] is False  # an older scan's insert
+    assert rows[manual_id]["isNew"] is False  # manual add — never badged
+
+
+def test_board_is_new_absent_result_ref_is_graceful(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Scans recorded before new_job_ids existed (or a scan with no inserts)
+    simply produce no badges — never an error."""
+    app, client = app_client
+    with _db(app).repos() as repos:
+        job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="lever")
+        op = repos.operations.create("scan", {})
+        repos.operations.mark_succeeded(op.id, result_ref={"scan": {"persisted": 0}})
+        job_id = job.id
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    assert rows[job_id]["isNew"] is False

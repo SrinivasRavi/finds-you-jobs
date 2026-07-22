@@ -551,6 +551,22 @@ class JobScoresRepo:
         )
         return set(self._s.scalars(stmt))
 
+    def job_ids_missing_llm_score(
+        self, job_ids: list[str], profile_version: int
+    ) -> list[str]:
+        """AI-score cache MISSES at one version, input order preserved — the
+        set the re-score preview counts AND the re-score run enqueues (one
+        query for both, so the prompt's N always equals what actually runs)."""
+        if not job_ids:
+            return []
+        stmt = select(JobScore.job_id).where(
+            JobScore.job_id.in_(job_ids),
+            JobScore.profile_version == profile_version,
+            JobScore.scorer_impl == "scorer-llm",
+        )
+        hits = set(self._s.scalars(stmt))
+        return [job_id for job_id in job_ids if job_id not in hits]
+
     def create(self, **fields: Any) -> JobScore:
         score = JobScore(**fields)
         self._s.add(score)
@@ -735,6 +751,11 @@ class ProfileRepo:
             self._s.add(profile)
             self._s.flush()
             return profile
+        if current.resume_markdown == resume_markdown:
+            # Unchanged content is a no-op version-wise: scores are cached per
+            # version, so a phantom bump would mark every score stale and
+            # trigger a pointless "Re-score N jobs?" prompt (2026-07-23).
+            return current
         current.resume_markdown = resume_markdown
         current.version += 1
         return current

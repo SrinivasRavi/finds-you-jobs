@@ -99,3 +99,20 @@ test("the board search filters server-side and highlights matches (FR-JB-13)", a
   await page.getByTestId("board-text-search-clear").click();
   await expect(rows).toHaveCount(initial, { timeout: 10_000 });
 });
+
+test("rows inserted by the latest scan carry the NEW badge", async ({ page }) => {
+  // The backend stamps isNew from the last succeeded scan's recorded
+  // new_job_ids (covered end-to-end by pytest: test_board_and_expiry.py);
+  // e2e can't run a real network scan deterministically, so patch the live
+  // board response to flag one row and verify the UI renders the badge.
+  await page.route("**/api/board*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { jobs?: { isNew?: boolean }[] };
+    if (body.jobs?.length) body.jobs[0].isNew = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/jobs");
+  await expect(page.getByTestId("new-badge").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("new-badge").first()).toHaveText(/new/i);
+  await page.screenshot({ path: `${DIR}/board-new-badge.png`, fullPage: true });
+});

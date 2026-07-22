@@ -38,9 +38,11 @@ import type {
   LinkedInSessionState,
   OperationKind,
   PromptSetting,
+  RescorePreview,
   Settings as SettingsT,
 } from "../api/types";
 import { InfoDot } from "../shell/InfoDot";
+import { RescoreAiDialog } from "../shell/RescoreAiDialog";
 import { type ThemeMode, useThemeMode } from "../shell/theme";
 
 const NETWORKING_WARNING =
@@ -1226,11 +1228,31 @@ export function Settings() {
   const update = useUpdateSettings();
   const [themeMode, , setThemeMode] = useThemeMode();
   const [ack, setAck] = useState(false);
+  // Switching Scoring keyword → AI: the server never spends on its own, so
+  // preview the cache misses and ask before any token goes out (maintainer
+  // 2026-07-23). Jobs already AI-scored at the current resume are skipped.
+  const [rescoreAsk, setRescoreAsk] = useState<RescorePreview | null>(null);
 
   if (!settings) return null;
 
   function patch(p: Partial<SettingsT>) {
     update.mutate(p);
+  }
+
+  function pickScoringMode(mode: SettingsT["scoring_mode"]) {
+    const was = settings?.scoring_mode;
+    update.mutate(
+      { scoring_mode: mode },
+      {
+        onSuccess: () => {
+          if (mode === "llm" && was === "keyword") {
+            void api.rescorePreview().then((preview) => {
+              if (preview.to_score > 0) setRescoreAsk(preview);
+            });
+          }
+        },
+      },
+    );
   }
 
   return (
@@ -1347,7 +1369,7 @@ export function Settings() {
                       type="button"
                       data-testid={`scoring-mode-${mode}`}
                       data-on={settings.scoring_mode === mode}
-                      onClick={() => patch({ scoring_mode: mode })}
+                      onClick={() => pickScoringMode(mode)}
                       className={
                         "rounded-md border px-3 py-2 text-left text-[12.5px] " +
                         (settings.scoring_mode === mode
@@ -1637,6 +1659,13 @@ export function Settings() {
           </Section>
         </div>
       </main>
+      {rescoreAsk !== null ? (
+        <RescoreAiDialog
+          preview={rescoreAsk}
+          reason="mode-switch"
+          onClose={() => setRescoreAsk(null)}
+        />
+      ) : null}
     </>
   );
 }

@@ -93,8 +93,18 @@ export interface Job {
   score: ScoreResult | null;
   /** Score lifecycle — resolves a null score to `pending` vs `failed` (US-JB-06). */
   score_status: ScoreStatus;
+  /** True when this row was inserted by the LATEST succeeded scan — the "NEW" badge. */
+  is_new: boolean;
   saved: boolean;
   board_state: BoardState;
+}
+
+/** GET /api/jobs/rescore/preview — the AI re-score consent numbers: cache
+ *  misses a confirmed run would enqueue vs jobs already AI-scored at the
+ *  current resume version (never re-spent). */
+export interface RescorePreview {
+  to_score: number;
+  cached: number;
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */

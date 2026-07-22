@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import Database
+from ..registry.persistence import scoring_mode
 
 # A score op already attempted at the current version: queued/running (in
 # flight) or failed (a failure is NOT auto-retried — it fell back to a grey
@@ -53,7 +54,7 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
 
         prefs = repos.preferences.get_or_create()
         thresholds = prefs.thresholds or {}
-        if str(thresholds.get("scoring_mode") or "llm") == "keyword":
+        if scoring_mode(prefs) == "keyword":
             return []
         if limit is None:
             raw = thresholds.get("score_new_batch", 0)

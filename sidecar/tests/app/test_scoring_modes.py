@@ -261,6 +261,122 @@ def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) 
         assert r.status_code == 200 and r.json()["queued"] == 1
 
 
+# ---------------------------------------------------------------------------
+# Re-score consent flow (maintainer 2026-07-23): a score is a cache row keyed
+# by (job, profile_version, scorer_impl). Every AI re-score entry point fills
+# cache MISSES only, and /api/jobs/rescore/preview counts the exact miss set
+# the run would enqueue — the prompt's N always equals what actually runs.
+# ---------------------------------------------------------------------------
+
+
+def _make_app(tmp_path: Any) -> Any:
+    return create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+
+
+def _score_ops_for(db: Database, job_id: str) -> int:
+    """How many `score` operation rows exist for one job (any state)."""
+    with db.repos() as repos:
+        ops = repos.operations.list_by_kind_states(
+            "score", {"queued", "running", "succeeded", "failed", "cancelled"}
+        )
+        return sum(
+            1
+            for op in ops
+            if isinstance(op.input_snapshot, dict)
+            and op.input_snapshot.get("job_id") == job_id
+        )
+
+
+def test_rescore_preview_and_run_fill_only_missing_ai_scores(tmp_path) -> None:
+    """Two jobs, one already AI-scored at the current version: the preview
+    reports 1 to score / 1 cached, and a confirmed run enqueues exactly the
+    missing one — a re-score never re-spends tokens on a cache hit."""
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        db = app.state.db
+        a = _seed(db, url="https://ex.co/j/prev-a")
+        with db.repos() as repos:
+            b = repos.jobs.create(
+                canonical_url="https://ex.co/j/prev-b", title="Data Engineer",
+                company="Acme", location="Remote", description="Python SQL pipelines.",
+                source_adapter="greenhouse",
+            ).id
+        score_entrypoint(_ctx(db, a, engine=_OkEngine()))  # a: AI score, current version
+
+        prev = client.get("/api/jobs/rescore/preview", headers=AUTH).json()
+        assert prev == {"toScore": 1, "cached": 1}
+
+        r = client.post("/api/jobs/rescore", headers=AUTH)
+        assert r.status_code == 200
+        assert r.json() == {"queued": 1, "skipped": 1}
+        # a's only score op is the _ctx one above — the re-score did NOT
+        # enqueue a second op for the cache hit; b got its op.
+        assert _score_ops_for(db, a) == 1
+        assert _score_ops_for(db, b) == 1
+
+
+def test_settings_switch_to_llm_enqueues_nothing_server_side(tmp_path) -> None:
+    """Switching Scoring keyword→AI is a pure settings write — the server
+    never spends tokens on its own; the frontend previews and asks first."""
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        db = app.state.db
+        _seed(db, url="https://ex.co/j/switch-a")
+        client.post(
+            "/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "keyword"}}
+        )
+        client.post(
+            "/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "llm"}}
+        )
+        with db.repos() as repos:
+            assert repos.operations.score_states_by_job() == {}
+
+
+def test_resume_upsert_identical_content_keeps_version(migrated_db: Database) -> None:
+    """Saving the resume unchanged bumps nothing — no new version, so no
+    phantom 'Re-score N jobs?' prompt after a save that changed nothing."""
+    db = migrated_db
+    with db.repos() as repos:
+        v1 = repos.profile.upsert(RESUME).version
+        assert repos.profile.upsert(RESUME).version == v1
+        assert repos.profile.upsert(RESUME + "\nGo.").version == v1 + 1
+
+
+def test_restore_from_trash_reenqueues_by_mode(tmp_path) -> None:
+    """Restore keeps a good score and re-scores per the CURRENT mode: keyword
+    mode with a current-version keyword row enqueues nothing; AI mode with only
+    a keyword floor enqueues the AI upgrade (the retry path, US-JB-06)."""
+    app = _make_app(tmp_path)
+    with TestClient(app) as client:
+        db = app.state.db
+        job_id = _seed(db, url="https://ex.co/j/restore-a")
+        with db.repos() as repos:
+            url = repos.jobs.get(job_id).canonical_url  # type: ignore[union-attr]
+        # Keyword mode: the switch backfills the floor at the current version.
+        client.post(
+            "/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "keyword"}}
+        )
+        client.patch(f"/api/jobs/{job_id}", headers=AUTH, json={"feed_state": "removed"})
+        client.post(
+            "/api/jobs", headers=AUTH,
+            json={"canonical_url": url, "title": "Backend Engineer"},
+        )
+        assert _score_ops_for(db, job_id) == 0  # keyword row is current — no op
+
+        # AI mode: the keyword floor is only a floor — restore enqueues the
+        # AI upgrade for a job with no AI score at the current version.
+        client.post("/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "llm"}})
+        client.patch(f"/api/jobs/{job_id}", headers=AUTH, json={"feed_state": "removed"})
+        client.post(
+            "/api/jobs", headers=AUTH,
+            json={"canonical_url": url, "title": "Backend Engineer"},
+        )
+        assert _score_ops_for(db, job_id) == 1
+
+
 def test_api_serves_llm_over_keyword_and_settings_switch_backfills(tmp_path) -> None:
     """Through the real app: scorer_impl rides on the DTO, display precedence
     is LLM > keyword, and POSTing scoring_mode=keyword backfills the board in

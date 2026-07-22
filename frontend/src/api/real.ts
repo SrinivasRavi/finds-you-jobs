@@ -61,6 +61,7 @@ import type {
   OnboardingPrefsInput,
   OperationKind,
   Profile,
+  RescorePreview,
   Settings,
   Warmth,
 } from "./types";
@@ -84,6 +85,7 @@ type ReferralCandidatesDTO = components["schemas"]["ReferralCandidatesDTO"];
 type QuotaDTO = components["schemas"]["QuotaDTO"];
 type LinkedInSessionDTO = components["schemas"]["LinkedInSessionDTO"];
 type ApplyRunDTO = components["schemas"]["ApplyRunDTO"];
+type RescorePreviewDTO = components["schemas"]["RescorePreviewDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
@@ -160,6 +162,7 @@ function toJob(d: JobDTO, saved: boolean): Job {
         }
       : null,
     score_status: (d.scoreStatus as Job["score_status"] | undefined) ?? (d.score ? "scored" : "pending"),
+    is_new: d.isNew ?? false,
     saved,
     board_state:
       d.feed_state === "removed"
@@ -190,6 +193,7 @@ function placeholderJob(jobId: string): JobDTO {
     workStyle: "",
     score: null,
     scoreStatus: "pending",
+    isNew: false,
   };
 }
 
@@ -725,9 +729,18 @@ export class RealApi {
     return this.getProfile();
   }
 
-  /** Re-score every active job against the current master resume (the AI-mode
-   *  "Re-score all" confirm after a resume edit). Keyword mode re-scores
-   *  server-side already at save time; this drives the AI path. */
+  /** The AI re-score consent numbers behind every "Re-score with AI?" prompt:
+   *  cache misses at the current resume version (what a confirmed run
+   *  enqueues) vs already-AI-scored jobs (skipped, never re-spent). */
+  async rescorePreview(): Promise<RescorePreview> {
+    const d = await this.req<RescorePreviewDTO>("/api/jobs/rescore/preview");
+    return { to_score: d.toScore, cached: d.cached };
+  }
+
+  /** Re-score the active board against the current master resume (the AI-mode
+   *  confirm after a resume edit or a switch to AI scoring). The server fills
+   *  cache MISSES only — jobs already AI-scored at the current version are
+   *  skipped. Keyword mode re-scores server-side already at save time. */
   async rescoreBoard(): Promise<void> {
     await this.json("POST", "/api/jobs/rescore", {});
   }

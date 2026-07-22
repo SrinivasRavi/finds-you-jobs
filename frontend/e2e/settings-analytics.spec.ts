@@ -52,7 +52,18 @@ test("settings renders every restored section", async ({ page }) => {
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/settings-scoring-keyword.png`, fullPage: true });
+  // Switching back to AI asks before spending (2026-07-23): keyword→AI always
+  // fetches the re-score preview; the consent dialog opens only when some job
+  // misses an AI score at the current resume version. Decline either way —
+  // this test only checks rendering (the flow test below covers the dialog).
+  const preview = page.waitForResponse((r) => r.url().includes("/api/jobs/rescore/preview"));
   await page.getByTestId("scoring-mode-llm").click();
+  const previewBody = (await (await preview).json()) as { toScore: number };
+  if (previewBody.toScore > 0) {
+    await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+    await page.getByTestId("confirm-cancel").click();
+    await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
+  }
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
   // Parallel-AI-calls control (2026-07-17): user-tunable 2-20 or Unlimited.
   await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
@@ -65,6 +76,40 @@ test("settings renders every restored section", async ({ page }) => {
   }
   await expect(page.getByTestId("cli-provider-antigravity-cli")).toContainText("Experimental");
   await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
+});
+
+test("switching scoring to AI asks consent, counting only cache misses", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  // Enter keyword mode through the UI (the app's own settings merge), then
+  // seed a job over the API — in keyword mode it earns a free keyword score
+  // only, so it is a guaranteed AI-cache MISS at the current resume version.
+  await page.goto("/settings");
+  await page.getByTestId("scoring-mode-keyword").click();
+  await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
+  await request.post(`${base}/api/jobs`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      canonical_url: "https://example.com/e2e-rescore-miss",
+      title: "Rescore Consent Probe",
+      company: "Acme",
+      location: "Remote",
+      description: "Deterministic keyword-scored row.",
+      source_adapter: "paste-url",
+    },
+  });
+  // keyword → AI: the consent dialog opens with the server's miss count and
+  // never re-scores silently.
+  await page.getByTestId("scoring-mode-llm").click();
+  await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+  await expect(page.getByTestId("confirm-dialog")).toContainText("AI");
+  await page.screenshot({ path: `${DIR}/settings-rescore-consent.png`, fullPage: true });
+  // Decline: no tokens spent; the mode itself stays AI (already saved).
+  await page.getByTestId("confirm-cancel").click();
+  await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
+  await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
 });
 
 test("linkedin session is nested inside referral outreach", async ({ page }) => {

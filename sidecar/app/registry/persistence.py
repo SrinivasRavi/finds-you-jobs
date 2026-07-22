@@ -32,6 +32,13 @@ SCORER_IMPL = "scorer-llm"
 # never confusable.
 SCORER_IMPL_DETERMINISTIC = "scorer-deterministic"
 
+
+def scoring_mode(prefs: Any) -> str:
+    """The Settings → Scoring mode: `"llm"` (default) or `"keyword"`. The ONE
+    reader of `thresholds["scoring_mode"]` — every call site resolves the mode
+    through here so the default and the key can never drift apart."""
+    return str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "llm")
+
 # Trash TTL — a removed job is tombstoned this many days after it entered Trash
 # (FR-JB-12 / FR-SYS-04: "permanently removed after 7 days").
 TRASH_TTL_DAYS = 7
@@ -276,6 +283,7 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
     """Persist scanned jobs (dedup + tombstone suppression) and build the
     per-source `result_ref`. Returns the result_ref payload."""
     persisted = deduped = tombstoned = 0
+    new_job_ids: list[str] = []
     if db is not None:
         with db.repos() as repos:
             for job in result.jobs:
@@ -285,7 +293,7 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
                 if repos.jobs.get_by_canonical_url(job.canonical_url) is not None:
                     deduped += 1  # first-seen wins (FR-SYS-01)
                     continue
-                repos.jobs.create(**_job_columns(job))
+                new_job_ids.append(repos.jobs.create(**_job_columns(job)).id)
                 persisted += 1
 
     fetched = sum(r.fetched for r in result.per_source.values())
@@ -308,6 +316,9 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
             "persisted": persisted,
             "deduped": deduped,
             "tombstoned": tombstoned,
+            # The ids this scan actually inserted — the board flags the latest
+            # succeeded scan's set as "NEW" (maintainer 2026-07-23).
+            "new_job_ids": new_job_ids,
             "sources": len(result.per_source),
             "errors": sum(len(r.errors) for r in result.per_source.values()),
         },

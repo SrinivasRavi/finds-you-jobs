@@ -30,11 +30,17 @@ import {
   useWatchlist,
 } from "../api/queries";
 import { ApiError } from "../api/real";
-import { JobTombstonedError, type BoardPage, type Job, type JobDraft } from "../api/types";
+import {
+  JobTombstonedError,
+  type BoardPage,
+  type Job,
+  type JobDraft,
+  type RescorePreview,
+} from "../api/types";
 import { Icon } from "../shell/icons";
 import { Chip, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
-import { ConfirmDialog } from "../shell/ConfirmDialog";
+import { RescoreAiDialog } from "../shell/RescoreAiDialog";
 import { Markdown } from "../shell/Markdown";
 import { ResumeModal } from "../popups/ResumeModal";
 import {
@@ -160,6 +166,15 @@ function JobRow({
           <span className="truncate text-[13px] font-semibold text-ink">
             {highlight(job.title, q)}
           </span>
+          {/* Inserted by the latest succeeded scan (isNew on the DTO). */}
+          {job.is_new ? (
+            <span
+              data-testid="new-badge"
+              className="inline-flex h-[16px] shrink-0 items-center rounded-full bg-accent-wash px-1.5 text-[9px] font-semibold uppercase tracking-wider text-accent-ink"
+            >
+              New
+            </span>
+          ) : null}
         </div>
         {/* US-JB-01 row: company · location · work-style */}
         <div className="truncate text-[11.5px] text-ink-2">
@@ -673,10 +688,9 @@ export function JobBoard() {
   const [showMaster, setShowMaster] = useState(false);
   const [showPrefs, setShowPrefs] = useState(false);
   // After a master-resume edit in AI mode, ask before spending tokens to
-  // re-score the whole board (maintainer 2026-07-23). Holds the job count to
-  // re-score, or null when hidden.
-  const [rescoreAsk, setRescoreAsk] = useState<number | null>(null);
-  const [rescoring, setRescoring] = useState(false);
+  // re-score the board (maintainer 2026-07-23). Holds the server's preview of
+  // the cache misses a confirmed run would enqueue, or null when hidden.
+  const [rescoreAsk, setRescoreAsk] = useState<RescorePreview | null>(null);
   const qc = useQueryClient();
   const dragging = useRef(false);
 
@@ -1023,40 +1037,30 @@ export function JobBoard() {
           profile={profile}
           onClose={() => setShowMaster(false)}
           onSaveMaster={(md: string) => {
-            // Save the resume; the board's scores are now against an older
-            // resume version. Keyword mode re-scores server-side for free at
-            // save; AI mode costs tokens, so ask first (declining keeps the
-            // prior scores visible — the board shows the latest version).
-            void updateProfile.mutateAsync(md).then(() => {
-              const n = meta?.total ?? boardJobs.length;
-              if (settings?.scoring_mode === "llm" && n > 0) {
-                setShowMaster(false); // close the editor so the prompt stands alone
-                setRescoreAsk(n);
-              } else {
-                invalidateFeed(qc); // keyword mode already re-scored
+            // Save the resume; scores are cached per resume version. Keyword
+            // mode re-scores server-side for free at save; AI mode costs
+            // tokens, so preview the cache misses and ask first (declining
+            // keeps the prior scores visible — the board shows the latest
+            // version). An unchanged save bumps nothing and asks nothing.
+            void updateProfile.mutateAsync(md).then(async () => {
+              if (settings?.scoring_mode === "llm") {
+                const preview = await api.rescorePreview();
+                if (preview.to_score > 0) {
+                  setShowMaster(false); // close the editor so the prompt stands alone
+                  setRescoreAsk(preview);
+                  return;
+                }
               }
+              invalidateFeed(qc); // keyword mode already re-scored / nothing to score
             });
           }}
         />
       ) : null}
       {rescoreAsk !== null ? (
-        <ConfirmDialog
-          title="Re-score jobs with AI?"
-          body={`Your resume changed. Re-score all ${rescoreAsk} job${rescoreAsk === 1 ? "" : "s"} against it with AI scoring? This uses your LLM key — one call per job. Or keep the current scores; you can re-score anytime by editing your resume again.`}
-          confirmLabel={rescoring ? "Re-scoring…" : "Re-score all"}
-          cancelLabel="Keep current scores"
-          busy={rescoring}
-          onConfirm={() => {
-            setRescoring(true);
-            void api
-              .rescoreBoard()
-              .then(() => invalidateFeed(qc))
-              .finally(() => {
-                setRescoring(false);
-                setRescoreAsk(null);
-              });
-          }}
-          onCancel={() => setRescoreAsk(null)}
+        <RescoreAiDialog
+          preview={rescoreAsk}
+          reason="resume-edit"
+          onClose={() => setRescoreAsk(null)}
         />
       ) : null}
       {showPrefs ? <FinderPrefsModal onClose={() => setShowPrefs(false)} /> : null}

@@ -224,6 +224,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/rescore/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rescore Preview
+         * @description The consent numbers behind every "Re-score with AI?" prompt (resume
+         *     edit, scoring-mode switch). Counts only — never enqueues, never spends.
+         *     A grey keyword score is not "cached" here; only a real AI score at the
+         *     current resume version is.
+         */
+        get: operations["rescore_preview_api_jobs_rescore_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/rescore": {
         parameters: {
             query?: never;
@@ -235,10 +258,12 @@ export interface paths {
         put?: never;
         /**
          * Rescore Board
-         * @description Re-score every active job against the CURRENT master resume — the action
-         *     behind the "Re-score all N jobs with AI?" prompt after a resume edit
-         *     (maintainer 2026-07-23). Keyword mode re-scores inline (free); AI mode
-         *     enqueues one LLM score op per job at the current version. Returns the count.
+         * @description Re-score the active board against the CURRENT master resume — the action
+         *     behind every "Re-score with AI?" confirm (resume edit, scoring-mode
+         *     switch). Keyword mode refreshes the whole board inline (free). AI mode
+         *     enqueues one LLM score op per cache MISS only — a job already AI-scored at
+         *     the current resume version is never re-spent (maintainer 2026-07-23) — so
+         *     the call is idempotent and safe from any entry point.
          */
         post: operations["rescore_board_api_jobs_rescore_post"];
         delete?: never;
@@ -2161,6 +2186,11 @@ export interface components {
              * @default pending
              */
             scoreStatus: string;
+            /**
+             * Isnew
+             * @default false
+             */
+            isNew: boolean;
         };
         /**
          * JobPreviewDTO
@@ -2654,6 +2684,20 @@ export interface components {
              * @default false
              */
             confirm_url_failed: boolean;
+        };
+        /**
+         * RescorePreviewDTO
+         * @description GET /api/jobs/rescore/preview — the AI re-score consent numbers: how
+         *     many active jobs miss an AI score at the current resume version (what a
+         *     confirmed run would enqueue) vs already carry one (never re-spent). Both
+         *     come from the same miss query the run uses, so the prompt's N always
+         *     equals what actually runs.
+         */
+        RescorePreviewDTO: {
+            /** Toscore */
+            toScore: number;
+            /** Cached */
+            cached: number;
         };
         /** ScheduleDTO */
         ScheduleDTO: {
@@ -3180,6 +3224,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rescore_preview_api_jobs_rescore_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RescorePreviewDTO"];
                 };
             };
         };
