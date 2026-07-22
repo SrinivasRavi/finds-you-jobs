@@ -34,9 +34,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14 # Apple Silicon, native
+          # Runner-image lifecycle matters here: macos-13 (the old Intel
+          # image) was retired Dec 2025 — a job pinned to it queues for 24h
+          # and is auto-cancelled (observed on the first release run).
+          # macos-15-intel is GitHub's designated Intel label, supported
+          # until Fall 2027, after which x86_64 macOS runners end entirely
+          # and the Intel .dmg needs a new plan (Rosetta cross-build, or
+          # dropping Intel). macos-14 began deprecation 2026-07, hence
+          # macos-15 for the arm64 leg.
+          - os: macos-15 # Apple Silicon, native
             label: macos-arm64
-          - os: macos-13 # Intel, native
+          - os: macos-15-intel # Intel, native
             label: macos-x64
           - os: windows-latest
             label: windows-x64
