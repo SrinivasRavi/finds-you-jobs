@@ -47,15 +47,15 @@ you from your own LinkedIn account.★
 
 **Download the installer for your OS** — no terminal, no build steps:
 
-### [⬇ Download finds-you-jobs v0.5.1-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.1-beta)
+### [⬇ Download finds-you-jobs v0.5.2-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.2-beta)
 
 | Your computer | Download this file | On first launch |
 |---|---|---|
-| **Windows** 10/11 | `finds-you-jobs_0.5.1-beta_x64-setup.exe` | SmartScreen warns because the beta isn't code-signed yet: click **More info → Run anyway** |
-| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.1-beta_aarch64.dmg` | Gatekeeper blocks unsigned apps: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** |
-| **Mac** (Intel) | `finds-you-jobs_0.5.1-beta_x64.dmg` | same as above |
-| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.1-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
-| **Linux** (any distro, portable) | `finds-you-jobs_0.5.1-beta_amd64.AppImage` | `chmod +x` the file, then run it |
+| **Windows** 10/11 | `finds-you-jobs_0.5.2-beta_x64-setup.exe` | SmartScreen warns because the beta isn't code-signed yet: click **More info → Run anyway** |
+| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.2-beta_aarch64.dmg` | Gatekeeper blocks unsigned apps: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** |
+| **Mac** (Intel) | `finds-you-jobs_0.5.2-beta_x64.dmg` | same as above |
+| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.2-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
+| **Linux** (any distro, portable) | `finds-you-jobs_0.5.2-beta_amd64.AppImage` | `chmod +x` the file, then run it |
 
 The warnings exist only because the installers aren't code-signed yet — signing
 is paid for and in progress (waiting on Apple/Microsoft identity review, not on
@@ -99,7 +99,7 @@ cd finds-you-jobs && pnpm dev
 
 ```bash
 pnpm dev                                             # start the app
-git fetch --tags && git checkout v0.5.1 && pnpm run boot   # update to the latest release
+git fetch --tags && git checkout v0.5.2 && pnpm run boot   # update to the latest release
 FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev               # start with a separate, fresh profile
 ```
 
@@ -139,7 +139,7 @@ uses `;` between commands, not `&&`):
 
 ```powershell
 pnpm dev                                              # start the app
-git fetch --tags; git checkout v0.5.1; pnpm run boot  # update to the latest release
+git fetch --tags; git checkout v0.5.2; pnpm run boot  # update to the latest release
 $env:FYJ_DATA_DIR="$HOME\fyj-test"; pnpm dev           # start with a separate, fresh profile
 ```
 
@@ -168,7 +168,7 @@ cd finds-you-jobs && pnpm dev
 
 ```bash
 pnpm dev                                             # start the app
-git fetch --tags && git checkout v0.5.1 && pnpm run boot   # update to the latest release
+git fetch --tags && git checkout v0.5.2 && pnpm run boot   # update to the latest release
 FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev               # start with a separate, fresh profile
 ```
 

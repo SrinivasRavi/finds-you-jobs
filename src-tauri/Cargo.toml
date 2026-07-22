@@ -1,6 +1,6 @@
 [package]
 name = "finds-you-jobs"
-version = "0.5.1"
+version = "0.5.2"
 description = "finds-you-jobs desktop shell"
 authors = ["Srinivas Ravi"]
 license = "AGPL-3.0-only"
