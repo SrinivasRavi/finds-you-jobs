@@ -43,8 +43,10 @@ class _ProbeDeadFetcher(_ProbeOkFetcher):
 @pytest.fixture(autouse=True)
 def _offline_watch_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     """No test in this file may hit the network: the watch liveness probe uses
-    a fake fetcher unless a test swaps in its own."""
+    a fake fetcher unless a test swaps in its own. The resolved-board memory
+    is cleared so no test sees another's cache."""
     monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
+    discovery_api._GUESS_CACHE.clear()
 
 
 @pytest.fixture
@@ -599,6 +601,45 @@ def test_watch_company_domain_url_guesses_board_when_no_covering_row(
     assert body["added"] is True
     roster = client.get("/api/discovery/watchlist", headers=AUTH).json()["entries"]
     assert any(e["url"] == "https://boards.greenhouse.io/coupang" for e in roster)
+
+
+def test_rewatch_uses_remembered_board_without_reprobing(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unwatch deletes the roster row, not the knowledge: after any successful
+    resolution the board is remembered, so watch → unwatch → rewatch is one
+    fast lookup — no live probe (maintainer 2026-07-22 #3, replacing the
+    optimistic-UI approach). Proven by making the prober DEAD for the rewatch."""
+    app, client = app_client
+    with app.state.db.repos() as repos:
+        prefs = repos.preferences.get_or_create()
+        portals = dict(prefs.portals_config or {})
+        portals["sources"] = [
+            {"url": "https://boards.greenhouse.io/coupang", "company": "Coupang"},
+        ]
+        repos.preferences.update(portals_config=portals)
+        job = repos.jobs.create(
+            canonical_url="https://www.coupang.jobs/en/jobs/12345/senior-staff",
+            title="Senior Staff Backend Engineer", company="Coupang",
+            location="Bengaluru", description="", source_adapter="greenhouse",
+        )
+    first = client.post(
+        "/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id}
+    ).json()
+    assert first["source_url"] == "https://boards.greenhouse.io/coupang"
+    removed = client.delete(
+        "/api/discovery/watchlist?url=https://boards.greenhouse.io/coupang",
+        headers=AUTH,
+    ).json()
+    assert removed == {"removed": True}
+    # Rewatch with every probe failing: only the remembered board can satisfy it.
+    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeDeadFetcher)
+    again = client.post(
+        "/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id}
+    )
+    assert again.status_code == 200
+    assert again.json()["source_url"] == "https://boards.greenhouse.io/coupang"
+    assert again.json()["added"] is True
 
 
 def test_watch_search_source_job_explains_no_board(

@@ -503,11 +503,8 @@ function JobDetail({
                   onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
                 });
               } else {
-                // company rides along so the optimistic roster entry (matched
-                // by company slug) flips the toggle instantly — the server
-                // still resolves the real board root.
                 watchCompany.mutate(
-                  { job_id: job.id, company: job.company },
+                  { job_id: job.id },
                   {
                     onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
                   },
@@ -534,7 +531,16 @@ function JobDetail({
                 }
               />
             </span>
-            {watchError ? "Watch failed — retry" : "Watch company"}
+            {/* Honest in-flight label (no optimistic pre-flip): almost every
+                toggle settles in one fast round-trip — the label only lingers
+                on a first-ever board probe. */}
+            {watchCompany.isPending
+              ? "Watching…"
+              : unwatchCompany.isPending
+                ? "Removing…"
+                : watchError
+                  ? "Watch failed — retry"
+                  : "Watch company"}
           </button>
         )}
         <a
@@ -899,9 +905,9 @@ export function JobBoard() {
         <SearchBox
           value={textSearch}
           onChange={setTextSearch}
-          placeholder="Search jobs — title, company, JD…"
+          placeholder="Search"
           testid="board-text-search"
-          className="ml-auto w-[230px]"
+          className="ml-auto w-[150px]"
         />
       </div>
 
@@ -1358,11 +1364,11 @@ function FinderPrefsModal({
         <p className="-mt-2 text-[12px] text-ink-3">
           Controls the background scraper that fills your Job Board. Every match is scored against
           your master resume when it lands. Changes here are auto saved — “Rescan now” applies
-          them to a fresh scan.
+          them to a fresh scan. In any chip field, press Enter or comma to add.
         </p>
         <PrefChipInput
           label="Roles to search"
-          hint="Titles the scraper queries for. Press Enter or comma to add."
+          hint="Titles the scraper queries for."
           items={roles}
           onAdd={(v) => setRoles((r) => (r.includes(v) ? r : [...r, v]))}
           onRemove={(v) => setRoles((r) => r.filter((x) => x !== v))}

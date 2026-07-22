@@ -293,23 +293,27 @@ async def watch_company(
     resolved = adapters.resolve(entry)
     if resolved is None and job_adapter:
         # Company-domain posting URL (no derivable board root) — the board
-        # that found this job is already a sources row; watch THAT.
+        # that found this job is already a sources row; watch THAT. Every
+        # resolution is remembered in _GUESS_CACHE: unwatch deletes the roster
+        # row but not the KNOWLEDGE, so a rewatch is one fast lookup instead
+        # of a live probe (maintainer 2026-07-22 #3 — real speed, no
+        # optimistic-UI faking).
+        cache_key = f"{job_adapter}:{_slugish(company)}"
         covering = _find_source_by_company(sources, company, job_adapter)
         if covering is not None:
             source_url = str(covering["url"])
             resolved = adapters.resolve(SourceEntry(url=source_url))
+            if resolved is not None:
+                _GUESS_CACHE[cache_key] = source_url
         else:
-            # No covering row (e.g. it was just unwatched): guess the
-            # tenant board from the company name and keep the first
-            # candidate that actually opens. Confirmed guesses are cached
-            # so a rewatch never re-probes.
-            cache_key = f"{job_adapter}:{_slugish(company)}"
             cached = _GUESS_CACHE.get(cache_key)
             if cached is not None:
                 cand_resolved = adapters.resolve(SourceEntry(url=cached))
                 if cand_resolved is not None:
                     source_url, resolved = cached, cand_resolved
             if resolved is None:
+                # Nothing remembered: guess the tenant board from the company
+                # name and keep the first candidate that actually opens.
                 for cand in _guess_board_urls(job_adapter, company):
                     try:
                         await asyncio.to_thread(
