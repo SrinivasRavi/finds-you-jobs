@@ -534,13 +534,15 @@ function JobDetail({
             {/* Honest in-flight label (no optimistic pre-flip): almost every
                 toggle settles in one fast round-trip — the label only lingers
                 on a first-ever board probe. */}
+            {/* "Show more jobs from this company" — outcome-first lingo,
+                matching the roster's heading (maintainer 2026-07-22). */}
             {watchCompany.isPending
-              ? "Watching…"
+              ? "Adding…"
               : unwatchCompany.isPending
                 ? "Removing…"
                 : watchError
-                  ? "Watch failed — retry"
-                  : "Watch company"}
+                  ? "Failed — retry"
+                  : "Show more jobs from this company"}
           </button>
         )}
         <a
@@ -907,7 +909,7 @@ export function JobBoard() {
           onChange={setTextSearch}
           placeholder="Search"
           testid="board-text-search"
-          className="ml-auto w-[150px]"
+          className="min-w-[220px] flex-1"
         />
       </div>
 
@@ -1164,10 +1166,12 @@ function TrackedCompanies() {
   return (
     <section className="space-y-2" data-testid="fp-tracked-companies">
       <header>
-        <h3 className="text-[13px] font-semibold text-ink">Tracked companies</h3>
+        <h3 className="text-[13px] font-semibold text-ink">
+          Show more jobs from these companies
+        </h3>
         <p className="text-[11.5px] text-ink-3">
           Boards every scan covers. Add one by pasting a careers page on a supported ATS, or use
-          “Watch company” on any job.
+          “Show more jobs from this company” on any job.
         </p>
       </header>
       <ul className="space-y-1">
@@ -1574,11 +1578,11 @@ function AddByUrlModal({
           }}
         >
           {/* One modal, one job (maintainer 2026-07-22): the "watch a whole
-              board" path moved out — that's "Watch company" on any job row, or
-              Job finder preferences → Tracked companies. */}
+              board" path moved out — that's "Show more jobs from this company"
+              on any job row, or the roster of the same name in preferences. */}
           <label className="text-[12.5px] text-ink-2">
-            Paste a job posting URL. (To follow a whole company board, use “Watch company” on a
-            job, or Job finder preferences → Tracked companies.)
+            Paste a job posting URL. (To follow a whole company board, use “Show more jobs from
+            this company” on a job, or the same list in Job finder preferences.)
           </label>
           {tombstoned ? (
             <p
