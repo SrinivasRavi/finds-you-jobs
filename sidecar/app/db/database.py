@@ -90,6 +90,16 @@ class Database:
     def from_env(cls, data_dir: str | os.PathLike[str] | None = None) -> Database:
         return cls(resolve_db_url(data_dir))
 
+    @property
+    def data_dir(self) -> Path:
+        """The directory holding this DB file — where co-located blobs (uploaded
+        documents) live. Derived from the URL, not the env, so it always matches
+        the DB even when the DB was built with an explicit path (tests)."""
+        prefix = "sqlite:///"
+        if self.url.startswith(prefix):
+            return Path(self.url[len(prefix):]).parent
+        return resolve_data_dir()
+
     def session(self) -> Session:
         return self._sessionmaker()
 

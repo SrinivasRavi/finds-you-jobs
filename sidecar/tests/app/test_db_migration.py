@@ -37,6 +37,8 @@ _EXPECTED = {
     "outreach_logs",
     "linkedin_sessions",
     "apply_runs",
+    "documents",
+    "application_documents",
 }
 
 

@@ -32,6 +32,7 @@ import type {
   Job,
   JobDraft,
   LinkedInSessionState,
+  ManualApplicationInput,
   NetContact,
   Priority,
   ReachOutInput,
@@ -395,6 +396,20 @@ export function useAddJobByUrl() {
   return useMutation({
     mutationFn: (draft: JobDraft): Promise<Job> => Promise.resolve(api.addJobByUrl(draft)),
     onSuccess: () => invalidateFeed(qc),
+  });
+}
+
+/** "Add a job application" (FR-TR manual-add): log an externally-applied job as
+ *  an `origin=manual` tracker card, with optional resume/cover uploads. */
+export function useAddManualApplication() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ManualApplicationInput): Promise<Application> =>
+      Promise.resolve(api.createManualApplication(input)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.applications });
+      invalidateFeed(qc);
+    },
   });
 }
 
