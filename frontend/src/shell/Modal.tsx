@@ -3,6 +3,7 @@
 // trio, cover letter, guidance, and the application detail modal.
 
 import { useEffect, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Icon } from "./icons";
 
@@ -22,6 +23,7 @@ export function Modal({
   /** Rendered in the title bar next to the × close button (e.g. Share). */
   headerExtra?: ReactNode;
 }) {
+  const { t } = useTranslation();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -47,7 +49,7 @@ export function Modal({
           <h2 className="m-0 text-[16px] font-semibold text-ink">{title}</h2>
           <div className="ml-auto flex items-center gap-2">
             {headerExtra}
-            <button className="text-ink-3 hover:text-ink" aria-label="Close" onClick={onClose}>
+            <button className="text-ink-3 hover:text-ink" aria-label={t("shell.close")} onClick={onClose}>
               <Icon name="x" size={18} strokeWidth={2} />
             </button>
           </div>

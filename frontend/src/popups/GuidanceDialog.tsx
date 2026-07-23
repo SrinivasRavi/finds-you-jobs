@@ -3,6 +3,7 @@
 // `guidance` field; not saved to the profile.
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Modal } from "../shell/Modal";
 
@@ -15,15 +16,20 @@ export function GuidanceDialog({
   onGenerate: (guidance: string) => void;
   label?: string;
 }) {
+  const { t } = useTranslation();
   const [guidance, setGuidance] = useState("");
+  // The label prop is a stable identifier from the caller; translate it here.
+  const labelText = t(
+    label === "cover letter" ? "popups.guidance.labelCover" : "popups.guidance.labelResume",
+  );
   return (
-    <Modal title={`Generate ${label}`} onClose={onClose} width={480}>
+    <Modal title={t("popups.guidance.generate", { label: labelText })} onClose={onClose} width={480}>
       <div className="flex flex-col gap-3 p-5">
         <p className="text-[12.5px] text-ink-2">
-          Re-generate the {label} from your current master resume.
+          {t("popups.guidance.blurb", { label: labelText })}
         </p>
         <label className="text-[12px] text-ink-3" htmlFor="guidance">
-          (Optional) Special instructions for the tailoring agent — will not be saved to your profile:
+          {t("popups.guidance.instructionsLabel")}
         </label>
         <textarea
           id="guidance"
@@ -31,7 +37,7 @@ export function GuidanceDialog({
           value={guidance}
           onChange={(e) => setGuidance(e.target.value)}
           rows={4}
-          placeholder="e.g. emphasize my FDE work; de-emphasize the frontend projects"
+          placeholder={t("popups.guidance.placeholder")}
           className="resize-none rounded-md border border-border bg-surface p-3 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
         />
         <div className="flex justify-end gap-2">
@@ -39,7 +45,7 @@ export function GuidanceDialog({
             onClick={onClose}
             className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
           >
-            Cancel
+            {t("popups.guidance.cancel")}
           </button>
           <button
             onClick={() => {
@@ -48,7 +54,7 @@ export function GuidanceDialog({
             }}
             className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
           >
-            Generate {label}
+            {t("popups.guidance.generate", { label: labelText })}
           </button>
         </div>
       </div>

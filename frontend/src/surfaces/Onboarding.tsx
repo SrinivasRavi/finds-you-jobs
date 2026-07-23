@@ -15,67 +15,76 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { Trans, useTranslation } from "react-i18next";
 
 import { api } from "../api";
 import { qk } from "../api/queries";
 import type { EngineSaveInput, EngineVerifyResult } from "../api/types";
 import { InfoDot } from "../shell/InfoDot";
+import { LanguageSelect } from "../shell/LanguageSelect";
 import { openLoginTerminal } from "../shell/openExternal";
 
-// The wizard's interactive steps. The stepper *displays* "Download the app"
-// ahead of these as stage 1, pre-completed, so the numbering the user sees is
-// 1 Download ✓ → 2 Resume → 3 Preferences → 4 LLM provider → 5 All set.
-const STEP_LABELS = ["Resume", "Preferences", "LLM provider", "All set"];
-const DISPLAY_STEPS = ["Download the app", ...STEP_LABELS];
+// The wizard's interactive steps (i18n keys). The stepper *displays* "Download
+// the app" ahead of these as stage 1, pre-completed, so the numbering the user
+// sees is 1 Download ✓ → 2 Resume → 3 Preferences → 4 LLM provider → 5 All set.
+const STEP_LABELS = [
+  "onboarding.stepResume",
+  "onboarding.stepPreferences",
+  "onboarding.stepProvider",
+  "onboarding.stepAllSet",
+];
+const DISPLAY_STEPS = ["onboarding.stepDownload", ...STEP_LABELS];
 
+// label/hint are i18n keys (t() at render) under the locale's
+// onboarding.providers.<id> node; the ids themselves are API values.
 const PROVIDERS = [
-  { id: "openrouter", label: "OpenRouter BYOK", hint: "One key, most models (recommended)" },
-  { id: "local", label: "Local LLM", hint: "Ollama / LM Studio / vLLM base URL" },
-  { id: "anthropic", label: "Direct Anthropic", hint: "Anthropic API key" },
-  { id: "openai", label: "Direct OpenAI", hint: "OpenAI API key" },
-  { id: "claude-cli", label: "Claude subscription (CLI)", hint: "Uses your Claude CLI — no key needed" },
-  { id: "codex-cli", label: "ChatGPT subscription (Codex CLI)", hint: "Uses your Codex CLI login — no key needed" },
-  { id: "antigravity-cli", label: "Google subscription (Antigravity CLI)", hint: "Experimental — uses your agy login, no key needed" },
+  { id: "openrouter", label: "onboarding.providers.openrouter.label", hint: "onboarding.providers.openrouter.hint" },
+  { id: "local", label: "onboarding.providers.local.label", hint: "onboarding.providers.local.hint" },
+  { id: "anthropic", label: "onboarding.providers.anthropic.label", hint: "onboarding.providers.anthropic.hint" },
+  { id: "openai", label: "onboarding.providers.openai.label", hint: "onboarding.providers.openai.hint" },
+  { id: "claude-cli", label: "onboarding.providers.claude-cli.label", hint: "onboarding.providers.claude-cli.hint" },
+  { id: "codex-cli", label: "onboarding.providers.codex-cli.label", hint: "onboarding.providers.codex-cli.hint" },
+  { id: "antigravity-cli", label: "onboarding.providers.antigravity-cli.label", hint: "onboarding.providers.antigravity-cli.hint" },
 ];
 
 // The subscription-CLI providers (no key, verify-only — mirrors the backend's
 // engine_config.CLI_PROVIDERS). Per-provider guidance for the not_found /
-// not_logged_in verify outcomes.
+// not_logged_in verify outcomes. The display strings are i18n keys (t() at
+// render) under the locale's onboarding.providers.<id> node.
 const CLI_PROVIDERS: Record<
   string,
   {
-    name: string; // short name for guidance copy ("Claude CLI", …)
-    verifyHint: string;
+    name: string; // i18n key — short name for guidance copy ("Claude CLI", …)
+    verifyHint: string; // i18n key
     loginCli: "claude" | "codex" | "agy";
-    loginLabel: string;
+    loginLabel: string; // i18n key
     installUrl: string;
-    installName: string;
+    installName: string; // i18n key
   }
 > = {
   "claude-cli": {
-    name: "Claude CLI",
-    verifyHint: "No key needed — we verify your Claude CLI is reachable.",
+    name: "onboarding.providers.claude-cli.name",
+    verifyHint: "onboarding.providers.claude-cli.verifyHint",
     loginCli: "claude",
-    loginLabel: "Log in to Claude",
+    loginLabel: "onboarding.providers.claude-cli.loginLabel",
     installUrl: "https://docs.claude.com/en/docs/claude-code/overview",
-    installName: "Claude Code",
+    installName: "onboarding.providers.claude-cli.installName",
   },
   "codex-cli": {
-    name: "Codex CLI",
-    verifyHint: "No key needed — we verify your Codex CLI is logged in.",
+    name: "onboarding.providers.codex-cli.name",
+    verifyHint: "onboarding.providers.codex-cli.verifyHint",
     loginCli: "codex",
-    loginLabel: "Log in to Codex",
+    loginLabel: "onboarding.providers.codex-cli.loginLabel",
     installUrl: "https://developers.openai.com/codex/cli",
-    installName: "OpenAI Codex CLI",
+    installName: "onboarding.providers.codex-cli.installName",
   },
   "antigravity-cli": {
-    name: "Antigravity CLI (agy)",
-    verifyHint:
-      "No key needed — we run a real test prompt through agy. Experimental: agy's non-interactive mode has known rough edges; Verify tells you honestly if it fails.",
+    name: "onboarding.providers.antigravity-cli.name",
+    verifyHint: "onboarding.providers.antigravity-cli.verifyHint",
     loginCli: "agy",
-    loginLabel: "Log in to Antigravity",
+    loginLabel: "onboarding.providers.antigravity-cli.loginLabel",
     installUrl: "https://antigravity.google/",
-    installName: "Google Antigravity",
+    installName: "onboarding.providers.antigravity-cli.installName",
   },
 };
 const isCliProvider = (id: string) => id in CLI_PROVIDERS;
@@ -111,6 +120,7 @@ function loadDraft(): Partial<Draft> {
 }
 
 export function Onboarding() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [d0] = useState(loadDraft);
@@ -332,6 +342,15 @@ export function Onboarding() {
     <div className="h-screen overflow-y-auto bg-canvas">
       <div className="grid min-h-full place-items-center p-6">
       <div className="w-full max-w-xl rounded-2xl border border-border bg-surface p-6 shadow-lg">
+        {/* Language — the very first control (maintainer 2026-07-24 #5), so a
+            non-English speaker can switch before reading anything else. */}
+        <div className="mb-4 flex items-center justify-end gap-2">
+          <span className="text-[11.5px] text-ink-4">{t("appearance.language")}</span>
+          <LanguageSelect
+            testid="onboarding-language"
+            className="rounded-md border border-border bg-surface px-1.5 py-0.5 text-[11.5px] text-ink-2"
+          />
+        </div>
         {/* Stepper */}
         <ol className="mb-6 flex items-center gap-2" data-testid="onboarding-stepper">
           {DISPLAY_STEPS.map((label, i) => {
@@ -356,7 +375,7 @@ export function Onboarding() {
                 <span
                   className={"hidden text-[11px] sm:block " + (active ? "text-ink" : "text-ink-4")}
                 >
-                  {label}
+                  {t(label)}
                 </span>
               </li>
             );
@@ -367,7 +386,9 @@ export function Onboarding() {
             in, so this never reads 0% and setup starts partway complete. */}
         <div className="mb-6" data-testid="onboarding-progress">
           <div className="mb-1 text-right text-[11px] text-ink-4">
-            <span data-testid="onboarding-progress-pct">{progressPct}% complete</span>
+            <span data-testid="onboarding-progress-pct">
+              {t("onboarding.pctComplete", { pct: progressPct })}
+            </span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
             <div
@@ -380,12 +401,8 @@ export function Onboarding() {
         <div className="min-h-[280px]" data-testid={`onboarding-step-${step}`}>
           {step === 0 ? (
             <div className="space-y-4">
-              <h1 className="text-[18px] font-semibold text-ink">Add your master resume</h1>
-              <p className="text-[13px] text-ink-3">
-                Upload a .md / .txt / .pdf, or paste it below. Review the extracted text — this is
-                what the app scores and tailors against. You can refine it later from the Job Board's
-                Master Resume button.
-              </p>
+              <h1 className="text-[18px] font-semibold text-ink">{t("onboarding.titleResume")}</h1>
+              <p className="text-[13px] text-ink-3">{t("onboarding.resumeIntro")}</p>
               <label className="block rounded-lg border border-dashed border-border-2 bg-surface-2 p-4 text-center text-[13px] text-ink-3 hover:border-accent">
                 <input
                   type="file"
@@ -395,11 +412,13 @@ export function Onboarding() {
                   onChange={(e) => void onFile(e.target.files?.[0])}
                 />
                 {ingestBusy ? (
-                  <span>Extracting…</span>
+                  <span>{t("onboarding.extracting")}</span>
                 ) : resumeName ? (
-                  <span className="text-ink">{resumeName} — loaded, review below</span>
+                  <span className="text-ink">
+                    {t("onboarding.resumeLoaded", { name: resumeName })}
+                  </span>
                 ) : (
-                  <span>Click to choose a .md / .txt / .pdf resume file</span>
+                  <span>{t("onboarding.resumeChoose")}</span>
                 )}
               </label>
               {ingestError ? (
@@ -411,97 +430,89 @@ export function Onboarding() {
                 </div>
               ) : null}
               <div>
-                <div className="mb-1 text-[12px] text-ink-3">
-                  Resume (Markdown) — paste or edit the extracted text
-                </div>
+                <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.resumeTextLabel")}</div>
                 <textarea
                   value={resumeText}
                   data-testid="resume-text"
                   onChange={(e) => setResumeText(e.target.value)}
-                  placeholder="# Your name&#10;&#10;Paste your resume here, or upload a file above."
+                  placeholder={t("onboarding.resumePlaceholder")}
                   className="h-40 w-full resize-y rounded-md border border-border bg-surface px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
                 />
               </div>
             </div>
           ) : step === 1 ? (
             <div className="space-y-4">
-              <h1 className="text-[18px] font-semibold text-ink">What are you looking for?</h1>
+              <h1 className="text-[18px] font-semibold text-ink">{t("onboarding.titlePreferences")}</h1>
               <ChipField
-                label="Role aliases (at least one)"
+                label={t("onboarding.aliasLabel")}
                 testid="alias"
                 items={aliases}
                 input={aliasInput}
                 setInput={setAliasInput}
                 onAdd={() => addChip(aliases, setAliases, aliasInput, () => setAliasInput(""))}
                 onRemove={(v) => setAliases(aliases.filter((a) => a !== v))}
-                placeholder="e.g. Backend Engineer"
-                hint="Type a role and press Enter or comma to add it. Add several — each becomes a chip below."
+                placeholder={t("onboarding.aliasPlaceholder")}
+                hint={t("onboarding.aliasHint")}
               />
               <ChipField
-                label="Locations (at least one; Remote is valid)"
+                label={t("onboarding.locationLabel")}
                 testid="location"
                 items={locations}
                 input={locInput}
                 setInput={setLocInput}
                 onAdd={() => addChip(locations, setLocations, locInput, () => setLocInput(""))}
                 onRemove={(v) => setLocations(locations.filter((a) => a !== v))}
-                placeholder="e.g. Mumbai"
-                hint="Type a location and press Enter or comma to add it. Remote is valid."
+                placeholder={t("onboarding.locationPlaceholder")}
+                hint={t("onboarding.locationHint")}
               />
               <div>
-                <div className="mb-1 text-[12px] text-ink-3">Freshness window</div>
+                <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.freshnessLabel")}</div>
                 <div className="flex gap-1.5">
                   {["24h", "7d", "30d"].map((f) => (
                     <Pill key={f} active={freshness === f} onClick={() => setFreshness(f)}>
-                      {f}
+                      {t(`onboarding.freshness.${f}`)}
                     </Pill>
                   ))}
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-[12px] text-ink-3">Background scrape cadence</div>
+                <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.cadenceLabel")}</div>
                 <div className="flex flex-wrap gap-1.5">
                   {["Every 6h", "Every 12h", "Every 24h", "Every 48h", "Every 72h"].map((c) => (
                     <Pill key={c} active={cadence === c} onClick={() => setCadence(c)}>
-                      {c}
+                      {t(`onboarding.cadence.${c}`)}
                     </Pill>
                   ))}
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-[12px] text-ink-3">How jobs are scored</div>
+                <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.scoringLabel")}</div>
                 <div className="flex flex-wrap gap-1.5">
                   <Pill
                     active={scoringMode === "llm"}
                     onClick={() => setScoringMode("llm")}
                     data-testid="ob-scoring-llm"
                   >
-                    AI scoring — best quality, but costs LLM tokens and some time
+                    {t("onboarding.scoringLlm")}
                   </Pill>
                   <Pill
                     active={scoringMode === "keyword"}
                     onClick={() => setScoringMode("keyword")}
                     data-testid="ob-scoring-keyword"
                   >
-                    Keyword scoring — lower quality, but free and instant
+                    {t("onboarding.scoringKeyword")}
                   </Pill>
                 </div>
-                <div className="mt-1 text-[11.5px] text-ink-4">
-                  You can change this any time in Settings → Scoring.
-                </div>
+                <div className="mt-1 text-[11.5px] text-ink-4">{t("onboarding.scoringHint")}</div>
               </div>
             </div>
           ) : step === 2 ? (
             <div className="space-y-4">
-              <h1 className="text-[18px] font-semibold text-ink">Choose your LLM provider</h1>
+              <h1 className="text-[18px] font-semibold text-ink">{t("onboarding.titleProvider")}</h1>
               <p className="text-[13px] text-ink-3">
-                You bring your own key (or a local model) — the app scores and tailors with it, and
-                your data goes only to the provider you choose. We verify the key before you finish,
-                so your first board shows real scores right away.
-                <InfoDot label="Why we verify now">
-                  We make one small test request to your provider to confirm the key works — so your
-                  first board shows real scores instead of stuck “Pending” chips. Nothing from the
-                  test is stored.
+                {t("onboarding.providerIntro")}
+                <InfoDot label={t("onboarding.verifyWhyLabel")}>
+                  {t("onboarding.verifyWhyBody")}
                 </InfoDot>
               </p>
               <div className="space-y-2">
@@ -533,8 +544,8 @@ export function Onboarding() {
                       {provider === p.id ? <span className="h-2 w-2 rounded-full bg-accent" /> : null}
                     </span>
                     <span className="flex-1">
-                      <span className="block text-[13px] font-medium text-ink">{p.label}</span>
-                      <span className="block text-[11.5px] text-ink-3">{p.hint}</span>
+                      <span className="block text-[13px] font-medium text-ink">{t(p.label)}</span>
+                      <span className="block text-[11.5px] text-ink-3">{t(p.hint)}</span>
                     </span>
                   </button>
                 ))}
@@ -549,12 +560,14 @@ export function Onboarding() {
                       setProviderInput(e.target.value);
                       setVerifyState("idle");
                     }}
-                    placeholder={provider === "local" ? "http://localhost:11434" : "Paste API key"}
+                    placeholder={
+                      provider === "local" ? "http://localhost:11434" : t("onboarding.pasteKey")
+                    }
                     className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
                   />
                 ) : (
                   <span className="flex-1 text-[12px] text-ink-3">
-                    {CLI_PROVIDERS[provider]?.verifyHint ?? "No key needed."}
+                    {t(CLI_PROVIDERS[provider]?.verifyHint ?? "onboarding.noKeyNeeded")}
                   </span>
                 )}
                 <button
@@ -569,17 +582,17 @@ export function Onboarding() {
                   }
                 >
                   {verifyState === "verifying"
-                    ? "Verifying…"
+                    ? t("onboarding.verifying")
                     : verifyState === "verified"
-                      ? "Verified ✓"
-                      : "Verify"}
+                      ? t("onboarding.verified")
+                      : t("onboarding.verify")}
                 </button>
               </div>
               {verifyState === "verified" ? (
                 <p className="text-[12px] text-good" data-testid="verify-ok">
                   {verifyDetail
-                    ? `${verifyDetail} — you can finish onboarding.`
-                    : "Provider verified — you can finish onboarding."}
+                    ? t("onboarding.verifiedDetail", { detail: verifyDetail })
+                    : t("onboarding.verifiedOk")}
                 </p>
               ) : null}
               {verifyState === "failed" && verifyStatus === "not_logged_in" ? (
@@ -588,8 +601,9 @@ export function Onboarding() {
                   data-testid="verify-login-needed"
                 >
                   <div className="mb-2">
-                    Your {CLI_PROVIDERS[provider]?.name ?? "CLI"} is installed but not logged in.
-                    Log in to your subscription, then Verify.
+                    {t("onboarding.cliNotLoggedIn", {
+                      cli: t(CLI_PROVIDERS[provider]?.name ?? "onboarding.cliFallback"),
+                    })}
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -597,13 +611,13 @@ export function Onboarding() {
                       data-testid="claude-login-btn"
                       className="rounded-md border border-accent bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:bg-accent-ink"
                     >
-                      {CLI_PROVIDERS[provider]?.loginLabel ?? "Log in"}
+                      {t(CLI_PROVIDERS[provider]?.loginLabel ?? "onboarding.loginFallback")}
                     </button>
                     <button
                       onClick={() => void verify()}
                       className="rounded-md border border-border px-2.5 py-1 text-[12px] text-ink"
                     >
-                      Verify
+                      {t("onboarding.verify")}
                     </button>
                   </div>
                 </div>
@@ -613,19 +627,26 @@ export function Onboarding() {
                   data-testid="verify-not-found"
                 >
                   <div className="mb-2">
-                    {CLI_PROVIDERS[provider]?.name ?? "CLI"} not found. Install{" "}
-                    <a
-                      href={CLI_PROVIDERS[provider]?.installUrl ?? "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline"
-                    >
-                      {CLI_PROVIDERS[provider]?.installName ?? "the CLI"}
-                    </a>
-                    , then Verify.
+                    <Trans
+                      i18nKey="onboarding.cliNotFound"
+                      values={{
+                        cli: t(CLI_PROVIDERS[provider]?.name ?? "onboarding.cliFallback"),
+                        name: t(CLI_PROVIDERS[provider]?.installName ?? "onboarding.installFallback"),
+                      }}
+                      components={{
+                        lnk: (
+                          <a
+                            href={CLI_PROVIDERS[provider]?.installUrl ?? "#"}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline"
+                          />
+                        ),
+                      }}
+                    />
                   </div>
                   <button onClick={() => void verify()} className="underline">
-                    Retry
+                    {t("onboarding.retry")}
                   </button>
                 </div>
               ) : verifyState === "failed" ? (
@@ -635,7 +656,7 @@ export function Onboarding() {
                 >
                   {verifyError}{" "}
                   <button onClick={() => void verify()} className="underline">
-                    Retry
+                    {t("onboarding.retry")}
                   </button>
                 </div>
               ) : null}
@@ -643,15 +664,12 @@ export function Onboarding() {
           ) : (
             <div className="space-y-4 text-center">
               <div className="text-[40px]">🎉</div>
-              <h1 className="text-[20px] font-semibold text-ink">All set</h1>
-              <p className="text-[13px] text-ink-3">
-                On Finish we write your profile and fire the cold-start scrape across every role ×
-                location.
-              </p>
+              <h1 className="text-[20px] font-semibold text-ink">{t("onboarding.titleAllSet")}</h1>
+              <p className="text-[13px] text-ink-3">{t("onboarding.allSetIntro")}</p>
               <ul className="mx-auto max-w-xs space-y-1 text-left text-[12.5px] text-ink-2">
-                <li>· Add a job by URL anytime from the board</li>
-                <li>· Review your master resume from the board's Master Resume button</li>
-                <li>· Tune providers + networking in Settings</li>
+                <li>· {t("onboarding.allSetAddUrl")}</li>
+                <li>· {t("onboarding.allSetResume")}</li>
+                <li>· {t("onboarding.allSetSettings")}</li>
               </ul>
               {finishError ? (
                 <div
@@ -672,7 +690,7 @@ export function Onboarding() {
               onClick={() => setStep((s) => s - 1)}
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
             >
-              Back
+              {t("onboarding.back")}
             </button>
           ) : null}
           <div className="ml-auto">
@@ -688,7 +706,7 @@ export function Onboarding() {
                     : "cursor-not-allowed bg-surface-3 text-ink-4")
                 }
               >
-                Continue
+                {t("onboarding.continue")}
               </button>
             ) : (
               <button
@@ -700,7 +718,7 @@ export function Onboarding() {
                   (finishing ? "cursor-not-allowed bg-surface-3 text-ink-4" : "bg-accent hover:bg-accent-ink")
                 }
               >
-                {finishing ? "Finishing…" : "Finish & go to the Job Board"}
+                {finishing ? t("onboarding.finishing") : t("onboarding.finish")}
               </button>
             )}
           </div>
@@ -757,6 +775,7 @@ function ChipField({
   placeholder: string;
   hint?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div>
       <div className="mb-1 text-[12px] text-ink-3">{label}</div>
@@ -768,7 +787,11 @@ function ChipField({
             className="inline-flex items-center gap-1 rounded-full bg-accent-wash px-2 py-0.5 text-[11.5px] text-accent-ink"
           >
             {it}
-            <button onClick={() => onRemove(it)} aria-label={`Remove ${it}`} className="text-accent-ink/70">
+            <button
+              onClick={() => onRemove(it)}
+              aria-label={t("onboarding.removeChip", { value: it })}
+              className="text-accent-ink/70"
+            >
               ×
             </button>
           </span>

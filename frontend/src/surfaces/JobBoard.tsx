@@ -5,8 +5,10 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import { api } from "../api";
+import i18n from "../i18n";
 import { invalidateFeed, qk } from "../api/queries";
 
 import {
@@ -37,6 +39,7 @@ import {
   type JobDraft,
   type RescorePreview,
 } from "../api/types";
+import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { Icon } from "../shell/icons";
 import { Chip, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
@@ -141,6 +144,7 @@ function JobRow({
   onClick: () => void;
   q?: string;
 }) {
+  const { t } = useTranslation();
   const tier = job.score ? scoreTier(job.score.score_0_100) : null;
   const expired = job.board_state === "expired";
   return (
@@ -170,9 +174,9 @@ function JobRow({
           {job.is_new ? (
             <span
               data-testid="new-badge"
-              className="inline-flex h-[16px] shrink-0 items-center rounded-full bg-accent-wash px-1.5 text-[9px] font-semibold uppercase tracking-wider text-accent-ink"
+              className="inline-flex h-[16px] shrink-0 items-center rounded-full bg-accent-wash px-1.5 text-[9px] font-semibold text-accent-ink"
             >
-              New
+              {t("jobBoard.row.new")}
             </span>
           ) : null}
         </div>
@@ -188,7 +192,9 @@ function JobRow({
           {[
             job.salary,
             timeAgo(job.posted_at),
-            job.applicants !== null ? `${job.applicants} applicants` : "",
+            job.applicants !== null
+              ? t("jobBoard.row.applicants", { count: job.applicants })
+              : "",
           ]
             .filter(Boolean)
             .join(" · ")}
@@ -204,7 +210,7 @@ function JobRow({
             </span>
           ))}
           <span
-            className={`inline-flex h-[16px] items-center rounded-full border px-1.5 font-mono text-[9.5px] uppercase tracking-wider ${sourceClasses(job.source_adapter)}`}
+            className={`inline-flex h-[16px] items-center rounded-full border px-1.5 font-mono text-[9.5px] ${sourceClasses(job.source_adapter)}`}
           >
             {job.source_adapter}
           </span>
@@ -220,7 +226,7 @@ function JobRow({
             data-keyword={job.score.scorer_impl === "scorer-deterministic"}
             title={
               job.score.scorer_impl === "scorer-deterministic"
-                ? "Keywords scored (free, on-device) — grey, not an AI score"
+                ? t("jobBoard.row.keywordScoreTitle")
                 : undefined
             }
             className={
@@ -237,15 +243,15 @@ function JobRow({
             data-testid="scoring-inflight"
             className="font-mono text-[10px] font-medium text-ink-4"
           >
-            scoring…
+            {t("jobBoard.row.scoring")}
           </span>
         )}
         {expired ? (
           <span
             data-testid="expired-label"
-            className="inline-flex items-center rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-ink-3"
+            className="inline-flex items-center rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[9.5px] font-medium text-ink-3"
           >
-            Older listing
+            {t("jobBoard.row.olderListing")}
           </span>
         ) : null}
       </div>
@@ -276,6 +282,7 @@ function JobDetail({
   packetDefaults: { resume: boolean; cl: boolean; refs: boolean };
   searchQ?: string;
 }) {
+  const { t } = useTranslation();
   // Per-job automation toggles (US-JB-03), seeded from the Settings default
   // (auto-packet-on-save) and reset per job — prototype jobs.html semantics.
   const [toggles, setToggles] = useState({ ...packetDefaults });
@@ -312,15 +319,15 @@ function JobDetail({
   if (!job) {
     return (
       <div className="grid h-full place-items-center text-[12.5px] text-ink-3">
-        Pick a job to see details.
+        {t("jobBoard.detail.pickJob")}
       </div>
     );
   }
   const subtitle = [
     job.company,
     job.location,
-    workLabel(job.work_style) || "Work style: N/A",
-    job.salary || "Salary: N/A",
+    workLabel(job.work_style) || t("jobBoard.detail.workStyleNA"),
+    job.salary || t("jobBoard.detail.salaryNA"),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -342,18 +349,18 @@ function JobDetail({
               data-source={job.source_adapter}
               onClick={() => onToggleSource(job.source_adapter)}
               className={
-                "inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] uppercase tracking-wider hover:opacity-80 " +
+                "inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] hover:opacity-80 " +
                 sourceClasses(job.source_adapter) +
                 (active ? " ring-2 ring-accent" : "")
               }
-              title="Click to filter the list to this source"
+              title={t("jobBoard.detail.sourcePillTitle")}
             >
               {job.source_adapter}
             </button>
           </div>
           <div className="mt-1 text-[12.5px] text-ink-2">{subtitle}</div>
           <div className="text-[11.5px] text-ink-3">
-            Posted: {job.posted_at || "N/A"}
+            {t("jobBoard.detail.posted", { date: job.posted_at || t("jobBoard.detail.na") })}
           </div>
         </div>
         {job.score ? (
@@ -362,8 +369,10 @@ function JobDetail({
               score={job.score.score_0_100}
               keyword={job.score.scorer_impl === "scorer-deterministic"}
             />
-            <span className="mt-1 text-[10.5px] uppercase tracking-wide text-ink-3">
-              {job.score.scorer_impl === "scorer-deterministic" ? "keywords scored" : "match"}
+            <span className="mt-1 text-[10.5px] text-ink-3">
+              {job.score.scorer_impl === "scorer-deterministic"
+                ? t("jobBoard.detail.keywordsScored")
+                : t("jobBoard.detail.match")}
             </span>
           </div>
         ) : null}
@@ -389,7 +398,7 @@ function JobDetail({
           }
         >
           <Icon name={job.saved || justSaved ? "bookmarkCheck" : "bookmark"} size={14} strokeWidth={2} />
-          {job.saved || justSaved ? "Saved" : "Save"}
+          {job.saved || justSaved ? t("jobBoard.detail.saved") : t("jobBoard.detail.save")}
         </button>
         <button
           onClick={() => onRemove(job)}
@@ -397,7 +406,7 @@ function JobDetail({
           className="inline-flex h-[30px] min-w-[110px] items-center justify-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
         >
           <Icon name="trash" size={14} strokeWidth={2} />
-          Remove
+          {t("jobBoard.detail.remove")}
         </button>
         {/* Per-job automation toggles (US-JB-03). Referrals only when the
             networking master toggle is on (US-NW-09 / FR-SET-03); the
@@ -407,9 +416,9 @@ function JobDetail({
             (slot) => {
               const on = toggles[slot];
               const label =
-                slot === "resume" ? "Resume"
-                : slot === "cl" ? "Cover letter"
-                : "Find referrals";
+                slot === "resume" ? t("jobBoard.detail.toggleResume")
+                : slot === "cl" ? t("jobBoard.detail.toggleCoverLetter")
+                : t("jobBoard.detail.toggleFindReferrals");
               return (
                 <button
                   key={slot}
@@ -446,11 +455,11 @@ function JobDetail({
           <button
             onClick={() => onUnexpire(job)}
             data-testid="unexpire-job"
-            title="Restore this older listing to the active feed"
+            title={t("jobBoard.detail.restoreListingTitle")}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
           >
             <Icon name="bookmark" size={14} strokeWidth={2} />
-            Restore listing
+            {t("jobBoard.detail.restoreListing")}
           </button>
         ) : null}
         <div className="flex-1" />
@@ -462,7 +471,7 @@ function JobDetail({
             title={watchError.message}
             className="inline-flex h-[30px] items-center px-3 text-[12px] text-ink-3"
           >
-            Can't watch this source
+            {t("jobBoard.detail.cantWatchSource")}
           </span>
         ) : (
           <button
@@ -470,10 +479,10 @@ function JobDetail({
             data-on={!!watchedEntry}
             title={
               watchError
-                ? `Watch failed — check connection and retry. (${watchError.message})`
+                ? t("jobBoard.detail.watchFailedTitle", { message: watchError.message })
                 : watchedEntry
-                  ? "Scanning this company's board on every scan — click to stop"
-                  : "Scan this company's whole board on every future scan"
+                  ? t("jobBoard.detail.watchOnTitle")
+                  : t("jobBoard.detail.watchOffTitle")
             }
             disabled={watchCompany.isPending || unwatchCompany.isPending}
             onClick={() => {
@@ -517,12 +526,12 @@ function JobDetail({
             {/* "Show more jobs from this company" — outcome-first lingo,
                 matching the roster's heading (maintainer 2026-07-22). */}
             {watchCompany.isPending
-              ? "Adding…"
+              ? t("jobBoard.detail.adding")
               : unwatchCompany.isPending
-                ? "Removing…"
+                ? t("jobBoard.detail.removing")
                 : watchError
-                  ? "Failed — retry"
-                  : "Show more jobs from this company"}
+                  ? t("jobBoard.detail.failedRetry")
+                  : t("jobBoard.detail.showMoreFromCompany")}
           </button>
         )}
         <a
@@ -531,7 +540,7 @@ function JobDetail({
           rel="noreferrer"
           className="inline-flex h-[30px] items-center gap-1 rounded-7 px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
         >
-          Open posting ↗
+          {t("jobBoard.detail.openPosting")}
         </a>
       </div>
 
@@ -555,15 +564,14 @@ function JobDetail({
           )}
           <aside className="flex flex-col gap-4">
             <div className="rounded-lg border border-border bg-surface-2 p-4">
-              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-ink-3">
+              <h3 className="mb-2 text-[12px] font-semibold text-ink-3">
                 {job.score?.scorer_impl === "scorer-deterministic"
-                  ? "Keywords scored"
-                  : "Match score"}
+                  ? t("jobBoard.detail.keywordsScored")
+                  : t("jobBoard.detail.matchScore")}
               </h3>
               {job.score?.scorer_impl === "scorer-deterministic" ? (
                 <p className="mb-2 text-[11.5px] text-ink-3" data-testid="keyword-score-note">
-                  Scored on-device by keyword overlap — free and instant, lower quality than AI
-                  scoring. Choose the mode in Settings → Scoring.
+                  {t("jobBoard.detail.keywordScoreNote")}
                 </p>
               ) : null}
               {job.score ? (
@@ -581,7 +589,7 @@ function JobDetail({
                   </div>
                 </>
               ) : (
-                <p className="text-[12px] text-ink-3">Scoring this job — refresh in a moment.</p>
+                <p className="text-[12px] text-ink-3">{t("jobBoard.detail.scoringInFlight")}</p>
               )}
             </div>
           </aside>
@@ -603,12 +611,13 @@ function BoardEmptyState({
   loading: boolean;
   filteredOut: boolean;
 }) {
+  const { t } = useTranslation();
   const wrap = "grid h-full place-items-center px-6 text-center text-[12.5px] text-ink-3";
   // Filters or a search hid every row — distinct from a genuinely empty scrape.
   if (filteredOut) {
     return (
       <div className={wrap} data-testid="board-empty" data-empty-reason="filtered">
-        No jobs match these filters or search.
+        {t("jobBoard.empty.filtered")}
       </div>
     );
   }
@@ -618,9 +627,9 @@ function BoardEmptyState({
       <div className={wrap} data-testid="board-empty" data-empty-reason="scrape-running">
         <div className="flex flex-col items-center gap-2">
           <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-border-2 border-t-accent" />
-          <div className="font-medium text-ink-2">Scanning job boards…</div>
+          <div className="font-medium text-ink-2">{t("jobBoard.empty.scanning")}</div>
           <div data-testid="scrape-found-count">
-            {meta?.total ?? 0} jobs found so far
+            {t("jobBoard.empty.foundSoFar", { count: meta?.total ?? 0 })}
           </div>
         </div>
       </div>
@@ -630,9 +639,13 @@ function BoardEmptyState({
     return (
       <div className={wrap} data-testid="board-empty" data-empty-reason="scrape-error">
         <div className="flex flex-col items-center gap-1">
-          <div className="font-medium text-bad">The last scrape failed.</div>
-          <div className="max-w-[360px] text-ink-3">{meta?.scan_error || "Unknown error."}</div>
-          <div className="text-ink-4">Last attempt {shortAgo(meta?.last_scan_at)}.</div>
+          <div className="font-medium text-bad">{t("jobBoard.empty.scrapeFailed")}</div>
+          <div className="max-w-[360px] text-ink-3">
+            {meta?.scan_error || t("jobBoard.empty.unknownError")}
+          </div>
+          <div className="text-ink-4">
+            {t("jobBoard.empty.lastAttempt", { ago: shortAgo(meta?.last_scan_at) })}
+          </div>
         </div>
       </div>
     );
@@ -641,17 +654,20 @@ function BoardEmptyState({
   return (
     <div className={wrap} data-testid="board-empty" data-empty-reason="scrape-empty">
       <div className="flex flex-col items-center gap-1">
-        <div className="font-medium text-ink-2">No jobs matched your roles and locations.</div>
+        <div className="font-medium text-ink-2">{t("jobBoard.empty.noMatches")}</div>
         <div className="text-ink-3">
-          Widen your Job finder preferences or add a job by URL.
+          {t("jobBoard.empty.widenPrefs")}
         </div>
-        <div className="text-ink-4">Last refresh {shortAgo(meta?.last_scan_at)}.</div>
+        <div className="text-ink-4">
+          {t("jobBoard.empty.lastRefresh", { ago: shortAgo(meta?.last_scan_at) })}
+        </div>
       </div>
     </div>
   );
 }
 
 export function JobBoard() {
+  const { t } = useTranslation();
   // Board search (FR-JB-13, consolidated 2026-07-22): ONE bar next to Sort,
   // deep all-text match (title/company/location + JD + score texts), matches
   // highlighted in the list and the open JD. Server-side (the feed is
@@ -770,118 +786,111 @@ export function JobBoard() {
     <>
       {/* Topbar */}
       <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
-        <h1 className="text-[14px] font-semibold text-ink">Job Board</h1>
+        <h1 className="text-[14px] font-semibold text-ink">{t("nav.jobBoard")}</h1>
         <div className="ml-auto flex items-center gap-3 py-1.5">
-          <button
-            onClick={() => setShowPrefs(true)}
-            data-testid="finder-prefs"
-            title="Configure background scraping and scoring"
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
-          >
-            <Icon name="settings" size={14} strokeWidth={2} />
-            Job finder preferences
-          </button>
+          {/* Master Resume before finder prefs (maintainer 2026-07-23 swap). */}
           <button
             onClick={() => setShowMaster(true)}
             data-action="open-master-resume"
-            title="Jobs in the board are scored and ranked based on your Master Resume. Click to view and edit."
+            title={t("jobBoard.header.masterResumeTitle")}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
           >
             <Icon name="file" size={14} strokeWidth={2} />
-            Master Resume
+            {t("jobBoard.header.masterResume")}
           </button>
           <button
+            onClick={() => setShowPrefs(true)}
+            data-testid="finder-prefs"
+            title={t("jobBoard.header.finderPrefsTitle")}
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
+          >
+            <Icon name="settings" size={14} strokeWidth={2} />
+            {t("jobBoard.header.finderPrefs")}
+          </button>
+          <HeaderDeletedButton
+            label={t("jobBoard.header.deletedJobs")}
+            count={trashed.length}
             onClick={() => setShowTrash(true)}
-            data-testid="trash-btn"
-            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
-          >
-            <Icon name="trash" size={14} strokeWidth={2} />
-            Deleted Jobs
-            {trashed.length > 0 ? (
-              <span className="ml-1 inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-bad px-1 font-mono text-[10px] font-bold text-white">
-                {trashed.length}
-              </span>
-            ) : null}
-          </button>
-          <button
+            testid="trash-btn"
+          />
+          <HeaderAddButton
+            label={t("jobBoard.header.addJobByUrl")}
             onClick={() => setShowAdd(true)}
-            data-testid="add-job"
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
-          >
-            <Icon name="plus" size={14} strokeWidth={2} />
-            Add a job by URL
-          </button>
+            testid="add-job"
+          />
         </div>
       </header>
 
-      {/* Filter row */}
+      {/* Filter row — right-aligned like the Applications/Networking FilterBar,
+          so the trailing Search box lands on the same edge in every tab
+          (maintainer 2026-07-24 #4). */}
       <div
         data-testid="v2-filters"
-        className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-5 py-2"
+        className="flex min-h-[45px] flex-wrap items-center justify-end gap-2 border-b border-border bg-surface px-5 py-2"
       >
         {/* Work style chip group (US-JB-02) — first, per the prototype filter row */}
-        <div className="flex items-center gap-1.5" id="filter-ws" aria-label="Work style">
-          <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Work style</span>
+        <div className="flex items-center gap-1.5" id="filter-ws" aria-label={t("jobBoard.filters.workStyle")}>
+          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.workStyle")}</span>
           {(
             [
-              ["ALL", "All"],
-              ["REMOTE", "Remote"],
-              ["HYBRID", "Hybrid"],
-              ["ONSITE", "Onsite"],
-              ["REMOTE_FRIENDLY", "Remote-friendly"],
+              ["ALL", "jobBoard.filters.all"],
+              ["REMOTE", "jobBoard.filters.remote"],
+              ["HYBRID", "jobBoard.filters.hybrid"],
+              ["ONSITE", "jobBoard.filters.onsite"],
+              ["REMOTE_FRIENDLY", "jobBoard.filters.remoteFriendly"],
             ] as [WorkStyleFilter, string][]
           ).map(([v, l]) => (
             <Chip key={v} active={ws === v} onClick={() => setWs(v)}>
-              {l}
+              {t(l)}
             </Chip>
           ))}
         </div>
         <span className="mx-1 h-4 w-px bg-border-2" />
         <div className="flex items-center gap-1.5">
-          <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Posted</span>
+          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.posted")}</span>
           {[
-            [0, "Any time"],
-            [1, "24h"],
-            [7, "7d"],
-            [30, "30d"],
+            [0, "jobBoard.filters.anyTime"],
+            [1, "jobBoard.filters.last24h"],
+            [7, "jobBoard.filters.last7d"],
+            [30, "jobBoard.filters.last30d"],
           ].map(([v, l]) => (
             <Chip key={v} active={posted === v} onClick={() => setPosted(v as number)}>
-              {l}
+              {t(l as string)}
             </Chip>
           ))}
         </div>
         <span className="mx-1 h-4 w-px bg-border-2" />
         <div className="flex items-center gap-1.5">
-          <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Min salary</span>
+          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.minSalary")}</span>
           {[
-            [0, "Any"],
-            [50000, "≥ $50k"],
-            [100000, "≥ $100k"],
-            [150000, "≥ $150k"],
+            [0, "jobBoard.filters.any"],
+            [50000, "jobBoard.filters.salary50k"],
+            [100000, "jobBoard.filters.salary100k"],
+            [150000, "jobBoard.filters.salary150k"],
           ].map(([v, l]) => (
             <Chip key={v} active={salaryMin === v} onClick={() => setSalaryMin(v as number)}>
-              {l}
+              {t(l as string)}
             </Chip>
           ))}
         </div>
         <span className="mx-1 h-4 w-px bg-border-2" />
         <div className="flex items-center gap-1.5" id="filter-status">
-          <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Status</span>
+          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.status")}</span>
           {(
             [
-              ["ALL", "All"],
-              ["AI", "AI Scored"],
-              ["KEYWORD", "Keywords scored"],
+              ["ALL", "jobBoard.filters.all"],
+              ["AI", "jobBoard.filters.aiScored"],
+              ["KEYWORD", "jobBoard.filters.keywordsScored"],
             ] as [StatusFilter, string][]
           ).map(([s, label]) => (
             <Chip key={s} active={status === s} onClick={() => setStatus(s)}>
-              {label}
+              {t(label)}
             </Chip>
           ))}
         </div>
         <span className="mx-1 h-4 w-px bg-border-2" />
         <div className="flex items-center gap-1.5">
-          <span className="text-[11.5px] uppercase tracking-wider text-ink-4">Sort</span>
+          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.sort")}</span>
           <div
             data-testid="sort-toggle"
             className="inline-flex items-center rounded-full border border-border-2 bg-surface p-0.5"
@@ -895,7 +904,7 @@ export function JobBoard() {
                   (sort === m ? "bg-accent text-white" : "text-ink-2 hover:bg-surface-3")
                 }
               >
-                {m === "match" ? "Match score" : "Recency"}
+                {m === "match" ? t("jobBoard.filters.sortMatchScore") : t("jobBoard.filters.sortRecency")}
               </button>
             ))}
           </div>
@@ -910,7 +919,7 @@ export function JobBoard() {
         <SearchBox
           value={textSearch}
           onChange={setTextSearch}
-          placeholder="Search"
+          placeholder={t("jobBoard.filters.searchPlaceholder")}
           testid="board-text-search"
         />
       </div>
@@ -922,15 +931,15 @@ export function JobBoard() {
             <span data-testid="job-list-count">
               {/* Live total from the server, not the loaded/filtered count (FR-JB-02);
                   real "last refresh" from the last successful scan (FR-JB-10). */}
-              {meta?.total ?? visible.length} jobs{" "}
+              {t("jobBoard.list.jobsCount", { count: meta?.total ?? visible.length })}{" "}
               <span className="text-ink-3/80" data-testid="last-refresh">
-                · last refresh {shortAgo(meta?.last_scan_at)}
+                {t("jobBoard.list.lastRefresh", { ago: shortAgo(meta?.last_scan_at) })}
               </span>
             </span>
           </div>
           <div
             role="listbox"
-            aria-label="Jobs"
+            aria-label={t("jobBoard.list.jobsAria")}
             className="flex-1 overflow-y-auto"
             onScroll={(e) => {
               // Infinite scroll (FR-JB-02): fetch the next page near the bottom.
@@ -971,7 +980,7 @@ export function JobBoard() {
                       disabled={board.isFetchingNextPage}
                       className="rounded-full border border-border-2 bg-surface px-3 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3 disabled:opacity-50"
                     >
-                      {board.isFetchingNextPage ? "Loading…" : "Load more jobs"}
+                      {board.isFetchingNextPage ? t("jobBoard.list.loading") : t("jobBoard.list.loadMore")}
                     </button>
                   </div>
                 ) : null}
@@ -1087,6 +1096,7 @@ function PrefChipInput({
   placeholder: string;
   testid: string;
 }) {
+  const { t } = useTranslation();
   const [input, setInput] = useState("");
   return (
     <section className="space-y-2">
@@ -1108,7 +1118,7 @@ function PrefChipInput({
               type="button"
               onClick={() => onRemove(it)}
               className="text-ink-3 hover:text-bad"
-              aria-label="Remove"
+              aria-label={t("jobBoard.prefs.removeAria")}
             >
               ×
             </button>
@@ -1137,11 +1147,14 @@ function RadioRow({
   value,
   onChange,
   testid,
+  display,
 }: {
   options: string[];
   value: string;
   onChange: (v: string) => void;
   testid: string;
+  /** Maps a persisted option VALUE to its displayed (translated) label. */
+  display?: (v: string) => string;
 }) {
   return (
     <div
@@ -1161,7 +1174,7 @@ function RadioRow({
             (value === o ? "bg-accent text-white" : "text-ink-2 hover:bg-surface-3")
           }
         >
-          {o}
+          {display ? display(o) : o}
         </button>
       ))}
     </div>
@@ -1172,6 +1185,7 @@ function RadioRow({
 // view of the `watched` [[sources]] rows the per-job "Watch company" action
 // writes — same data, now listable/removable/addable from one place.
 function TrackedCompanies() {
+  const { t } = useTranslation();
   const { data: entries } = useWatchlist();
   const watchCompany = useWatchCompany();
   const unwatch = useUnwatchCompany();
@@ -1193,11 +1207,10 @@ function TrackedCompanies() {
     <section className="space-y-2" data-testid="fp-tracked-companies">
       <header>
         <h3 className="text-[13px] font-semibold text-ink">
-          Show more jobs from these companies
+          {t("jobBoard.prefs.tracked.heading")}
         </h3>
         <p className="text-[11.5px] text-ink-3">
-          Boards every scan covers. Add one by pasting a careers page on a supported ATS, or use
-          “Show more jobs from this company” on any job.
+          {t("jobBoard.prefs.tracked.hint")}
         </p>
       </header>
       <ul className="space-y-1">
@@ -1226,12 +1239,14 @@ function TrackedCompanies() {
                   // section's error line so the reason is visible.
                   onError: (err) =>
                     setError(
-                      `couldn't remove — ${err instanceof Error ? err.message : String(err)}`,
+                      t("jobBoard.prefs.tracked.removeFailed", {
+                        message: err instanceof Error ? err.message : String(err),
+                      }),
                     ),
                 });
               }}
               className="text-ink-3 hover:text-bad"
-              aria-label="Stop tracking"
+              aria-label={t("jobBoard.prefs.tracked.stopTrackingAria")}
               data-testid="fp-tracked-remove"
             >
               ×
@@ -1240,7 +1255,7 @@ function TrackedCompanies() {
         ))}
         {(entries ?? []).length === 0 ? (
           <li className="rounded-7 border border-dashed border-border-2 px-2.5 py-1.5 text-[12px] text-ink-3">
-            Nothing tracked yet.
+            {t("jobBoard.prefs.tracked.empty")}
           </li>
         ) : null}
       </ul>
@@ -1265,7 +1280,7 @@ function TrackedCompanies() {
           data-testid="fp-tracked-add"
           className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {watchCompany.isPending ? "Adding…" : "Track"}
+          {watchCompany.isPending ? t("jobBoard.prefs.tracked.adding") : t("jobBoard.prefs.tracked.track")}
         </button>
       </div>
       {error ? (
@@ -1281,10 +1296,10 @@ function TrackedCompanies() {
 // when the tick hasn't caught up yet.
 function nextScanLabel(iso: string): string {
   const mins = Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
-  if (mins <= 0) return "is overdue — it will fire within a minute";
-  if (mins < 60) return `in ${mins}m`;
-  if (mins < 48 * 60) return `in ${Math.round(mins / 60)}h`;
-  return `in ${Math.round(mins / (24 * 60))}d`;
+  if (mins <= 0) return i18n.t("jobBoard.prefs.nextScanOverdue");
+  if (mins < 60) return i18n.t("jobBoard.prefs.inMinutes", { n: mins });
+  if (mins < 48 * 60) return i18n.t("jobBoard.prefs.inHours", { n: Math.round(mins / 60) });
+  return i18n.t("jobBoard.prefs.inDays", { n: Math.round(mins / (24 * 60)) });
 }
 
 // Freshness label ⇄ days (0 = "Any" = no freshness window, ScanPrefs semantics).
@@ -1300,6 +1315,7 @@ function FinderPrefsModal({
   // /api/settings path onboarding uses — which also threads the cadence into
   // the scan schedule server-side. (2026-07-12 audit P0-2: this modal was a
   // hardcoded mock stub whose "Save & rescan" rescanned with stale prefs.)
+  const { t } = useTranslation();
   const { data: settings } = useSettings();
   const qc = useQueryClient();
   const [roles, setRoles] = useState<string[]>(settings?.job_prefs.role_aliases ?? []);
@@ -1383,7 +1399,7 @@ function FinderPrefsModal({
   }
 
   return (
-    <Modal title="Job finder preferences" onClose={onClose} width={560}>
+    <Modal title={t("jobBoard.prefs.title")} onClose={onClose} width={560}>
       <form
         className="flex flex-col gap-5 px-5 py-5"
         onSubmit={(e) => {
@@ -1392,53 +1408,50 @@ function FinderPrefsModal({
         }}
       >
         <p className="-mt-2 text-[12px] text-ink-3">
-          Controls the background scraper that fills your Job Board. Every match is scored against
-          your master resume when it lands. Changes here are auto saved — “Rescan now” applies
-          them to a fresh scan. In any chip field, press Enter or comma to add.
+          {t("jobBoard.prefs.intro")}
         </p>
         <PrefChipInput
-          label="Roles to search"
-          hint="Titles the scraper queries for."
+          label={t("jobBoard.prefs.roles.label")}
+          hint={t("jobBoard.prefs.roles.hint")}
           items={roles}
           onAdd={(v) => setRoles((r) => (r.includes(v) ? r : [...r, v]))}
           onRemove={(v) => setRoles((r) => r.filter((x) => x !== v))}
-          placeholder="Add a role…"
+          placeholder={t("jobBoard.prefs.roles.placeholder")}
           testid="fp-roles"
         />
         <PrefChipInput
-          label="Locations"
-          hint="Cities or regions to search in. Remote is valid. (Work style is a board filter — the chips above the feed.)"
+          label={t("jobBoard.prefs.locations.label")}
+          hint={t("jobBoard.prefs.locations.hint")}
           items={locations}
           onAdd={(v) => setLocations((r) => (r.includes(v) ? r : [...r, v]))}
           onRemove={(v) => setLocations((r) => r.filter((x) => x !== v))}
-          placeholder="Add a location…"
+          placeholder={t("jobBoard.prefs.locations.placeholder")}
           testid="fp-locations"
         />
         <PrefChipInput
-          label="Excluded companies"
-          hint="Never show jobs from these companies (current employer, blocklist). Word-boundary match."
+          label={t("jobBoard.prefs.excludedCompanies.label")}
+          hint={t("jobBoard.prefs.excludedCompanies.hint")}
           items={excludedCompanies}
           onAdd={(v) => setExcludedCompanies((r) => (r.includes(v) ? r : [...r, v]))}
           onRemove={(v) => setExcludedCompanies((r) => r.filter((x) => x !== v))}
-          placeholder="Add a company…"
+          placeholder={t("jobBoard.prefs.excludedCompanies.placeholder")}
           testid="fp-exclude-companies"
         />
         <PrefChipInput
-          label="Excluded keywords"
-          hint="Skip postings whose description contains any of these (e.g. “unpaid”, “clearance required”)."
+          label={t("jobBoard.prefs.excludedKeywords.label")}
+          hint={t("jobBoard.prefs.excludedKeywords.hint")}
           items={excludedKeywords}
           onAdd={(v) => setExcludedKeywords((r) => (r.includes(v) ? r : [...r, v]))}
           onRemove={(v) => setExcludedKeywords((r) => r.filter((x) => x !== v))}
-          placeholder="Add a keyword…"
+          placeholder={t("jobBoard.prefs.excludedKeywords.placeholder")}
           testid="fp-exclude-keywords"
         />
         <TrackedCompanies />
         <section className="space-y-2">
           <header>
-            <h3 className="text-[13px] font-semibold text-ink">Posting freshness</h3>
+            <h3 className="text-[13px] font-semibold text-ink">{t("jobBoard.prefs.freshness.heading")}</h3>
             <p className="text-[11.5px] text-ink-3">
-              Skip postings older than this on every scrape. (Cold-start ignores this and pulls the
-              past 30 days.)
+              {t("jobBoard.prefs.freshness.hint")}
             </p>
           </header>
           <RadioRow
@@ -1446,14 +1459,14 @@ function FinderPrefsModal({
             value={freshness}
             onChange={setFreshness}
             testid="fp-freshness"
+            display={(v) => t(`jobBoard.prefs.freshness.values.${v}`)}
           />
         </section>
         <section className="space-y-2">
           <header>
-            <h3 className="text-[13px] font-semibold text-ink">Background scrape cadence</h3>
+            <h3 className="text-[13px] font-semibold text-ink">{t("jobBoard.prefs.cadence.heading")}</h3>
             <p className="text-[11.5px] text-ink-3">
-              We run scraping once per selected time frame, then score every match against your
-              master resume. Tighter cadence = fresher feed, more bandwidth.
+              {t("jobBoard.prefs.cadence.hint")}
             </p>
           </header>
           <RadioRow
@@ -1461,6 +1474,7 @@ function FinderPrefsModal({
             value={cadence}
             onChange={setCadence}
             testid="fp-cadence"
+            display={(v) => t(`jobBoard.prefs.cadence.values.${v}`)}
           />
           {/* Proof the cadence is real (2026-07-22): the scan schedule's actual
               next firing time. Saving here also rescans now, which pushes this
@@ -1468,23 +1482,25 @@ function FinderPrefsModal({
           {scanSchedule ? (
             <p className="text-[11.5px] text-ink-3" data-testid="fp-next-scan">
               {scanSchedule.enabled
-                ? `Next automatic scan ${nextScanLabel(scanSchedule.next_due_at)}.`
-                : "Automatic scanning is off — saving a cadence turns it on."}
+                ? t("jobBoard.prefs.nextScan", { when: nextScanLabel(scanSchedule.next_due_at) })
+                : t("jobBoard.prefs.autoScanOff")}
             </p>
           ) : null}
         </section>
         <section className="space-y-2">
           <header>
-            <h3 className="text-[13px] font-semibold text-ink">Master resume</h3>
-            <p className="text-[11.5px] text-ink-3">Used to score every job in your feed.</p>
+            <h3 className="text-[13px] font-semibold text-ink">{t("jobBoard.prefs.master.heading")}</h3>
+            <p className="text-[11.5px] text-ink-3">{t("jobBoard.prefs.master.hint")}</p>
           </header>
           <div className="flex items-center justify-between gap-3 rounded-7 border border-border-2 bg-surface-2 px-3 py-2">
             <div className="min-w-0">
               <div className="truncate text-[12.5px] font-medium text-ink">
-                {masterName ? `${masterName} — master` : "No master resume yet"}
+                {masterName
+                  ? t("jobBoard.prefs.master.named", { name: masterName })
+                  : t("jobBoard.prefs.master.none")}
               </div>
               <div className="font-mono text-[11px] text-ink-3">
-                {masterName ? "Ready to score your feed" : "Add one to score & tailor"}
+                {masterName ? t("jobBoard.prefs.master.ready") : t("jobBoard.prefs.master.addOne")}
               </div>
             </div>
             {/* View/Replace opens the master-resume popup — returns with the
@@ -1500,26 +1516,26 @@ function FinderPrefsModal({
             </span>
           ) : savedFlash && !dirty ? (
             <span className="mr-auto text-[11.5px] text-good" data-testid="finder-prefs-saved">
-              Changes saved!
+              {t("jobBoard.prefs.saved")}
             </span>
           ) : dirty && valid ? (
-            <span className="mr-auto text-[11.5px] text-ink-3">Saving…</span>
+            <span className="mr-auto text-[11.5px] text-ink-3">{t("jobBoard.prefs.saving")}</span>
           ) : null}
           <button
             type="button"
             onClick={onClose}
             className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2 hover:text-ink"
           >
-            Close
+            {t("jobBoard.prefs.close")}
           </button>
           <button
             type="submit"
             disabled={saving || !valid}
             data-testid="finder-prefs-save"
-            title="Save is automatic — this starts a fresh scan with the current preferences"
+            title={t("jobBoard.prefs.rescanTitle")}
             className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? "Starting…" : "Rescan now"}
+            {saving ? t("jobBoard.prefs.starting") : t("jobBoard.prefs.rescanNow")}
           </button>
         </div>
       </form>
@@ -1536,6 +1552,7 @@ function AddByUrlModal({
   onClose: () => void;
   onAdd: (draft: JobDraft) => Promise<unknown>;
 }) {
+  const { t } = useTranslation();
   const [url, setUrl] = useState("");
   const [phase, setPhase] = useState<"entry" | "fetching" | "editing">("entry");
   const [draft, setDraft] = useState<JobDraft | null>(null);
@@ -1594,7 +1611,7 @@ function AddByUrlModal({
   }
 
   return (
-    <Modal title="Add a job by URL" onClose={onClose} width={520}>
+    <Modal title={t("jobBoard.addModal.title")} onClose={onClose} width={520}>
       {phase === "entry" ? (
         <form
           className="flex flex-col gap-3 px-5 py-4"
@@ -1607,16 +1624,14 @@ function AddByUrlModal({
               board" path moved out — that's "Show more jobs from this company"
               on any job row, or the roster of the same name in preferences. */}
           <label className="text-[12.5px] text-ink-2">
-            Paste a job posting URL. (To follow a whole company board, use “Show more jobs from
-            this company” on a job, or the same list in Job finder preferences.)
+            {t("jobBoard.addModal.pasteLabel")}
           </label>
           {tombstoned ? (
             <p
               data-testid="add-job-tombstoned"
               className="rounded-md border border-bad/40 bg-bad-wash px-3 py-2 text-[12px] text-bad"
             >
-              This job was permanently deleted and can't be re-added. If you still want to track
-              it, keep a record of it outside the app.
+              {t("jobBoard.addModal.tombstoned")}
             </p>
           ) : null}
           <input
@@ -1638,14 +1653,14 @@ function AddByUrlModal({
               onClick={onClose}
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
             >
-              Cancel
+              {t("jobBoard.addModal.cancel")}
             </button>
             <button
               type="submit"
               data-testid="add-job-fetch-btn"
               className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
             >
-              Fetch job details
+              {t("jobBoard.addModal.fetchDetails")}
             </button>
           </div>
         </form>
@@ -1653,7 +1668,7 @@ function AddByUrlModal({
         <div className="grid place-items-center px-5 py-10 text-[13px] text-ink-3">
           <div className="flex items-center gap-2">
             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border-2 border-t-accent" />
-            Fetching job details…
+            {t("jobBoard.addModal.fetching")}
           </div>
         </div>
       ) : (
@@ -1665,37 +1680,37 @@ function AddByUrlModal({
           }}
         >
           <div className="text-[11.5px] text-ink-3">
-            {url || "(no URL)"}{" "}
+            {url || t("jobBoard.addModal.noUrl")}{" "}
             <button
               type="button"
               onClick={() => setPhase("entry")}
               className="text-accent hover:underline"
             >
-              · Re-fetch
+              {t("jobBoard.addModal.refetch")}
             </button>
           </div>
           <input
             value={draft?.title ?? ""}
             onChange={(e) => patch({ title: e.target.value })}
-            placeholder="Title"
+            placeholder={t("jobBoard.addModal.titlePlaceholder")}
             className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
           />
           <input
             value={draft?.company ?? ""}
             onChange={(e) => patch({ company: e.target.value })}
-            placeholder="Company"
+            placeholder={t("jobBoard.addModal.companyPlaceholder")}
             className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
           />
           <input
             value={draft?.location ?? ""}
             onChange={(e) => patch({ location: e.target.value })}
-            placeholder="Location"
+            placeholder={t("jobBoard.addModal.locationPlaceholder")}
             className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
           />
           <textarea
             value={draft?.description ?? ""}
             onChange={(e) => patch({ description: e.target.value })}
-            placeholder="Description"
+            placeholder={t("jobBoard.addModal.descriptionPlaceholder")}
             rows={5}
             data-testid="add-job-description"
             className="resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
@@ -1706,14 +1721,14 @@ function AddByUrlModal({
               onClick={onClose}
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
             >
-              Cancel
+              {t("jobBoard.addModal.cancel")}
             </button>
             <button
               type="submit"
               data-testid="add-job-submit-btn"
               className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
             >
-              Add to Job Board
+              {t("jobBoard.addModal.submit")}
             </button>
           </div>
         </form>
@@ -1740,22 +1755,22 @@ function TrashModal({
   // Two-step confirms before anything irreversible (US-JB-11 ethos: the user
   // signs off on every irreversible action). `confirmId` = per-row Delete
   // forever; `confirmEmpty` = Empty Trash.
+  const { t } = useTranslation();
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   return (
     <Modal
-      title="Deleted Jobs"
+      title={t("jobBoard.trashModal.title")}
       onClose={onClose}
       width={520}
       footer={
         <div className="flex items-center justify-between gap-3 text-[11.5px] text-ink-3">
-          <span>Jobs in Trash are permanently removed after 7 days.</span>
+          <span>{t("jobBoard.trashModal.retention")}</span>
           {confirmEmpty ? (
             <span className="flex items-center gap-2">
               <span className="text-ink-2">
-                Empty Trash? {trashed.length} {trashed.length === 1 ? "job" : "jobs"} will be
-                permanently removed.
+                {t("jobBoard.trashModal.emptyConfirm", { count: trashed.length })}
               </span>
               <button
                 data-testid="trash-empty-confirm-btn"
@@ -1765,13 +1780,13 @@ function TrashModal({
                 }}
                 className="rounded-md border border-bad/40 bg-bad px-2 py-1 font-medium text-white hover:opacity-90"
               >
-                Confirm
+                {t("jobBoard.trashModal.confirm")}
               </button>
               <button
                 onClick={() => setConfirmEmpty(false)}
                 className="rounded-md border border-border px-2 py-1 text-ink-2 hover:bg-surface-3"
               >
-                Cancel
+                {t("jobBoard.trashModal.cancel")}
               </button>
             </span>
           ) : (
@@ -1781,7 +1796,7 @@ function TrashModal({
               onClick={() => setConfirmEmpty(true)}
               className="rounded-md border border-bad/40 px-2 py-1 text-bad hover:bg-bad-wash disabled:opacity-40 disabled:hover:bg-transparent"
             >
-              Empty Trash
+              {t("jobBoard.trashModal.emptyTrash")}
             </button>
           )}
         </div>
@@ -1789,7 +1804,7 @@ function TrashModal({
     >
       <div data-testid="trash-modal" className="px-5 py-4">
         {trashed.length === 0 ? (
-          <p className="text-[13px] text-ink-3">No removed jobs.</p>
+          <p className="text-[13px] text-ink-3">{t("jobBoard.trashModal.empty")}</p>
         ) : (
           <ul className="space-y-2">
             {trashed.map((j) => (
@@ -1799,7 +1814,9 @@ function TrashModal({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12.5px] font-medium text-ink">{j.title}</div>
-                  <div className="text-[11px] text-ink-3">{j.company} · Removed recently</div>
+                  <div className="text-[11px] text-ink-3">
+                    {t("jobBoard.trashModal.removedRecently", { company: j.company })}
+                  </div>
                 </div>
                 {confirmId === j.id ? (
                   <>
@@ -1811,13 +1828,13 @@ function TrashModal({
                       }}
                       className="rounded-md border border-bad/40 bg-bad px-2 py-1 text-[11.5px] font-medium text-white hover:opacity-90"
                     >
-                      Delete forever
+                      {t("jobBoard.trashModal.deleteForever")}
                     </button>
                     <button
                       onClick={() => setConfirmId(null)}
                       className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
                     >
-                      Cancel
+                      {t("jobBoard.trashModal.cancel")}
                     </button>
                   </>
                 ) : (
@@ -1827,15 +1844,15 @@ function TrashModal({
                       onClick={() => onUndo(j.id)}
                       className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
                     >
-                      Undo
+                      {t("jobBoard.trashModal.undo")}
                     </button>
                     <button
                       data-testid="trash-delete-forever-btn"
-                      title="Delete forever"
+                      title={t("jobBoard.trashModal.deleteForever")}
                       onClick={() => setConfirmId(j.id)}
                       className="rounded-md border border-bad/40 px-2 py-1 text-[11.5px] text-bad hover:bg-bad-wash"
                     >
-                      Delete forever
+                      {t("jobBoard.trashModal.deleteForever")}
                     </button>
                   </>
                 )}

@@ -2,10 +2,15 @@
 // source-adapter pill colors, time-ago).
 
 import type { Job, WorkStyle } from "../api/types";
+import i18n from "../i18n";
 
 /** Work-style display label (jobs.html workLabel). */
 export function workLabel(ws: WorkStyle): string {
-  const map: Record<string, string> = { REMOTE: "Remote", HYBRID: "Hybrid", ONSITE: "Onsite" };
+  const map: Record<string, string> = {
+    REMOTE: i18n.t("shell.work.remote"),
+    HYBRID: i18n.t("shell.work.hybrid"),
+    ONSITE: i18n.t("shell.work.onsite"),
+  };
   return map[ws] ?? "";
 }
 

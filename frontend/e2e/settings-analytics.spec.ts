@@ -30,32 +30,43 @@ test.beforeEach(async ({ request }) => {
   });
 });
 
-test("settings renders every restored section", async ({ page }) => {
+test("settings renders every restored section across its panes", async ({ page }) => {
+  // OS-style sidebar (2026-07-23): sections live on separate panes reached from
+  // the left rail. Default pane is AI Providers.
   await page.goto("/settings");
-  await expect(page.getByTestId("auto-resume-toggle")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("auto-cover-toggle")).toBeVisible();
+  await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
+  // Subscription-CLI family: three verify-only rows, each with a Verify — on the
+  // default AI Providers pane. The Antigravity "Experimental" pill and the
+  // "Embedded local LLM" tile were removed 2026-07-23.
+  await expect(page.getByTestId("cli-providers-panel")).toBeVisible();
+  for (const id of ["claude-cli", "codex-cli", "antigravity-cli"]) {
+    await expect(page.getByTestId(`cli-provider-${id}`)).toBeVisible();
+    await expect(page.getByTestId(`cli-verify-${id}`)).toBeVisible();
+  }
+  await expect(page.getByTestId("cli-provider-antigravity-cli")).not.toContainText("Experimental");
+  await expect(page.getByTestId("provider-tile-embedded")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
+
+  // Prompts pane — the one-line prompt tab bar (2026-07-23 redesign).
+  await page.getByTestId("settings-nav-prompts").click();
   await expect(page.getByTestId("prompt-row-score")).toBeVisible();
-  await expect(page.getByTestId("networking-toggle")).toBeVisible();
-  await expect(page.getByTestId("content-logging-toggle")).toBeVisible();
-  await expect(page.getByTestId("retention-days-row")).toBeVisible();
-  // The retired auto-submit toggle is GONE; the P1 boundary statement stands.
-  await expect(page.getByTestId("apply-mode-toggle")).toHaveCount(0);
-  await expect(page.getByTestId("auto-prep-toggle")).toHaveCount(0);
-  await expect(page.getByTestId("applier-p1-boundary")).toBeVisible();
-  // Scoring MODE picker (2026-07-22): the off-switch is retired — two modes,
-  // AI (default, batch cap visible) and keyword (cap hidden, no LLM knobs).
+  await page.screenshot({ path: `${DIR}/settings-prompts.png`, fullPage: true });
+
+  // Job Discovery pane — Scoring (before Automation now) + the Automation toggles.
+  await page.getByTestId("settings-nav-discovery").click();
   await expect(page.getByTestId("scoring-mode-picker")).toBeVisible();
   await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
+  await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
+  await expect(page.getByTestId("auto-resume-toggle")).toBeVisible();
+  await expect(page.getByTestId("auto-cover-toggle")).toBeVisible();
   await page.screenshot({ path: `${DIR}/settings-overview.png`, fullPage: true });
+  // keyword hides the batch cap.
   await page.getByTestId("scoring-mode-keyword").click();
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/settings-scoring-keyword.png`, fullPage: true });
-  // Switching back to AI asks before spending (2026-07-23): keyword→AI always
-  // fetches the re-score preview; the consent dialog opens only when some job
-  // misses an AI score at the current resume version. Decline either way —
-  // this test only checks rendering (the flow test below covers the dialog).
+  // Back to AI asks before spending (2026-07-23): decline if the dialog opens.
   const preview = page.waitForResponse((r) => r.url().includes("/api/jobs/rescore/preview"));
   await page.getByTestId("scoring-mode-llm").click();
   const previewBody = (await (await preview).json()) as { toScore: number };
@@ -65,17 +76,22 @@ test("settings renders every restored section", async ({ page }) => {
     await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
   }
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
-  // Parallel-AI-calls control (2026-07-17): user-tunable 2-20 or Unlimited.
-  await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
-  // Subscription-CLI family (2026-07-18): the three verify-only rows render,
-  // Antigravity carries its Experimental badge, and each row has a Verify.
-  await expect(page.getByTestId("cli-providers-panel")).toBeVisible();
-  for (const id of ["claude-cli", "codex-cli", "antigravity-cli"]) {
-    await expect(page.getByTestId(`cli-provider-${id}`)).toBeVisible();
-    await expect(page.getByTestId(`cli-verify-${id}`)).toBeVisible();
-  }
-  await expect(page.getByTestId("cli-provider-antigravity-cli")).toContainText("Experimental");
-  await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
+
+  // Networking pane — the master toggle.
+  await page.getByTestId("settings-nav-networking").click();
+  await expect(page.getByTestId("networking-toggle")).toBeVisible();
+
+  // Privacy & Data pane — observability + lifecycle.
+  await page.getByTestId("settings-nav-data").click();
+  await expect(page.getByTestId("content-logging-toggle")).toBeVisible();
+  await expect(page.getByTestId("retention-days-row")).toBeVisible();
+
+  // The Applier statement + the whole Applications category are gone (removed
+  // 2026-07-23); the retired submit/prep toggles never returned.
+  await expect(page.getByTestId("apply-mode-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("auto-prep-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("applier-p1-boundary")).toHaveCount(0);
+  await expect(page.getByTestId("settings-nav-applications")).toHaveCount(0);
 });
 
 test("switching scoring to AI asks consent, counting only cache misses", async ({
@@ -87,6 +103,7 @@ test("switching scoring to AI asks consent, counting only cache misses", async (
   // seed a job over the API — in keyword mode it earns a free keyword score
   // only, so it is a guaranteed AI-cache MISS at the current resume version.
   await page.goto("/settings");
+  await page.getByTestId("settings-nav-discovery").click();
   await page.getByTestId("scoring-mode-keyword").click();
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
   await request.post(`${base}/api/jobs`, {
@@ -112,8 +129,16 @@ test("switching scoring to AI asks consent, counting only cache misses", async (
   await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
 });
 
-test("linkedin session is nested inside referral outreach", async ({ page }) => {
+test("linkedin session is nested inside referral outreach", async ({ page, request }) => {
+  // Pin the precondition: networking.spec flips the master toggle on via the
+  // API and leaves it on, so trusting suite order makes this test flaky.
+  const { base, token } = sidecarInfo();
+  await request.post(`${base}/api/settings`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { voyager_risk_marker_on: false },
+  });
   await page.goto("/settings");
+  await page.getByTestId("settings-nav-networking").click();
   // Off: no session card, just the unlock hint inside the section.
   await expect(page.getByTestId("linkedin-session-section")).toHaveCount(0);
   // Enable via ack + toggle — the session card appears INSIDE the section as
@@ -122,7 +147,8 @@ test("linkedin session is nested inside referral outreach", async ({ page }) => 
   await page.getByTestId("networking-ack").check();
   await page.getByTestId("networking-toggle").click();
   await expect(page.getByTestId("linkedin-session-section")).toBeVisible();
-  await expect(page.getByText("Next step — connect your LinkedIn session")).toBeVisible();
+  // Collapsible shared session (2026-07-23): the header toggle + status pill.
+  await expect(page.getByTestId("linkedin-session-toggle")).toBeVisible();
   await page.screenshot({ path: `${DIR}/referral-linkedin-nested.png`, fullPage: true });
   // Turn it back off for later tests.
   await page.getByTestId("networking-toggle").click();
@@ -133,6 +159,7 @@ test("prompts editor round-trips an override", async ({ page, request }) => {
   const auth = { Authorization: `Bearer ${token}` };
 
   await page.goto("/settings");
+  await page.getByTestId("settings-nav-prompts").click();
   await page.getByTestId("prompt-row-score").click();
   await expect(page.getByTestId("prompt-textarea-score")).toBeVisible();
   await expect(page.getByTestId("route-score")).toBeVisible();
@@ -216,6 +243,7 @@ test("analytics shows cost tiles and a real ledger row; /logs redirects", async 
 
 test("discovery sources: all on by default, opt-out persists across reload", async ({ page }) => {
   await page.goto("/settings");
+  await page.getByTestId("settings-nav-discovery").click();
   await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
   // Family rows render grouped; the big ones exist with entry counts.
   const greenhouse = page.getByTestId("source-toggle-greenhouse");
@@ -230,6 +258,7 @@ test("discovery sources: all on by default, opt-out persists across reload", asy
   await greenhouse.locator("input").click();
   await expect(greenhouse.locator("input")).not.toBeChecked();
   await page.reload();
+  await page.getByTestId("settings-nav-discovery").click();
   await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("source-toggle-greenhouse").locator("input")).not.toBeChecked();
   await page.screenshot({ path: `${DIR}/discovery-sources-greenhouse-off.png`, fullPage: true });
@@ -240,6 +269,7 @@ test("discovery sources: all on by default, opt-out persists across reload", asy
 
 test("section-title checkboxes flip whole discovery sections at once", async ({ page }) => {
   await page.goto("/settings");
+  await page.getByTestId("settings-nav-discovery").click();
   await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
   // Every section renders its own master checkbox — Apify as its OWN section
   // (2026-07-18 #5), separate from the other search sources.
@@ -259,6 +289,7 @@ test("section-title checkboxes flip whole discovery sections at once", async ({ 
   await page.screenshot({ path: `${DIR}/discovery-section-boards-off.png`, fullPage: true });
   // …persists across reload (portals_config, not component state)…
   await page.reload();
+  await page.getByTestId("settings-nav-discovery").click();
   await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("source-section-toggle-board")).not.toBeChecked();
   // …and one re-ticked row makes the master read mixed (indeterminate).
@@ -292,6 +323,7 @@ test("analytics ledger has a Scraper filter chip", async ({ page }) => {
 
 test("BYO-key rows render and analytics has a Discovery tab", async ({ page }) => {
   await page.goto("/settings");
+  await page.getByTestId("settings-nav-discovery").click();
   await expect(page.getByTestId("discovery-sources")).toBeVisible({ timeout: 15_000 });
   // Key inputs for both providers, no key stored → input + Save visible.
   await expect(page.getByTestId("discovery-credential-apify")).toBeVisible();
@@ -307,16 +339,23 @@ test("BYO-key rows render and analytics has a Discovery tab", async ({ page }) =
   await page.screenshot({ path: `${DIR}/analytics-discovery-tab.png`, fullPage: true });
 });
 
-test("linkedin one-shot job search button gates on a connected session", async ({ page }) => {
+test("linkedin one-shot job search block lives under Discovery and gates on a connected session", async ({
+  page,
+}) => {
   await page.goto("/settings");
-  // Enable Referral Outreach so the LinkedIn session section reveals.
+  // Enable Referral Outreach (Networking pane) so a session could exist.
+  await page.getByTestId("settings-nav-networking").click();
   await page.getByTestId("networking-ack").check();
   await page.getByTestId("networking-toggle").click();
   await expect(page.getByTestId("linkedin-session-section")).toBeVisible({ timeout: 15_000 });
-  // Not connected → the one-shot job-search block must NOT be offered (it uses
-  // the logged-in session; no session, no button).
+  // The one-shot job search moved to the Job Discovery pane (2026-07-23). Not
+  // connected → the block must NOT be offered anywhere (it uses the logged-in
+  // session; no session, no block).
+  await page.getByTestId("settings-nav-discovery").click();
+  await expect(page.getByTestId("discovery-sources")).toBeVisible();
   await expect(page.getByTestId("linkedin-jobsearch-block")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/linkedin-jobsearch-gated.png`, fullPage: true });
   // Leave the shared profile clean.
+  await page.getByTestId("settings-nav-networking").click();
   await page.getByTestId("networking-toggle").click();
 });

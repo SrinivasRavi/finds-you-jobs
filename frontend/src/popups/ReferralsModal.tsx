@@ -13,6 +13,7 @@
 // (not built on this repo yet) — this modal only reads session state.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { eventBus, type SSEEvent } from "../api/events";
 import {
@@ -23,16 +24,18 @@ import {
   useReferralQuota,
 } from "../api/queries";
 import type { AudienceTag, CompanyCandidate, ReferralCandidate } from "../api/types";
+import i18n from "../i18n";
 import { Modal } from "../shell/Modal";
 
 const BUDGET = 10; // recommended-max reaches per role (US-NW-09; not hard-enforced)
 
+// i18n key map — translated with t(...) at render.
 const TAG_LABEL: Record<AudienceTag, string> = {
-  peer: "Peer",
-  hm: "HM",
-  recruiter: "Recruiter",
-  leadership: "Leadership",
-  other: "Peer",
+  peer: "popups.referrals.tag.peer",
+  hm: "popups.referrals.tag.hm",
+  recruiter: "popups.referrals.tag.recruiter",
+  leadership: "popups.referrals.tag.leadership",
+  other: "popups.referrals.tag.peer",
 };
 const TAG_CLASS: Record<AudienceTag, string> = {
   peer: "border-border-2 bg-surface text-ink-2",
@@ -75,6 +78,7 @@ export function ReferralsModal({
   applicationId?: string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const session = useLinkedInSession();
   const connected = Boolean(session.data?.enabled && session.data.status === "valid");
   const quota = useReferralQuota();
@@ -172,7 +176,10 @@ export function ReferralsModal({
         setFailures((prev) => omit(prev, p.contact_id as string));
       } else if (p.phase === "send_failed") {
         setSendingIds((prev) => remove(prev, p.contact_id as string));
-        setFailures((prev) => ({ ...prev, [p.contact_id as string]: p.reason || "send failed" }));
+        setFailures((prev) => ({
+          ...prev,
+          [p.contact_id as string]: p.reason || i18n.t("popups.referrals.sendFailedFallback"),
+        }));
       }
     });
     return off;
@@ -397,10 +404,10 @@ export function ReferralsModal({
 
   // Discovery is genuinely in flight (submit + the long server-side op).
   const finding = phase === "searching" || discovering;
-  const titleVerb = phase === "confirm" ? "Confirm the company"
-    : phase === "sending" ? "Sending messages"
-    : finding ? "Finding referrals…"
-    : alreadyReached > 0 ? "View referrals" : "Find referrals";
+  const titleVerb = phase === "confirm" ? t("popups.referrals.titleConfirmCompany")
+    : phase === "sending" ? t("popups.referrals.titleSendingMessages")
+    : finding ? t("popups.referrals.titleFinding")
+    : alreadyReached > 0 ? t("popups.referrals.titleView") : t("popups.referrals.findReferrals");
   const title = `${titleVerb} — ${jobTitle} · ${company}`;
 
   return (
@@ -414,7 +421,7 @@ export function ReferralsModal({
           >
             <div className="flex items-center gap-3">
               <span data-testid="referrals-quota-counter" className="font-mono text-ink-2">
-                {alreadyReached} reach{alreadyReached === 1 ? "" : "es"} already sent for this role
+                {t("popups.referrals.reachesSent", { count: alreadyReached })}
               </span>
               {/* Our conservative caps only apply when WE do the sending
                   (automation on + connected). In manual mode the user tracks
@@ -424,35 +431,47 @@ export function ReferralsModal({
                   <span className="text-ink-4">·</span>
                   <span
                     className="text-ink-3"
-                    title="Rolling windows, not calendar day/week — each send frees up 24 hours (daily) or 7 days (weekly) after it was sent. Conservative caps kept well under LinkedIn's limits."
+                    title={t("popups.referrals.quotaTooltip")}
                   >
-                    Automated quota — last 24h: <strong>{quota.data.daily_used}/{quota.data.daily_limit}</strong>{" "}
-                    last 7d: <strong>{quota.data.weekly_used}/{quota.data.weekly_limit}</strong>
+                    <Trans
+                      i18nKey="popups.referrals.automatedQuota"
+                      values={{
+                        dailyUsed: quota.data.daily_used,
+                        dailyLimit: quota.data.daily_limit,
+                        weeklyUsed: quota.data.weekly_used,
+                        weeklyLimit: quota.data.weekly_limit,
+                      }}
+                      components={{ strong: <strong /> }}
+                    />
                   </span>
                   <span className="text-ink-4">·</span>
                   <span
                     className="text-ink-3"
                     data-testid="referrals-dm-counter"
-                    title="Direct messages to 1st-degree connections are uncapped and never count against the invite quota"
+                    title={t("popups.referrals.dmTooltip")}
                   >
-                    DMs (last 24h): <strong>{quota.data.dm_daily_sent}</strong> (uncapped)
+                    <Trans
+                      i18nKey="popups.referrals.dmCounter"
+                      values={{ dmSent: quota.data.dm_daily_sent }}
+                      components={{ strong: <strong /> }}
+                    />
                   </span>
                 </>
               ) : (
                 <>
                   <span className="text-ink-4">·</span>
-                  <span className="text-ink-3">Manual mode — track against your own LinkedIn limits</span>
+                  <span className="text-ink-3">{t("popups.referrals.manualModeQuota")}</span>
                 </>
               )}
             </div>
             {capReached && (
               <div className="rounded-md border border-bad bg-bad-wash px-3 py-1.5 font-medium text-bad" data-testid="quota-blocked">
-                Daily limit reached. New requests queue until tomorrow.
+                {t("popups.referrals.dailyLimitReached")}
               </div>
             )}
             {!capReached && dailyRemaining <= 5 && (
               <div className="rounded-md border border-warn bg-warn-wash px-3 py-1.5 font-medium text-warn">
-                Close to your daily limit — {dailyRemaining} request{dailyRemaining === 1 ? "" : "s"} left today.
+                {t("popups.referrals.closeToLimit", { count: dailyRemaining })}
               </div>
             )}
           </div>
@@ -463,8 +482,8 @@ export function ReferralsModal({
         {!connected && phase === "review" && (
           <div className="border-b border-border bg-surface-2 px-5 py-2.5 text-[12px] text-ink-2" data-testid="referrals-drafts-only-banner">
             {session.data?.enabled
-              ? "LinkedIn not connected — connect it in Settings → LinkedIn to auto-discover and send. Until then you can add contacts by URL and track your outreach here manually."
-              : "Manual mode — Referral Outreach is off. Add the contacts you're reaching out to by URL and track them here; turn on Referral Outreach in Settings to auto-discover people and send."}
+              ? t("popups.referrals.bannerNotConnected")
+              : t("popups.referrals.bannerManualOff")}
           </div>
         )}
 
@@ -476,13 +495,16 @@ export function ReferralsModal({
           >
             {failureCount > 0 && (
               <span className="mr-3 font-medium text-bad">
-                {failureCount} send{failureCount === 1 ? "" : "s"} failed — see the row detail (and{" "}
-                <code>logs/sidecar.log</code> / the LinkedIn debug capture).
+                <Trans
+                  i18nKey="popups.referrals.sendsFailed"
+                  count={failureCount}
+                  components={{ code: <code /> }}
+                />
               </span>
             )}
             {skippedCount > 0 && (
               <span className="text-ink-3">
-                {skippedCount} skipped — already sending.
+                {t("popups.referrals.skipped", { count: skippedCount })}
               </span>
             )}
           </div>
@@ -495,20 +517,17 @@ export function ReferralsModal({
           <div className="flex flex-1 flex-col overflow-hidden" data-testid="company-confirm">
             <div className="border-b border-border bg-surface-2 px-5 py-3 text-[12.5px] text-ink-2">
               {companyCandidates.length > 0 ? (
-                <>
-                  <strong>The search paused.</strong> We couldn’t pin down the exact company{" "}
-                  <strong>“{company}”</strong> refers to.
-                  Pick it below — or paste its LinkedIn page URL — so we search its{" "}
-                  <em>current</em> employees, not people who just share the name. Referral search
-                  needs a company that has a LinkedIn page.
-                </>
+                <Trans
+                  i18nKey="popups.referrals.confirmIntroPick"
+                  values={{ company }}
+                  components={{ strong: <strong />, em: <em /> }}
+                />
               ) : (
-                <>
-                  We couldn’t match <strong>“{company}”</strong> to a LinkedIn company. Paste the
-                  company’s LinkedIn page URL to target the right one — we won’t guess by name (that
-                  surfaces unrelated look-alike companies). If it has no LinkedIn page, referral
-                  search isn’t available for it — close this and track contacts by hand.
-                </>
+                <Trans
+                  i18nKey="popups.referrals.confirmIntroNoMatch"
+                  values={{ company }}
+                  components={{ strong: <strong /> }}
+                />
               )}
             </div>
             {urlFailed && (
@@ -516,8 +535,10 @@ export function ReferralsModal({
                 className="border-b border-border bg-bad-wash px-5 py-2 text-[12px] font-medium text-bad"
                 data-testid="company-url-failed"
               >
-                That link didn’t resolve to a LinkedIn company. Check it’s a
-                <code className="mx-1">linkedin.com/company/…</code> URL and try again.
+                <Trans
+                  i18nKey="popups.referrals.urlFailed"
+                  components={{ code: <code className="mx-1" /> }}
+                />
               </div>
             )}
             <div className="flex-1 overflow-y-auto">
@@ -550,8 +571,8 @@ export function ReferralsModal({
                     <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
                       <span className="truncate">{c.name}</span>
                       {c.domain_match && (
-                        <span className="inline-flex h-[16px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[9.5px] uppercase text-good">
-                          best match
+                        <span className="inline-flex h-[16px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[9.5px] text-good">
+                          {t("popups.referrals.bestMatch")}
                         </span>
                       )}
                     </span>
@@ -571,7 +592,7 @@ export function ReferralsModal({
                       onClick={(e) => e.stopPropagation()}
                       className="shrink-0 rounded-md border border-border-2 bg-surface px-2 py-1 text-[11px] font-medium text-ink-2 hover:bg-surface-3"
                     >
-                      LinkedIn ↗
+                      {t("popups.referrals.linkedIn")}
                     </a>
                   ) : null}
                 </label>
@@ -584,7 +605,7 @@ export function ReferralsModal({
                 data-testid="company-url-input"
                 value={pasteUrl}
                 onChange={(e) => setPasteUrl(e.target.value)}
-                placeholder="Paste the company's LinkedIn URL — linkedin.com/company/…"
+                placeholder={t("popups.referrals.pasteUrlPlaceholder")}
                 className="h-[30px] flex-1 rounded-md border border-border bg-surface px-2.5 text-[12px] text-ink focus:border-accent focus:outline-none"
               />
               <button
@@ -593,7 +614,7 @@ export function ReferralsModal({
                 onClick={confirmPastedUrl}
                 className="h-[30px] rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Use this URL
+                {t("popups.referrals.useThisUrl")}
               </button>
             </div>
             <div className="flex items-center gap-2 border-t border-border bg-surface-2 px-5 py-3">
@@ -602,17 +623,17 @@ export function ReferralsModal({
                 className="h-[30px] rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
                 onClick={() => setPhase("review")}
               >
-                ← Back
+                {t("popups.referrals.back")}
               </button>
               <span className="text-[11px] text-ink-4">
-                Back keeps the roster as-is; the company stays unconfirmed.
+                {t("popups.referrals.backHint")}
               </span>
               <span className="flex-1" />
               <button
                 className="h-[30px] rounded-md px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
                 onClick={onClose}
               >
-                Cancel
+                {t("popups.referrals.cancel")}
               </button>
               <button
                 data-testid="company-confirm-btn"
@@ -620,7 +641,7 @@ export function ReferralsModal({
                 onClick={confirmPickedCompany}
                 className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Find employees
+                {t("popups.referrals.findEmployees")}
               </button>
             </div>
           </div>
@@ -637,24 +658,22 @@ export function ReferralsModal({
               <div className="max-w-md">
                 <div className="text-[14px] font-semibold text-ink">
                   {candidatesQ.data?.discover_state === "empty"
-                    ? "No one found — yet"
-                    : "Find people who can refer you"}
+                    ? t("popups.referrals.startEmptyTitle")
+                    : t("popups.referrals.startTitle")}
                 </div>
                 <div className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3">
                   {candidatesQ.data?.discover_state === "empty" ? (
-                    <>
-                      The last scan didn't turn up anyone at{" "}
-                      <strong className="text-ink-2">{company}</strong>. The company
-                      name may be ambiguous on LinkedIn — try again, and if it still
-                      finds nobody, paste the company's LinkedIn URL when prompted.
-                    </>
+                    <Trans
+                      i18nKey="popups.referrals.startEmptyBody"
+                      values={{ company }}
+                      components={{ strong: <strong className="text-ink-2" /> }}
+                    />
                   ) : (
-                    <>
-                      We'll scan LinkedIn via your session for people at{" "}
-                      <strong className="text-ink-2">{company}</strong> — peers, hiring
-                      managers, and recruiters — and draft a tailored outreach message
-                      for each. Nothing is sent until you review and confirm.
-                    </>
+                    <Trans
+                      i18nKey="popups.referrals.startScanBody"
+                      values={{ company }}
+                      components={{ strong: <strong className="text-ink-2" /> }}
+                    />
                   )}
                 </div>
               </div>
@@ -663,7 +682,7 @@ export function ReferralsModal({
                 onClick={() => void startDiscovery()}
                 className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-accent bg-accent px-4 text-[12.5px] font-medium text-white hover:bg-accent-ink"
               >
-                Find referrals
+                {t("popups.referrals.findReferrals")}
               </button>
             </div>
           )}
@@ -672,10 +691,9 @@ export function ReferralsModal({
             <div className="flex h-full flex-col items-center justify-center gap-4 py-16 text-center">
               <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
               <div>
-                <div className="text-[14px] font-semibold text-ink">Finding contacts at {company}…</div>
+                <div className="text-[14px] font-semibold text-ink">{t("popups.referrals.findingContacts", { company })}</div>
                 <div className="mt-1 text-[12px] text-ink-3">
-                  Scanning LinkedIn via your session · typically 10–30 s. If the company name
-                  is ambiguous we'll pause and ask you to confirm it.
+                  {t("popups.referrals.scanningHint")}
                 </div>
               </div>
             </div>
@@ -685,9 +703,9 @@ export function ReferralsModal({
             <div className="flex h-full flex-col items-center justify-center gap-4 py-16 text-center" data-testid="referrals-sending">
               <div className="h-9 w-9 animate-spin rounded-full border-2 border-warn border-t-transparent" />
               <div>
-                <div className="text-[14px] font-semibold text-ink">Sending messages…</div>
+                <div className="text-[14px] font-semibold text-ink">{t("popups.referrals.sendingTitle")}</div>
                 <div className="mt-1 text-[12px] text-ink-3">
-                  Sent one by one at human typing speed to mimic natural behavior. You can close this — sending continues in the background.
+                  {t("popups.referrals.sendingHint")}
                 </div>
               </div>
             </div>
@@ -702,18 +720,17 @@ export function ReferralsModal({
                 <div className="flex h-full flex-col items-center justify-center gap-4 py-16 text-center">
                   <div className="h-9 w-9 animate-spin rounded-full border-2 border-accent border-t-transparent" />
                   <div>
-                    <div className="text-[14px] font-semibold text-ink">Finding contacts at {company}…</div>
+                    <div className="text-[14px] font-semibold text-ink">{t("popups.referrals.findingContacts", { company })}</div>
                     <div className="mt-1 text-[12px] text-ink-3">
-                      Scanning LinkedIn via your session · typically 10–30 s. If the company
-                      name is ambiguous we'll pause and ask you to confirm it.
+                      {t("popups.referrals.scanningHint")}
                     </div>
                   </div>
                 </div>
               ) : (
               <div className="flex h-full items-center justify-center px-8 text-center text-[13px] text-ink-3">
                 {connected
-                  ? "No contacts found at this company yet."
-                  : "No contacts yet — add one by URL from the Networking page, or turn on Referral Outreach in Settings to auto-discover people at this company."}
+                  ? t("popups.referrals.emptyConnected")
+                  : t("popups.referrals.emptyManual")}
               </div>
               )
             ) : (
@@ -741,7 +758,7 @@ export function ReferralsModal({
             <div className="flex flex-col items-center gap-1.5 px-5 py-4">
               {candidates.length > 0 && (
                 <div className="text-[11.5px] text-ink-3" data-testid="referrals-roster-count">
-                  {candidates.length} contact{candidates.length === 1 ? "" : "s"} found
+                  {t("popups.referrals.contactsFound", { count: candidates.length })}
                 </div>
               )}
               <button
@@ -753,12 +770,12 @@ export function ReferralsModal({
                 {discovering ? (
                   <>
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border border-ink-3 border-t-transparent" />
-                    Finding more…
+                    {t("popups.referrals.findingMore")}
                   </>
                 ) : candidates.length === 0 ? (
-                  "Find 10 more / search manually"
+                  t("popups.referrals.findMoreManual")
                 ) : (
-                  "Find 10 more"
+                  t("popups.referrals.findMore")
                 )}
               </button>
             </div>
@@ -775,14 +792,14 @@ export function ReferralsModal({
                 className="mr-auto h-[30px] rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
                 onClick={() => setPhase("confirm")}
               >
-                Confirm company →
+                {t("popups.referrals.confirmCompanyNext")}
               </button>
             )}
             <button
               className="h-[30px] rounded-md px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
               onClick={onClose}
             >
-              Close
+              {t("popups.referrals.close")}
             </button>
             {connected && (
               <button
@@ -791,7 +808,7 @@ export function ReferralsModal({
                 onClick={() => setConfirming(true)}
                 className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Reach out ({selected.size})
+                {t("popups.referrals.reachOut", { count: selected.size })}
               </button>
             )}
           </div>
@@ -802,15 +819,16 @@ export function ReferralsModal({
       {confirming && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-[rgba(0,0,0,0.35)]" data-testid="reach-out-confirm">
           <div className="w-[380px] rounded-[12px] border border-border bg-surface p-5 shadow-xl">
-            <h3 className="text-[14px] font-semibold text-ink">Send {selected.size} outreach message{selected.size === 1 ? "" : "s"}?</h3>
+            <h3 className="text-[14px] font-semibold text-ink">{t("popups.referrals.sendConfirmTitle", { count: selected.size })}</h3>
             <p className="mt-2 text-[12.5px] text-ink-3">
-              This sends real LinkedIn connection requests / DMs from your account, one at a time.
-              finds-you-jobs can’t take them back — to withdraw a request or delete a message, do it
-              yourself on <span className="text-ink-2">linkedin.com</span>.
+              <Trans
+                i18nKey="popups.referrals.sendConfirmBody"
+                components={{ span: <span className="text-ink-2" /> }}
+              />
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button className="h-[30px] rounded-md px-3 text-[12px] text-ink-2 hover:bg-surface-2" onClick={() => setConfirming(false)}>
-                Cancel
+                {t("popups.referrals.cancel")}
               </button>
               <button
                 data-testid="reach-out-confirm-btn"
@@ -821,10 +839,10 @@ export function ReferralsModal({
                 {reachOut.isPending || sendingIds.size > 0 ? (
                   <>
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border border-white/60 border-t-transparent" />
-                    Sending…
+                    {t("popups.referrals.sendingEllipsis")}
                   </>
                 ) : (
-                  "Send now"
+                  t("popups.referrals.sendNow")
                 )}
               </button>
             </div>
@@ -839,10 +857,10 @@ export function ReferralsModal({
  *  badge is hidden rather than rendering "NULLTH deg"). */
 function degreeLabel(degree: number | null): string | null {
   if (degree == null) return null;
-  if (degree === 1) return "1st";
-  if (degree === 2) return "2nd";
-  if (degree === 3) return "3rd";
-  return `${degree}th`;
+  if (degree === 1) return i18n.t("popups.referrals.degree.first");
+  if (degree === 2) return i18n.t("popups.referrals.degree.second");
+  if (degree === 3) return i18n.t("popups.referrals.degree.third");
+  return i18n.t("popups.referrals.degree.nth", { degree });
 }
 
 function CandidateRow({
@@ -870,18 +888,19 @@ function CandidateRow({
   onExpand: () => void;
   onDraft: (v: string) => void;
 }) {
+  const { t } = useTranslation();
   const degLabel = degreeLabel(c.degree);
   return (
     <div className="border-b border-border" data-testid="referrals-row">
       <div className="flex items-center gap-3 px-5 py-3">
         {c.already_reached ? (
-          <span className="inline-flex h-[18px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[10px] uppercase text-good" data-testid="referrals-row-reached">
-            reached
+          <span className="inline-flex h-[18px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[10px] text-good" data-testid="referrals-row-reached">
+            {t("popups.referrals.rowReached")}
           </span>
         ) : sending ? (
-          <span className="inline-flex h-[18px] items-center gap-1 rounded-full border border-warn bg-warn-wash px-1.5 font-mono text-[10px] uppercase text-warn" data-testid="referrals-row-sending">
+          <span className="inline-flex h-[18px] items-center gap-1 rounded-full border border-warn bg-warn-wash px-1.5 font-mono text-[10px] text-warn" data-testid="referrals-row-sending">
             <span className="inline-block h-2 w-2 animate-spin rounded-full border border-warn border-t-transparent" />
-            sending
+            {t("popups.referrals.rowSending")}
           </span>
         ) : selectable ? (
           <input
@@ -901,18 +920,18 @@ function CandidateRow({
           <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
             <span className="truncate">{c.name}</span>
             {degLabel ? (
-              <span className="inline-flex h-[16px] items-center rounded-full border border-border-2 bg-surface px-1.5 font-mono text-[9.5px] uppercase text-ink-3" data-testid="referrals-row-degree">
-                {degLabel} deg
+              <span className="inline-flex h-[16px] items-center rounded-full border border-border-2 bg-surface px-1.5 font-mono text-[9.5px] text-ink-3" data-testid="referrals-row-degree">
+                {t("popups.referrals.degreeBadge", { degree: degLabel })}
               </span>
             ) : null}
-            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] uppercase ${TAG_CLASS[c.audience_tag]}`} data-testid="referrals-row-tag">
-              {TAG_LABEL[c.audience_tag]}
+            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] ${TAG_CLASS[c.audience_tag]}`} data-testid="referrals-row-tag">
+              {t(TAG_LABEL[c.audience_tag])}
             </span>
           </div>
           <div className="truncate text-[11.5px] text-ink-3">{c.role} · {c.company}</div>
           {failure ? (
             <div className="mt-1 rounded border border-bad/40 bg-bad-wash px-1.5 py-1 text-[10.5px] leading-snug text-bad" data-testid="referrals-row-failure">
-              Not sent — {failure}
+              {t("popups.referrals.notSent", { reason: failure })}
             </div>
           ) : null}
         </button>
@@ -924,11 +943,11 @@ function CandidateRow({
             target="_blank"
             rel="noopener noreferrer"
             data-testid="referrals-row-linkedin"
-            title="Open this profile on LinkedIn to verify"
+            title={t("popups.referrals.verifyProfileTooltip")}
             onClick={(e) => e.stopPropagation()}
             className="rounded-md border border-border-2 bg-surface px-2 py-1 text-[11px] font-medium text-ink-2 hover:bg-surface-3"
           >
-            LinkedIn ↗
+            {t("popups.referrals.linkedIn")}
           </a>
         ) : null}
         {!connected && (
@@ -937,14 +956,14 @@ function CandidateRow({
             data-testid="referrals-copy-btn"
             onClick={() => void navigator.clipboard?.writeText(draft)}
           >
-            Copy
+            {t("popups.referrals.copy")}
           </button>
         )}
       </div>
       {expanded && (
         <div className="px-[52px] pb-4">
-          <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-ink-3">
-            Draft {c.channel === "dm" ? "DM (warm)" : "connection note (cold)"}
+          <div className="mb-1 font-mono text-[10px] text-ink-3">
+            {c.channel === "dm" ? t("popups.referrals.draftDm") : t("popups.referrals.draftConnection")}
           </div>
           {draft ? (
             <textarea
@@ -960,7 +979,7 @@ function CandidateRow({
               data-testid="referrals-draft-loading"
             >
               <span className="inline-block h-3 w-3 animate-spin rounded-full border border-border-2 border-t-accent" />
-              Drafting…
+              {t("popups.referrals.drafting")}
             </div>
           )}
         </div>

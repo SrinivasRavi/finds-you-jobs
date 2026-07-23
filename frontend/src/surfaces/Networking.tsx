@@ -11,6 +11,7 @@
 // yet (its own commit); there is no button here to trigger them.
 
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   useAddContact,
@@ -20,20 +21,22 @@ import {
   useUpdateContact,
 } from "../api/queries";
 import type { AudienceTag, ConnectionStatus, NetContact } from "../api/types";
-import { Icon } from "../shell/icons";
+import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 
+// label/empty hold i18n keys — wrapped with t(...) at render.
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
-  { id: "sent", label: "Sent", dot: "bg-ink-3", empty: "Awaiting accepts — keep sending." },
-  { id: "accepted", label: "Accepted", dot: "bg-accent", empty: "Accepted, awaiting first reply." },
-  { id: "engagement", label: "Engagement", dot: "bg-warn", empty: "Active conversation — nudge as needed." },
-  { id: "ghosted", label: "Ghosted", dot: "bg-bad", empty: "No activity for 7+ days." },
-  { id: "converted", label: "Converted", dot: "bg-good", empty: "They referred you or intro'd." },
+  { id: "sent", label: "networking.columns.sent", dot: "bg-ink-3", empty: "networking.columnEmpty.sent" },
+  { id: "accepted", label: "networking.columns.accepted", dot: "bg-accent", empty: "networking.columnEmpty.accepted" },
+  { id: "engagement", label: "networking.columns.engagement", dot: "bg-warn", empty: "networking.columnEmpty.engagement" },
+  { id: "ghosted", label: "networking.columns.ghosted", dot: "bg-bad", empty: "networking.columnEmpty.ghosted" },
+  { id: "converted", label: "networking.columns.converted", dot: "bg-good", empty: "networking.columnEmpty.converted" },
 ];
 
 const TAG_LABEL: Record<AudienceTag, string> = {
-  peer: "Peer", hm: "Hiring Team", recruiter: "Recruiter", leadership: "Top Management", other: "Other",
+  peer: "networking.audience.peer", hm: "networking.audience.hm", recruiter: "networking.audience.recruiter",
+  leadership: "networking.audience.leadership", other: "networking.audience.other",
 };
 
 function initials(name: string): string {
@@ -45,6 +48,7 @@ function daysSince(iso: string | null): number | null {
 }
 
 export function Networking() {
+  const { t } = useTranslation();
   const session = useLinkedInSession();
   const contactsQ = useContacts();
   const contacts = useMemo(() => contactsQ.data ?? [], [contactsQ.data]);
@@ -72,7 +76,7 @@ export function Networking() {
       { id, patch: { connection_status: status } },
       {
         onError: (err) =>
-          setError(err instanceof Error ? err.message : "Could not move contact."),
+          setError(err instanceof Error ? err.message : t("networking.moveError")),
       },
     );
   }
@@ -103,52 +107,40 @@ export function Networking() {
 
   const connState = session.data?.enabled
     ? session.data.status === "valid"
-      ? { cls: "bg-good-wash border-good text-good", label: "LinkedIn connected" }
+      ? { cls: "bg-good-wash border-good text-good", label: t("networking.linkedinPill.connected") }
       : session.data.status === "connecting"
-        ? { cls: "bg-warn-wash border-warn text-warn", label: "Connecting…" }
+        ? { cls: "bg-warn-wash border-warn text-warn", label: t("networking.linkedinPill.connecting") }
         : session.data.status === "backing_off"
-          ? { cls: "bg-bad-wash border-bad text-bad", label: "Backing off" }
-          : { cls: "bg-bad-wash border-bad text-bad", label: "Connect LinkedIn" }
+          ? { cls: "bg-bad-wash border-bad text-bad", label: t("networking.linkedinPill.backingOff") }
+          : { cls: "bg-bad-wash border-bad text-bad", label: t("networking.linkedinPill.connect") }
     : null;
 
   return (
     <>
       <header className="flex min-h-[48px] items-center gap-3 border-b border-border bg-surface px-5">
-        <h1 className="text-[14px] font-semibold text-ink">Networking</h1>
+        <h1 className="text-[14px] font-semibold text-ink">{t("nav.networking")}</h1>
         <div className="ml-auto flex items-center gap-3">
           {connState && (
             <span
               data-testid="linkedin-state-pill"
-              title="Read-only — connect/enable LinkedIn from Settings"
+              title={t("networking.linkedinPill.title")}
               className={`inline-flex h-[22px] items-center gap-[5px] rounded-full border px-2 text-[11.5px] font-medium ${connState.cls}`}
             >
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {connState.label}
             </span>
           )}
-          <button
-            data-testid="deleted-contacts-btn"
+          <HeaderDeletedButton
+            label={t("networking.deleted.title")}
+            count={archivedCount}
             onClick={() => setDeletedOpen(true)}
-            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
-          >
-            <Icon name="trash" size={14} strokeWidth={2} />
-            Deleted Contacts
-            {archivedCount > 0 ? (
-              <span className="ml-1 inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-bad px-1 font-mono text-[10px] font-bold text-white">
-                {archivedCount}
-              </span>
-            ) : null}
-          </button>
-          {/* Sized identically to Job Board's "+ Add a job by URL" (icon +
-              rounded-7 + same paddings) for cross-tab consistency. */}
-          <button
-            data-testid="add-contact-by-url-button"
+            testid="deleted-contacts-btn"
+          />
+          <HeaderAddButton
+            label={t("networking.addByUrl")}
             onClick={() => setAddOpen(true)}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
-          >
-            <Icon name="plus" size={14} strokeWidth={2} />
-            Add contact by URL
-          </button>
+            testid="add-contact-by-url-button"
+          />
         </div>
       </header>
 
@@ -160,29 +152,29 @@ export function Networking() {
           <>
             <span className="inline-flex h-[22px] items-center gap-[5px] rounded-full border border-good bg-good-wash px-2 text-[11.5px] font-medium text-good">
               <span className="h-1.5 w-1.5 rounded-full bg-good" />
-              {scoped.length} connection{scoped.length === 1 ? "" : "s"}
+              {t("networking.connectionCount", { count: scoped.length })}
             </span>
             <span className="inline-flex h-[22px] items-center rounded-full border border-border bg-surface-3 px-2 font-mono text-[11px] text-ink-2">
-              {firstDeg} 1st · {secondDeg} 2nd
+              {t("networking.degreeSummary", { first: firstDeg, second: secondDeg })}
             </span>
           </>
         }
       >
-        <FilterGroup label="Company">
+        <FilterGroup label={t("networking.filters.company")}>
           <select
             value={companyFilter ?? ""}
             onChange={(e) => setCompanyFilter(e.target.value || null)}
             className="h-7 rounded-full border border-border-2 bg-surface px-2 text-[11.5px] text-ink focus:border-accent focus:outline-none"
             data-testid="scope-company-select"
           >
-            <option value="">All</option>
+            <option value="">{t("networking.filters.all")}</option>
             {companies.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
         </FilterGroup>
         <FilterSep />
-        <FilterGroup label="Audience">
+        <FilterGroup label={t("networking.filters.audience")}>
           {(["hm", "recruiter", "leadership"] as AudienceTag[]).map((a) => {
             const n = scoped.filter((c) => c.audience_tag === a).length;
             return (
@@ -191,7 +183,7 @@ export function Networking() {
                 active={audienceFilter === a}
                 onClick={() => setAudienceFilter(audienceFilter === a ? null : a)}
               >
-                {TAG_LABEL[a]} ({n})
+                {t(TAG_LABEL[a])} ({n})
               </Chip>
             );
           })}
@@ -200,54 +192,54 @@ export function Networking() {
         <SearchBox
           value={search}
           onChange={setSearch}
-          placeholder="Search"
+          placeholder={t("networking.filters.search")}
           testid="networking-search"
         />
       </FilterBar>
 
-      <main className="flex flex-1 flex-col gap-3 overflow-hidden px-4 py-3">
-        {/* Kanban */}
-        <div className="min-h-0 flex-1">
-          <div className="flex h-full gap-3 overflow-x-auto pb-2" data-testid="networking-kanban">
-            {COLUMNS.map((col) => {
-              const cards = scoped.filter((c) => c.connection_status === col.id);
-              return (
-                <div
-                  key={col.id}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => onDropContact(col.id)}
-                  className="flex w-[260px] shrink-0 flex-col gap-2 rounded-xl bg-surface-2 p-2.5"
-                  data-status={col.id}
-                >
-                  <div className="flex items-center gap-2 px-1">
-                    <h5 className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-ink-2">
-                      <span className={`h-1.5 w-1.5 rounded-full ${col.dot}`} />
-                      {col.label}
-                    </h5>
-                    <span className="ml-auto rounded bg-surface-3 px-1.5 py-px font-mono text-[11px] text-ink-3">{cards.length}</span>
-                  </div>
-                  <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-                    {cards.length === 0 ? (
-                      <div className="rounded-lg border-2 border-dashed border-border-2 px-3 py-3.5 text-center font-mono text-[11.5px] text-ink-4">
-                        {col.empty}
-                      </div>
-                    ) : (
-                      cards.map((c) => (
-                        <ContactCard
-                          key={c.id}
-                          c={c}
-                          onClick={() => setActive(c)}
-                          onDragStart={() => setDragId(c.id)}
-                          onDragEnd={() => setDragId(null)}
-                        />
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {/* Kanban — same column skeleton as the Applications board (maintainer
+          2026-07-23 #6: one width, one header style, one card language). */}
+      <main
+        className="flex min-h-0 flex-1 gap-3 overflow-x-auto bg-canvas p-4 no-scrollbar"
+        data-testid="networking-kanban"
+      >
+        {COLUMNS.map((col) => {
+          const cards = scoped.filter((c) => c.connection_status === col.id);
+          return (
+            <div
+              key={col.id}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => onDropContact(col.id)}
+              className="flex w-[280px] shrink-0 flex-col rounded-xl bg-surface-2/60"
+              data-status={col.id}
+            >
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-2">
+                  <span className={`h-1.5 w-1.5 rounded-full ${col.dot}`} />
+                  {t(col.label)}
+                </span>
+                <span className="rounded bg-surface-3 px-1.5 font-mono text-[11px] text-ink-3">
+                  {cards.length}
+                </span>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-3">
+                {cards.length === 0 ? (
+                  <p className="px-1 py-2 text-[11px] text-ink-4">{t(col.empty)}</p>
+                ) : (
+                  cards.map((c) => (
+                    <ContactCard
+                      key={c.id}
+                      c={c}
+                      onClick={() => setActive(c)}
+                      onDragStart={() => setDragId(c.id)}
+                      onDragEnd={() => setDragId(null)}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })}
       </main>
 
       {/* Drag-move failure toast — the update mutation reports rejections here
@@ -260,7 +252,7 @@ export function Networking() {
         >
           {error}
           <button onClick={() => setError(null)} className="ml-3 underline">
-            dismiss
+            {t("networking.dismiss")}
           </button>
         </div>
       ) : null}
@@ -273,18 +265,18 @@ export function Networking() {
 }
 
 function DeletedContactsModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const archivedQ = useArchivedContacts();
   const update = useUpdateContact();
   const rows = archivedQ.data ?? [];
   return (
-    <Modal title="Deleted Contacts" onClose={onClose} width={520}>
+    <Modal title={t("networking.deleted.title")} onClose={onClose} width={520}>
       <div data-testid="deleted-contacts-modal" className="px-5 py-4">
         <p className="mb-3 text-[11.5px] text-ink-3">
-          Deleted contacts are hidden from the kanban but keep their outreach history. Restore one
-          to bring it back, or re-add it by URL — either way it returns to where it was.
+          {t("networking.deleted.blurb")}
         </p>
         {rows.length === 0 ? (
-          <p className="text-[13px] text-ink-3">No deleted contacts.</p>
+          <p className="text-[13px] text-ink-3">{t("networking.deleted.empty")}</p>
         ) : (
           <ul className="space-y-2">
             {rows.map((c) => (
@@ -293,7 +285,7 @@ function DeletedContactsModal({ onClose }: { onClose: () => void }) {
                 data-testid="deleted-contact-row"
                 className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
               >
-                <span className="inline-grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-2 font-mono text-[11px] font-semibold text-ink-2">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-surface-2 text-[11px] font-semibold text-ink-2">
                   {initials(c.name)}
                 </span>
                 <div className="min-w-0 flex-1">
@@ -309,7 +301,7 @@ function DeletedContactsModal({ onClose }: { onClose: () => void }) {
                   onClick={() => update.mutate({ id: c.id, patch: { archived: false } })}
                   className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
                 >
-                  Restore
+                  {t("networking.deleted.restore")}
                 </button>
               </li>
             ))}
@@ -331,6 +323,7 @@ function ContactCard({
   onDragStart: () => void;
   onDragEnd: () => void;
 }) {
+  const { t } = useTranslation();
   const days = daysSince(c.last_message_at ?? c.sent_at);
   return (
     <button
@@ -340,10 +333,11 @@ function ContactCard({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
-      className="flex w-full flex-col gap-1.5 rounded-lg border border-border bg-surface p-2.5 text-left transition hover:border-border-2 focus:outline-none focus:ring-2 focus:ring-accent"
+      className="flex w-full flex-col gap-1.5 rounded-lg border border-border bg-surface p-3 text-left shadow-sm transition hover:border-border-2 focus:outline-none focus:ring-2 focus:ring-accent"
     >
       <div className="flex items-center gap-2">
-        <span className="inline-grid h-7 w-7 shrink-0 place-items-center rounded-full bg-surface-3 font-mono text-[11px] font-semibold text-ink-2">
+        {/* Square initials block — matches the Applications card avatar. */}
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-surface-2 text-[11px] font-semibold text-ink-2">
           {initials(c.name)}
         </span>
         <div className="min-w-0 flex-1">
@@ -353,12 +347,15 @@ function ContactCard({
       </div>
       {days != null && (
         <div className="font-mono text-[10.5px] text-ink-3">
-          {days === 0 ? "today" : `${days}d`} in {c.connection_status}
+          {t("networking.card.inStatus", {
+            duration: days === 0 ? t("networking.card.today") : t("networking.card.days", { n: days }),
+            status: c.connection_status,
+          })}
         </div>
       )}
       {c.last_message && (
         <div className="rounded-md border border-border bg-surface-3/70 px-2 py-1.5 text-[11px] leading-snug text-ink-3">
-          <span className="text-[10px] font-semibold text-ink-2">You:</span>{" "}
+          <span className="text-[10px] font-semibold text-ink-2">{t("networking.card.you")}</span>{" "}
           <span className="italic">&ldquo;{c.last_message.slice(0, 90)}{c.last_message.length > 90 ? "…" : ""}&rdquo;</span>
         </div>
       )}
@@ -367,6 +364,7 @@ function ContactCard({
 }
 
 function ContactDetailModal({ contact, onClose }: { contact: NetContact; onClose: () => void }) {
+  const { t } = useTranslation();
   const update = useUpdateContact();
   return (
     <Modal title={contact.name} onClose={onClose} width={520}>
@@ -374,12 +372,12 @@ function ContactDetailModal({ contact, onClose }: { contact: NetContact; onClose
         <div className="text-[13px] text-ink-2">
           {contact.current_role} · {contact.current_company}
           <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className="ml-2 text-accent underline">
-            LinkedIn
+            {t("networking.detail.linkedin")}
           </a>
         </div>
         {contact.last_message && (
           <div className="rounded-md border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2">
-            <div className="mb-1 font-mono text-[10px] uppercase text-ink-4">Last message</div>
+            <div className="mb-1 text-[10.5px] font-medium text-ink-4">{t("networking.detail.lastMessage")}</div>
             {contact.last_message}
           </div>
         )}
@@ -389,7 +387,7 @@ function ContactDetailModal({ contact, onClose }: { contact: NetContact; onClose
             onClick={() => { update.mutate({ id: contact.id, patch: { archived: true } }); onClose(); }}
             className="h-[30px] rounded-md border border-border bg-surface px-3 text-[12px] text-ink-2 hover:bg-surface-2"
           >
-            Archive
+            {t("networking.detail.archive")}
           </button>
         </div>
       </div>
@@ -398,6 +396,7 @@ function ContactDetailModal({ contact, onClose }: { contact: NetContact; onClose
 }
 
 function AddContactModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const add = useAddContact();
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
@@ -415,49 +414,49 @@ function AddContactModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title="Add a contact" onClose={onClose} width={520}>
+    <Modal title={t("networking.add.title")} onClose={onClose} width={520}>
       <form
         data-testid="add-contact-form"
         onSubmit={(e) => { e.preventDefault(); submit(); }}
         className="flex flex-col gap-3 px-5 py-5"
       >
         <p className="text-[12.5px] text-ink-3">
-          Add anyone by their LinkedIn URL — always available regardless of LinkedIn state (rank, don't gate).
+          {t("networking.add.blurb")}
         </p>
-        <Field label="LinkedIn profile URL">
+        <Field label={t("networking.add.urlLabel")}>
           <input data-testid="add-contact-url" type="url" required value={url} onChange={(e) => setUrl(e.target.value)}
             placeholder="https://www.linkedin.com/in/sarah-tan"
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
         </Field>
-        <Field label="Name">
+        <Field label={t("networking.add.nameLabel")}>
           <input data-testid="add-contact-name" value={name} onChange={(e) => setName(e.target.value)}
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Company">
+          <Field label={t("networking.add.companyLabel")}>
             <input value={company} onChange={(e) => setCompany(e.target.value)}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
           </Field>
-          <Field label="Role">
+          <Field label={t("networking.add.roleLabel")}>
             <input value={role} onChange={(e) => setRole(e.target.value)}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
           </Field>
         </div>
-        <Field label="Initial column">
+        <Field label={t("networking.add.initialColumn")}>
           <select value={status} onChange={(e) => setStatus(e.target.value as ConnectionStatus)}
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none">
-            <option value="sent">Sent — invite is out</option>
-            <option value="accepted">Accepted — already connected</option>
-            <option value="engagement">Engagement — actively chatting</option>
-            <option value="converted">Converted — referring me</option>
+            <option value="sent">{t("networking.add.optionSent")}</option>
+            <option value="accepted">{t("networking.add.optionAccepted")}</option>
+            <option value="engagement">{t("networking.add.optionEngagement")}</option>
+            <option value="converted">{t("networking.add.optionConverted")}</option>
           </select>
         </Field>
         <div className="mt-1 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="h-[30px] rounded-md border border-border bg-surface px-3 text-[12.5px] text-ink-2 hover:bg-surface-2">
-            Cancel
+            {t("networking.add.cancel")}
           </button>
           <button type="submit" data-testid="add-contact-submit" className="h-[30px] rounded-md border border-accent bg-accent px-3 text-[12.5px] font-medium text-white hover:bg-accent-ink">
-            Add contact
+            {t("networking.add.submit")}
           </button>
         </div>
       </form>

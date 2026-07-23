@@ -1,12 +1,14 @@
 // A small yes/no confirmation modal (maintainer 2026-07-23) — used for the
 // "Re-score all N jobs with AI?" prompt and any other reversible confirm.
+import { useTranslation } from "react-i18next";
+
 import { Modal } from "./Modal";
 
 export function ConfirmDialog({
   title,
   body,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   busy = false,
   onConfirm,
   onCancel,
@@ -19,6 +21,7 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Modal title={title} onClose={onCancel} width={440}>
       <div className="flex flex-col gap-4 px-5 py-4" data-testid="confirm-dialog">
@@ -31,7 +34,7 @@ export function ConfirmDialog({
             data-testid="confirm-cancel"
             className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2 hover:text-ink disabled:opacity-50"
           >
-            {cancelLabel}
+            {cancelLabel ?? t("shell.cancel")}
           </button>
           <button
             type="button"
@@ -40,7 +43,7 @@ export function ConfirmDialog({
             data-testid="confirm-ok"
             className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {confirmLabel}
+            {confirmLabel ?? t("shell.confirm")}
           </button>
         </div>
       </div>

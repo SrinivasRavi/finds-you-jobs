@@ -9,11 +9,13 @@
 // never cancels the run (§8.2) — it just closes.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { api } from "../api";
 import { eventBus, type SSEEvent } from "../api/events";
 import { useApplyRun, useAttestApply, useCancelApply, useStartApply } from "../api/queries";
 import type { ApplyRun, ApplyRunStatus } from "../api/types";
+import i18n from "../i18n";
 import { Modal } from "../shell/Modal";
 
 type Tone = "info" | "ok" | "warn" | "bad";
@@ -38,31 +40,31 @@ const DOT_CLS: Record<Tone, string> = {
 function phaseInfo(status: ApplyRunStatus, phase: string): { label: string; tone: Tone; live: boolean } {
   switch (status) {
     case "queued":
-      return { label: "Queued", tone: "info", live: true };
+      return { label: i18n.t("popups.applier.phase.queued"), tone: "info", live: true };
     case "waiting_for_packet":
-      return { label: "Waiting for résumé", tone: "info", live: true };
+      return { label: i18n.t("popups.applier.phase.waitingForPacket"), tone: "info", live: true };
     case "ready_for_human":
-      return { label: "Ready for review", tone: "warn", live: false };
+      return { label: i18n.t("popups.applier.phase.readyForHuman"), tone: "warn", live: false };
     case "blocked":
-      return { label: "Blocked", tone: "bad", live: false };
+      return { label: i18n.t("popups.applier.phase.blocked"), tone: "bad", live: false };
     case "timed_out":
-      return { label: "Timed out", tone: "bad", live: false };
+      return { label: i18n.t("popups.applier.phase.timedOut"), tone: "bad", live: false };
     case "interrupted":
-      return { label: "Interrupted", tone: "bad", live: false };
+      return { label: i18n.t("popups.applier.phase.interrupted"), tone: "bad", live: false };
     case "failed":
-      return { label: "Failed", tone: "bad", live: false };
+      return { label: i18n.t("popups.applier.phase.failed"), tone: "bad", live: false };
     case "submitted":
-      return { label: "Submitted", tone: "ok", live: false };
+      return { label: i18n.t("popups.applier.phase.submitted"), tone: "ok", live: false };
     case "running": {
       const p = phase.toLowerCase();
-      if (p.includes("open")) return { label: "Opening job", tone: "info", live: true };
-      if (p.includes("find") || p.includes("form")) return { label: "Finding form", tone: "info", live: true };
-      if (p.includes("fill")) return { label: "Filling", tone: "info", live: true };
-      if (p.includes("verif")) return { label: "Verifying", tone: "info", live: true };
-      return { label: "Working", tone: "info", live: true };
+      if (p.includes("open")) return { label: i18n.t("popups.applier.phase.openingJob"), tone: "info", live: true };
+      if (p.includes("find") || p.includes("form")) return { label: i18n.t("popups.applier.phase.findingForm"), tone: "info", live: true };
+      if (p.includes("fill")) return { label: i18n.t("popups.applier.phase.filling"), tone: "info", live: true };
+      if (p.includes("verif")) return { label: i18n.t("popups.applier.phase.verifying"), tone: "info", live: true };
+      return { label: i18n.t("popups.applier.phase.working"), tone: "info", live: true };
     }
     default:
-      return { label: "Completed", tone: "ok", live: false };
+      return { label: i18n.t("popups.applier.phase.completed"), tone: "ok", live: false };
   }
 }
 
@@ -75,14 +77,16 @@ function seedFeed(run: ApplyRun): FeedItem[] {
   run.fields.forEach((f, i) => {
     items.push({
       id: `seed-field-${i}`,
-      text: `${f.label || "Field"} — ${f.action}${f.note ? ` (${f.note})` : ""}`,
+      text: `${f.label || i18n.t("popups.applier.seedFieldFallback")} — ${f.action}${f.note ? ` (${f.note})` : ""}`,
       tone: f.ok ? "ok" : "warn",
     });
   });
   run.blockers.forEach((b, i) => {
     items.push({
       id: `seed-blocker-${i}`,
-      text: `Blocker — ${b.kind}${b.field_label ? ` [${b.field_label}]` : ""}${b.detail ? `: ${b.detail}` : ""}`,
+      text:
+        i18n.t("popups.applier.feed.blocker", { kind: b.kind }) +
+        `${b.field_label ? ` [${b.field_label}]` : ""}${b.detail ? `: ${b.detail}` : ""}`,
       tone: "bad",
     });
   });
@@ -109,34 +113,53 @@ type ApplyEventPayload = {
  *  that carry no narration (screenshot_ready drives the image, not the feed). */
 function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
   const id = `ev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const who = p.label || p.tool || "Action";
+  const who = p.label || p.tool || i18n.t("popups.applier.feed.actionFallback");
   switch (p.event) {
     case "apply.phase_changed":
-      return { id, text: `Phase — ${p.phase ?? ""}`, tone: "info" };
+      return { id, text: i18n.t("popups.applier.feed.phaseChanged", { phase: p.phase ?? "" }), tone: "info" };
     case "apply.observed":
-      return { id, text: `Observing${p.title ? ` — ${p.title}` : p.url ? ` — ${p.url}` : ""}`, tone: "info" };
+      return {
+        id,
+        text:
+          i18n.t("popups.applier.feed.observing") +
+          `${p.title ? ` — ${p.title}` : p.url ? ` — ${p.url}` : ""}`,
+        tone: "info",
+      };
     case "apply.action_started":
-      return { id, text: `${who} — ${p.tool ?? "started"}…`, tone: "info" };
+      return {
+        id,
+        text: i18n.t("popups.applier.feed.actionStarted", {
+          who,
+          tool: p.tool ?? i18n.t("popups.applier.feed.startedFallback"),
+        }),
+        tone: "info",
+      };
     case "apply.action_verified":
-      return { id, text: `${who} — verified`, tone: "ok" };
+      return { id, text: i18n.t("popups.applier.feed.actionVerified", { who }), tone: "ok" };
     case "apply.action_failed":
-      return { id, text: `${who} — failed${p.note ? `: ${p.note}` : ""}`, tone: "bad" };
+      return {
+        id,
+        text: i18n.t("popups.applier.feed.actionFailed", { who }) + `${p.note ? `: ${p.note}` : ""}`,
+        tone: "bad",
+      };
     case "apply.blocker_found":
       return {
         id,
-        text: `Blocker — ${p.kind ?? ""}${p.field_label ? ` [${p.field_label}]` : ""}${p.detail ? `: ${p.detail}` : ""}`,
+        text:
+          i18n.t("popups.applier.feed.blocker", { kind: p.kind ?? "" }) +
+          `${p.field_label ? ` [${p.field_label}]` : ""}${p.detail ? `: ${p.detail}` : ""}`,
         tone: "bad",
       };
     case "apply.waiting_for_packet":
-      return { id, text: "Waiting for the résumé packet to finish…", tone: "info" };
+      return { id, text: i18n.t("popups.applier.feed.waitingForPacket"), tone: "info" };
     case "apply.ready_for_human":
-      return { id, text: "Form ready — review and submit in the application browser.", tone: "warn" };
+      return { id, text: i18n.t("popups.applier.feed.readyForHuman"), tone: "warn" };
     case "apply.confirmation_detected":
-      return { id, text: "Submission confirmed on the page.", tone: "ok" };
+      return { id, text: i18n.t("popups.applier.feed.confirmationDetected"), tone: "ok" };
     case "apply.interrupted":
-      return { id, text: "Run interrupted — the application browser was closed.", tone: "bad" };
+      return { id, text: i18n.t("popups.applier.feed.interrupted"), tone: "bad" };
     case "apply.completed":
-      return { id, text: "Run completed.", tone: "ok" };
+      return { id, text: i18n.t("popups.applier.feed.completed"), tone: "ok" };
     default:
       return null;
   }
@@ -167,6 +190,7 @@ export function ApplierPanel({
   onRebind: (newRunId: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const runQ = useApplyRun(runId);
   const run = runQ.data;
   const cancel = useCancelApply();
@@ -251,14 +275,17 @@ export function ApplierPanel({
   // ── Cost line ──
   const usage = run?.usage;
   const costLine = useMemo(() => {
-    if (!usage) return "0 calls";
+    if (!usage) return t("popups.applier.calls", { count: 0 });
     const parts = [
-      `${usage.calls} call${usage.calls === 1 ? "" : "s"}`,
-      `${usage.tokens_in.toLocaleString()}+${usage.tokens_out.toLocaleString()} tok`,
+      t("popups.applier.calls", { count: usage.calls }),
+      t("popups.applier.tokens", {
+        tokensIn: usage.tokens_in.toLocaleString(),
+        tokensOut: usage.tokens_out.toLocaleString(),
+      }),
     ];
-    parts.push(usage.cost_usd != null ? `$${usage.cost_usd.toFixed(4)}` : "cost n/a");
+    parts.push(usage.cost_usd != null ? `$${usage.cost_usd.toFixed(4)}` : t("popups.applier.costNa"));
     return parts.join(" · ");
-  }, [usage]);
+  }, [usage, t]);
 
   const canCancel =
     status === "queued" || status === "waiting_for_packet" || status === "running";
@@ -273,7 +300,7 @@ export function ApplierPanel({
     if (fresh) onRebind(fresh.id);
   }
 
-  const title = `Applying — ${role} · ${company}`;
+  const title = t("popups.applier.title", { role, company });
 
   return (
     <Modal
@@ -303,9 +330,11 @@ export function ApplierPanel({
               <span className="text-ink-4">·</span>
               <span
                 className="font-mono text-ink-3"
-                title="Remaining Apply budget (20-minute total)"
+                title={t("popups.applier.budgetTooltip")}
               >
-                {phase.live ? `${fmtRemaining(remainingMs)} left` : `budget ${fmtRemaining(Math.max(remainingMs, 0))}`}
+                {phase.live
+                  ? t("popups.applier.timeLeft", { time: fmtRemaining(remainingMs) })
+                  : t("popups.applier.budgetTime", { time: fmtRemaining(Math.max(remainingMs, 0)) })}
               </span>
             </>
           ) : null}
@@ -325,7 +354,7 @@ export function ApplierPanel({
         {/* Submitted banner (§8.4 — confirmation detected or user-attested) */}
         {status === "submitted" ? (
           <div className="border-b border-border bg-good-wash px-5 py-2.5 text-[12.5px] font-medium text-good">
-            Submitted — this application moved to Applied.
+            {t("popups.applier.submittedBanner")}
             {run?.submit_evidence ? (
               <span className="ml-1 font-normal text-ink-2">{run.submit_evidence}</span>
             ) : null}
@@ -335,17 +364,17 @@ export function ApplierPanel({
         <div className="flex min-h-0 flex-1">
           {/* Event feed */}
           <div className="flex min-h-0 w-1/2 flex-col border-r border-border">
-            <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-3">
-              Activity
+            <div className="border-b border-border px-4 py-2 font-mono text-[10px] font-medium text-ink-3">
+              {t("popups.applier.activity")}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="applier-event-feed">
               {runQ.isLoading && feed.length === 0 ? (
                 <div className="flex items-center gap-2 text-[12px] text-ink-3">
                   <span className="inline-block h-3 w-3 animate-spin rounded-full border border-border-2 border-t-accent" />
-                  Loading run…
+                  {t("popups.applier.loadingRun")}
                 </div>
               ) : feed.length === 0 ? (
-                <div className="text-[12px] text-ink-3">No activity yet.</div>
+                <div className="text-[12px] text-ink-3">{t("popups.applier.noActivity")}</div>
               ) : (
                 <ul className="space-y-1.5">
                   {feed.map((it) => (
@@ -362,8 +391,8 @@ export function ApplierPanel({
 
           {/* Latest evidence screenshot */}
           <div className="flex min-h-0 w-1/2 flex-col">
-            <div className="border-b border-border px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-3">
-              Latest screenshot
+            <div className="border-b border-border px-4 py-2 font-mono text-[10px] font-medium text-ink-3">
+              {t("popups.applier.latestScreenshot")}
             </div>
             <div
               className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-surface-3 p-3"
@@ -372,11 +401,11 @@ export function ApplierPanel({
               {shotUrl ? (
                 <img
                   src={shotUrl}
-                  alt="Latest Applier evidence screenshot"
+                  alt={t("popups.applier.screenshotAlt")}
                   className="max-h-full max-w-full rounded-md border border-border object-contain"
                 />
               ) : (
-                <span className="text-[12px] text-ink-4">No screenshot captured yet.</span>
+                <span className="text-[12px] text-ink-4">{t("popups.applier.noScreenshot")}</span>
               )}
             </div>
           </div>
@@ -389,17 +418,18 @@ export function ApplierPanel({
             data-testid="applier-handoff-strip"
           >
             <div className="text-[13px] font-semibold text-ink">
-              Form ready — review and submit in the application browser
+              {t("popups.applier.handoffTitle")}
             </div>
             <div className="mt-1 text-[12px] text-ink-2">
-              Filled {okFields} of {totalFields} field{totalFields === 1 ? "" : "s"}.
+              {t("popups.applier.filledFields", { ok: okFields, count: totalFields })}
               {run && run.blockers.length > 0
-                ? " Couldn’t complete: " +
-                  run.blockers
-                    .map((b) => `${b.kind}${b.field_label ? ` (${b.field_label})` : ""}`)
-                    .join(", ") +
-                  "."
-                : " finds-you-jobs never submits for you in P1 — check it over, then click the site’s own Submit."}
+                ? " " +
+                  t("popups.applier.couldntComplete", {
+                    blockers: run.blockers
+                      .map((b) => `${b.kind}${b.field_label ? ` (${b.field_label})` : ""}`)
+                      .join(", "),
+                  })
+                : " " + t("popups.applier.neverSubmits")}
             </div>
             <div className="mt-3 flex items-center gap-2">
               <button
@@ -408,7 +438,7 @@ export function ApplierPanel({
                 onClick={() => attest.mutate({ runId, submitted: true })}
                 className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
               >
-                I submitted
+                {t("popups.applier.iSubmitted")}
               </button>
               <button
                 data-testid="applier-attest-didnt-btn"
@@ -416,7 +446,7 @@ export function ApplierPanel({
                 onClick={() => attest.mutate({ runId, submitted: false })}
                 className="inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Didn’t submit
+                {t("popups.applier.didntSubmit")}
               </button>
             </div>
           </div>
@@ -453,10 +483,10 @@ export function ApplierPanel({
                 {startApply.isPending ? (
                   <>
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border border-white/60 border-t-transparent" />
-                    Retrying…
+                    {t("popups.applier.retrying")}
                   </>
                 ) : (
-                  "Retry"
+                  t("popups.applier.retry")
                 )}
               </button>
             </div>
@@ -472,15 +502,15 @@ export function ApplierPanel({
               onClick={() => cancel.mutate(runId)}
               className="mr-auto inline-flex h-[30px] items-center rounded-md border border-bad/40 bg-surface px-3 text-[12px] font-medium text-bad hover:bg-bad-wash disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {cancel.isPending ? "Cancelling…" : "Cancel run"}
+              {cancel.isPending ? t("popups.applier.cancelling") : t("popups.applier.cancelRun")}
             </button>
           ) : null}
-          <span className="text-[11px] text-ink-4">Closing this panel won’t stop the run.</span>
+          <span className="text-[11px] text-ink-4">{t("popups.applier.closeHint")}</span>
           <button
             className="h-[30px] rounded-md px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
             onClick={onClose}
           >
-            Close
+            {t("popups.applier.close")}
           </button>
         </div>
       </div>

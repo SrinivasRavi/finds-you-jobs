@@ -10,14 +10,17 @@
 // were restored 2026-07-16 (the referral-outreach backend now exists).
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
+  useAddManualApplication,
   useApplicationActivity,
   useApplicationNetworking,
   useApplications,
   useArchived,
   useArchiveApplication,
   useGeneratePacket,
+  useJobPreview,
   useLinkedInSession,
   useMoveApplication,
   usePatchArtifact,
@@ -28,8 +31,49 @@ import {
   useUnarchiveApplication,
   useUpdateApplication,
 } from "../api/queries";
-import type { Application, Job, Priority, Stage } from "../api/types";
-import { STAGES } from "../api/types";
+import { api } from "../api/index";
+import i18n from "../i18n";
+import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
+import type {
+  Application,
+  ApplicationDocument,
+  Job,
+  JobDraft,
+  ManualApplicationInput,
+  Priority,
+  Stage,
+} from "../api/types";
+import { JobTombstonedError, STAGES } from "../api/types";
+
+// Stages a manually-logged application can land in — it's already been applied
+// to, so it starts at Applied (or later); the pre-submission columns don't apply.
+const MANUAL_STAGES: ManualApplicationInput["stage"][] = [
+  "Applied",
+  "Interviewing",
+  "Offer",
+  "Rejected",
+];
+
+// Translation keys for the attached-document slots' human labels (the artifact
+// kind vocabulary).
+const DOC_KIND_KEY: Record<ApplicationDocument["kind"], string> = {
+  tailored_resume: "tracker.docKind.tailored_resume",
+  cover_letter: "tracker.docKind.cover_letter",
+};
+
+/** Download an attached document (authed fetch → object URL → save). The bearer
+ *  token can't ride on a plain href, so we fetch the blob and click a temp link. */
+async function downloadDocument(doc: ApplicationDocument): Promise<void> {
+  const blob = await api.fetchDocument(doc.document_id);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = doc.filename || i18n.t(DOC_KIND_KEY[doc.kind]);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 import { ApplierPanel } from "../popups/ApplierPanel";
 import { GuidanceDialog } from "../popups/GuidanceDialog";
 import { ReferralsModal } from "../popups/ReferralsModal";
@@ -48,9 +92,10 @@ const PRIORITY_CLS: Record<Priority, string> = {
 };
 
 function PriorityChip({ p }: { p: Priority }) {
+  const { t } = useTranslation();
   return (
     <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ${PRIORITY_CLS[p]}`}>
-      Priority: {p}
+      {t("tracker.priorityChip", { p })}
     </span>
   );
 }
@@ -73,17 +118,17 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
 // running→"Applying…" (grey+spinner), ready_for_human→"Review & submit"
 // (yellow), submitted→"Submitted" (green check), and the honest non-success
 // terminals→"Retry" (red).
-const APPLY_SLOT: Record<Application["apply_run_status"], { label: string; state: string }> = {
-  queued: { label: "Applying…", state: "generating" },
-  none: { label: "Apply", state: "none" },
-  waiting_for_packet: { label: "Applying…", state: "generating" },
-  running: { label: "Applying…", state: "generating" },
-  ready_for_human: { label: "Review & submit", state: "pending" },
-  submitted: { label: "Submitted", state: "approved" },
-  blocked: { label: "Retry", state: "failed" },
-  timed_out: { label: "Retry", state: "failed" },
-  interrupted: { label: "Retry", state: "failed" },
-  failed: { label: "Retry", state: "failed" },
+const APPLY_SLOT: Record<Application["apply_run_status"], { labelKey: string; state: string }> = {
+  queued: { labelKey: "tracker.applySlot.applying", state: "generating" },
+  none: { labelKey: "tracker.applySlot.apply", state: "none" },
+  waiting_for_packet: { labelKey: "tracker.applySlot.applying", state: "generating" },
+  running: { labelKey: "tracker.applySlot.applying", state: "generating" },
+  ready_for_human: { labelKey: "tracker.applySlot.review", state: "pending" },
+  submitted: { labelKey: "tracker.applySlot.submitted", state: "approved" },
+  blocked: { labelKey: "tracker.applySlot.retry", state: "failed" },
+  timed_out: { labelKey: "tracker.applySlot.retry", state: "failed" },
+  interrupted: { labelKey: "tracker.applySlot.retry", state: "failed" },
+  failed: { labelKey: "tracker.applySlot.retry", state: "failed" },
 };
 
 // Stages where the job has already been applied to — the Apply slot must not
@@ -136,6 +181,7 @@ function Card({
   onMenu: (anchor: DOMRect) => void;
   menuOpen: boolean;
 }) {
+  const { t } = useTranslation();
   const tier = app.job.score ? scoreTier(app.job.score.score_0_100) : null;
   return (
     <div
@@ -172,7 +218,7 @@ function Card({
           }}
           data-testid="card-menu-btn"
           className="text-ink-4 hover:text-ink"
-          aria-label="Card menu"
+          aria-label={t("tracker.card.menu")}
         >
           <Icon name="moreV" size={16} strokeWidth={2} />
         </button>
@@ -182,9 +228,19 @@ function Card({
           <span className={`font-mono text-[11px] font-semibold ${tier?.text}`}>
             {app.job.score.score_0_100}
           </span>
+        ) : app.origin === "manual" ? (
+          // A manually-logged card is never scored (they already applied) — mark
+          // its provenance instead of showing a "Pending" score that never lands.
+          <span
+            data-testid="card-manual-badge"
+            title={t("tracker.card.manualTitle")}
+            className="rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[9.5px] font-medium text-ink-3"
+          >
+            {t("tracker.card.manual")}
+          </span>
         ) : (
           <span className="rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 font-mono text-[9.5px] text-ink-3">
-            Pending
+            {t("tracker.card.pending")}
           </span>
         )}
         <PriorityChip p={app.priority} />
@@ -193,14 +249,31 @@ function Card({
           Referrals restored 2026-07-16 — wired to real referrals_state +
           opens the find-referrals popup. */}
       <div className="mt-2 flex flex-wrap items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        {/* A manual card with an uploaded resume/cover shows a green "present"
+            slot; clicking opens the read-only submitted-doc viewer instead of
+            the generate flow (FR-TR manual-add). */}
         <button onClick={() => onSlot("tailored")}>
-          <PacketSlotTag label="Resume" state={app.packet_resume_state} />
+          <PacketSlotTag
+            label={t("tracker.card.resume")}
+            state={
+              app.documents.some((d) => d.kind === "tailored_resume")
+                ? "approved"
+                : app.packet_resume_state
+            }
+          />
         </button>
         <button onClick={() => onSlot("cover")}>
-          <PacketSlotTag label="Cover letter" state={app.packet_cover_state} />
+          <PacketSlotTag
+            label={t("tracker.card.coverLetter")}
+            state={
+              app.documents.some((d) => d.kind === "cover_letter")
+                ? "approved"
+                : app.packet_cover_state
+            }
+          />
         </button>
         <button onClick={() => onSlot("refs")} data-testid="card-referrals-slot">
-          <PacketSlotTag label="Referrals" state={REFERRALS_SLOT_STATE[app.referrals_state]} />
+          <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state]} />
         </button>
         {/* Apply slot (applier.md §8.1/§8.2) — starts a run (or reopens the
             bound one) and opens the companion panel. A card already past
@@ -210,12 +283,12 @@ function Card({
             existing run stays reviewable in any stage. */}
         {POST_APPLICATION.includes(app.stage) && app.apply_run_status === "none" ? (
           <span data-testid="card-apply-slot">
-            <PacketSlotTag label="Applied" state="approved" />
+            <PacketSlotTag label={t("tracker.applySlot.applied")} state="approved" />
           </span>
         ) : (
           <button onClick={() => onSlot("apply")} data-testid="card-apply-slot">
             <PacketSlotTag
-              label={APPLY_SLOT[app.apply_run_status].label}
+              label={t(APPLY_SLOT[app.apply_run_status].labelKey)}
               state={APPLY_SLOT[app.apply_run_status].state}
             />
           </button>
@@ -223,7 +296,10 @@ function Card({
       </div>
       {/* days-in-column + last-touched (US-TR-01) */}
       <div className="mt-2 font-mono text-[10px] text-ink-4" data-testid="card-timestamps">
-        {daysIn(app.created_at)} in column · touched {app.updated_at.slice(5, 10).replace("-", "/")}
+        {t("tracker.card.timestamps", {
+          days: daysIn(app.created_at),
+          touched: app.updated_at.slice(5, 10).replace("-", "/"),
+        })}
       </div>
     </div>
   );
@@ -248,6 +324,7 @@ function formatActivityAt(iso: string): string {
 }
 
 export function Tracker() {
+  const { t } = useTranslation();
   const { data: apps = [] } = useApplications();
   const { data: archived = [] } = useArchived();
   const { data: profile } = useProfile();
@@ -262,7 +339,9 @@ export function Tracker() {
 
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "ALL">("ALL");
+  const [sourceFilter, setSourceFilter] = useState<"ALL" | "discovered" | "manual">("ALL");
   const [hideRejected, setHideRejected] = useState(false);
+  const [showAddApp, setShowAddApp] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [showArchive, setShowArchive] = useState(false);
@@ -293,9 +372,10 @@ export function Tracker() {
         a.job.company.toLowerCase().includes(q) ||
         a.job.location.toLowerCase().includes(q);
       const pri = priorityFilter === "ALL" || a.priority === priorityFilter;
-      return hit && pri;
+      const src = sourceFilter === "ALL" || a.origin === sourceFilter;
+      return hit && pri && src;
     });
-  }, [apps, search, priorityFilter]);
+  }, [apps, search, priorityFilter, sourceFilter]);
 
   const columns = hideRejected ? STAGES.filter((s) => s !== "Rejected") : STAGES;
   const byStage = (s: Stage) => filtered.filter((a) => a.stage === s);
@@ -307,7 +387,7 @@ export function Tracker() {
     const frozen: Stage[] = ["Applied", "Interviewing", "Offer", "Rejected"];
     const backward: Stage[] = ["Saved", "Seeking Referral"];
     if (frozen.includes(app.stage) && backward.includes(stage)) {
-      setAlert("Applied cards can't move back to Saved or Seeking Referral.");
+      setAlert(t("tracker.backwardAlert"));
       setDragId(null);
       return;
     }
@@ -346,35 +426,52 @@ export function Tracker() {
       {/* Row 1 — actions that change what LEAVES this board (mirrors the Job
           Board's top row). Applications only removes via the archive. */}
       <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
-        <h1 className="text-[14px] font-semibold text-ink">Applications</h1>
+        <h1 className="text-[14px] font-semibold text-ink">{t("tracker.title")}</h1>
         <div className="ml-auto flex items-center gap-3 py-1.5">
-          <button
+          <HeaderDeletedButton
+            label={t("tracker.deletedApplications")}
+            count={archived.length}
             onClick={() => setShowArchive(true)}
-            data-testid="archive-btn"
-            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
-          >
-            <Icon name="trash" size={14} strokeWidth={2} />
-            Deleted Applications
-            {archived.length > 0 ? (
-              <span className="ml-1 inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-bad px-1 font-mono text-[10px] font-bold text-white">
-                {archived.length}
-              </span>
-            ) : null}
-          </button>
+            testid="archive-btn"
+          />
+          <HeaderAddButton
+            label={t("tracker.addApplication")}
+            onClick={() => setShowAddApp(true)}
+            testid="add-application-btn"
+          />
         </div>
       </header>
 
       {/* Row 2 — view modifiers (mirrors the Job Board filter row): labeled
           chip groups + "|" separators + trailing Search, all right-aligned. */}
       <FilterBar>
-        <FilterGroup label="Priorities" id="filter-priorities">
+        <FilterGroup label={t("tracker.filters.priorities")} id="filter-priorities">
           {(["ALL", "P0", "P1", "P2", "P3"] as const).map((p) => (
             <Chip
               key={p}
               active={priorityFilter === p}
               onClick={() => setPriorityFilter(p)}
             >
-              {p === "ALL" ? "All" : p}
+              {p === "ALL" ? t("tracker.filters.all") : p}
+            </Chip>
+          ))}
+        </FilterGroup>
+        <FilterSep />
+        <FilterGroup label={t("tracker.filters.source")} id="filter-source">
+          {(
+            [
+              ["ALL", "tracker.filters.all"],
+              ["discovered", "tracker.filters.foundByFyj"],
+              ["manual", "tracker.filters.addedManually"],
+            ] as const
+          ).map(([value, labelKey]) => (
+            <Chip
+              key={value}
+              active={sourceFilter === value}
+              onClick={() => setSourceFilter(value)}
+              testid={`source-${value}`}
+            >
+              {t(labelKey)}
             </Chip>
           ))}
         </FilterGroup>
@@ -384,13 +481,13 @@ export function Tracker() {
           onClick={() => setHideRejected((v) => !v)}
           testid="hide-rejected"
         >
-          Hide Rejected
+          {t("tracker.filters.hideRejected")}
         </Chip>
         <FilterSep />
         <SearchBox
           value={search}
           onChange={setSearch}
-          placeholder="Search"
+          placeholder={t("tracker.filters.search")}
           testid="tracker-search"
         />
       </FilterBar>
@@ -408,7 +505,7 @@ export function Tracker() {
               className="flex w-[280px] shrink-0 flex-col rounded-xl bg-surface-2/60"
             >
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-[12px] font-semibold text-ink-2">{stage}</span>
+                <span className="text-[12px] font-semibold text-ink-2">{t(`tracker.stage.${stage}`)}</span>
                 <span className="rounded bg-surface-3 px-1.5 font-mono text-[11px] text-ink-3">
                   {cards.length}
                 </span>
@@ -416,7 +513,7 @@ export function Tracker() {
               <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-2 pb-3">
                 {cards.length === 0 ? (
                   <p className="px-1 py-2 text-[11px] text-ink-4">
-                    {stage === "Saved" ? "Save a job from the Job Board to start." : "—"}
+                    {stage === "Saved" ? t("tracker.emptySaved") : "—"}
                   </p>
                 ) : (
                   cards.map((app) => (
@@ -459,7 +556,7 @@ export function Tracker() {
         >
           {alert}
           <button onClick={() => setAlert(null)} className="ml-3 underline">
-            dismiss
+            {t("tracker.dismiss")}
           </button>
         </div>
       ) : null}
@@ -467,16 +564,21 @@ export function Tracker() {
       {/* One-way-door confirm dialog: dragging into Applied+ (2026-07-15) */}
       {pendingFrozenMove ? (
         <Modal
-          title={`Move to ${pendingFrozenMove.stage}?`}
+          title={t("tracker.frozenMove.title", { stage: t(`tracker.stage.${pendingFrozenMove.stage}`) })}
           onClose={() => setPendingFrozenMove(null)}
           width={440}
         >
           <div className="space-y-4 px-5 py-4" data-testid="frozen-move-confirm">
             <p className="text-[13px] leading-relaxed text-ink-2">
-              Once a card is in {pendingFrozenMove.stage} it can&apos;t be dragged back
-              to Saved or Seeking Referral — the pre-application work (tailoring,
-              referrals, the Applier) closes for it. Move it only if this
-              application really is {pendingFrozenMove.stage === "Applied" ? "submitted" : `at ${pendingFrozenMove.stage}`}.
+              {t("tracker.frozenMove.body", {
+                stage: t(`tracker.stage.${pendingFrozenMove.stage}`),
+                status:
+                  pendingFrozenMove.stage === "Applied"
+                    ? t("tracker.frozenMove.statusSubmitted")
+                    : t("tracker.frozenMove.statusAt", {
+                        stage: t(`tracker.stage.${pendingFrozenMove.stage}`),
+                      }),
+              })}
             </p>
             <div className="flex justify-end gap-2">
               <button
@@ -484,7 +586,7 @@ export function Tracker() {
                 onClick={() => setPendingFrozenMove(null)}
                 className="rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-surface-3"
               >
-                Cancel
+                {t("tracker.cancel")}
               </button>
               <button
                 data-testid="frozen-move-proceed"
@@ -494,7 +596,7 @@ export function Tracker() {
                 }}
                 className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90"
               >
-                Move to {pendingFrozenMove.stage}
+                {t("tracker.frozenMove.confirm", { stage: t(`tracker.stage.${pendingFrozenMove.stage}`) })}
               </button>
             </div>
           </div>
@@ -541,12 +643,21 @@ export function Tracker() {
         />
       ) : null}
 
-      {/* Resume/cover popups */}
+      {/* Resume/cover popups. For a MANUAL card with an uploaded doc of this
+          kind, the modal shows it read-only (FR-TR manual-add) instead of the
+          generate/tailor flow. */}
       {popup && popupApp && profile ? (
         <ResumeModal
           kind={popup.kind}
           profile={profile}
           application={popupApp}
+          submittedDoc={
+            popupApp.origin === "manual"
+              ? popupApp.documents.find(
+                  (d) => d.kind === (popup.kind === "cover" ? "cover_letter" : "tailored_resume"),
+                )
+              : undefined
+          }
           onClose={() => setPopup(null)}
           onApprove={(markdown) => {
             // Persist the edited markdown + flip ready → approved (FR-RES-02).
@@ -590,6 +701,10 @@ export function Tracker() {
         <ArchiveModal archived={archived} onClose={() => setShowArchive(false)} />
       ) : null}
 
+      {/* "Add a job application" (FR-TR manual-add) — the Tracker sibling of the
+          Job Board's Add-by-URL, for a job applied to outside the app. */}
+      {showAddApp ? <AddApplicationModal onClose={() => setShowAddApp(false)} /> : null}
+
       {/* Applier companion panel (applier.md §8.2) — off the Apply slot. Bound
           to one Apply Run; Retry rebinds it to the fresh run (§8.3). Closing it
           never cancels the run. */}
@@ -631,12 +746,325 @@ export function Tracker() {
   );
 }
 
+// ─── Attached documents (FR-TR manual-add) — the resume/cover the user actually
+// submitted for a manually-logged application, downloadable verbatim. ──────────
+
+function AttachedDocuments({ docs }: { docs: ApplicationDocument[] }) {
+  const { t } = useTranslation();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="space-y-1.5" data-testid="detail-documents">
+      <div className="text-[12px] font-medium text-ink-2">{t("tracker.documents.submitted")}</div>
+      <div className="flex flex-wrap gap-2">
+        {docs.map((doc) => (
+          <button
+            key={doc.document_id}
+            type="button"
+            onClick={() =>
+              downloadDocument(doc).catch((e: unknown) =>
+                setError(e instanceof Error ? e.message : String(e)),
+              )
+            }
+            data-testid={`doc-${doc.kind}`}
+            title={t("tracker.documents.downloadTitle", { filename: doc.filename })}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink-2 hover:border-accent hover:text-ink"
+          >
+            <Icon name="file" size={13} strokeWidth={2} />
+            {t(DOC_KIND_KEY[doc.kind])}
+            <span className="max-w-[160px] truncate text-ink-4">· {doc.filename}</span>
+          </button>
+        ))}
+      </div>
+      {error ? <p className="text-[11.5px] text-bad">{error}</p> : null}
+    </div>
+  );
+}
+
+// ─── "Add a job application" (FR-TR manual-add) — the Tracker sibling of the Job
+// Board's Add-by-URL. Same paste→preview→edit flow, plus the pipeline stage and
+// the optional resume/cover the user submitted (stored content-addressed). ─────
+
+// The upload formats the sidecar accepts (mirrors `documents.ALLOWED_TYPES`).
+const DOC_ACCEPT = ".pdf,.doc,.docx,.txt,.md,.rtf";
+
+function FilePicker({
+  label,
+  file,
+  onPick,
+  testid,
+}: {
+  label: string;
+  file: File | null;
+  onPick: (f: File | null) => void;
+  testid: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center gap-2">
+      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink-2 hover:border-accent">
+        <Icon name="file" size={13} strokeWidth={2} />
+        {file ? t("tracker.documents.change") : label}
+        <input
+          type="file"
+          accept={DOC_ACCEPT}
+          data-testid={testid}
+          className="hidden"
+          onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+        />
+      </label>
+      {file ? (
+        <span className="inline-flex min-w-0 items-center gap-1 text-[12px] text-ink-3">
+          <span className="max-w-[180px] truncate">{file.name}</span>
+          <button
+            type="button"
+            onClick={() => onPick(null)}
+            className="text-ink-4 hover:text-bad"
+            aria-label={t("tracker.documents.remove", { label })}
+          >
+            ×
+          </button>
+        </span>
+      ) : (
+        <span className="text-[11.5px] text-ink-4">{t("tracker.documents.optional")}</span>
+      )}
+    </div>
+  );
+}
+
+function AddApplicationModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
+  const [url, setUrl] = useState("");
+  const [phase, setPhase] = useState<"entry" | "fetching" | "editing">("entry");
+  const [draft, setDraft] = useState<JobDraft | null>(null);
+  const [stage, setStage] = useState<ManualApplicationInput["stage"]>("Applied");
+  const [notes, setNotes] = useState("");
+  const [resume, setResume] = useState<File | null>(null);
+  const [cover, setCover] = useState<File | null>(null);
+  const [tombstoned, setTombstoned] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const preview = useJobPreview();
+  const addApp = useAddManualApplication();
+
+  function fetchDetails() {
+    setPhase("fetching");
+    setTombstoned(false);
+    setError(null);
+    preview.mutate(url, {
+      onSuccess: (d) => {
+        setDraft(d);
+        setPhase("editing");
+      },
+      onError: (err) => {
+        if (err instanceof JobTombstonedError) {
+          setTombstoned(true);
+          setPhase("entry");
+          return;
+        }
+        // Other fetch failures: still let the user fill fields by hand
+        // (rank-don't-gate escape hatch — they already applied, so we never
+        // block logging it).
+        setDraft({
+          canonical_url: url,
+          title: "",
+          company: "",
+          location: "",
+          description: "",
+          salary: "",
+          source_adapter: "paste-url",
+        });
+        setPhase("editing");
+      },
+    });
+  }
+
+  function submit() {
+    if (!draft) return;
+    setError(null);
+    addApp.mutate(
+      {
+        canonical_url: draft.canonical_url,
+        title: draft.title,
+        company: draft.company,
+        location: draft.location,
+        description: draft.description,
+        salary: draft.salary,
+        source_adapter: draft.source_adapter || "paste-url",
+        stage,
+        notes,
+        resume,
+        cover,
+      },
+      {
+        onSuccess: () => onClose(),
+        onError: (err) => setError(err instanceof Error ? err.message : String(err)),
+      },
+    );
+  }
+
+  function patch(fields: Partial<JobDraft>) {
+    setDraft((d) => (d ? { ...d, ...fields } : d));
+  }
+
+  return (
+    <Modal title={t("tracker.addApplication")} onClose={onClose} width={520}>
+      {phase === "entry" ? (
+        <form
+          className="flex flex-col gap-3 px-5 py-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            fetchDetails();
+          }}
+        >
+          <label className="text-[12.5px] text-ink-2">
+            {t("tracker.addApp.intro")}
+          </label>
+          {tombstoned ? (
+            <p
+              data-testid="add-app-tombstoned"
+              className="rounded-md border border-bad/40 bg-bad-wash px-3 py-2 text-[12px] text-bad"
+            >
+              {t("tracker.addApp.tombstoned")}
+            </p>
+          ) : null}
+          <input
+            type="url"
+            required
+            autoFocus
+            data-testid="add-app-url-input"
+            value={url}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              setTombstoned(false);
+            }}
+            placeholder="https://company.com/careers/senior-engineer"
+            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
+          />
+          <div className="mt-1 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
+            >
+              {t("tracker.cancel")}
+            </button>
+            <button
+              type="submit"
+              data-testid="add-app-fetch-btn"
+              className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
+            >
+              {t("tracker.addApp.fetch")}
+            </button>
+          </div>
+        </form>
+      ) : phase === "fetching" ? (
+        <div className="grid place-items-center px-5 py-10 text-[13px] text-ink-3">
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border-2 border-t-accent" />
+            {t("tracker.addApp.fetching")}
+          </div>
+        </div>
+      ) : (
+        <form
+          className="flex flex-col gap-3 px-5 py-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+        >
+          <div className="text-[11.5px] text-ink-3">
+            {url || t("tracker.addApp.noUrl")}{" "}
+            <button
+              type="button"
+              onClick={() => setPhase("entry")}
+              className="text-accent hover:underline"
+            >
+              {t("tracker.addApp.refetch")}
+            </button>
+          </div>
+          <input
+            value={draft?.title ?? ""}
+            onChange={(e) => patch({ title: e.target.value })}
+            placeholder={t("tracker.addApp.titlePlaceholder")}
+            data-testid="add-app-title"
+            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
+          />
+          <input
+            value={draft?.company ?? ""}
+            onChange={(e) => patch({ company: e.target.value })}
+            placeholder={t("tracker.addApp.companyPlaceholder")}
+            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
+          />
+          <input
+            value={draft?.location ?? ""}
+            onChange={(e) => patch({ location: e.target.value })}
+            placeholder={t("tracker.addApp.locationPlaceholder")}
+            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
+          />
+          <label className="flex items-center justify-between gap-3 text-[12.5px] text-ink-2">
+            {t("tracker.addApp.stage")}
+            <select
+              value={stage}
+              onChange={(e) => setStage(e.target.value as ManualApplicationInput["stage"])}
+              data-testid="add-app-stage"
+              className="rounded-md border border-border bg-surface px-2 py-1.5 text-[12.5px] text-ink"
+            >
+              {MANUAL_STAGES.map((s) => (
+                <option key={s} value={s}>
+                  {t(`tracker.stage.${s}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="space-y-2 rounded-md border border-border bg-surface-2 px-3 py-2.5">
+            <div className="text-[12px] font-medium text-ink-2">
+              {t("tracker.documents.used")}{" "}
+              <span className="font-normal text-ink-4">{t("tracker.documents.optionalTag")}</span>
+            </div>
+            <FilePicker label={t("tracker.documents.attachResume")} file={resume} onPick={setResume} testid="add-app-resume" />
+            <FilePicker label={t("tracker.documents.attachCover")} file={cover} onPick={setCover} testid="add-app-cover" />
+          </div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder={t("tracker.addApp.notesPlaceholder")}
+            rows={3}
+            className="resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
+          />
+          {error ? (
+            <p data-testid="add-app-error" className="text-[12px] text-bad">
+              {error}
+            </p>
+          ) : null}
+          <div className="mt-1 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
+            >
+              {t("tracker.cancel")}
+            </button>
+            <button
+              type="submit"
+              disabled={addApp.isPending}
+              data-testid="add-app-submit-btn"
+              className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
+            >
+              {addApp.isPending ? t("tracker.addApp.adding") : t("tracker.addApp.submit")}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 // ─── Job detail block (US-TR-03) — the job-board fields on the Overview tab ───
 // Everything the Job Board card/detail shows, so a tracked card is a full record
 // without bouncing back to the board: logo, title, company · location · work-style,
 // match score, the JD, and — most importantly — the canonical Job URL.
 
 function JobDetail({ job }: { job: Job }) {
+  const { t } = useTranslation();
   const tier = job.score ? scoreTier(job.score.score_0_100) : null;
   const meta = [job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · ");
   return (
@@ -652,7 +1080,7 @@ function JobDetail({ job }: { job: Job }) {
         {job.score ? (
           <span
             data-testid="detail-match-score"
-            title="Match score against your master resume"
+            title={t("tracker.jobDetail.matchScoreTitle")}
             className={`inline-grid h-10 w-10 shrink-0 place-items-center rounded-full border font-mono text-[13px] font-semibold ${tier?.ring} ${tier?.text}`}
           >
             {job.score.score_0_100}
@@ -667,14 +1095,14 @@ function JobDetail({ job }: { job: Job }) {
           data-testid="detail-job-url"
           className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
         >
-          Open job posting ↗
+          {t("tracker.jobDetail.openPosting")}
         </a>
         {job.salary ? <span className="text-ink-3">{job.salary}</span> : null}
       </div>
       {job.description ? (
         <details className="rounded-md border border-border bg-surface-2" data-testid="detail-jd">
           <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-ink-2">
-            Job description
+            {t("tracker.jobDetail.jobDescription")}
           </summary>
           <div className="max-h-64 overflow-y-auto border-t border-border px-3 py-2 text-[12.5px] leading-relaxed text-ink-2">
             <Markdown md={job.description} />
@@ -708,6 +1136,7 @@ function DetailModal({
   // exists) — shown only when the LinkedIn toggle is on (US-TR-03 / FR-TR-03),
   // same gate the prior repo used.
   type Tab = "Overview" | "Notes" | "Scoring" | "Activity" | "Networking";
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("Overview");
   const [notes, setNotes] = useState(app.notes);
   const linkedInOn = Boolean(useLinkedInSession().data?.enabled);
@@ -726,16 +1155,16 @@ function DetailModal({
   return (
     <Modal title={`${app.job.title} · ${app.job.company}`} onClose={onClose} width={640}>
       <div className="flex items-center gap-1 border-b border-border px-5">
-        {tabs.map((t) => (
+        {tabs.map((tb) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={tb}
+            onClick={() => setTab(tb)}
             className={
               "border-b-2 px-3 py-2 text-[12.5px] " +
-              (tab === t ? "border-accent font-medium text-ink" : "border-transparent text-ink-3 hover:text-ink")
+              (tab === tb ? "border-accent font-medium text-ink" : "border-transparent text-ink-3 hover:text-ink")
             }
           >
-            {t}
+            {t(`tracker.detail.tab.${tb}`)}
           </button>
         ))}
       </div>
@@ -743,8 +1172,9 @@ function DetailModal({
         {tab === "Overview" ? (
           <div className="space-y-4">
             <JobDetail job={app.job} />
+            {app.documents.length > 0 ? <AttachedDocuments docs={app.documents} /> : null}
             <div className="flex items-center gap-3">
-              <span className="text-[12px] text-ink-3">Priority</span>
+              <span className="text-[12px] text-ink-3">{t("tracker.detail.priority")}</span>
               <select
                 value={app.priority}
                 onChange={(e) => onPriority(e.target.value as Priority)}
@@ -760,19 +1190,20 @@ function DetailModal({
               <span
                 className="ml-auto font-mono text-[11px] text-ink-4"
                 data-testid="app-ref"
-                title="Application reference — quote this in logs / Analytics"
+                title={t("tracker.detail.appRefTitle")}
               >
                 {"#" + app.id.replace(/-/g, "").slice(-6).toUpperCase()}
               </span>
-              <span className="text-[12px] text-ink-3">Stage: {app.stage}</span>
+              <span className="text-[12px] text-ink-3">
+                {t("tracker.detail.stageLine", { stage: t(`tracker.stage.${app.stage}`) })}
+              </span>
             </div>
             {app.posting_closed || app.job.board_state === "expired" ? (
               <div
                 className="rounded-md border border-bad/40 bg-bad-wash px-3 py-2 text-[12px] text-bad"
                 data-testid="posting-closed-note"
               >
-                This posting appears to be no longer open — applying will likely fail.
-                Verify with "Open job posting" above.
+                {t("tracker.detail.postingClosed")}
               </div>
             ) : null}
             <div className="flex gap-2">
@@ -781,20 +1212,20 @@ function DetailModal({
                 className="rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-surface-3"
               >
                 {app.packet_resume_state === "ready" || app.packet_resume_state === "approved"
-                  ? "View resume"
+                  ? t("tracker.detail.viewResume")
                   : app.packet_resume_state === "generating"
-                    ? "Generating resume…"
-                    : "Generate resume"}
+                    ? t("tracker.detail.generatingResume")
+                    : t("tracker.detail.generateResume")}
               </button>
               <button
                 onClick={() => onOpenPopup("cover")}
                 className="rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-surface-3"
               >
                 {app.packet_cover_state === "ready" || app.packet_cover_state === "approved"
-                  ? "View cover letter"
+                  ? t("tracker.detail.viewCover")
                   : app.packet_cover_state === "generating"
-                    ? "Generating cover letter…"
-                    : "Generate cover letter"}
+                    ? t("tracker.detail.generatingCover")
+                    : t("tracker.detail.generateCover")}
               </button>
             </div>
             {/* REMOVED: Apply button, Applier run summary, and Applier preview
@@ -805,14 +1236,14 @@ function DetailModal({
                   onClick={onReturn}
                   className="rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-surface-3"
                 >
-                  Move to Job Board
+                  {t("tracker.moveToDiscover")}
                 </button>
               ) : null}
               <button
                 onClick={onArchive}
                 className="ml-auto rounded-md border border-bad/40 px-3 py-1.5 text-[12.5px] text-bad hover:bg-bad-wash"
               >
-                Archive
+                {t("tracker.archive")}
               </button>
             </div>
           </div>
@@ -823,14 +1254,14 @@ function DetailModal({
             onBlur={() => onNotes(notes)}
             data-testid="notes-editor"
             rows={8}
-            placeholder="Interview prep, follow-ups, salary notes… (markdown, auto-saves on blur)"
+            placeholder={t("tracker.detail.notesPlaceholder")}
             className="w-full resize-none rounded-md border border-border bg-surface p-3 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
           />
         ) : tab === "Scoring" ? (
           app.job.score ? (
             <div>
               <div className="mb-2 text-[13px] font-semibold text-ink">
-                Match score: {app.job.score.score_0_100}
+                {t("tracker.detail.matchScore", { score: app.job.score.score_0_100 })}
               </div>
               <ul className="mb-3 space-y-1 text-[12px] text-ink-2">
                 {app.job.score.reasons.map((r, i) => (
@@ -843,16 +1274,16 @@ function DetailModal({
               <Markdown md={app.job.score.breakdown_md} className="text-[11.5px]" />
             </div>
           ) : (
-            <p className="text-[12.5px] text-ink-3">Scoring pending.</p>
+            <p className="text-[12.5px] text-ink-3">{t("tracker.detail.scoringPending")}</p>
           )
         ) : tab === "Activity" ? (
           // Real Activity log (US-TR-03 / FR-TR-03) — composed server-side from
           // the operations ledger + outreach log, not synthesized client-side.
           <ul className="space-y-2 text-[12px] text-ink-2" data-testid="activity-log">
             {activity.isLoading ? (
-              <li className="text-ink-3">Loading activity…</li>
+              <li className="text-ink-3">{t("tracker.detail.loadingActivity")}</li>
             ) : (activity.data ?? []).length === 0 ? (
-              <li className="text-ink-3">No activity yet.</li>
+              <li className="text-ink-3">{t("tracker.detail.noActivity")}</li>
             ) : (
               // Reverse chronological — newest first (maintainer, 2026-07-11).
               [...(activity.data ?? [])]
@@ -880,10 +1311,10 @@ function DetailModal({
           // Restored 2026-07-16.
           <div data-testid="networking-tab">
             {networking.isLoading ? (
-              <p className="text-[12.5px] text-ink-3">Loading contacts…</p>
+              <p className="text-[12.5px] text-ink-3">{t("tracker.detail.loadingContacts")}</p>
             ) : (networking.data ?? []).length === 0 ? (
               <p className="text-[12.5px] text-ink-3">
-                No referral contacts for this role yet. Use the Referrals action to find some.
+                {t("tracker.detail.noContacts")}
               </p>
             ) : (
               <ul className="space-y-2">
@@ -894,7 +1325,7 @@ function DetailModal({
                     className="rounded-md border border-border px-3 py-2"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[12.5px] font-medium text-ink">{c.name || "Unknown"}</span>
+                      <span className="text-[12.5px] font-medium text-ink">{c.name || t("tracker.detail.unknown")}</span>
                       <span className="rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3">
                         {c.connection_status}
                       </span>
@@ -904,7 +1335,7 @@ function DetailModal({
                     </div>
                     {c.last_message ? (
                       <div className="mt-1 truncate text-[11px] text-ink-4">
-                        Last: {c.last_message}
+                        {t("tracker.detail.lastMessage", { message: c.last_message })}
                       </div>
                     ) : null}
                   </li>
@@ -933,6 +1364,7 @@ function CardMenu({
   onArchive: () => void;
   onReturn: () => void;
 }) {
+  const { t } = useTranslation();
   const canGen = app.packet_state === "none" || app.packet_state === "failed";
   const canRegen = app.packet_state === "ready" || app.packet_state === "approved";
   useEffect(() => {
@@ -962,7 +1394,7 @@ function CardMenu({
       >
         {app.stage === "Saved" ? (
           <button onClick={onReturn} className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3">
-            Move to Job Board
+            {t("tracker.moveToDiscover")}
           </button>
         ) : null}
         {canGen ? (
@@ -971,13 +1403,13 @@ function CardMenu({
               onClick={() => onGenerate("tailored resume")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
-              Generate tailored resume
+              {t("tracker.menu.generateResume")}
             </button>
             <button
               onClick={() => onGenerate("cover letter")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
-              Generate cover letter
+              {t("tracker.menu.generateCover")}
             </button>
           </>
         ) : null}
@@ -987,18 +1419,18 @@ function CardMenu({
               onClick={() => onGenerate("tailored resume")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
-              Re-generate tailored resume
+              {t("tracker.menu.regenResume")}
             </button>
             <button
               onClick={() => onGenerate("cover letter")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
-              Re-generate cover letter
+              {t("tracker.menu.regenCover")}
             </button>
           </>
         ) : null}
         <button onClick={onArchive} className="rounded px-3 py-2 text-left text-bad hover:bg-bad-wash">
-          Archive
+          {t("tracker.archive")}
         </button>
       </div>
     </>
@@ -1006,12 +1438,13 @@ function CardMenu({
 }
 
 function ArchiveModal({ archived, onClose }: { archived: Application[]; onClose: () => void }) {
+  const { t } = useTranslation();
   const unarchive = useUnarchiveApplication();
   return (
-    <Modal title="Deleted Applications" onClose={onClose} width={520}>
+    <Modal title={t("tracker.deletedApplications")} onClose={onClose} width={520}>
       <div data-testid="deleted-applications-modal" className="px-5 py-4">
         {archived.length === 0 ? (
-          <p className="text-[13px] text-ink-3">No deleted applications.</p>
+          <p className="text-[13px] text-ink-3">{t("tracker.archiveModal.empty")}</p>
         ) : (
           <ul className="space-y-2">
             {archived.map((a) => (
@@ -1021,13 +1454,13 @@ function ArchiveModal({ archived, onClose }: { archived: Application[]; onClose:
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12.5px] font-medium text-ink">{a.job.title}</div>
-                  <div className="text-[11px] text-ink-3">{a.job.company} · Deleted recently</div>
+                  <div className="text-[11px] text-ink-3">{a.job.company} · {t("tracker.archiveModal.deletedRecently")}</div>
                 </div>
                 <button
                   onClick={() => unarchive.mutate(a.id)}
                   className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
                 >
-                  Restore
+                  {t("tracker.archiveModal.restore")}
                 </button>
               </li>
             ))}

@@ -5,10 +5,7 @@
 
 import { useState } from "react";
 
-import { useQueryClient } from "@tanstack/react-query";
-
 import { api } from "../api/index";
-import { qk } from "../api/queries";
 import {
   useConnectLinkedIn,
   useDeleteDiscoveryCredential,
@@ -18,7 +15,6 @@ import {
   useDiscoverySources,
   useLinkedinSearch,
   useLinkedInSession,
-  useProfile,
   usePrompts,
   useResetPrompt,
   useResumeLinkedIn,
@@ -33,7 +29,6 @@ import {
   useVerifyEngine,
 } from "../api/queries";
 import type {
-  ApplicationProfile,
   EngineVerifyResult,
   LinkedInSessionState,
   OperationKind,
@@ -41,12 +36,52 @@ import type {
   RescorePreview,
   Settings as SettingsT,
 } from "../api/types";
+import { Trans, useTranslation } from "react-i18next";
+
+import { Icon, type IconName } from "../shell/icons";
 import { InfoDot } from "../shell/InfoDot";
+import { LanguageSelect } from "../shell/LanguageSelect";
 import { RescoreAiDialog } from "../shell/RescoreAiDialog";
 import { type ThemeMode, useThemeMode } from "../shell/theme";
 
-const NETWORKING_WARNING =
-  "Automation on LinkedIn of any kind violates LinkedIn's terms of service. finds-you-jobs does not misuse the automation to farm data, sell it, or profit from it, and it keeps the automation 1-to-1 identical to what a human would do — sending messages at human typing speed, respecting daily caps, and randomising timing. But LinkedIn's Terms of Service is violated whatever way we slice it, so we insist you use your own judgement and take full responsibility for the consequences from LinkedIn. Your account may face restrictions, and finds-you-jobs is not responsible for any consequences to your LinkedIn account. Please use this feature responsibly, monitor your sent messages, and turn it off if you notice unusual account behaviour. Not using this feature does not impact your LinkedIn account or any other account in any way.";
+const NETWORKING_WARNING = "settingsPage.referral.warning";
+
+// LinkedIn Job Search breaks ToS by SCRAPING listings (not messaging) — its own
+// justification: one-off + small default batch, so it reads as ordinary browsing.
+const JOB_SEARCH_WARNING = "settingsPage.linkedinSearch.warning";
+
+// Muted warn styling (2026-07-23): the dark-theme `warn-wash` (#78350f) reads as
+// a loud brown; a light amber tint is calmer and consistent across every tab.
+const MUTED_WARN_BOX = "rounded-lg border border-warn/30 bg-warn/5 text-warn";
+const MUTED_WARN_PILL =
+  "inline-flex cursor-help items-center gap-1 rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold text-warn";
+
+// The two LinkedIn features (Referral Outreach, LinkedIn job search) both drive
+// your logged-in session and both break LinkedIn's ToS — same hazard marker,
+// same shared session, separate opt-ins.
+const LINKEDIN_HAZARD_TIP = "settingsPage.linkedinHazardTip";
+
+function ExperimentalHazard() {
+  const { t } = useTranslation();
+  return (
+    <span data-testid="experimental-hazard" title={t(LINKEDIN_HAZARD_TIP)} className={MUTED_WARN_PILL}>
+      <span aria-hidden="true">⚠</span> {t("settingsPage.experimental")}
+    </span>
+  );
+}
+
+// The short warn-tinted risk line + an "i" to the full text — replaces the wall
+// of warning copy on both LinkedIn opt-ins (2026-07-23: brief in place, detail
+// one click away). `detail` differs per feature (messaging vs scraping).
+function LinkedInRiskLine({ detail }: { detail: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className={"flex items-start gap-1 px-3 py-2 text-[11.5px] leading-relaxed " + MUTED_WARN_BOX}>
+      <span>{t("settingsPage.riskLine")}</span>
+      <InfoDot label={t("settingsPage.riskDetailLabel")}>{detail}</InfoDot>
+    </div>
+  );
+}
 
 // OTLP headers (audit P2-3) — the wire shape (`observability/config.py`'s
 // `otlp_headers`) is a flat string dict; the Settings input edits it as a
@@ -102,9 +137,9 @@ function Toggle({
 // Three-way theme selector (FR-SET-09): Light / Dark / Follow system. The
 // persisted mode wins; "system" resolves through prefers-color-scheme live.
 const THEME_MODES: { value: ThemeMode; label: string }[] = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
+  { value: "light", label: "appearance.light" },
+  { value: "dark", label: "appearance.dark" },
+  { value: "system", label: "appearance.system" },
 ];
 
 function ThemeModeToggle({
@@ -114,6 +149,7 @@ function ThemeModeToggle({
   mode: ThemeMode;
   onChange: (m: ThemeMode) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="inline-flex overflow-hidden rounded-7 border border-border text-[12px]">
       {THEME_MODES.map((m) => (
@@ -127,7 +163,7 @@ function ThemeModeToggle({
             (mode === m.value ? "bg-accent text-white" : "bg-surface text-ink-2 hover:bg-surface-3")
           }
         >
-          {m.label}
+          {t(m.label)}
         </button>
       ))}
     </div>
@@ -141,7 +177,7 @@ function ThemeModeToggle({
 // (sidecar/app/scheduler/planner.py); the planner has read this since it
 // shipped, this control is the missing writer.
 const SCORE_BATCH_PRESETS: { value: number; label: string }[] = [
-  { value: 0, label: "Uncapped" },
+  { value: 0, label: "settingsPage.scoring.uncapped" },
   { value: 10, label: "10" },
   { value: 25, label: "25" },
   { value: 50, label: "50" },
@@ -154,6 +190,7 @@ function ScoreBatchCapControl({
   value: number;
   onChange: (v: number) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="inline-flex overflow-hidden rounded-7 border border-border text-[12px]">
       {SCORE_BATCH_PRESETS.map((p) => (
@@ -167,7 +204,7 @@ function ScoreBatchCapControl({
             (value === p.value ? "bg-accent text-white" : "bg-surface text-ink-2 hover:bg-surface-3")
           }
         >
-          {p.label}
+          {p.value === 0 ? t(p.label) : p.label}
         </button>
       ))}
     </div>
@@ -184,28 +221,28 @@ function ScoreBatchCapControl({
 const SOURCE_KIND_GROUPS: { kind: string; heading: string; blurb: string }[] = [
   {
     kind: "ats",
-    heading: "Company boards (ATS)",
-    blurb: "Direct company careers boards from your source registry.",
+    heading: "settingsPage.sources.ats.heading",
+    blurb: "settingsPage.sources.ats.blurb",
   },
   {
     kind: "board",
-    heading: "Job boards",
-    blurb: "Public keyless boards, scanned whole and filtered locally.",
+    heading: "settingsPage.sources.board.heading",
+    blurb: "settingsPage.sources.board.blurb",
   },
   {
     kind: "search",
-    heading: "Search sources",
-    blurb: "Queried with your role aliases × locations each scan.",
+    heading: "settingsPage.sources.search.heading",
+    blurb: "settingsPage.sources.search.blurb",
   },
   {
     kind: "apify",
-    heading: "Apify",
-    blurb: "Actor-run boards on your own Apify key (Naukri, Indeed, Seek…).",
+    heading: "settingsPage.sources.apify.heading",
+    blurb: "settingsPage.sources.apify.blurb",
   },
   {
     kind: "fallback",
-    heading: "Feeds",
-    blurb: "Any RSS/Atom feed URL you add as a source.",
+    heading: "settingsPage.sources.fallback.heading",
+    blurb: "settingsPage.sources.fallback.blurb",
   },
 ];
 
@@ -219,6 +256,7 @@ function sectionOf(s: { id: string; kind: string }): string {
 // sidecar-side; saving the Apify key seeds its actor sources (Naukri/Indeed/
 // Seek/LinkedIn deep-JD), saving Brave seeds the meta-search source.
 function CredentialRow({ id, label, hint }: { id: string; label: string; hint: string }) {
+  const { t } = useTranslation();
   const { data: creds } = useDiscoveryCredentials();
   const save = useSaveDiscoveryCredential();
   const remove = useDeleteDiscoveryCredential();
@@ -240,7 +278,7 @@ function CredentialRow({ id, label, hint }: { id: string; label: string; hint: s
             onClick={() => remove.mutate(id)}
             className="rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] text-ink-2 hover:border-border-2"
           >
-            Remove
+            {t("settingsPage.sources.keys.remove")}
           </button>
         </>
       ) : (
@@ -249,7 +287,7 @@ function CredentialRow({ id, label, hint }: { id: string; label: string; hint: s
             type="password"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="API key"
+            placeholder={t("settingsPage.sources.keys.keyPlaceholder")}
             data-testid={`discovery-credential-input-${id}`}
             className="h-[30px] w-44 rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink placeholder:text-ink-4"
           />
@@ -262,7 +300,7 @@ function CredentialRow({ id, label, hint }: { id: string; label: string; hint: s
             }
             className="rounded-md border border-accent bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:bg-accent-ink disabled:opacity-50"
           >
-            Save
+            {t("settingsPage.sources.keys.save")}
           </button>
         </>
       )}
@@ -283,6 +321,7 @@ function SectionMasterCheckbox({
   onChange: (enabled: boolean) => void;
   testid: string;
 }) {
+  const { t } = useTranslation();
   return (
     <input
       type="checkbox"
@@ -292,24 +331,18 @@ function SectionMasterCheckbox({
       }}
       onChange={(e) => onChange(e.target.checked)}
       data-testid={testid}
-      title="Enable or disable every source in this section"
+      title={t("settingsPage.sources.sectionToggleTitle")}
     />
   );
 }
 
 function DiscoverySourcesSection() {
+  const { t } = useTranslation();
   const { data: sources } = useDiscoverySources();
   const toggle = useToggleDiscoverySource();
   if (!sources) return null;
   return (
     <div className="space-y-4" data-testid="discovery-sources">
-      <p className="text-[12px] text-ink-3">
-        Every source is on by default. Untick one to skip it on every future scan — for
-        example, if an ATS never carries roles for your field or location. The checkbox
-        on a section title flips the whole section at once. Nothing else changes:
-        already-found jobs stay, and re-ticking picks the source back up on the next
-        scan.
-      </p>
       {SOURCE_KIND_GROUPS.map(({ kind, heading, blurb }) => {
         const isApify = kind === "apify";
         const sectionRows = sources.filter((s) => sectionOf(s) === kind);
@@ -336,17 +369,17 @@ function DiscoverySourcesSection() {
                     : toggle.mutate({ ids: rows.map((s) => s.id), enabled })
                 }
               />
-              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-4">
-                {heading}
+              <span className="text-[12px] font-semibold text-ink-2">
+                {t(heading)}
               </span>
             </label>
-            <div className="text-[11.5px] text-ink-4">{blurb}</div>
+            <div className="text-[11.5px] text-ink-4">{t(blurb)}</div>
             {isApify && rows.length === 0 ? (
               <div className="text-[11.5px] text-ink-4">
-                Save your Apify key below to add its actor sources.
+                {t("settingsPage.sources.apifyEmpty")}
               </div>
             ) : null}
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 pt-1">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 pt-1 pl-6">
               {rows.map((s) => (
                 <label
                   key={s.id}
@@ -358,10 +391,10 @@ function DiscoverySourcesSection() {
                     checked={s.enabled}
                     onChange={(e) => toggle.mutate({ id: s.id, enabled: e.target.checked })}
                   />
-                  <span className={s.enabled ? "" : "text-ink-4 line-through"}>{s.label}</span>
+                  <span className={s.enabled ? "" : "text-ink-4"}>{s.label}</span>
                   {s.entries > 0 ? (
                     <span className="text-[11px] text-ink-4">
-                      {s.entries} board{s.entries === 1 ? "" : "s"}
+                      {t("settingsPage.sources.boardCount", { count: s.entries })}
                     </span>
                   ) : null}
                 </label>
@@ -370,35 +403,54 @@ function DiscoverySourcesSection() {
           </div>
         );
       })}
-      <div className="space-y-3 border-t border-border pt-4">
-        <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-4">
-          Bring-your-own-key sources
-        </div>
-        <p className="text-[11.5px] text-ink-4">
-          Optional. These cover boards we can&apos;t scrape cleanly first-party (Indeed,
-          Naukri, Seek). Keys are encrypted at rest and only ever sent to that provider.
-        </p>
-        <CredentialRow
-          id="apify"
-          label="Apify"
-          hint="Runs job-scraper actors on your Apify account — a free account (~$5/mo credit, no card) covers roughly 5,000 jobs/month."
-        />
-        <CredentialRow
-          id="brave"
-          label="Brave Search"
-          hint="Finds fresh postings on ATS boards outside your registry via Brave's Search API — free tier is ~2,000 queries/month (we stop at the cap)."
-        />
-      </div>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+// Bring-your-own-key scraper credentials — split out of the sources list into
+// its own Section card (maintainer 2026-07-23: "Provide your API Keys").
+function DiscoveryKeysSection() {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-3" data-testid="discovery-keys">
+      <p className="text-[11.5px] text-ink-4">
+        {t("settingsPage.sources.keys.intro")}
+      </p>
+      <CredentialRow
+        id="apify"
+        label={t("settingsPage.sources.keys.apifyLabel")}
+        hint={t("settingsPage.sources.keys.apifyHint")}
+      />
+      <CredentialRow
+        id="brave"
+        label={t("settingsPage.sources.keys.braveLabel")}
+        hint={t("settingsPage.sources.keys.braveHint")}
+      />
+    </div>
+  );
+}
+
+// `title` is optional: a pane whose header already names the content (e.g.
+// Appearance) renders the card alone instead of repeating itself.
+function Section({
+  title,
+  titleExtra,
+  children,
+}: {
+  title?: string;
+  titleExtra?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section className="space-y-3">
-      <h2 className="font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-ink-3">
-        {title}
-      </h2>
+      {title ? (
+        <div className="flex items-center gap-2">
+          <h2 className="text-[13px] font-semibold text-ink">
+            {title}
+          </h2>
+          {titleExtra}
+        </div>
+      ) : null}
       <div className="rounded-xl border border-border bg-surface p-4">{children}</div>
     </section>
   );
@@ -450,65 +502,63 @@ export function LifecycleSection({
   settings: SettingsT;
   patch: (p: Partial<SettingsT>) => void;
 }) {
+  const { t } = useTranslation();
   const lc = settings.lifecycle;
   // Merge-patch a single field so unrelated windows aren't clobbered (mirrors the
   // observability patch shape — the mock/real clients replace the whole object).
   const set = (k: keyof SettingsT["lifecycle"]) => (v: number) =>
     patch({ lifecycle: { ...lc, [k]: v } });
   return (
-    <Section title="Contact & data lifecycle">
+    <Section title={t("settingsPage.lifecycle.title")}>
       <div className="space-y-4">
-        <p className="text-[12px] text-ink-3">
-          How long finds-you-jobs keeps and auto-advances your data. Networking contacts move
-          themselves along the kanban and quiet threads mark <em>Ghosted</em>; deleted items
-          are purged for good after their window. <strong>Converted contacts are never
-          auto-changed.</strong>
+        <p className="text-[12px] text-ink-4">
+          <Trans i18nKey="settingsPage.lifecycle.intro" components={{ em: <em /> }} />
         </p>
         <LifecycleRow
-          label="Engagement → Ghosted"
-          hint="A replied-to thread with no new activity for this long is marked Ghosted."
-          unit="days"
+          label={t("settingsPage.lifecycle.engagementGhostedLabel")}
+          hint={t("settingsPage.lifecycle.engagementGhostedHint")}
+          unit={t("settingsPage.lifecycle.days")}
           value={lc.engagement_ghosted_days}
           onChange={set("engagement_ghosted_days")}
           testid="engagement-ghosted"
         />
         <LifecycleRow
-          label="Sent / Accepted → Ghosted"
-          hint="A connection that's never accepted, or accepted but never replied to, ghosts after this."
-          unit="days"
+          label={t("settingsPage.lifecycle.sentGhostedLabel")}
+          hint={t("settingsPage.lifecycle.sentGhostedHint")}
+          unit={t("settingsPage.lifecycle.days")}
           value={lc.sent_ghosted_days}
           onChange={set("sent_ghosted_days")}
           testid="sent-ghosted"
         />
         <LifecycleRow
-          label="Purge deleted contacts"
-          hint="Archived (deleted) contacts are permanently removed this long after you delete them."
-          unit="days"
+          label={t("settingsPage.lifecycle.contactPurgeLabel")}
+          hint={t("settingsPage.lifecycle.contactPurgeHint")}
+          unit={t("settingsPage.lifecycle.days")}
           value={lc.contact_purge_days}
           onChange={set("contact_purge_days")}
           testid="contact-purge"
         />
         <LifecycleRow
-          label="Purge trashed jobs"
-          hint="Jobs left in Trash are permanently removed (and suppressed from re-scraping) after this."
-          unit="days"
+          label={t("settingsPage.lifecycle.trashedJobsLabel")}
+          hint={t("settingsPage.lifecycle.trashedJobsHint")}
+          unit={t("settingsPage.lifecycle.days")}
           value={lc.trashed_jobs_purge_days}
           onChange={set("trashed_jobs_purge_days")}
           testid="trashed-jobs-purge"
         />
         <LifecycleRow
-          label="Purge archived applications"
-          hint="Archived tracker cards (and their tailored docs) are permanently removed after this."
-          unit="days"
+          label={t("settingsPage.lifecycle.archivedAppsLabel")}
+          hint={t("settingsPage.lifecycle.archivedAppsHint")}
+          unit={t("settingsPage.lifecycle.days")}
           value={lc.archived_applications_purge_days}
           onChange={set("archived_applications_purge_days")}
           testid="archived-apps-purge"
         />
         {settings.networking_enabled ? (
           <LifecycleRow
-            label="Contact status sync cadence"
-            hint="How often finds-you-jobs checks LinkedIn to advance your contacts (only while Referral Outreach is on + connected)."
-            unit="hours"
+            label={t("settingsPage.lifecycle.syncCadenceLabel")}
+            hint={t("settingsPage.lifecycle.syncCadenceHint")}
+            unit={t("settingsPage.lifecycle.hours")}
             value={lc.contact_sync_cadence_hours}
             onChange={set("contact_sync_cadence_hours")}
             testid="sync-cadence"
@@ -527,9 +577,9 @@ const CLAUDE_CLI_DEFAULT_MODEL = "claude-opus-4-8";
 // (mirrors the backend's engine_config.CLI_PROVIDERS). codex/agy run their
 // CLI's own configured default model when the routing entry names none.
 const CLI_ENGINE_OPTIONS = [
-  { id: "claude-cli", label: "Claude subscription (CLI)" },
-  { id: "codex-cli", label: "ChatGPT subscription (Codex CLI)" },
-  { id: "antigravity-cli", label: "Google subscription (Antigravity CLI)" },
+  { id: "claude-cli", label: "settingsPage.providers.cli.claudeLabel" },
+  { id: "codex-cli", label: "settingsPage.providers.cli.codexLabel" },
+  { id: "antigravity-cli", label: "settingsPage.providers.cli.antigravityLabel" },
 ];
 const isCliEngine = (id: string) => CLI_ENGINE_OPTIONS.some((o) => o.id === id);
 
@@ -540,7 +590,10 @@ const isCliEngine = (id: string) => CLI_ENGINE_OPTIONS.some((o) => o.id === id);
 // module skill markdown), with Save/Reset. Collapsed by default so the large
 // prompt text never overwhelms the page.
 
-export function PromptRoutingRow({
+// One prompt's editor (routed model selector + full-height system-prompt
+// textarea + Save/Reset). Rendered for the ACTIVE tab only; keyed by kind in the
+// parent so switching tabs gives it fresh local draft state.
+export function PromptEditor({
   prompt,
   settings,
   patch,
@@ -549,7 +602,7 @@ export function PromptRoutingRow({
   settings: SettingsT;
   patch: (p: Partial<SettingsT>) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const { t } = useTranslation();
   const [draft, setDraft] = useState<string | null>(null);
   const [modelDraft, setModelDraft] = useState<string | null>(null);
   const setPrompt = useSetPrompt();
@@ -560,8 +613,7 @@ export function PromptRoutingRow({
   const text = draft ?? baseText;
   const dirty = text !== baseText;
 
-  // Engine selector (routed kinds only) — same behavior/markup as before: the
-  // select picks the ENGINE; changing it clears the per-kind model so the
+  // The select picks the ENGINE; changing it clears the per-kind model so the
   // engine's own default applies.
   const route = settings.routing.find((r) => r.kind === prompt.kind);
   const engine = route?.engine || "claude-cli";
@@ -570,136 +622,114 @@ export function PromptRoutingRow({
     (engine === "claude-cli"
       ? CLAUDE_CLI_DEFAULT_MODEL
       : isCliEngine(engine)
-        ? "CLI default model"
+        ? t("settingsPage.prompts.cliDefaultModel")
         : settings.providers.find((p) => p.id === engine)?.default_model) ||
-    "provider default";
+    t("settingsPage.prompts.providerDefault");
+  const cliEngineLabel = CLI_ENGINE_OPTIONS.find((o) => o.id === engine)?.label;
   const engineLabel =
-    CLI_ENGINE_OPTIONS.find((o) => o.id === engine)?.label ||
+    (cliEngineLabel && t(cliEngineLabel)) ||
     settings.providers.find((p) => p.id === engine)?.label ||
     engine;
   const options = [
-    ...CLI_ENGINE_OPTIONS,
+    ...CLI_ENGINE_OPTIONS.map((o) => ({ id: o.id, label: t(o.label) })),
     ...settings.providers.filter((p) => p.configured).map((p) => ({ id: p.id, label: p.label })),
   ];
 
   function save() {
-    setPrompt.mutate(
-      { kind: prompt.kind, markdown: text },
-      { onSuccess: () => setDraft(null) },
-    );
+    setPrompt.mutate({ kind: prompt.kind, markdown: text }, { onSuccess: () => setDraft(null) });
   }
   function reset() {
-    if (!window.confirm("Reset this prompt to the shipped default? Your edits will be lost."))
-      return;
+    if (!window.confirm(t("settingsPage.prompts.resetConfirm"))) return;
     resetPrompt.mutate(prompt.kind, { onSuccess: () => setDraft(null) });
   }
 
   return (
-    <div className="rounded-md border border-border">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        data-testid={`prompt-row-${prompt.kind}`}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-      >
-        <span className="w-3 text-ink-4">{open ? "▾" : "▸"}</span>
-        <span className="w-16 font-mono text-[11px] uppercase text-ink-3">{prompt.kind}</span>
-        <span className="text-[12.5px] font-medium text-ink">{prompt.title}</span>
-        {edited ? (
-          <span
-            data-testid={`prompt-edited-${prompt.kind}`}
-            className="rounded-full bg-accent-wash px-1.5 py-0.5 text-[10px] font-medium text-accent"
+    <div className="flex flex-col gap-3">
+      {prompt.routed ? (
+        <div className="flex items-center gap-3">
+          <span className="text-[11.5px] text-ink-3">{t("settingsPage.prompts.modelEngine")}</span>
+          <select
+            value={engine}
+            data-testid={`route-${prompt.kind}`}
+            onChange={(e) => {
+              setModelDraft(null);
+              patch({
+                routing: [
+                  ...settings.routing.filter((r) => r.kind !== prompt.kind),
+                  { kind: prompt.kind as OperationKind, engine: e.target.value, model: "" },
+                ],
+              });
+            }}
+            className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
           >
-            edited
-          </span>
-        ) : null}
-        <span className="ml-auto truncate text-[11px] text-ink-4">
-          {prompt.routed ? `${engineLabel} · ${effectiveModel}` : "prompt-only"}
-        </span>
-      </button>
-      {open ? (
-        <div className="space-y-2 border-t border-border px-3 py-3">
-          {prompt.routed ? (
-            <div className="flex items-center gap-3">
-              <span className="text-[11.5px] text-ink-3">Engine</span>
-              <select
-                value={engine}
-                data-testid={`route-${prompt.kind}`}
-                onChange={(e) => {
-                  setModelDraft(null);
-                  patch({
-                    routing: [
-                      ...settings.routing.filter((r) => r.kind !== prompt.kind),
-                      { kind: prompt.kind as OperationKind, engine: e.target.value, model: "" },
-                    ],
-                  });
-                }}
-                className="flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
-              >
-                {options.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={modelDraft ?? (route?.model || "")}
-                placeholder={effectiveModel}
-                data-testid={`route-${prompt.kind}-model`}
-                title={`Model this operation uses on ${engineLabel}. Blank = ${effectiveModel} (the provider/CLI default).`}
-                onChange={(e) => setModelDraft(e.target.value)}
-                onBlur={() => {
-                  if (modelDraft == null || modelDraft === (route?.model || "")) return;
-                  patch({
-                    routing: [
-                      ...settings.routing.filter((r) => r.kind !== prompt.kind),
-                      { kind: prompt.kind as OperationKind, engine, model: modelDraft },
-                    ],
-                  });
-                  setModelDraft(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
-                className="w-44 truncate rounded-md border border-border bg-surface px-2 py-1 text-right text-[11px] text-ink-2"
-              />
-            </div>
-          ) : null}
-          <textarea
-            value={text}
-            spellCheck={false}
-            data-testid={`prompt-textarea-${prompt.kind}`}
-            onChange={(e) => setDraft(e.target.value)}
-            className="h-56 w-full resize-y rounded-md border border-border bg-surface-2 px-2 py-1.5 font-mono text-[11.5px] leading-relaxed text-ink"
+            {options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <input
+            value={modelDraft ?? (route?.model || "")}
+            placeholder={effectiveModel}
+            data-testid={`route-${prompt.kind}-model`}
+            title={t("settingsPage.prompts.modelTitle", { engineLabel, effectiveModel })}
+            onChange={(e) => setModelDraft(e.target.value)}
+            onBlur={() => {
+              if (modelDraft == null || modelDraft === (route?.model || "")) return;
+              patch({
+                routing: [
+                  ...settings.routing.filter((r) => r.kind !== prompt.kind),
+                  { kind: prompt.kind as OperationKind, engine, model: modelDraft },
+                ],
+              });
+              setModelDraft(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            className="w-56 truncate rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink-2"
           />
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-ink-4" data-testid={`prompt-chars-${prompt.kind}`}>
-              {text.length} chars{edited ? " · override active" : " · shipped default"}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={reset}
-                disabled={!edited}
-                data-testid={`prompt-reset-${prompt.kind}`}
-                className="rounded-md border border-border px-2.5 py-1 text-[12px] text-ink-2 disabled:opacity-40"
-              >
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={save}
-                disabled={!dirty || !text.trim()}
-                data-testid={`prompt-save-${prompt.kind}`}
-                className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
-              >
-                Save
-              </button>
-            </div>
-          </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="text-[12px] text-ink-4">
+          {t("settingsPage.prompts.noModel")}
+        </div>
+      )}
+      <textarea
+        value={text}
+        spellCheck={false}
+        data-testid={`prompt-textarea-${prompt.kind}`}
+        onChange={(e) => setDraft(e.target.value)}
+        className="h-[66vh] min-h-[360px] w-full resize-y rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[12px] leading-relaxed text-ink"
+      />
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-ink-4" data-testid={`prompt-chars-${prompt.kind}`}>
+          {t("settingsPage.prompts.charCount", { n: text.length })}
+          {edited
+            ? t("settingsPage.prompts.overrideActive")
+            : t("settingsPage.prompts.shippedDefault")}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={reset}
+            disabled={!edited}
+            data-testid={`prompt-reset-${prompt.kind}`}
+            className="rounded-md border border-border px-2.5 py-1 text-[12px] text-ink-2 disabled:opacity-40"
+          >
+            {t("settingsPage.prompts.resetToDefault")}
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={!dirty || !text.trim()}
+            data-testid={`prompt-save-${prompt.kind}`}
+            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
+          >
+            {t("settingsPage.prompts.save")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -711,156 +741,45 @@ function EngineRoutingSection({
   settings: SettingsT;
   patch: (p: Partial<SettingsT>) => void;
 }) {
+  const { t } = useTranslation();
   const { data: prompts } = usePrompts();
+  const list = prompts ?? [];
+  const [active, setActive] = useState<string>("score");
+  const current = list.find((p) => p.kind === active) ?? list[0];
   return (
-    <div className="border-border pt-1">
-      <div className="mb-2 text-[12px] font-medium text-ink-2">
-        Per-operation routing + prompts (strong model for what a human reads, cheap for machine
-        filters). Expand a row to edit its engine and system prompt.
+    <div>
+      {/* One-line tab bar — one tab per editable prompt. */}
+      <div className="mb-4 flex flex-wrap gap-1.5 border-b border-border pb-2" role="tablist">
+        {list.map((p) => {
+          const on = current?.kind === p.kind;
+          return (
+            <button
+              key={p.kind}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              data-testid={`prompt-row-${p.kind}`}
+              onClick={() => setActive(p.kind)}
+              className={
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium " +
+                (on ? "bg-accent-wash text-accent-ink" : "text-ink-2 hover:bg-surface-3")
+              }
+            >
+              {p.title}
+              {p.override_md != null ? (
+                <span
+                  data-testid={`prompt-edited-${p.kind}`}
+                  title={t("settingsPage.prompts.customized")}
+                  className="inline-block h-1.5 w-1.5 rounded-full bg-accent"
+                />
+              ) : null}
+            </button>
+          );
+        })}
       </div>
-      <div className="space-y-2">
-        {(prompts ?? []).map((prompt) => (
-          <PromptRoutingRow key={prompt.kind} prompt={prompt} settings={settings} patch={patch} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Application profile editor (FR-APP-01, 2026-07-11) ─────────────────────
-
-const AP_FIELDS: { key: keyof ApplicationProfile & string; label: string }[] = [
-  { key: "name", label: "Full name" },
-  { key: "first_name", label: "First name" },
-  { key: "last_name", label: "Last name" },
-  { key: "email", label: "Email" },
-  { key: "phone", label: "Phone" },
-  { key: "location", label: "Location (city)" },
-  { key: "country", label: "Country" },
-  { key: "work_authorization", label: "Work authorization" },
-];
-
-function ApplicationProfileEditor() {
-  const qc = useQueryClient();
-  const profile = useProfile();
-  const stored = profile.data?.application_profile ?? null;
-  const [draft, setDraft] = useState<ApplicationProfile | null>(null);
-  const [busy, setBusy] = useState(false);
-  const record = draft ?? stored;
-
-  async function save(): Promise<void> {
-    if (draft == null) return;
-    setBusy(true);
-    try {
-      await Promise.resolve(api.patchApplicationProfile(draft));
-      setDraft(null);
-      await qc.invalidateQueries({ queryKey: qk.profile });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function reExtract(): Promise<void> {
-    setBusy(true);
-    try {
-      await Promise.resolve(api.extractApplicationProfile());
-      await qc.invalidateQueries({ queryKey: qk.profile });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!profile.data?.master_md) {
-    return (
-      <p className="text-[12px] text-ink-3" data-testid="ap-editor-empty">
-        Save a master resume first — the profile is extracted from it.
-      </p>
-    );
-  }
-  if (record == null) {
-    return (
-      <div className="flex items-center gap-3" data-testid="ap-editor-none">
-        <p className="flex-1 text-[12px] text-ink-3">
-          No application profile yet — extract one from your master resume.
-        </p>
-        <button
-          onClick={reExtract}
-          disabled={busy}
-          className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12px] text-white disabled:opacity-50"
-          data-testid="ap-extract-now"
-        >
-          {busy ? "Extracting…" : "Extract now"}
-        </button>
-      </div>
-    );
-  }
-
-  const set = (key: string, value: string) =>
-    setDraft({ ...(record as ApplicationProfile), [key]: value });
-  const education = record.education ?? [];
-  const setEdu = (i: number, key: string, value: string) => {
-    const rows = education.map((e, j) => (j === i ? { ...e, [key]: value } : e));
-    setDraft({ ...(record as ApplicationProfile), education: rows });
-  };
-
-  return (
-    <div className="space-y-3" data-testid="ap-editor">
-      <div className="grid grid-cols-2 gap-2">
-        {AP_FIELDS.map(({ key, label }) => (
-          <label key={key} className="text-[11.5px] text-ink-3">
-            {label}
-            <input
-              value={String(record[key] ?? "")}
-              onChange={(e) => set(key, e.target.value)}
-              data-testid={`ap-field-${key}`}
-              className="mt-0.5 w-full rounded-md border border-border-2 bg-surface-2 px-2 py-1.5 text-[12.5px] text-ink"
-            />
-          </label>
-        ))}
-      </div>
-      {education.length > 0 ? (
-        <div className="space-y-1.5">
-          <div className="text-[11.5px] font-medium text-ink-2">Education</div>
-          {education.map((e, i) => (
-            <div key={i} className="grid grid-cols-5 gap-1.5">
-              {(["school", "degree", "discipline", "start_year", "end_year"] as const).map(
-                (k) => (
-                  <input
-                    key={k}
-                    value={String(e[k] ?? "")}
-                    onChange={(ev) => setEdu(i, k, ev.target.value)}
-                    placeholder={k.replace("_", " ")}
-                    className="rounded-md border border-border-2 bg-surface-2 px-2 py-1.5 text-[12px] text-ink"
-                  />
-                ),
-              )}
-            </div>
-          ))}
-        </div>
+      {current ? (
+        <PromptEditor key={current.kind} prompt={current} settings={settings} patch={patch} />
       ) : null}
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-ink-3">
-          {record.source === "edited" ? "Manually edited — your values win." : "Extracted from your resume."}
-        </span>
-        <div className="flex gap-2">
-          <button
-            onClick={reExtract}
-            disabled={busy}
-            className="rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12px] text-ink-2 hover:bg-surface-3 disabled:opacity-50"
-            data-testid="ap-reextract"
-          >
-            Re-extract
-          </button>
-          <button
-            onClick={save}
-            disabled={busy || draft == null}
-            className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12px] text-white disabled:opacity-50"
-            data-testid="ap-save"
-          >
-            Save profile
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -871,7 +790,6 @@ function ApplicationProfileEditor() {
 type ProviderCatalogEntry = {
   id: string;
   label: string;
-  badge?: string;
   kind: "key" | "local";
   desc: string;
   modelChips?: string[];
@@ -882,30 +800,29 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   {
     id: "openrouter",
     label: "OpenRouter",
-    badge: "Recommended",
     kind: "key",
-    desc: "One key, most models — the simplest bring-your-own-key path.",
+    desc: "settingsPage.providers.openrouterDesc",
     modelPlaceholder: "e.g. anthropic/claude-opus-4-8",
   },
   {
     id: "anthropic",
     label: "Anthropic",
     kind: "key",
-    desc: "Direct Anthropic API key (x-api-key).",
+    desc: "settingsPage.providers.anthropicDesc",
     modelChips: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
   },
   {
     id: "openai",
     label: "OpenAI",
     kind: "key",
-    desc: "Direct OpenAI API key (Bearer).",
+    desc: "settingsPage.providers.openaiDesc",
     modelChips: ["gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
   },
   {
     id: "local",
     label: "Local LLM",
     kind: "local",
-    desc: "Point at a running Ollama / LM Studio / vLLM server — nothing leaves your machine.",
+    desc: "settingsPage.providers.localDesc",
     modelPlaceholder: "e.g. llama3.1:70b",
   },
 ];
@@ -915,22 +832,26 @@ const INPUT_CLS =
 
 // Subscription-CLI rows in the AI Providers panel (verify-only — no key, no
 // persisted row; routing under "Engine routing & prompts" selects them).
-const SUBSCRIPTION_CLIS: { id: string; label: string; desc: string; experimental?: boolean }[] = [
-  { id: "claude-cli", label: "Claude subscription (CLI)", desc: "Your logged-in Claude Code CLI." },
+const SUBSCRIPTION_CLIS: { id: string; label: string; desc: string }[] = [
+  {
+    id: "claude-cli",
+    label: "settingsPage.providers.cli.claudeLabel",
+    desc: "settingsPage.providers.cli.claudeDesc",
+  },
   {
     id: "codex-cli",
-    label: "ChatGPT subscription (Codex CLI)",
-    desc: "Your logged-in OpenAI Codex CLI.",
+    label: "settingsPage.providers.cli.codexLabel",
+    desc: "settingsPage.providers.cli.codexDesc",
   },
   {
     id: "antigravity-cli",
-    label: "Google subscription (Antigravity CLI)",
-    desc: "Uses your agy login. Verify runs a real test prompt — agy's non-interactive mode has known rough edges upstream.",
-    experimental: true,
+    label: "settingsPage.providers.cli.antigravityLabel",
+    desc: "settingsPage.providers.cli.antigravityDesc",
   },
 ];
 
 function AIProvidersPanel({ settings }: { settings: SettingsT }) {
+  const { t } = useTranslation();
   const verify = useVerifyEngine();
   const save = useSaveEngine();
   const del = useDeleteEngine();
@@ -985,17 +906,21 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
     default_model: model || undefined,
   };
   const inUse = settings.routing.some((r) => r.engine === selected);
-  const noVerified = !settings.providers.some((p) => p.configured);
+  // The subscription CLIs are always routable (no saved key) — operations
+  // default-route to claude-cli, so "nothing configured" is only a real
+  // problem when an operation is routed to a BYOK provider with no saved key
+  // (2026-07-23: the old blanket warning contradicted the "In use" CLI badge).
+  const unconfiguredRouted = settings.routing.some(
+    (r) =>
+      !isCliEngine(r.engine) &&
+      !settings.providers.find((p) => p.id === r.engine)?.configured,
+  );
 
   return (
     <div className="space-y-4" data-testid="ai-providers-panel">
-      {noVerified && (
-        <div
-          data-testid="no-provider-warning"
-          className="rounded-lg border border-warn-2 bg-warn-wash p-3 text-[11.5px] text-warn"
-        >
-          No provider is configured yet — scoring and tailoring stay disabled until you verify and
-          save one below.
+      {unconfiguredRouted && (
+        <div data-testid="no-provider-warning" className={"p-3 text-[11.5px] " + MUTED_WARN_BOX}>
+          {t("settingsPage.providers.unconfiguredWarning")}
         </div>
       )}
 
@@ -1003,103 +928,26 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {PROVIDER_CATALOG.map((e) => {
           const row = settings.providers.find((p) => p.id === e.id);
-          const active = e.id === selected;
           return (
             <button
               key={e.id}
               data-testid={`provider-tile-${e.id}`}
               onClick={() => select(e.id)}
-              className={
-                "rounded-lg border p-3 text-left transition-colors " +
-                (active
-                  ? "border-accent ring-1 ring-accent bg-surface"
-                  : "border-border bg-surface hover:bg-surface-3")
-              }
+              // No highlight state on tiles (maintainer 2026-07-24 #2): the
+              // config panel right below names the picked tile, and the
+              // Configured / In use text says what's actually live — a lit
+              // tile just read as "already active" when nothing was set.
+              className="rounded-lg border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-3"
             >
-              <div className="flex items-center gap-1.5">
-                <span className="text-[13px] font-medium text-ink">{e.label}</span>
-                {e.badge && (
-                  <span className="rounded-full bg-good-wash px-1.5 py-0.5 text-[9px] font-medium uppercase text-good">
-                    {e.badge}
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 font-mono text-[9.5px] uppercase tracking-wider text-ink-3">
-                {row?.configured ? "configured" : "not set"}
+              <div className="text-[13px] font-medium text-ink">{e.label}</div>
+              <div className={"mt-1 text-[10.5px] " + (row?.configured ? "text-good" : "text-ink-4")}>
+                {row?.configured
+                  ? t("settingsPage.providers.configured")
+                  : t("settingsPage.providers.notSet")}
               </div>
             </button>
           );
         })}
-        <div
-          data-testid="provider-tile-embedded"
-          className="rounded-lg border border-dashed border-border p-3 text-left opacity-50"
-        >
-          <div className="text-[13px] font-medium text-ink-3">Embedded local LLM</div>
-          <div className="mt-1 font-mono text-[9.5px] uppercase tracking-wider text-ink-4">
-            coming soon
-          </div>
-        </div>
-      </div>
-
-      {/* Subscription CLIs — verify-only providers (no key, nothing persisted);
-          route operations to one under "Engine routing & prompts" below. */}
-      <div
-        className="rounded-lg border border-border bg-surface-2 p-3"
-        data-testid="cli-providers-panel"
-      >
-        <div className="text-[13px] font-medium text-ink">Subscription CLIs</div>
-        <p className="mt-1 text-[12px] text-ink-3">
-          Use a coding CLI you're already logged into — no API key, your subscription pays. Verify
-          checks the login; pick one per operation under Engine routing &amp; prompts.
-        </p>
-        <div className="mt-2 space-y-1.5">
-          {SUBSCRIPTION_CLIS.map((c) => {
-            const res = cliResults[c.id];
-            const busy = cliBusy === c.id;
-            return (
-              <div
-                key={c.id}
-                data-testid={`cli-provider-${c.id}`}
-                className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-2"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className="text-[12.5px] font-medium text-ink">{c.label}</span>
-                    {c.experimental ? (
-                      <span className="rounded-full bg-warn-wash px-1.5 py-0.5 text-[9px] font-medium uppercase text-warn">
-                        Experimental
-                      </span>
-                    ) : null}
-                    {settings.routing.some((r) => r.engine === c.id) ? (
-                      <span className="rounded-full bg-good-wash px-1.5 py-0.5 text-[9px] font-medium uppercase text-good">
-                        In use
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="block truncate text-[11px] text-ink-3">{c.desc}</span>
-                  {res ? (
-                    <span
-                      data-testid={`cli-verify-result-${c.id}`}
-                      className={
-                        "block truncate text-[11px] " + (res.ok ? "text-good" : "text-bad")
-                      }
-                    >
-                      {res.detail}
-                    </span>
-                  ) : null}
-                </span>
-                <button
-                  onClick={() => void verifyCli(c.id)}
-                  disabled={busy}
-                  data-testid={`cli-verify-${c.id}`}
-                  className="rounded-md border border-border px-2.5 py-1 text-[12px] text-ink-2 hover:border-border-2 disabled:opacity-40"
-                >
-                  {busy ? "Verifying…" : res?.ok ? "Verified ✓" : "Verify"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
       </div>
 
       {/* Config panel */}
@@ -1111,11 +959,11 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
               data-testid="engine-in-use"
               className="rounded-full bg-good-wash px-2 py-0.5 text-[10px] font-medium text-good"
             >
-              In use
+              {t("settingsPage.providers.inUse")}
             </span>
           )}
         </div>
-        <p className="mt-1 text-[12px] text-ink-3">{entry.desc}</p>
+        <p className="mt-1 text-[12px] text-ink-3">{t(entry.desc)}</p>
 
         {entry.kind === "local" ? (
           <div className="mt-3 space-y-2">
@@ -1143,8 +991,10 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
               onChange={(e) => setKey(e.target.value)}
               placeholder={
                 savedRow?.configured
-                  ? `Key saved (${savedRow.key_hint ?? "•••"}) — paste to replace`
-                  : "Paste your API key"
+                  ? t("settingsPage.providers.keySavedPlaceholder", {
+                      hint: savedRow.key_hint ?? "•••",
+                    })
+                  : t("settingsPage.providers.keyPlaceholder")
               }
               className={INPUT_CLS}
             />
@@ -1185,14 +1035,16 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
             onClick={() => verify.mutate(input, { onSuccess: setResult })}
             className="inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-50"
           >
-            {verify.isPending ? "Verifying…" : "Verify"}
+            {verify.isPending
+              ? t("settingsPage.providers.verifying")
+              : t("settingsPage.providers.verify")}
           </button>
           <button
             data-testid="engine-save-btn"
             onClick={() => save.mutate(input, { onSuccess: () => setKey("") })}
             className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
           >
-            Save
+            {t("settingsPage.providers.save")}
           </button>
           {savedRow && (
             <button
@@ -1200,7 +1052,7 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
               onClick={() => del.mutate(selected)}
               className="inline-flex h-[30px] items-center rounded-md border border-transparent px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
             >
-              Remove
+              {t("settingsPage.providers.remove")}
             </button>
           )}
         </div>
@@ -1215,18 +1067,151 @@ function AIProvidersPanel({ settings }: { settings: SettingsT }) {
                 : "border-bad-2 bg-bad-wash text-bad")
             }
           >
-            {result.ok ? "✓ Verified" : result.detail}
+            {result.ok ? t("settingsPage.providers.verified") : result.detail}
           </div>
         )}
+      </div>
+
+      {/* Subscription CLIs — verify-only providers (no key, nothing persisted);
+          route operations to one under Prompts & Models. */}
+      <div
+        className="rounded-lg border border-border bg-surface-2 p-3"
+        data-testid="cli-providers-panel"
+      >
+        <div className="text-[13px] font-medium text-ink">
+          {t("settingsPage.providers.clisTitle")}
+        </div>
+        <p className="mt-1 text-[12px] text-ink-3">
+          {t("settingsPage.providers.clisIntro")}
+        </p>
+        <div className="mt-2 space-y-1.5">
+          {SUBSCRIPTION_CLIS.map((c) => {
+            const res = cliResults[c.id];
+            const busy = cliBusy === c.id;
+            return (
+              <div
+                key={c.id}
+                data-testid={`cli-provider-${c.id}`}
+                className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-2"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[12.5px] font-medium text-ink">{t(c.label)}</span>
+                    {settings.routing.some((r) => r.engine === c.id) ? (
+                      <span className="rounded-full bg-good-wash px-1.5 py-0.5 text-[9px] font-medium text-good">
+                        {t("settingsPage.providers.inUse")}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="block truncate text-[11px] text-ink-3">{t(c.desc)}</span>
+                  {res ? (
+                    <span
+                      data-testid={`cli-verify-result-${c.id}`}
+                      className={
+                        "block truncate text-[11px] " + (res.ok ? "text-good" : "text-bad")
+                      }
+                    >
+                      {res.detail}
+                    </span>
+                  ) : null}
+                </span>
+                <button
+                  onClick={() => void verifyCli(c.id)}
+                  disabled={busy}
+                  data-testid={`cli-verify-${c.id}`}
+                  className="rounded-md border border-border px-2.5 py-1 text-[12px] text-ink-2 hover:border-border-2 disabled:opacity-40"
+                >
+                  {busy
+                    ? t("settingsPage.providers.verifying")
+                    : res?.ok
+                      ? t("settingsPage.providers.verifiedCheck")
+                      : t("settingsPage.providers.verify")}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
+// OS-style Settings navigation (maintainer directive 2026-07-23): a left
+// category rail + one focused pane per category, the way macOS/Windows Settings
+// organize a large surface — instead of one long scroll where "Prompts" was
+// invisible at the bottom. Each pane reuses the existing `Section` cards.
+type SettingsCat =
+  | "providers"
+  | "prompts"
+  | "discovery"
+  | "networking"
+  | "data"
+  | "appearance";
+
+const SETTINGS_CATS: {
+  id: SettingsCat;
+  label: string; // i18n key
+  icon: IconName;
+  blurb: string; // i18n key
+}[] = [
+  { id: "providers", label: "settingsNav.providers", icon: "settings", blurb: "settingsNav.providersBlurb" },
+  { id: "prompts", label: "settingsNav.prompts", icon: "pencil", blurb: "settingsNav.promptsBlurb" },
+  { id: "discovery", label: "settingsNav.discovery", icon: "search", blurb: "settingsNav.discoveryBlurb" },
+  { id: "networking", label: "settingsNav.networking", icon: "share", blurb: "settingsNav.networkingBlurb" },
+  { id: "data", label: "settingsNav.data", icon: "barChart", blurb: "settingsNav.dataBlurb" },
+  { id: "appearance", label: "settingsNav.appearance", icon: "sun", blurb: "settingsNav.appearanceBlurb" },
+];
+
+function SettingsNav({
+  active,
+  onPick,
+}: {
+  active: SettingsCat;
+  onPick: (c: SettingsCat) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <nav
+      aria-label={t("settingsPage.navAriaLabel")}
+      data-testid="settings-nav"
+      className="w-56 shrink-0 space-y-0.5 overflow-y-auto border-r border-border bg-surface p-3"
+    >
+      {SETTINGS_CATS.map((c) => {
+        const on = c.id === active;
+        return (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onPick(c.id)}
+            data-testid={`settings-nav-${c.id}`}
+            aria-current={on ? "page" : undefined}
+            className={
+              "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors " +
+              (on ? "bg-accent-wash text-accent-ink" : "text-ink-2 hover:bg-surface-3")
+            }
+          >
+            <span className={"mt-0.5 " + (on ? "text-accent" : "text-ink-3")}>
+              <Icon name={c.icon} size={15} strokeWidth={2} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[13px] font-medium leading-tight">{t(c.label)}</span>
+              <span className="block truncate text-[11px] leading-tight text-ink-4">
+                {t(c.blurb)}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
 export function Settings() {
+  const { t } = useTranslation();
   const { data: settings } = useSettings();
   const update = useUpdateSettings();
   const [themeMode, , setThemeMode] = useThemeMode();
+  const [cat, setCat] = useState<SettingsCat>("providers");
   const [ack, setAck] = useState(false);
   // Switching Scoring keyword → AI: the server never spends on its own, so
   // preview the cache misses and ask before any token goes out (maintainer
@@ -1255,41 +1240,153 @@ export function Settings() {
     );
   }
 
+  const active = SETTINGS_CATS.find((c) => c.id === cat) ?? SETTINGS_CATS[0];
   return (
     <>
-      <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5" />
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl space-y-8 p-6">
-          <header className="space-y-2">
-            <h1 className="text-[20px] font-semibold text-ink">Settings</h1>
-            <p className="text-[13px] text-ink-3">
-              Configure how finds-you-jobs scrapes, scores, and reaches out on your behalf.
-            </p>
+      <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
+        <h1 className="text-[14px] font-semibold text-ink">{t("nav.settings")}</h1>
+      </header>
+      <main className="flex min-h-0 flex-1 overflow-hidden">
+        <SettingsNav active={cat} onPick={setCat} />
+        <div className="flex-1 overflow-y-auto">
+        {/* All panes share one comfortable width (2026-07-23: the full-width
+            Prompts pane read as too spread out). Less side-padding than before. */}
+        <div className="mx-auto w-full max-w-5xl space-y-6 px-6 py-5">
+          <header className="space-y-1">
+            <h2 className="text-[18px] font-semibold text-ink">{t(active.label)}</h2>
+            <p className="text-[13px] text-ink-3">{t(active.blurb)}</p>
           </header>
 
+          {cat === "discovery" && (
+          <div className="space-y-8">
           {/* Discovery sources — per-family opt-out toggles (2026-07-18).
               First section on purpose: discovery is the first stage of the
               pipeline everything below feeds on. */}
-          <Section title="Discovery sources">
+          <Section title={t("settingsPage.sources.title")}>
             <DiscoverySourcesSection />
           </Section>
 
-          {/* Automation on Save — split defaults (FR-SET-02): Resume ON, Cover ON */}
-          <Section title="Automation on Save">
+          {/* BYO scraper keys — their own card so the sources list above stays
+              a pure pick-list (maintainer 2026-07-23). */}
+          <Section title={t("settingsPage.sources.keys.title")}>
+            <DiscoveryKeysSection />
+          </Section>
+
+          {/* LinkedIn job search sits above Scoring (maintainer 2026-07-23) — an
+              experimental discovery source with its own ToS opt-in, sharing the
+              LinkedIn session with Referral Outreach. */}
+          <LinkedInJobSearchSection settings={settings} patch={patch} />
+
+          {/* Scoring: a scanned job is scored before anything else happens to it.
+              Every scanned job is scored; the choice is HOW. AI failures fall
+              back to a grey keyword score (retry in Logs). */}
+          <Section title={t("settingsPage.scoring.title")}>
             <div className="space-y-4">
-              <p className="text-[12px] text-ink-3">
-                These are your <strong>defaults for every job you save</strong>. Need something
-                different for one job? Flip its per-job toggles on the Job Board before you save —
-                that doesn&apos;t change the defaults here.
+              <div>
+                <div className="flex items-center text-[13px] font-medium text-ink">
+                  {t("settingsPage.scoring.howTitle")}
+                  <InfoDot label={t("settingsPage.scoring.fallbackLabel")}>
+                    {t("settingsPage.scoring.fallbackInfo")}
+                  </InfoDot>
+                </div>
+                <div className="mb-2 text-[12px] text-ink-3">
+                  {t("settingsPage.scoring.howHint")}
+                </div>
+                <div className="flex flex-col gap-1.5" data-testid="scoring-mode-picker">
+                  {(
+                    [
+                      ["llm", "settingsPage.scoring.modeLlm"],
+                      ["keyword", "settingsPage.scoring.modeKeyword"],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      data-testid={`scoring-mode-${mode}`}
+                      data-on={settings.scoring_mode === mode}
+                      onClick={() => pickScoringMode(mode)}
+                      className={
+                        "rounded-md border px-3 py-2 text-left text-[12.5px] " +
+                        (settings.scoring_mode === mode
+                          ? "border-accent bg-accent-wash text-accent-ink"
+                          : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
+                      }
+                    >
+                      {t(label)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {settings.scoring_mode === "llm" ? (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center text-[13px] font-medium text-ink">
+                      {t("settingsPage.scoring.batchCap")}
+                      <InfoDot label={t("settingsPage.scoring.batchCap")}>
+                        {t("settingsPage.scoring.batchCapInfo")}
+                      </InfoDot>
+                    </div>
+                    <div className="text-[12px] text-ink-3">
+                      {t("settingsPage.scoring.batchCapHint")}
+                    </div>
+                  </div>
+                  <ScoreBatchCapControl
+                    value={settings.score_new_batch}
+                    onChange={(v) => patch({ score_new_batch: v })}
+                  />
+                </div>
+              ) : null}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="flex items-center text-[13px] font-medium text-ink">
+                    {t("settingsPage.scoring.parallel")}
+                    <InfoDot label={t("settingsPage.scoring.parallel")}>
+                      {t("settingsPage.scoring.parallelInfo")}
+                    </InfoDot>
+                  </div>
+                  <div className="text-[12px] text-ink-3">
+                    {t("settingsPage.scoring.parallelHint")}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5" data-testid="llm-concurrency-row">
+                  <select
+                    value={String(settings.llm_concurrency)}
+                    data-testid="llm-concurrency-select"
+                    onChange={(e) => patch({ llm_concurrency: Number(e.target.value) })}
+                    className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+                  >
+                    {[2, 3, 4, 6, 8, 10, 12, 16, 20].map((n) => (
+                      <option key={n} value={n}>
+                        {t("settingsPage.scoring.atOnce", { n })}
+                      </option>
+                    ))}
+                    <option value={0}>{t("settingsPage.scoring.unlimited")}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </Section>
+
+          {/* Automation on Save — split defaults (FR-SET-02): Resume ON, Cover ON.
+              After Scoring in the workflow (maintainer 2026-07-23). */}
+          <Section title={t("settingsPage.automation.title")}>
+            <div className="space-y-4">
+              <p className="text-[12px] text-ink-4">
+                {t("settingsPage.automation.intro")}
+                <InfoDot label={t("settingsPage.automation.perJobLabel")}>
+                  {t("settingsPage.automation.perJobInfo")}
+                </InfoDot>
               </p>
               <div className="flex items-center gap-3">
                 <div className="flex-1">
-                  <div className="text-[13px] font-medium text-ink">
-                    Tailor my resume when I save a job
+                  <div className="flex items-center text-[13px] font-medium text-ink">
+                    {t("settingsPage.automation.resumeLabel")}
+                    <InfoDot label={t("settingsPage.automation.resumeInfoLabel")}>
+                      {t("settingsPage.automation.resumeInfo")}
+                    </InfoDot>
                   </div>
                   <div className="text-[12px] text-ink-3">
-                    On Save, tailor your resume in the background so it&apos;s ready on the tracker
-                    card. Review it before you copy or export — nothing is auto-submitted.
+                    {t("settingsPage.automation.resumeHint")}
                   </div>
                 </div>
                 <Toggle
@@ -1301,11 +1398,10 @@ export function Settings() {
               <div className="flex items-center gap-3">
                 <div className="flex-1">
                   <div className="text-[13px] font-medium text-ink">
-                    Draft a cover letter when I save a job
+                    {t("settingsPage.automation.coverLabel")}
                   </div>
                   <div className="text-[12px] text-ink-3">
-                    On Save, draft a cover letter from your master profile and the job description in
-                    the background — a separate step from the resume.
+                    {t("settingsPage.automation.coverHint")}
                   </div>
                 </div>
                 <Toggle
@@ -1323,12 +1419,14 @@ export function Settings() {
               {settings.networking_enabled ? (
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
-                    <div className="text-[13px] font-medium text-ink">
-                      Find referrals when I save a job
+                    <div className="flex items-center text-[13px] font-medium text-ink">
+                      {t("settingsPage.automation.referralsLabel")}
+                      <InfoDot label={t("settingsPage.automation.referralsInfoLabel")}>
+                        {t("settingsPage.automation.referralsInfo")}
+                      </InfoDot>
                     </div>
                     <div className="text-[12px] text-ink-3">
-                      On Save, start Referral Outreach for the job in the background. You still
-                      confirm the company and approve every message before anything is sent.
+                      {t("settingsPage.automation.referralsHint")}
                     </div>
                   </div>
                   <Toggle
@@ -1341,133 +1439,37 @@ export function Settings() {
             </div>
           </Section>
 
-          {/* Scoring MODE (maintainer design 2026-07-22): every scanned job is
-              scored — the old off-switch is retired ("a user can always sort
-              by recency and ignore the scoring anyways"); the choice is HOW.
-              AI failures fall back to a grey keyword score (retry in Logs). */}
-          <Section title="Scoring">
-            <div className="space-y-4">
-              <div>
-                <div className="text-[13px] font-medium text-ink">How jobs are scored</div>
-                <div className="mb-2 text-[12px] text-ink-3">
-                  Every new job gets a fit score against your master resume. If an AI score
-                  fails, the keyword score fills in (grey) and you can retry from
-                  Analytics → Logs.
-                </div>
-                <div className="flex flex-col gap-1.5" data-testid="scoring-mode-picker">
-                  {(
-                    [
-                      [
-                        "llm",
-                        "AI scoring — best quality, but costs LLM tokens and some time",
-                      ],
-                      ["keyword", "Keyword scoring — lower quality, but free and instant"],
-                    ] as const
-                  ).map(([mode, label]) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      data-testid={`scoring-mode-${mode}`}
-                      data-on={settings.scoring_mode === mode}
-                      onClick={() => pickScoringMode(mode)}
-                      className={
-                        "rounded-md border px-3 py-2 text-left text-[12.5px] " +
-                        (settings.scoring_mode === mode
-                          ? "border-accent bg-accent-wash text-accent-ink"
-                          : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
-                      }
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {settings.scoring_mode === "llm" ? (
-                <div className="flex items-center gap-3">
-                  <div className="flex-1">
-                    <div className="text-[13px] font-medium text-ink">Scoring batch cap</div>
-                    <div className="text-[12px] text-ink-3">
-                      Limit how many newly-scanned jobs get scored in one scheduler pass. Uncapped
-                      scores everything found; a cap spreads the LLM cost across more ticks.
-                    </div>
-                  </div>
-                  <ScoreBatchCapControl
-                    value={settings.score_new_batch}
-                    onChange={(v) => patch({ score_new_batch: v })}
-                  />
-                </div>
-              ) : null}
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="text-[13px] font-medium text-ink">Parallel AI calls</div>
-                  <div className="text-[12px] text-ink-3">
-                    How many scoring / tailoring / drafting calls run at once. Higher =
-                    faster board, but the spend arrives just as fast and your provider may
-                    rate-limit bursts (429s). Unlimited removes the app's cap entirely —
-                    you own that tradeoff.
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5" data-testid="llm-concurrency-row">
-                  <select
-                    value={String(settings.llm_concurrency)}
-                    data-testid="llm-concurrency-select"
-                    onChange={(e) => patch({ llm_concurrency: Number(e.target.value) })}
-                    className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
-                  >
-                    {[2, 3, 4, 6, 8, 10, 12, 16, 20].map((n) => (
-                      <option key={n} value={n}>
-                        {n} at once
-                      </option>
-                    ))}
-                    <option value={0}>Unlimited</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </Section>
+          </div>
+          )}
 
-          {/* The prior repository's auto-submit toggle (apply_mode) is retired:
-              P1 ships no submit capability at all — the agent's tool vocabulary
-              has no submit tool, and a card reaches Applied only via detected
-              confirmation or your explicit attestation (RELEASING.md, the P2
-              boundary). The section stays as an honest statement of that. */}
-          <Section title="Applier">
-            <div className="flex-1" data-testid="applier-p1-boundary">
-              <div className="text-[13px] font-medium text-ink">
-                The Applier never submits in P1
-              </div>
-              <div className="text-[12px] text-ink-3">
-                It fills the form to the best of your real facts, then hands you the open
-                browser to review and click Submit yourself. Autonomous submission is a
-                P2 capability behind an explicit delegation opt-in — it does not exist in
-                this build.
-              </div>
-            </div>
-          </Section>
+          {/* The "Applications" settings category (P1 Applier statement +
+              Application-profile editor) was removed 2026-07-23 (maintainer:
+              no value in P1). The ApplicationProfileEditor component is parked
+              below, unreferenced, for trivial restoration; the profile is still
+              auto-extracted on master-save regardless. */}
 
-          {/* Application profile (FR-APP-01, 2026-07-11) — the structured
-              form-fill facts the Applier uses; extracted at master-save,
-              editable here (edits always win over extraction). */}
-          <Section title="Application profile">
-            <div className="space-y-4">
-              <p className="text-[12px] text-ink-3">
-                Extracted from your resume automatically whenever you save it (one small AI
-                call) — the name / contact / location / education record used to fill
-                application forms. Your edits below always win.
-              </p>
-              <ApplicationProfileEditor />
-            </div>
-          </Section>
-
-          {/* AI Providers (FR-SET-06 / US-SET-07) — tile grid + Verify + Save */}
-          <Section title="AI Providers">
+          {cat === "providers" && (
+          <div className="space-y-8">
+          {/* LLM Providers (FR-SET-06 / US-SET-07) — tile grid + Verify + Save */}
+          <Section title={t("settingsPage.providers.title")}>
             <AIProvidersPanel settings={settings} />
           </Section>
+          </div>
+          )}
 
-          {/* Per-operation engine routing + editable system prompts (FR-SET-11) */}
-          <Section title="Engine routing & prompts">
+          {cat === "prompts" && (
+          <div className="space-y-8">
+          {/* Per-operation engine routing + editable system prompts (FR-SET-11).
+              Its own category so prompt editing is discoverable — the old long
+              scroll buried it at the bottom (maintainer 2026-07-23). */}
+          <Section title={t("settingsPage.prompts.title")}>
             <EngineRoutingSection settings={settings} patch={patch} />
           </Section>
+          </div>
+          )}
+
+          {cat === "networking" && (
+          <div className="space-y-8">
 
           {/* Referral Outreach risk toggle — the canonical feature name for the
               automated LinkedIn module (maintainer, 2026-07-10). The Networking
@@ -1475,26 +1477,15 @@ export function Settings() {
               carries no risk; this gates only the automated actions. This section
               is deliberately the feature's ONE reveal point (it is never
               advertised elsewhere), so the copy carries the full context. */}
-          <Section title="Referral Outreach (experimental)">
+          <Section title={t("settingsPage.referral.title")} titleExtra={<ExperimentalHazard />}>
             <div className="space-y-3">
               <p className="text-[12.5px] text-ink-2">
-                Tracking contacts by hand (the Networking tab) is always on and safe.{" "}
-                <strong>Referral Outreach</strong> is the automated part: for a job you pick, it
-                finds people at that company and — after you confirm each batch — messages them from
-                your own LinkedIn account to ask for a referral. Off by default; you can also use it
-                drafts-only and send the messages yourself.
-                <InfoDot label="How Referral Outreach works">
-                  It finds <em>current</em> employees at the company and drafts a short message for
-                  each from a fixed per-role template (peer / hiring-manager / recruiter /
-                  leadership) that you can edit — or hit Regenerate for an AI version grounded in
-                  your profile. Sending goes through your own LinkedIn session as connection
-                  requests or DMs, paced slowly with conservative daily/weekly caps to reduce
-                  detection risk.
+                {t("settingsPage.referral.intro")}
+                <InfoDot label={t("settingsPage.referral.howLabel")}>
+                  <Trans i18nKey="settingsPage.referral.howInfo" components={{ em: <em /> }} />
                 </InfoDot>
               </p>
-              <div className="rounded-lg border border-warn-2 bg-warn-wash p-3 text-[11.5px] leading-relaxed text-warn">
-                {NETWORKING_WARNING}
-              </div>
+              <LinkedInRiskLine detail={t(NETWORKING_WARNING)} />
               <label className="flex items-start gap-2 text-[12px] font-medium text-ink-2">
                 <input
                   type="checkbox"
@@ -1503,12 +1494,12 @@ export function Settings() {
                   data-testid="networking-ack"
                   className="mt-0.5"
                 />
-                I want to automate LinkedIn outreach seeking referrals, at the cost of BREAKING
-                LinkedIn&apos;s Terms of Service — which can lead to account restrictions, up to a
-                permanent ban. I accept full responsibility.
+                {t("settingsPage.referral.ack")}
               </label>
               <div className="flex items-center gap-3">
-                <div className="flex-1 text-[13px] font-medium text-ink">Enable Referral Outreach</div>
+                <div className="flex-1 text-[13px] font-medium text-ink">
+                  {t("settingsPage.referral.enable")}
+                </div>
                 <Toggle
                   on={settings.networking_enabled}
                   onChange={(v) => {
@@ -1529,7 +1520,9 @@ export function Settings() {
               </div>
               {settings.networking_ack_at ? (
                 <div className="text-[11px] text-ink-4" data-testid="networking-ack-at">
-                  Acknowledged on {new Date(settings.networking_ack_at).toLocaleDateString()}
+                  {t("settingsPage.acknowledgedOn", {
+                    date: new Date(settings.networking_ack_at).toLocaleDateString(),
+                  })}
                 </div>
               ) : null}
               {/* Step 2 — the LinkedIn session (US-SET-06) lives INSIDE this
@@ -1540,22 +1533,29 @@ export function Settings() {
                 <LinkedInSessionSection />
               ) : (
                 <div className="text-[11.5px] text-ink-4">
-                  Turn the toggle on to unlock the next step: connecting your LinkedIn
-                  session (required for auto-discovery and sending).
+                  {t("settingsPage.referral.lockedHint")}
                 </div>
               )}
             </div>
           </Section>
+          </div>
+          )}
 
+          {cat === "data" && (
+          <div className="space-y-8">
           {/* Observability */}
-          <Section title="Observability">
+          <Section title={t("settingsPage.observability.title")}>
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="flex-1">
-                  <div className="text-[13px] font-medium text-ink">Content logging</div>
+                  <div className="flex items-center text-[13px] font-medium text-ink">
+                    {t("settingsPage.observability.contentLogging")}
+                    <InfoDot label={t("settingsPage.observability.contentLogging")}>
+                      {t("settingsPage.observability.contentLoggingInfo")}
+                    </InfoDot>
+                  </div>
                   <div className="text-[12px] text-ink-3">
-                    Log prompt/output content locally for self-debugging (off by default; sizes +
-                    fingerprints only otherwise).
+                    {t("settingsPage.observability.contentLoggingHint")}
                   </div>
                 </div>
                 <Toggle
@@ -1568,11 +1568,14 @@ export function Settings() {
               </div>
               <div className="flex items-center gap-3">
                 <div className="flex-1">
-                  <div className="text-[13px] font-medium text-ink">OTLP export</div>
+                  <div className="flex items-center text-[13px] font-medium text-ink">
+                    {t("settingsPage.observability.otlpExport")}
+                    <InfoDot label={t("settingsPage.observability.otlpExport")}>
+                      {t("settingsPage.observability.otlpExportInfo")}
+                    </InfoDot>
+                  </div>
                   <div className="text-[12px] text-ink-3">
-                    Off by default — spans stay in the local store and nothing leaves your machine.
-                    Turn on to also send spans to an external OTLP endpoint (Honeycomb, Grafana,
-                    Logfire Cloud, …).
+                    {t("settingsPage.observability.otlpExportHint")}
                   </div>
                 </div>
                 <Toggle
@@ -1585,7 +1588,9 @@ export function Settings() {
               </div>
               {settings.observability.otlp_enabled ? (
                 <div className="flex items-center gap-3" data-testid="otlp-endpoint-row">
-                  <div className="flex-1 text-[13px] text-ink-2">OTLP endpoint</div>
+                  <div className="flex-1 text-[13px] text-ink-2">
+                    {t("settingsPage.observability.otlpEndpoint")}
+                  </div>
                   <input
                     value={settings.observability.otlp_endpoint}
                     onChange={(e) =>
@@ -1600,7 +1605,9 @@ export function Settings() {
               ) : null}
               {settings.observability.otlp_enabled ? (
                 <div className="flex items-center gap-3" data-testid="otlp-headers-row">
-                  <div className="flex-1 text-[13px] text-ink-2">OTLP headers</div>
+                  <div className="flex-1 text-[13px] text-ink-2">
+                    {t("settingsPage.observability.otlpHeaders")}
+                  </div>
                   <input
                     value={otlpHeadersToText(settings.observability.otlp_headers)}
                     onChange={(e) =>
@@ -1618,9 +1625,11 @@ export function Settings() {
               ) : null}
               <div className="flex items-center gap-3" data-testid="retention-days-row">
                 <div className="flex-1">
-                  <div className="text-[13px] text-ink-2">Local log retention (days)</div>
+                  <div className="text-[13px] text-ink-2">
+                    {t("settingsPage.observability.retention")}
+                  </div>
                   <div className="text-[12px] text-ink-3">
-                    Spans older than this are pruned from the local store.
+                    {t("settingsPage.observability.retentionHint")}
                   </div>
                 </div>
                 <input
@@ -1644,19 +1653,34 @@ export function Settings() {
           {/* Contact & data lifecycle (FR-SYS-06 / FR-NW-15) — configurable
               windows for kanban ghosting, purge, and the contact-sync cadence. */}
           <LifecycleSection settings={settings} patch={patch} />
+          </div>
+          )}
 
-          {/* Appearance */}
-          <Section title="Appearance">
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <div className="text-[13px] font-medium text-ink">Theme</div>
-                <div className="text-[11.5px] text-ink-3">
-                  Follow system matches your OS light/dark setting.
+          {cat === "appearance" && (
+          <div className="space-y-8">
+          {/* Untitled card — the pane header already says "Appearance"
+              (maintainer 2026-07-24 #5: stop repeating it). */}
+          <Section>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="text-[13px] font-medium text-ink">{t("appearance.theme")}</div>
+                  <div className="text-[11.5px] text-ink-3">{t("appearance.themeHint")}</div>
                 </div>
+                <ThemeModeToggle mode={themeMode} onChange={setThemeMode} />
               </div>
-              <ThemeModeToggle mode={themeMode} onChange={setThemeMode} />
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="text-[13px] font-medium text-ink">{t("appearance.language")}</div>
+                  <div className="text-[11.5px] text-ink-3">{t("appearance.languageHint")}</div>
+                </div>
+                <LanguageSelect testid="language-select" />
+              </div>
             </div>
           </Section>
+          </div>
+          )}
+        </div>
         </div>
       </main>
       {rescoreAsk !== null ? (
@@ -1679,18 +1703,39 @@ export function Settings() {
 
 type PillVariant = { cls: string; dot: string; label: string };
 
+// `label` is an i18n key — t()'d where the pill renders.
 function statusPill(status: LinkedInSessionState["status"]): PillVariant {
   switch (status) {
     case "valid":
-      return { cls: "bg-good-wash border-good-2 text-good", dot: "#1F9D55", label: "Connected" };
+      return {
+        cls: "bg-good-wash border-good-2 text-good",
+        dot: "#1F9D55",
+        label: "settingsPage.session.statusConnected",
+      };
     case "connecting":
-      return { cls: "bg-warn-wash border-warn-2 text-warn", dot: "#C5A24A", label: "Connecting…" };
+      return {
+        cls: "bg-warn-wash border-warn-2 text-warn",
+        dot: "#C5A24A",
+        label: "settingsPage.session.statusConnecting",
+      };
     case "backing_off":
-      return { cls: "bg-bad-wash border-bad-2 text-bad", dot: "#B23A3A", label: "Backing off" };
+      return {
+        cls: "bg-bad-wash border-bad-2 text-bad",
+        dot: "#B23A3A",
+        label: "settingsPage.session.statusBackingOff",
+      };
     case "expired":
-      return { cls: "bg-bad-wash border-bad-2 text-bad", dot: "#B23A3A", label: "Session expired" };
+      return {
+        cls: "bg-bad-wash border-bad-2 text-bad",
+        dot: "#B23A3A",
+        label: "settingsPage.session.statusExpired",
+      };
     default:
-      return { cls: "bg-bad-wash border-bad-2 text-bad", dot: "#B23A3A", label: "Disconnected" };
+      return {
+        cls: "bg-bad-wash border-bad-2 text-bad",
+        dot: "#B23A3A",
+        label: "settingsPage.session.statusDisconnected",
+      };
   }
 }
 
@@ -1700,174 +1745,181 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }
 
+// Collapsible + SHARED (2026-07-23): one LinkedIn session drives both Referral
+// Outreach and LinkedIn Job Search. Rendered in both places; because both read
+// the same session query + hit the same backend, connecting or disconnecting in
+// one reflects instantly in the other. Collapsed once connected to stay tidy.
 function LinkedInSessionSection() {
+  const { t } = useTranslation();
   const { data: session } = useLinkedInSession();
   const connect = useConnectLinkedIn();
   const disconnect = useDisconnectLinkedIn();
   const validate = useValidateLinkedIn();
   const resume = useResumeLinkedIn();
   const setTier = useSetLinkedInTier();
+  const [openOverride, setOpenOverride] = useState<boolean | null>(null);
 
   if (!session) return null;
   const status = session.status;
   const pill = statusPill(status);
   const connecting = status === "connecting" || connect.isPending;
   const connected = status === "valid";
+  const open = openOverride ?? !connected; // expanded until connected, then tidy
 
   return (
-    <div className="rounded-lg border border-border bg-surface-2 p-4">
-      <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
-        Next step — connect your LinkedIn session
-      </div>
-      <div className="space-y-4" data-testid="linkedin-session-section">
-        <p className="text-[12.5px] text-ink-3">
-          Connect your LinkedIn account so finds-you-jobs can find referrers and reach out for you —
-          with your own login, and <strong>your session stays on your device</strong>.
-          <InfoDot label="How connecting + your session work">
-            Connect opens a real browser window on LinkedIn&apos;s own login page; you log in there
-            (2FA included), so finds-you-jobs never sees your password. It then keeps only the session
-            cookie — encrypted at rest (Fernet) in the app&apos;s local data folder on your machine,
-            never uploaded anywhere. The window stays open so you can watch outreach happen in the
-            same session; close it when you&apos;re done. Disconnect deletes the saved session and
-            the app&apos;s browser profile from this device — it does <strong>not</strong> log you
-            out of LinkedIn itself (do that at linkedin.com if you want the session revoked
-            server-side).
-          </InfoDot>
-        </p>
+    <div className="rounded-lg border border-border bg-surface-2 p-3" data-testid="linkedin-session-section">
+      <button
+        type="button"
+        onClick={() => setOpenOverride(!open)}
+        aria-expanded={open}
+        data-testid="linkedin-session-toggle"
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <span className="w-3 text-ink-4">{open ? "▾" : "▸"}</span>
+        <span className="text-[12px] font-semibold text-ink-3">
+          {t("settingsPage.session.title")}
+        </span>
+        <span
+          data-testid="linkedin-status-pill"
+          className={
+            "ml-auto inline-flex h-[20px] items-center gap-[5px] rounded-full border px-2 text-[11px] font-medium " +
+            pill.cls
+          }
+        >
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: pill.dot }} />
+          {t(pill.label)}
+        </span>
+      </button>
+      {open ? (
+        <div className="mt-3 space-y-4">
+          <p className="text-[12.5px] text-ink-3">
+            <Trans i18nKey="settingsPage.session.intro" components={{ strong: <strong /> }} />
+            <InfoDot label={t("settingsPage.session.howLabel")}>
+              {t("settingsPage.session.howInfo")}
+            </InfoDot>
+          </p>
 
-        {/* Status row */}
-        <div className="rounded-lg border border-border bg-surface-2 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-[12px] font-medium text-ink-2">Current status</div>
-            <span
-              data-testid="linkedin-status-pill"
-              className={
-                "inline-flex h-[22px] items-center gap-[5px] rounded-full border px-2 text-[11.5px] font-medium " +
-                pill.cls
-              }
-            >
-              <span className="h-2 w-2 rounded-full" style={{ background: pill.dot }} />
-              {pill.label}
-            </span>
-          </div>
-          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] text-ink-3">
-            <dt>Connected as</dt>
-            <dd className="text-ink-2" data-testid="linkedin-connected-as">
-              {session.connected_as || "—"}
-            </dd>
-            <dt>Session expires</dt>
-            <dd>{fmtDate(session.li_at_expires_at)}</dd>
-            <dt>Last validated</dt>
-            <dd>{fmtDate(session.last_validated_at)}</dd>
-          </dl>
+          {/* Status details + actions */}
+          <div className="rounded-lg border border-border bg-surface p-3">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] text-ink-3">
+              <dt>{t("settingsPage.session.connectedAs")}</dt>
+              <dd className="text-ink-2" data-testid="linkedin-connected-as">
+                {session.connected_as || "—"}
+              </dd>
+              <dt>{t("settingsPage.session.expires")}</dt>
+              <dd>{fmtDate(session.li_at_expires_at)}</dd>
+              <dt>{t("settingsPage.session.lastValidated")}</dt>
+              <dd>{fmtDate(session.last_validated_at)}</dd>
+            </dl>
 
-          {status === "backing_off" && (
-            <div
-              className="mt-3 rounded-md border border-bad-2 bg-bad-wash p-2.5 text-[11.5px] text-bad"
-              data-testid="linkedin-backoff-notice"
-            >
-              Outreach is paused after a LinkedIn rate-limit signal
-              {session.paused_reason ? `: "${session.paused_reason}"` : "."} Fix the underlying
-              issue, then Resume to send again.
-            </div>
-          )}
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {!connected && !connecting && (
-              <button
-                data-testid="linkedin-connect-btn"
-                onClick={() => connect.mutate()}
-                className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
-              >
-                Connect LinkedIn
-              </button>
-            )}
-            {connecting && (
-              <span
-                data-testid="linkedin-connecting-hint"
-                className="inline-flex h-[30px] items-center rounded-md border border-warn-2 bg-warn-wash px-3 text-[12px] font-medium text-warn"
-              >
-                A browser window opened — finish logging in there…
-              </span>
-            )}
-            {connected && (
-              <button
-                data-testid="linkedin-validate-btn"
-                onClick={() => validate.mutate()}
-                disabled={validate.isPending}
-                className="inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-60"
-              >
-                {validate.isPending ? "Validating…" : "Validate"}
-              </button>
-            )}
-            {/* Validate feedback (2026-07-12 — clicking used to do "nothing"
-                visibly): a local check of the saved cookie, never a LinkedIn
-                call, so say what happened either way. */}
-            {validate.isSuccess && !validate.isPending ? (
-              <span
-                data-testid="linkedin-validate-result"
-                className="inline-flex h-[30px] items-center text-[12px] text-good"
-              >
-                Session checked ✓ — status + &quot;Last validated&quot; updated (local check, no
-                LinkedIn call)
-              </span>
-            ) : null}
-            {validate.isError ? (
-              <span
-                data-testid="linkedin-validate-error"
-                className="inline-flex h-[30px] items-center text-[12px] text-bad"
-              >
-                Validate failed: {validate.error instanceof Error ? validate.error.message : "error"}
-              </span>
-            ) : null}
             {status === "backing_off" && (
-              <button
-                data-testid="linkedin-resume-btn"
-                onClick={() => resume.mutate()}
-                className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
+              <div
+                className="mt-3 rounded-md border border-bad-2 bg-bad-wash p-2.5 text-[11.5px] text-bad"
+                data-testid="linkedin-backoff-notice"
               >
-                Resume outreach
-              </button>
+                {session.paused_reason
+                  ? t("settingsPage.session.backoffNoticeReason", {
+                      reason: session.paused_reason,
+                    })
+                  : t("settingsPage.session.backoffNotice")}
+              </div>
             )}
-            {(connected || status === "expired" || status === "backing_off") && (
-              <button
-                data-testid="linkedin-disconnect-btn"
-                onClick={() => disconnect.mutate()}
-                className="inline-flex h-[30px] items-center rounded-md border border-transparent px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
-        </div>
 
-        {/* Account tier (US-REF-08 / US-NW-10) */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
-            <div className="text-[13px] font-medium text-ink">Account tier</div>
-            <div className="text-[12px] text-ink-3">
-              Caps are owned by the LinkedIn worker; pick the tier that matches your account
-              honestly. New = 15/day · 100/wk. Seasoned = 30/day · 200/wk.
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!connected && !connecting && (
+                <button
+                  data-testid="linkedin-connect-btn"
+                  onClick={() => connect.mutate()}
+                  className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
+                >
+                  {t("settingsPage.session.connect")}
+                </button>
+              )}
+              {connecting && (
+                <span
+                  data-testid="linkedin-connecting-hint"
+                  className={"inline-flex h-[30px] items-center rounded-md px-3 text-[12px] font-medium " + MUTED_WARN_BOX}
+                >
+                  {t("settingsPage.session.connectingHint")}
+                </span>
+              )}
+              {connected && (
+                <button
+                  data-testid="linkedin-validate-btn"
+                  onClick={() => validate.mutate()}
+                  disabled={validate.isPending}
+                  className="inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-60"
+                >
+                  {validate.isPending
+                    ? t("settingsPage.session.validating")
+                    : t("settingsPage.session.validate")}
+                </button>
+              )}
+              {validate.isSuccess && !validate.isPending ? (
+                <span
+                  data-testid="linkedin-validate-result"
+                  className="inline-flex h-[30px] items-center text-[12px] text-good"
+                >
+                  {t("settingsPage.session.validateOk")}
+                </span>
+              ) : null}
+              {validate.isError ? (
+                <span
+                  data-testid="linkedin-validate-error"
+                  className="inline-flex h-[30px] items-center text-[12px] text-bad"
+                >
+                  {t("settingsPage.session.validateFailed", {
+                    message:
+                      validate.error instanceof Error
+                        ? validate.error.message
+                        : t("settingsPage.session.errorFallback"),
+                  })}
+                </span>
+              ) : null}
+              {status === "backing_off" && (
+                <button
+                  data-testid="linkedin-resume-btn"
+                  onClick={() => resume.mutate()}
+                  className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
+                >
+                  {t("settingsPage.session.resume")}
+                </button>
+              )}
+              {(connected || status === "expired" || status === "backing_off") && (
+                <button
+                  data-testid="linkedin-disconnect-btn"
+                  onClick={() => disconnect.mutate()}
+                  className="inline-flex h-[30px] items-center rounded-md border border-transparent px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
+                >
+                  {t("settingsPage.session.disconnect")}
+                </button>
+              )}
             </div>
           </div>
-          <select
-            data-testid="linkedin-tier-select"
-            value={session.account_tier}
-            onChange={(e) => setTier.mutate(e.target.value as "new" | "seasoned")}
-            className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
-          >
-            <option value="new">New account (safe default)</option>
-            <option value="seasoned">Seasoned account</option>
-          </select>
-        </div>
 
-        {/* One-shot logged-in job search (discovery-expansion #6). A
-            user-clicked entry point ONLY — scheduled scans never touch the
-            logged-in session (that's what the guest adapter is for). Uses your
-            saved roles × locations; results land in the normal Job Board feed,
-            deduped against guest/Apify finds. Read-only against LinkedIn. */}
-        {connected ? <LinkedInJobSearchBlock /> : null}
-      </div>
+          {/* Account tier (US-REF-08 / US-NW-10) */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <div className="flex items-center text-[13px] font-medium text-ink">
+                {t("settingsPage.session.tier")}
+                <InfoDot label={t("settingsPage.session.tierCapsLabel")}>
+                  {t("settingsPage.session.tierInfo")}
+                </InfoDot>
+              </div>
+              <div className="text-[12px] text-ink-3">{t("settingsPage.session.tierHint")}</div>
+            </div>
+            <select
+              data-testid="linkedin-tier-select"
+              value={session.account_tier}
+              onChange={(e) => setTier.mutate(e.target.value as "new" | "seasoned")}
+              className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
+            >
+              <option value="new">{t("settingsPage.session.tierNew")}</option>
+              <option value="seasoned">{t("settingsPage.session.tierSeasoned")}</option>
+            </select>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1876,25 +1928,97 @@ function LinkedInSessionSection() {
 const LI_LIMIT_MIN = 25;
 const LI_LIMIT_MAX = 250;
 
+// The experimental gate around LinkedIn job search — mirrors Referral Outreach
+// (hazard badge + ToS risk line + ack + Enable toggle), with its OWN opt-in but
+// the SAME shared LinkedIn session (connect once, stays until Disconnect).
+function LinkedInJobSearchSection({
+  settings,
+  patch,
+}: {
+  settings: SettingsT;
+  patch: (p: Partial<SettingsT>) => void;
+}) {
+  const { t } = useTranslation();
+  const { data: session } = useLinkedInSession();
+  const [ack, setAck] = useState(false);
+  const enabled = settings.linkedin_search_enabled;
+  const connected = session?.status === "valid";
+  return (
+    <Section title={t("settingsPage.linkedinSearch.title")} titleExtra={<ExperimentalHazard />}>
+      <div className="space-y-3">
+        <p className="text-[12.5px] text-ink-2">
+          {t("settingsPage.linkedinSearch.intro")}
+          <InfoDot label={t("settingsPage.linkedinSearch.howLabel")}>
+            {t("settingsPage.linkedinSearch.howInfo")}
+          </InfoDot>
+        </p>
+        <LinkedInRiskLine detail={t(JOB_SEARCH_WARNING)} />
+        <label className="flex items-start gap-2 text-[12px] font-medium text-ink-2">
+          <input
+            type="checkbox"
+            checked={ack || enabled}
+            onChange={(e) => setAck(e.target.checked)}
+            data-testid="linkedin-search-ack"
+            className="mt-0.5"
+          />
+          {t("settingsPage.linkedinSearch.ack")}
+        </label>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 text-[13px] font-medium text-ink">
+            {t("settingsPage.linkedinSearch.enable")}
+          </div>
+          <Toggle
+            on={enabled}
+            onChange={(v) => {
+              if (v && !ack) return;
+              patch(
+                v
+                  ? { linkedin_search_enabled: v, linkedin_search_ack_at: new Date().toISOString() }
+                  : { linkedin_search_enabled: v },
+              );
+              if (!v) setAck(false);
+            }}
+            testid="linkedin-search-toggle"
+          />
+        </div>
+        {settings.linkedin_search_ack_at ? (
+          <div className="text-[11px] text-ink-4" data-testid="linkedin-search-ack-at">
+            {t("settingsPage.acknowledgedOn", {
+              date: new Date(settings.linkedin_search_ack_at).toLocaleDateString(),
+            })}
+          </div>
+        ) : null}
+        {enabled ? (
+          <div className="space-y-3">
+            {/* Same collapsible session as Referral Outreach — connect/disconnect
+                here or there, it's one shared session. */}
+            <LinkedInSessionSection />
+            {connected ? (
+              <LinkedInJobSearchBlock />
+            ) : (
+              <p className="text-[11.5px] text-ink-4">
+                {t("settingsPage.linkedinSearch.connectHint")}
+              </p>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
 function LinkedInJobSearchBlock() {
+  const { t } = useTranslation();
   const search = useLinkedinSearch();
   const { data: settings } = useSettings();
   const update = useUpdateSettings();
   const limit = settings?.linkedin_search_limit ?? 50;
   const onChangeLimit = (v: number) => update.mutate({ linkedin_search_limit: v });
   return (
-    <div
-      className="space-y-3 border-t border-border pt-4"
-      data-testid="linkedin-jobsearch-block"
-    >
+    <div className="space-y-3" data-testid="linkedin-jobsearch-block">
       <div className="flex items-center gap-3">
-        <div className="flex-1">
-          <div className="text-[13px] font-medium text-ink">Search LinkedIn jobs now</div>
-          <div className="text-[12px] text-ink-3">
-            Run a one-off logged-in job search using your saved roles and locations. Results
-            appear in your Job Board, deduped against everything else. This uses your session
-            only when you click — scheduled scans never do.
-          </div>
+        <div className="flex-1 text-[12.5px] text-ink-2">
+          {t("settingsPage.linkedinSearch.runNow")}
         </div>
         <button
           data-testid="linkedin-jobsearch-btn"
@@ -1902,40 +2026,47 @@ function LinkedInJobSearchBlock() {
           disabled={search.isPending}
           className="inline-flex h-[30px] shrink-0 items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
         >
-          {search.isPending ? "Searching…" : "Search LinkedIn jobs"}
+          {search.isPending
+            ? t("settingsPage.linkedinSearch.searching")
+            : t("settingsPage.linkedinSearch.searchBtn")}
         </button>
       </div>
       <div className="flex items-center gap-3">
-        <div className="flex-1">
-          <div className="text-[12.5px] text-ink-2">Results per search</div>
-          <div className="text-[11.5px] text-ink-4">
-            How many jobs to pull per role × location, in pages of 25. Higher means more
-            results — but also more requests fired on <strong>your own</strong> LinkedIn
-            account in one burst, which raises rate-limit / account risk. Keep it modest.
-          </div>
+        <div className="flex-1 text-[12.5px] text-ink-2">
+          {t("settingsPage.linkedinSearch.resultsPerSearch")}
+          <InfoDot label={t("settingsPage.linkedinSearch.resultsPerSearch")}>
+            <Trans
+              i18nKey="settingsPage.linkedinSearch.resultsPerSearchInfo"
+              components={{ strong: <strong /> }}
+            />
+          </InfoDot>
         </div>
-        <input
-          type="number"
-          min={LI_LIMIT_MIN}
-          max={LI_LIMIT_MAX}
-          step={25}
-          value={limit}
+        <select
+          value={String(limit)}
           data-testid="linkedin-jobsearch-limit"
-          onChange={(e) => {
-            const n = Number(e.target.value) || LI_LIMIT_MIN;
-            onChangeLimit(Math.max(LI_LIMIT_MIN, Math.min(LI_LIMIT_MAX, n)));
-          }}
-          className="h-[30px] w-20 rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
-        />
+          onChange={(e) => onChangeLimit(Number(e.target.value))}
+          className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+        >
+          {Array.from(
+            { length: (LI_LIMIT_MAX - LI_LIMIT_MIN) / 25 + 1 },
+            (_, i) => LI_LIMIT_MIN + i * 25,
+          ).map((n) => (
+            <option key={n} value={n}>
+              {t("settingsPage.linkedinSearch.jobsOption", { n })}
+            </option>
+          ))}
+        </select>
       </div>
       {search.isSuccess ? (
         <div className="text-[11.5px] text-good" data-testid="linkedin-jobsearch-started">
-          Search started — new matches will appear in the Job Board shortly.
+          {t("settingsPage.linkedinSearch.started")}
         </div>
       ) : null}
       {search.isError ? (
         <div className="text-[11.5px] text-bad" data-testid="linkedin-jobsearch-error">
-          {search.error instanceof Error ? search.error.message : "Search failed."}
+          {search.error instanceof Error
+            ? search.error.message
+            : t("settingsPage.linkedinSearch.failed")}
         </div>
       ) : null}
     </div>
