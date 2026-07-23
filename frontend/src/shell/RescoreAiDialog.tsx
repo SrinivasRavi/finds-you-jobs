@@ -5,6 +5,7 @@
 // actually runs, and jobs already AI-scored at the current resume version are
 // skipped, never re-spent.
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api";
@@ -22,23 +23,22 @@ export function RescoreAiDialog({
   reason: "resume-edit" | "mode-switch";
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const n = preview.to_score;
   const skipped =
-    preview.cached > 0
-      ? ` (${preview.cached} already ${preview.cached === 1 ? "has" : "have"} an AI score for this resume — skipped.)`
-      : "";
+    preview.cached > 0 ? ` ${t("shell.rescore.skipped", { count: preview.cached })}` : "";
   const body =
     reason === "resume-edit"
-      ? `Your resume changed. Re-score ${n} job${n === 1 ? "" : "s"} against it with AI?${skipped} This uses your LLM key — one call per job. Or keep the current scores; you can re-score anytime by editing your resume again.`
-      : `Score the ${n} job${n === 1 ? "" : "s"} on your board that ${n === 1 ? "has" : "have"} no AI score yet?${skipped} This uses your LLM key — one call per job. New jobs from future scans are AI-scored automatically either way.`;
+      ? t("shell.rescore.bodyResumeEdit", { count: n, skipped })
+      : t("shell.rescore.bodyModeSwitch", { count: n, skipped });
   return (
     <ConfirmDialog
-      title="Re-score jobs with AI?"
+      title={t("shell.rescore.title")}
       body={body}
-      confirmLabel={busy ? "Re-scoring…" : `Re-score ${n} job${n === 1 ? "" : "s"}`}
-      cancelLabel="Keep current scores"
+      confirmLabel={busy ? t("shell.rescore.busy") : t("shell.rescore.confirm", { count: n })}
+      cancelLabel={t("shell.rescore.keepScores")}
       busy={busy}
       onConfirm={() => {
         setBusy(true);

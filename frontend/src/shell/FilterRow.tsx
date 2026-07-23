@@ -5,6 +5,7 @@
 // Networking so the tabs read as one product.
 
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Icon } from "./icons";
 
@@ -24,7 +25,7 @@ export function FilterBar({ children, left }: { children: ReactNode; left?: Reac
   );
 }
 
-/** A labeled chip group ("SORT", "STATUS", "PRIORITIES", …). */
+/** A labeled chip group ("Sort", "Status", "Priorities", …). */
 export function FilterGroup({
   label,
   children,
@@ -36,7 +37,7 @@ export function FilterGroup({
 }) {
   return (
     <div className="flex items-center gap-1.5" id={id}>
-      <span className="text-[11.5px] uppercase tracking-wider text-ink-4">{label}</span>
+      <span className="text-[11.5px] text-ink-4">{label}</span>
       {children}
     </div>
   );
@@ -82,7 +83,7 @@ export function Chip({
 export function SearchBox({
   value,
   onChange,
-  placeholder = "Search",
+  placeholder,
   testid,
   className = "w-[176px] shrink-0",
 }: {
@@ -92,6 +93,7 @@ export function SearchBox({
   testid: string;
   className?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={
@@ -103,7 +105,7 @@ export function SearchBox({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t("shell.search")}
         data-testid={testid}
         className="min-w-0 flex-1 bg-transparent text-[12px] text-ink placeholder:text-ink-4 focus:outline-none"
       />
@@ -112,7 +114,7 @@ export function SearchBox({
           type="button"
           onClick={() => onChange("")}
           data-testid={`${testid}-clear`}
-          aria-label="Clear search"
+          aria-label={t("shell.clearSearch")}
           className="shrink-0 text-ink-3 hover:text-ink"
         >
           ×

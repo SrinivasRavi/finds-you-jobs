@@ -355,6 +355,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications/manual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Manual Application
+         * @description Log a job the user already applied to OUTSIDE the app ("Add a job
+         *     application" — the Tracker sibling of the board's Add-by-URL). Upserts the
+         *     job with the same dedup/tombstone discipline, creates the card as
+         *     `origin=manual` in a post-referral stage (default Applied), and attaches the
+         *     resume/cover the user actually submitted (optional) as content-addressed,
+         *     deduped documents. No score is enqueued — they already applied, so fit
+         *     ranking is moot.
+         */
+        post: operations["create_manual_application_api_applications_manual_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Document
+         * @description Serve an uploaded document verbatim (the resume/cover a user attached to a
+         *     manual card). Content-addressed on disk; streamed with its original name.
+         */
+        get: operations["download_document_api_documents__document_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/applications/{application_id}/packet": {
         parameters: {
             query?: never;
@@ -1587,6 +1634,31 @@ export interface components {
             applyRunId?: string | null;
             /** Artifacts */
             artifacts?: components["schemas"]["ArtifactDTO"][];
+            /**
+             * Origin
+             * @default discovered
+             */
+            origin: string;
+            /** Documents */
+            documents?: components["schemas"]["ApplicationDocumentDTO"][];
+        };
+        /**
+         * ApplicationDocumentDTO
+         * @description One document the user attached to a manually-logged application (the
+         *     resume/cover letter they actually submitted). Downloaded verbatim from
+         *     `GET /api/documents/{document_id}`.
+         */
+        ApplicationDocumentDTO: {
+            /** Document Id */
+            document_id: string;
+            /** Kind */
+            kind: string;
+            /** Original Filename */
+            original_filename: string;
+            /** Mime Type */
+            mime_type: string;
+            /** Byte Size */
+            byte_size: number;
         };
         /** ApplicationUpdate */
         ApplicationUpdate: {
@@ -1750,6 +1822,60 @@ export interface components {
             lastScanAt?: string | null;
             /** Scanerror */
             scanError?: string | null;
+        };
+        /** Body_create_manual_application_api_applications_manual_post */
+        Body_create_manual_application_api_applications_manual_post: {
+            /** Canonical Url */
+            canonical_url: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Company
+             * @default
+             */
+            company: string;
+            /**
+             * Location
+             * @default
+             */
+            location: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Posted At
+             * @default
+             */
+            posted_at: string;
+            /**
+             * Salary
+             * @default
+             */
+            salary: string;
+            /**
+             * Source Adapter
+             * @default paste-url
+             */
+            source_adapter: string;
+            /**
+             * Column
+             * @default applied
+             */
+            column: string;
+            /**
+             * Notes Markdown
+             * @default
+             */
+            notes_markdown: string;
+            /** Resume */
+            resume?: string | null;
+            /** Cover */
+            cover?: string | null;
         };
         /** Body_draft_referral_api_contacts__contact_id__draft_post */
         Body_draft_referral_api_contacts__contact_id__draft_post: {
@@ -3462,6 +3588,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_manual_application_api_applications_manual_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_create_manual_application_api_applications_manual_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_document_api_documents__document_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

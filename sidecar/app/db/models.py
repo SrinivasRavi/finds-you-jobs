@@ -224,6 +224,11 @@ class Application(Base):
     job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
     column: Mapped[str] = mapped_column(String, nullable=False, default="saved")
     priority: Mapped[str] = mapped_column(String, nullable=False, default="P0")
+    # How this card entered the pipeline (FR-TR — manual-add):
+    # `discovered` = created through the fyj flow (scan / add-by-URL → Save);
+    # `manual` = logged by the user via "Add a job application" for a job they
+    # already applied to outside the app. Drives the Tracker source filter.
+    origin: Mapped[str] = mapped_column(String, nullable=False, default="discovered")
     # Exclusive pre-submission intent (`docs/internal/roadmap.md` §5.1):
     # `none | referral | apply` — one authoritative value, so two competing
     # background paths can never present conflicting calls to action.
@@ -290,6 +295,51 @@ class ApplicationEvent(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
 
     __table_args__ = (Index("ix_appevent_application", "application_id", "created_at"),)
+
+
+class Document(Base):
+    """A content-addressed uploaded file (a resume/cover letter the user
+    actually submitted for a manually-logged application, FR-TR manual-add).
+
+    The blob is stored once on disk at `<data_dir>/documents/<sha256>`; this row
+    is its index + dedup key. Re-uploading identical bytes resolves to the SAME
+    row (the `sha256` unique constraint), so no duplicate storage. Rows are
+    referenced from `application_documents` — one blob may back many links."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[str] = _pk()
+    # SHA-256 hex of the raw bytes — the dedup key AND the on-disk filename.
+    sha256: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    mime_type: Mapped[str] = mapped_column(String, nullable=False, default="")
+    original_filename: Mapped[str] = mapped_column(String, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+
+class ApplicationDocument(Base):
+    """Links an uploaded `Document` to an application as its resume or cover
+    letter (FR-TR manual-add). `kind` mirrors the artifact vocabulary
+    (`tailored_resume` | `cover_letter`) so the Tracker card can slot it beside
+    the generated variants. One document per (application, kind)."""
+
+    __tablename__ = "application_documents"
+
+    id: Mapped[str] = _pk()
+    application_id: Mapped[str] = mapped_column(
+        String, ForeignKey("applications.id"), nullable=False
+    )
+    document_id: Mapped[str] = mapped_column(
+        String, ForeignKey("documents.id"), nullable=False
+    )
+    # tailored_resume | cover_letter
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("application_id", "kind", name="uq_appdoc_kind"),
+        Index("ix_appdoc_application", "application_id"),
+    )
 
 
 class ApplyRun(Base):

@@ -6,6 +6,7 @@
 // generating — retry?" affordance over the boot-recovery note (US-LOG-01).
 
 import { Fragment, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   useCostTotals,
@@ -34,17 +35,17 @@ const RESTART_NOTE_MARKER = "boot recovery";
 const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
   // Scraper is its own group (maintainer directive 2026-07-18 #5): scans are
   // the discovery workload, not system plumbing.
-  { key: "scraper", label: "Scraper", kinds: ["scan"] },
-  { key: "scoring", label: "Scoring", kinds: ["score"] },
-  { key: "tailoring", label: "Tailoring", kinds: ["tailor"] },
-  { key: "cover", label: "Cover letters", kinds: ["cover"] },
+  { key: "scraper", label: "analytics.groups.scraper", kinds: ["scan"] },
+  { key: "scoring", label: "analytics.groups.scoring", kinds: ["score"] },
+  { key: "tailoring", label: "analytics.groups.tailoring", kinds: ["tailor"] },
+  { key: "cover", label: "analytics.groups.cover", kinds: ["cover"] },
   {
     key: "networking",
-    label: "Networking",
+    label: "analytics.groups.networking",
     kinds: ["discover", "draft", "send", "linkedin_login", "archive_stale_contacts"],
   },
-  { key: "apply", label: "Applying", kinds: ["apply", "extract", "prep"] },
-  { key: "system", label: "System", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
+  { key: "apply", label: "analytics.groups.apply", kinds: ["apply", "extract", "prep"] },
+  { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
 ];
 
 const KIND_TO_GROUP: Record<string, string> = Object.fromEntries(
@@ -74,7 +75,7 @@ function fmtTime(iso: string | null): string {
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
-      <div className="text-[10.5px] font-medium uppercase tracking-wider text-ink-3">{label}</div>
+      <div className="text-[11px] font-medium text-ink-3">{label}</div>
       <div className="mt-1 font-mono text-[20px] font-semibold text-ink">{value}</div>
       {sub ? <div className="text-[11px] text-ink-3">{sub}</div> : null}
     </div>
@@ -85,6 +86,7 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
 // ledger + the pruned-ops aggregate — so the tiles survive the ~250-op ledger
 // retention. Falls back to zeros while the query loads.
 function CostPanel({ totals }: { totals: CostTotals | undefined }) {
+  const { t } = useTranslation();
   const total = totals?.usd ?? 0;
   const ops = totals?.operations ?? 0;
   const failed = totals?.failed ?? 0;
@@ -92,17 +94,17 @@ function CostPanel({ totals }: { totals: CostTotals | undefined }) {
   const maxKind = Math.max(0.01, ...Object.values(byKind));
   return (
     <div className="space-y-4" data-testid="cost-tiles">
-      <Tile label="Total spend" value={`$${total.toFixed(2)}`} sub="all-time" />
-      <Tile label="Operations" value={String(ops)} sub={`${failed} failed`} />
-      <Tile label="Avg / op" value={`$${(ops ? total / ops : 0).toFixed(2)}`} sub="across all kinds" />
+      <Tile label={t("analytics.tiles.totalSpend")} value={`$${total.toFixed(2)}`} sub={t("analytics.tiles.allTime")} />
+      <Tile label={t("analytics.tiles.operations")} value={String(ops)} sub={t("analytics.tiles.failedSub", { failed })} />
+      <Tile label={t("analytics.tiles.avgPerOp")} value={`$${(ops ? total / ops : 0).toFixed(2)}`} sub={t("analytics.tiles.acrossAllKinds")} />
       <div className="rounded-xl border border-border bg-surface p-3">
-        <div className="mb-2 text-[10.5px] font-medium uppercase tracking-wider text-ink-3">
-          Spend by kind
+        <div className="mb-2 text-[11px] font-medium text-ink-3">
+          {t("analytics.tiles.spendByKind")}
         </div>
         <div className="space-y-1.5">
           {(Object.keys(byKind) as OperationKind[]).map((kind) => (
             <div key={kind} className="flex items-center gap-2">
-              <span className="w-12 font-mono text-[10.5px] uppercase text-ink-3">{kind}</span>
+              <span className="w-12 font-mono text-[10.5px] text-ink-3">{kind}</span>
               <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-2">
                 <div
                   className="h-full rounded-full bg-accent"
@@ -123,12 +125,13 @@ function CostPanel({ totals }: { totals: CostTotals | undefined }) {
 // ─── right panel: operations ledger ──────────────────────────────────────────
 
 function SpanDetail({ operationId }: { operationId: string }) {
+  const { t } = useTranslation();
   const { data: spans = [], isLoading } = useOperationSpans(operationId);
-  if (isLoading) return <div className="px-3 py-3 text-[12px] text-ink-3">Loading span…</div>;
+  if (isLoading) return <div className="px-3 py-3 text-[12px] text-ink-3">{t("analytics.span.loading")}</div>;
   if (spans.length === 0) {
     return (
       <div className="px-3 py-3 text-[12px] text-ink-3" data-testid="span-empty">
-        No span recorded for this operation.
+        {t("analytics.span.empty")}
       </div>
     );
   }
@@ -142,28 +145,32 @@ function SpanDetail({ operationId }: { operationId: string }) {
             <div className="mb-2 flex items-center gap-2">
               <span className="font-mono text-[11px] font-semibold text-ink">{s.name}</span>
               <span
-                className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
+                className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${
                   s.status === "ERROR" ? "bg-bad-wash text-bad" : "bg-good-wash text-good"
                 }`}
               >
                 {/* OTel's default span status is "UNSET" (no explicit status) —
                     for our completed spans that means OK; show that, not jargon. */}
-                {s.status === "ERROR" ? "ERROR" : "OK"}
+                {s.status === "ERROR" ? t("analytics.span.error") : t("analytics.span.ok")}
               </span>
               <span className="ml-auto font-mono text-[11px] text-ink-2">
-                {s.duration_ms.toFixed(0)} ms
+                {t("analytics.span.ms", { value: s.duration_ms.toFixed(0) })}
               </span>
             </div>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11.5px] sm:grid-cols-3">
-              <Field label="Model" value={(a.model as string) ?? "—"} />
-              <Field label="Cost" value={cost != null ? `$${cost.toFixed(4)}` : "—"} />
+              <Field label={t("analytics.span.model")} value={(a.model as string) ?? "—"} />
+              <Field label={t("analytics.span.cost")} value={cost != null ? `$${cost.toFixed(4)}` : "—"} />
               <Field
-                label="Latency"
-                value={num(a.latency_ms) != null ? `${(num(a.latency_ms)! / 1000).toFixed(1)} s` : "—"}
+                label={t("analytics.span.latency")}
+                value={
+                  num(a.latency_ms) != null
+                    ? t("analytics.span.seconds", { value: (num(a.latency_ms)! / 1000).toFixed(1) })
+                    : "—"
+                }
               />
-              <Field label="Tokens in" value={num(a.tokens_in) != null ? String(a.tokens_in) : "—"} />
-              <Field label="Tokens out" value={num(a.tokens_out) != null ? String(a.tokens_out) : "—"} />
-              <Field label="Engine calls" value={num(a.internal_calls) != null ? String(a.internal_calls) : "—"} />
+              <Field label={t("analytics.span.tokensIn")} value={num(a.tokens_in) != null ? String(a.tokens_in) : "—"} />
+              <Field label={t("analytics.span.tokensOut")} value={num(a.tokens_out) != null ? String(a.tokens_out) : "—"} />
+              <Field label={t("analytics.span.engineCalls")} value={num(a.internal_calls) != null ? String(a.internal_calls) : "—"} />
             </dl>
             {a.error ? (
               <div className="mt-2 font-mono text-[11px] text-bad" data-testid="span-error">
@@ -205,6 +212,7 @@ const NON_RETRYABLE: OperationKind[] = ["apply", "linkedin_login"];
  *  the FAILED pill (2026-07-12 beta feedback on placement). Re-enqueues the op
  *  with its stored input snapshot. */
 function RetryButton({ entry }: { entry: LedgerEntry }) {
+  const { t } = useTranslation();
   const retry = useRetryOperation();
   const canRetry =
     entry.state === "failed" && !entry.retried_as && !NON_RETRYABLE.includes(entry.kind);
@@ -219,7 +227,7 @@ function RetryButton({ entry }: { entry: LedgerEntry }) {
       data-testid="log-retry"
       className="mt-1 block rounded-md border border-accent bg-accent px-2 py-0.5 text-[11px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
     >
-      {retry.isPending ? "Retrying…" : "Retry"}
+      {retry.isPending ? t("analytics.ledger.retrying") : t("analytics.ledger.retry")}
     </button>
   );
 }
@@ -228,11 +236,12 @@ function RetryButton({ entry }: { entry: LedgerEntry }) {
  *  show the verbatim error (de-emphasized once retried). The Retry button
  *  itself lives in the State cell (RetryButton). */
 function ErrorCell({ entry }: { entry: LedgerEntry }) {
+  const { t } = useTranslation();
   if (!entry.error) return null;
   if (entry.error.includes(RESTART_NOTE_MARKER)) {
     return (
       <div className="mt-0.5 flex items-center gap-2 text-[11.5px]" data-testid="log-restart">
-        <span className="text-ink-2">App restarted while generating.</span>
+        <span className="text-ink-2">{t("analytics.ledger.restarted")}</span>
       </div>
     );
   }
@@ -254,16 +263,17 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
 // sources) see which families actually yield for their role/location, and
 // which to untick in Settings → Discovery sources.
 function DiscoveryPanel() {
+  const { t } = useTranslation();
   const { data } = useDiscoveryAnalytics();
   if (!data) return null;
   return (
     <div className="space-y-3" data-testid="discovery-panel">
-      <div className="text-[11px] uppercase tracking-wider text-ink-4">
-        Source efficacy · last {data.scans} scan{data.scans === 1 ? "" : "s"}
+      <div className="text-[11px] font-medium text-ink-4">
+        {t("analytics.discovery.sourceEfficacy", { count: data.scans })}
       </div>
       {data.sources.length === 0 ? (
         <div className="text-[12px] text-ink-3">
-          No discovery data yet — run a scan from the Job Board.
+          {t("analytics.discovery.empty")}
         </div>
       ) : (
         data.sources.map((s) => (
@@ -274,17 +284,23 @@ function DiscoveryPanel() {
           >
             <div className="flex items-baseline justify-between gap-2">
               <span className="truncate text-[12.5px] font-medium text-ink">{s.label}</span>
-              <span className="font-mono text-[12px] text-ink-2">{s.jobs} jobs</span>
+              <span className="font-mono text-[12px] text-ink-2">
+                {t("analytics.discovery.jobs", { jobs: s.jobs })}
+              </span>
             </div>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-ink-3">
-              <span>saved {s.saved}</span>
+              <span>{t("analytics.discovery.saved", { saved: s.saved })}</span>
               <span>
-                avg score {s.avg_score !== null ? Math.round(s.avg_score) : "—"}
+                {t("analytics.discovery.avgScore", {
+                  score: s.avg_score !== null ? Math.round(s.avg_score) : "—",
+                })}
               </span>
               <span>
-                kept {s.kept}/{s.fetched}
+                {t("analytics.discovery.kept", { kept: s.kept, fetched: s.fetched })}
               </span>
-              <span className={s.errors > 0 ? "text-warn" : ""}>errors {s.errors}</span>
+              <span className={s.errors > 0 ? "text-warn" : ""}>
+                {t("analytics.discovery.errors", { errors: s.errors })}
+              </span>
             </div>
           </div>
         ))
@@ -294,6 +310,7 @@ function DiscoveryPanel() {
 }
 
 export function Analytics() {
+  const { t } = useTranslation();
   const { data: ledger = [] } = useLedger();
   const { data: costTotals } = useCostTotals();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -324,29 +341,39 @@ export function Analytics() {
   return (
     <>
       <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
-        <h1 className="text-[14px] font-semibold text-ink">Analytics</h1>
+        <h1 className="text-[14px] font-semibold text-ink">{t("nav.analytics")}</h1>
         <span className="ml-3 text-[12px] text-ink-3">
-          Cost &amp; usage · operations ledger — the cost source of truth
+          {t("analytics.header.subtitle")}
         </span>
       </header>
       <main className="flex min-h-0 flex-1 gap-5 overflow-hidden p-5">
         {/* Left 25% — Costs | Discovery tabs (approved-plan #7) */}
         <aside className="w-1/4 min-w-[200px] shrink-0 overflow-y-auto">
-          <div className="mb-3 flex gap-1.5" data-testid="analytics-tabs">
-            {(["costs", "discovery"] as const).map((t) => (
+          {/* Costs | Discovery — same tab language as the Settings prompt tabs
+              (maintainer 2026-07-23 #7), laid side by side. */}
+          <div
+            className="mb-3 flex gap-1.5 border-b border-border pb-2"
+            role="tablist"
+            data-testid="analytics-tabs"
+          >
+            {(
+              [
+                ["costs", "analytics.tabs.costs"],
+                ["discovery", "analytics.tabs.discovery"],
+              ] as const
+            ).map(([tabKey, label]) => (
               <button
-                key={t}
-                onClick={() => setTab(t)}
-                data-testid={`analytics-tab-${t}`}
-                aria-pressed={tab === t}
+                key={tabKey}
+                role="tab"
+                onClick={() => setTab(tabKey)}
+                data-testid={`analytics-tab-${tabKey}`}
+                aria-selected={tab === tabKey}
                 className={
-                  "h-7 rounded-full border px-3 text-[11.5px] capitalize transition " +
-                  (tab === t
-                    ? "border-accent bg-accent text-white"
-                    : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
+                  "rounded-md px-3 py-1.5 text-[12.5px] font-medium " +
+                  (tab === tabKey ? "bg-accent-wash text-accent-ink" : "text-ink-2 hover:bg-surface-3")
                 }
               >
-                {t}
+                {t(label)}
               </button>
             ))}
           </div>
@@ -356,7 +383,7 @@ export function Analytics() {
         {/* Right 75% — operations ledger */}
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="mb-3 flex items-center gap-1.5" data-testid="agent-filters">
-            <span className="mr-1 text-[11px] uppercase tracking-wider text-ink-4">Show</span>
+            <span className="mr-1 text-[11.5px] text-ink-4">{t("analytics.ledger.show")}</span>
             {GROUPS.map((c) => (
               <button
                 key={c.key}
@@ -370,7 +397,7 @@ export function Analytics() {
                     : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
                 }
               >
-                {c.label}
+                {t(c.label)}
               </button>
             ))}
           </div>
@@ -379,13 +406,13 @@ export function Analytics() {
               <thead>
                 <tr className="border-b border-border text-left text-ink-3">
                   <th className="w-6 px-3 py-2" />
-                  <th className="px-3 py-2 font-medium">Operation</th>
-                  <th className="px-3 py-2 font-medium">Kind</th>
-                  <th className="px-3 py-2 font-medium">State</th>
-                  <th className="px-3 py-2 font-medium">Started</th>
-                  <th className="px-3 py-2 font-medium">Model</th>
-                  <th className="px-3 py-2 text-right font-medium">Latency</th>
-                  <th className="px-3 py-2 text-right font-medium">Cost</th>
+                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.operation")}</th>
+                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.kind")}</th>
+                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.state")}</th>
+                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.started")}</th>
+                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.model")}</th>
+                  <th className="px-3 py-2 text-right font-medium">{t("analytics.ledger.latency")}</th>
+                  <th className="px-3 py-2 text-right font-medium">{t("analytics.ledger.cost")}</th>
                 </tr>
               </thead>
               <tbody data-testid="logs-table">
@@ -410,20 +437,20 @@ export function Analytics() {
                           ) : null}
                           <ErrorCell entry={e} />
                         </td>
-                        <td className="px-3 py-2 font-mono text-[11px] uppercase text-ink-3">
+                        <td className="px-3 py-2 font-mono text-[11px] text-ink-3">
                           {e.kind}
                         </td>
                         <td className="px-3 py-2">
                           {e.state === "failed" && e.retried_as ? (
                             <span
-                              className="rounded-full bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink-3"
+                              className="rounded-full bg-surface-3 px-2 py-0.5 font-mono text-[10px] capitalize text-ink-3"
                               data-testid="log-retried-pill"
                             >
-                              retried
+                              {t("analytics.ledger.retried")}
                             </span>
                           ) : (
                             <span
-                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${STATE_CLS[e.state]}`}
+                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] capitalize ${STATE_CLS[e.state]}`}
                             >
                               {e.state}
                             </span>
@@ -438,11 +465,13 @@ export function Analytics() {
                         </td>
                         <td className="px-3 py-2 text-ink-2">{e.model ?? "—"}</td>
                         <td className="px-3 py-2 text-right font-mono text-ink-2">
-                          {e.latency_ms ? `${(e.latency_ms / 1000).toFixed(1)}s` : "—"}
+                          {e.latency_ms
+                            ? t("analytics.ledger.seconds", { value: (e.latency_ms / 1000).toFixed(1) })
+                            : "—"}
                         </td>
                         <td
                           className="px-3 py-2 text-right font-mono text-ink-2"
-                          title={e.usd == null ? "cost unknown for this model" : undefined}
+                          title={e.usd == null ? t("analytics.ledger.costUnknown") : undefined}
                         >
                           {e.usd != null ? `$${e.usd.toFixed(2)}` : "—"}
                         </td>
@@ -468,11 +497,12 @@ export function Analytics() {
           >
             <span>
               {filtered.length === 0
-                ? "No operations"
-                : `${safePage * PAGE_SIZE + 1}–${Math.min(
-                    (safePage + 1) * PAGE_SIZE,
-                    filtered.length,
-                  )} of ${filtered.length}`}
+                ? t("analytics.pager.empty")
+                : t("analytics.pager.range", {
+                    from: safePage * PAGE_SIZE + 1,
+                    to: Math.min((safePage + 1) * PAGE_SIZE, filtered.length),
+                    total: filtered.length,
+                  })}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -481,7 +511,7 @@ export function Analytics() {
                 data-testid="logs-prev"
                 className="rounded-md border border-border-2 bg-surface px-2 py-1 text-ink-2 hover:bg-surface-3 disabled:opacity-40"
               >
-                Prev
+                {t("analytics.pager.prev")}
               </button>
               <span className="font-mono">
                 {safePage + 1} / {pageCount}
@@ -492,7 +522,7 @@ export function Analytics() {
                 data-testid="logs-next"
                 className="rounded-md border border-border-2 bg-surface px-2 py-1 text-ink-2 hover:bg-surface-3 disabled:opacity-40"
               >
-                Next
+                {t("analytics.pager.next")}
               </button>
             </div>
           </div>

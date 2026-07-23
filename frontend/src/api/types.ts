@@ -199,11 +199,47 @@ export interface ActivityEntry {
  *  ApplicationUpdate). `referrals_state`/`referrals_count` restored
  *  (2026-07-16, referral-outreach frontend) — the networking surface now
  *  exists on this sidecar. */
+/** A document the user attached to a manually-logged application (the resume /
+ *  cover letter they actually submitted). Downloaded, authed, via
+ *  `api.fetchDocument(document_id)`. */
+export interface ApplicationDocument {
+  document_id: string;
+  /** Mirrors the artifact vocabulary so it slots beside generated variants. */
+  kind: "tailored_resume" | "cover_letter";
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+}
+
+/** Fields for logging a job applied to outside the app ("Add a job application").
+ *  Mirrors the JobDraft shape (from the URL preview) + the pipeline stage and
+ *  the optional resume/cover files the user submitted. */
+export interface ManualApplicationInput {
+  canonical_url: string;
+  title: string;
+  company: string;
+  location: string;
+  description: string;
+  salary: string;
+  source_adapter: string;
+  /** Post-referral stage the record lands in (default Applied). */
+  stage: Extract<Stage, "Applied" | "Interviewing" | "Offer" | "Rejected">;
+  notes: string;
+  resume: File | null;
+  cover: File | null;
+}
+
 export interface Application {
   id: string;
   job: Job;
   stage: Stage;
   priority: Priority;
+  /** How the card entered the pipeline — drives the Tracker source filter.
+   *  "discovered" = the fyj flow (scan / add-by-URL → Save); "manual" = logged
+   *  via "Add a job application" for a job applied to outside the app. */
+  origin: "discovered" | "manual";
+  /** Documents the user attached to a manual card (empty for discovered cards). */
+  documents: ApplicationDocument[];
   /** The §5.1 exclusive next-step marker — "none" | "referral" | "apply". */
   intent: "none" | "referral" | "apply";
   notes: string;
@@ -748,6 +784,12 @@ export interface Settings {
   providers: ProviderConfig[];
   routing: EngineRoute[];
   networking_enabled: boolean;
+  /** LinkedIn Job Search (logged-in one-shot search) — its own experimental
+   *  opt-in, separate from Referral Outreach but sharing the same LinkedIn
+   *  session. Both break LinkedIn's ToS; each gates independently. */
+  linkedin_search_enabled: boolean;
+  /** ISO timestamp the LinkedIn Job Search ToS ack was accepted (null until on). */
+  linkedin_search_ack_at: string | null;
   /** LinkedIn one-shot per-query fetch budget (discovery-expansion #6),
    *  persisted in ui_state. Server clamps to [25, 250]; default 50. */
   linkedin_search_limit: number;

@@ -202,6 +202,20 @@ class ArtifactDTO(BaseModel):
     created_at: datetime
 
 
+class ApplicationDocumentDTO(BaseModel):
+    """One document the user attached to a manually-logged application (the
+    resume/cover letter they actually submitted). Downloaded verbatim from
+    `GET /api/documents/{document_id}`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    document_id: str
+    kind: str  # tailored_resume | cover_letter
+    original_filename: str
+    mime_type: str
+    byte_size: int
+
+
 class ApplicationDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -244,6 +258,11 @@ class ApplicationDTO(BaseModel):
     apply_run_status: str = Field(default="none", serialization_alias="applyRunStatus")
     apply_run_id: str | None = Field(default=None, serialization_alias="applyRunId")
     artifacts: list[ArtifactDTO] = Field(default_factory=list)
+    # How this card entered the pipeline: `discovered` (fyj flow) | `manual`
+    # (logged via "Add a job application"). Drives the Tracker source filter.
+    origin: str = "discovered"
+    # Documents the user attached to a manual card (resume/cover they submitted).
+    documents: list[ApplicationDocumentDTO] = Field(default_factory=list)
 
 
 class ApplyRunDTO(BaseModel):
@@ -982,6 +1001,7 @@ def application_dto(
     has_candidates: bool = False,
     latest_batch_outcomes: list[str] | None = None,
     latest_apply_run: Any | None = None,
+    documents: list[tuple[Any, Any]] | None = None,
 ) -> ApplicationDTO:
     # Built explicitly (not model_validate) so we never lazy-load the ORM
     # relationship and packetState stays purely derived.
@@ -1021,6 +1041,17 @@ def application_dto(
         ),
         apply_run_id=latest_apply_run.id if latest_apply_run is not None else None,
         artifacts=artifact_dtos,
+        origin=application.origin,
+        documents=[
+            ApplicationDocumentDTO(
+                document_id=doc.id,
+                kind=link.kind,
+                original_filename=doc.original_filename,
+                mime_type=doc.mime_type,
+                byte_size=doc.byte_size,
+            )
+            for link, doc in (documents or [])
+        ],
     )
 
 

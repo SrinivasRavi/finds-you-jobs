@@ -21,7 +21,9 @@ import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
 import { JobTombstonedError } from "./types";
 import type {
   Application,
+  ApplicationDocument,
   ApplicationProfile,
+  ManualApplicationInput,
   ActivityEntry,
   ApplyRun,
   ApplyUsage,
@@ -212,6 +214,14 @@ function toApplication(d: ApplicationDTO, job: Job): Application {
     job,
     stage: COLUMN_TO_STAGE[d.column] ?? "Saved",
     priority: d.priority as Priority,
+    origin: (d.origin as Application["origin"]) ?? "discovered",
+    documents: (d.documents ?? []).map((doc) => ({
+      document_id: doc.document_id,
+      kind: doc.kind as ApplicationDocument["kind"],
+      filename: doc.original_filename,
+      mime_type: doc.mime_type,
+      byte_size: doc.byte_size,
+    })),
     intent: (d.intent as Application["intent"]) ?? "none",
     notes: d.notes_markdown,
     packet_state: (d.packetState as PacketState) ?? "none",
@@ -479,6 +489,49 @@ export class RealApi {
       throw e;
     })) as JobDTO;
     return toJob(d, false);
+  }
+
+  /** "Add a job application" (FR-TR manual-add): log a job applied to outside
+   *  the app. Multipart so the user's resume/cover files ride along; the sidecar
+   *  upserts the job, creates an `origin=manual` card, and stores the docs
+   *  content-addressed. Surfaces the sidecar's verbatim detail on 409/422. */
+  async createManualApplication(input: ManualApplicationInput): Promise<Application> {
+    const info = await this.info();
+    const form = new FormData();
+    form.append("canonical_url", input.canonical_url);
+    form.append("title", input.title);
+    form.append("company", input.company);
+    form.append("location", input.location);
+    form.append("description", input.description);
+    form.append("salary", input.salary);
+    form.append("source_adapter", input.source_adapter || "paste-url");
+    form.append("column", STAGE_TO_COLUMN[input.stage]);
+    form.append("notes_markdown", input.notes);
+    if (input.resume) form.append("resume", input.resume);
+    if (input.cover) form.append("cover", input.cover);
+    // No explicit Content-Type — the browser sets the multipart boundary.
+    const res = await apiFetch(info, "/api/applications/manual", { method: "POST", body: form });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let detail = body;
+      try {
+        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
+      } catch {
+        /* non-JSON body — surface as-is */
+      }
+      throw new ApiError(res.status, detail || `add application failed (${res.status})`);
+    }
+    const d = (await res.json()) as ApplicationDTO;
+    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+  }
+
+  /** One attached document as a Blob (authed — a plain href can't carry the
+   *  bearer token). The caller wraps it in an object URL to trigger a download. */
+  async fetchDocument(documentId: string): Promise<Blob> {
+    const info = await this.info();
+    const res = await apiFetch(info, `/api/documents/${documentId}`);
+    if (!res.ok) throw new ApiError(res.status, `GET document ${documentId} → ${res.status}`);
+    return res.blob();
   }
 
   // Empty Trash (US-JB-11 / FR-SYS-04): tombstone + remove every Trashed job.
@@ -861,6 +914,9 @@ export class RealApi {
       })),
       networking_enabled: p.voyager_risk_marker_on,
       networking_ack_at: (ui.networking_ack_at as string | undefined) ?? null,
+      // LinkedIn Job Search — its own experimental opt-in (shares the session).
+      linkedin_search_enabled: Boolean(ui.linkedin_search_enabled),
+      linkedin_search_ack_at: (ui.linkedin_search_ack_at as string | undefined) ?? null,
       // LinkedIn one-shot per-query fetch budget (discovery-expansion #6);
       // persisted so the user's choice sticks. Default 50 (2 pages).
       linkedin_search_limit:
@@ -924,6 +980,14 @@ export class RealApi {
     }
     if (patch.linkedin_search_limit !== undefined) {
       ui.linkedin_search_limit = patch.linkedin_search_limit;
+      uiTouched = true;
+    }
+    if (patch.linkedin_search_enabled !== undefined) {
+      ui.linkedin_search_enabled = patch.linkedin_search_enabled;
+      uiTouched = true;
+    }
+    if (patch.linkedin_search_ack_at !== undefined) {
+      ui.linkedin_search_ack_at = patch.linkedin_search_ack_at;
       uiTouched = true;
     }
     if (patch.observability !== undefined) {

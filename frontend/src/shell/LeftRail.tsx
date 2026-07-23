@@ -4,6 +4,7 @@
 // risk); the LinkedIn risk toggle gates only automated actions (FR-SET-03).
 
 import { NavLink } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 import logoUrl from "../assets/logo.png";
 import { Icon } from "./icons";
@@ -12,18 +13,18 @@ type IconName = "search" | "briefcase" | "bookmark" | "share" | "barChart" | "fi
 
 interface RailItem {
   to: string;
-  label: string;
+  label: string; // i18n key
   icon: IconName;
 }
 
 const TOP: RailItem[] = [
-  { to: "/jobs", label: "Job board", icon: "briefcase" },
-  { to: "/applications", label: "Applications", icon: "bookmark" },
-  { to: "/networking", label: "Networking", icon: "share" },
+  { to: "/jobs", label: "nav.jobBoard", icon: "search" },
+  { to: "/applications", label: "nav.applications", icon: "bookmark" },
+  { to: "/networking", label: "nav.networking", icon: "share" },
 ];
 const BOTTOM: RailItem[] = [
   // Logs folded into Analytics (US-LOG-01): one surface, cost left + ledger right.
-  { to: "/analytics", label: "Analytics", icon: "barChart" },
+  { to: "/analytics", label: "nav.analytics", icon: "barChart" },
 ];
 // The Dev tab (US-DEV-01) is hidden from the rail — its scenarios are better
 // covered by killing `pnpm dev` (crash) + the persistent browser profile
@@ -31,6 +32,7 @@ const BOTTOM: RailItem[] = [
 // scenarios (maintainer note 2026-07-09).
 
 function Tile({ to, label, icon }: RailItem) {
+  const { t } = useTranslation();
   return (
     <NavLink
       to={to}
@@ -42,7 +44,7 @@ function Tile({ to, label, icon }: RailItem) {
       }
     >
       <Icon name={icon} size={17} strokeWidth={1.6} />
-      <span className="text-[10px] font-medium leading-none">{label}</span>
+      <span className="text-center text-[10px] font-medium leading-none">{t(label)}</span>
     </NavLink>
   );
 }
@@ -93,7 +95,7 @@ export function LeftRail() {
           </li>
         ))}
       </ul>
-      <Tile to="/settings" label="Settings" icon="settings" />
+      <Tile to="/settings" label="nav.settings" icon="settings" />
     </nav>
   );
 }

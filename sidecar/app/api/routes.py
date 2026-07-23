@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from sidecar.modules.scraper import ScraperError, probe_url
@@ -26,6 +26,7 @@ from sidecar.modules.scraper.canonical import canonicalize_url
 from sidecar.modules.scraper.filters import passes_company, passes_content
 from sidecar.modules.scraper.types import ScanPrefs
 
+from .. import documents as docstore
 from ..db import Database
 from ..db.base import now_utc
 from ..events import heartbeat_stream
@@ -770,6 +771,12 @@ def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
     latest_batch_outcomes = [
         log.outcome for log in repos.outreach_logs.latest_batch_for_job(job_id)
     ]
+    # Attached documents (manual cards) — the resume/cover the user submitted.
+    attached_docs = [
+        (link, repos.documents.get(link.document_id))
+        for link in repos.application_documents.list_for_application(application.id)
+    ]
+    attached_docs = [(link, doc) for link, doc in attached_docs if doc is not None]
     return dto.application_dto(
         application,
         with_states,
@@ -780,6 +787,7 @@ def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
         has_candidates=has_candidates,
         latest_batch_outcomes=latest_batch_outcomes,
         latest_apply_run=repos.apply_runs.latest_for_application(application.id),
+        documents=attached_docs,
     )
 
 
@@ -843,6 +851,138 @@ async def create_application(
 
     with db.repos() as repos:
         return _application_dto(repos, repos.applications.get(application_id))
+
+
+# Manual application `column` values shown on the Tracker card menu — the
+# post-referral pipeline stages a real-world "already applied" record can land in.
+_MANUAL_COLUMNS = {"applied", "interviewing", "offer", "rejected"}
+_DOC_KINDS = {"tailored_resume", "cover_letter"}
+
+
+@router.post("/api/applications/manual", status_code=201)
+async def create_manual_application(
+    request: Request,
+    canonical_url: Annotated[str, Form()],
+    title: Annotated[str, Form()] = "",
+    company: Annotated[str, Form()] = "",
+    location: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
+    posted_at: Annotated[str, Form()] = "",
+    salary: Annotated[str, Form()] = "",
+    source_adapter: Annotated[str, Form()] = "paste-url",
+    column: Annotated[str, Form()] = "applied",
+    notes_markdown: Annotated[str, Form()] = "",
+    resume: Annotated[UploadFile | None, File()] = None,
+    cover: Annotated[UploadFile | None, File()] = None,
+) -> dto.ApplicationDTO:
+    """Log a job the user already applied to OUTSIDE the app ("Add a job
+    application" — the Tracker sibling of the board's Add-by-URL). Upserts the
+    job with the same dedup/tombstone discipline, creates the card as
+    `origin=manual` in a post-referral stage (default Applied), and attaches the
+    resume/cover the user actually submitted (optional) as content-addressed,
+    deduped documents. No score is enqueued — they already applied, so fit
+    ranking is moot."""
+    db = _db(request)
+    canonical = canonicalize_url(canonical_url) or canonical_url
+    stage = column or "applied"
+    if stage not in _MANUAL_COLUMNS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"stage must be one of {sorted(_MANUAL_COLUMNS)}",
+        )
+
+    # 1. Read + validate any uploads up front (fail fast before we create rows).
+    prepared: list[tuple[str, bytes, str]] = []  # (kind, data, filename)
+    for kind, upload in (("tailored_resume", resume), ("cover_letter", cover)):
+        if upload is None or not upload.filename:
+            continue
+        data = await upload.read()
+        try:
+            docstore.validate(upload.filename, data)
+        except (docstore.DocumentTooLarge, docstore.UnsupportedDocumentType) as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        prepared.append((kind, data, upload.filename))
+
+    # 2. Upsert the job + create the manual card (refusing to double-track).
+    with db.repos() as repos:
+        if repos.tombstones.exists(canonical):
+            raise HTTPException(status_code=409, detail=_TOMBSTONE_409_DETAIL)
+        existing_job = repos.jobs.get_by_canonical_url(canonical)
+        if existing_job is not None:
+            job = existing_job
+            if job.feed_state == "removed":
+                job = repos.jobs.set_trash_state(job.id, trashed=False)
+            if job.id in repos.applications.job_ids():
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This job is already in your tracker — move that card to "
+                        "Applied instead of adding it again."
+                    ),
+                )
+        else:
+            job = repos.jobs.create(
+                canonical_url=canonical,
+                title=title or canonical,
+                company=company,
+                location=location,
+                description=description,
+                posted_at=posted_at or None,
+                salary=salary or None,
+                source_adapter=source_adapter or "paste-url",
+            )
+        app = repos.applications.create(
+            job.id,
+            column=stage,
+            origin="manual",
+            applied_via="manual",
+            notes_markdown=notes_markdown,
+        )
+        application_id = app.id
+
+    # 3. Store uploads off the event loop (deduped on disk), then index + link
+    #    them — only now that the card exists (no orphan blobs on the 409 path).
+    stored: list[tuple[str, str, int, str, str]] = []  # kind, sha, size, mime, name
+    for kind, data, filename in prepared:
+        sha = await asyncio.to_thread(docstore.store_bytes, data, db.data_dir)
+        stored.append(
+            (kind, sha, len(data), docstore.mime_for_filename(filename), filename)
+        )
+    if stored:
+        with db.repos() as repos:
+            for kind, sha, size, mime, filename in stored:
+                doc = repos.documents.get_or_create(
+                    sha256=sha,
+                    byte_size=size,
+                    mime_type=mime,
+                    original_filename=filename,
+                )
+                repos.application_documents.set(application_id, kind, doc.id)
+
+    with db.repos() as repos:
+        return _application_dto(repos, repos.applications.get(application_id))
+
+
+@router.get("/api/documents/{document_id}")
+async def download_document(request: Request, document_id: str) -> FileResponse:
+    """Serve an uploaded document verbatim (the resume/cover a user attached to a
+    manual card). Content-addressed on disk; streamed with its original name."""
+    db = _db(request)
+    with db.repos() as repos:
+        doc = repos.documents.get(document_id)
+        if doc is None:
+            raise HTTPException(
+                status_code=404, detail=f"document {document_id!r} not found"
+            )
+        sha, mime, filename = doc.sha256, doc.mime_type, doc.original_filename
+    path = docstore.blob_path(sha, db.data_dir)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="document blob is missing on disk")
+    return FileResponse(
+        path,
+        media_type=mime or "application/octet-stream",
+        filename=filename or sha,
+    )
 
 
 @router.post("/api/applications/{application_id}/packet", status_code=202)

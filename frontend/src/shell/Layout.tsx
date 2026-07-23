@@ -3,7 +3,9 @@
 
 import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
+import i18n from "../i18n";
 import { LeftRail } from "./LeftRail";
 
 /** Listen for the Tauri shell's sidecar supervision events. The shell emitted
@@ -18,7 +20,7 @@ function useSidecarFatal(): string {
     let disposed = false;
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<{ message: string }>("sidecar://fatal", (e) => {
-        setFatal(e.payload.message || "the backend stopped responding");
+        setFatal(e.payload.message || i18n.t("shell.backendStoppedFallback"));
       }).then((un) => {
         if (disposed) un();
         else unlisten = un;
@@ -33,6 +35,7 @@ function useSidecarFatal(): string {
 }
 
 export function Layout() {
+  const { t } = useTranslation();
   const fatal = useSidecarFatal();
   return (
     <div className="grid h-screen grid-cols-[76px_1fr] overflow-hidden bg-canvas">
@@ -43,7 +46,7 @@ export function Layout() {
             className="border-b border-bad bg-bad-wash px-4 py-2 text-[12.5px] text-bad"
             data-testid="sidecar-fatal-banner"
           >
-            Backend stopped: {fatal}. Nothing you do will save until you quit and reopen the app.
+            {t("shell.sidecarFatalBanner", { message: fatal })}
           </div>
         ) : null}
         <Outlet />

@@ -1,7 +1,7 @@
 // Feather-style icons ported 1:1 from the prototype (assets/shell.js `icon()`),
 // same paths + stroke widths so the port matches pixel-for-pixel.
 
-type IconName =
+export type IconName =
   | "search"
   | "briefcase"
   | "bookmark"

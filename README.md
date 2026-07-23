@@ -45,7 +45,9 @@ you from your own LinkedIn account.★
 
 ## Install
 
-**Download the installer for your OS** — no terminal, no build steps:
+**Download the installer for your OS**, run it, and the app walks you through
+onboarding: paste your resume, set your job preferences, pick an AI provider,
+and add your key. No terminal, no build steps.
 
 ### [⬇ Download finds-you-jobs v0.5.2-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.2-beta)
 
@@ -53,129 +55,27 @@ you from your own LinkedIn account.★
 |---|---|---|
 | **Windows** 10/11 | `finds-you-jobs_0.5.2-beta_x64-setup.exe` | SmartScreen warns because the beta isn't code-signed yet: click **More info → Run anyway** |
 | **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.2-beta_aarch64.dmg` | Gatekeeper blocks unsigned apps: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** |
-| **Mac** (Intel) | `finds-you-jobs_0.5.2-beta_x64.dmg` | same as above |
+| **Mac** (Intel) | this release has no Intel build (its CI leg failed) — use `finds-you-jobs_0.5.1-beta_x64.dmg` from [v0.5.1-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.1-beta) for now | same as above |
 | **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.2-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
 | **Linux** (any distro, portable) | `finds-you-jobs_0.5.2-beta_amd64.AppImage` | `chmod +x` the file, then run it |
 
-The warnings exist only because the installers aren't code-signed yet — signing
-is paid for and in progress (waiting on Apple/Microsoft identity review, not on
-the code). Every release is built in public by [GitHub Actions](.github/workflows/release.yml)
-from the source in this repo. All versions live on the
+The one-time warnings exist only because the beta installers aren't code-signed
+yet (Apple's developer-identity review is pending; Windows signing follows
+after). Every release is built in public by
+[GitHub Actions](.github/workflows/release.yml) from the source in this repo.
+All versions live on the
 [releases page](https://github.com/SrinivasRavi/finds-you-jobs/releases).
 
-The app then walks you through onboarding: paste your resume, set your job
-preferences, pick an AI provider, and add your key.
-
-(Changed your mind later? Everything can be removed cleanly — see
-[Uninstall](#uninstall).)
-
----
-
-<details>
-<summary><strong>Install from source instead</strong> (developers, or any platform the installers don't cover yet)</summary>
-
-### macOS
-
-**Open a terminal:** press `⌘ + Space`, type `Terminal`, press Enter.
-
-**Install** (one copy-paste — installs git and every dependency, and downloads the
-app into a `finds-you-jobs` folder in your current directory):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.sh | bash
-```
-
-If it asks you to install the "command line developer tools", click Install, wait,
-then run the same command again.
-
-**Start the app** (the script prints this exact line with your real path at the end;
-if `pnpm` is "command not found", close Terminal, open a new one, and run it again):
-
-```bash
-cd finds-you-jobs && pnpm dev
-```
-
-**Everyday commands** (run inside the `finds-you-jobs` folder):
-
-```bash
-pnpm dev                                             # start the app
-git fetch --tags && git checkout v0.5.2 && pnpm run boot   # update to the latest release
-FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev               # start with a separate, fresh profile
-```
-
----
-
-### Windows
-
-**Open a terminal:** press the `Windows` key, type `PowerShell`, press Enter.
-
-**Install** (one copy-paste — installs git, the C++ build tools the desktop shell
-needs, and every dependency, downloads the app into a `finds-you-jobs` folder in
-your current directory (or your home folder if the current directory isn't
-writable, e.g. an admin PowerShell that starts in `System32`), then **starts the
-app automatically** — the build-tools download is large and the first launch
-compiles the desktop shell, so let it run, this can take a while):
-
-```powershell
-irm https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.ps1 | iex
-```
-
-Keep that PowerShell window open while the app runs — closing it or pressing
-Ctrl-C there quits the app. (The one exception: if an installer above asked you
-to restart your PC first, the script tells you and stops there instead of
-starting the app — restart, then run the two commands it prints.)
-
-**Start the app again later** (after the first install, from inside the
-`finds-you-jobs` folder; if a command is "not recognized", close PowerShell,
-open a new one, and try again):
-
-```powershell
-cd finds-you-jobs
-pnpm dev
-```
-
-**Everyday commands** (run inside the `finds-you-jobs` folder — note PowerShell
-uses `;` between commands, not `&&`):
-
-```powershell
-pnpm dev                                              # start the app
-git fetch --tags; git checkout v0.5.2; pnpm run boot  # update to the latest release
-$env:FYJ_DATA_DIR="$HOME\fyj-test"; pnpm dev           # start with a separate, fresh profile
-```
-
----
-
-### Linux
-
-**Open a terminal:** press `Ctrl + Alt + T`, or open "Terminal" from your apps.
-
-**Install** (one copy-paste — installs git, the desktop-shell system libraries via
-your package manager (`sudo` will prompt), and every dependency, and downloads the
-app into a `finds-you-jobs` folder in your current directory):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SrinivasRavi/finds-you-jobs/main/scripts/setup.sh | bash
-```
-
-**Start the app** (the script prints this exact line with your real path at the end;
-if `pnpm` is "command not found", close the terminal, open a new one, and run it again):
-
-```bash
-cd finds-you-jobs && pnpm dev
-```
-
-**Everyday commands** (run inside the `finds-you-jobs` folder):
-
-```bash
-pnpm dev                                             # start the app
-git fetch --tags && git checkout v0.5.2 && pnpm run boot   # update to the latest release
-FYJ_DATA_DIR="$HOME/fyj-test" pnpm dev               # start with a separate, fresh profile
-```
-
-**First launch from source:** the first `pnpm dev` compiles the desktop shell and
-can take a few minutes; later launches are fast.
-
-</details>
+**Uninstall** — quit the app, then remove it like any other program:
+**Windows:** Settings → Apps → finds-you-jobs → Uninstall · **macOS:** drag
+`finds-you-jobs.app` from Applications to the Trash · **Linux:**
+`sudo apt remove finds-you-jobs` (or just delete the AppImage file). Your data
+(database, tailored documents, settings) lives in one folder that updates never
+touch — delete it too for a clean slate:
+`~/Library/Application Support/finds-you-jobs` (Mac) ·
+`%LOCALAPPDATA%\finds-you-jobs` (Windows) ·
+`~/.local/share/finds-you-jobs` (Linux). The app's encryption key sits in your
+OS keychain under `finds-you-jobs` if you want to remove that as well.
 
 ## What it does
 
@@ -192,187 +92,14 @@ can take a few minutes; later launches are fast.
 - **No AI slop.** Tailored output is grounded in your real resume and shown to you before it's used.
 - **Open source.** [AGPL-3.0-only](LICENSE) — inspect it, fork it, improve it, share it back.
 
-## Uninstall
-
-**Installed from a downloaded installer?** Quit the app, then: on **Windows**,
-uninstall it from Settings → Apps (or Control Panel → Programs); on **macOS**,
-drag `finds-you-jobs.app` from Applications to the Trash; on **Linux**,
-`sudo apt remove finds-you-jobs` (or delete the AppImage file). To also remove
-your data, run the "Delete your data" step for your OS below — the rest of the
-steps below only apply to source installs.
-
-**Installed from source?** Removing finds-you-jobs is as clean as installing it. Quit the app first, then
-work through the steps for your OS: **step 1** removes the app, **step 2**
-removes your data, **step 3** removes the developer tools the installer set up.
-Steps 1 and 2 are always safe. In step 3, each line says what it removes —
-**skip any tool you also use for something else**, because those are shared
-tools, not part of the app.
-
-One more rule for a machine that isn't yours (a friend's, a work laptop): the
-installer only installs a tool when it's missing, so if the machine already had
-git or Node, those belong to its owner — in step 3, remove only what the
-install actually printed it was installing.
-
----
-
-### macOS
-
-**1. Delete the app.** Everything the app built lives inside the one folder the
-installer created. In the folder where you ran the install command:
-
-```bash
-rm -rf finds-you-jobs
-```
-
-**2. Delete your data** — the database, tailored resumes, settings, window
-caches, and the app's saved encryption key:
-
-```bash
-rm -rf "$HOME/Library/Application Support/finds-you-jobs"
-rm -rf "$HOME/Library/WebKit/com.finds-you-jobs.app" "$HOME/Library/Caches/com.finds-you-jobs.app" "$HOME/Library/Saved Application State/com.finds-you-jobs.app.savedState"
-security delete-generic-password -s finds-you-jobs
-```
-
-The last line removes the app's key from your macOS Keychain — it's fine if it
-says the item can't be found. If you ever started the app with a custom
-`FYJ_DATA_DIR` profile (like the `$HOME/fyj-test` example above), delete those
-folders too.
-
-**3. Remove the tools the installer set up** — skip any line for a tool you use
-elsewhere:
-
-```bash
-rm -rf "$HOME/Library/Caches/ms-playwright"       # the app's private Chromium (~150 MB); shared with any other Playwright tools you have
-rustup self uninstall -y                          # the Rust toolchain
-rm -rf "$HOME/.cache/uv" "$HOME/.local/share/uv" "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx"   # uv and the Python it installed
-corepack disable pnpm 2>/dev/null; npm uninstall -g pnpm 2>/dev/null    # pnpm
-rm -rf "$HOME/Library/pnpm" "$HOME/.npm" "$HOME/.cache/node/corepack"   # pnpm's store, npm + corepack caches
-```
-
-If the installer added Node via Homebrew (it only does this when Node was
-missing and Homebrew was present): `brew uninstall node`. The Xcode command-line
-tools (which provide git) are Apple's shared developer tools used by many other
-things, so we don't suggest removing them.
-
-Last trace: the Rust and uv installers each added a PATH line to your shell
-profile (`~/.zshenv`, `~/.zshrc`, `~/.profile`, or `~/.bashrc`). They're
-harmless after the step above, but for zero trace, open those files and delete
-the lines mentioning `.cargo/env` or `.local/bin/env`.
-
----
-
-### Windows
-
-**1. Delete the app.** Everything the app built lives inside the one folder the
-installer created. In the folder where you ran the install command (the
-installer may have used your home folder instead — run `cd $HOME` first if the
-folder isn't found):
-
-```powershell
-cmd /c "rmdir /s /q finds-you-jobs"
-```
-
-**2. Delete your data** — the database, tailored resumes, settings, window
-cache, and the app's saved encryption key:
-
-```powershell
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\finds-you-jobs" -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\com.finds-you-jobs.app" -ErrorAction SilentlyContinue
-cmdkey /delete:finds-you-jobs
-```
-
-The last line removes the app's key from Windows Credential Manager — it's fine
-if it says the entry doesn't exist (you can also do it in Control Panel →
-Credential Manager → Windows Credentials). If you ever started the app with a
-custom `FYJ_DATA_DIR` profile (like the `$HOME\fyj-test` example above), delete
-those folders too.
-
-**3. Remove the tools the installer set up** — skip any line for a tool you use
-elsewhere:
-
-```powershell
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\ms-playwright" -ErrorAction SilentlyContinue   # the app's private Chromium (~150 MB)
-rustup self uninstall -y                                    # the Rust toolchain
-uv cache clean
-Remove-Item -Recurse -Force "$env:APPDATA\uv","$env:LOCALAPPDATA\uv" -ErrorAction SilentlyContinue        # uv and the Python it installed
-Remove-Item -Force "$HOME\.local\bin\uv.exe","$HOME\.local\bin\uvx.exe" -ErrorAction SilentlyContinue
-corepack disable pnpm; npm uninstall -g pnpm                # pnpm
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\pnpm","$env:APPDATA\npm","$env:LOCALAPPDATA\npm-cache","$env:LOCALAPPDATA\node\corepack","$HOME\.cache\node\corepack" -ErrorAction SilentlyContinue  # pnpm's store, npm + corepack caches
-winget uninstall OpenJS.NodeJS.LTS                          # Node — skip if you use Node elsewhere
-winget uninstall Microsoft.VisualStudio.2022.BuildTools     # C++ Build Tools — skip if you build other software
-winget uninstall Git.Git                                    # git — skip if you use git elsewhere
-```
-
-Two things we deliberately leave alone: the **WebView2 runtime** is a shared
-Windows component other apps rely on (the installer only added it if Windows
-didn't have it), and your **PowerShell execution policy** — the installer set it
-to `RemoteSigned` for your user only if it was locked down, and putting it back
-(`Set-ExecutionPolicy -ExecutionPolicy Undefined -Scope CurrentUser`) would
-block other local scripts again. Restore it only if you know you want that.
-
----
-
-### Linux
-
-**1. Delete the app.** Everything the app built lives inside the one folder the
-installer created. In the folder where you ran the install command:
-
-```bash
-rm -rf finds-you-jobs
-```
-
-**2. Delete your data** — the database, tailored resumes, settings, window
-caches, and the app's saved encryption key:
-
-```bash
-rm -rf "$HOME/.local/share/finds-you-jobs"
-rm -rf "$HOME/.local/share/com.finds-you-jobs.app" "$HOME/.cache/com.finds-you-jobs.app"
-secret-tool clear service finds-you-jobs
-```
-
-(If you've set `$XDG_DATA_HOME`, the first folder lives under it instead.) The
-last line removes the app's key from your keyring — if `secret-tool` isn't
-installed, use your desktop's "Passwords and Keys" app, and if there's no
-keyring at all the key lived in a file already deleted with your data folder.
-If you ever started the app with a custom `FYJ_DATA_DIR` profile (like the
-`$HOME/fyj-test` example above), delete those folders too.
-
-**3. Remove the tools the installer set up** — skip any line for a tool you use
-elsewhere:
-
-```bash
-rm -rf "$HOME/.cache/ms-playwright"               # the app's private Chromium (~150 MB); shared with any other Playwright tools you have
-rustup self uninstall -y                          # the Rust toolchain
-rm -rf "$HOME/.cache/uv" "$HOME/.local/share/uv" "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx"   # uv and the Python it installed
-corepack disable pnpm 2>/dev/null; sudo npm uninstall -g pnpm 2>/dev/null   # pnpm
-rm -rf "$HOME/.local/share/pnpm" "$HOME/.npm" "$HOME/.cache/node/corepack"   # pnpm's store, npm + corepack caches
-```
-
-If the installer added Node (Debian/Ubuntu only, via the NodeSource repository)
-and you don't use Node elsewhere:
-
-```bash
-sudo apt-get remove -y nodejs
-sudo rm -f /etc/apt/sources.list.d/nodesource.list*
-```
-
-The system libraries the installer added via your package manager (webkit2gtk,
-GTK, build tools, git) are shared with the rest of your desktop, so we don't suggest force-removing
-them — many other programs use them. `sudo apt autoremove` will clean up
-whatever nothing else needs.
-
-Last trace: the Rust and uv installers each added a PATH line to your shell
-profile (`~/.profile`, `~/.bashrc`, or `~/.zshrc`). They're harmless after the
-step above, but for zero trace, open those files and delete the lines mentioning
-`.cargo/env` or `.local/bin/env`.
-
 ## For developers & contributors
 
+- Run from source: clone this repo, then `pnpm boot && pnpm dev` (toolchain: Node 20+ with pnpm 9, [uv](https://docs.astral.sh/uv/) for Python 3.13, and Rust/cargo — the first build compiles the desktop shell and takes a few minutes).
 - `pnpm test` · `pnpm lint` · `pnpm typecheck` — the gates.
 - `pnpm dev:web` — run the sidecar + UI in a browser (no desktop window) for quick iteration.
 - Third-party provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [UPSTREAMS.md](UPSTREAMS.md). Release process: [RELEASING.md](RELEASING.md). Contributing (DCO sign-off required): [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Discord
-Join the discord for job search discussions and beta testing - https://discord.gg/hQRjKw6QS. If there is something that bothers you in the app, there is a limited time offer till July 25, 2026 to submit your thoughts and wishlist and get a chance to have your very own custom finds-you-jobs branch. For free of course!
+Join the discord for job search discussions and beta testing - https://discord.gg/hQRjKw6QS
 
 Licensed [AGPL-3.0-only](LICENSE); carried upstream portions keep their own notices.

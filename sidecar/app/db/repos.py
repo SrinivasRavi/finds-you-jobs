@@ -19,12 +19,14 @@ from sqlalchemy.orm import Session
 from .base import now_utc
 from .models import (
     Application,
+    ApplicationDocument,
     ApplicationEvent,
     ApplyRun,
     Artifact,
     CompanyResolution,
     Contact,
     ContactJobAssoc,
+    Document,
     EngineSettings,
     Job,
     JobScore,
@@ -701,6 +703,75 @@ class ArtifactsRepo:
         return artifact
 
 
+class DocumentsRepo:
+    """The content-addressed `documents` index (FR-TR manual-add). The blob on
+    disk is owned by `app.documents`; this repo owns the dedup row."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self, document_id: str) -> Document | None:
+        return self._s.get(Document, document_id)
+
+    def get_by_sha256(self, sha256: str) -> Document | None:
+        return self._s.scalars(
+            select(Document).where(Document.sha256 == sha256)
+        ).first()
+
+    def get_or_create(
+        self, *, sha256: str, byte_size: int, mime_type: str, original_filename: str
+    ) -> Document:
+        """The row for these bytes — dedup by sha256, so identical uploads share
+        one row (and one blob). A re-upload keeps the first-seen filename."""
+        existing = self.get_by_sha256(sha256)
+        if existing is not None:
+            return existing
+        doc = Document(
+            sha256=sha256,
+            byte_size=byte_size,
+            mime_type=mime_type,
+            original_filename=original_filename,
+        )
+        self._s.add(doc)
+        self._s.flush()
+        return doc
+
+
+class ApplicationDocumentsRepo:
+    """Links uploaded documents to applications as resume/cover (FR-TR manual-add)."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def list_for_application(self, application_id: str) -> list[ApplicationDocument]:
+        stmt = (
+            select(ApplicationDocument)
+            .where(ApplicationDocument.application_id == application_id)
+            .order_by(ApplicationDocument.kind, ApplicationDocument.created_at)
+        )
+        return list(self._s.scalars(stmt))
+
+    def set(self, application_id: str, kind: str, document_id: str) -> ApplicationDocument:
+        """Attach `document_id` as this application's `kind` slot, replacing any
+        prior link for that (application, kind) — one resume + one cover per card."""
+        existing = self._s.scalars(
+            select(ApplicationDocument).where(
+                ApplicationDocument.application_id == application_id,
+                ApplicationDocument.kind == kind,
+            )
+        ).first()
+        if existing is not None:
+            existing.document_id = document_id
+            self._s.flush()
+            return existing
+        link = ApplicationDocument(
+            application_id=application_id, kind=kind, document_id=document_id
+        )
+        self._s.add(link)
+        self._s.flush()
+        return link
+
+
 class ApplicationEventsRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1194,6 +1265,8 @@ class Repos:
         self.tombstones = TombstonesRepo(session)
         self.applications = ApplicationsRepo(session)
         self.artifacts = ArtifactsRepo(session)
+        self.documents = DocumentsRepo(session)
+        self.application_documents = ApplicationDocumentsRepo(session)
         self.application_events = ApplicationEventsRepo(session)
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)

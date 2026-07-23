@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
+import { useTranslation } from "react-i18next";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
@@ -13,6 +14,9 @@ import { Settings } from "./surfaces/Settings";
 import { Tracker } from "./surfaces/Tracker";
 import { Layout } from "./shell/Layout";
 import { installExternalLinkInterceptor } from "./shell/openExternal";
+// i18n init (side-effect import): registers bundled locales and applies the
+// persisted language before first paint.
+import "./i18n";
 // Fonts bundled locally (MIT/OFL) — the packaged app's loopback-only CSP blocks
 // external hosts, so no Google Fonts link (ROADMAP A4; THIRD_PARTY_NOTICES).
 import "@fontsource/inter/400.css";
@@ -43,6 +47,7 @@ const queryClient = new QueryClient({
 // forever (queries.ts), so this self-heals the moment the sidecar answers.
 // eslint-disable-next-line react-refresh/only-export-components -- entry-file boot state, not HMR'd
 function BootSplash() {
+  const { t } = useTranslation();
   return (
     <div
       data-testid="boot-splash"
@@ -53,7 +58,7 @@ function BootSplash() {
           finds you jobs.
         </div>
         <div className="mt-2 text-[12.5px] text-ink-3">
-          Starting the local backend… first launch can take a moment.
+          {t("shell.bootSplash")}
         </div>
       </div>
     </div>
