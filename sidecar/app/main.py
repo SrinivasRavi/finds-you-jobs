@@ -15,6 +15,7 @@ import os
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,6 +55,28 @@ SHUTDOWN_DRAIN_SECONDS = 10.0
 # (docs/internal/distribution.md §2/§7). Loopback-only by design otherwise
 # (§4.2) — this only widens it to the exact schemes Tauri itself uses.
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
+
+
+class _LogUnhandledMiddleware:
+    """Log any exception escaping a route to the flight recorder, then
+    RE-RAISE — the 500 response and propagation behavior stay exactly as
+    before (2026-07-24, "no unlogged failures"). Pure ASGI on purpose:
+    BaseHTTPMiddleware buffers response streams and breaks SSE."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        try:
+            await self.app(scope, receive, send)
+        except Exception:
+            get_logger().exception(
+                "unhandled error on %s %s", scope.get("method"), scope.get("path")
+            )
+            raise
 
 
 def create_app(
@@ -256,6 +279,12 @@ def create_app(
     app = FastAPI(
         title="finds-you-jobs sidecar", version="0.5.3", lifespan=lifespan
     )
+
+    # Unexpected route crashes land in the flight recorder (2026-07-24):
+    # uvicorn's stderr-only default left them with NO line in sidecar.log,
+    # despite the recorder being documented as the net for failures. Log-and-
+    # reraise only — the 500 response/propagation stays exactly as before.
+    app.add_middleware(_LogUnhandledMiddleware)
 
     app.state.token = token
     app.state.original_ppid = original_ppid

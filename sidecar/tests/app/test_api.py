@@ -6,6 +6,8 @@ under test.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -89,3 +91,38 @@ def test_cors_preflight_rejects_other_origins(client: TestClient) -> None:
     )
     assert resp.status_code == 400
     assert "access-control-allow-origin" not in resp.headers
+
+
+def test_unhandled_route_error_is_logged_to_flight_recorder(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """An unexpected route crash must never go unlogged (2026-07-24): the
+    log-and-reraise middleware writes the traceback to the flight recorder
+    while leaving the 500 propagation exactly as before."""
+    import logging
+
+    from sidecar.app.logging_setup import LOGGER_NAME
+
+    # No lifespan on purpose (client used without `with`, matching the module
+    # fixture): the middleware is pure ASGI and needs no runner/DB — and a
+    # lifespan-booted app here proved able to wedge the browser-driven apply
+    # tests that run later in the same process. Isolated data_dir keeps the
+    # flight-recorder file out of the developer's real app-data either way.
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+
+    @app.get("/api/_test_boom")
+    async def _boom() -> None:
+        raise RuntimeError("deliberate test crash")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR, logger=LOGGER_NAME):
+        resp = client.get(
+            "/api/_test_boom", headers={"Authorization": f"Bearer {TOKEN}"}
+        )
+    assert resp.status_code == 500
+    assert any(
+        "unhandled error on GET /api/_test_boom" in r.message for r in caplog.records
+    )
