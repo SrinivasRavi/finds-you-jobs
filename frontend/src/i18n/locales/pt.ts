@@ -213,7 +213,7 @@ const pt: DeepPartial<Messages> = {
       matchScore: "Pontuação de compatibilidade",
       save: "Salvar",
       saved: "Salva",
-      remove: "Remover",
+      remove: "Excluir",
       toggleResume: "Currículo",
       toggleCoverLetter: "Carta de apresentação",
       toggleFindReferrals: "Encontrar indicações",
@@ -225,7 +225,7 @@ const pt: DeepPartial<Messages> = {
       watchOnTitle: "Varremos o quadro desta empresa em cada varredura — clique para parar",
       watchOffTitle: "Varrer todo o quadro desta empresa nas próximas varreduras",
       adding: "Adicionando…",
-      removing: "Removendo…",
+      removing: "Excluindo…",
       failedRetry: "Falhou — tentar novamente",
       showMoreFromCompany: "Mostrar mais vagas desta empresa",
       openPosting: "Abrir vaga ↗",
@@ -324,14 +324,14 @@ const pt: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "Vagas excluídas",
-      retention: "Vagas na Lixeira são removidas permanentemente após 7 dias.",
-      emptyConfirm_one: "Esvaziar a Lixeira? {{count}} vaga será removida permanentemente.",
-      emptyConfirm_other: "Esvaziar a Lixeira? {{count}} vagas serão removidas permanentemente.",
+      retention: "Vagas excluídas são apagadas permanentemente após 7 dias.",
+      emptyConfirm_one: "Excluir tudo para sempre? {{count}} vaga será apagada permanentemente.",
+      emptyConfirm_other: "Excluir tudo para sempre? {{count}} vagas serão apagadas permanentemente.",
       confirm: "Confirmar",
       cancel: "Cancelar",
-      emptyTrash: "Esvaziar Lixeira",
-      empty: "Nenhuma vaga removida.",
-      removedRecently: "{{company}} · Removida há pouco",
+      emptyTrash: "Excluir tudo para sempre",
+      empty: "Nenhuma vaga excluída.",
+      removedRecently: "{{company}} · Excluída há pouco",
       deleteForever: "Excluir para sempre",
       undo: "Desfazer",
     },
@@ -341,7 +341,7 @@ const pt: DeepPartial<Messages> = {
     deletedApplications: "Candidaturas excluídas",
     addApplication: "Adicionar candidatura",
     cancel: "Cancelar",
-    archive: "Arquivar",
+    archive: "Excluir",
     moveToDiscover: "Mover para Descobrir vagas",
     stage: {
       Saved: "Salva",
@@ -466,6 +466,7 @@ const pt: DeepPartial<Messages> = {
       empty: "Nenhuma candidatura excluída.",
       deletedRecently: "Excluída há pouco",
       restore: "Restaurar",
+      deleteForever: "Excluir para sempre",
     },
   },
   networking: {
@@ -525,7 +526,7 @@ const pt: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Última mensagem",
-      archive: "Arquivar",
+      archive: "Excluir",
     },
     add: {
       title: "Adicionar contato",
@@ -856,15 +857,15 @@ const pt: DeepPartial<Messages> = {
       sentGhostedLabel: "Marcar um convite sem retorno como “sem resposta” após",
       sentGhostedHint:
         "Um convite de conexão nunca aceito (ou aceito, mas nunca respondido) por esses dias.",
-      contactPurgeLabel: "Excluir de vez contatos removidos após",
+      contactPurgeLabel: "Apagar de vez contatos excluídos após",
       contactPurgeHint:
-        "Contatos que você excluiu são apagados permanentemente esses dias depois.",
-      trashedJobsLabel: "Excluir de vez vagas da Lixeira após",
+        "Contatos excluídos são apagados permanentemente esses dias depois.",
+      trashedJobsLabel: "Apagar de vez vagas excluídas após",
       trashedJobsHint:
-        "Vagas na Lixeira são apagadas permanentemente (e não voltam em varreduras) esses dias depois.",
-      archivedAppsLabel: "Excluir de vez candidaturas arquivadas após",
+        "Vagas excluídas são apagadas permanentemente (e não voltam em varreduras) esses dias depois.",
+      archivedAppsLabel: "Apagar de vez candidaturas excluídas após",
       archivedAppsHint:
-        "Cards arquivados de Candidaturas e seus documentos são apagados permanentemente esses dias depois.",
+        "Cards excluídos de Candidaturas e seus documentos são apagados permanentemente esses dias depois.",
       syncCadenceLabel: "Checar atualizações de contatos no LinkedIn a cada",
       syncCadenceHint:
         "Com que frequência atualizar o status dos seus contatos a partir do LinkedIn (apenas com os Pedidos de Indicação ligados e conectados).",
@@ -1128,6 +1129,15 @@ const pt: DeepPartial<Messages> = {
       remote: "Remoto",
       hybrid: "Híbrido",
       onsite: "Presencial",
+    },
+    surfaceError: {
+      title: "Algo deu errado aqui",
+      body: "Esta visão encontrou um erro inesperado que foi contido — o resto do app continua funcionando e seus dados estão seguros. Os detalhes técnicos foram registrados no console do desenvolvedor.",
+      reload: "Recarregar o app",
+    },
+    mutationError: {
+      body: "Essa alteração não foi salva — o app encontrou um erro ao se comunicar com o backend local.",
+      dismiss: "Dispensar",
     },
     rescore: {
       title: "Pontuar vagas novamente com IA?",

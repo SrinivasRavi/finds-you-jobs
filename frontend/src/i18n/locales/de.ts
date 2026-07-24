@@ -212,7 +212,7 @@ const de: DeepPartial<Messages> = {
       matchScore: "Match-Score",
       save: "Speichern",
       saved: "Gespeichert",
-      remove: "Entfernen",
+      remove: "Löschen",
       toggleResume: "Lebenslauf",
       toggleCoverLetter: "Anschreiben",
       toggleFindReferrals: "Empfehlungen finden",
@@ -223,7 +223,7 @@ const de: DeepPartial<Messages> = {
       watchOnTitle: "Das Board dieser Firma wird bei jedem Scan gescannt — zum Stoppen klicken",
       watchOffTitle: "Das ganze Board dieser Firma bei jedem künftigen Scan scannen",
       adding: "Wird hinzugefügt…",
-      removing: "Wird entfernt…",
+      removing: "Wird gelöscht…",
       failedRetry: "Fehlgeschlagen — erneut versuchen",
       showMoreFromCompany: "Mehr Jobs dieser Firma anzeigen",
       openPosting: "Anzeige öffnen ↗",
@@ -322,14 +322,14 @@ const de: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "Gelöschte Jobs",
-      retention: "Jobs im Papierkorb werden nach 7 Tagen endgültig entfernt.",
-      emptyConfirm_one: "Papierkorb leeren? {{count}} Job wird endgültig entfernt.",
-      emptyConfirm_other: "Papierkorb leeren? {{count}} Jobs werden endgültig entfernt.",
+      retention: "Gelöschte Jobs werden nach 7 Tagen endgültig gelöscht.",
+      emptyConfirm_one: "Alle endgültig löschen? {{count}} Job wird endgültig gelöscht.",
+      emptyConfirm_other: "Alle endgültig löschen? {{count}} Jobs werden endgültig gelöscht.",
       confirm: "Bestätigen",
       cancel: "Abbrechen",
-      emptyTrash: "Papierkorb leeren",
-      empty: "Keine entfernten Jobs.",
-      removedRecently: "{{company}} · Kürzlich entfernt",
+      emptyTrash: "Alle endgültig löschen",
+      empty: "Keine gelöschten Jobs.",
+      removedRecently: "{{company}} · Kürzlich gelöscht",
       deleteForever: "Endgültig löschen",
       undo: "Rückgängig",
     },
@@ -339,7 +339,7 @@ const de: DeepPartial<Messages> = {
     deletedApplications: "Gelöschte Bewerbungen",
     addApplication: "Bewerbung hinzufügen",
     cancel: "Abbrechen",
-    archive: "Archivieren",
+    archive: "Löschen",
     moveToDiscover: "Zu „Jobs“ verschieben",
     stage: {
       Saved: "Gespeichert",
@@ -464,6 +464,7 @@ const de: DeepPartial<Messages> = {
       empty: "Keine gelöschten Bewerbungen.",
       deletedRecently: "Kürzlich gelöscht",
       restore: "Wiederherstellen",
+      deleteForever: "Endgültig löschen",
     },
   },
   networking: {
@@ -523,7 +524,7 @@ const de: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Letzte Nachricht",
-      archive: "Archivieren",
+      archive: "Löschen",
     },
     add: {
       title: "Kontakt hinzufügen",
@@ -852,14 +853,14 @@ const de: DeepPartial<Messages> = {
       sentGhostedLabel: "Unbeantwortete Anfrage als „geghostet“ markieren nach",
       sentGhostedHint:
         "Eine Kontaktanfrage, die so viele Tage nie angenommen (oder angenommen, aber nie beantwortet) wurde.",
-      contactPurgeLabel: "Entfernte Kontakte endgültig löschen nach",
-      contactPurgeHint: "Von dir gelöschte Kontakte werden so viele Tage später endgültig entfernt.",
-      trashedJobsLabel: "Jobs im Papierkorb endgültig löschen nach",
+      contactPurgeLabel: "Gelöschte Kontakte endgültig löschen nach",
+      contactPurgeHint: "Gelöschte Kontakte werden so viele Tage später endgültig gelöscht.",
+      trashedJobsLabel: "Gelöschte Jobs endgültig löschen nach",
       trashedJobsHint:
-        "Jobs im Papierkorb werden so viele Tage später endgültig gelöscht (und nicht erneut gescannt).",
-      archivedAppsLabel: "Archivierte Bewerbungen endgültig löschen nach",
+        "Gelöschte Jobs werden so viele Tage später endgültig gelöscht (und nicht erneut gescannt).",
+      archivedAppsLabel: "Gelöschte Bewerbungen endgültig löschen nach",
       archivedAppsHint:
-        "Archivierte Tracker-Karten und ihre Dokumente werden so viele Tage später endgültig gelöscht.",
+        "Gelöschte Tracker-Karten und ihre Dokumente werden so viele Tage später endgültig gelöscht.",
       syncCadenceLabel: "LinkedIn auf Kontakt-Updates prüfen alle",
       syncCadenceHint:
         "Wie oft der Status deiner Kontakte von LinkedIn aktualisiert wird (nur solange Referral Outreach an und verbunden ist).",
@@ -1123,6 +1124,15 @@ const de: DeepPartial<Messages> = {
       remote: "Remote",
       hybrid: "Hybrid",
       onsite: "Vor Ort",
+    },
+    surfaceError: {
+      title: "Hier ist etwas schiefgelaufen",
+      body: "Diese Ansicht ist auf einen unerwarteten Fehler gestoßen, der eingegrenzt wurde — der Rest der App funktioniert weiter und deine Daten sind sicher. Die technischen Details wurden in der Entwicklerkonsole protokolliert.",
+      reload: "App neu laden",
+    },
+    mutationError: {
+      body: "Diese Änderung wurde nicht gespeichert — die App ist beim Zugriff auf das lokale Backend auf einen Fehler gestoßen.",
+      dismiss: "Schließen",
     },
     rescore: {
       title: "Jobs mit KI neu bewerten?",

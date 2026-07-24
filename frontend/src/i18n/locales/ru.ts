@@ -229,7 +229,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       matchScore: "Оценка соответствия",
       save: "Сохранить",
       saved: "Сохранено",
-      remove: "Убрать",
+      remove: "Удалить",
       toggleResume: "Резюме",
       toggleCoverLetter: "Сопроводительное",
       toggleFindReferrals: "Найти рекомендателей",
@@ -341,14 +341,14 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     },
     trashModal: {
       title: "Удалённые вакансии",
-      retention: "Вакансии в корзине удаляются навсегда через 7 дней.",
-      emptyConfirm_one: "Очистить корзину? {{count}} вакансия будет удалена навсегда.",
-      emptyConfirm_few: "Очистить корзину? {{count}} вакансии будут удалены навсегда.",
-      emptyConfirm_many: "Очистить корзину? {{count}} вакансий будут удалены навсегда.",
-      emptyConfirm_other: "Очистить корзину? {{count}} вакансии будут удалены навсегда.",
+      retention: "Удалённые вакансии безвозвратно стираются через 7 дней.",
+      emptyConfirm_one: "Удалить всё навсегда? {{count}} вакансия будет стёрта безвозвратно.",
+      emptyConfirm_few: "Удалить всё навсегда? {{count}} вакансии будут стёрты безвозвратно.",
+      emptyConfirm_many: "Удалить всё навсегда? {{count}} вакансий будут стёрты безвозвратно.",
+      emptyConfirm_other: "Удалить всё навсегда? {{count}} вакансии будут стёрты безвозвратно.",
       confirm: "Подтвердить",
       cancel: "Отмена",
-      emptyTrash: "Очистить корзину",
+      emptyTrash: "Удалить всё навсегда",
       empty: "Нет удалённых вакансий.",
       removedRecently: "{{company}} · Удалена недавно",
       deleteForever: "Удалить навсегда",
@@ -360,7 +360,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     deletedApplications: "Удалённые отклики",
     addApplication: "Добавить отклик",
     cancel: "Отмена",
-    archive: "Архивировать",
+    archive: "Удалить",
     moveToDiscover: "Вернуть в «Вакансии»",
     stage: {
       Saved: "Сохранено",
@@ -486,6 +486,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       empty: "Нет удалённых откликов.",
       deletedRecently: "Удалено недавно",
       restore: "Восстановить",
+      deleteForever: "Удалить навсегда",
     },
   },
   networking: {
@@ -547,7 +548,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Последнее сообщение",
-      archive: "Архивировать",
+      archive: "Удалить",
     },
     add: {
       title: "Добавить контакт",
@@ -884,12 +885,12 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
         "Запрос на контакт не принят (или принят, но без ответа) столько дней.",
       contactPurgeLabel: "Стирать удалённые контакты навсегда через",
       contactPurgeHint: "Удалённые вами контакты безвозвратно стираются спустя столько дней.",
-      trashedJobsLabel: "Стирать вакансии из корзины навсегда через",
+      trashedJobsLabel: "Стирать удалённые вакансии навсегда через",
       trashedJobsHint:
-        "Вакансии в корзине безвозвратно стираются (и больше не сканируются) спустя столько дней.",
-      archivedAppsLabel: "Стирать архивные отклики навсегда через",
+        "Удалённые вакансии безвозвратно стираются (и больше не сканируются) спустя столько дней.",
+      archivedAppsLabel: "Стирать удалённые отклики навсегда через",
       archivedAppsHint:
-        "Архивированные карточки трекера и их документы безвозвратно стираются спустя столько дней.",
+        "Удалённые карточки трекера и их документы безвозвратно стираются спустя столько дней.",
       syncCadenceLabel: "Проверять обновления контактов в LinkedIn каждые",
       syncCadenceHint:
         "Как часто обновлять статусы контактов из LinkedIn (только пока Referral Outreach включён и подключён).",
@@ -1171,6 +1172,15 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       remote: "Удалённо",
       hybrid: "Гибрид",
       onsite: "В офисе",
+    },
+    surfaceError: {
+      title: "Здесь что-то пошло не так",
+      body: "В этом разделе произошла непредвиденная ошибка, но она была локализована — остальная часть приложения продолжает работать, данные в безопасности. Технические детали записаны в консоль разработчика.",
+      reload: "Перезагрузить приложение",
+    },
+    mutationError: {
+      body: "Изменение не сохранилось — приложение столкнулось с ошибкой при обращении к локальному бэкенду.",
+      dismiss: "Закрыть",
     },
     rescore: {
       title: "Оценить вакансии ИИ заново?",

@@ -19,6 +19,19 @@ const shell = {
     hybrid: "Hybrid",
     onsite: "Onsite",
   },
+  // Route-level error boundary (SurfaceError.tsx) — contains a surface crash
+  // instead of letting it hijack the whole app (2026-07-24 customer bug).
+  surfaceError: {
+    title: "Something went wrong here",
+    body: "This view hit an unexpected error and was contained — the rest of the app keeps working and your data is safe. The technical details were logged to the developer console.",
+    reload: "Reload app",
+  },
+  // Global failed-write banner (MutationErrorBanner.tsx) — no mutation error
+  // may vanish silently.
+  mutationError: {
+    body: "That change didn't save — the app hit an error talking to the local backend.",
+    dismiss: "Dismiss",
+  },
   rescore: {
     title: "Re-score jobs with AI?",
     // Interpolated into the body strings below (with a leading space) when

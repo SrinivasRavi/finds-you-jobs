@@ -209,7 +209,7 @@ const it: DeepPartial<Messages> = {
       matchScore: "Punteggio di affinità",
       save: "Salva",
       saved: "Salvata",
-      remove: "Rimuovi",
+      remove: "Elimina",
       toggleResume: "Curriculum",
       toggleCoverLetter: "Lettera",
       toggleFindReferrals: "Trova referral",
@@ -220,7 +220,7 @@ const it: DeepPartial<Messages> = {
       watchOnTitle: "La bacheca di questa azienda viene scansionata a ogni scansione — clicca per interrompere",
       watchOffTitle: "Scansiona l'intera bacheca di questa azienda a ogni scansione futura",
       adding: "Aggiunta…",
-      removing: "Rimozione…",
+      removing: "Eliminazione…",
       failedRetry: "Non riuscito — riprova",
       showMoreFromCompany: "Mostra altre offerte di questa azienda",
       openPosting: "Apri annuncio ↗",
@@ -318,14 +318,14 @@ const it: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "Offerte eliminate",
-      retention: "Le offerte nel cestino vengono rimosse definitivamente dopo 7 giorni.",
-      emptyConfirm_one: "Svuotare il cestino? {{count}} offerta verrà rimossa definitivamente.",
-      emptyConfirm_other: "Svuotare il cestino? {{count}} offerte verranno rimosse definitivamente.",
+      retention: "Le offerte eliminate vengono cancellate definitivamente dopo 7 giorni.",
+      emptyConfirm_one: "Eliminare tutto per sempre? {{count}} offerta verrà cancellata definitivamente.",
+      emptyConfirm_other: "Eliminare tutto per sempre? {{count}} offerte verranno cancellate definitivamente.",
       confirm: "Conferma",
       cancel: "Annulla",
-      emptyTrash: "Svuota cestino",
-      empty: "Nessuna offerta rimossa.",
-      removedRecently: "{{company}} · Rimossa di recente",
+      emptyTrash: "Elimina tutto per sempre",
+      empty: "Nessuna offerta eliminata.",
+      removedRecently: "{{company}} · Eliminata di recente",
       deleteForever: "Elimina per sempre",
       undo: "Annulla",
     },
@@ -335,7 +335,7 @@ const it: DeepPartial<Messages> = {
     deletedApplications: "Candidature eliminate",
     addApplication: "Aggiungi una candidatura",
     cancel: "Annulla",
-    archive: "Archivia",
+    archive: "Elimina",
     moveToDiscover: "Sposta in Scopri offerte",
     stage: {
       Saved: "Salvate",
@@ -458,6 +458,7 @@ const it: DeepPartial<Messages> = {
       empty: "Nessuna candidatura eliminata.",
       deletedRecently: "Eliminata di recente",
       restore: "Ripristina",
+      deleteForever: "Elimina per sempre",
     },
   },
   networking: {
@@ -517,7 +518,7 @@ const it: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Ultimo messaggio",
-      archive: "Archivia",
+      archive: "Elimina",
     },
     add: {
       title: "Aggiungi un contatto",
@@ -846,14 +847,14 @@ const it: DeepPartial<Messages> = {
       sentGhostedLabel: "Segna una richiesta senza risposta come “sparito” dopo",
       sentGhostedHint:
         "Una richiesta di collegamento mai accettata (o accettata ma rimasta senza risposta) da questo numero di giorni.",
-      contactPurgeLabel: "Elimina definitivamente i contatti rimossi dopo",
-      contactPurgeHint: "I contatti che hai eliminato vengono cancellati definitivamente dopo questo numero di giorni.",
-      trashedJobsLabel: "Elimina definitivamente le offerte nel cestino dopo",
+      contactPurgeLabel: "Cancella definitivamente i contatti eliminati dopo",
+      contactPurgeHint: "I contatti eliminati vengono cancellati definitivamente dopo questo numero di giorni.",
+      trashedJobsLabel: "Cancella definitivamente le offerte eliminate dopo",
       trashedJobsHint:
-        "Le offerte nel cestino vengono cancellate definitivamente (e non verranno più recuperate dallo scraping) dopo questo numero di giorni.",
-      archivedAppsLabel: "Elimina definitivamente le candidature archiviate dopo",
+        "Le offerte eliminate vengono cancellate definitivamente (e non verranno più recuperate dallo scraping) dopo questo numero di giorni.",
+      archivedAppsLabel: "Cancella definitivamente le candidature eliminate dopo",
       archivedAppsHint:
-        "Le schede archiviate e i loro documenti vengono cancellati definitivamente dopo questo numero di giorni.",
+        "Le schede eliminate e i loro documenti vengono cancellati definitivamente dopo questo numero di giorni.",
       syncCadenceLabel: "Controlla su LinkedIn gli aggiornamenti dei contatti ogni",
       syncCadenceHint:
         "Ogni quanto aggiornare lo stato dei tuoi contatti da LinkedIn (solo con Referral Outreach attivo e connesso).",
@@ -1117,6 +1118,15 @@ const it: DeepPartial<Messages> = {
       remote: "Remoto",
       hybrid: "Ibrido",
       onsite: "In sede",
+    },
+    surfaceError: {
+      title: "Qualcosa è andato storto qui",
+      body: "Questa vista ha riscontrato un errore imprevisto che è stato contenuto: il resto dell'app continua a funzionare e i tuoi dati sono al sicuro. I dettagli tecnici sono stati registrati nella console sviluppatore.",
+      reload: "Ricarica l'app",
+    },
+    mutationError: {
+      body: "La modifica non è stata salvata: l'app ha riscontrato un errore comunicando con il backend locale.",
+      dismiss: "Chiudi",
     },
     rescore: {
       title: "Rivalutare le offerte con l'IA?",

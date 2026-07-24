@@ -333,12 +333,12 @@ const nl: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "Verwijderde vacatures",
-      retention: "Vacatures in de prullenbak worden na 7 dagen permanent verwijderd.",
-      emptyConfirm_one: "Prullenbak legen? {{count}} vacature wordt permanent verwijderd.",
-      emptyConfirm_other: "Prullenbak legen? {{count}} vacatures worden permanent verwijderd.",
+      retention: "Verwijderde vacatures worden na 7 dagen permanent gewist.",
+      emptyConfirm_one: "Alles definitief verwijderen? {{count}} vacature wordt permanent gewist.",
+      emptyConfirm_other: "Alles definitief verwijderen? {{count}} vacatures worden permanent gewist.",
       confirm: "Bevestigen",
       cancel: "Annuleren",
-      emptyTrash: "Prullenbak legen",
+      emptyTrash: "Alles definitief verwijderen",
       empty: "Geen verwijderde vacatures.",
       removedRecently: "{{company}} · Onlangs verwijderd",
       deleteForever: "Definitief verwijderen",
@@ -350,7 +350,7 @@ const nl: DeepPartial<Messages> = {
     deletedApplications: "Verwijderde sollicitaties",
     addApplication: "Sollicitatie toevoegen",
     cancel: "Annuleren",
-    archive: "Archiveren",
+    archive: "Verwijderen",
     moveToDiscover: "Naar Vacatures ontdekken verplaatsen",
     // Kanban stage names — keys are the backend STAGES enum values verbatim; the
     // enum strings themselves are never translated on the wire.
@@ -480,6 +480,7 @@ const nl: DeepPartial<Messages> = {
       empty: "Geen verwijderde sollicitaties.",
       deletedRecently: "Onlangs verwijderd",
       restore: "Terugzetten",
+      deleteForever: "Definitief verwijderen",
     },
   },
   networking: {
@@ -539,7 +540,7 @@ const nl: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Laatste bericht",
-      archive: "Archiveren",
+      archive: "Verwijderen",
     },
     add: {
       title: "Contact toevoegen",
@@ -869,14 +870,14 @@ const nl: DeepPartial<Messages> = {
       sentGhostedLabel: "Markeer een onbeantwoord verzoek als “geghost” na",
       sentGhostedHint:
         "Een connectieverzoek dat zoveel dagen niet is geaccepteerd (of geaccepteerd maar nooit beantwoord).",
-      contactPurgeLabel: "Verwijder verwijderde contacten definitief na",
-      contactPurgeHint: "Contacten die je hebt verwijderd worden zoveel dagen later permanent gewist.",
-      trashedJobsLabel: "Verwijder vacatures in de prullenbak definitief na",
+      contactPurgeLabel: "Wis verwijderde contacten definitief na",
+      contactPurgeHint: "Verwijderde contacten worden zoveel dagen later permanent gewist.",
+      trashedJobsLabel: "Wis verwijderde vacatures definitief na",
       trashedJobsHint:
-        "Vacatures in de prullenbak worden zoveel dagen later permanent gewist (en niet opnieuw gescand).",
-      archivedAppsLabel: "Verwijder gearchiveerde sollicitaties definitief na",
+        "Verwijderde vacatures worden zoveel dagen later permanent gewist (en niet opnieuw gescand).",
+      archivedAppsLabel: "Wis verwijderde sollicitaties definitief na",
       archivedAppsHint:
-        "Gearchiveerde trackerkaarten en hun documenten worden zoveel dagen later permanent gewist.",
+        "Verwijderde trackerkaarten en hun documenten worden zoveel dagen later permanent gewist.",
       syncCadenceLabel: "Controleer LinkedIn op contactupdates elke",
       syncCadenceHint:
         "Hoe vaak de status van je contacten vanaf LinkedIn wordt ververst (alleen zolang Referral Outreach aan staat en verbonden is).",
@@ -1144,6 +1145,15 @@ const nl: DeepPartial<Messages> = {
       remote: "Remote",
       hybrid: "Hybride",
       onsite: "Op locatie",
+    },
+    surfaceError: {
+      title: "Hier ging iets mis",
+      body: "Deze weergave kreeg een onverwachte fout die is ingeperkt — de rest van de app blijft werken en je gegevens zijn veilig. De technische details zijn vastgelegd in de ontwikkelaarsconsole.",
+      reload: "App opnieuw laden",
+    },
+    mutationError: {
+      body: "Die wijziging is niet opgeslagen — de app kreeg een fout bij het bereiken van de lokale backend.",
+      dismiss: "Sluiten",
     },
     rescore: {
       title: "Vacatures opnieuw scoren met AI?",

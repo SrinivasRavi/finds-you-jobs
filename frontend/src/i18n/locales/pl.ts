@@ -333,14 +333,14 @@ const pl: DeepPartial<Messages> = {
     trashModal: {
       title: "Usunięte oferty",
       retention: "Oferty w koszu są trwale usuwane po 7 dniach.",
-      emptyConfirm_one: "Opróżnić kosz? {{count}} oferta zostanie trwale usunięta.",
+      emptyConfirm_one: "Usunąć wszystko na zawsze? {{count}} oferta zostanie trwale usunięta.",
       ...{
-        emptyConfirm_few: "Opróżnić kosz? {{count}} oferty zostaną trwale usunięte.",
-        emptyConfirm_many: "Opróżnić kosz? {{count}} ofert zostanie trwale usuniętych.",
+        emptyConfirm_few: "Usunąć wszystko na zawsze? {{count}} oferty zostaną trwale usunięte.",
+        emptyConfirm_many: "Usunąć wszystko na zawsze? {{count}} ofert zostanie trwale usuniętych.",
       },
       confirm: "Potwierdź",
       cancel: "Anuluj",
-      emptyTrash: "Opróżnij kosz",
+      emptyTrash: "Usuń wszystko na zawsze",
       empty: "Brak usuniętych ofert.",
       removedRecently: "{{company}} · Usunięto niedawno",
       deleteForever: "Usuń na zawsze",
@@ -352,7 +352,7 @@ const pl: DeepPartial<Messages> = {
     deletedApplications: "Usunięte aplikacje",
     addApplication: "Dodaj aplikację",
     cancel: "Anuluj",
-    archive: "Archiwizuj",
+    archive: "Usuń",
     moveToDiscover: "Przenieś do Ofert",
     // Keys are the backend STAGES enum values verbatim — never translated on the wire.
     stage: {
@@ -478,6 +478,7 @@ const pl: DeepPartial<Messages> = {
       empty: "Brak usuniętych aplikacji.",
       deletedRecently: "Usunięto niedawno",
       restore: "Przywróć",
+      deleteForever: "Usuń na zawsze",
     },
   },
   networking: {
@@ -537,7 +538,7 @@ const pl: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Ostatnia wiadomość",
-      archive: "Archiwizuj",
+      archive: "Usuń",
     },
     add: {
       title: "Dodaj kontakt",
@@ -871,14 +872,14 @@ const pl: DeepPartial<Messages> = {
       sentGhostedLabel: "Oznaczaj zaproszenie bez odpowiedzi jako „cisza” po upływie",
       sentGhostedHint:
         "Zaproszenie nigdy niezaakceptowane (albo zaakceptowane, ale bez żadnej odpowiedzi) przez tyle dni.",
-      contactPurgeLabel: "Usuwaj skasowane kontakty na dobre po upływie",
-      contactPurgeHint: "Usunięte przez ciebie kontakty są kasowane trwale po tylu dniach.",
-      trashedJobsLabel: "Usuwaj oferty z kosza na dobre po upływie",
+      contactPurgeLabel: "Usuwaj na dobre usunięte kontakty po upływie",
+      contactPurgeHint: "Usunięte kontakty są kasowane trwale po tylu dniach.",
+      trashedJobsLabel: "Usuwaj na dobre usunięte oferty po upływie",
       trashedJobsHint:
-        "Oferty w koszu są kasowane trwale (i nie będą ponownie skanowane) po tylu dniach.",
-      archivedAppsLabel: "Usuwaj zarchiwizowane aplikacje na dobre po upływie",
+        "Usunięte oferty są kasowane trwale (i nie będą ponownie skanowane) po tylu dniach.",
+      archivedAppsLabel: "Usuwaj na dobre usunięte aplikacje po upływie",
       archivedAppsHint:
-        "Zarchiwizowane karty aplikacji i ich dokumenty są kasowane trwale po tylu dniach.",
+        "Usunięte karty aplikacji i ich dokumenty są kasowane trwale po tylu dniach.",
       syncCadenceLabel: "Sprawdzaj aktualizacje kontaktów na LinkedIn co",
       syncCadenceHint:
         "Jak często odświeżać status twoich kontaktów z LinkedIn (tylko gdy Referral Outreach jest włączony i połączony).",
@@ -1165,6 +1166,15 @@ const pl: DeepPartial<Messages> = {
       remote: "Zdalna",
       hybrid: "Hybrydowa",
       onsite: "Stacjonarna",
+    },
+    surfaceError: {
+      title: "Coś tu poszło nie tak",
+      body: "Ten widok napotkał nieoczekiwany błąd, który został odizolowany — reszta aplikacji działa dalej, a Twoje dane są bezpieczne. Szczegóły techniczne zapisano w konsoli deweloperskiej.",
+      reload: "Załaduj aplikację ponownie",
+    },
+    mutationError: {
+      body: "Ta zmiana nie została zapisana — aplikacja napotkała błąd podczas łączenia z lokalnym backendem.",
+      dismiss: "Zamknij",
     },
     rescore: {
       title: "Ocenić oferty ponownie z użyciem AI?",
