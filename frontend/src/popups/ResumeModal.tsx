@@ -41,7 +41,9 @@ function PacketPill({ state }: { state: PacketState }) {
     none: [t("popups.resume.packet.none"), "bg-surface-3 text-ink-3"],
     failed: [t("popups.resume.packet.failed"), "bg-bad-wash text-bad"],
   };
-  const [label, cls] = map[state];
+  // Defensive: an unknown server state must degrade to the grey pill, never
+  // crash the destructure (2026-07-24 unsafe-lookup audit).
+  const [label, cls] = map[state] ?? map.none;
   return (
     <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${cls}`}>
       {label}
@@ -214,16 +216,23 @@ function DownloadDocButton({ doc }: { doc: ApplicationDocument }) {
     <button
       data-testid="submitted-doc-download-btn"
       onClick={() => {
-        void api.fetchDocument(doc.document_id).then((blob) => {
-          const dl = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = dl;
-          a.download = doc.filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(dl);
-        });
+        void api
+          .fetchDocument(doc.document_id)
+          .then((blob) => {
+            const dl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = dl;
+            a.download = doc.filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(dl);
+          })
+          .catch((e: unknown) => {
+            // Never a silent no-op (2026-07-24 graceful-failure audit).
+            console.error("[finds-you-jobs] document download failed:", e);
+            window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: e }));
+          });
       }}
       className="inline-flex h-[28px] items-center gap-1 rounded-7 border border-border-2 bg-surface px-2.5 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
     >

@@ -450,8 +450,12 @@ export class RealApi {
   async getJob(id: string): Promise<Job | undefined> {
     try {
       return toJob(await this.req<JobDTO>(`/api/jobs/${id}`), false);
-    } catch {
-      return undefined;
+    } catch (e) {
+      // Only a true 404 means "no such job". Anything else (500, auth,
+      // network) must propagate — masking it as undefined made a transient
+      // failure render as "(job removed)" (2026-07-24 graceful-failure audit).
+      if (e instanceof ApiError && e.status === 404) return undefined;
+      throw e;
     }
   }
 
@@ -593,8 +597,11 @@ export class RealApi {
     try {
       const d = await this.req<ApplicationDTO>(`/api/applications/${id}`);
       return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
-    } catch {
-      return undefined;
+    } catch (e) {
+      // 404 → genuinely gone; every other failure propagates instead of
+      // masquerading as "not found" (2026-07-24 graceful-failure audit).
+      if (e instanceof ApiError && e.status === 404) return undefined;
+      throw e;
     }
   }
 
@@ -668,6 +675,14 @@ export class RealApi {
   }
 
   async returnToBoard(id: string): Promise<void> {
+    await this.req(`/api/applications/${id}`, { method: "DELETE" });
+  }
+
+  /** Permanently delete an archived card (Deleted Applications modal). Same
+   *  endpoint as returnToBoard — the card and its children go, the underlying
+   *  job survives and may resurface in Discover (mirrors the FR-SYS-06
+   *  retention purge semantics). */
+  async deleteApplicationForever(id: string): Promise<void> {
     await this.req(`/api/applications/${id}`, { method: "DELETE" });
   }
 

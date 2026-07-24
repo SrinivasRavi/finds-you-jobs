@@ -19,6 +19,7 @@ import {
   useApplications,
   useArchived,
   useArchiveApplication,
+  useDeleteApplicationForever,
   useGeneratePacket,
   useJobPreview,
   useLinkedInSession,
@@ -68,7 +69,7 @@ async function downloadDocument(doc: ApplicationDocument): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = doc.filename || i18n.t(DOC_KIND_KEY[doc.kind]);
+  a.download = doc.filename || i18n.t(DOC_KIND_KEY[doc.kind] ?? doc.kind);
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -94,7 +95,7 @@ const PRIORITY_CLS: Record<Priority, string> = {
 function PriorityChip({ p }: { p: Priority }) {
   const { t } = useTranslation();
   return (
-    <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ${PRIORITY_CLS[p]}`}>
+    <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ${PRIORITY_CLS[p] ?? PRIORITY_CLS.P3}`}>
       {t("tracker.priorityChip", { p })}
     </span>
   );
@@ -183,6 +184,10 @@ function Card({
 }) {
   const { t } = useTranslation();
   const tier = app.job.score ? scoreTier(app.job.score.score_0_100) : null;
+  // Defensive: an apply-run status this build doesn't know yet must degrade to
+  // the grey "Apply" slot, never crash the whole board render (2026-07-24
+  // unsafe-lookup audit).
+  const applySlot = APPLY_SLOT[app.apply_run_status] ?? APPLY_SLOT.none;
   return (
     <div
       draggable
@@ -273,7 +278,7 @@ function Card({
           />
         </button>
         <button onClick={() => onSlot("refs")} data-testid="card-referrals-slot">
-          <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state]} />
+          <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state] ?? "none"} />
         </button>
         {/* Apply slot (applier.md §8.1/§8.2) — starts a run (or reopens the
             bound one) and opens the companion panel. A card already past
@@ -287,10 +292,7 @@ function Card({
           </span>
         ) : (
           <button onClick={() => onSlot("apply")} data-testid="card-apply-slot">
-            <PacketSlotTag
-              label={t(APPLY_SLOT[app.apply_run_status].labelKey)}
-              state={APPLY_SLOT[app.apply_run_status].state}
-            />
+            <PacketSlotTag label={t(applySlot.labelKey)} state={applySlot.state} />
           </button>
         )}
       </div>
@@ -414,12 +416,27 @@ export function Tracker() {
       setApplierPanel({ appId: app.id, runId: app.apply_run_id });
       return;
     }
-    const run = await Promise.resolve(startApply.mutateAsync({ applicationId: app.id }));
-    if (run) setApplierPanel({ appId: app.id, runId: run.id });
+    // Failure is logged + bannered by the global MutationCache hook — this
+    // catch only stops the unhandled rejection (2026-07-24 audit).
+    try {
+      const run = await Promise.resolve(startApply.mutateAsync({ applicationId: app.id }));
+      if (run) setApplierPanel({ appId: app.id, runId: run.id });
+    } catch {
+      /* surfaced globally */
+    }
   }
 
   const detail = apps.find((a) => a.id === detailId) ?? null;
   const popupApp = popup ? apps.find((a) => a.id === popup.appId) : undefined;
+  // The ⋮ menu's card, resolved defensively: the list can refetch WITHOUT the
+  // card while the menu is open (archived via the detail modal — the open card
+  // sits above the menu backdrop and stays clickable — or from another window).
+  // A stale id must degrade to "menu closed", never render and crash
+  // (2026-07-24 customer-reported crash: `app.packet_state` of undefined).
+  const menuApp = menu ? (apps.find((a) => a.id === menu.id) ?? null) : null;
+  useEffect(() => {
+    if (menu && !menuApp) setMenu(null);
+  }, [menu, menuApp]);
 
   return (
     <>
@@ -520,7 +537,13 @@ export function Tracker() {
                     <Card
                       key={app.id}
                       app={app}
-                      onOpen={() => setDetailId(app.id)}
+                      onOpen={() => {
+                        // A card with its menu open stays clickable (it lifts
+                        // above the backdrop) — opening the detail dismisses
+                        // the popover instead of leaving it stranded beneath.
+                        setDetailId(app.id);
+                        setMenu(null);
+                      }}
                       onDragStart={() => setDragId(app.id)}
                       onDragEnd={() => setDragId(null)}
                       onSlot={(kind) => {
@@ -623,9 +646,9 @@ export function Tracker() {
       ) : null}
 
       {/* 3-dot menu */}
-      {menu ? (
+      {menu && menuApp ? (
         <CardMenu
-          app={apps.find((a) => a.id === menu.id)!}
+          app={menuApp}
           anchor={menu.anchor}
           onClose={() => setMenu(null)}
           onGenerate={(label) => {
@@ -770,7 +793,7 @@ function AttachedDocuments({ docs }: { docs: ApplicationDocument[] }) {
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink-2 hover:border-accent hover:text-ink"
           >
             <Icon name="file" size={13} strokeWidth={2} />
-            {t(DOC_KIND_KEY[doc.kind])}
+            {t(DOC_KIND_KEY[doc.kind] ?? doc.kind)}
             <span className="max-w-[160px] truncate text-ink-4">· {doc.filename}</span>
           </button>
         ))}
@@ -1241,6 +1264,7 @@ function DetailModal({
               ) : null}
               <button
                 onClick={onArchive}
+                data-testid="detail-archive-btn"
                 className="ml-auto rounded-md border border-bad/40 px-3 py-1.5 text-[12.5px] text-bad hover:bg-bad-wash"
               >
                 {t("tracker.archive")}
@@ -1429,7 +1453,11 @@ function CardMenu({
             </button>
           </>
         ) : null}
-        <button onClick={onArchive} className="rounded px-3 py-2 text-left text-bad hover:bg-bad-wash">
+        <button
+          onClick={onArchive}
+          data-testid="card-menu-archive"
+          className="rounded px-3 py-2 text-left text-bad hover:bg-bad-wash"
+        >
           {t("tracker.archive")}
         </button>
       </div>
@@ -1440,6 +1468,11 @@ function CardMenu({
 function ArchiveModal({ archived, onClose }: { archived: Application[]; onClose: () => void }) {
   const { t } = useTranslation();
   const unarchive = useUnarchiveApplication();
+  const deleteForever = useDeleteApplicationForever();
+  // Two-step per-row confirm before the irreversible delete — same pattern as
+  // the Job Board's Trash modal (US-JB-11 ethos: the user signs off on every
+  // irreversible action).
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   return (
     <Modal title={t("tracker.deletedApplications")} onClose={onClose} width={520}>
       <div data-testid="deleted-applications-modal" className="px-5 py-4">
@@ -1456,12 +1489,43 @@ function ArchiveModal({ archived, onClose }: { archived: Application[]; onClose:
                   <div className="truncate text-[12.5px] font-medium text-ink">{a.job.title}</div>
                   <div className="text-[11px] text-ink-3">{a.job.company} · {t("tracker.archiveModal.deletedRecently")}</div>
                 </div>
-                <button
-                  onClick={() => unarchive.mutate(a.id)}
-                  className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
-                >
-                  {t("tracker.archiveModal.restore")}
-                </button>
+                {confirmId === a.id ? (
+                  <>
+                    <button
+                      data-testid="deleted-app-delete-forever-confirm-btn"
+                      onClick={() => {
+                        deleteForever.mutate(a.id);
+                        setConfirmId(null);
+                      }}
+                      className="rounded-md border border-bad/40 bg-bad px-2 py-1 text-[11.5px] font-medium text-white hover:opacity-90"
+                    >
+                      {t("tracker.archiveModal.deleteForever")}
+                    </button>
+                    <button
+                      onClick={() => setConfirmId(null)}
+                      className="rounded-md border border-border px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
+                    >
+                      {t("tracker.cancel")}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      data-testid="deleted-app-restore-btn"
+                      onClick={() => unarchive.mutate(a.id)}
+                      className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
+                    >
+                      {t("tracker.archiveModal.restore")}
+                    </button>
+                    <button
+                      data-testid="deleted-app-delete-forever-btn"
+                      onClick={() => setConfirmId(a.id)}
+                      className="rounded-md border border-bad/40 px-2 py-1 text-[11.5px] text-bad hover:bg-bad-wash"
+                    >
+                      {t("tracker.archiveModal.deleteForever")}
+                    </button>
+                  </>
+                )}
               </li>
             ))}
           </ul>

@@ -158,6 +158,33 @@ function ActionCard({
   );
 }
 
+// Deliberate render-crash trigger — proves the route error boundary contains a
+// surface crash to that surface (SurfaceError panel, rail alive) instead of
+// hijacking the whole app (2026-07-24 customer bug). Throws during RENDER: a
+// throw inside the click handler would never reach the router boundary.
+function CrashCard() {
+  const [armed, setArmed] = useState(false);
+  if (armed) {
+    throw new Error("dev: deliberate render crash (error-boundary test)");
+  }
+  return (
+    <div className="rounded-xl border border-border bg-surface p-4">
+      <div className="text-[13px] font-semibold text-ink">Crash this surface</div>
+      <p className="mt-1 text-[12px] text-ink-3">
+        Throws during render — the error boundary must contain it to this
+        surface and log it, leaving the left rail usable.
+      </p>
+      <button
+        onClick={() => setArmed(true)}
+        data-testid="dev-crash-btn"
+        className="mt-3 rounded-md bg-bad px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90"
+      >
+        Crash render
+      </button>
+    </div>
+  );
+}
+
 export function Dev() {
   const expire = useDevExpireCookie();
   const failRunning = useDevFailRunning();
@@ -205,6 +232,7 @@ export function Dev() {
             result={results.seed}
             onRun={() => run("seed", seed)}
           />
+          <CrashCard />
         </div>
       </main>
     </>

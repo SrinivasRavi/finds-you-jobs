@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import i18n from "../i18n";
 import { LeftRail } from "./LeftRail";
+import { MutationErrorBanner } from "./MutationErrorBanner";
 
 /** Listen for the Tauri shell's sidecar supervision events. The shell emitted
  *  `sidecar://fatal` (backend killed, supervisor gave up) into a void — the UI
@@ -51,6 +52,7 @@ export function Layout() {
         ) : null}
         <Outlet />
       </div>
+      <MutationErrorBanner />
     </div>
   );
 }

@@ -450,7 +450,7 @@ export function Analytics() {
                             </span>
                           ) : (
                             <span
-                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] capitalize ${STATE_CLS[e.state]}`}
+                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] capitalize ${STATE_CLS[e.state] ?? "bg-surface-3 text-ink-3"}`}
                             >
                               {e.state}
                             </span>

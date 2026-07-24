@@ -232,6 +232,9 @@ export function useWatchCompany() {
       qc.invalidateQueries({ queryKey: qk.settings });
       qc.invalidateQueries({ queryKey: qk.watchlist });
     },
+    // Both call sites (board watch toggle, finder-prefs tracked roster) render
+    // the failure inline — no global banner.
+    meta: { errorHandledLocally: true },
   });
 }
 /** Background schedules — the preferences modal shows the scan schedule's
@@ -252,6 +255,7 @@ export function useUnwatchCompany() {
       qc.invalidateQueries({ queryKey: qk.discoverySources });
       qc.invalidateQueries({ queryKey: qk.settings });
     },
+    meta: { errorHandledLocally: true },
   });
 }
 /** Per-source efficacy aggregates — the Analytics Discovery tab. */
@@ -383,24 +387,28 @@ export function useTombstoneJob() {
   });
 }
 
-/** Add-by-URL step 1: fetch the pasted URL → editable draft (no persist). */
+/** Add-by-URL step 1: fetch the pasted URL → editable draft (no persist).
+ *  Every call site renders the failure inline — no global banner. */
 export function useJobPreview() {
   return useMutation({
     mutationFn: (url: string): Promise<JobDraft> => Promise.resolve(api.previewJob(url)),
+    meta: { errorHandledLocally: true },
   });
 }
 
-/** Add-by-URL step 2: persist the (edited) draft. */
+/** Add-by-URL step 2: persist the (edited) draft. Failure renders inline. */
 export function useAddJobByUrl() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (draft: JobDraft): Promise<Job> => Promise.resolve(api.addJobByUrl(draft)),
     onSuccess: () => invalidateFeed(qc),
+    meta: { errorHandledLocally: true },
   });
 }
 
 /** "Add a job application" (FR-TR manual-add): log an externally-applied job as
- *  an `origin=manual` tracker card, with optional resume/cover uploads. */
+ *  an `origin=manual` tracker card, with optional resume/cover uploads.
+ *  Failure renders inline in the add-application modal. */
 export function useAddManualApplication() {
   const qc = useQueryClient();
   return useMutation({
@@ -410,6 +418,7 @@ export function useAddManualApplication() {
       qc.invalidateQueries({ queryKey: qk.applications });
       invalidateFeed(qc);
     },
+    meta: { errorHandledLocally: true },
   });
 }
 
@@ -586,6 +595,21 @@ export function useUnarchiveApplication() {
       qc.invalidateQueries({ queryKey: qk.applications });
       qc.invalidateQueries({ queryKey: qk.archived });
       qc.invalidateQueries({ queryKey: qk.activity });
+    },
+  });
+}
+
+/** Permanent per-row delete in the Deleted Applications modal. The job may
+ *  resurface in Discover (same semantics as the retention purge) — hence the
+ *  feed invalidation. */
+export function useDeleteApplicationForever() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => Promise.resolve(api.deleteApplicationForever(id)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.archived });
+      qc.invalidateQueries({ queryKey: qk.applications });
+      invalidateFeed(qc);
     },
   });
 }

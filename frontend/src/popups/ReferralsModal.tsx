@@ -309,23 +309,31 @@ export function ReferralsModal({
     setFailures({});
     setSkippedCount(0);
     setPhase("sending");
-    const res = await Promise.resolve(
-      reachOut.mutateAsync({ job_id: jobId, application_id: applicationId, contacts: picks }),
-    );
-    // Duplicates the sidecar refused never entered flight — drop their spinners.
-    const skipped = res?.skipped_contact_ids ?? [];
-    if (skipped.length > 0) {
-      setSkippedCount(skipped.length);
-      setSendingIds((prev) => {
-        const next = new Set(prev);
-        for (const id of skipped) next.delete(id);
-        return next;
-      });
+    try {
+      const res = await Promise.resolve(
+        reachOut.mutateAsync({ job_id: jobId, application_id: applicationId, contacts: picks }),
+      );
+      // Duplicates the sidecar refused never entered flight — drop their spinners.
+      const skipped = res?.skipped_contact_ids ?? [];
+      if (skipped.length > 0) {
+        setSkippedCount(skipped.length);
+        setSendingIds((prev) => {
+          const next = new Set(prev);
+          for (const id of skipped) next.delete(id);
+          return next;
+        });
+      }
+      await candidatesQ.refetch();
+      await quota.refetch();
+      setSelected(new Set());
+      setPhase("done");
+    } catch {
+      // The batch never entered flight (the global MutationCache hook logs +
+      // banners it) — un-stick every spinner and return to review so the user
+      // can retry, instead of an eternal "sending" (2026-07-24 audit).
+      setSendingIds(new Set());
+      setPhase("review");
     }
-    await candidatesQ.refetch();
-    await quota.refetch();
-    setSelected(new Set());
-    setPhase("done");
   }
 
   // Re-run discovery scoped to a confirmed company (the sidecar caches the choice
@@ -924,8 +932,8 @@ function CandidateRow({
                 {t("popups.referrals.degreeBadge", { degree: degLabel })}
               </span>
             ) : null}
-            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] ${TAG_CLASS[c.audience_tag]}`} data-testid="referrals-row-tag">
-              {t(TAG_LABEL[c.audience_tag])}
+            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] ${TAG_CLASS[c.audience_tag] ?? TAG_CLASS.other}`} data-testid="referrals-row-tag">
+              {t(TAG_LABEL[c.audience_tag] ?? TAG_LABEL.other)}
             </span>
           </div>
           <div className="truncate text-[11.5px] text-ink-3">{c.role} · {c.company}</div>
