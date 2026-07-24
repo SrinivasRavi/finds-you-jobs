@@ -1200,7 +1200,12 @@ async def delete_application(request: Request, application_id: str) -> None:
             raise HTTPException(
                 status_code=404, detail=f"application {application_id!r} not found"
             )
+        # Purge every FK child first (`foreign_keys=ON`): events, uploaded-
+        # document links (manual cards — 2026-07-24 customer bug class), and
+        # apply runs. Artifacts cascade via the ORM relationship.
         repos.application_events.delete_for_application(application_id)
+        repos.application_documents.delete_for_application(application_id)
+        repos.apply_runs.delete_for_application(application_id)
         repos.applications.delete(application_id)
 
 

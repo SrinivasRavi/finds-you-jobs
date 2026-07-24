@@ -771,6 +771,17 @@ class ApplicationDocumentsRepo:
         self._s.flush()
         return link
 
+    def delete_for_application(self, application_id: str) -> int:
+        """Remove an application's document LINKS when the card is purged
+        (`foreign_keys=ON` forbids orphans). The content-addressed `Document`
+        rows and blobs stay — one blob may back many links."""
+        result = self._s.execute(
+            delete(ApplicationDocument).where(
+                ApplicationDocument.application_id == application_id
+            )
+        )
+        return cast("CursorResult[Any]", result).rowcount
+
 
 class ApplicationEventsRepo:
     def __init__(self, session: Session) -> None:
@@ -1237,6 +1248,16 @@ class ApplyRunsRepo:
             .order_by(ApplyRun.started_at.desc(), ApplyRun.id.desc())
         )
         return list(self._s.scalars(stmt))
+
+    def delete_for_application(self, application_id: str) -> int:
+        """Purge an application's runs when the CARD itself is deleted
+        (unsave/return-to-board — the whole record goes; `foreign_keys=ON`
+        forbids orphans). Never used to mutate runs on a live card — those
+        stay append-only evidence."""
+        result = self._s.execute(
+            delete(ApplyRun).where(ApplyRun.application_id == application_id)
+        )
+        return cast("CursorResult[Any]", result).rowcount
 
     def latest_for_application(self, application_id: str) -> ApplyRun | None:
         runs = self.list_for_application(application_id)

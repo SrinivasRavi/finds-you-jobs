@@ -513,7 +513,13 @@ def purge_archived_applications(
     purged: list[str] = []
     with db.repos() as repos:
         for app in repos.applications.list_archived_before(cutoff):
+            # Purge every FK child (`foreign_keys=ON`): events, uploaded-
+            # document links (manual cards — 2026-07-24 bug class), and apply
+            # runs — an archived manual card used to IntegrityError here and
+            # wedge the whole retention pass.
             repos.application_events.delete_for_application(app.id)
+            repos.application_documents.delete_for_application(app.id)
+            repos.apply_runs.delete_for_application(app.id)
             if repos.applications.delete(app.id):
                 purged.append(app.id)
     return purged
