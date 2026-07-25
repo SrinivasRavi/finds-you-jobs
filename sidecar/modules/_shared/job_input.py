@@ -18,7 +18,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .url_guard import GuardedRedirects as _GuardedRedirects
+from .url_guard import url_refusal as _url_refusal
+
 _FETCH_TIMEOUT_S = 20  # matches the Add-by-URL contract (FR-JB-09)
+_MAX_BYTES = 20 * 1024 * 1024  # same cap as scraper/http.py — refuse absurd pages
 
 
 class JobInputError(Exception):
@@ -26,6 +30,15 @@ class JobInputError(Exception):
         self.stage = stage
         self.message = message
         super().__init__(f"[{stage}] {message}")
+
+
+# SSRF guard (F-M1) — the refusal logic + guarded redirect handler live in
+# `_shared/url_guard.py` (one copy, shared with `scraper/http.py` since the
+# 2026-07-25 dedup; see that module's docstring for the design and the
+# documented DNS-rebinding TOCTOU boundary). Refusals here are wrapped in this
+# module's own typed JobInputError at the call site below.
+
+_opener = urllib.request.build_opener(_GuardedRedirects)
 
 
 def _html_to_text(page: str) -> str:
@@ -45,15 +58,23 @@ def resolve_job(job: str) -> str:
     `job` may be: raw JD text, a path to a .md/.txt file, or an http(s) URL.
     """
     if job.startswith(("http://", "https://")):
+        refusal = _url_refusal(job)  # SSRF guard (F-M1) — resolved-IP check
+        if refusal:
+            raise JobInputError("job-fetch", f"refusing to fetch {job}: {refusal}")
         # Scheme is constrained to http(s) by the branch condition above.
         req = urllib.request.Request(  # noqa: S310
             job, headers={"User-Agent": "findsyoujobs/0.0"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT_S) as resp:  # noqa: S310
-                body = resp.read().decode("utf-8", errors="replace")
+            with _opener.open(req, timeout=_FETCH_TIMEOUT_S) as resp:  # noqa: S310
+                raw = resp.read(_MAX_BYTES + 1)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise JobInputError("job-fetch", f"could not fetch {job}: {e}") from e
+        if len(raw) > _MAX_BYTES:  # same cap + style as scraper/http.py (F-L8)
+            raise JobInputError(
+                "job-fetch", f"{job} returned more than {_MAX_BYTES} bytes; refusing"
+            )
+        body = raw.decode("utf-8", errors="replace")
         text = _html_to_text(body)
         if len(text) < 200:
             raise JobInputError(

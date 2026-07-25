@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import hmac
 
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Paths reachable without a token.
 OPEN_PATHS = frozenset({"/healthz"})
@@ -50,18 +49,33 @@ def token_ok(presented: str | None, expected: str) -> bool:
     return hmac.compare_digest(presented, expected)
 
 
-class BearerAuthMiddleware(BaseHTTPMiddleware):
-    """Rejects any non-open request lacking a valid bearer token with 401."""
+class BearerAuthMiddleware:
+    """Rejects any non-open request lacking a valid bearer token with 401.
+
+    Pure ASGI on purpose (F-M10): BaseHTTPMiddleware wraps every response in a
+    per-request task group that buffers streams and has documented quirks around
+    client-disconnect propagation — wrapping the app-lifetime `/api/events` SSE
+    stream in it could delay unsubscribe after the webview drops. Same reason
+    `main.py`'s flight-recorder middleware is pure ASGI."""
 
     def __init__(self, app: ASGIApp, *, token: str) -> None:
-        super().__init__(app)
+        self.app = app
         self._token = token
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        # Request(scope) is a cheap view over the scope (no body access) — it
+        # keeps header/query parsing identical to the old Starlette path.
+        request = Request(scope)
         if request.url.path in OPEN_PATHS:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
         if not token_ok(extract_token(request), self._token):
-            return JSONResponse(
+            response = JSONResponse(
                 {"detail": "missing or invalid bearer token"}, status_code=401
             )
-        return await call_next(request)
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)

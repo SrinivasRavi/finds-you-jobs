@@ -294,10 +294,16 @@ export function ApplierPanel({
   const totalFields = run?.fields.length ?? 0;
 
   async function onRetry() {
-    const fresh = await Promise.resolve(
-      startApply.mutateAsync({ applicationId, retryOfRunId: runId }),
-    );
-    if (fresh) onRebind(fresh.id);
+    // Failure is logged + bannered by the global MutationCache hook — the
+    // catch only stops the unhandled rejection (2026-07-24 audit).
+    try {
+      const fresh = await Promise.resolve(
+        startApply.mutateAsync({ applicationId, retryOfRunId: runId }),
+      );
+      if (fresh) onRebind(fresh.id);
+    } catch {
+      /* surfaced globally */
+    }
   }
 
   const title = t("popups.applier.title", { role, company });

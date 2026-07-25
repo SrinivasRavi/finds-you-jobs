@@ -9,11 +9,18 @@ urllib directly.
 from __future__ import annotations
 
 import json
+import random
+import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from urllib.parse import urlsplit
 
-from .types import ScraperError, Usage
+from .._shared.url_guard import GuardedRedirects as _GuardedRedirects
+from .._shared.url_guard import url_refusal
+from .types import RateLimitError, ScraperError, Usage
 
 USER_AGENT = "findsyoujobs/0.0 (+https://github.com/findsyoujobs)"
 MAX_BYTES = 20 * 1024 * 1024  # refuse absurd payloads before json.loads
@@ -35,6 +42,72 @@ BROWSER_HEADERS: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# SSRF guard (F-M1) — the refusal logic + guarded redirect handler live in
+# `_shared/url_guard.py` (one copy, shared with `_shared/job_input.py` since
+# the 2026-07-25 dedup; see that module's docstring for the design and the
+# documented DNS-rebinding TOCTOU boundary). Refusals here are wrapped in the
+# Scraper's own typed ScraperError at the call sites below.
+# ---------------------------------------------------------------------------
+
+_opener = urllib.request.build_opener(_GuardedRedirects)
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit handling (F-M9). A 429 raises the typed RateLimitError and opens
+# an in-memory per-host cool-down so the next scan (same sidecar process)
+# skips the host without re-bursting it. Process-local by design: persisting
+# it would need an app-layer schema (the Brave monthly ledger lives in
+# app/registry, out of this module's reach); a sidecar restart forgiving the
+# cool-down is proportionate for a single-user desktop app.
+# ---------------------------------------------------------------------------
+
+_COOLDOWN_DEFAULT_S = 60.0
+_COOLDOWN_MAX_S = 15 * 60.0  # a hostile Retry-After can't brick a source for days
+_cooldown_lock = threading.Lock()
+_cooldowns: dict[str, float] = {}  # host → time.monotonic() deadline
+
+# Jittered pause between a paginating adapter's page requests (F-M9) — keeps a
+# MAX_PAGES loop from reading as burst traffic to one host. Adapters run on
+# scan()'s worker threads (never the event loop), so time.sleep is safe here.
+PAGE_PAUSE_RANGE_S: tuple[float, float] = (0.3, 0.9)
+
+
+def page_pause() -> None:
+    """Sleep a small jittered interval between page fetches (worker threads)."""
+    time.sleep(random.uniform(*PAGE_PAUSE_RANGE_S))  # noqa: S311 — jitter, not crypto
+
+
+def _retry_after_s(value: str | None) -> float:
+    """Seconds from a Retry-After header (delta or HTTP-date), clamped to
+    [0, _COOLDOWN_MAX_S]; the default cool-down when absent/unparseable."""
+    if not value:
+        return _COOLDOWN_DEFAULT_S
+    value = value.strip()
+    if value.isdigit():
+        return min(float(value), _COOLDOWN_MAX_S)
+    try:
+        dt = parsedate_to_datetime(value)
+    except ValueError:
+        return _COOLDOWN_DEFAULT_S
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    delta = (dt - datetime.now(UTC)).total_seconds()
+    if delta <= 0:
+        return _COOLDOWN_DEFAULT_S
+    return min(delta, _COOLDOWN_MAX_S)
+
+
+def _cooldown_remaining(host: str) -> float:
+    with _cooldown_lock:
+        return _cooldowns.get(host, 0.0) - time.monotonic()
+
+
+def _start_cooldown(host: str, seconds: float) -> None:
+    with _cooldown_lock:
+        _cooldowns[host] = max(_cooldowns.get(host, 0.0), time.monotonic() + seconds)
+
+
 class Fetcher:
     """GET text/JSON over http(s), recording call count + latency into `usage`."""
 
@@ -52,6 +125,13 @@ class Fetcher:
     ) -> str:
         if not url.startswith(("http://", "https://")):
             raise ScraperError("fetch", f"refusing non-http(s) URL: {url}")
+        refusal = url_refusal(url)  # SSRF guard (F-M1) — resolved-IP check
+        if refusal:
+            raise ScraperError("fetch", f"refusing to fetch {url}: {refusal}")
+        host = urlsplit(url).hostname or ""
+        remaining = _cooldown_remaining(host)  # F-M9 — no request during cool-down
+        if remaining > 0:
+            raise RateLimitError(url, remaining, cooling_down=True)
         # `headers` (e.g. BROWSER_HEADERS for search adapters) replaces the
         # default honest UA; callers own the policy choice (see module notes).
         merged = dict(headers) if headers else {"User-Agent": USER_AGENT}
@@ -61,10 +141,16 @@ class Fetcher:
         req = urllib.request.Request(url, data=data, headers=merged)  # noqa: S310
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(  # noqa: S310
+            with _opener.open(  # noqa: S310 — scheme + resolved-IP checked above
                 req, timeout=timeout_s if timeout_s is not None else self.timeout_s
             ) as resp:
                 body = resp.read(MAX_BYTES + 1)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:  # typed rate-limit + cool-down (F-M9)
+                retry_after = _retry_after_s(e.headers.get("Retry-After"))
+                _start_cooldown(host, retry_after)
+                raise RateLimitError(url, retry_after) from e
+            raise ScraperError("fetch", f"could not fetch {url}: {e}") from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise ScraperError("fetch", f"could not fetch {url}: {e}") from e
         finally:

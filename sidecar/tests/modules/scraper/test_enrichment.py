@@ -76,6 +76,25 @@ def test_scan_enrichment_failure_keeps_row_and_records_error():
     assert any("enrich" in e and "429 slow down" in e for e in report.errors)
 
 
+def test_scan_enrichment_contains_unexpected_exception():
+    """F-H6 — a non-ScraperError out of fetch_detail is contained per row,
+    keeping the row and the rest of the scan."""
+    config = PortalsConfig(sources=[SourceEntry(board="linkedin")])
+    result = scan(
+        config,
+        ScanPrefs(title_allow=["backend engineer"]),
+        fetcher_factory=routed(
+            {
+                "seeMoreJobPostings/search": "linkedin_guest.html",
+                "jobs-guest/jobs/api/jobPosting/": TypeError("adapter bug"),
+            }
+        ),
+    )
+    report = result.per_source["linkedin:linkedin"]
+    assert result.jobs, "rows survive a crashed enrichment"
+    assert any("unexpected TypeError: adapter bug" in e for e in report.errors)
+
+
 def test_enrich_cap_bounds_detail_fetches():
     calls = {"n": 0}
 

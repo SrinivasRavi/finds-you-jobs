@@ -56,7 +56,7 @@ const networking = {
   detail: {
     linkedin: "LinkedIn",
     lastMessage: "Last message",
-    archive: "Archive",
+    archive: "Delete",
   },
   add: {
     title: "Add a contact",

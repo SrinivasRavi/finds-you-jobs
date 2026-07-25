@@ -78,6 +78,8 @@ test("SSE stream state survives a sidecar restart", async ({ page, request }) =>
     await expect(page.getByTestId("sse-status")).toHaveText("reconnecting", {
       timeout: 15_000,
     });
+    // The outage is visible on the main chrome, not just /dev (F-M5).
+    await expect(page.getByTestId("stream-reconnecting-banner")).toBeVisible();
     await page.screenshot({ path: `${DIR}/reconnecting.png`, fullPage: true });
 
     // Bring it back on the same port + token; EventSource retry finds it.
@@ -85,6 +87,7 @@ test("SSE stream state survives a sidecar restart", async ({ page, request }) =>
     await expect(page.getByTestId("sse-status")).toHaveText("live", {
       timeout: 30_000,
     });
+    await expect(page.getByTestId("stream-reconnecting-banner")).toBeHidden();
     await expect(page.getByTestId("ops-count")).toContainText(
       "operations recorded:",
     );

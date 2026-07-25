@@ -137,6 +137,12 @@ const hi: DeepPartial<Messages> = {
     allSetSettings: "सेटिंग्स में प्रदाता + नेटवर्किंग समायोजित करें",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "नई भूमिकाओं की खोज हो रही है",
+      scoring: "AI नई मिली नौकरियों का मूल्यांकन कर रहा है",
+      done: "पूर्ण",
+      count: "{{found}} में से {{done}}",
+    },
     header: {
       masterResume: "मास्टर रेज़्यूमे",
       masterResumeTitle:
@@ -320,12 +326,12 @@ const hi: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "हटाई गई जॉब्स",
-      retention: "ट्रैश की जॉब्स 7 दिन बाद स्थायी रूप से मिट जाती हैं।",
-      emptyConfirm_one: "ट्रैश खाली करें? {{count}} जॉब स्थायी रूप से मिट जाएगी।",
-      emptyConfirm_other: "ट्रैश खाली करें? {{count}} जॉब्स स्थायी रूप से मिट जाएँगी।",
+      retention: "हटाई गई जॉब्स 7 दिन बाद स्थायी रूप से मिट जाती हैं।",
+      emptyConfirm_one: "सब हमेशा के लिए मिटाएँ? {{count}} जॉब स्थायी रूप से मिट जाएगी।",
+      emptyConfirm_other: "सब हमेशा के लिए मिटाएँ? {{count}} जॉब्स स्थायी रूप से मिट जाएँगी।",
       confirm: "पुष्टि करें",
       cancel: "रद्द करें",
-      emptyTrash: "ट्रैश खाली करें",
+      emptyTrash: "सब हमेशा के लिए मिटाएँ",
       empty: "कोई हटाई गई जॉब नहीं।",
       removedRecently: "{{company}} · हाल में हटाई गई",
       deleteForever: "हमेशा के लिए मिटाएँ",
@@ -337,7 +343,7 @@ const hi: DeepPartial<Messages> = {
     deletedApplications: "हटाए गए आवेदन",
     addApplication: "जॉब आवेदन जोड़ें",
     cancel: "रद्द करें",
-    archive: "आर्काइव करें",
+    archive: "हटाएँ",
     moveToDiscover: "जॉब खोज में ले जाएँ",
     stage: {
       Saved: "सहेजी गई",
@@ -460,6 +466,7 @@ const hi: DeepPartial<Messages> = {
       empty: "कोई हटाया गया आवेदन नहीं।",
       deletedRecently: "हाल में हटाया गया",
       restore: "वापस लाएँ",
+      deleteForever: "हमेशा के लिए मिटाएँ",
     },
   },
   networking: {
@@ -519,7 +526,7 @@ const hi: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "अंतिम संदेश",
-      archive: "आर्काइव करें",
+      archive: "हटाएँ",
     },
     add: {
       title: "संपर्क जोड़ें",
@@ -590,6 +597,8 @@ const hi: DeepPartial<Messages> = {
       retried: "दोबारा चला",
       retry: "फिर कोशिश करें",
       retrying: "फिर कोशिश हो रही है…",
+      stop: "रोकें",
+      stopping: "रोका जा रहा है…",
       restarted: "जनरेशन के दौरान ऐप रीस्टार्ट हुआ।",
       seconds: "{{value}}s",
       costUnknown: "इस मॉडल की लागत अज्ञात है",
@@ -849,12 +858,12 @@ const hi: DeepPartial<Messages> = {
         "कनेक्शन अनुरोध जो इतने दिनों तक स्वीकृत नहीं हुआ (या स्वीकृत हुआ पर जवाब नहीं मिला)।",
       contactPurgeLabel: "हटाए संपर्क स्थायी रूप से मिटाएँ, इतने बाद",
       contactPurgeHint: "आपके हटाए संपर्क इतने दिनों बाद स्थायी रूप से मिट जाते हैं।",
-      trashedJobsLabel: "ट्रैश की जॉब्स स्थायी रूप से मिटाएँ, इतने बाद",
+      trashedJobsLabel: "हटाई गई जॉब्स स्थायी रूप से मिटाएँ, इतने बाद",
       trashedJobsHint:
-        "ट्रैश की जॉब्स इतने दिनों बाद स्थायी रूप से मिट जाती हैं (और दोबारा स्क्रैप नहीं होतीं)।",
-      archivedAppsLabel: "आर्काइव किए आवेदन स्थायी रूप से मिटाएँ, इतने बाद",
+        "हटाई गई जॉब्स इतने दिनों बाद स्थायी रूप से मिट जाती हैं (और दोबारा स्क्रैप नहीं होतीं)।",
+      archivedAppsLabel: "हटाए गए आवेदन स्थायी रूप से मिटाएँ, इतने बाद",
       archivedAppsHint:
-        "आर्काइव किए ट्रैकर कार्ड और उनके दस्तावेज़ इतने दिनों बाद स्थायी रूप से मिट जाते हैं।",
+        "हटाए गए ट्रैकर कार्ड और उनके दस्तावेज़ इतने दिनों बाद स्थायी रूप से मिट जाते हैं।",
       syncCadenceLabel: "LinkedIn पर संपर्क अपडेट जाँचें, हर",
       syncCadenceHint:
         "LinkedIn से आपके संपर्कों की स्थिति कितनी बार ताज़ा हो (केवल जब रेफ़रल आउटरीच चालू और जुड़ा हो)।",
@@ -1111,6 +1120,8 @@ const hi: DeepPartial<Messages> = {
     moreDetail: "अधिक विवरण",
     deletedSizerLabel: "हटाए गए आवेदन",
     bootSplash: "स्थानीय बैकएंड शुरू हो रहा है… पहली बार में थोड़ा समय लग सकता है।",
+    streamReconnecting:
+      "स्थानीय बैकएंड से दोबारा कनेक्ट हो रहा है… लाइव अपडेट रुके हुए हैं और अपने आप अप-टू-डेट हो जाएँगे।",
     backendStoppedFallback: "बैकएंड ने जवाब देना बंद कर दिया",
     sidecarFatalBanner:
       "बैकएंड रुक गया: {{message}}। ऐप बंद करके दोबारा खोलने तक कुछ भी सहेजा नहीं जाएगा।",
@@ -1118,6 +1129,17 @@ const hi: DeepPartial<Messages> = {
       remote: "रिमोट",
       hybrid: "हाइब्रिड",
       onsite: "ऑनसाइट",
+    },
+    surfaceError: {
+      title: "यहाँ कुछ गड़बड़ हो गई",
+      body: "इस व्यू में एक अप्रत्याशित त्रुटि आई, जिसे यहीं रोक दिया गया — ऐप का बाकी हिस्सा काम करता रहेगा और आपका डेटा सुरक्षित है। तकनीकी विवरण डेवलपर कंसोल में दर्ज कर दिए गए हैं।",
+      reload: "ऐप फिर से लोड करें",
+    },
+    mutationError: {
+      body: "वह बदलाव सहेजा नहीं गया — लोकल बैकएंड से संपर्क करते समय ऐप में त्रुटि आई।",
+      dismiss: "हटाएँ",
+      more_one: "+{{count}} पहले की विफलता नहीं दिखाई गई",
+      more_other: "+{{count}} पहले की विफलताएँ नहीं दिखाई गईं",
     },
     rescore: {
       title: "जॉब्स AI से दोबारा स्कोर करें?",

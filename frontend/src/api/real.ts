@@ -64,6 +64,7 @@ import type {
   OperationKind,
   Profile,
   RescorePreview,
+  ScanProgress,
   Settings,
   Warmth,
 } from "./types";
@@ -88,10 +89,26 @@ type QuotaDTO = components["schemas"]["QuotaDTO"];
 type LinkedInSessionDTO = components["schemas"]["LinkedInSessionDTO"];
 type ApplyRunDTO = components["schemas"]["ApplyRunDTO"];
 type RescorePreviewDTO = components["schemas"]["RescorePreviewDTO"];
+type ScanProgressDTO = components["schemas"]["ScanProgressDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
-const LLM_KINDS: OperationKind[] = ["score", "tailor", "cover", "extract", "prep"];
+// The routable LLM kinds, pinned to the sidecar's `LlmKind` schema (emitted
+// from registry/engine_config.LLM_KINDS via `pnpm codegen`, F-L3). The Record
+// makes drift a COMPILE error in both directions: a kind the sidecar retires
+// is an excess key, a kind it adds is a missing one. (The hand-mirrored list
+// this replaces had drifted — it still carried the retired `prep` and missed
+// the live `draft`/`apply`, so those two rows never showed in Settings.)
+type LlmKind = components["schemas"]["LlmKind"];
+const LLM_KIND_ROWS: Record<LlmKind, true> = {
+  score: true,
+  tailor: true,
+  cover: true,
+  extract: true,
+  draft: true,
+  apply: true,
+};
+const LLM_KINDS = Object.keys(LLM_KIND_ROWS) as LlmKind[];
 
 // ─── column ⇄ stage (restored from the prior repo's real.ts) ────────────────
 
@@ -441,6 +458,20 @@ export class RealApi {
     };
   }
 
+  /** Board-level scan + scoring progress (observed-issue #2) — the Rescan status
+   *  pill's data. Derived server-side from the ledger; cheap enough to poll while
+   *  a scan/scoring cycle is live (the query gates its own polling to that window). */
+  async getScanProgress(): Promise<ScanProgress> {
+    const d = await this.req<ScanProgressDTO>("/api/scan/progress");
+    return {
+      scan_running: d.scan_running,
+      last_scan_at: d.last_scan_at ?? null,
+      new_found: d.new_found,
+      score_pending: d.score_pending,
+      score_done: d.score_done,
+    };
+  }
+
   /** Trashed jobs (US-JB-11) — the Trash modal's own source, kept off the board. */
   async listTrash(): Promise<Job[]> {
     const jobs = await this.req<JobDTO[]>("/api/jobs?feed_state=removed");
@@ -450,8 +481,12 @@ export class RealApi {
   async getJob(id: string): Promise<Job | undefined> {
     try {
       return toJob(await this.req<JobDTO>(`/api/jobs/${id}`), false);
-    } catch {
-      return undefined;
+    } catch (e) {
+      // Only a true 404 means "no such job". Anything else (500, auth,
+      // network) must propagate — masking it as undefined made a transient
+      // failure render as "(job removed)" (2026-07-24 graceful-failure audit).
+      if (e instanceof ApiError && e.status === 404) return undefined;
+      throw e;
     }
   }
 
@@ -593,8 +628,11 @@ export class RealApi {
     try {
       const d = await this.req<ApplicationDTO>(`/api/applications/${id}`);
       return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
-    } catch {
-      return undefined;
+    } catch (e) {
+      // 404 → genuinely gone; every other failure propagates instead of
+      // masquerading as "not found" (2026-07-24 graceful-failure audit).
+      if (e instanceof ApiError && e.status === 404) return undefined;
+      throw e;
     }
   }
 
@@ -668,6 +706,14 @@ export class RealApi {
   }
 
   async returnToBoard(id: string): Promise<void> {
+    await this.req(`/api/applications/${id}`, { method: "DELETE" });
+  }
+
+  /** Permanently delete an archived card (Deleted Applications modal). Same
+   *  endpoint as returnToBoard — the card and its children go, the underlying
+   *  job survives and may resurface in Discover (mirrors the FR-SYS-06
+   *  retention purge semantics). */
+  async deleteApplicationForever(id: string): Promise<void> {
     await this.req(`/api/applications/${id}`, { method: "DELETE" });
   }
 
@@ -1149,8 +1195,12 @@ export class RealApi {
         attributes: s.attributes as Record<string, unknown>,
         events: (s.events as { name: string; attributes: Record<string, unknown> }[]) ?? [],
       }));
-    } catch {
-      return [];
+    } catch (e) {
+      // Only a true 404 (no such operation) means "no spans". Anything else
+      // (500, auth, network) must propagate — masking it as [] rendered a
+      // transient failure as an empty drill-down (F-L7, same pattern as getJob).
+      if (e instanceof ApiError && e.status === 404) return [];
+      throw e;
     }
   }
 
@@ -1173,11 +1223,34 @@ export class RealApi {
     };
   }
 
+  /** Stop a queued/running op (F-M7 Stop button). 202 with the honest
+   *  post-cancel state; 404 unknown; 409 when nothing can honestly cancel. */
+  async cancelOperation(id: string): Promise<Operation> {
+    const d = (await this.json("POST", `/api/operations/${id}/cancel`, {})) as {
+      id: string;
+      kind: string;
+      state: string;
+    };
+    return {
+      id: d.id,
+      kind: d.kind as OperationKind,
+      state: d.state as Operation["state"],
+      progress: 0,
+      step: d.state,
+      usage: null,
+      error: null,
+      created_at: new Date().toISOString(),
+    };
+  }
+
   async getOperation(id: string): Promise<Operation | undefined> {
     try {
       return toOperation(await this.req<OperationDTO>(`/api/operations/${id}`));
-    } catch {
-      return undefined;
+    } catch (e) {
+      // Only a true 404 means "no such operation" — everything else propagates
+      // (F-L7, same pattern as getJob).
+      if (e instanceof ApiError && e.status === 404) return undefined;
+      throw e;
     }
   }
 

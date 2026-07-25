@@ -1,6 +1,6 @@
 [package]
 name = "finds-you-jobs"
-version = "0.5.3"
+version = "0.5.4"
 description = "finds-you-jobs desktop shell"
 authors = ["Srinivas Ravi"]
 license = "AGPL-3.0-only"
@@ -25,6 +25,9 @@ serde_json = "1"
 ureq = { version = "2", default-features = false }
 # Native message box for the AM1 "backend failed to start" fatal dialog.
 rfd = "0.15"
+# Strict parsing of untrusted outbound URLs in open_external (F-H1). Already
+# in the dependency graph transitively via tauri — no new compilation units.
+url = "2"
 
 # Second-launch guard: a re-run (or a dev relaunch beside a surviving window)
 # focuses the existing instance instead of opening a second app + sidecar.

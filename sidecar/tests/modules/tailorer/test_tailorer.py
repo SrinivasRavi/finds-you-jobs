@@ -201,3 +201,53 @@ def test_tailor_retries_parse_contract_failure_and_sums_billed_usage():
 def test_dry_run_prompt_contains_skill_and_inputs_without_llm():
     out = dry_run_prompt(MASTER, str(JD_PATH))
     assert "SYSTEM (skill)" in out and "Tenet Loader" in out and "Glean" in out or "glean" in out
+
+
+# ---------------------------------------------------------------------------
+# Retry classification (technical audit F-H5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _record_backoff_no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Backoff delays are classified and recorded but never slept — semantics
+    under test, not wall-clock waits (the wait itself is unit-tested in
+    tests/modules/shared/test_completion_retry.py)."""
+    import sidecar.modules.tailorer.tailorer as tailorer_mod
+
+    waits: list[float] = []
+    monkeypatch.setattr(
+        tailorer_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
+    )
+    return waits
+
+
+def test_tailor_fails_fast_on_deterministic_rejection(
+    _record_backoff_no_sleep: list[float],
+) -> None:
+    calls = {"n": 0}
+
+    class Rejecting:
+        def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+            calls["n"] += 1
+            raise EngineError("LLM API 401: invalid api key", status=401)
+
+    with pytest.raises(EngineError, match="invalid api key"):
+        tailor(MASTER, str(JD_PATH), engine=Rejecting())
+    assert calls["n"] == 1  # no second attempt, no backoff
+    assert _record_backoff_no_sleep == []
+
+
+def test_tailor_cancel_checkpoint_precedes_any_attempt() -> None:
+    from sidecar.modules._shared.completion_retry import CompletionCancelled
+
+    calls = {"n": 0}
+
+    class Never:
+        def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+            calls["n"] += 1
+            raise AssertionError("must not be reached")
+
+    with pytest.raises(CompletionCancelled):
+        tailor(MASTER, str(JD_PATH), engine=Never(), cancelled=lambda: True)
+    assert calls["n"] == 0

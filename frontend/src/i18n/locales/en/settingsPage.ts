@@ -238,14 +238,14 @@ const settingsPage = {
     sentGhostedLabel: "Mark an unanswered request “ghosted” after",
     sentGhostedHint:
       "A connection request never accepted (or accepted but never replied to) this many days.",
-    contactPurgeLabel: "Delete removed contacts for good after",
-    contactPurgeHint: "Contacts you deleted are erased permanently this many days later.",
-    trashedJobsLabel: "Delete trashed jobs for good after",
+    contactPurgeLabel: "Erase deleted contacts for good after",
+    contactPurgeHint: "Deleted contacts are erased permanently this many days later.",
+    trashedJobsLabel: "Erase deleted jobs for good after",
     trashedJobsHint:
-      "Jobs in Trash are erased permanently (and won't be re-scraped) this many days later.",
-    archivedAppsLabel: "Delete archived applications for good after",
+      "Deleted jobs are erased permanently (and won't be re-scraped) this many days later.",
+    archivedAppsLabel: "Erase deleted applications for good after",
     archivedAppsHint:
-      "Archived tracker cards and their documents are erased permanently this many days later.",
+      "Deleted tracker cards and their documents are erased permanently this many days later.",
     syncCadenceLabel: "Check LinkedIn for contact updates every",
     syncCadenceHint:
       "How often to refresh your contacts' status from LinkedIn (only while Referral Outreach is on and connected).",

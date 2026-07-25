@@ -4,7 +4,7 @@ const tracker = {
   deletedApplications: "Deleted Applications",
   addApplication: "Add a job application",
   cancel: "Cancel",
-  archive: "Archive",
+  archive: "Delete",
   moveToDiscover: "Move to Discover jobs",
   // Kanban stage names — keys are the backend STAGES enum values verbatim; the
   // enum strings themselves are never translated on the wire.
@@ -131,6 +131,7 @@ const tracker = {
     empty: "No deleted applications.",
     deletedRecently: "Deleted recently",
     restore: "Restore",
+    deleteForever: "Delete forever",
   },
 };
 

@@ -38,3 +38,33 @@ def test_handshake_lines_are_machine_parseable() -> None:
     assert port_re.match("PORT=8000")
     assert token_re.match("TOKEN=11111111-2222-3333-4444-555555555555")
     assert not port_re.match("PORT=")
+
+
+def test_dev_handshake_file_is_owner_only(tmp_path, monkeypatch) -> None:
+    """F-L4: the opt-in handshake file carries the bearer token — 0600, always,
+    including when a stale world-readable file is being overwritten."""
+    import json
+    import os
+    import stat
+
+    from sidecar.app.__main__ import _maybe_write_dev_handshake
+
+    target = tmp_path / "handshake.json"
+    monkeypatch.setenv("FYJ_WRITE_HANDSHAKE", str(target))
+    _maybe_write_dev_handshake(4321, "tok-abc")
+    assert json.loads(target.read_text()) == {"port": 4321, "token": "tok-abc"}
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+        # A pre-existing loose file gets clamped on rewrite.
+        os.chmod(target, 0o644)
+        _maybe_write_dev_handshake(4322, "tok-def")
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+        assert json.loads(target.read_text())["port"] == 4322
+
+
+def test_dev_handshake_noop_without_env(tmp_path, monkeypatch) -> None:
+    from sidecar.app.__main__ import _maybe_write_dev_handshake
+
+    monkeypatch.delenv("FYJ_WRITE_HANDSHAKE", raising=False)
+    _maybe_write_dev_handshake(1, "t")
+    assert list(tmp_path.iterdir()) == []

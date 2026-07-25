@@ -14,6 +14,10 @@ export interface SidecarInfo {
 declare global {
   interface Window {
     __TAURI_INTERNALS__?: unknown;
+    // e2e-only handshake override (zzz-reconnect-newport.spec.ts): outside
+    // Tauri there is no shell to re-ask after a sidecar restart, so the spec
+    // injects the respawned sidecar's port + token here.
+    __FYJ_SIDECAR_INFO__?: SidecarInfo;
   }
 }
 
@@ -56,6 +60,8 @@ function fromEnv(): SidecarInfo | null {
  * browser-dev path it falls back to the VITE_SIDECAR_* env vars.
  */
 export async function getSidecarInfo(): Promise<SidecarInfo> {
+  const override = typeof window !== "undefined" ? window.__FYJ_SIDECAR_INFO__ : undefined;
+  if (override) return override;
   const info = (await fromTauri()) ?? fromEnv();
   if (!info) {
     throw new Error(

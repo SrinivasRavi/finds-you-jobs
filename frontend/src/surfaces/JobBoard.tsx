@@ -3,8 +3,9 @@
 // Save/Remove, Add-by-URL, Trash, source filter, master-resume popup.
 // Ports design/prototype/prototype-modal/jobs.html.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../api";
@@ -46,6 +47,7 @@ import { Modal } from "../shell/Modal";
 import { RescoreAiDialog } from "../shell/RescoreAiDialog";
 import { Markdown } from "../shell/Markdown";
 import { ResumeModal } from "../popups/ResumeModal";
+import { ScanProgressPill } from "./ScanProgressPill";
 import {
   firstHeading,
   initials,
@@ -133,15 +135,20 @@ function highlight(text: string, q: string): ReactNode {
   return <>{parts}</>;
 }
 
-function JobRow({
+// Memoized (F-M4): a 1000+-row feed re-ran every row's highlight() scans on
+// each keystroke/click. Props stay memo-friendly — `job` is referentially
+// stable per fetch (boardJobs/visible only rebuild the arrays), `onSelect` is
+// the setState function itself, `q` is the debounced string. useTranslation
+// inside still re-renders rows on a language switch.
+const JobRow = memo(function JobRow({
   job,
   selected,
-  onClick,
+  onSelect,
   q = "",
 }: {
   job: Job;
   selected: boolean;
-  onClick: () => void;
+  onSelect: (id: string) => void;
   q?: string;
 }) {
   const { t } = useTranslation();
@@ -149,7 +156,7 @@ function JobRow({
   const expired = job.board_state === "expired";
   return (
     <button
-      onClick={onClick}
+      onClick={() => onSelect(job.id)}
       data-testid="job-row"
       data-expired={expired}
       data-score-status={job.score_status}
@@ -257,7 +264,7 @@ function JobRow({
       </div>
     </button>
   );
-}
+});
 
 function JobDetail({
   job,
@@ -761,6 +768,20 @@ export function JobBoard() {
 
   const selected = visible.find((j) => j.id === selectedId) ?? visible[0] ?? null;
 
+  // Virtualized list (F-M4): only the on-screen window of rows hits the DOM —
+  // the feed contemplates 1000+ jobs and infinite scroll appends unbounded.
+  // The trailing "Load more" button rides along as one extra virtual row so it
+  // stays exactly where the plain list put it. Row heights vary (wrapping skill
+  // chips, expired label), so measureElement corrects the estimate per row.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rowCount = visible.length + (board.hasNextPage ? 1 : 0);
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 96,
+    overscan: 10,
+  });
+
   function onDrag(e: React.MouseEvent) {
     dragging.current = true;
     const startX = e.clientX;
@@ -787,6 +808,11 @@ export function JobBoard() {
       {/* Topbar */}
       <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
         <h1 className="text-[14px] font-semibold text-ink">{t("nav.jobBoard")}</h1>
+        {/* Board-level Rescan status (observed-issue #2) — renders only while a
+            scan/scoring cycle is live (or just finished); nothing otherwise. */}
+        <div className="ml-3">
+          <ScanProgressPill />
+        </div>
         <div className="ml-auto flex items-center gap-3 py-1.5">
           {/* Master Resume before finder prefs (maintainer 2026-07-23 swap). */}
           <button
@@ -938,6 +964,7 @@ export function JobBoard() {
             </span>
           </div>
           <div
+            ref={listRef}
             role="listbox"
             aria-label={t("jobBoard.list.jobsAria")}
             className="flex-1 overflow-y-auto"
@@ -962,29 +989,44 @@ export function JobBoard() {
                 filteredOut={boardJobs.length > 0 || Boolean(textQ)}
               />
             ) : (
-              <>
-                {visible.map((j) => (
-                  <JobRow
-                    key={j.id}
-                    job={j}
-                    selected={selected?.id === j.id}
-                    onClick={() => setSelectedId(j.id)}
-                    q={textQ}
-                  />
-                ))}
-                {board.hasNextPage ? (
-                  <div className="grid place-items-center py-3">
-                    <button
-                      data-testid="board-load-more"
-                      onClick={() => void board.fetchNextPage()}
-                      disabled={board.isFetchingNextPage}
-                      className="rounded-full border border-border-2 bg-surface px-3 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3 disabled:opacity-50"
+              <div
+                className="relative w-full"
+                style={{ height: rowVirtualizer.getTotalSize() }}
+              >
+                {rowVirtualizer.getVirtualItems().map((vi) => {
+                  const j = visible[vi.index];
+                  return (
+                    <div
+                      key={j?.id ?? "board-load-more"}
+                      data-index={vi.index}
+                      ref={rowVirtualizer.measureElement}
+                      className="absolute left-0 top-0 w-full"
+                      style={{ transform: `translateY(${vi.start}px)` }}
                     >
-                      {board.isFetchingNextPage ? t("jobBoard.list.loading") : t("jobBoard.list.loadMore")}
-                    </button>
-                  </div>
-                ) : null}
-              </>
+                      {j ? (
+                        <JobRow
+                          job={j}
+                          selected={selected?.id === j.id}
+                          onSelect={setSelectedId}
+                          q={textQ}
+                        />
+                      ) : (
+                        // The extra virtual row past the loaded feed.
+                        <div className="grid place-items-center py-3">
+                          <button
+                            data-testid="board-load-more"
+                            onClick={() => void board.fetchNextPage()}
+                            disabled={board.isFetchingNextPage}
+                            className="rounded-full border border-border-2 bg-surface px-3 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3 disabled:opacity-50"
+                          >
+                            {board.isFetchingNextPage ? t("jobBoard.list.loading") : t("jobBoard.list.loadMore")}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>

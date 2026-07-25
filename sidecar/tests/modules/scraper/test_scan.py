@@ -115,6 +115,34 @@ def test_scan_failing_source_never_kills_the_scan():
     assert result.per_source["greenhouse:down"].errors == [str(boom)]  # verbatim
 
 
+def test_scan_contains_unexpected_exception_from_one_source():
+    """F-H6 — a non-ScraperError escaping an adapter (bug, unanticipated feed
+    shape) is contained in that source's report; every other source's results
+    survive and the scan completes."""
+    config = _config(
+        SourceEntry(url="https://boards.greenhouse.io/buggy"),
+        SourceEntry(url="https://boards.greenhouse.io/up", company="Up"),
+    )
+    ok = {
+        "jobs": [
+            {
+                "absolute_url": "https://example.com/jobs/9",
+                "title": "Engineer",
+                "location": {"name": "Mumbai, India"},
+            }
+        ]
+    }
+    result = scan(
+        config,
+        ScanPrefs(),
+        fetcher_factory=routed(
+            {"/boards/buggy/jobs": ValueError("kaput"), "/boards/up/jobs": ok}
+        ),
+    )
+    assert len(result.jobs) == 1  # the healthy source's rows survive
+    assert result.per_source["greenhouse:buggy"].errors == ["unexpected ValueError: kaput"]
+
+
 def test_scan_unresolved_source_reported_not_fatal():
     config = _config(SourceEntry(url="https://jobs.example-unknown-ats.com/acme"))
     result = scan(config, ScanPrefs(), fetcher_factory=routed({}))

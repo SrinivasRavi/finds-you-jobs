@@ -341,3 +341,70 @@ def test_verify_provider_dispatch_and_validation():
 
     # unknown provider
     assert verify_provider("nope", api_key="k", base_url=None).ok is False
+
+
+# ---------------------------------------------------------------------------
+# Error classification plumbing (technical audit F-H5)
+# ---------------------------------------------------------------------------
+
+
+def test_openai_compatible_error_carries_status_and_retry_after():
+    transport = FakeTransport(
+        [
+            HttpResponse(
+                status=429,
+                body=b'{"error": "rate limited"}',
+                headers={"Retry-After": "3"},
+            )
+        ]
+    )
+    engine = OpenAICompatibleEngine(
+        base_url="https://openrouter.ai/api/v1", model="m", api_key="k", transport=transport
+    )
+    with pytest.raises(EngineError, match="rate limited") as ei:
+        engine.complete("", "hi")
+    assert ei.value.status == 429
+    assert ei.value.retry_after_s == 3.0
+
+
+def test_anthropic_error_carries_status_no_retry_after():
+    transport = FakeTransport([_resp(401, {"error": {"message": "invalid x-api-key"}})])
+    engine = AnthropicEngine(api_key="bad", model="claude-opus-4-8", transport=transport)
+    with pytest.raises(EngineError, match="invalid x-api-key") as ei:
+        engine.complete("", "hi")
+    assert ei.value.status == 401
+    assert ei.value.retry_after_s is None
+
+
+def test_retry_after_http_date_header_parses_to_seconds():
+    from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
+
+    when = format_datetime(datetime.now(UTC) + timedelta(seconds=30))
+    transport = FakeTransport(
+        [HttpResponse(status=503, body=b"overloaded", headers={"retry-after": when})]
+    )
+    engine = AnthropicEngine(api_key="k", model="m", transport=transport)
+    with pytest.raises(EngineError) as ei:
+        engine.complete("", "hi")
+    assert ei.value.status == 503
+    assert ei.value.retry_after_s is not None
+    assert 0.0 <= ei.value.retry_after_s <= 31.0
+
+
+def test_unparseable_retry_after_is_honestly_none():
+    transport = FakeTransport(
+        [HttpResponse(status=429, body=b"slow down", headers={"Retry-After": "soonish"})]
+    )
+    engine = AnthropicEngine(api_key="k", model="m", transport=transport)
+    with pytest.raises(EngineError) as ei:
+        engine.complete("", "hi")
+    assert ei.value.retry_after_s is None
+
+
+def test_urllib_transport_refuses_non_http_scheme_fail_fast():
+    from sidecar.app.registry.engines_http import UrllibTransport
+
+    with pytest.raises(EngineError, match="non-http") as ei:
+        UrllibTransport().request("GET", "file:///etc/passwd", headers={})
+    assert ei.value.retryable is False  # a config error — never worth a retry

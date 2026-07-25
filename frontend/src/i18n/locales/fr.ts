@@ -139,6 +139,12 @@ const fr: DeepPartial<Messages> = {
     allSetSettings: "Ajustez fournisseurs et réseau dans Réglages",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Recherche de nouveaux postes",
+      scoring: "L'IA évalue les offres qui viennent d'être trouvées",
+      done: "Terminé",
+      count: "{{done}} sur {{found}}",
+    },
     header: {
       masterResume: "CV de référence",
       masterResumeTitle:
@@ -213,7 +219,7 @@ const fr: DeepPartial<Messages> = {
       matchScore: "Score de correspondance",
       save: "Enregistrer",
       saved: "Enregistrée",
-      remove: "Retirer",
+      remove: "Supprimer",
       toggleResume: "CV",
       toggleCoverLetter: "Lettre de motivation",
       toggleFindReferrals: "Trouver des recommandations",
@@ -225,7 +231,7 @@ const fr: DeepPartial<Messages> = {
         "Le tableau de cette entreprise est couvert à chaque scan — cliquez pour arrêter",
       watchOffTitle: "Scanner tout le tableau de cette entreprise à chaque futur scan",
       adding: "Ajout…",
-      removing: "Retrait…",
+      removing: "Suppression…",
       failedRetry: "Échec — réessayer",
       showMoreFromCompany: "Voir plus d'offres de cette entreprise",
       openPosting: "Ouvrir l'annonce ↗",
@@ -324,12 +330,12 @@ const fr: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "Offres supprimées",
-      retention: "Les offres de la corbeille sont supprimées définitivement après 7 jours.",
-      emptyConfirm_one: "Vider la corbeille ? {{count}} offre sera supprimée définitivement.",
-      emptyConfirm_other: "Vider la corbeille ? {{count}} offres seront supprimées définitivement.",
+      retention: "Les offres supprimées sont effacées définitivement après 7 jours.",
+      emptyConfirm_one: "Tout supprimer définitivement ? {{count}} offre sera effacée définitivement.",
+      emptyConfirm_other: "Tout supprimer définitivement ? {{count}} offres seront effacées définitivement.",
       confirm: "Confirmer",
       cancel: "Annuler",
-      emptyTrash: "Vider la corbeille",
+      emptyTrash: "Tout supprimer définitivement",
       empty: "Aucune offre supprimée.",
       removedRecently: "{{company}} · Supprimée récemment",
       deleteForever: "Supprimer définitivement",
@@ -341,7 +347,7 @@ const fr: DeepPartial<Messages> = {
     deletedApplications: "Candidatures supprimées",
     addApplication: "Ajouter une candidature",
     cancel: "Annuler",
-    archive: "Archiver",
+    archive: "Supprimer",
     moveToDiscover: "Déplacer vers les offres",
     stage: {
       Saved: "Enregistrée",
@@ -467,6 +473,7 @@ const fr: DeepPartial<Messages> = {
       empty: "Aucune candidature supprimée.",
       deletedRecently: "Supprimée récemment",
       restore: "Restaurer",
+      deleteForever: "Supprimer définitivement",
     },
   },
   networking: {
@@ -526,7 +533,7 @@ const fr: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Dernier message",
-      archive: "Archiver",
+      archive: "Supprimer",
     },
     add: {
       title: "Ajouter un contact",
@@ -597,6 +604,8 @@ const fr: DeepPartial<Messages> = {
       retried: "réessayée",
       retry: "Réessayer",
       retrying: "Nouvel essai…",
+      stop: "Arrêter",
+      stopping: "Arrêt en cours…",
       restarted: "L'app a redémarré pendant la génération.",
       seconds: "{{value}} s",
       costUnknown: "coût inconnu pour ce modèle",
@@ -860,15 +869,15 @@ const fr: DeepPartial<Messages> = {
       sentGhostedLabel: "Marquer une invitation restée sans réponse « ghostée » après",
       sentGhostedHint:
         "Une invitation jamais acceptée (ou acceptée mais restée sans réponse) depuis ce nombre de jours.",
-      contactPurgeLabel: "Supprimer définitivement les contacts retirés après",
+      contactPurgeLabel: "Effacer définitivement les contacts supprimés après",
       contactPurgeHint:
-        "Les contacts que vous supprimez sont effacés définitivement ce nombre de jours plus tard.",
-      trashedJobsLabel: "Supprimer définitivement les offres en corbeille après",
+        "Les contacts supprimés sont effacés définitivement ce nombre de jours plus tard.",
+      trashedJobsLabel: "Effacer définitivement les offres supprimées après",
       trashedJobsHint:
-        "Les offres de la corbeille sont effacées définitivement (et ne seront pas re-scrapées) ce nombre de jours plus tard.",
-      archivedAppsLabel: "Supprimer définitivement les candidatures archivées après",
+        "Les offres supprimées sont effacées définitivement (et ne seront pas re-scrapées) ce nombre de jours plus tard.",
+      archivedAppsLabel: "Effacer définitivement les candidatures supprimées après",
       archivedAppsHint:
-        "Les cartes archivées du suivi et leurs documents sont effacés définitivement ce nombre de jours plus tard.",
+        "Les cartes supprimées du suivi et leurs documents sont effacés définitivement ce nombre de jours plus tard.",
       syncCadenceLabel: "Vérifier les mises à jour des contacts sur LinkedIn toutes les",
       syncCadenceHint:
         "Fréquence d'actualisation du statut de vos contacts depuis LinkedIn (seulement quand les demandes de recommandation sont actives et la session connectée).",
@@ -1130,6 +1139,8 @@ const fr: DeepPartial<Messages> = {
     moreDetail: "Plus de détails",
     deletedSizerLabel: "Candidatures supprimées",
     bootSplash: "Démarrage du backend local… le premier lancement peut prendre un moment.",
+    streamReconnecting:
+      "Reconnexion au backend local… les mises à jour en direct sont en pause et se rattraperont automatiquement.",
     backendStoppedFallback: "le backend ne répond plus",
     sidecarFatalBanner:
       "Backend arrêté : {{message}}. Rien de ce que vous faites ne sera enregistré tant que vous n'aurez pas quitté puis rouvert l'app.",
@@ -1137,6 +1148,17 @@ const fr: DeepPartial<Messages> = {
       remote: "Télétravail",
       hybrid: "Hybride",
       onsite: "Sur site",
+    },
+    surfaceError: {
+      title: "Une erreur est survenue ici",
+      body: "Cette vue a rencontré une erreur inattendue qui a été contenue — le reste de l'app continue de fonctionner et vos données sont en sécurité. Les détails techniques ont été consignés dans la console développeur.",
+      reload: "Recharger l'app",
+    },
+    mutationError: {
+      body: "Cette modification n'a pas été enregistrée — l'app a rencontré une erreur en contactant le backend local.",
+      dismiss: "Fermer",
+      more_one: "+{{count}} échec précédent non affiché",
+      more_other: "+{{count}} échecs précédents non affichés",
     },
     rescore: {
       title: "Réévaluer les offres avec l'IA ?",

@@ -8,6 +8,7 @@ propagation (NFR-SIDE-04), and the per-kind concurrency policy — the pure
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -18,7 +19,16 @@ from sidecar.app.registry import (
     OperationOutcome,
     OperationRegistry,
 )
-from sidecar.app.runner import DEFAULT_POLICY, OperationRunner, can_start
+from sidecar.app.registry.engines import EngineRegistry
+from sidecar.app.runner import (
+    DEFAULT_POLICY,
+    EngineCircuitBreaker,
+    OperationRunner,
+    ProviderCircuitOpen,
+    can_start,
+)
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import CompletionCancelled
 
 from .conftest import wait_for_state
 
@@ -431,3 +441,277 @@ def test_llm_concurrency_setting_parses_and_clamps() -> None:
     assert can_start("tailor", ["score"] * 6, raised) is False
     # Only the llm group changed; scan stays single-flight.
     assert can_start("scan", ["scan"], raised) is False
+
+
+# -- cooperative cancel of RUNNING ops (F-M7) ------------------------------
+
+
+def test_cancel_running_operation_lands_cancelled(migrated_db: Database) -> None:
+    """A running op the user cancels notices via ctx.cancelled at a cooperative
+    checkpoint, raises CompletionCancelled, and lands `cancelled` — row + SSE
+    event, no failure entry."""
+    db = migrated_db
+    events: list[dict] = []
+    started = threading.Semaphore(0)
+
+    def _cancellable(ctx: OperationContext) -> OperationOutcome:
+        assert ctx.cancelled is not None
+        started.release()
+        deadline = time.monotonic() + 5
+        while not ctx.cancelled():
+            if time.monotonic() > deadline:
+                raise AssertionError("cancel request never reached the worker")
+            time.sleep(0.02)
+        raise CompletionCancelled("operation cancelled by the user")
+
+    runner = OperationRunner(
+        db, registry=OperationRegistry({"score": _cancellable}), publish=events.append
+    )
+    runner.start()
+    try:
+        op_id = runner.submit("score", {})
+        assert started.acquire(timeout=3)
+        assert runner.cancel(op_id) is True  # accepted for a RUNNING op now
+        assert wait_for_state(db, op_id, "cancelled") == "cancelled"
+    finally:
+        runner.shutdown(drain_timeout=3)
+    states = [e["payload"]["state"] for e in events if e["type"] == "operation"]
+    assert states == ["queued", "running", "cancelled"]
+
+
+def test_cancel_queued_still_works_and_terminal_refuses(migrated_db: Database) -> None:
+    db = migrated_db
+    blocking = _Blocking()
+    runner = OperationRunner(db, registry=OperationRegistry({"scan": blocking}))
+    runner.start()
+    try:
+        first = runner.submit("scan", {})
+        assert blocking.started.acquire(timeout=3)
+        second = runner.submit("scan", {})  # single-flight → stays queued
+        assert runner.cancel(second) is True
+        assert wait_for_state(db, second, "cancelled") == "cancelled"
+        assert runner.cancel("no-such-op") is False
+    finally:
+        blocking.release.set()
+        runner.shutdown(drain_timeout=3)
+    assert wait_for_state(db, first, "succeeded") == "succeeded"
+    assert runner.cancel(first) is False  # terminal ops refuse
+
+
+# -- per-engine circuit breaker (F-H5) -------------------------------------
+
+
+def test_circuit_breaker_opens_half_opens_and_closes() -> None:
+    clock = {"now": 0.0}
+    breaker = EngineCircuitBreaker(threshold=3, cooldown_s=10.0, monotonic=lambda: clock["now"])
+    breaker.record_failure("prov", "boom 1")
+    breaker.record_failure("prov", "boom 2")
+    breaker.check("prov")  # below threshold → still closed
+    breaker.record_failure("prov", "boom 3")  # threshold → opens
+    with pytest.raises(ProviderCircuitOpen, match="new attempts accepted"):
+        breaker.check("prov")
+    clock["now"] = 10.1  # cooldown elapsed
+    assert breaker.check("prov") is True  # half-open: exactly one probe allowed
+    with pytest.raises(ProviderCircuitOpen):
+        breaker.check("prov")  # a second concurrent probe is rejected
+    breaker.record_success("prov")  # the probe succeeded → closed
+    assert breaker.check("prov") is False  # closed — no probe lease held
+
+
+def test_circuit_breaker_abandoned_probe_admits_a_new_probe() -> None:
+    """A probe that ends with NO provider verdict (user cancel, non-EngineError
+    failure) must release its lease — or the circuit wedges open forever."""
+    clock = {"now": 0.0}
+    breaker = EngineCircuitBreaker(threshold=1, cooldown_s=5.0, monotonic=lambda: clock["now"])
+    breaker.record_failure("prov", "down")
+    clock["now"] = 5.1
+    assert breaker.check("prov") is True  # probe lease granted
+    breaker.abandon_probe("prov")  # probe derailed — no verdict on the provider
+    assert breaker.check("prov") is True  # a NEW probe is admitted
+    with pytest.raises(ProviderCircuitOpen):
+        breaker.check("prov")  # …and the circuit is still open for everyone else
+    breaker.record_success("prov")  # the new probe succeeds → closed
+    assert breaker.check("prov") is False
+
+
+def test_circuit_breaker_failed_probe_reopens() -> None:
+    clock = {"now": 0.0}
+    breaker = EngineCircuitBreaker(threshold=1, cooldown_s=5.0, monotonic=lambda: clock["now"])
+    breaker.record_failure("prov", "down")
+    clock["now"] = 5.1
+    breaker.check("prov")  # probe
+    breaker.record_failure("prov", "still down")  # probe failed → re-open from NOW
+    clock["now"] = 7.0
+    with pytest.raises(ProviderCircuitOpen):
+        breaker.check("prov")  # cooldown restarted at 5.1, not elapsed
+    clock["now"] = 10.3
+    breaker.check("prov")  # next probe window
+
+
+def test_circuit_breaker_success_resets_the_streak_and_is_per_engine() -> None:
+    clock = {"now": 0.0}
+    breaker = EngineCircuitBreaker(threshold=3, cooldown_s=10.0, monotonic=lambda: clock["now"])
+    breaker.record_failure("a", "boom")
+    breaker.record_failure("a", "boom")
+    breaker.record_success("a")  # streak broken
+    breaker.record_failure("a", "boom")
+    breaker.record_failure("a", "boom")
+    breaker.check("a")  # 2 consecutive < 3 → closed
+    for _ in range(3):
+        breaker.record_failure("b", "boom")
+    with pytest.raises(ProviderCircuitOpen, match="'b'"):
+        breaker.check("b")
+    breaker.check("a")  # a's circuit is untouched by b's
+
+
+class _StubEngine:
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, dict]:
+        raise AssertionError("the fake entrypoints never call the engine")
+
+
+def _routed_engines(kind: str = "score", name: str = "deadprov") -> EngineRegistry:
+    engines = EngineRegistry()
+    engines.register(name, _StubEngine())
+    engines.route(kind, engine=name)
+    return engines
+
+
+def test_circuit_breaker_fails_fast_after_consecutive_engine_failures(
+    migrated_db: Database,
+) -> None:
+    db = migrated_db
+    calls = {"n": 0}
+    healthy = {"on": False}
+
+    def _entry(ctx: OperationContext) -> OperationOutcome:
+        calls["n"] += 1
+        if healthy["on"]:
+            return OperationOutcome()
+        raise EngineError("LLM API 500: provider down", status=500)
+
+    runner = OperationRunner(
+        db,
+        registry=OperationRegistry({"score": _entry}),
+        engines=_routed_engines(),
+        circuit=EngineCircuitBreaker(threshold=2, cooldown_s=0.3),
+    )
+    runner.start()
+    try:
+        for _ in range(2):
+            op_id = runner.submit("score", {})
+            assert wait_for_state(db, op_id, "failed") == "failed"
+        assert calls["n"] == 2  # both reached the (failing) entrypoint
+
+        blocked = runner.submit("score", {})
+        assert wait_for_state(db, blocked, "failed") == "failed"
+        assert calls["n"] == 2  # rejected at the gate — no slot time burned
+        with db.repos() as repos:
+            op = repos.operations.get(blocked)
+            assert op is not None and op.error is not None
+            # The ledger message names the provider and says it's paused —
+            # distinct from the raw engine error (F-H5). It must NOT claim the
+            # failed op retries itself: only NEW attempts are admitted later.
+            assert "'deadprov'" in op.error and "paused" in op.error
+            assert "new attempts accepted" in op.error
+            assert "retrying automatically" not in op.error
+
+        healthy["on"] = True
+        time.sleep(0.35)  # cooldown → the next op is the half-open probe
+        probe = runner.submit("score", {})
+        assert wait_for_state(db, probe, "succeeded") == "succeeded"
+        after = runner.submit("score", {})  # circuit closed again
+        assert wait_for_state(db, after, "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=3)
+
+
+def test_non_engine_failures_never_feed_the_breaker(migrated_db: Database) -> None:
+    """Module bugs / parse drift say nothing about provider health — ops keep
+    reaching the entrypoint no matter how many fail."""
+    db = migrated_db
+    calls = {"n": 0}
+
+    def _entry(ctx: OperationContext) -> OperationOutcome:
+        calls["n"] += 1
+        raise ValueError("a module bug, not the provider")
+
+    runner = OperationRunner(
+        db,
+        registry=OperationRegistry({"score": _entry}),
+        engines=_routed_engines(),
+        circuit=EngineCircuitBreaker(threshold=2, cooldown_s=60.0),
+    )
+    runner.start()
+    try:
+        for _ in range(4):
+            op_id = runner.submit("score", {})
+            assert wait_for_state(db, op_id, "failed") == "failed"
+        assert calls["n"] == 4  # never gated
+    finally:
+        runner.shutdown(drain_timeout=3)
+
+
+def _open_circuit_then(migrated_db: Database, probe_mode: dict) -> OperationRunner:
+    """Open the circuit with 2 EngineErrors; `probe_mode['value']` then steers
+    the entrypoint for the half-open probe and everything after."""
+
+    def _entry(ctx: OperationContext) -> OperationOutcome:
+        mode = probe_mode["value"]
+        if mode == "engine_fail":
+            raise EngineError("LLM API 500: provider down", status=500)
+        if mode == "cancel":
+            raise CompletionCancelled("operation cancelled by the user")
+        if mode == "module_bug":
+            raise ValueError("parse drift — not the provider")
+        return OperationOutcome()
+
+    runner = OperationRunner(
+        migrated_db,
+        registry=OperationRegistry({"score": _entry}),
+        engines=_routed_engines(),
+        circuit=EngineCircuitBreaker(threshold=2, cooldown_s=0.2),
+    )
+    runner.start()
+    for _ in range(2):
+        op_id = runner.submit("score", {})
+        assert wait_for_state(migrated_db, op_id, "failed") == "failed"
+    return runner
+
+
+def test_cancelled_probe_releases_the_lease_for_a_new_probe(migrated_db: Database) -> None:
+    """A half-open probe the user cancels lands `cancelled` with no provider
+    verdict — the lease is abandoned, so the next op after cooldown becomes a
+    fresh probe instead of every op being rejected until restart."""
+    db = migrated_db
+    probe_mode = {"value": "engine_fail"}
+    runner = _open_circuit_then(db, probe_mode)
+    try:
+        time.sleep(0.25)  # cooldown → the next op is the half-open probe
+        probe_mode["value"] = "cancel"
+        probe = runner.submit("score", {})
+        assert wait_for_state(db, probe, "cancelled") == "cancelled"
+        probe_mode["value"] = "ok"
+        retry = runner.submit("score", {})  # a NEW probe is admitted
+        assert wait_for_state(db, retry, "succeeded") == "succeeded"
+        after = runner.submit("score", {})  # …and its success closed the circuit
+        assert wait_for_state(db, after, "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=3)
+
+
+def test_probe_failing_with_non_engine_error_releases_the_lease(migrated_db: Database) -> None:
+    """A probe that dies of module drift (non-EngineError) never fed the breaker
+    and must not keep the lease either — the next op gets a fresh probe."""
+    db = migrated_db
+    probe_mode = {"value": "engine_fail"}
+    runner = _open_circuit_then(db, probe_mode)
+    try:
+        time.sleep(0.25)
+        probe_mode["value"] = "module_bug"
+        probe = runner.submit("score", {})
+        assert wait_for_state(db, probe, "failed") == "failed"
+        probe_mode["value"] = "ok"
+        retry = runner.submit("score", {})  # a NEW probe is admitted
+        assert wait_for_state(db, retry, "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=3)

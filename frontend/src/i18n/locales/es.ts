@@ -138,6 +138,12 @@ const es: DeepPartial<Messages> = {
     allSetSettings: "Ajusta proveedores y networking en Ajustes",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Buscando nuevos puestos",
+      scoring: "La IA está puntuando los empleos recién encontrados",
+      done: "Listo",
+      count: "{{done}} de {{found}}",
+    },
     header: {
       masterResume: "Currículum maestro",
       masterResumeTitle:
@@ -213,7 +219,7 @@ const es: DeepPartial<Messages> = {
       matchScore: "Puntuación de compatibilidad",
       save: "Guardar",
       saved: "Guardado",
-      remove: "Quitar",
+      remove: "Eliminar",
       toggleResume: "Currículum",
       toggleCoverLetter: "Carta de presentación",
       toggleFindReferrals: "Buscar referidos",
@@ -225,7 +231,7 @@ const es: DeepPartial<Messages> = {
         "El tablón de esta empresa se escanea en cada escaneo — haz clic para dejar de seguirlo",
       watchOffTitle: "Escanear el tablón completo de esta empresa en cada escaneo futuro",
       adding: "Añadiendo…",
-      removing: "Quitando…",
+      removing: "Eliminando…",
       failedRetry: "Falló — reintentar",
       showMoreFromCompany: "Ver más empleos de esta empresa",
       openPosting: "Abrir la oferta ↗",
@@ -324,12 +330,12 @@ const es: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "Empleos eliminados",
-      retention: "Los empleos de la papelera se eliminan permanentemente a los 7 días.",
-      emptyConfirm_one: "¿Vaciar la papelera? {{count}} empleo se eliminará permanentemente.",
-      emptyConfirm_other: "¿Vaciar la papelera? {{count}} empleos se eliminarán permanentemente.",
+      retention: "Los empleos eliminados se borran definitivamente a los 7 días.",
+      emptyConfirm_one: "¿Eliminar todo definitivamente? {{count}} empleo se borrará definitivamente.",
+      emptyConfirm_other: "¿Eliminar todo definitivamente? {{count}} empleos se borrarán definitivamente.",
       confirm: "Confirmar",
       cancel: "Cancelar",
-      emptyTrash: "Vaciar papelera",
+      emptyTrash: "Eliminar todo definitivamente",
       empty: "No hay empleos eliminados.",
       removedRecently: "{{company}} · Eliminado hace poco",
       deleteForever: "Eliminar definitivamente",
@@ -341,7 +347,7 @@ const es: DeepPartial<Messages> = {
     deletedApplications: "Solicitudes eliminadas",
     addApplication: "Añadir una solicitud",
     cancel: "Cancelar",
-    archive: "Archivar",
+    archive: "Eliminar",
     moveToDiscover: "Mover a Descubrir empleos",
     stage: {
       Saved: "Guardado",
@@ -466,6 +472,7 @@ const es: DeepPartial<Messages> = {
       empty: "No hay solicitudes eliminadas.",
       deletedRecently: "Eliminada hace poco",
       restore: "Restaurar",
+      deleteForever: "Eliminar definitivamente",
     },
   },
   networking: {
@@ -525,7 +532,7 @@ const es: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Último mensaje",
-      archive: "Archivar",
+      archive: "Eliminar",
     },
     add: {
       title: "Añadir un contacto",
@@ -596,6 +603,8 @@ const es: DeepPartial<Messages> = {
       retried: "reintentada",
       retry: "Reintentar",
       retrying: "Reintentando…",
+      stop: "Detener",
+      stopping: "Deteniendo…",
       restarted: "La app se reinició durante la generación.",
       seconds: "{{value}}s",
       costUnknown: "coste desconocido para este modelo",
@@ -855,15 +864,15 @@ const es: DeepPartial<Messages> = {
       sentGhostedLabel: "Marcar una invitación sin contestar como «sin respuesta» tras",
       sentGhostedHint:
         "Una invitación de conexión nunca aceptada (o aceptada pero nunca respondida) durante estos días.",
-      contactPurgeLabel: "Eliminar definitivamente los contactos borrados tras",
+      contactPurgeLabel: "Borrar definitivamente los contactos eliminados tras",
       contactPurgeHint:
-        "Los contactos que eliminaste se borran definitivamente estos días después.",
-      trashedJobsLabel: "Eliminar definitivamente los empleos de la papelera tras",
+        "Los contactos eliminados se borran definitivamente estos días después.",
+      trashedJobsLabel: "Borrar definitivamente los empleos eliminados tras",
       trashedJobsHint:
-        "Los empleos de la papelera se borran definitivamente (y no se vuelven a rastrear) estos días después.",
-      archivedAppsLabel: "Eliminar definitivamente las solicitudes archivadas tras",
+        "Los empleos eliminados se borran definitivamente (y no se vuelven a rastrear) estos días después.",
+      archivedAppsLabel: "Borrar definitivamente las solicitudes eliminadas tras",
       archivedAppsHint:
-        "Las tarjetas archivadas y sus documentos se borran definitivamente estos días después.",
+        "Las tarjetas eliminadas y sus documentos se borran definitivamente estos días después.",
       syncCadenceLabel: "Comprobar novedades de los contactos en LinkedIn cada",
       syncCadenceHint:
         "Con qué frecuencia refrescar el estado de tus contactos desde LinkedIn (solo mientras Referral Outreach está activado y conectado).",
@@ -1120,6 +1129,8 @@ const es: DeepPartial<Messages> = {
     moreDetail: "Más detalle",
     deletedSizerLabel: "Solicitudes eliminadas",
     bootSplash: "Iniciando el backend local… el primer arranque puede tardar un poco.",
+    streamReconnecting:
+      "Reconectando con el backend local… las actualizaciones en vivo están en pausa y se pondrán al día automáticamente.",
     backendStoppedFallback: "el backend dejó de responder",
     sidecarFatalBanner:
       "Backend detenido: {{message}}. Nada de lo que hagas se guardará hasta que cierres y vuelvas a abrir la app.",
@@ -1127,6 +1138,17 @@ const es: DeepPartial<Messages> = {
       remote: "Remoto",
       hybrid: "Híbrido",
       onsite: "Presencial",
+    },
+    surfaceError: {
+      title: "Algo salió mal aquí",
+      body: "Esta vista encontró un error inesperado que fue contenido: el resto de la app sigue funcionando y tus datos están a salvo. Los detalles técnicos quedaron registrados en la consola de desarrollo.",
+      reload: "Recargar la app",
+    },
+    mutationError: {
+      body: "Ese cambio no se guardó: la app encontró un error al comunicarse con el backend local.",
+      dismiss: "Descartar",
+      more_one: "+{{count}} fallo anterior no mostrado",
+      more_other: "+{{count}} fallos anteriores no mostrados",
     },
     rescore: {
       title: "¿Volver a puntuar los empleos con IA?",
