@@ -50,6 +50,35 @@ build spawns the sidecar binary directly, so the orphan-watchdog chain holds
 (the known dev-only `uv run` wrapper edge does not apply to packaged builds).
 See `docs/internal/distribution.md` for the full packaging/signing/CI plan.
 
+## 4a. Shipping a beta — the one command (`pnpm ship`)
+
+`scripts/ship.sh` is the release trigger. Running it **is** the approval for what
+it does; it publishes only what is already committed on `main` (it never commits
+for you), so bump the version files + commit first.
+
+```bash
+pnpm ship            # approve: push committed main -> origin/main. Nothing else.
+pnpm ship release    # ALSO: merge main->release & push (fires the Release
+                     # workflow -> v<version>-beta + signed auto-update manifest),
+                     # wait for it to publish, then point findsyoujobs.com's
+                     # download links at the new tag and push the site.
+```
+
+`<version>` comes from `src-tauri/tauri.conf.json`. Before `pnpm ship release`,
+bump the version in the five files (tauri.conf.json, both Cargo, both package.json,
+pyproject.toml + the sidecar `main.py` string) and the pinned install tag (§2),
+commit, then run it. The site repo is expected at `~/dev/findsyoujobs-site`
+(override `FYJ_SITE_DIR`). The Ed25519 secret `TAURI_SIGNING_PRIVATE_KEY` must be
+set on the repo or the build fails by design (see `docs/internal/distribution.md` §9).
+
+**Auto-update:** from v0.5.5-beta on, the app self-updates (Settings › About ›
+Check for updates) against the signed `latest.json` published to the fixed `latest`
+tag. `scripts/build-updater-manifest.mjs` builds that manifest in the release job.
+CI-green is necessary, not sufficient — after a release, confirm `latest.json` has
+an entry for **all four** targets (`darwin-aarch64`, `darwin-x86_64`,
+`windows-x86_64`, `linux-x86_64`); the macOS `.app.tar.gz` is re-named per-arch in
+the collect step precisely because Tauri emits it version/arch-less.
+
 ## 5. Release notes must state honestly
 
 - What the Applier does in P1: it navigates, fills, and verifies — it opens
