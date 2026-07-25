@@ -903,6 +903,18 @@ export interface CostTotals {
   by_kind: Record<string, number>;
 }
 
+/** Board-level scan + scoring progress (observed-issue #2) — the source for the
+ *  Job Board's Rescan status pill. Derived server-side from the operations
+ *  ledger, polled while a scan/scoring cycle is live. Mirrors ScanProgressDTO.
+ *  `new_found` = the "N" and `score_done` = the "M" of the "M of N scored" line. */
+export interface ScanProgress {
+  scan_running: boolean;
+  last_scan_at: string | null;
+  new_found: number;
+  score_pending: number;
+  score_done: number;
+}
+
 // ─── Logfire spans (Logs drill-down — US-SYS-05 / A6) ───────────────────────
 
 /** One span from the local logfire.sqlite store, read for an operation's
