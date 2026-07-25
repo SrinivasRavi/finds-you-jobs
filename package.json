@@ -14,7 +14,8 @@
     "lint": "uv run ruff check .",
     "typecheck": "uv run pyright sidecar && cd frontend && pnpm typecheck",
     "playwright": "cd frontend && pnpm playwright test",
-    "codegen": "node scripts/codegen.mjs"
+    "codegen": "node scripts/codegen.mjs",
+    "ship": "bash scripts/ship.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.0",
