@@ -74,6 +74,16 @@ def setup_flight_recorder(
             datefmt="%Y-%m-%dT%H:%M:%S%z",
         )
     )
+    # Defense-in-depth redaction net: scrub any secret-shaped substring that a
+    # future code path slips into a log line or traceback before it lands in the
+    # flight recorder. Source discipline stays the primary control; this is the
+    # safety net (see observability/redaction.py). Attached at the handler so it
+    # also covers records propagated from child loggers (fyj.sidecar.*).
+    # Local import: the observability package imports get_logger from this module,
+    # so a top-level import here would be circular at boot.
+    from .observability.redaction import attach_redaction
+
+    attach_redaction(handler)
     logger.addHandler(handler)
     return log_path
 
