@@ -52,7 +52,7 @@ jobs:
             label: linux-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux system dependencies (Tauri prerequisites)
         if: startsWith(matrix.os, 'ubuntu')
@@ -66,16 +66,16 @@ jobs:
         # No `python-version:` input — astral-sh/setup-uv doesn't have one;
         # `.python-version` (3.13) is the source of truth (see
         # build-windows.yml for the history).
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v9
 
       - name: Install pnpm
         # No explicit `version:` — package.json's `packageManager` field is
         # the single source of truth; pnpm/action-setup errors if both are
         # given.
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: pnpm
@@ -153,7 +153,7 @@ jobs:
           [ -n "$(ls -A dist-beta)" ] # fail loudly if nothing was bundled
 
       - name: Upload installer artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: beta-${{ matrix.label }}
           path: dist-beta/*
@@ -168,7 +168,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read version
         id: ver
@@ -177,7 +177,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Download all installer artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -200,7 +200,7 @@ jobs:
           mkdir -p _sigs && mv dist/*.sig _sigs/ 2>/dev/null || true
 
       - name: Create/update the versioned GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.ver.outputs.version }}-beta
           name: finds-you-jobs v${{ steps.ver.outputs.version }}-beta
@@ -230,7 +230,7 @@ jobs:
         # (releases/download/latest/latest.json). Kept a pre-release so it never
         # steals the "Latest" badge from the real versioned releases; direct-tag
         # download works regardless of that flag.
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: latest
           name: Auto-update manifest
