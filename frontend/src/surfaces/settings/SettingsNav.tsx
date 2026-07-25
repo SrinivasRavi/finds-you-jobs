@@ -17,7 +17,8 @@ export type SettingsCat =
   | "discovery"
   | "networking"
   | "data"
-  | "appearance";
+  | "appearance"
+  | "about";
 
 export const SETTINGS_CATS: {
   id: SettingsCat;
@@ -31,6 +32,7 @@ export const SETTINGS_CATS: {
   { id: "networking", label: "settingsNav.networking", icon: "share", blurb: "settingsNav.networkingBlurb" },
   { id: "data", label: "settingsNav.data", icon: "barChart", blurb: "settingsNav.dataBlurb" },
   { id: "appearance", label: "settingsNav.appearance", icon: "sun", blurb: "settingsNav.appearanceBlurb" },
+  { id: "about", label: "settingsNav.about", icon: "info", blurb: "settingsNav.aboutBlurb" },
 ];
 
 export const SettingsNav = memo(function SettingsNav({

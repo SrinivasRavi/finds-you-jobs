@@ -277,7 +277,7 @@ def create_app(
             log.info("sidecar app stopped")
 
     app = FastAPI(
-        title="finds-you-jobs sidecar", version="0.5.3", lifespan=lifespan
+        title="finds-you-jobs sidecar", version="0.5.5", lifespan=lifespan
     )
 
     # Unexpected route crashes land in the flight recorder (2026-07-24):

@@ -138,7 +138,7 @@ const ja: DeepPartial<Messages> = {
     scanProgress: {
       scanning: "新しい求人を検索中",
       scoring: "AI が新しく見つかった求人を評価中",
-      done: "完了",
+      done_other: "スキャン完了。{{count}} 件の新しい求人が見つかりました。",
       count: "{{found}} 件中 {{done}} 件",
     },
     header: {

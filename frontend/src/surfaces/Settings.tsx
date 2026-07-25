@@ -13,6 +13,7 @@ import { api } from "../api/index";
 import { useSettings, useUpdateSettings } from "../api/queries";
 import type { RescorePreview, Settings as SettingsT } from "../api/types";
 import { RescoreAiDialog } from "../shell/RescoreAiDialog";
+import { AboutSection } from "./settings/AboutSection";
 import { AIProvidersPanel } from "./settings/AIProvidersPanel";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { AutomationSection } from "./settings/AutomationSection";
@@ -171,6 +172,12 @@ export function Settings() {
           {cat === "appearance" && (
           <div className="space-y-8">
           <AppearanceSection />
+          </div>
+          )}
+
+          {cat === "about" && (
+          <div className="space-y-8">
+          <AboutSection />
           </div>
           )}
         </div>

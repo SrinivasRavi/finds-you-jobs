@@ -200,6 +200,17 @@ pub fn run() {
             open_login_terminal,
         ])
         .setup(|app| {
+            // In-app software update (desktop only): the updater checks the
+            // pinned endpoint, verifies the Ed25519 signature, and installs;
+            // the process plugin relaunches afterward. Registered here (not in
+            // the builder chain) so it's cleanly gated off any mobile target.
+            #[cfg(desktop)]
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
+
             // Dev-mode dock icon: the unbundled `tauri dev` binary has no
             // .app bundle to source an icon from, so set it explicitly on macOS.
             #[cfg(target_os = "macos")]

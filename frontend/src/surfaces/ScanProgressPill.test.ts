@@ -8,43 +8,28 @@ import { isScanDoneEdge } from "./ScanProgressPill";
 
 describe("isScanDoneEdge", () => {
   it("does NOT fire on an idle-on-mount read (nothing ran)", () => {
-    expect(
-      isScanDoneEdge(false, { scan_running: false, score_pending: 0, new_found: 0 }),
-    ).toBe(false);
-    // Even if a prior scan left new_found > 0, a false→idle mount is not an edge.
-    expect(
-      isScanDoneEdge(false, { scan_running: false, score_pending: 0, new_found: 5 }),
-    ).toBe(false);
+    expect(isScanDoneEdge(false, { scan_running: false, score_pending: 0 })).toBe(false);
   });
 
   it("does NOT fire while a cycle is still active", () => {
     // Scanning.
-    expect(
-      isScanDoneEdge(true, { scan_running: true, score_pending: 0, new_found: 0 }),
-    ).toBe(false);
+    expect(isScanDoneEdge(true, { scan_running: true, score_pending: 0 })).toBe(false);
     // Scoring in progress.
-    expect(
-      isScanDoneEdge(true, { scan_running: false, score_pending: 3, new_found: 10 }),
-    ).toBe(false);
+    expect(isScanDoneEdge(true, { scan_running: false, score_pending: 3 })).toBe(false);
   });
 
-  it("fires on the active→idle edge when jobs were found", () => {
-    expect(
-      isScanDoneEdge(true, { scan_running: false, score_pending: 0, new_found: 10 }),
-    ).toBe(true);
+  it("fires on the active→idle edge", () => {
+    expect(isScanDoneEdge(true, { scan_running: false, score_pending: 0 })).toBe(true);
   });
 
-  it("does NOT fire on active→idle when the scan found nothing", () => {
-    expect(
-      isScanDoneEdge(true, { scan_running: false, score_pending: 0, new_found: 0 }),
-    ).toBe(false);
+  it("fires on active→idle even when the scan found nothing new", () => {
+    // A re-scan that dedupes to zero still completed — the check confirms it ran.
+    expect(isScanDoneEdge(true, { scan_running: false, score_pending: 0 })).toBe(true);
   });
 
   it("stays false once already idle after firing (no repeat)", () => {
     // After the edge fires, the component records wasActive=false; a subsequent
     // idle read must not re-fire.
-    expect(
-      isScanDoneEdge(false, { scan_running: false, score_pending: 0, new_found: 10 }),
-    ).toBe(false);
+    expect(isScanDoneEdge(false, { scan_running: false, score_pending: 0 })).toBe(false);
   });
 });

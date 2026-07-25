@@ -97,6 +97,11 @@
 
   --color-good: var(--good);
   --color-good-wash: var(--good-wash);
+  /* Dimmed "good" green for the scan-progress ring + done check — the full
+     --good reads too bright/neon in the header (maintainer 2026-07-25). Mixing
+     ~22% black drops the brightness while keeping the hue; adapts per theme
+     because --good does. */
+  --color-scan: color-mix(in srgb, var(--good) 78%, #000);
   --color-warn: var(--warn);
   --color-warn-wash: var(--warn-wash);
   --color-bad: var(--bad);
@@ -145,6 +150,40 @@ body {
 /* Resize handle col-resize feedback (JD split, US-JB-04). */
 .resize-handle {
   cursor: col-resize;
+}
+
+/* Scan-progress ring (ScanProgressPill). The indeterminate discovery phase
+   sweeps a green arc around a grey track — mirroring the reference fill
+   animation and matching the determinate scoring ring's look, so both phases
+   read as the same filling ring. @property lets the conic angle animate; the
+   90deg initial value keeps a partial arc visible on engines that don't
+   register it. */
+@property --fyj-arc {
+  syntax: "<angle>";
+  initial-value: 90deg;
+  inherits: false;
+}
+@keyframes fyj-arc-sweep {
+  0% {
+    --fyj-arc: 25deg;
+  }
+  50% {
+    --fyj-arc: 300deg;
+  }
+  100% {
+    --fyj-arc: 25deg;
+  }
+}
+@keyframes fyj-arc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.fyj-scan-ring {
+  background: conic-gradient(var(--color-scan) var(--fyj-arc), var(--surface-3) 0deg);
+  animation:
+    fyj-arc-sweep 1.5s ease-in-out infinite,
+    fyj-arc-spin 1.5s linear infinite;
 }
 
 /* Prose recipe for the resume/markdown preview — mirrors base.css .resume-prose. */

@@ -1,6 +1,6 @@
 [package]
 name = "finds-you-jobs"
-version = "0.5.4"
+version = "0.5.5"
 description = "finds-you-jobs desktop shell"
 authors = ["Srinivas Ravi"]
 license = "AGPL-3.0-only"
@@ -32,6 +32,13 @@ url = "2"
 # Second-launch guard: a re-run (or a dev relaunch beside a surviving window)
 # focuses the existing instance instead of opening a second app + sidecar.
 tauri-plugin-single-instance = "2"
+
+# In-app software update. The updater fetches + Ed25519-verifies + installs a
+# newer signed release; the process plugin relaunches the app afterward. The
+# fetch runs in the core (not the webview), so no CSP change is needed — the
+# allowed endpoint is pinned in tauri.conf.json's plugins.updater.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

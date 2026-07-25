@@ -37,7 +37,8 @@ const jobBoard = {
   scanProgress: {
     scanning: "Scanning for new roles",
     scoring: "AI is scoring the newly found jobs",
-    done: "Done",
+    done_one: "Scan complete. Found {{count}} new role.",
+    done_other: "Scan complete. Found {{count}} new roles.",
     count: "{{done}} of {{found}}",
   },
   list: {

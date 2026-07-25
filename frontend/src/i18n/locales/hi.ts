@@ -140,7 +140,8 @@ const hi: DeepPartial<Messages> = {
     scanProgress: {
       scanning: "नई भूमिकाओं की खोज हो रही है",
       scoring: "AI नई मिली नौकरियों का मूल्यांकन कर रहा है",
-      done: "पूर्ण",
+      done_one: "स्कैन पूर्ण। {{count}} नई भूमिका मिली।",
+      done_other: "स्कैन पूर्ण। {{count}} नई भूमिकाएँ मिलीं।",
       count: "{{found}} में से {{done}}",
     },
     header: {

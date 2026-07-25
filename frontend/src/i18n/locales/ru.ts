@@ -151,7 +151,10 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     scanProgress: {
       scanning: "Поиск новых вакансий",
       scoring: "ИИ оценивает недавно найденные вакансии",
-      done: "Готово",
+      done_one: "Сканирование завершено. Найдена {{count}} новая вакансия.",
+      done_few: "Сканирование завершено. Найдено {{count}} новые вакансии.",
+      done_many: "Сканирование завершено. Найдено {{count}} новых вакансий.",
+      done_other: "Сканирование завершено. Найдено {{count}} новых вакансий.",
       count: "{{done}} из {{found}}",
     },
     header: {

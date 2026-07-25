@@ -141,7 +141,8 @@ const pt: DeepPartial<Messages> = {
     scanProgress: {
       scanning: "Procurando novas vagas",
       scoring: "A IA está avaliando as vagas recém-encontradas",
-      done: "Concluído",
+      done_one: "Verificação concluída. {{count}} nova vaga encontrada.",
+      done_other: "Verificação concluída. {{count}} novas vagas encontradas.",
       count: "{{done}} de {{found}}",
     },
     header: {
