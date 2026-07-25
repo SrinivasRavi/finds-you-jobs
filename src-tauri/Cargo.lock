@@ -1034,6 +1034,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "ureq",
+ "url",
 ]
 
 [[package]]

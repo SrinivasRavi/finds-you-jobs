@@ -10,27 +10,58 @@ use std::thread;
 
 use tauri::{Manager, RunEvent, State};
 
-use sidecar::{dev_cwd, spawn_once, supervise, AppState};
+use sidecar::{dev_cwd, init_shell_log, spawn_once, supervise, AppState};
 
 /// Open an external http(s) URL in the OS default browser. The WebView blocks
 /// window.open/target=_blank for external origins, so every outbound link in
 /// the app routes through here (2026-07-11 beta feedback — links didn't open;
 /// re-hit 2026-07-17: "Open posting" did nothing because this command was
 /// missing from the rebuild's shell while the frontend already invoked it).
+///
+/// URLs reaching here come from scraped postings and LLM output — untrusted.
+/// `validate_external_url` strictly parses them, and every platform arm spawns
+/// the launcher with a real argv, never through a shell. Windows in particular
+/// must not use `cmd /C start`: cmd.exe re-tokenizes its line, so `& | ^` in a
+/// URL become command separators (F-H1 injection). `rundll32
+/// url.dll,FileProtocolHandler` opens the default browser with plain argv
+/// semantics instead.
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(format!("refusing to open non-http(s) URL: {url}"));
-    }
+    let url = validate_external_url(&url)?;
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("open").arg(&url).spawn();
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", &url])
+    let result = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &url])
         .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = std::process::Command::new("xdg-open").arg(&url).spawn();
     result.map(|_| ()).map_err(|e| format!("could not open browser: {e}"))
+}
+
+/// Strict validation for untrusted outbound URLs (F-H1): absolute http(s) with
+/// a real host, no embedded credentials, no whitespace or control characters.
+/// Returns the parser's normalized serialization — shell-sensitive bytes like
+/// `"` and spaces come back percent-encoded — and THAT string, not the raw
+/// input, is what gets spawned.
+fn validate_external_url(raw: &str) -> Result<String, String> {
+    // The WHATWG parser silently strips tab/newline and trims C0/space; a URL
+    // carrying those was never a clean link — reject instead of laundering.
+    if raw.chars().any(|c| c.is_ascii_control() || c == ' ') {
+        return Err("refusing to open URL with whitespace or control characters".to_string());
+    }
+    let parsed =
+        url::Url::parse(raw).map_err(|e| format!("refusing to open invalid URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("refusing to open non-http(s) URL: {raw}"));
+    }
+    if parsed.host_str().is_none() {
+        return Err(format!("refusing to open URL without a host: {raw}"));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(format!("refusing to open URL with embedded credentials: {raw}"));
+    }
+    Ok(parsed.to_string())
 }
 
 /// Open the user's terminal running the named subscription CLI's login flow.
@@ -41,15 +72,17 @@ fn open_external(url: String) -> Result<(), String> {
 /// `not_logged_in`, so an already-logged-in user never lands here.
 ///
 /// `cli` maps through a fixed allowlist to the exact command line — the
-/// frontend can name a CLI, never inject a command. Unknown ids fall back to
-/// `claude` (the historical behavior) rather than erroring: worst case the
-/// user gets a terminal, not silence.
+/// frontend can name a CLI, never inject a command. An unknown id is an error
+/// (F-L6): silently falling back to `claude` would open the wrong login flow
+/// and hide the frontend/shell mismatch. `None` still means `claude` (the
+/// historical default).
 #[tauri::command]
 fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
     let login_cmd = match cli.as_deref() {
+        None | Some("claude") => "claude",
         Some("codex") => "codex login",
         Some("agy") => "agy", // first run triggers Antigravity's browser OAuth
-        _ => "claude",
+        Some(other) => return Err(format!("unknown login CLI: {other}")),
     };
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("osascript")
@@ -172,6 +205,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             set_macos_dock_icon();
 
+            // Pin the shell.log directory before the first log line — packaged
+            // installs use the OS app-log dir, dev keeps repo-local logs/ (F-L5).
+            init_shell_log(app.handle());
+
             let state: State<AppState> = app.state();
             let inner = state.inner.clone();
             let cwd = dev_cwd();
@@ -206,4 +243,77 @@ pub fn run() {
                 sidecar::shutdown(&state.inner);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_external_url;
+
+    #[test]
+    fn accepts_clean_http_and_https() {
+        assert_eq!(
+            validate_external_url("https://jobs.example.com/posting/123?src=feed&x=1").unwrap(),
+            "https://jobs.example.com/posting/123?src=feed&x=1"
+        );
+        assert!(validate_external_url("http://example.com/").is_ok());
+        // Scheme case is normalized, not rejected (frontend's check is
+        // case-insensitive too).
+        assert_eq!(
+            validate_external_url("HTTPS://Example.COM/a").unwrap(),
+            "https://example.com/a"
+        );
+    }
+
+    #[test]
+    fn rejects_non_http_schemes() {
+        assert!(validate_external_url("file:///etc/passwd").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("ftp://example.com/").is_err());
+        assert!(validate_external_url("not a url").is_err());
+        assert!(validate_external_url("").is_err());
+        // Relative / schemeless input must not slip through.
+        assert!(validate_external_url("//example.com/x").is_err());
+        assert!(validate_external_url("example.com").is_err());
+    }
+
+    #[test]
+    fn rejects_whitespace_and_control_characters() {
+        // The WHATWG parser would silently strip these — we reject instead.
+        assert!(validate_external_url("https://x.example/a\nb").is_err());
+        assert!(validate_external_url("https://x.example/a\tb").is_err());
+        assert!(validate_external_url("https://x.example/a b").is_err());
+        assert!(validate_external_url(" https://x.example/").is_err());
+        assert!(validate_external_url("https://x.example/\r").is_err());
+        assert!(validate_external_url("https://x.example/\u{0}").is_err());
+    }
+
+    #[test]
+    fn rejects_missing_host_and_embedded_credentials() {
+        assert!(validate_external_url("https://").is_err());
+        assert!(validate_external_url("https://user:pass@x.example/").is_err());
+        assert!(validate_external_url("https://user@x.example/").is_err());
+        // WHATWG leniency: a slash-count typo normalizes into a host-bearing
+        // URL instead of failing — safe, because the normalized serialization
+        // (not the raw input) is what gets spawned.
+        assert_eq!(
+            validate_external_url("https:///path-only").unwrap(),
+            "https://path-only/"
+        );
+    }
+
+    #[test]
+    fn windows_metacharacters_are_inert_argv_data() {
+        // The F-H1 PoC: under `cmd /C start` this ran calc.exe. The validated
+        // string is passed as one argv element to rundll32/open/xdg-open, so
+        // `&` is plain URL data — but it must survive validation, since & is
+        // legitimate in query strings.
+        let ok = validate_external_url("https://x.example/&&calc.exe").unwrap();
+        assert_eq!(ok, "https://x.example/&&calc.exe");
+        // Raw double quotes never survive serialization (percent-encoded), so
+        // the spawned argument can't confuse any downstream quoting.
+        let quoted = validate_external_url("https://x.example/a\"b?c=\"d").unwrap();
+        assert!(!quoted.contains('"'), "serialized URL still has a raw quote: {quoted}");
+        let caret = validate_external_url("https://x.example/a^b|c").unwrap();
+        assert!(caret.starts_with("https://x.example/"));
+    }
 }
