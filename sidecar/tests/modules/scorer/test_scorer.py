@@ -224,3 +224,89 @@ def test_parse_output_still_rejects_too_few_reasons():
     with pytest.raises(ScoreError) as ei:
         parse_output(one)
     assert "2–4 bullets" in str(ei.value)
+
+
+# ---------------------------------------------------------------------------
+# Retry classification + cancellation (technical audit F-H5 / F-M7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _record_backoff_no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Backoff delays are classified and RECORDED but never slept — these tests
+    assert retry semantics, not wall-clock waits (the wait itself is unit-tested
+    in tests/modules/shared/test_completion_retry.py)."""
+    import sidecar.modules.scorer.scorer as scorer_mod
+
+    waits: list[float] = []
+    monkeypatch.setattr(
+        scorer_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
+    )
+    return waits
+
+
+class DeterministicRejectionEngine:
+    """A 401 — the same rejection every time; retrying only burns slot time."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+        self.calls += 1
+        raise EngineError("Anthropic API 401: invalid x-api-key", status=401)
+
+
+def test_score_fails_fast_on_deterministic_rejection(
+    _record_backoff_no_sleep: list[float],
+) -> None:
+    eng = DeterministicRejectionEngine()
+    with pytest.raises(EngineError, match="invalid x-api-key"):
+        score("# Master", "responsibilities " * 20, engine=eng)
+    assert eng.calls == 1  # no second attempt, ever
+    assert _record_backoff_no_sleep == []  # and no backoff wait either
+
+
+def test_score_backs_off_before_a_transient_retry(
+    _record_backoff_no_sleep: list[float],
+) -> None:
+    eng = FlakyThenGoodEngine(fail_times=1)
+    result = score("# Master", "responsibilities " * 20, engine=eng)
+    assert result.score == 82
+    assert eng.calls == 2
+    assert len(_record_backoff_no_sleep) == 1  # one backoff wait before the re-ask
+
+
+def test_score_cancelled_before_any_attempt_makes_no_engine_call() -> None:
+    from sidecar.modules._shared.completion_retry import CompletionCancelled
+
+    eng = FakeEngine()
+    with pytest.raises(CompletionCancelled):
+        score("# Master", "responsibilities " * 20, engine=eng, cancelled=lambda: True)
+    assert eng.calls == []
+
+
+def test_score_cancel_lands_between_attempts() -> None:
+    from sidecar.modules._shared.completion_retry import CompletionCancelled
+
+    flag = {"cancelled": False}
+
+    class FailAndFlip:
+        """First attempt fails transiently; the user's Stop lands meanwhile."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+            self.calls += 1
+            flag["cancelled"] = True
+            raise EngineError("LLM API returned empty content")
+
+    eng = FailAndFlip()
+    with pytest.raises(CompletionCancelled):
+        score(
+            "# Master",
+            "responsibilities " * 20,
+            engine=eng,
+            cancelled=lambda: flag["cancelled"],
+        )
+    assert eng.calls == 1  # the second attempt never fired

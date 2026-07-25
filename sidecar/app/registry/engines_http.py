@@ -30,11 +30,13 @@ back to a 1-token completion; both P1 direct APIs expose the list endpoint.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from typing import Protocol
 
 from sidecar.modules._shared.claude_engine import EngineError, EngineUsage
@@ -61,6 +63,9 @@ _MAX_BYTES = 20 * 1024 * 1024
 class HttpResponse:
     status: int
     body: bytes
+    # Response headers (Retry-After feeds the shared retry policy, F-H5).
+    # Defaulted so test fakes and older call sites need not carry them.
+    headers: dict[str, str] = field(default_factory=dict)
 
     def json(self) -> object:
         return json.loads(self.body.decode("utf-8", errors="replace"))
@@ -96,15 +101,25 @@ class UrllibTransport:
         timeout_s: int = 60,
     ) -> HttpResponse:
         if not url.startswith("https://") and not url.startswith("http://"):
-            raise EngineError(f"refusing non-http(s) engine URL: {url}")
+            raise EngineError(f"refusing non-http(s) engine URL: {url}", retryable=False)
         req = urllib.request.Request(url, data=body, headers=headers, method=method)  # noqa: S310
         try:
             with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310
-                return HttpResponse(status=resp.status, body=resp.read(_MAX_BYTES))
+                return HttpResponse(
+                    status=resp.status,
+                    body=resp.read(_MAX_BYTES),
+                    headers=dict(resp.headers.items()),
+                )
         except urllib.error.HTTPError as e:
             # A 4xx/5xx carries the provider's verbatim JSON error in the body.
-            return HttpResponse(status=e.code, body=e.read(_MAX_BYTES) if e.fp else b"")
+            return HttpResponse(
+                status=e.code,
+                body=e.read(_MAX_BYTES) if e.fp else b"",
+                headers=dict(e.headers.items()) if e.headers is not None else {},
+            )
         except (urllib.error.URLError, TimeoutError, OSError) as e:
+            # Network unreachable / connect or read timeout — transient by
+            # default; the shared retry policy backs off before re-asking.
             raise EngineError(f"could not reach {url}: {e}") from e
 
 
@@ -165,6 +180,24 @@ def _verbatim(resp: HttpResponse) -> str:
     return text[:2000] if text else f"HTTP {resp.status}"
 
 
+def _retry_after_s(resp: HttpResponse) -> float | None:
+    """The response's `Retry-After` in seconds (delta-seconds or HTTP-date),
+    or None when absent/unparseable — feeds the shared retry policy (F-H5)."""
+    raw = next((v for k, v in resp.headers.items() if k.lower() == "retry-after"), None)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, (dt - _dt.datetime.now(_dt.UTC)).total_seconds())
+
+
 # ---------------------------------------------------------------------------
 # Anthropic Messages API
 # ---------------------------------------------------------------------------
@@ -213,7 +246,14 @@ class AnthropicEngine:
         )
         latency_ms = int((time.monotonic() - started) * 1000)
         if resp.status != 200:
-            raise EngineError(f"Anthropic API {resp.status}: {_verbatim(resp)}")
+            # Structured status → the shared retry policy fails fast on
+            # deterministic 4xx and backs off (honoring Retry-After) on
+            # 429/5xx instead of instantly re-asking (F-H5).
+            raise EngineError(
+                f"Anthropic API {resp.status}: {_verbatim(resp)}",
+                status=resp.status,
+                retry_after_s=_retry_after_s(resp),
+            )
         data = resp.json()
         if not isinstance(data, dict):
             raise EngineError("Anthropic API returned a non-object response")
@@ -315,7 +355,12 @@ class OpenAICompatibleEngine:
         )
         latency_ms = int((time.monotonic() - started) * 1000)
         if resp.status != 200:
-            raise EngineError(f"LLM API {resp.status}: {_verbatim(resp)}")
+            # Structured status → fail-fast vs backoff classification (F-H5).
+            raise EngineError(
+                f"LLM API {resp.status}: {_verbatim(resp)}",
+                status=resp.status,
+                retry_after_s=_retry_after_s(resp),
+            )
         data = resp.json()
         if not isinstance(data, dict):
             raise EngineError("LLM API returned a non-object response")

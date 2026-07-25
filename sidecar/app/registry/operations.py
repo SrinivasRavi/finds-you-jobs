@@ -43,6 +43,12 @@ class OperationContext:
     # Lets an entrypoint stream its own typed sub-events onto the SSE hub
     # (the Applier live-modal substream). None under the fake-entrypoint tests.
     publish: PublishFn | None = None
+    # Cooperative cancellation (F-M7): True once the user cancelled this
+    # RUNNING operation. Entrypoints poll it at safe checkpoints (the LLM
+    # modules do so between retry attempts and mid-backoff) and bail by
+    # raising `CompletionCancelled`. None when the runner predates the token
+    # (fake-entrypoint tests) — treat as never cancelled.
+    cancelled: Callable[[], bool] | None = None
 
 
 @dataclass
@@ -333,7 +339,11 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
     try:
         result = score(
-            master_md, job_text, engine=resolved.engine, skill_md=get_override("score")
+            master_md,
+            job_text,
+            engine=resolved.engine,
+            skill_md=get_override("score"),
+            cancelled=ctx.cancelled,
         )
     except Exception:
         # The keyword floor is the fallback; guarantee it exists (idempotent)
@@ -495,6 +505,7 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
         guidance=snap.get("guidance", ""),
         engine=resolved.engine,
         skill_md=get_override("tailor"),
+        cancelled=ctx.cancelled,
     )
     artifact_id = _persist_artifact(
         ctx,
@@ -537,6 +548,7 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         guidance=snap.get("guidance", ""),
         engine=resolved.engine,
         skill_md=get_override("cover"),
+        cancelled=ctx.cancelled,
     )
     artifact_id = _persist_artifact(
         ctx,
@@ -591,6 +603,16 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
         engine=resolved.name,
         model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
     )
+
+
+# Kinds whose entrypoints actually POLL `ctx.cancelled` while running (the LLM
+# modules check between retry attempts and mid-backoff) — the only RUNNING ops
+# a runner-level cancel can genuinely reach (F-M7 honesty, 2026-07-25). Kept
+# NEXT to the registry below so adding a kind forces the question "does it
+# poll?" instead of the cancel route silently over-promising. `apply` is NOT
+# here: it checks once at dispatch; its real cancel is the apply-run route's
+# ApplyControl. Queued ops of ANY kind stay cancellable.
+CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover"})
 
 
 def default_operation_registry() -> OperationRegistry:

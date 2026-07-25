@@ -115,3 +115,104 @@ def test_sse_events_401_without_token(client: TestClient) -> None:
     # close, so only the auth rejection is asserted here; live SSE frames are
     # covered against the real subprocess server in test_integration_boot.
     assert client.get("/api/events").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /api/operations/{id}/cancel — the generic cancel surface (F-M7 route)
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_unknown_operation_is_404(client: TestClient) -> None:
+    resp = client.post("/api/operations/nope/cancel", headers=AUTH)
+    assert resp.status_code == 404
+
+
+def test_cancel_terminal_operation_is_409(client: TestClient) -> None:
+    op_id = client.post("/api/operations/echo", headers=AUTH, json={}).json()["id"]
+    _wait_for_state(client, op_id, "succeeded")
+    resp = client.post(f"/api/operations/{op_id}/cancel", headers=AUTH)
+    assert resp.status_code == 409
+
+
+def test_cancel_queued_operation_is_202_and_lands_cancelled(client: TestClient) -> None:
+    # Create the row directly (no runner pump) so it is still `queued` when the
+    # cancel arrives — the route answers 202 with the OperationAccepted DTO
+    # (same shape as retry) and the op must land `cancelled`.
+    db = client.app.state.db  # type: ignore[attr-defined]
+    with db.repos() as repos:
+        op_id = repos.operations.create("echo", {}).id
+    resp = client.post(f"/api/operations/{op_id}/cancel", headers=AUTH)
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body == {"id": op_id, "kind": "echo", "state": "cancelled"}
+    fetched = client.get(f"/api/operations/{op_id}", headers=AUTH).json()
+    assert fetched["state"] == "cancelled"
+
+
+def test_cancel_running_non_polling_kind_is_409(tmp_path: Path) -> None:
+    """Honesty (2026-07-25): a RUNNING kind that never observes the cancel
+    token (scan/discover/send/apply — anything outside
+    CANCELLABLE_RUNNING_KINDS) is refused with 409, not a 202 that cancels
+    nothing. Queued ops of the same kind stay cancellable (test above)."""
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def _blocking(ctx: OperationContext) -> OperationOutcome:
+        started.set()
+        release.wait(timeout=5)
+        return OperationOutcome()
+
+    app = create_app(
+        token=TOKEN,
+        original_ppid=None,
+        data_dir=tmp_path / "data",
+        operation_registry=OperationRegistry({"scan": _blocking}),
+        enable_scheduler=False,
+    )
+    with TestClient(app) as client:
+        op_id = client.post("/api/operations/scan", headers=AUTH, json={}).json()["id"]
+        assert started.wait(timeout=5)
+        resp = client.post(f"/api/operations/{op_id}/cancel", headers=AUTH)
+        assert resp.status_code == 409
+        release.set()
+        _wait_for_state(client, op_id, "succeeded")
+
+
+def test_cancel_running_polling_kind_is_202_and_lands_cancelled(tmp_path: Path) -> None:
+    """A RUNNING kind that polls the token (score/tailor/cover) is genuinely
+    cancellable: 202 with the honest post-cancel state (`running` until the
+    entrypoint's next checkpoint), then the op lands `cancelled`."""
+    import threading
+
+    from sidecar.modules._shared.completion_retry import CompletionCancelled
+
+    started = threading.Event()
+
+    def _cooperative(ctx: OperationContext) -> OperationOutcome:
+        assert ctx.cancelled is not None
+        started.set()
+        deadline = time.monotonic() + 5
+        while not ctx.cancelled():
+            if time.monotonic() > deadline:
+                raise AssertionError("cancel request never reached the worker")
+            time.sleep(0.01)
+        raise CompletionCancelled("operation cancelled by the user")
+
+    app = create_app(
+        token=TOKEN,
+        original_ppid=None,
+        data_dir=tmp_path / "data",
+        operation_registry=OperationRegistry({"score": _cooperative}),
+        enable_scheduler=False,
+    )
+    with TestClient(app) as client:
+        op_id = client.post("/api/operations/score", headers=AUTH, json={}).json()["id"]
+        assert started.wait(timeout=5)
+        resp = client.post(f"/api/operations/{op_id}/cancel", headers=AUTH)
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["id"] == op_id and body["kind"] == "score"
+        assert body["state"] in ("running", "cancelled")  # honest — not yet terminal
+        _wait_for_state(client, op_id, "cancelled")

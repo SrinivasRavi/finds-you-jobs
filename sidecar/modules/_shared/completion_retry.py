@@ -15,19 +15,108 @@ Retries mean more than one billed completion can precede a success; `usd`
 being an honest ledger (never swallowed, never guessed) means every billed
 attempt's cost/tokens must be counted, not just the winning one — that's what
 `merge_usage` is for. A completion that raises before returning has no usage
-to bill (the `Engine.complete()` contract only returns usage on success), so
-only attempts that *produced output* (whether or not it parsed) contribute.
+to bill (the `Engine.complete()` contract only returns usage on success —
+this includes a timed-out attempt, whose spend the provider may still bill
+but never reports back to us; acknowledged, unattributable — F-L11), so only
+attempts that *produced output* (whether or not it parsed) contribute.
+
+Retry POLICY (technical audit F-H5): engine failures are classified via the
+structured fields `EngineError` carries (`status` / `retryable` /
+`retry_after_s` — see `claude_engine.EngineError`). Deterministic provider
+rejections (bad key, bad request, missing model) fail fast — re-asking can
+never fix them and only burns slot time. Transient failures (429, 5xx,
+network, empty content) retry after an exponential backoff with full jitter,
+honoring the provider's `Retry-After` when sent, so a rate-limited fan-out
+stops hammering in lockstep. Parse-contract drift keeps its immediate re-ask
+(it's model non-determinism, not provider load). The backoff sleeps run on
+the runner's worker threads (module code never runs on the event loop), so
+`time.sleep` is safe here. `wait_before_retry` also polls a cancellation
+check so a user's Stop lands between attempts, not after them (F-M7).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import random
+import time
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 # 1 initial attempt + 2 retries. LLM output is non-deterministic enough that a
 # same-prompt re-ask clears most transient empty-content/parse-contract misses;
 # past that it's very likely a persistent problem worth surfacing, not masking.
 MAX_ATTEMPTS = 3
+
+# Exponential backoff with FULL jitter: delay = uniform(0, min(cap, base·2^k)).
+# Jitter decorrelates a 50-job fan-out that all hit the same 429 together.
+BACKOFF_BASE_S = 1.0
+BACKOFF_CAP_S = 30.0
+# A provider's Retry-After is honored verbatim, but capped — an operation the
+# user is watching must not silently sleep for minutes on one header.
+RETRY_AFTER_CAP_S = 60.0
+
+# Deterministic HTTP rejections a same-input retry can never fix: bad request /
+# auth / payment / permission / unknown model / method / payload / validation.
+_FAIL_FAST_STATUSES = frozenset({400, 401, 402, 403, 404, 405, 413, 422})
+
+# How often a backoff wait wakes to poll the cancellation check.
+_CANCEL_POLL_S = 0.2
+
+
+class CompletionCancelled(Exception):
+    """The user cancelled the operation; raised from a cancellation checkpoint
+    (loop top or mid-backoff). The runner maps this onto the `cancelled`
+    operation state — it is an outcome, never an error to retry."""
+
+
+def raise_if_cancelled(cancelled: Callable[[], bool] | None) -> None:
+    if cancelled is not None and cancelled():
+        raise CompletionCancelled("operation cancelled by the user")
+
+
+def retry_delay_s(
+    exc: BaseException,
+    attempt: int,
+    *,
+    rng: Callable[[float, float], float] = random.uniform,
+) -> float | None:
+    """How long to wait before re-asking after failed attempt number `attempt`
+    (1-based), or None when the failure must NOT be retried (deterministic
+    rejection, an explicit `retryable=False`, or attempts exhausted).
+
+    Reads `EngineError`'s structured fields via getattr so a module-typed
+    error that carries the same fields classifies identically. An explicit
+    `retryable` from the raise site always wins over the status table."""
+    if attempt >= MAX_ATTEMPTS:
+        return None
+    retryable = getattr(exc, "retryable", None)
+    if retryable is False:
+        return None
+    status = getattr(exc, "status", None)
+    if retryable is not True and status in _FAIL_FAST_STATUSES:
+        return None
+    retry_after = getattr(exc, "retry_after_s", None)
+    if retry_after is not None:
+        return min(max(float(retry_after), 0.0), RETRY_AFTER_CAP_S)
+    return rng(0.0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * (2 ** (attempt - 1))))
+
+
+def wait_before_retry(
+    delay_s: float,
+    cancelled: Callable[[], bool] | None = None,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> None:
+    """Sleep `delay_s` in short slices, polling `cancelled` between slices so a
+    user's Stop interrupts the backoff (raising `CompletionCancelled`) instead
+    of waiting it out. Worker-thread only — never call on the event loop."""
+    deadline = monotonic() + delay_s
+    while True:
+        raise_if_cancelled(cancelled)
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return
+        sleep(min(_CANCEL_POLL_S, remaining))
 
 
 class _UsageLike(Protocol):
