@@ -138,7 +138,7 @@ const zh: DeepPartial<Messages> = {
     scanProgress: {
       scanning: "正在搜索新职位",
       scoring: "AI 正在为新发现的职位评分",
-      done: "完成",
+      done_other: "扫描完成。找到 {{count}} 个新职位。",
       count: "{{found}} 个中的 {{done}} 个",
     },
     header: {

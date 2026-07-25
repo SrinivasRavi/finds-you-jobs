@@ -141,7 +141,8 @@ const de: DeepPartial<Messages> = {
     scanProgress: {
       scanning: "Suche nach neuen Stellen",
       scoring: "KI bewertet die neu gefundenen Jobs",
-      done: "Fertig",
+      done_one: "Suche abgeschlossen. {{count}} neue Stelle gefunden.",
+      done_other: "Suche abgeschlossen. {{count}} neue Stellen gefunden.",
       count: "{{done}} von {{found}}",
     },
     header: {

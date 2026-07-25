@@ -808,12 +808,11 @@ export function JobBoard() {
       {/* Topbar */}
       <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
         <h1 className="text-[14px] font-semibold text-ink">{t("nav.jobBoard")}</h1>
-        {/* Board-level Rescan status (observed-issue #2) — renders only while a
-            scan/scoring cycle is live (or just finished); nothing otherwise. */}
-        <div className="ml-3">
-          <ScanProgressPill />
-        </div>
         <div className="ml-auto flex items-center gap-3 py-1.5">
+          {/* Board-level Rescan status (observed-issue #2) — renders only while a
+              scan/scoring cycle is live (or just finished); nothing otherwise.
+              Sits just left of Master Resume (maintainer 2026-07-25). */}
+          <ScanProgressPill />
           {/* Master Resume before finder prefs (maintainer 2026-07-23 swap). */}
           <button
             onClick={() => setShowMaster(true)}

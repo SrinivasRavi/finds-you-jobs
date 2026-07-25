@@ -151,7 +151,8 @@ const nl: DeepPartial<Messages> = {
     scanProgress: {
       scanning: "Zoeken naar nieuwe functies",
       scoring: "AI beoordeelt de nieuw gevonden vacatures",
-      done: "Klaar",
+      done_one: "Scan voltooid. {{count}} nieuwe functie gevonden.",
+      done_other: "Scan voltooid. {{count}} nieuwe functies gevonden.",
       count: "{{done}} van {{found}}",
     },
     header: {

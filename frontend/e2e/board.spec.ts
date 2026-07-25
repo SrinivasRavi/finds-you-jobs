@@ -181,9 +181,9 @@ test("the Rescan pill shows the scoring state (M of N) then flips to Done (obser
   await page.screenshot({ path: `${DIR}/scan-progress-scoring.png`, fullPage: true });
 
   // Flip to idle — the active-only poll (1.5s) re-reads and the pill converts to
-  // the round green check + "Done".
+  // the round green check + "Scan complete. Found N new roles." (N = new_found).
   phase = "idle";
   await expect(pill).toHaveAttribute("data-state", "done", { timeout: 10_000 });
-  await expect(pill).toContainText("Done");
+  await expect(pill).toContainText("Found 10 new roles");
   await page.screenshot({ path: `${DIR}/scan-progress-done.png`, fullPage: true });
 });
