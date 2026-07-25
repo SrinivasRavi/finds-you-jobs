@@ -66,8 +66,8 @@ def _fetch_source(
     entry: object, prefs: ScanPrefs, fetcher_factory: Callable[..., Fetcher]
 ) -> _FetchOutcome:
     """Resolve + fetch ONE source. Pure I/O, no shared state — safe to run in a
-    worker thread. Never raises for a source-level failure (recorded in the
-    report); only a genuine bug would propagate."""
+    worker thread. Never raises: every source-level failure — typed or not —
+    lands in the report (F-H6: one bad feed must not abort the scan)."""
     resolved = adapters.resolve(entry)  # type: ignore[arg-type]
     if resolved is None:
         return _FetchOutcome(
@@ -92,6 +92,13 @@ def _fetch_source(
             fetched = adapter.fetch(entry, fetcher)
     except ScraperError as e:
         report.errors.append(str(e))
+        return _FetchOutcome(key=key, report=report, adapter=adapter)
+    except Exception as e:  # noqa: BLE001 — one bad feed must never abort the scan
+        # An adapter bug or a feed shape nobody anticipated (F-H6). Typed
+        # failures stay verbatim above; anything else is contained here with
+        # its type named, so the per-source diagnostics show the real bug
+        # instead of the whole scan (and every scheduled rescan) dying on it.
+        report.errors.append(f"unexpected {type(e).__name__}: {e}")
         return _FetchOutcome(key=key, report=report, adapter=adapter)
     return _FetchOutcome(key=key, report=report, fetched=fetched, adapter=adapter)
 
@@ -136,6 +143,11 @@ def _enrich_source(
             detail = bucket.adapter.fetch_detail(job, fetcher)  # type: ignore[attr-defined]
         except ScraperError as e:
             bucket.report.errors.append(f"enrich {job.canonical_url}: {e}")
+            continue
+        except Exception as e:  # noqa: BLE001 — same containment as _fetch_source (F-H6)
+            bucket.report.errors.append(
+                f"enrich {job.canonical_url}: unexpected {type(e).__name__}: {e}"
+            )
             continue
         if detail:
             job.description = detail

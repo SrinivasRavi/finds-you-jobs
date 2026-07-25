@@ -63,3 +63,24 @@ def test_fetch_bad_payload_is_typed_error():
     with pytest.raises(ScraperError) as ei:
         greenhouse.fetch(SourceEntry(url="https://boards.greenhouse.io/broken"), fetcher)
     assert "[greenhouse]" in str(ei.value)
+
+
+def test_fetch_skips_malformed_elements_keeps_the_rest():
+    """One malformed feed row (string/null/number where a job dict belongs)
+    never sinks the feed — F-H6, the workday per-element precedent."""
+    payload = {
+        "jobs": [
+            "not-a-job",
+            None,
+            42,
+            {
+                "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1",
+                "title": "Backend Engineer",
+                "location": "Pune",  # location itself malformed (string, not dict)
+            },
+        ]
+    }
+    fetcher = routed({"/boards/acme/jobs": payload})()
+    jobs = greenhouse.fetch(SourceEntry(url="https://boards.greenhouse.io/acme"), fetcher)
+    assert [j.title for j in jobs] == ["Backend Engineer"]
+    assert jobs[0].location == ""  # malformed location degrades, never raises

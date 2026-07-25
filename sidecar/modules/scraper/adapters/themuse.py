@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 from ..config import SourceEntry
 from ..htmltext import strip_html
-from ..http import Fetcher
+from ..http import Fetcher, page_pause
 from ..types import NormalizedJob, ScraperError
 
 ID = "themuse"
@@ -40,6 +40,8 @@ def detect(entry: SourceEntry) -> str:
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
     jobs: list[NormalizedJob] = []
     for page in range(1, MAX_PAGES + 1):
+        if page > 1:  # jittered inter-page pause — no back-to-back bursts (F-M9)
+            page_pause()
         payload = fetcher.get_json(f"{_API}?page={page}")
         if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
             raise ScraperError(ID, f"unexpected payload shape on page {page}: no results[]")

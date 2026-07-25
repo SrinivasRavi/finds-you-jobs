@@ -32,7 +32,7 @@ from urllib.parse import quote
 
 from ..config import SourceEntry
 from ..htmltext import strip_html
-from ..http import BROWSER_HEADERS, Fetcher
+from ..http import BROWSER_HEADERS, Fetcher, page_pause
 from ..searchquery import build_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
@@ -131,12 +131,16 @@ def search(entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher) -> list[Norma
 
     jobs: list[NormalizedJob] = []
     errors: list[str] = []
+    requests_made = 0
     for q in queries:
         for page in range(MAX_PAGES):
+            if requests_made:  # jittered pause between guest requests (F-M9)
+                page_pause()
             url = (
                 f"{_BASE}?keywords={quote(q.keyword)}"
                 f"&location={quote(q.location)}&start={page * _PAGE_SIZE}"
             )
+            requests_made += 1
             try:
                 html = fetcher.get_text(url, headers=BROWSER_HEADERS)
             except ScraperError as e:
