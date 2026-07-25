@@ -18,13 +18,20 @@ const envLocalPath = join(repoRoot, "frontend", ".env.local");
 
 const children = [];
 
+let closing = false;
 function shutdown(code = 0) {
+  if (closing) return;
+  closing = true;
   for (const child of children) {
-    if (!child.killed) {
+    // Per-child try/catch: a dead child (ESRCH on its stale pgid) must never
+    // abort the loop and leave the NEXT child unsignalled (2026-07-25).
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
       try {
-        process.kill(-child.pid, "SIGTERM");
-      } catch {
         child.kill("SIGTERM");
+      } catch {
+        /* already gone */
       }
     }
   }
@@ -46,17 +53,26 @@ setInterval(() => {
   if (process.ppid !== ORIGINAL_PPID || process.ppid === 1) shutdown(0);
 }, 2000).unref();
 
+// Piped (never inherited) stdio on BOTH children: when Playwright drives this
+// script as its webServer, our stdout/stderr are Playwright's pipes, and its
+// teardown waits for them to CLOSE. A child that inherits those fds keeps the
+// pipe open past our death and hangs the Playwright CLI forever (2026-07-25:
+// observed 6 h — teardown SIGKILLs only OUR process group, cleanup never runs).
 const sidecar = spawn("uv", ["run", "python", "-m", "sidecar.app"], {
   cwd: repoRoot,
   detached: true,
-  stdio: ["ignore", "pipe", "inherit"],
+  stdio: ["ignore", "pipe", "pipe"],
   // The sidecar's orphan watchdog watches THIS pid (2026-07-17): if this
   // script is hard-killed (SIGKILL — Playwright teardown, a crashed shell),
   // the sidecar reaps itself within a poll tick instead of squatting on the
   // port with the `uv` wrapper.
-  env: { ...process.env, FYJ_SHELL_PID: String(process.pid) },
+  // FYJ_DEV unlocks the /api/dev/* fault-injection endpoints (F-L4) — the
+  // browser-dev/Playwright path is exactly what they exist for; the packaged
+  // app never sets it, so those routes 404 there.
+  env: { ...process.env, FYJ_SHELL_PID: String(process.pid), FYJ_DEV: "1" },
 });
 children.push(sidecar);
+sidecar.stderr.on("data", (chunk) => process.stderr.write(chunk));
 
 let port;
 let token;
@@ -82,21 +98,25 @@ sidecar.stdout.on("data", (chunk) => {
         `VITE_SIDECAR_PORT=${port}\nVITE_SIDECAR_TOKEN=${token}\n`,
       );
       console.log(`[dev-web] sidecar up on ${port}; starting vite…`);
-      // Windows: pnpm is pnpm.cmd (needs a shell; one command string —
-      // DEP0190); no POSIX process groups.
-      const vite =
-        process.platform === "win32"
-          ? spawn("pnpm dev", {
-              cwd: join(repoRoot, "frontend"),
-              stdio: "inherit",
-              shell: true,
-            })
-          : spawn("pnpm", ["dev"], {
-              cwd: join(repoRoot, "frontend"),
-              detached: true,
-              stdio: "inherit",
-            });
+      // Vite runs under scripts/dev-frontend.mjs — the same wrapper `tauri
+      // dev` uses. Its ppid poll is the vite-side counterpart of the
+      // sidecar's FYJ_SHELL_PID watchdog: if THIS process is hard-killed
+      // (Playwright's webServer teardown SIGKILLs our process group without
+      // ever signalling us), the reparented wrapper reaps vite's whole
+      // process group within a poll tick instead of orphaning it on the port
+      // (2026-07-25 — the 6 h Playwright teardown hang). The wrapper handles
+      // the win32 pnpm.cmd/no-process-group cases itself.
+      const vite = spawn(
+        process.execPath,
+        [join(repoRoot, "scripts", "dev-frontend.mjs")],
+        {
+          detached: process.platform !== "win32",
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       children.push(vite);
+      vite.stdout.on("data", (chunk) => process.stdout.write(chunk));
+      vite.stderr.on("data", (chunk) => process.stderr.write(chunk));
       vite.on("exit", (code) => shutdown(code ?? 0));
     }
   }
@@ -106,5 +126,12 @@ sidecar.on("exit", (code) => {
   if (!started) {
     console.error(`[dev-web] sidecar exited before handshake (code ${code})`);
     shutdown(1);
+  } else if (!closing) {
+    // Deliberate: vite stays up. The e2e reconnect specs (zz-reconnect,
+    // zzz-reconnect-newport) kill this sidecar mid-run and respawn their own
+    // — zzz even page.goto()s through vite AFTER this one is dead.
+    console.log(
+      `[dev-web] sidecar exited (code ${code}); vite stays up (reconnect specs respawn their own sidecar) — Ctrl-C to quit`,
+    );
   }
 });
