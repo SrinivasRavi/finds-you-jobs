@@ -14,8 +14,11 @@ from __future__ import annotations
 import traceback
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from threading import RLock
+from threading import Event, RLock
 from typing import Any
+
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import CompletionCancelled
 
 from ..db import Database
 from ..events import operation_event
@@ -27,11 +30,13 @@ from ..observability import (
     record_span_success,
 )
 from ..registry import (
+    CANCELLABLE_RUNNING_KINDS,
     EngineRegistry,
     OperationContext,
     OperationRegistry,
     default_operation_registry,
 )
+from .circuit import EngineCircuitBreaker
 from .policy import (
     DEFAULT_POLICY,
     ConcurrencyPolicy,
@@ -72,6 +77,8 @@ class OperationRunner:
         # setting isn't silently capped — idle threads cost nothing. 32 is the
         # practical ceiling for the "Unlimited" setting.
         max_workers: int = 32,
+        # Injectable for tests (short cooldowns); production uses the default.
+        circuit: EngineCircuitBreaker | None = None,
     ) -> None:
         self._db = db
         self._registry = registry or default_operation_registry()
@@ -89,8 +96,14 @@ class OperationRunner:
         self._executor: ThreadPoolExecutor | None = None
         self._lock = RLock()
         self._running: dict[str, str] = {}  # operation_id -> kind (in-flight)
+        # Per-running-op cooperative cancel tokens (F-M7): created at dispatch,
+        # exposed to the entrypoint via ctx.cancelled, dropped on completion.
+        self._cancels: dict[str, Event] = {}
         self._futures: set[Future[None]] = set()
         self._closing = False
+        # Per-engine-name circuit breaker (F-H5): a provider that keeps
+        # failing stops burning slot time on every queued op routed to it.
+        self._circuit = circuit or EngineCircuitBreaker()
         self._log = get_logger()
 
     # -- lifecycle ---------------------------------------------------------
@@ -139,11 +152,35 @@ class OperationRunner:
         return operation_id
 
     def cancel(self, operation_id: str) -> bool:
-        """Cancel a still-`queued` operation. Running ops are not interrupted."""
+        """Cancel an operation. A still-`queued` op (any kind) is cancelled
+        immediately.
+
+        A `running` op gets a cooperative cancel REQUEST (F-M7) — but only for
+        the kinds that actually POLL the token (`CANCELLABLE_RUNNING_KINDS`,
+        kept next to the entrypoint registry): the LLM modules check between
+        retry attempts and mid-backoff. Other kinds never observe the token
+        while running (`apply` checks once at dispatch; its real cancel is the
+        apply-run route), so accepting the request would be a lie — they
+        return False (honesty fix, 2026-07-25). A call already blocked inside
+        an engine (subprocess / HTTP read) runs to its own timeout first — we
+        never kill a live worker thread mid-syscall. Returns True when the
+        cancel was applied (queued) or genuinely accepted (running + polling
+        kind); False for unknown, already-terminal, or non-polling running ops."""
         with self._lock:
             with self._db.repos() as repos:
                 op = repos.operations.get(operation_id)
-                if op is None or op.state != "queued":
+                if op is None:
+                    return False
+                if op.state == "running":
+                    if op.kind not in CANCELLABLE_RUNNING_KINDS:
+                        return False
+                    token = self._cancels.get(operation_id)
+                    if token is None:
+                        return False
+                    token.set()
+                    self._log.info("operation %s (%s) cancel requested", operation_id, op.kind)
+                    return True
+                if op.state != "queued":
                     return False
                 kind = op.kind
                 repos.operations.mark_cancelled(operation_id)
@@ -203,6 +240,7 @@ class OperationRunner:
                 for op_id, kind, _snap in to_start:
                     repos.operations.mark_running(op_id)
                     self._running[op_id] = kind
+                    self._cancels[op_id] = Event()
             executor = self._executor
         for op_id, kind, snapshot in to_start:
             self._log.info("operation %s (%s) → running", op_id, kind)
@@ -224,6 +262,17 @@ class OperationRunner:
         content_logging = (
             self._observability.content_logging if self._observability is not None else False
         )
+        with self._lock:
+            cancel_token = self._cancels.get(operation_id)
+        resolved = None
+        # Half-open probe lease (F-H5 follow-up, 2026-07-25): when `check`
+        # admits this op as the circuit's ONE probe, the lease must be settled
+        # on EVERY terminal path or the circuit wedges open forever. It is
+        # *transferred* by record_success / record_failure (set back to None
+        # right after) and *abandoned* in the outer finally for every other
+        # outcome — cancellation, non-EngineError failures, even a crash in
+        # the handlers themselves.
+        probe_engine: str | None = None
         try:
             with operation_span(
                 operation_id,
@@ -235,6 +284,14 @@ class OperationRunner:
                     resolved = (
                         self._engines.resolve(kind) if self._engines is not None else None
                     )
+                    if resolved is not None:
+                        # Circuit breaker (F-H5): a provider that keeps failing
+                        # rejects fast here instead of burning an llm slot on
+                        # retries/timeouts. Raises ProviderCircuitOpen → the
+                        # generic failure path lands its message in the ledger.
+                        # True ⇒ this op holds the half-open probe lease.
+                        if self._circuit.check(resolved.name):
+                            probe_engine = resolved.name
                     ctx = OperationContext(
                         kind=kind,
                         input_snapshot=snapshot,
@@ -242,11 +299,34 @@ class OperationRunner:
                         db=self._db,
                         operation_id=operation_id,
                         publish=self._publish_fn,
+                        cancelled=cancel_token.is_set if cancel_token is not None else None,
                     )
                     entrypoint = self._registry.resolve(kind)
                     outcome = entrypoint(ctx)
+                except CompletionCancelled:
+                    # The user's Stop landed at a cooperative checkpoint —
+                    # an outcome, not an error: no failure log, no breaker
+                    # feedback, the row + event say `cancelled` (F-M7).
+                    message = "cancelled by the user"
+                    try:
+                        record_span_failure(span, message)
+                    except Exception:  # noqa: BLE001 — the span is additive; row + event must land
+                        self._log.exception(
+                            "span recording failed for operation %s (%s)", operation_id, kind
+                        )
+                    with self._db.repos() as repos:
+                        repos.operations.mark_cancelled(operation_id)
+                    self._log.info("operation %s (%s) → cancelled", operation_id, kind)
+                    self._publish(operation_id, kind, "cancelled")
                 except Exception as exc:  # noqa: BLE001 — verbatim capture is the contract
                     message = f"{type(exc).__name__}: {exc}"
+                    # Only real engine failures feed the breaker — module
+                    # parse drift or our own bugs say nothing about the
+                    # provider, and a ProviderCircuitOpen rejection must never
+                    # feed the breaker that produced it (it isn't EngineError).
+                    if resolved is not None and isinstance(exc, EngineError):
+                        self._circuit.record_failure(resolved.name, str(exc))
+                        probe_engine = None  # lease transferred (probe verdict: still down)
                     try:
                         record_span_failure(span, message, exc)
                     except Exception:  # noqa: BLE001 — the span is additive; row + event must land
@@ -273,6 +353,9 @@ class OperationRunner:
                     )
                     self._publish(operation_id, kind, "failed", error=message)
                 else:
+                    if resolved is not None:
+                        self._circuit.record_success(resolved.name)
+                        probe_engine = None  # lease transferred (probe verdict: healthy)
                     try:
                         record_span_success(span, outcome)
                     except Exception:  # noqa: BLE001 — the span is additive; state + chain must run
@@ -305,8 +388,16 @@ class OperationRunner:
                                 kind,
                             )
         finally:
+            if probe_engine is not None:
+                # Every terminal path that did NOT settle the lease via
+                # record_success/record_failure lands here: user cancellation
+                # (CompletionCancelled), non-EngineError failures (parse
+                # drift, pre-engine bugs), and exceptions escaping the outcome
+                # handlers. The circuit stays open; a NEW probe is admitted.
+                self._circuit.abandon_probe(probe_engine)
             with self._lock:
                 self._running.pop(operation_id, None)
+                self._cancels.pop(operation_id, None)
             # Ledger retention (US-LOG-01 #2): keep ~5 pages of terminal ops;
             # prune older so the DB stays bounded (in-flight rows never touched).
             # `prune_ledger` folds the pruned ops' usd/tokens into the lifetime

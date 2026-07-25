@@ -169,3 +169,21 @@ class ScraperError(Exception):
     def __init__(self, stage: str, message: str) -> None:
         self.stage = stage
         super().__init__(f"[{stage}] {message}")
+
+
+class RateLimitError(ScraperError):
+    """HTTP 429 from a source, or its in-memory cool-down window (F-M9).
+
+    Typed so callers can tell "back off" from a broken feed; still a
+    ScraperError, so every existing per-source/per-query catch contains it.
+    `retry_after_s` carries the server's Retry-After hint (or the default
+    cool-down when the header is absent)."""
+
+    def __init__(self, url: str, retry_after_s: float, *, cooling_down: bool = False) -> None:
+        self.retry_after_s = retry_after_s
+        detail = (
+            f"cooling down after an earlier HTTP 429 (retry in ~{retry_after_s:.0f}s)"
+            if cooling_down
+            else f"HTTP 429 rate-limited (retry after ~{retry_after_s:.0f}s)"
+        )
+        super().__init__("rate-limit", f"{url}: {detail}")

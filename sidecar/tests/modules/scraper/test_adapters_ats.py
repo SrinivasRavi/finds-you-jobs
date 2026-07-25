@@ -93,6 +93,24 @@ def test_lever_fetch_bad_payload_is_typed_error():
     assert "[lever]" in str(ei.value)
 
 
+def test_lever_fetch_skips_malformed_elements_keeps_the_rest():
+    """F-H6 — a string/null/number feed element is skipped, never fatal."""
+    payload = [
+        "not-a-job",
+        None,
+        7,
+        {
+            "text": "Backend Engineer",
+            "hostedUrl": "https://jobs.lever.co/acme/1",
+            "categories": "oops",  # malformed categories degrades, never raises
+        },
+    ]
+    fetcher = routed({"api.lever.co/v0/postings/acme": payload})()
+    jobs = lever.fetch(SourceEntry(url="https://jobs.lever.co/acme"), fetcher)
+    assert [j.title for j in jobs] == ["Backend Engineer"]
+    assert jobs[0].location == ""
+
+
 # --- ashby -----------------------------------------------------------------
 
 
@@ -168,6 +186,21 @@ def test_ashby_fetch_bad_payload_is_typed_error():
     with pytest.raises(ScraperError) as ei:
         ashby.fetch(SourceEntry(url="https://jobs.ashbyhq.com/broken"), fetcher)
     assert "[ashby]" in str(ei.value)
+
+
+def test_ashby_fetch_skips_malformed_elements_keeps_the_rest():
+    """F-H6 — a string/null/number feed element is skipped, never fatal."""
+    payload = {
+        "jobs": [
+            "not-a-job",
+            None,
+            3.14,
+            {"title": "Backend Engineer", "jobUrl": "https://jobs.ashbyhq.com/acme/1"},
+        ]
+    }
+    fetcher = routed({"api.ashbyhq.com/posting-api/job-board/acme": payload})()
+    jobs = ashby.fetch(SourceEntry(url="https://jobs.ashbyhq.com/acme"), fetcher)
+    assert [j.title for j in jobs] == ["Backend Engineer"]
 
 
 # --- workable --------------------------------------------------------------
@@ -251,3 +284,19 @@ def test_workable_fetch_bad_payload_is_typed_error():
     with pytest.raises(ScraperError) as ei:
         workable.fetch(SourceEntry(url="https://apply.workable.com/broken"), fetcher)
     assert "[workable]" in str(ei.value)
+
+
+def test_workable_fetch_skips_malformed_elements_keeps_the_rest():
+    """F-H6 — a string/null/number feed element is skipped, never fatal."""
+    payload = {
+        "name": "Acme",
+        "jobs": [
+            "not-a-job",
+            None,
+            9,
+            {"title": "Backend Engineer", "url": "https://apply.workable.com/acme/j/1"},
+        ],
+    }
+    fetcher = routed({"apply.workable.com/api/v1/widget/accounts/acme": payload})()
+    jobs = workable.fetch(SourceEntry(url="https://apply.workable.com/acme"), fetcher)
+    assert [j.title for j in jobs] == ["Backend Engineer"]

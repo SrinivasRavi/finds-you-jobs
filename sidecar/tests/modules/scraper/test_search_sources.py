@@ -131,6 +131,20 @@ def test_linkedin_search_stops_on_empty_page() -> None:
     assert len(jobs) == 2  # only the non-empty page contributed
 
 
+def test_linkedin_pauses_between_guest_requests(monkeypatch) -> None:
+    """F-M9 — guest requests (pages and queries alike hit the same host) are
+    spaced by the jittered pause, never fired back-to-back."""
+    pauses = {"n": 0}
+    monkeypatch.setattr(
+        linkedin_guest, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1)
+    )
+    prefs = ScanPrefs(title_allow=["backend engineer"], location_allow=["remote"])
+    fetcher = routed({"seeMoreJobPostings/search": "linkedin_guest.html"})()
+    linkedin_guest.search(SourceEntry(board="linkedin"), prefs, fetcher)
+    assert fetcher.usage.internal_calls == 2  # one query × 2 pages (fixture never empties)
+    assert pauses["n"] == 1  # between requests only — never before the first
+
+
 def test_linkedin_search_requires_role_alias() -> None:
     fetcher = routed({"seeMoreJobPostings/search": "linkedin_guest.html"})()
     with pytest.raises(ScraperError, match="role alias"):

@@ -100,6 +100,46 @@ test("the board search filters server-side and highlights matches (FR-JB-13)", a
   await expect(rows).toHaveCount(initial, { timeout: 10_000 });
 });
 
+test("the board list is virtualized: a 150-row feed renders a DOM window, not 150 rows (F-M4)", async ({
+  page,
+}) => {
+  // e2e can't cheaply seed 150 real jobs, so patch the live board response:
+  // clone the first real row into 150 distinct jobs (one page, no next page).
+  await page.route("**/api/board*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      jobs: { id: string; title: string; canonical_url: string }[];
+      total: number;
+    };
+    const template = body.jobs[0];
+    if (template) {
+      body.jobs = Array.from({ length: 150 }, (_, i) => ({
+        ...template,
+        id: `virtual-${i + 1}`,
+        title: `Virtual Role ${i + 1}`,
+        canonical_url: `https://example.com/virtual-${i + 1}`,
+      }));
+      body.total = 150;
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/jobs");
+  const rows = page.locator('[data-testid="job-row"]');
+  await expect(rows.first()).toBeVisible({ timeout: 15_000 });
+
+  // Windowed: only the viewport slice (+overscan) is in the DOM.
+  const rendered = await rows.count();
+  expect(rendered).toBeGreaterThanOrEqual(5);
+  expect(rendered).toBeLessThan(80);
+  await page.screenshot({ path: `${DIR}/board-virtualized-top.png`, fullPage: true });
+
+  // Scrolling reaches the far end of the feed — the last clone materializes.
+  const list = page.locator('[role="listbox"]');
+  await list.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  await expect(page.getByText("Virtual Role 150").first()).toBeVisible({ timeout: 10_000 });
+  await page.screenshot({ path: `${DIR}/board-virtualized-bottom.png`, fullPage: true });
+});
+
 test("rows inserted by the latest scan carry the NEW badge", async ({ page }) => {
   // The backend stamps isNew from the last succeeded scan's recorded
   // new_job_ids (covered end-to-end by pytest: test_board_and_expiry.py);
@@ -115,4 +155,35 @@ test("rows inserted by the latest scan carry the NEW badge", async ({ page }) =>
   await expect(page.getByTestId("new-badge").first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("new-badge").first()).toHaveText(/new/i);
   await page.screenshot({ path: `${DIR}/board-new-badge.png`, fullPage: true });
+});
+
+test("the Rescan pill shows the scoring state (M of N) then flips to Done (observed-issue #2)", async ({
+  page,
+}) => {
+  // A real scan+score cycle is heavy/non-deterministic in e2e, so drive the
+  // board-level Rescan pill by patching /api/scan/progress: first a scoring
+  // state (spinner-ring + "M of N"), then — after the pill's active-only poll
+  // re-reads — an idle state, which the pill detects as the active→done edge.
+  let phase: "scoring" | "idle" = "scoring";
+  await page.route("**/api/scan/progress", async (route) => {
+    const body =
+      phase === "scoring"
+        ? { scan_running: false, last_scan_at: null, new_found: 10, score_pending: 3, score_done: 7 }
+        : { scan_running: false, last_scan_at: new Date().toISOString(), new_found: 10, score_pending: 0, score_done: 10 };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+
+  await page.goto("/jobs");
+  const pill = page.getByTestId("scan-progress");
+  await expect(pill).toBeVisible({ timeout: 15_000 });
+  await expect(pill).toHaveAttribute("data-state", "scoring");
+  await expect(page.getByTestId("scan-progress-count")).toHaveText("7 of 10");
+  await page.screenshot({ path: `${DIR}/scan-progress-scoring.png`, fullPage: true });
+
+  // Flip to idle — the active-only poll (1.5s) re-reads and the pill converts to
+  // the round green check + "Done".
+  phase = "idle";
+  await expect(pill).toHaveAttribute("data-state", "done", { timeout: 10_000 });
+  await expect(pill).toContainText("Done");
+  await page.screenshot({ path: `${DIR}/scan-progress-done.png`, fullPage: true });
 });

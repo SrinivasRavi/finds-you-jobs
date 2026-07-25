@@ -232,3 +232,109 @@ def test_unknown_document_download_404(
     _app, client = app_client
     r = client.get("/api/documents/nonexistent-id", headers=AUTH)
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# lifecycle parity — a manual card archives/restores/removes exactly like a
+# discovered one (2026-07-24 customer bug class: origin must never gate the
+# card lifecycle)
+# ---------------------------------------------------------------------------
+
+
+def _create_manual(client: TestClient, url: str, title: str) -> dict:
+    r = client.post(
+        "/api/applications/manual",
+        data={"canonical_url": url, "title": title, "column": "applied"},
+        files={"resume": ("resume.pdf", b"%PDF-1.4 submitted resume", "application/pdf")},
+        headers=AUTH,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_manual_application_archive_and_restore_lifecycle(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _app, client = app_client
+    created = _create_manual(client, "https://ex.co/j/lifecycle", "Lifecycle Role")
+    app_id = created["id"]
+
+    # Archive: 200, stamped, and the DTO still round-trips the manual extras
+    # (origin + attached documents) — serialization must not assume a packet.
+    r = client.patch(
+        f"/api/applications/{app_id}", headers=AUTH, json={"archived": True}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["archived_at"] is not None
+    assert body["origin"] == "manual"
+    assert [d["kind"] for d in body["documents"]] == ["tailored_resume"]
+    assert body["packetState"] == "none"
+
+    # Excluded from the board list; present under include_archived.
+    default_ids = {a["id"] for a in client.get("/api/applications", headers=AUTH).json()}
+    assert app_id not in default_ids
+    archived = client.get(
+        "/api/applications?include_archived=true", headers=AUTH
+    ).json()
+    assert app_id in {a["id"] for a in archived}
+
+    # Restore: back on the board, archived stamp cleared.
+    r = client.patch(
+        f"/api/applications/{app_id}", headers=AUTH, json={"archived": False}
+    )
+    assert r.status_code == 200
+    assert r.json()["archived_at"] is None
+    default_ids = {a["id"] for a in client.get("/api/applications", headers=AUTH).json()}
+    assert app_id in default_ids
+
+
+def test_retention_purge_handles_manual_card_children(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """FR-SYS-06: the retention purge must delete an archived manual card's FK
+    children (document links, apply runs) — it used to IntegrityError on the
+    first archived manual card and wedge the whole pass (2026-07-24)."""
+    from datetime import timedelta
+
+    from sidecar.app.db.base import now_utc
+    from sidecar.app.registry.persistence import purge_archived_applications
+
+    app, client = app_client
+    created = _create_manual(client, "https://ex.co/j/purge-me", "Purge Role")
+    app_id = created["id"]
+    client.patch(f"/api/applications/{app_id}", headers=AUTH, json={"archived": True})
+    with app.state.db.repos() as repos:
+        repos.apply_runs.create(app_id, status="failed", phase="failed")
+        repos.applications.update(
+            app_id, archived_at=now_utc() - timedelta(days=90)
+        )
+    purged = purge_archived_applications(app.state.db, retention_days=30)
+    assert app_id in purged
+    remaining = client.get(
+        "/api/applications?include_archived=true", headers=AUTH
+    ).json()
+    assert app_id not in {a["id"] for a in remaining}
+
+
+def test_manual_application_delete_removes_card(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    created = _create_manual(client, "https://ex.co/j/delete-me", "Delete Role")
+    app_id = created["id"]
+    # Every FK child must go with the card — the uploaded-document link (part
+    # of the create above) AND an apply run (both 500'd with IntegrityError
+    # before the delete route purged them).
+    with app.state.db.repos() as repos:
+        repos.apply_runs.create(app_id, status="failed", phase="failed")
+    r = client.delete(f"/api/applications/{app_id}", headers=AUTH)
+    assert r.status_code == 204
+    assert app_id not in {
+        a["id"]
+        for a in client.get(
+            "/api/applications?include_archived=true", headers=AUTH
+        ).json()
+    }
+    # Idempotence guard: a second delete is a clean 404, not a 500.
+    assert client.delete(f"/api/applications/{app_id}", headers=AUTH).status_code == 404

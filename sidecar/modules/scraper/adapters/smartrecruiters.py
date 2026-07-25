@@ -16,7 +16,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from ..config import SourceEntry
-from ..http import Fetcher
+from ..http import Fetcher, page_pause
 from ..types import NormalizedJob, ScraperError
 
 ID = "smartrecruiters"
@@ -87,6 +87,8 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
 
     jobs: list[NormalizedJob] = []
     for page in range(_MAX_PAGES):
+        if page:  # jittered inter-page pause — no back-to-back bursts (F-M9)
+            page_pause()
         payload = fetcher.get_json(_postings_url(slug, page * _PAGE_SIZE))
         if not isinstance(payload, dict) or not isinstance(payload.get("content"), list):
             raise ScraperError(ID, f"unexpected payload shape from {slug}: no content[] list")

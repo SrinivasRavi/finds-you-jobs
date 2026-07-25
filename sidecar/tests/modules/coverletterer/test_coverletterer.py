@@ -229,3 +229,53 @@ def test_dry_run_prompt_contains_skill_and_inputs_without_llm():
     assert "SYSTEM (skill)" in p and "USER" in p
     assert "cover-letter writing engine" in p
     assert "# Master resume body" in p and "lead with Kafka" in p
+
+
+# ---------------------------------------------------------------------------
+# Retry classification (technical audit F-H5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _record_backoff_no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Backoff delays are classified and recorded but never slept — semantics
+    under test, not wall-clock waits (the wait itself is unit-tested in
+    tests/modules/shared/test_completion_retry.py)."""
+    import sidecar.modules.coverletterer.coverletterer as cover_mod
+
+    waits: list[float] = []
+    monkeypatch.setattr(
+        cover_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
+    )
+    return waits
+
+
+def test_cover_fails_fast_on_deterministic_rejection(
+    _record_backoff_no_sleep: list[float],
+) -> None:
+    calls = {"n": 0}
+
+    class Rejecting:
+        def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+            calls["n"] += 1
+            raise EngineError("LLM API 402: insufficient credits", status=402)
+
+    with pytest.raises(EngineError, match="insufficient credits"):
+        cover("# Master", "responsibilities " * 20, engine=Rejecting())
+    assert calls["n"] == 1  # no second attempt, no backoff
+    assert _record_backoff_no_sleep == []
+
+
+def test_cover_cancel_checkpoint_precedes_any_attempt() -> None:
+    from sidecar.modules._shared.completion_retry import CompletionCancelled
+
+    calls = {"n": 0}
+
+    class Never:
+        def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+            calls["n"] += 1
+            raise AssertionError("must not be reached")
+
+    with pytest.raises(CompletionCancelled):
+        cover("# Master", "responsibilities " * 20, engine=Never(), cancelled=lambda: True)
+    assert calls["n"] == 0

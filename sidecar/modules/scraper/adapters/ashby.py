@@ -69,6 +69,8 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
 
     jobs: list[NormalizedJob] = []
     for raw in payload["jobs"]:
+        if not isinstance(raw, dict):
+            continue  # one malformed element never sinks the feed (workday precedent)
         if raw.get("isListed") is False:
             continue
         jobs.append(

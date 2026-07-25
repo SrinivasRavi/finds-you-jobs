@@ -30,7 +30,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 
-from .claude_engine import EngineError, EngineUsage
+from .claude_engine import EngineError, EngineUsage, run_cli
 
 # Binary path cache, per CLI name — same rationale as claude_engine._CLAUDE_PATH
 # (a GUI-launched app inherits a minimal PATH; the login-shell probe is slow).
@@ -136,7 +136,7 @@ class CodexCliEngine:
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, EngineUsage]:
         exe = resolve_cli("codex")
         if exe is None:
-            raise EngineError("`codex` CLI not found on PATH")
+            raise EngineError("`codex` CLI not found on PATH", retryable=False)
         cmd = [exe, "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check"]
         if self.model:
             cmd += ["--model", self.model]
@@ -145,18 +145,21 @@ class CodexCliEngine:
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="fyj-codex-") as scratch:
             try:
-                proc = subprocess.run(  # noqa: S603
+                # run_cli (not subprocess.run): group launch + group kill on
+                # timeout, so agent-spawned grandchildren die too (F-L9).
+                proc = run_cli(
                     cmd,
                     input=prompt,
-                    capture_output=True,
-                    text=True,
                     timeout=self.timeout_s,
-                    check=False,
                     cwd=scratch,
                     env=_scrubbed_env(_CODEX_SCRUB),
                 )
             except subprocess.TimeoutExpired as e:
-                raise EngineError(f"codex CLI timed out after {self.timeout_s}s") from e
+                # Full per-attempt budget spent — fail fast, don't hold the
+                # llm slot for another full timeout (F-H5).
+                raise EngineError(
+                    f"codex CLI timed out after {self.timeout_s}s", retryable=False
+                ) from e
         latency_ms = int((time.monotonic() - started) * 1000)
         if proc.returncode != 0:
             raise EngineError(
@@ -235,22 +238,23 @@ class AntigravityCliEngine:
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, EngineUsage]:
         exe = resolve_cli("agy")
         if exe is None:
-            raise EngineError("`agy` (Antigravity CLI) not found on PATH")
+            raise EngineError("`agy` (Antigravity CLI) not found on PATH", retryable=False)
         prompt = f"{system_prompt}\n\n{user_prompt}" if system_prompt else user_prompt
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="fyj-agy-") as scratch:
             try:
-                proc = subprocess.run(  # noqa: S603
+                # run_cli (not subprocess.run): group launch + group kill on
+                # timeout, so agent-spawned grandchildren die too (F-L9).
+                proc = run_cli(
                     [exe, "-p", prompt],
-                    capture_output=True,
-                    text=True,
                     timeout=self.timeout_s,
-                    check=False,
                     cwd=scratch,
                     env=_scrubbed_env(_ANTIGRAVITY_SCRUB),
                 )
             except subprocess.TimeoutExpired as e:
-                raise EngineError(f"agy CLI timed out after {self.timeout_s}s") from e
+                raise EngineError(
+                    f"agy CLI timed out after {self.timeout_s}s", retryable=False
+                ) from e
         latency_ms = int((time.monotonic() - started) * 1000)
         if proc.returncode != 0:
             raise EngineError(

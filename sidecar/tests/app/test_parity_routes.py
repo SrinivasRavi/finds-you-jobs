@@ -96,7 +96,8 @@ def test_install_browser_is_idempotent(
     assert second.json()["status"] == "already_running"
 
 
-def test_dev_seed_and_fail_running(app_client) -> None:
+def test_dev_seed_and_fail_running(app_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FYJ_DEV", "1")  # F-L4: dev endpoints answer only opted-in
     _app, client = app_client
     seeded = client.post("/api/dev/seed-application", headers=AUTH)
     assert seeded.status_code == 201
@@ -107,3 +108,40 @@ def test_dev_seed_and_fail_running(app_client) -> None:
     # No running ops → fail-running is a clean no-op.
     failed = client.post("/api/dev/operations/fail-running", headers=AUTH).json()
     assert failed["ok"] is True and failed["count"] == 0
+
+
+def test_dev_seed_queued_stays_queued_and_cancels(
+    app_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """seed-queued creates a row the runner never dispatched — it stays
+    `queued` (deterministic target for the Logs Stop control e2e), and the
+    real cancel route lands it `cancelled`."""
+    monkeypatch.setenv("FYJ_DEV", "1")
+    _app, client = app_client
+    seeded = client.post("/api/dev/operations/seed-queued", headers=AUTH)
+    assert seeded.status_code == 201
+    op_id = seeded.json()["id"]
+    op = client.get(f"/api/operations/{op_id}", headers=AUTH).json()
+    assert op["kind"] == "cleanup_trash" and op["state"] == "queued"
+
+    cancelled = client.post(f"/api/operations/{op_id}/cancel", headers=AUTH)
+    assert cancelled.status_code == 202
+    assert cancelled.json()["state"] == "cancelled"
+    op = client.get(f"/api/operations/{op_id}", headers=AUTH).json()
+    assert op["state"] == "cancelled"
+
+
+def test_dev_endpoints_are_gated_off_by_default(
+    app_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-L4: without FYJ_DEV=1 the fault-injection endpoints answer 404 — the
+    packaged app never sets the flag, so they are unreachable there."""
+    monkeypatch.delenv("FYJ_DEV", raising=False)
+    _app, client = app_client
+    for path in (
+        "/api/dev/seed-application",
+        "/api/dev/operations/fail-running",
+        "/api/dev/operations/seed-queued",
+        "/api/dev/linkedin/expire-cookie",
+    ):
+        assert client.post(path, headers=AUTH).status_code == 404, path

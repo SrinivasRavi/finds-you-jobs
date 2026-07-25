@@ -18,6 +18,12 @@ export const E2E_DATA_DIR = join(
   "appdata",
 );
 
+// FYJ_WEB_PORT (default 1420): run the e2e stack on a second port while a
+// `pnpm dev` session holds 1420 — vite.config.ts reads the same variable, so
+// the spawned dev-web vite and the URLs here stay in lockstep. Without this,
+// reuseExistingServer would attach the tests to the developer's live session.
+const WEB_PORT = Number(process.env.FYJ_WEB_PORT ?? 1420);
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./e2e/_results",
@@ -27,14 +33,17 @@ export default defineConfig({
   workers: 1,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:1420",
+    baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: "off",
   },
   webServer: {
     command: "node ../scripts/dev-web.mjs",
-    url: "http://127.0.0.1:1420",
+    url: `http://127.0.0.1:${WEB_PORT}`,
     reuseExistingServer: true,
     timeout: 90_000,
+    // TERM first so dev-web's own cleanup (child process groups, .env.local)
+    // runs before Playwright escalates to a group SIGKILL.
+    gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
     // FYJ_APPLY_DEV unlocks the apply op's dev knobs (scripted engine, local
     // fixture URLs, headless) so the applier e2e runs with zero model calls
     // and zero external traffic — same seam the sidecar tests use.

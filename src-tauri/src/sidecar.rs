@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -115,6 +115,13 @@ pub fn spawn_once(cwd: &Path, app: &AppHandle) -> std::io::Result<(Child, Sideca
     // parent, which in dev is the `uv run` wrapper that outlives us) — so a
     // hard-killed shell always takes the sidecar down within one poll tick.
     cmd.env("FYJ_SHELL_PID", std::process::id().to_string());
+    // Dev-only surfaces (the hidden /dev routes): scripts/dev-web.mjs sets
+    // FYJ_DEV=1 for the browser stack, but under `pnpm dev` the sidecar is
+    // spawned HERE — without this a debug Tauri build 404s every dev endpoint.
+    // Never set in release builds.
+    if cfg!(debug_assertions) {
+        cmd.env("FYJ_DEV", "1");
+    }
     // Put the child in its own process group so we can kill the whole tree.
     #[cfg(unix)]
     {
@@ -212,12 +219,38 @@ pub fn kill_group(pid: u32) {
     }
 }
 
-/// Append one timestamped line to `logs/shell.log` (dev diagnostics — the
+/// Where shell.log lives. Dev keeps the repo-local `logs/` dir; a packaged
+/// install resolves the OS per-app log dir at runtime — `dev_cwd()` is a
+/// compile-time build-machine path that doesn't exist on real installs, which
+/// made the "remote-debugging channel" dev-only (F-L5). Pinned once from
+/// `init_shell_log` before the first log line.
+static SHELL_LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Resolve and pin the shell.log directory (called once during app setup).
+/// Best-effort: if the OS log dir can't be resolved, shell_log falls back to
+/// the dev path and stays a no-op on installs where that path doesn't exist —
+/// logging never fails the caller.
+pub fn init_shell_log(app: &AppHandle) {
+    let dir = if cfg!(debug_assertions) {
+        dev_cwd().join("logs")
+    } else {
+        match app.path().app_log_dir() {
+            Ok(dir) => dir,
+            Err(_) => return,
+        }
+    };
+    let _ = SHELL_LOG_DIR.set(dir);
+}
+
+/// Append one timestamped line to shell.log (dev diagnostics — the
 /// remote-debugging channel for real installs: the console can't say who
 /// initiated an exit, this file can). Best-effort, never fails the caller.
 pub fn shell_log(msg: &str) {
     use std::io::Write;
-    let dir = dev_cwd().join("logs");
+    let dir = SHELL_LOG_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| dev_cwd().join("logs"));
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)

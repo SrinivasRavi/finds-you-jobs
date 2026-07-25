@@ -135,6 +135,12 @@ const zh: DeepPartial<Messages> = {
     allSetSettings: "在设置中调整提供商与人脉功能",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "正在搜索新职位",
+      scoring: "AI 正在为新发现的职位评分",
+      done: "完成",
+      count: "{{found}} 个中的 {{done}} 个",
+    },
     header: {
       masterResume: "主简历",
       masterResumeTitle:
@@ -206,7 +212,7 @@ const zh: DeepPartial<Messages> = {
       matchScore: "匹配分",
       save: "保存",
       saved: "已保存",
-      remove: "移除",
+      remove: "删除",
       toggleResume: "简历",
       toggleCoverLetter: "求职信",
       toggleFindReferrals: "寻找内推",
@@ -217,7 +223,7 @@ const zh: DeepPartial<Messages> = {
       watchOnTitle: "每次扫描都会扫描该公司的招聘页 — 点击停止",
       watchOffTitle: "在以后的每次扫描中扫描该公司的整个招聘页",
       adding: "添加中…",
-      removing: "移除中…",
+      removing: "删除中…",
       failedRetry: "失败 — 重试",
       showMoreFromCompany: "显示该公司的更多职位",
       openPosting: "打开职位原文 ↗",
@@ -315,13 +321,13 @@ const zh: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "已删除职位",
-      retention: "回收站中的职位将在 7 天后被永久删除。",
-      emptyConfirm_other: "清空回收站？{{count}} 个职位将被永久删除。",
+      retention: "已删除的职位将在 7 天后被永久清除。",
+      emptyConfirm_other: "全部永久删除？{{count}} 个职位将被永久清除。",
       confirm: "确认",
       cancel: "取消",
-      emptyTrash: "清空回收站",
-      empty: "没有已移除的职位。",
-      removedRecently: "{{company}} · 最近移除",
+      emptyTrash: "全部永久删除",
+      empty: "没有已删除的职位。",
+      removedRecently: "{{company}} · 最近删除",
       deleteForever: "永久删除",
       undo: "撤销",
     },
@@ -331,7 +337,7 @@ const zh: DeepPartial<Messages> = {
     deletedApplications: "已删除申请",
     addApplication: "添加职位申请",
     cancel: "取消",
-    archive: "归档",
+    archive: "删除",
     moveToDiscover: "移回发现职位",
     stage: {
       Saved: "已保存",
@@ -454,6 +460,7 @@ const zh: DeepPartial<Messages> = {
       empty: "没有已删除的申请。",
       deletedRecently: "最近删除",
       restore: "恢复",
+      deleteForever: "永久删除",
     },
   },
   networking: {
@@ -512,7 +519,7 @@ const zh: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "最近消息",
-      archive: "归档",
+      archive: "删除",
     },
     add: {
       title: "添加联系人",
@@ -583,6 +590,8 @@ const zh: DeepPartial<Messages> = {
       retried: "已重试",
       retry: "重试",
       retrying: "重试中…",
+      stop: "停止",
+      stopping: "正在停止…",
       restarted: "生成期间应用重启了。",
       seconds: "{{value}} 秒",
       costUnknown: "该模型成本未知",
@@ -838,14 +847,14 @@ const zh: DeepPartial<Messages> = {
       sentGhostedLabel: "无回应请求超过以下时长后标记为“已失联”",
       sentGhostedHint:
         "连接请求始终未被接受（或接受后始终未回复）达这么多天。",
-      contactPurgeLabel: "已移除的联系人在以下时长后永久删除",
-      contactPurgeHint: "你删除的联系人会在这么多天后被永久清除。",
-      trashedJobsLabel: "回收站中的职位在以下时长后永久删除",
+      contactPurgeLabel: "已删除的联系人在以下时长后永久清除",
+      contactPurgeHint: "已删除的联系人会在这么多天后被永久清除。",
+      trashedJobsLabel: "已删除的职位在以下时长后永久清除",
       trashedJobsHint:
-        "回收站中的职位会在这么多天后被永久清除（且不会被重新抓取）。",
-      archivedAppsLabel: "已归档的申请在以下时长后永久删除",
+        "已删除的职位会在这么多天后被永久清除（且不会被重新抓取）。",
+      archivedAppsLabel: "已删除的申请在以下时长后永久清除",
       archivedAppsHint:
-        "已归档的跟踪卡片及其文件会在这么多天后被永久清除。",
+        "已删除的跟踪卡片及其文件会在这么多天后被永久清除。",
       syncCadenceLabel: "检查 LinkedIn 联系人更新的间隔",
       syncCadenceHint:
         "多久从 LinkedIn 刷新一次联系人状态（仅在内推联络开启且已连接时）。",
@@ -1093,6 +1102,8 @@ const zh: DeepPartial<Messages> = {
     moreDetail: "更多详情",
     deletedSizerLabel: "已删除联系人",
     bootSplash: "正在启动本地后端… 首次启动可能需要一点时间。",
+    streamReconnecting:
+      "正在重新连接本地后端… 实时更新已暂停，恢复后会自动补上。",
     backendStoppedFallback: "后端已停止响应",
     sidecarFatalBanner:
       "后端已停止：{{message}}。在退出并重新打开应用之前，你的任何操作都不会被保存。",
@@ -1100,6 +1111,16 @@ const zh: DeepPartial<Messages> = {
       remote: "远程",
       hybrid: "混合",
       onsite: "现场",
+    },
+    surfaceError: {
+      title: "此处出现问题",
+      body: "此视图遇到了意外错误，但已被隔离——应用的其余部分继续正常运行，你的数据安全无虞。技术细节已记录到开发者控制台。",
+      reload: "重新加载应用",
+    },
+    mutationError: {
+      body: "该更改未能保存——应用在与本地后端通信时出错。",
+      dismiss: "关闭",
+      more_other: "另有 {{count}} 个较早的失败未显示",
     },
     rescore: {
       title: "用 AI 重新评分这些职位？",

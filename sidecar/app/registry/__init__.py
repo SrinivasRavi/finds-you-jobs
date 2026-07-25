@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from .engines import EngineNotConfiguredError, EngineRegistry, ResolvedEngine
 from .operations import (
+    CANCELLABLE_RUNNING_KINDS,
     OperationContext,
     OperationOutcome,
     OperationRegistry,
@@ -19,6 +20,7 @@ from .operations import (
 )
 
 __all__ = [
+    "CANCELLABLE_RUNNING_KINDS",
     "EngineNotConfiguredError",
     "EngineRegistry",
     "OperationContext",

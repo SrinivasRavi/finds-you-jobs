@@ -148,6 +148,12 @@ const nl: DeepPartial<Messages> = {
     allSetSettings: "Beheer providers + netwerk in Instellingen",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Zoeken naar nieuwe functies",
+      scoring: "AI beoordeelt de nieuw gevonden vacatures",
+      done: "Klaar",
+      count: "{{done}} van {{found}}",
+    },
     header: {
       masterResume: "Master-cv",
       masterResumeTitle:
@@ -333,12 +339,12 @@ const nl: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "Verwijderde vacatures",
-      retention: "Vacatures in de prullenbak worden na 7 dagen permanent verwijderd.",
-      emptyConfirm_one: "Prullenbak legen? {{count}} vacature wordt permanent verwijderd.",
-      emptyConfirm_other: "Prullenbak legen? {{count}} vacatures worden permanent verwijderd.",
+      retention: "Verwijderde vacatures worden na 7 dagen permanent gewist.",
+      emptyConfirm_one: "Alles definitief verwijderen? {{count}} vacature wordt permanent gewist.",
+      emptyConfirm_other: "Alles definitief verwijderen? {{count}} vacatures worden permanent gewist.",
       confirm: "Bevestigen",
       cancel: "Annuleren",
-      emptyTrash: "Prullenbak legen",
+      emptyTrash: "Alles definitief verwijderen",
       empty: "Geen verwijderde vacatures.",
       removedRecently: "{{company}} · Onlangs verwijderd",
       deleteForever: "Definitief verwijderen",
@@ -350,7 +356,7 @@ const nl: DeepPartial<Messages> = {
     deletedApplications: "Verwijderde sollicitaties",
     addApplication: "Sollicitatie toevoegen",
     cancel: "Annuleren",
-    archive: "Archiveren",
+    archive: "Verwijderen",
     moveToDiscover: "Naar Vacatures ontdekken verplaatsen",
     // Kanban stage names — keys are the backend STAGES enum values verbatim; the
     // enum strings themselves are never translated on the wire.
@@ -480,6 +486,7 @@ const nl: DeepPartial<Messages> = {
       empty: "Geen verwijderde sollicitaties.",
       deletedRecently: "Onlangs verwijderd",
       restore: "Terugzetten",
+      deleteForever: "Definitief verwijderen",
     },
   },
   networking: {
@@ -539,7 +546,7 @@ const nl: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "Laatste bericht",
-      archive: "Archiveren",
+      archive: "Verwijderen",
     },
     add: {
       title: "Contact toevoegen",
@@ -610,6 +617,8 @@ const nl: DeepPartial<Messages> = {
       retried: "opnieuw geprobeerd",
       retry: "Opnieuw",
       retrying: "Opnieuw proberen…",
+      stop: "Stoppen",
+      stopping: "Bezig met stoppen…",
       restarted: "App herstart tijdens het genereren.",
       seconds: "{{value}}s",
       costUnknown: "kosten onbekend voor dit model",
@@ -869,14 +878,14 @@ const nl: DeepPartial<Messages> = {
       sentGhostedLabel: "Markeer een onbeantwoord verzoek als “geghost” na",
       sentGhostedHint:
         "Een connectieverzoek dat zoveel dagen niet is geaccepteerd (of geaccepteerd maar nooit beantwoord).",
-      contactPurgeLabel: "Verwijder verwijderde contacten definitief na",
-      contactPurgeHint: "Contacten die je hebt verwijderd worden zoveel dagen later permanent gewist.",
-      trashedJobsLabel: "Verwijder vacatures in de prullenbak definitief na",
+      contactPurgeLabel: "Wis verwijderde contacten definitief na",
+      contactPurgeHint: "Verwijderde contacten worden zoveel dagen later permanent gewist.",
+      trashedJobsLabel: "Wis verwijderde vacatures definitief na",
       trashedJobsHint:
-        "Vacatures in de prullenbak worden zoveel dagen later permanent gewist (en niet opnieuw gescand).",
-      archivedAppsLabel: "Verwijder gearchiveerde sollicitaties definitief na",
+        "Verwijderde vacatures worden zoveel dagen later permanent gewist (en niet opnieuw gescand).",
+      archivedAppsLabel: "Wis verwijderde sollicitaties definitief na",
       archivedAppsHint:
-        "Gearchiveerde trackerkaarten en hun documenten worden zoveel dagen later permanent gewist.",
+        "Verwijderde trackerkaarten en hun documenten worden zoveel dagen later permanent gewist.",
       syncCadenceLabel: "Controleer LinkedIn op contactupdates elke",
       syncCadenceHint:
         "Hoe vaak de status van je contacten vanaf LinkedIn wordt ververst (alleen zolang Referral Outreach aan staat en verbonden is).",
@@ -1137,6 +1146,8 @@ const nl: DeepPartial<Messages> = {
     // width of the longest label (HeaderAddButton.tsx).
     deletedSizerLabel: "Verwijderde sollicitaties",
     bootSplash: "De lokale backend wordt gestart… de eerste keer kan dit even duren.",
+    streamReconnecting:
+      "Opnieuw verbinden met de lokale backend… live-updates zijn gepauzeerd en halen automatisch de achterstand in.",
     backendStoppedFallback: "de backend reageert niet meer",
     sidecarFatalBanner:
       "Backend gestopt: {{message}}. Niets wat je doet wordt opgeslagen totdat je de app afsluit en opnieuw opent.",
@@ -1144,6 +1155,17 @@ const nl: DeepPartial<Messages> = {
       remote: "Remote",
       hybrid: "Hybride",
       onsite: "Op locatie",
+    },
+    surfaceError: {
+      title: "Hier ging iets mis",
+      body: "Deze weergave kreeg een onverwachte fout die is ingeperkt — de rest van de app blijft werken en je gegevens zijn veilig. De technische details zijn vastgelegd in de ontwikkelaarsconsole.",
+      reload: "App opnieuw laden",
+    },
+    mutationError: {
+      body: "Die wijziging is niet opgeslagen — de app kreeg een fout bij het bereiken van de lokale backend.",
+      dismiss: "Sluiten",
+      more_one: "+{{count}} eerdere fout niet getoond",
+      more_other: "+{{count}} eerdere fouten niet getoond",
     },
     rescore: {
       title: "Vacatures opnieuw scoren met AI?",

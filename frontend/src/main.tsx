@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { useTranslation } from "react-i18next";
 import { createRoot } from "react-dom/client";
@@ -13,6 +13,7 @@ import { Onboarding } from "./surfaces/Onboarding";
 import { Settings } from "./surfaces/Settings";
 import { Tracker } from "./surfaces/Tracker";
 import { Layout } from "./shell/Layout";
+import { SurfaceError } from "./shell/SurfaceError";
 import { installExternalLinkInterceptor } from "./shell/openExternal";
 // i18n init (side-effect import): registers bundled locales and applies the
 // persisted language before first paint.
@@ -32,8 +33,21 @@ import "@fontsource/ibm-plex-mono/600.css";
 import "./index.css";
 
 // One QueryClient for the app session. SSE events invalidate keys (queries.ts).
+// The MutationCache hook is the no-silent-failure net (2026-07-24): every
+// failed write is logged AND surfaced via the Layout's MutationErrorBanner —
+// before this a failed archive/move/save showed nothing anywhere.
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 0, refetchOnWindowFocus: false } },
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) => {
+      console.error("[finds-you-jobs] mutation failed:", error);
+      // Hooks whose surfaces already render the failure inline declare
+      // `meta.errorHandledLocally` — the global banner is the net for the
+      // UNHANDLED rest, not a second voice over handled ones.
+      if (mutation.meta?.errorHandledLocally) return;
+      window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: error }));
+    },
+  }),
 });
 
 // First-launch guard (FR-OB-01 / US-OB-01): `MasterProfile` exists ⟺ onboarded.
@@ -83,20 +97,25 @@ function OnboardingRoute() {
 
 // Explicit React Router config (the pinned choice — architecture §6). Routes are
 // internal navigation only; this is a desktop app, no URL-bar-driven flows.
+// Every route carries the SurfaceError boundary (2026-07-24, customer-reported
+// crash): a child-route error renders the panel INSIDE the Layout — the rail
+// stays usable — and a root-level error (or unmatched path) gets it full-page.
+// Without these, React Router's developer-facing default page hijacks the app.
 const router = createBrowserRouter([
-  { path: "/onboarding", element: <OnboardingRoute /> },
+  { path: "/onboarding", element: <OnboardingRoute />, errorElement: <SurfaceError /> },
   {
     path: "/",
     element: <GuardedLayout />,
+    errorElement: <SurfaceError />,
     children: [
       { index: true, element: <Navigate to="/jobs" replace /> },
-      { path: "jobs", element: <JobBoard /> },
-      { path: "applications", element: <Tracker /> },
-      { path: "networking", element: <Networking /> },
-      { path: "dev", element: <Dev /> },
-      { path: "analytics", element: <Analytics /> },
+      { path: "jobs", element: <JobBoard />, errorElement: <SurfaceError /> },
+      { path: "applications", element: <Tracker />, errorElement: <SurfaceError /> },
+      { path: "networking", element: <Networking />, errorElement: <SurfaceError /> },
+      { path: "dev", element: <Dev />, errorElement: <SurfaceError /> },
+      { path: "analytics", element: <Analytics />, errorElement: <SurfaceError /> },
       { path: "logs", element: <Navigate to="/analytics" replace /> },
-      { path: "settings", element: <Settings /> },
+      { path: "settings", element: <Settings />, errorElement: <SurfaceError /> },
     ],
   },
 ]);

@@ -6,6 +6,9 @@ under test.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -89,3 +92,153 @@ def test_cors_preflight_rejects_other_origins(client: TestClient) -> None:
     )
     assert resp.status_code == 400
     assert "access-control-allow-origin" not in resp.headers
+
+
+def test_unhandled_route_error_is_logged_to_flight_recorder(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """An unexpected route crash must never go unlogged (2026-07-24): the
+    log-and-reraise middleware writes the traceback to the flight recorder
+    while leaving the 500 propagation exactly as before."""
+    import logging
+
+    from sidecar.app.logging_setup import LOGGER_NAME
+
+    # No lifespan on purpose (client used without `with`, matching the module
+    # fixture): the middleware is pure ASGI and needs no runner/DB — and a
+    # lifespan-booted app here proved able to wedge the browser-driven apply
+    # tests that run later in the same process. Isolated data_dir keeps the
+    # flight-recorder file out of the developer's real app-data either way.
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+
+    @app.get("/api/_test_boom")
+    async def _boom() -> None:
+        raise RuntimeError("deliberate test crash")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR, logger=LOGGER_NAME):
+        resp = client.get(
+            "/api/_test_boom", headers={"Authorization": f"Bearer {TOKEN}"}
+        )
+    assert resp.status_code == 500
+    assert any(
+        "unhandled error on GET /api/_test_boom" in r.message for r in caplog.records
+    )
+
+
+# ─── F-M10: BearerAuthMiddleware is pure ASGI — behavior preserved exactly ───
+# The middleware no longer rides on BaseHTTPMiddleware (whose per-request task
+# group buffers streams and can delay SSE unsubscribe on webview drop). These
+# tests pin every behavior of the old dispatch at the ASGI level: the /healthz
+# exemption, header tokens, the `?token=` allowance for the SSE stream and
+# screenshot GETs (and ONLY those), the 401 shape, and non-http pass-through.
+
+
+def _asgi_scope(path: str, query: bytes = b"", headers: list | None = None) -> dict:
+    return {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "server": ("127.0.0.1", 80),
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": query,
+        "headers": headers or [],
+    }
+
+
+async def _run_middleware(scope: dict) -> tuple[bool, list[Any]]:
+    """Drive BearerAuthMiddleware over a recording inner app. Returns
+    (inner_app_reached, messages sent to the client)."""
+    from starlette.types import Message, Receive, Scope, Send
+
+    from sidecar.app.auth import BearerAuthMiddleware
+
+    reached = {"value": False}
+
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        reached["value"] = True
+        await send(
+            {"type": "http.response.start", "status": 200, "headers": []}
+        )
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await BearerAuthMiddleware(inner, token=TOKEN)(scope, receive, send)
+    return reached["value"], sent
+
+
+async def test_asgi_auth_healthz_open() -> None:
+    reached, _ = await _run_middleware(_asgi_scope("/healthz"))
+    assert reached is True
+
+
+async def test_asgi_auth_header_token_accepted() -> None:
+    headers = [(b"authorization", f"Bearer {TOKEN}".encode())]
+    reached, _ = await _run_middleware(_asgi_scope("/api/jobs", headers=headers))
+    assert reached is True
+
+
+async def test_asgi_auth_missing_token_is_401_with_detail() -> None:
+    reached, sent = await _run_middleware(_asgi_scope("/api/jobs"))
+    assert reached is False
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 401
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    import json as _json
+
+    assert _json.loads(body) == {"detail": "missing or invalid bearer token"}
+
+
+async def test_asgi_auth_query_token_allowed_for_sse_stream() -> None:
+    reached, _ = await _run_middleware(
+        _asgi_scope("/api/events", query=f"token={TOKEN}".encode())
+    )
+    assert reached is True
+
+
+async def test_asgi_auth_query_token_allowed_for_screenshot_get() -> None:
+    reached, _ = await _run_middleware(
+        _asgi_scope("/api/apply-runs/r1/screenshot", query=f"token={TOKEN}".encode())
+    )
+    assert reached is True
+
+
+async def test_asgi_auth_query_token_rejected_elsewhere() -> None:
+    # `?token=` only rides on the SSE stream + screenshot GETs (NFR-SEC-03) —
+    # any other path must still 401 without the header.
+    reached, sent = await _run_middleware(
+        _asgi_scope("/api/jobs", query=f"token={TOKEN}".encode())
+    )
+    assert reached is False
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 401
+
+
+async def test_asgi_auth_non_http_scope_passes_through() -> None:
+    from starlette.types import Receive, Scope, Send
+
+    from sidecar.app.auth import BearerAuthMiddleware
+
+    seen = {"value": False}
+
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        seen["value"] = True
+
+    await BearerAuthMiddleware(inner, token=TOKEN)(
+        {"type": "lifespan"},
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+    )
+    assert seen["value"] is True

@@ -23,7 +23,11 @@ def _no_real_llm_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     from sidecar.modules._shared import claude_engine
 
     def _refuse(self, system_prompt: str, user_prompt: str):  # noqa: ANN001, ANN202, ARG001
-        raise claude_engine.EngineError("claude-cli is stubbed out in unit tests")
+        # retryable=False: fail fast, exactly as documented above — without it
+        # the shared retry policy would backoff-retry the stub and slow tests.
+        raise claude_engine.EngineError(
+            "claude-cli is stubbed out in unit tests", retryable=False
+        )
 
     monkeypatch.setattr(claude_engine.ClaudeCliEngine, "complete", _refuse)
 

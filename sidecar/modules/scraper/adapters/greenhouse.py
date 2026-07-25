@@ -66,7 +66,11 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
 
     jobs: list[NormalizedJob] = []
     for raw in payload["jobs"]:
+        if not isinstance(raw, dict):
+            continue  # one malformed element never sinks the feed (workday precedent)
         location = raw.get("location") or {}
+        if not isinstance(location, dict):
+            location = {}
         jobs.append(
             NormalizedJob(
                 title=str(raw.get("title") or ""),

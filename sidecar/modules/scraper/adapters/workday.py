@@ -30,7 +30,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from ..config import SourceEntry
-from ..http import Fetcher
+from ..http import Fetcher, page_pause
 from ..types import NormalizedJob, ScraperError
 
 ID = "workday"
@@ -120,6 +120,8 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
     jobs: list[NormalizedJob] = []
     offset = 0
     for _page in range(MAX_PAGES):
+        if _page:  # jittered inter-page pause — no back-to-back bursts (F-M9)
+            page_pause()
         payload = fetcher.post_json(
             endpoint,
             {"limit": _PAGE_SIZE, "offset": offset, "searchText": "", "appliedFacets": {}},

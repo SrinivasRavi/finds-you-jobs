@@ -241,6 +241,109 @@ test("analytics shows cost tiles and a real ledger row; /logs redirects", async 
   await page.screenshot({ path: `${DIR}/analytics-ledger.png`, fullPage: true });
 });
 
+test("a queued operation row offers Stop and cancels to `cancelled` (F-M7)", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  // Deterministically queued: the dev seed writes the operation ROW without
+  // pumping the runner, so it STAYS queued (the generic enqueue dispatches
+  // almost immediately — a race, not a test). FYJ_DEV=1 is set by dev-web.
+  const seeded = await request.post(`${base}/api/dev/operations/seed-queued`, { headers: auth });
+  expect(seeded.status()).toBe(201);
+  const opId = (await seeded.json()).id as string;
+
+  await page.goto("/analytics");
+  await expect(page.getByTestId("agent-filters")).toBeVisible({ timeout: 15_000 });
+  const queuedRow = page
+    .getByTestId("log-row")
+    .filter({ hasText: "cleanup_trash" })
+    .filter({ hasText: "queued" })
+    .first();
+  await expect(queuedRow).toBeVisible();
+  await expect(queuedRow.getByTestId("log-stop")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/ledger-stop-queued.png`, fullPage: true });
+
+  await queuedRow.getByTestId("log-stop").click();
+  // Authoritative: the op lands `cancelled` on the API…
+  await expect
+    .poll(async () => {
+      const op = await (
+        await request.get(`${base}/api/operations/${opId}`, { headers: auth })
+      ).json();
+      return op.state;
+    })
+    .toBe("cancelled");
+  // …and the ledger repaints the row without a manual reload (mutation refresh
+  // + SSE bridge), with the Stop control gone from the now-terminal row.
+  const cancelledRow = page
+    .getByTestId("log-row")
+    .filter({ hasText: "cleanup_trash" })
+    .filter({ hasText: "cancelled" })
+    .first();
+  await expect(cancelledRow).toBeVisible();
+  await expect(cancelledRow.getByTestId("log-stop")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/ledger-stop-cancelled.png`, fullPage: true });
+});
+
+test("the ledger Stop control never renders on an apply-kind row (queued or running)", async ({
+  page,
+}) => {
+  // Apply cancellation belongs to the apply-run flow (the ApplierPanel's own
+  // Cancel), not the generic ledger Stop — even for a queued apply. Staging a
+  // real queued apply needs an application + apply run (heavy + flaky), so inject
+  // synthetic ledger rows deterministically: one queued `apply` (must show NO
+  // Stop) and one queued `cleanup_trash` (the control — must still show Stop).
+  await page.route("**/api/operations?*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const now = new Date().toISOString();
+    const injected = [
+      {
+        id: "e2e-apply-queued",
+        kind: "apply",
+        state: "queued",
+        context: "e2e-apply-no-stop",
+        usage: null,
+        error: null,
+        created_at: now,
+        started_at: null,
+        result_ref: null,
+      },
+      {
+        id: "e2e-cleanup-queued",
+        kind: "cleanup_trash",
+        state: "queued",
+        context: "e2e-cleanup-has-stop",
+        usage: null,
+        error: null,
+        created_at: now,
+        started_at: null,
+        result_ref: null,
+      },
+    ];
+    const response = await route.fetch();
+    const body = (await response.json()) as unknown[];
+    await route.fulfill({ response, json: [...injected, ...body] });
+  });
+
+  await page.goto("/analytics");
+  await expect(page.getByTestId("agent-filters")).toBeVisible({ timeout: 15_000 });
+
+  const applyRow = page.getByTestId("log-row").filter({ hasText: "e2e-apply-no-stop" }).first();
+  const cleanupRow = page
+    .getByTestId("log-row")
+    .filter({ hasText: "e2e-cleanup-has-stop" })
+    .first();
+  await expect(applyRow).toBeVisible();
+  await expect(cleanupRow).toBeVisible();
+  // The control (a queued non-apply op) still offers Stop…
+  await expect(cleanupRow.getByTestId("log-stop")).toBeVisible();
+  // …but the queued apply row offers none.
+  await expect(applyRow.getByTestId("log-stop")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/ledger-apply-no-stop.png`, fullPage: true });
+});
+
 test("discovery sources: all on by default, opt-out persists across reload", async ({ page }) => {
   await page.goto("/settings");
   await page.getByTestId("settings-nav-discovery").click();

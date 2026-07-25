@@ -1,0 +1,162 @@
+// One referral-candidate row (extracted from ReferralsModal.tsx 2026-07-25,
+// F-M6 monolith split — pure move, zero behavior change). Memoized: every prop
+// is a primitive, a query-stable object (`c`), or a root-stable useCallback, so
+// typing in one row's draft no longer re-renders every other row.
+
+import { memo } from "react";
+import { useTranslation } from "react-i18next";
+
+import type { AudienceTag, ReferralCandidate } from "../../api/types";
+import i18n from "../../i18n";
+import { initials } from "./shared";
+
+// i18n key map — translated with t(...) at render.
+const TAG_LABEL: Record<AudienceTag, string> = {
+  peer: "popups.referrals.tag.peer",
+  hm: "popups.referrals.tag.hm",
+  recruiter: "popups.referrals.tag.recruiter",
+  leadership: "popups.referrals.tag.leadership",
+  other: "popups.referrals.tag.peer",
+};
+const TAG_CLASS: Record<AudienceTag, string> = {
+  peer: "border-border-2 bg-surface text-ink-2",
+  hm: "border-accent bg-accent-wash text-accent-ink",
+  recruiter: "border-pink bg-pink-wash text-pink",
+  leadership: "border-purple bg-purple-wash text-purple",
+  other: "border-border-2 bg-surface text-ink-2",
+};
+
+/** Ordinal degree label, or null when the degree is genuinely unknown (so the
+ *  badge is hidden rather than rendering "NULLTH deg"). */
+function degreeLabel(degree: number | null): string | null {
+  if (degree == null) return null;
+  if (degree === 1) return i18n.t("popups.referrals.degree.first");
+  if (degree === 2) return i18n.t("popups.referrals.degree.second");
+  if (degree === 3) return i18n.t("popups.referrals.degree.third");
+  return i18n.t("popups.referrals.degree.nth", { degree });
+}
+
+export const CandidateRow = memo(function CandidateRow({
+  c,
+  connected,
+  selectable,
+  checked,
+  draft,
+  expanded,
+  sending,
+  failure,
+  onToggle,
+  onExpand,
+  onDraft,
+}: {
+  c: ReferralCandidate;
+  connected: boolean;
+  selectable: boolean;
+  checked: boolean;
+  draft: string;
+  expanded: boolean;
+  sending: boolean;
+  failure: string | null;
+  onToggle: (id: string) => void;
+  onExpand: (id: string) => void;
+  onDraft: (id: string, v: string) => void;
+}) {
+  const { t } = useTranslation();
+  const degLabel = degreeLabel(c.degree);
+  return (
+    <div className="border-b border-border" data-testid="referrals-row">
+      <div className="flex items-center gap-3 px-5 py-3">
+        {c.already_reached ? (
+          <span className="inline-flex h-[18px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[10px] text-good" data-testid="referrals-row-reached">
+            {t("popups.referrals.rowReached")}
+          </span>
+        ) : sending ? (
+          <span className="inline-flex h-[18px] items-center gap-1 rounded-full border border-warn bg-warn-wash px-1.5 font-mono text-[10px] text-warn" data-testid="referrals-row-sending">
+            <span className="inline-block h-2 w-2 animate-spin rounded-full border border-warn border-t-transparent" />
+            {t("popups.referrals.rowSending")}
+          </span>
+        ) : selectable ? (
+          <input
+            type="checkbox"
+            data-testid="referrals-row-checkbox"
+            checked={checked}
+            onChange={() => onToggle(c.contact_id)}
+            className="h-4 w-4 cursor-pointer"
+          />
+        ) : (
+          <span className="h-4 w-4" />
+        )}
+        <span className="inline-grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-3 font-mono text-[11px] font-semibold text-ink-2">
+          {initials(c.name)}
+        </span>
+        <button className="min-w-0 flex-1 text-left" onClick={() => onExpand(c.contact_id)}>
+          <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
+            <span className="truncate">{c.name}</span>
+            {degLabel ? (
+              <span className="inline-flex h-[16px] items-center rounded-full border border-border-2 bg-surface px-1.5 font-mono text-[9.5px] text-ink-3" data-testid="referrals-row-degree">
+                {t("popups.referrals.degreeBadge", { degree: degLabel })}
+              </span>
+            ) : null}
+            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] ${TAG_CLASS[c.audience_tag] ?? TAG_CLASS.other}`} data-testid="referrals-row-tag">
+              {t(TAG_LABEL[c.audience_tag] ?? TAG_LABEL.other)}
+            </span>
+          </div>
+          <div className="truncate text-[11.5px] text-ink-3">{c.role} · {c.company}</div>
+          {failure ? (
+            <div className="mt-1 rounded border border-bad/40 bg-bad-wash px-1.5 py-1 text-[10.5px] leading-snug text-bad" data-testid="referrals-row-failure">
+              {t("popups.referrals.notSent", { reason: failure })}
+            </div>
+          ) : null}
+        </button>
+        {/* Open the contact's LinkedIn profile — lets the user verify who this is
+            (US-REF verifiability). Always shown; never trust discovery blindly. */}
+        {c.linkedin_url ? (
+          <a
+            href={c.linkedin_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="referrals-row-linkedin"
+            title={t("popups.referrals.verifyProfileTooltip")}
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-md border border-border-2 bg-surface px-2 py-1 text-[11px] font-medium text-ink-2 hover:bg-surface-3"
+          >
+            {t("popups.referrals.linkedIn")}
+          </a>
+        ) : null}
+        {!connected && (
+          <button
+            className="rounded-md border border-border-2 bg-surface px-2 py-1 text-[11px] text-ink-2 hover:bg-surface-3"
+            data-testid="referrals-copy-btn"
+            onClick={() => void navigator.clipboard?.writeText(draft)}
+          >
+            {t("popups.referrals.copy")}
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <div className="px-[52px] pb-4">
+          <div className="mb-1 font-mono text-[10px] text-ink-3">
+            {c.channel === "dm" ? t("popups.referrals.draftDm") : t("popups.referrals.draftConnection")}
+          </div>
+          {draft ? (
+            <textarea
+              data-testid="referrals-draft-textarea"
+              value={draft}
+              onChange={(e) => onDraft(c.contact_id, e.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-[12.5px] leading-relaxed text-ink focus:border-accent focus:outline-none"
+            />
+          ) : (
+            <div
+              className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-ink-3"
+              data-testid="referrals-draft-loading"
+            >
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border border-border-2 border-t-accent" />
+              {t("popups.referrals.drafting")}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});

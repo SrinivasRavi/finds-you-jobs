@@ -20,7 +20,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-import { eventBus } from "./events";
+import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
   Application,
@@ -43,6 +43,7 @@ import type {
 export const qk = {
   jobs: ["jobs"] as const,
   board: ["board"] as const,
+  scanProgress: ["scanProgress"] as const,
   trash: ["trash"] as const,
   applications: ["applications"] as const,
   activity: ["activity"] as const,
@@ -86,6 +87,21 @@ export function useBoard(listQ = "", textQ = "") {
     getNextPageParam: (last, all) => {
       const loaded = all.reduce((n, p) => n + p.jobs.length, 0);
       return loaded < last.total ? all.length : undefined;
+    },
+  });
+}
+/** Board-level scan + scoring progress (observed-issue #2) — the Rescan status
+ *  pill. Kept fresh by the SSE bridge (scan/score events, throttled) AND a modest
+ *  poll that runs ONLY while a cycle is active (`scan_running || score_pending>0`),
+ *  so the "M of N" ticks up smoothly even if an SSE hint is dropped, and drops to
+ *  zero network traffic once idle. */
+export function useScanProgress() {
+  return useQuery({
+    queryKey: qk.scanProgress,
+    queryFn: () => api.getScanProgress(),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d && (d.scan_running || d.score_pending > 0) ? 1500 : false;
     },
   });
 }
@@ -232,6 +248,9 @@ export function useWatchCompany() {
       qc.invalidateQueries({ queryKey: qk.settings });
       qc.invalidateQueries({ queryKey: qk.watchlist });
     },
+    // Both call sites (board watch toggle, finder-prefs tracked roster) render
+    // the failure inline — no global banner.
+    meta: { errorHandledLocally: true },
   });
 }
 /** Background schedules — the preferences modal shows the scan schedule's
@@ -252,6 +271,7 @@ export function useUnwatchCompany() {
       qc.invalidateQueries({ queryKey: qk.discoverySources });
       qc.invalidateQueries({ queryKey: qk.settings });
     },
+    meta: { errorHandledLocally: true },
   });
 }
 /** Per-source efficacy aggregates — the Analytics Discovery tab. */
@@ -383,24 +403,28 @@ export function useTombstoneJob() {
   });
 }
 
-/** Add-by-URL step 1: fetch the pasted URL → editable draft (no persist). */
+/** Add-by-URL step 1: fetch the pasted URL → editable draft (no persist).
+ *  Every call site renders the failure inline — no global banner. */
 export function useJobPreview() {
   return useMutation({
     mutationFn: (url: string): Promise<JobDraft> => Promise.resolve(api.previewJob(url)),
+    meta: { errorHandledLocally: true },
   });
 }
 
-/** Add-by-URL step 2: persist the (edited) draft. */
+/** Add-by-URL step 2: persist the (edited) draft. Failure renders inline. */
 export function useAddJobByUrl() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (draft: JobDraft): Promise<Job> => Promise.resolve(api.addJobByUrl(draft)),
     onSuccess: () => invalidateFeed(qc),
+    meta: { errorHandledLocally: true },
   });
 }
 
 /** "Add a job application" (FR-TR manual-add): log an externally-applied job as
- *  an `origin=manual` tracker card, with optional resume/cover uploads. */
+ *  an `origin=manual` tracker card, with optional resume/cover uploads.
+ *  Failure renders inline in the add-application modal. */
 export function useAddManualApplication() {
   const qc = useQueryClient();
   return useMutation({
@@ -410,6 +434,7 @@ export function useAddManualApplication() {
       qc.invalidateQueries({ queryKey: qk.applications });
       invalidateFeed(qc);
     },
+    meta: { errorHandledLocally: true },
   });
 }
 
@@ -418,7 +443,12 @@ export function useTriggerScan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => Promise.resolve(api.enqueueOperation("scan")),
-    onSuccess: () => invalidateFeed(qc),
+    // Kick the scan-progress query so the Rescan pill flips to "Scanning" (and
+    // its active-only poll starts) without waiting for the first SSE tick.
+    onSuccess: () => {
+      invalidateFeed(qc);
+      qc.invalidateQueries({ queryKey: qk.scanProgress });
+    },
   });
 }
 
@@ -494,6 +524,27 @@ export function useRetryOperation() {
       qc.invalidateQueries({ queryKey: qk.ledger });
       qc.invalidateQueries({ queryKey: qk.applications });
       qc.invalidateQueries({ queryKey: qk.jobs });
+    },
+  });
+}
+
+/** Stop a queued/running operation from the Analytics ledger (F-M7). A 409
+ *  ("nothing to honestly cancel" — e.g. the op went terminal, or a running
+ *  kind that never observes the token) rejects and surfaces through the
+ *  global MutationErrorBanner flow; the ledger refresh on settle makes the
+ *  row honest again either way. */
+export function useCancelOperation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => Promise.resolve(api.cancelOperation(id)),
+    onSuccess: () => {
+      // A cancelled score/tailor/cover leaves a card slot or board score
+      // un-generated — same refresh set as Retry, which re-creates them.
+      qc.invalidateQueries({ queryKey: qk.applications });
+      qc.invalidateQueries({ queryKey: qk.jobs });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.ledger });
     },
   });
 }
@@ -590,6 +641,21 @@ export function useUnarchiveApplication() {
   });
 }
 
+/** Permanent per-row delete in the Deleted Applications modal. The job may
+ *  resurface in Discover (same semantics as the retention purge) — hence the
+ *  feed invalidation. */
+export function useDeleteApplicationForever() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => Promise.resolve(api.deleteApplicationForever(id)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.archived });
+      qc.invalidateQueries({ queryKey: qk.applications });
+      invalidateFeed(qc);
+    },
+  });
+}
+
 export function useReturnToBoard() {
   const qc = useQueryClient();
   return useMutation({
@@ -666,8 +732,7 @@ export function useApplyRun(runId: string | null) {
     if (!runId) return;
     return eventBus.subscribe((ev) => {
       if (ev.type === "apply") {
-        const p = ev.payload as { run_id?: string };
-        if (p.run_id === runId) {
+        if (ev.payload.run_id === runId) {
           qc.invalidateQueries({ queryKey: [...qk.applyRun, runId] });
         }
         return;
@@ -675,7 +740,7 @@ export function useApplyRun(runId: string | null) {
       // A terminal apply operation is the authoritative end-of-run signal — the
       // run row is settled by then, so re-read its final snapshot.
       if (ev.type === "operation") {
-        const p = ev.payload as { kind?: string; state?: string };
+        const p = ev.payload;
         if (p.kind === "apply" && (p.state === "succeeded" || p.state === "failed")) {
           qc.invalidateQueries({ queryKey: [...qk.applyRun, runId] });
         }
@@ -876,32 +941,132 @@ export function useReachOut() {
 
 // ─── SSE invalidation bridge ─────────────────────────────────────────────────
 
+/** Leading+trailing throttle for invalidation bursts (F-H4). The first call
+ *  fires immediately (terminal-state freshness); further calls within
+ *  `intervalMs` collapse into ONE trailing call, so the final event of a burst
+ *  is never lost — a re-score of 300 jobs invalidates at a bounded rate instead
+ *  of once per event. Pure and exported for testability (no frontend unit
+ *  runner exists today — see the e2e + typecheck coverage note). */
+export interface TrailingThrottle {
+  (): void;
+  /** Drop any pending trailing call — for effect cleanup, so an unmounted
+   *  subscriber's timer can't fire a late invalidation. */
+  cancel(): void;
+}
+
+export function makeTrailingThrottle(fn: () => void, intervalMs: number): TrailingThrottle {
+  let last = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const throttled = () => {
+    if (timer != null) return; // a trailing call is already scheduled
+    const elapsed = Date.now() - last;
+    if (elapsed >= intervalMs) {
+      last = Date.now();
+      fn();
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      last = Date.now();
+      fn();
+    }, intervalMs - elapsed);
+  };
+  throttled.cancel = () => {
+    if (timer != null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+  return throttled;
+}
+
+// Applier events that change the card's Apply slot / run phase. Everything
+// else (observed, action_*, screenshot_ready) only feeds the companion panel,
+// which has its own scoped subscription (useApplyRun) — invalidating the
+// applications list for those was pure churn (F-H4).
+const APPLY_PHASE_EVENTS = new Set([
+  "apply.phase_changed",
+  "apply.blocker_found",
+  "apply.ready_for_human",
+  "apply.interrupted",
+  "apply.completed",
+  "apply.waiting_for_packet",
+]);
+
 /** Wire the SSE bus (src/api/events.ts) to Query invalidation. Mount once near
- *  the app root. */
+ *  the app root. Every group below is throttled (leading + trailing edge):
+ *  with `staleTime: 0` each invalidation is a real refetch, and an SSE burst
+ *  (re-scoring hundreds of jobs ≈ 3 events per op) used to cancel/restart the
+ *  same refetches hundreds of times (F-H4). */
 export function useSSEInvalidation(qc: QueryClient): void {
   useEffect(() => {
-    return eventBus.subscribe((ev) => {
+    const THROTTLE_MS = 300;
+    // The Analytics ledger + cost tiles read every operation — keep them live,
+    // but at a bounded rate (they fire on EVERY operation event).
+    const invalidateLedger = makeTrailingThrottle(() => {
+      qc.invalidateQueries({ queryKey: qk.ledger });
+      qc.invalidateQueries({ queryKey: qk.costTotals });
+    }, THROTTLE_MS);
+    // The board is the expensive one — every accumulated page refetches — so
+    // give it a wider window.
+    const invalidateBoardFeed = makeTrailingThrottle(() => invalidateFeed(qc), 500);
+    // Board-level Rescan pill (observed-issue #2): scan/score ops at ANY state
+    // (queued/running/terminal) tick the "M of N", so the pill shows "Scanning"
+    // promptly on a scheduled scan too — not just after the poll learns it. The
+    // /api/scan/progress read is cheap; throttled so a 300-job scoring burst
+    // lands ~2 refetches/second, matching the board-feed lane's cadence.
+    const invalidateScanProgress = makeTrailingThrottle(
+      () => qc.invalidateQueries({ queryKey: qk.scanProgress }),
+      500,
+    );
+    const invalidatePacket = makeTrailingThrottle(() => {
+      qc.invalidateQueries({ queryKey: qk.applications });
+      qc.invalidateQueries({ queryKey: qk.activity });
+    }, THROTTLE_MS);
+    const invalidateNetworkingLists = makeTrailingThrottle(() => {
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.archivedContacts });
+      qc.invalidateQueries({ queryKey: qk.referralQuota });
+      qc.invalidateQueries({ queryKey: qk.applications });
+    }, THROTTLE_MS);
+    const invalidateReferralRoster = makeTrailingThrottle(() => {
+      qc.invalidateQueries({ queryKey: qk.referralCandidates });
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.applications });
+    }, THROTTLE_MS);
+    // Per-candidate discover events (roster liveness, restored 2026-07-25):
+    // same roster-scoped keys the pre-F-H4 bridge invalidated on `candidate`
+    // events, but grouped through a wider trailing window so a "Find 10 more"
+    // burst lands as ~2 refetches/second, not one per contact.
+    const invalidateRosterCandidates = makeTrailingThrottle(() => {
+      qc.invalidateQueries({ queryKey: qk.referralCandidates });
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.applications });
+    }, 500);
+    const invalidateApplications = makeTrailingThrottle(() => {
+      qc.invalidateQueries({ queryKey: qk.applications });
+    }, THROTTLE_MS);
+
+    const unsubscribe = eventBus.subscribe((ev) => {
       if (ev.type === "operation") {
-        // The Analytics ledger + cost tiles read every operation, so keep them
-        // live on any operation event (cheap queries; the surface is often open).
-        qc.invalidateQueries({ queryKey: qk.ledger });
-        qc.invalidateQueries({ queryKey: qk.costTotals });
+        const p = ev.payload;
+        invalidateLedger();
         // Only feed-affecting kinds refetch the board, and only at a terminal
         // state (2026-07-11 Save-lag fix): each op bursts queued/running/
         // succeeded events and a naive handler would refetch every loaded
         // page of the infinite board query per event.
-        const p = ev.payload as { kind?: string; state?: string };
         const feedAffecting = p.kind === "scan" || p.kind === "score";
         const terminal = p.state === "succeeded" || p.state === "failed";
-        if (feedAffecting && terminal) invalidateFeed(qc);
+        if (feedAffecting && terminal) invalidateBoardFeed();
+        // The Rescan pill needs the non-terminal states too (a scan going
+        // queued→running is what flips it to "Scanning"); it reads a cheap
+        // counts endpoint, so refresh on every scan/score event.
+        if (feedAffecting) invalidateScanProgress();
         // Restored: a terminal tailor/cover op flips a card's packet slot
         // (generating → ready/failed) and writes an Activity event — refresh
         // both so the Tracker repaints without a manual reload.
         const packetAffecting = p.kind === "tailor" || p.kind === "cover";
-        if (packetAffecting && terminal) {
-          qc.invalidateQueries({ queryKey: qk.applications });
-          qc.invalidateQueries({ queryKey: qk.activity });
-        }
+        if (packetAffecting && terminal) invalidatePacket();
         // Restored 2026-07-16: a terminal discover/send/linkedin_login/
         // contact_sync op means the referral roster, the contact kanban, the
         // card's Referrals slot, or the LinkedIn session may have changed —
@@ -915,10 +1080,7 @@ export function useSSEInvalidation(qc: QueryClient): void {
           p.kind === "linkedin_login" ||
           p.kind === "contact_sync";
         if (networkingAffecting && terminal) {
-          qc.invalidateQueries({ queryKey: qk.contacts });
-          qc.invalidateQueries({ queryKey: qk.archivedContacts });
-          qc.invalidateQueries({ queryKey: qk.referralQuota });
-          qc.invalidateQueries({ queryKey: qk.applications });
+          invalidateNetworkingLists();
           if (p.kind === "linkedin_login") {
             qc.invalidateQueries({ queryKey: qk.linkedinSession });
           }
@@ -926,6 +1088,7 @@ export function useSSEInvalidation(qc: QueryClient): void {
         // A terminal apply op settles the run and the card's Apply slot
         // (applyRunStatus) + writes an Activity event — refresh all three so the
         // Tracker/companion repaint without a manual reload (applier.md §8.4).
+        // One event per run — no throttle needed.
         if (p.kind === "apply" && terminal) {
           qc.invalidateQueries({ queryKey: qk.applications });
           qc.invalidateQueries({ queryKey: qk.applyRun });
@@ -933,22 +1096,24 @@ export function useSSEInvalidation(qc: QueryClient): void {
           qc.invalidateQueries({ queryKey: qk.activity });
         }
       }
-      // Applier live-updates (applier.md §9.2): a phase/observe/screenshot/
-      // blocker event may change the card's Apply slot and the bound run. The
-      // companion's own useApplyRun subscription re-reads the run snapshot; here
-      // we keep the card's applyRunStatus honest as the run advances.
-      if (ev.type === "apply") {
-        qc.invalidateQueries({ queryKey: qk.applications });
-        qc.invalidateQueries({ queryKey: qk.applyRun });
+      // Applier live-updates (applier.md §9.2): only phase-affecting events
+      // change the card's Apply slot — the bound run's snapshot is re-read by
+      // the companion's own scoped useApplyRun subscription, so the blanket
+      // applyRun invalidation that doubled it up is gone (F-H4).
+      if (ev.type === "apply" && APPLY_PHASE_EVENTS.has(ev.payload.event)) {
+        invalidateApplications();
       }
       // Networking live-updates (Track N3): discover/send progress for the
       // popup + kanban (US-NW-09) — the popup's own SSE subscription (in
       // ReferralsModal) reads company-confirm / per-contact send outcomes off
-      // this same event; here we just keep the cached lists honest.
+      // this same event; here we just keep the cached lists honest. Per-contact
+      // `candidate` events grow the roster LIVE through their own wider
+      // throttle group (they burst once per found contact); everything else —
+      // including the `discovered` summary that closes every discover pass,
+      // the final-consistency backstop — keeps the tighter group (F-H4).
       if (ev.type === "networker") {
-        qc.invalidateQueries({ queryKey: qk.referralCandidates });
-        qc.invalidateQueries({ queryKey: qk.contacts });
-        qc.invalidateQueries({ queryKey: qk.applications });
+        if (ev.payload.phase === "candidate") invalidateRosterCandidates();
+        else invalidateReferralRoster();
       }
       // LinkedIn session capture (N4): connecting → connected/disconnected
       // repaints the Networking pill (and, once built, the Settings status chip).
@@ -957,5 +1122,31 @@ export function useSSEInvalidation(qc: QueryClient): void {
         qc.invalidateQueries({ queryKey: qk.referralQuota });
       }
     });
+
+    // Outage recovery (F-M5): events missed while disconnected are never
+    // replayed (events.ts header contract), so a reconnecting → live
+    // transition re-reads EVERYTHING from the API in one blanket invalidation.
+    let prevState: StreamState | null = null;
+    const unsubscribeState = eventBus.subscribe(null, (state) => {
+      if (state === "live" && prevState === "reconnecting") {
+        void qc.invalidateQueries();
+      }
+      prevState = state;
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeState();
+      // Drop pending trailing timers — a late invalidation after unmount
+      // would refetch on behalf of a subscriber that no longer exists.
+      invalidateLedger.cancel();
+      invalidateBoardFeed.cancel();
+      invalidateScanProgress.cancel();
+      invalidatePacket.cancel();
+      invalidateNetworkingLists.cancel();
+      invalidateReferralRoster.cancel();
+      invalidateRosterCandidates.cancel();
+      invalidateApplications.cancel();
+    };
   }, [qc]);
 }

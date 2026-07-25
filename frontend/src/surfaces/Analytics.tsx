@@ -9,6 +9,7 @@ import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  useCancelOperation,
   useCostTotals,
   useDiscoveryAnalytics,
   useLedger,
@@ -232,6 +233,44 @@ function RetryButton({ entry }: { entry: LedgerEntry }) {
   );
 }
 
+// Mirrors the backend's CANCELLABLE_RUNNING_KINDS (registry/operations.py):
+// the only kinds that poll the cancel token while RUNNING. Queued ops of any
+// kind can always be cancelled server-side. This is a render heuristic, not a
+// gate — a race (the op advancing under us) lands a 409 that surfaces through
+// the global MutationErrorBanner and the ledger refresh makes the row honest.
+const CANCELLABLE_RUNNING_KINDS: OperationKind[] = ["score", "tailor", "cover"];
+
+// `apply` cancellation is never a generic ledger Stop — even a queued apply is
+// cancelled through its own apply-run flow (the ApplierPanel's dedicated Cancel,
+// applier.md §8.2), which lands the run honestly. A generic "Stop" here would be
+// a semantically odd second affordance, so the ledger never renders one for it.
+const STOP_EXCLUDED_KINDS: OperationKind[] = ["apply"];
+
+/** Stop for a queued/running row (F-M7) — rendered in the State cell like
+ *  RetryButton, so the affordance sits right under the state pill. */
+function StopButton({ entry }: { entry: LedgerEntry }) {
+  const { t } = useTranslation();
+  const cancel = useCancelOperation();
+  const canStop =
+    !STOP_EXCLUDED_KINDS.includes(entry.kind) &&
+    (entry.state === "queued" ||
+      (entry.state === "running" && CANCELLABLE_RUNNING_KINDS.includes(entry.kind)));
+  if (!canStop) return null;
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        cancel.mutate(entry.id);
+      }}
+      disabled={cancel.isPending}
+      data-testid="log-stop"
+      className="mt-1 block rounded-md border border-border-2 bg-surface px-2 py-0.5 text-[11px] font-medium text-ink-2 hover:bg-surface-3 disabled:opacity-60"
+    >
+      {cancel.isPending ? t("analytics.ledger.stopping") : t("analytics.ledger.stop")}
+    </button>
+  );
+}
+
 /** The error cell: the boot-recovery note gets friendly copy; other failures
  *  show the verbatim error (de-emphasized once retried). The Retry button
  *  itself lives in the State cell (RetryButton). */
@@ -450,12 +489,13 @@ export function Analytics() {
                             </span>
                           ) : (
                             <span
-                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] capitalize ${STATE_CLS[e.state]}`}
+                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] capitalize ${STATE_CLS[e.state] ?? "bg-surface-3 text-ink-3"}`}
                             >
                               {e.state}
                             </span>
                           )}
                           <RetryButton entry={e} />
+                          <StopButton entry={e} />
                         </td>
                         <td
                           className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-ink-3"

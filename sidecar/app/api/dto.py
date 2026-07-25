@@ -106,6 +106,25 @@ class RescorePreviewDTO(BaseModel):
     cached: int
 
 
+class ScanProgressDTO(BaseModel):
+    """Board-level scan + scoring progress (observed-issue #2 backend). A small,
+    schema-free read the board polls while a scan runs — derived entirely from
+    the operations ledger, no new persisted state.
+
+    `scan_running` — a scan op is queued/in-flight. `last_scan_at` — the latest
+    succeeded scan's finish time (null before any scan lands). `new_found` — how
+    many jobs that scan inserted (its recorded `new_job_ids`), the "N" of the
+    board's "M of N scored". `score_pending` — the live (queued/running) score-op
+    count. `score_done` — how many of THIS scan's new jobs have reached a
+    terminal score, the "M"."""
+
+    scan_running: bool
+    last_scan_at: datetime | None = None
+    new_found: int
+    score_pending: int
+    score_done: int
+
+
 class JobCreate(BaseModel):
     """Add-by-URL (US-JB-07) + programmatic ingest."""
 

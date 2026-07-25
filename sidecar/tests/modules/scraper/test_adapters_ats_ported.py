@@ -111,6 +111,36 @@ def test_smartrecruiters_pagination_stops_on_short_page():
     assert Paged.calls == 2  # short second page halts the loop
 
 
+def test_smartrecruiters_pauses_between_pages_never_before_the_first(monkeypatch):
+    """F-M9 — pagination is spaced by the jittered pause, no back-to-back burst."""
+    pauses = {"n": 0}
+    monkeypatch.setattr(
+        smartrecruiters, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1)
+    )
+    full = {"content": [
+        {"id": str(i), "name": f"Role {i}",
+         "ref": f"https://api.smartrecruiters.com/v1/companies/Acme/postings/{i}",
+         "location": {"city": "Pune"}} for i in range(100)
+    ]}
+    short = {"content": [
+        {"id": "x", "name": "Last",
+         "ref": "https://api.smartrecruiters.com/v1/companies/Acme/postings/x",
+         "location": {"city": "Pune"}}
+    ]}
+
+    class Paged(FakeFetcher):
+        calls = 0
+
+        def get_json(self, url: str, headers: dict[str, str] | None = None) -> object:
+            Paged.calls += 1
+            self.usage.internal_calls += 1
+            return full if "offset=0" in url else short
+
+    smartrecruiters.fetch(SourceEntry(url="https://careers.smartrecruiters.com/Acme"), Paged())
+    assert Paged.calls == 2
+    assert pauses["n"] == 1  # between pages only — never before the first request
+
+
 def test_smartrecruiters_bad_payload_is_typed_error():
     fetcher = routed(
         {"api.smartrecruiters.com/v1/companies/broken/postings": {"nope": True}}

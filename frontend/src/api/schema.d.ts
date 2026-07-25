@@ -103,8 +103,42 @@ export interface paths {
          *     `list_q` / `text_q` (FR-JB-13) filter server-side *before* pagination — the
          *     feed is paginated, so a client-side filter over loaded pages would silently
          *     miss matches on unloaded pages.
+         *
+         *     The whole assembly runs off the event loop (async-first rule / F-H2 — at a
+         *     few thousand jobs it could hold the loop past the shell's 2 s health window),
+         *     and the DTO build (three regexes over the full JD each) happens only for the
+         *     returned page, not every eligible row.
          */
         get: operations["board_api_board_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scan/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scan Progress
+         * @description Board-level scan + scoring progress (observed-issue #2): a small,
+         *     schema-free read the board polls to show "scanning…" and "M of N scored".
+         *
+         *     Assembled entirely from the operations ledger (no new persisted state):
+         *     `scan_running` = a scan op is in flight; `last_scan_at` = the latest
+         *     succeeded scan's finish time; `new_found` = that scan's recorded
+         *     `new_job_ids` count; and the scoring split — `score_pending` is the live
+         *     (queued/running) score-op count, `score_done` is how many of THIS scan's
+         *     new jobs have reached a terminal (succeeded/failed) score. Off the event
+         *     loop (async-first rule), one session inside the callable.
+         */
+        get: operations["scan_progress_api_scan_progress_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -598,6 +632,32 @@ export interface paths {
          *     `apply`/`linkedin_login` are excluded (interactive, non-generic paths).
          */
         post: operations["retry_operation_api_operations__operation_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{operation_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Operation
+         * @description Cancel an operation (F-M7): a still-`queued` op (any kind) is cancelled
+         *     outright; a `running` one is accepted ONLY for the kinds that cooperatively
+         *     poll the cancel token (score/tailor/cover — `CANCELLABLE_RUNNING_KINDS`),
+         *     landing `cancelled` at the entrypoint's next checkpoint. 404 for an unknown
+         *     id; 409 when there is nothing this endpoint can honestly cancel — the op is
+         *     already terminal, or it is running a kind that never observes the token
+         *     (a running `apply` is cancelled via POST /api/apply-runs/{id}/cancel).
+         */
+        post: operations["cancel_operation_api_operations__operation_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1320,6 +1380,31 @@ export interface paths {
          *     while generating — Retry' path (US-LOG-01) can be exercised on demand.
          */
         post: operations["dev_fail_running_api_dev_operations_fail_running_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/operations/seed-queued": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Seed Queued Operation
+         * @description Create a `queued` operation ROW directly — without pumping the runner —
+         *     so it STAYS queued until something else submits work. Lets the Logs Stop
+         *     control (F-M7) be exercised deterministically in e2e (the generic enqueue
+         *     dispatches almost immediately, so a queued row is otherwise a race). Kind
+         *     `cleanup_trash`: zero-LLM and harmless if a later pump does dispatch it.
+         *     Dev-only.
+         */
+        post: operations["dev_seed_queued_operation_api_dev_operations_seed_queued_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2825,6 +2910,31 @@ export interface components {
             /** Cached */
             cached: number;
         };
+        /**
+         * ScanProgressDTO
+         * @description Board-level scan + scoring progress (observed-issue #2 backend). A small,
+         *     schema-free read the board polls while a scan runs — derived entirely from
+         *     the operations ledger, no new persisted state.
+         *
+         *     `scan_running` — a scan op is queued/in-flight. `last_scan_at` — the latest
+         *     succeeded scan's finish time (null before any scan lands). `new_found` — how
+         *     many jobs that scan inserted (its recorded `new_job_ids`), the "N" of the
+         *     board's "M of N scored". `score_pending` — the live (queued/running) score-op
+         *     count. `score_done` — how many of THIS scan's new jobs have reached a
+         *     terminal score, the "M".
+         */
+        ScanProgressDTO: {
+            /** Scan Running */
+            scan_running: boolean;
+            /** Last Scan At */
+            last_scan_at?: string | null;
+            /** New Found */
+            new_found: number;
+            /** Score Pending */
+            score_pending: number;
+            /** Score Done */
+            score_done: number;
+        };
         /** ScheduleDTO */
         ScheduleDTO: {
             /** Id */
@@ -2982,6 +3092,176 @@ export interface components {
             /** Adapter */
             adapter: string;
         };
+        /** ApplyProgressEvent */
+        ApplyProgressEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "apply";
+            payload: components["schemas"]["ApplyProgressPayload"];
+        };
+        /**
+         * ApplyProgressPayload
+         * @description Applier live-updates (apply_op) — `event` is an `ApplyEventType` value
+         *     (`apply.phase_changed`, …) plus the out-of-band `apply.waiting_for_packet`.
+         */
+        ApplyProgressPayload: {
+            /** Run Id */
+            run_id: string;
+            /** Operation Id */
+            operation_id: string;
+            /** Event */
+            event: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BrowserInstallEvent */
+        BrowserInstallEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "browser_install";
+            payload: components["schemas"]["BrowserInstallPayload"];
+        };
+        /**
+         * BrowserInstallPayload
+         * @description One-time Playwright browser install progress (api/browser.py).
+         */
+        BrowserInstallPayload: {
+            /** State */
+            state: string;
+            /**
+             * Message
+             * @default null
+             */
+            message: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** HeartbeatEvent */
+        HeartbeatEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "heartbeat";
+            payload: components["schemas"]["HeartbeatPayload"];
+        };
+        /** HeartbeatPayload */
+        HeartbeatPayload: {
+            /** Seq */
+            seq: number;
+            /** Ts */
+            ts: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** LinkedInEvent */
+        LinkedInEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "linkedin";
+            payload: components["schemas"]["LinkedInEventPayload"];
+        };
+        /**
+         * LinkedInEventPayload
+         * @description LinkedIn session capture / search progress (linkedin_op).
+         *
+         *     States published today: connecting, connected, disconnected, searching,
+         *     search_done.
+         */
+        LinkedInEventPayload: {
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** NetworkerEvent */
+        NetworkerEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "networker";
+            payload: components["schemas"]["NetworkerEventPayload"];
+        };
+        /**
+         * NetworkerEventPayload
+         * @description Referral-outreach progress (networker_ops / contact_sync / linkedin_op).
+         *
+         *     Phases published today: synced, needs_company_confirm, candidate,
+         *     discovered, sent, send_failed, auto_archived.
+         */
+        NetworkerEventPayload: {
+            /** Id */
+            id: string;
+            /** Phase */
+            phase: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OperationEvent */
+        OperationEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "operation";
+            payload: components["schemas"]["OperationEventPayload"];
+        };
+        /**
+         * OperationEventPayload
+         * @description `operation_event` — runner state changes (queued → … → terminal).
+         */
+        OperationEventPayload: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        } & {
+            [key: string]: unknown;
+        };
+        /** SchedulerEvent */
+        SchedulerEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "scheduler";
+            payload: components["schemas"]["SchedulerEventPayload"];
+        };
+        /**
+         * SchedulerEventPayload
+         * @description `scheduler_event` — a scheduler decision (enqueued / skipped).
+         */
+        SchedulerEventPayload: {
+            /** Schedule Id */
+            schedule_id: string;
+            /** Kind */
+            kind: string;
+            /** Action */
+            action: string;
+        } & {
+            [key: string]: unknown;
+        };
+        SSEEnvelope: components["schemas"]["HeartbeatEvent"] | components["schemas"]["OperationEvent"] | components["schemas"]["SchedulerEvent"] | components["schemas"]["NetworkerEvent"] | components["schemas"]["ApplyProgressEvent"] | components["schemas"]["LinkedInEvent"] | components["schemas"]["BrowserInstallEvent"];
+        /**
+         * LlmKind
+         * @description The routable LLM operation kinds (single source: registry/engine_config.LLM_KINDS).
+         * @enum {string}
+         */
+        LlmKind: "score" | "tailor" | "cover" | "extract" | "draft" | "apply";
     };
     responses: never;
     parameters: never;
@@ -3147,6 +3427,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scan_progress_api_scan_progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanProgressDTO"];
                 };
             };
         };
@@ -3986,6 +4286,37 @@ export interface operations {
         };
     };
     retry_operation_api_operations__operation_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_operation_api_operations__operation_id__cancel_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4983,6 +5314,28 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    dev_seed_queued_operation_api_dev_operations_seed_queued_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

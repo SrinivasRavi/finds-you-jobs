@@ -106,6 +106,14 @@ class OperationsRepo:
     def get(self, operation_id: str) -> Operation | None:
         return self._s.get(Operation, operation_id)
 
+    def get_many(self, operation_ids: list[str]) -> dict[str, Operation]:
+        """id → Operation for a batch — the artifact→op-state join done with one
+        IN query instead of one `get` per artifact (F-H2)."""
+        if not operation_ids:
+            return {}
+        stmt = select(Operation).where(Operation.id.in_(operation_ids))
+        return {op.id: op for op in self._s.scalars(stmt)}
+
     def list_by_state(self, state: str) -> list[Operation]:
         stmt = (
             select(Operation)
@@ -365,6 +373,14 @@ class JobsRepo:
 
     def get(self, job_id: str) -> Job | None:
         return self._s.get(Job, job_id)
+
+    def get_many(self, job_ids: list[str]) -> dict[str, Job]:
+        """id → Job for a batch — one IN query instead of one `get` per tracker
+        card (F-H2)."""
+        if not job_ids:
+            return {}
+        stmt = select(Job).where(Job.id.in_(job_ids))
+        return {job.id: job for job in self._s.scalars(stmt)}
 
     def get_by_canonical_url(self, canonical_url: str) -> Job | None:
         stmt = select(Job).where(Job.canonical_url == canonical_url)
@@ -683,6 +699,18 @@ class ArtifactsRepo:
         )
         return list(self._s.scalars(stmt))
 
+    def list_for_applications(self, application_ids: list[str]) -> list[Artifact]:
+        """`list_for_application` over many cards in one IN query (F-H2). Same
+        (created_at, id) order, so per-card grouping preserves the per-card order."""
+        if not application_ids:
+            return []
+        stmt = (
+            select(Artifact)
+            .where(Artifact.application_id.in_(application_ids))
+            .order_by(Artifact.created_at, Artifact.id)
+        )
+        return list(self._s.scalars(stmt))
+
     def get_by_operation_id(self, operation_id: str) -> Artifact | None:
         stmt = select(Artifact).where(Artifact.operation_id == operation_id)
         return self._s.scalars(stmt).first()
@@ -712,6 +740,13 @@ class DocumentsRepo:
 
     def get(self, document_id: str) -> Document | None:
         return self._s.get(Document, document_id)
+
+    def get_many(self, document_ids: list[str]) -> dict[str, Document]:
+        """id → Document for a batch of attachment links (F-H2)."""
+        if not document_ids:
+            return {}
+        stmt = select(Document).where(Document.id.in_(document_ids))
+        return {doc.id: doc for doc in self._s.scalars(stmt)}
 
     def get_by_sha256(self, sha256: str) -> Document | None:
         return self._s.scalars(
@@ -751,6 +786,20 @@ class ApplicationDocumentsRepo:
         )
         return list(self._s.scalars(stmt))
 
+    def list_for_applications(
+        self, application_ids: list[str]
+    ) -> list[ApplicationDocument]:
+        """`list_for_application` over many cards in one IN query (F-H2). Same
+        (kind, created_at) order, so per-card grouping preserves the per-card order."""
+        if not application_ids:
+            return []
+        stmt = (
+            select(ApplicationDocument)
+            .where(ApplicationDocument.application_id.in_(application_ids))
+            .order_by(ApplicationDocument.kind, ApplicationDocument.created_at)
+        )
+        return list(self._s.scalars(stmt))
+
     def set(self, application_id: str, kind: str, document_id: str) -> ApplicationDocument:
         """Attach `document_id` as this application's `kind` slot, replacing any
         prior link for that (application, kind) — one resume + one cover per card."""
@@ -770,6 +819,17 @@ class ApplicationDocumentsRepo:
         self._s.add(link)
         self._s.flush()
         return link
+
+    def delete_for_application(self, application_id: str) -> int:
+        """Remove an application's document LINKS when the card is purged
+        (`foreign_keys=ON` forbids orphans). The content-addressed `Document`
+        rows and blobs stay — one blob may back many links."""
+        result = self._s.execute(
+            delete(ApplicationDocument).where(
+                ApplicationDocument.application_id == application_id
+            )
+        )
+        return cast("CursorResult[Any]", result).rowcount
 
 
 class ApplicationEventsRepo:
@@ -1075,6 +1135,19 @@ class ContactJobAssocsRepo:
         stmt = select(ContactJobAssoc).where(ContactJobAssoc.job_id == job_id)
         return list(self._s.scalars(stmt))
 
+    def job_ids_with_contacts(self, job_ids: list[str]) -> set[str]:
+        """The subset of `job_ids` with at least one contact link — the tracker
+        list's has-candidates flag in one IN query instead of one query per
+        card (F-H2)."""
+        if not job_ids:
+            return set()
+        stmt = (
+            select(ContactJobAssoc.job_id)
+            .where(ContactJobAssoc.job_id.in_(job_ids))
+            .distinct()
+        )
+        return set(self._s.scalars(stmt))
+
     def list_for_contact(self, contact_id: str) -> list[ContactJobAssoc]:
         stmt = select(ContactJobAssoc).where(ContactJobAssoc.contact_id == contact_id)
         return list(self._s.scalars(stmt))
@@ -1124,32 +1197,47 @@ class OutreachLogsRepo:
         )
         return list(self._s.scalars(stmt))
 
-    def count_sent_for_job(self, job_id: str) -> int:
-        """Reaches actually sent for a role (US-NW-09 per-role reached count)."""
-        stmt = select(OutreachLog).where(
-            OutreachLog.job_id == job_id, OutreachLog.outcome == "sent"
+    def count_sent_for_jobs(self, job_ids: list[str]) -> dict[str, int]:
+        """Reaches actually sent per role (US-NW-09 per-role reached count) —
+        one grouped IN query for a batch of roles (F-H2). Roles with no sent
+        reaches are absent from the map (read with `.get(job_id, 0)`)."""
+        if not job_ids:
+            return {}
+        stmt = (
+            select(OutreachLog.job_id, func.count())
+            .where(OutreachLog.job_id.in_(job_ids), OutreachLog.outcome == "sent")
+            .group_by(OutreachLog.job_id)
         )
-        return len(list(self._s.scalars(stmt)))
+        return {job_id: int(n) for job_id, n in self._s.execute(stmt)}
 
     def list_for_job(self, job_id: str) -> list[OutreachLog]:
         stmt = select(OutreachLog).where(OutreachLog.job_id == job_id)
         return list(self._s.scalars(stmt))
 
-    def latest_batch_for_job(self, job_id: str) -> list[OutreachLog]:
-        """The OutreachLog rows of the *latest* reach-out batch for a role, used
-        to derive `referralsState` (FR-NW-01). The batch is keyed by `batch_id`;
-        a NULL batch_id (legacy/manual single send) is its own settled batch. The
-        latest batch = the one containing the most-recently-created log."""
-        logs = sorted(
-            self.list_for_job(job_id),
-            key=lambda log: (log.created_at, log.id),
-        )
-        if not logs:
-            return []
-        newest = logs[-1]
-        if newest.batch_id is None:
-            return [newest]  # a solo (batchless) send is its own settled batch
-        return [log for log in logs if log.batch_id == newest.batch_id]
+    def latest_batches_for_jobs(self, job_ids: list[str]) -> dict[str, list[OutreachLog]]:
+        """The OutreachLog rows of the *latest* reach-out batch per role, used
+        to derive `referralsState` (FR-NW-01) — one IN query for a batch of
+        roles (F-H2). The batch is keyed by `batch_id`; a NULL batch_id
+        (legacy/manual single send) is its own settled batch. The latest batch =
+        the one containing the most-recently-created log. Roles with no logs are
+        absent from the map."""
+        if not job_ids:
+            return {}
+        stmt = select(OutreachLog).where(OutreachLog.job_id.in_(job_ids))
+        by_job: dict[str, list[OutreachLog]] = {}
+        for log in self._s.scalars(stmt):
+            if log.job_id is None:  # unreachable given the IN filter; typing only
+                continue
+            by_job.setdefault(log.job_id, []).append(log)
+        batches: dict[str, list[OutreachLog]] = {}
+        for job_id, logs in by_job.items():
+            logs.sort(key=lambda log: (log.created_at, log.id))
+            newest = logs[-1]
+            if newest.batch_id is None:
+                batches[job_id] = [newest]  # a solo (batchless) send is its own settled batch
+            else:
+                batches[job_id] = [log for log in logs if log.batch_id == newest.batch_id]
+        return batches
 
 
 class SequencesRepo:
@@ -1238,9 +1326,35 @@ class ApplyRunsRepo:
         )
         return list(self._s.scalars(stmt))
 
+    def delete_for_application(self, application_id: str) -> int:
+        """Purge an application's runs when the CARD itself is deleted
+        (unsave/return-to-board — the whole record goes; `foreign_keys=ON`
+        forbids orphans). Never used to mutate runs on a live card — those
+        stay append-only evidence."""
+        result = self._s.execute(
+            delete(ApplyRun).where(ApplyRun.application_id == application_id)
+        )
+        return cast("CursorResult[Any]", result).rowcount
+
     def latest_for_application(self, application_id: str) -> ApplyRun | None:
         runs = self.list_for_application(application_id)
         return runs[0] if runs else None
+
+    def latest_for_applications(self, application_ids: list[str]) -> dict[str, ApplyRun]:
+        """`latest_for_application` over many cards in one IN query (F-H2) —
+        same (started_at desc, id desc) ordering, first row per card wins.
+        Cards with no runs are absent from the map."""
+        if not application_ids:
+            return {}
+        stmt = (
+            select(ApplyRun)
+            .where(ApplyRun.application_id.in_(application_ids))
+            .order_by(ApplyRun.started_at.desc(), ApplyRun.id.desc())
+        )
+        latest: dict[str, ApplyRun] = {}
+        for run in self._s.scalars(stmt):
+            latest.setdefault(run.application_id, run)
+        return latest
 
     def list_active(self) -> list[ApplyRun]:
         """Runs a boot-recovery pass must mark interrupted (§9.3)."""

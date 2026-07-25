@@ -46,11 +46,16 @@ def emit_handshake(port: int, token: str) -> None:
 def _maybe_write_dev_handshake(port: int, token: str) -> None:
     """Dev-only convenience for the browser-dev path (`scripts/dev-web.mjs` uses
     stdout; this file target is opt-in via FYJ_WRITE_HANDSHAKE). Never written in
-    the packaged app."""
+    the packaged app. Owner-only (0600) — the file carries the bearer token."""
     target = os.environ.get("FYJ_WRITE_HANDSHAKE")
     if not target:
         return
-    with open(target, "w", encoding="utf-8") as handle:
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)  # a pre-existing file keeps its old mode otherwise
+    except (AttributeError, OSError):  # Windows: no fchmod; O_CREAT mode applied
+        pass
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump({"port": port, "token": token}, handle)
 
 

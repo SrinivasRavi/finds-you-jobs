@@ -84,6 +84,70 @@ def test_board_pending_when_no_score_op(app_client: tuple[FastAPI, TestClient]) 
 
 
 # ---------------------------------------------------------------------------
+# GET /api/scan/progress — board-level scan + scoring progress (observed-issue
+# #2 backend). Derived entirely from the operations ledger; no schema change.
+# ---------------------------------------------------------------------------
+
+
+def test_scan_progress_reports_batch_counts(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        j1 = repos.jobs.create(canonical_url="s1", title="A", source_adapter="lever")
+        j2 = repos.jobs.create(canonical_url="s2", title="B", source_adapter="lever")
+        j3 = repos.jobs.create(canonical_url="s3", title="C", source_adapter="lever")
+        old = repos.jobs.create(canonical_url="s-old", title="Old", source_adapter="lever")
+        scan = repos.operations.create("scan", {})
+        repos.operations.mark_succeeded(
+            scan.id, result_ref={"scan": {"new_job_ids": [j1.id, j2.id, j3.id]}}
+        )
+        # j1 done (succeeded), j2 done (failed), j3 still queued (pending).
+        repos.operations.mark_succeeded(
+            repos.operations.create("score", {"job_id": j1.id}).id
+        )
+        repos.operations.mark_failed(
+            repos.operations.create("score", {"job_id": j2.id}).id, error="x"
+        )
+        repos.operations.create("score", {"job_id": j3.id})  # queued
+        # An older job's score op — outside this scan's batch, never counted in
+        # score_done (though it is terminal, its job isn't in new_job_ids).
+        repos.operations.mark_succeeded(
+            repos.operations.create("score", {"job_id": old.id}).id
+        )
+
+    body = client.get("/api/scan/progress", headers=AUTH).json()
+    assert body["scan_running"] is False
+    assert body["last_scan_at"] is not None
+    assert body["new_found"] == 3
+    # score_pending is the GLOBAL live count — just j3's queued op here.
+    assert body["score_pending"] == 1
+    # score_done is batch-scoped: j1 + j2 terminal; j3 still pending; old excluded.
+    assert body["score_done"] == 2
+
+
+def test_scan_progress_flags_running_scan(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    with _db(app).repos() as repos:
+        repos.operations.create("scan", {})  # queued → in-flight, never pumped
+    body = client.get("/api/scan/progress", headers=AUTH).json()
+    assert body["scan_running"] is True
+    assert body["last_scan_at"] is None  # no succeeded scan yet
+    assert body["new_found"] == 0
+    assert body["score_pending"] == 0
+    assert body["score_done"] == 0
+
+
+def test_scan_progress_requires_token(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _app, client = app_client
+    assert client.get("/api/scan/progress").status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # Pagination + total (FR-JB-02)
 # ---------------------------------------------------------------------------
 

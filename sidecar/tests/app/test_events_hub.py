@@ -7,7 +7,12 @@ import json
 
 import pytest
 
-from sidecar.app.events import EventHub, operation_event, scheduler_event
+from sidecar.app.events import (
+    SUBSCRIBER_QUEUE_MAXSIZE,
+    EventHub,
+    operation_event,
+    scheduler_event,
+)
 
 
 def test_operation_event_shape() -> None:
@@ -51,6 +56,30 @@ async def test_hub_delivers_published_event_to_subscriber() -> None:
     assert env["type"] == "operation"
     assert env["payload"]["state"] == "succeeded"
     assert hub.subscriber_count == 0  # unsubscribed on stream exit
+
+
+def test_slow_subscriber_queue_is_bounded_and_drops_oldest() -> None:
+    """F-L1: a stalled SSE consumer must not grow its queue without bound.
+
+    Events are invalidation hints — dropping the OLDEST is safe (the consumer
+    refetches the same fresh snapshot on the next hint). No loop bound, so
+    delivery is inline (same as the unit-test path `publish` documents).
+    """
+    hub = EventHub()
+    queue = hub._subscribe()
+    overflow = 25
+    for seq in range(SUBSCRIBER_QUEUE_MAXSIZE + overflow):
+        hub.publish(operation_event(f"op{seq}", "score", "succeeded"))
+    assert queue.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
+    # The oldest `overflow` events were dropped; the head is now event #overflow
+    # and the newest event survived.
+    head = queue.get_nowait()
+    assert head["payload"]["id"] == f"op{overflow}"
+    tail = None
+    while queue.qsize():
+        tail = queue.get_nowait()
+    assert tail is not None
+    assert tail["payload"]["id"] == f"op{SUBSCRIBER_QUEUE_MAXSIZE + overflow - 1}"
 
 
 @pytest.mark.asyncio

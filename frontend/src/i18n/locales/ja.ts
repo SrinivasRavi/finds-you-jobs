@@ -135,6 +135,12 @@ const ja: DeepPartial<Messages> = {
     allSetSettings: "プロバイダーや人脈の設定は「設定」で調整できます",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "新しい求人を検索中",
+      scoring: "AI が新しく見つかった求人を評価中",
+      done: "完了",
+      count: "{{found}} 件中 {{done}} 件",
+    },
     header: {
       masterResume: "マスター職務経歴書",
       masterResumeTitle:
@@ -315,11 +321,11 @@ const ja: DeepPartial<Messages> = {
     },
     trashModal: {
       title: "削除した求人",
-      retention: "ゴミ箱内の求人は7日後に完全に削除されます。",
-      emptyConfirm_other: "ゴミ箱を空にしますか?{{count}}件の求人が完全に削除されます。",
+      retention: "削除した求人は7日後に完全に消去されます。",
+      emptyConfirm_other: "すべて完全に削除しますか?{{count}}件の求人が完全に消去されます。",
       confirm: "確定",
       cancel: "キャンセル",
-      emptyTrash: "ゴミ箱を空にする",
+      emptyTrash: "すべて完全に削除",
       empty: "削除した求人はありません。",
       removedRecently: "{{company}} · 最近削除",
       deleteForever: "完全に削除",
@@ -331,7 +337,7 @@ const ja: DeepPartial<Messages> = {
     deletedApplications: "削除した応募",
     addApplication: "応募を追加",
     cancel: "キャンセル",
-    archive: "アーカイブ",
+    archive: "削除",
     moveToDiscover: "求人検索に移動",
     stage: {
       Saved: "保存済み",
@@ -454,6 +460,7 @@ const ja: DeepPartial<Messages> = {
       empty: "削除した応募はありません。",
       deletedRecently: "最近削除",
       restore: "復元",
+      deleteForever: "完全に削除",
     },
   },
   networking: {
@@ -512,7 +519,7 @@ const ja: DeepPartial<Messages> = {
     detail: {
       linkedin: "LinkedIn",
       lastMessage: "最新メッセージ",
-      archive: "アーカイブ",
+      archive: "削除",
     },
     add: {
       title: "コンタクトを追加",
@@ -583,6 +590,8 @@ const ja: DeepPartial<Messages> = {
       retried: "再試行済み",
       retry: "再試行",
       retrying: "再試行中…",
+      stop: "停止",
+      stopping: "停止中…",
       restarted: "生成中にアプリが再起動されました。",
       seconds: "{{value}}秒",
       costUnknown: "このモデルのコストは不明です",
@@ -840,12 +849,12 @@ const ja: DeepPartial<Messages> = {
         "つながりリクエストがこの日数承認されなかった(または承認後も返信がなかった)場合。",
       contactPurgeLabel: "削除したコンタクトを完全に消去するまで",
       contactPurgeHint: "削除したコンタクトは、この日数が経過すると完全に消去されます。",
-      trashedJobsLabel: "ゴミ箱の求人を完全に消去するまで",
+      trashedJobsLabel: "削除した求人を完全に消去するまで",
       trashedJobsHint:
-        "ゴミ箱内の求人は、この日数が経過すると完全に消去されます(再スクレイピングもされません)。",
-      archivedAppsLabel: "アーカイブした応募を完全に消去するまで",
+        "削除した求人は、この日数が経過すると完全に消去されます(再スクレイピングもされません)。",
+      archivedAppsLabel: "削除した応募を完全に消去するまで",
       archivedAppsHint:
-        "アーカイブした応募カードとその書類は、この日数が経過すると完全に消去されます。",
+        "削除した応募カードとその書類は、この日数が経過すると完全に消去されます。",
       syncCadenceLabel: "LinkedInでコンタクトの更新を確認する間隔",
       syncCadenceHint:
         "コンタクトのステータスをLinkedInから更新する頻度です(リファラルアウトリーチがオンで接続中の間のみ)。",
@@ -1093,6 +1102,8 @@ const ja: DeepPartial<Messages> = {
     moreDetail: "詳細",
     deletedSizerLabel: "削除したコンタクト",
     bootSplash: "ローカルバックエンドを起動しています… 初回起動には少し時間がかかることがあります。",
+    streamReconnecting:
+      "ローカルバックエンドに再接続しています… ライブ更新は一時停止中で、復帰後に自動的に追いつきます。",
     backendStoppedFallback: "バックエンドが応答しなくなりました",
     sidecarFatalBanner:
       "バックエンドが停止しました: {{message}}。アプリを終了して再起動するまで、操作は一切保存されません。",
@@ -1100,6 +1111,16 @@ const ja: DeepPartial<Messages> = {
       remote: "リモート",
       hybrid: "ハイブリッド",
       onsite: "出社",
+    },
+    surfaceError: {
+      title: "ここで問題が発生しました",
+      body: "このビューで予期しないエラーが発生しましたが、影響はこの画面内に抑えられました。アプリの他の部分は動作を続け、データも安全です。技術的な詳細は開発者コンソールに記録されています。",
+      reload: "アプリを再読み込み",
+    },
+    mutationError: {
+      body: "変更を保存できませんでした — ローカルバックエンドとの通信でエラーが発生しました。",
+      dismiss: "閉じる",
+      more_other: "ほかに{{count}}件の以前の失敗が非表示です",
     },
     rescore: {
       title: "AIで求人を再スコアリングしますか?",

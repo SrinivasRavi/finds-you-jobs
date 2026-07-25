@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -129,7 +130,114 @@ class EngineUsage:
 
 
 class EngineError(RuntimeError):
-    """The CLI call failed; the message carries the verbatim cause."""
+    """The engine call failed; the message carries the verbatim cause.
+
+    Optional structured fields let the shared retry policy
+    (`completion_retry.retry_delay_s`) classify the failure instead of
+    guessing from message text (technical audit F-H5):
+
+    - `status` — the provider's HTTP status when the failure was an HTTP
+      error response (None for CLI/subprocess/network failures).
+    - `retryable` — an explicit classification override from the raise site:
+      False for deterministic failures a same-input retry can never fix
+      (bad key, missing binary, a full subprocess-timeout budget already
+      spent); True to force retry despite a normally-permanent status.
+      None (default) defers to the status-based table.
+    - `retry_after_s` — the provider's `Retry-After` hint in seconds, when
+      it sent one (429/503); honored (capped) over computed backoff.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        retryable: bool | None = None,
+        retry_after_s: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.retryable = retryable
+        self.retry_after_s = retry_after_s
+
+
+def _kill_process_group(proc: subprocess.Popen[str]) -> None:
+    """Best-effort kill of the child's whole process group / tree (F-L9)."""
+    try:
+        if os.name == "nt":
+            # No POSIX process groups; `taskkill /T` walks and kills the tree
+            # (grandchildren holding inherited pipe handles included) — the
+            # stdlib-driveable equivalent of killpg. Absolute path (S607).
+            taskkill = os.path.join(
+                os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe"
+            )
+            subprocess.run(  # noqa: S603
+                [taskkill, "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+        else:
+            # start_new_session=True made the child its own group leader, so
+            # its pid IS the pgid — one killpg takes the CLI and every tool
+            # subprocess it spawned.
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError, subprocess.TimeoutExpired):
+        try:
+            proc.kill()  # fall back to the direct child alone
+        except OSError:
+            pass
+
+
+def run_cli(
+    cmd: list[str],
+    *,
+    input: str | None = None,  # noqa: A002 — mirrors subprocess.run's keyword
+    timeout: float | None = None,
+    cwd: str | Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """`subprocess.run(capture_output=True, text=True, check=False)` equivalent
+    that launches the CLI in its OWN process group and kills the whole group on
+    timeout (technical audit F-L9).
+
+    Why not plain `subprocess.run(timeout=)`: the subscription CLIs are agents
+    that spawn tool subprocesses. On timeout, `run` kills only the direct
+    child — on POSIX the grandchildren survive until app exit; on Windows the
+    post-kill `communicate()` blocks *forever* on pipe handles the grandchildren
+    inherited, wedging the worker thread. Group-kill fixes both. Timeout still
+    raises `subprocess.TimeoutExpired`, so callers' error mapping is unchanged.
+    """
+    # Windows: CREATE_NEW_PROCESS_GROUP (the attribute only exists there).
+    # POSIX: start_new_session → setsid, so the child leads its own group.
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    proc = subprocess.Popen(  # noqa: S603
+        cmd,
+        stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+        env=env,
+        creationflags=creationflags,
+        start_new_session=os.name != "nt",
+    )
+    try:
+        stdout, stderr = proc.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        try:
+            # The group is dead, so the pipes close and this reaps promptly. A
+            # pathological survivor (double-forked daemon holding the pipe)
+            # hits the short cap and is abandoned rather than wedging the
+            # worker thread.
+            proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 class ClaudeCliEngine:
@@ -155,25 +263,29 @@ class ClaudeCliEngine:
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, EngineUsage]:
         exe = resolve_claude()
         if exe is None:
-            raise EngineError("`claude` CLI not found on PATH")
+            # Deterministic: retrying can't materialize a missing binary.
+            raise EngineError("`claude` CLI not found on PATH", retryable=False)
         cmd = [exe, "-p", "--model", self.model, "--output-format", "json"]
         if system_prompt:
             cmd += ["--append-system-prompt", system_prompt]
         cmd += list(self.extra_args)
         started = time.monotonic()
         try:
-            proc = subprocess.run(  # noqa: S603
+            proc = run_cli(
                 cmd,
                 input=user_prompt,
-                capture_output=True,
-                text=True,
                 timeout=self.timeout_s,
-                check=False,
                 cwd=self.cwd,
                 env=_subscription_env(),
             )
         except subprocess.TimeoutExpired as e:
-            raise EngineError(f"claude CLI timed out after {self.timeout_s}s") from e
+            # The full per-attempt budget is already spent — an immediate
+            # same-prompt retry would hold the llm slot for another full
+            # timeout with poor odds. Fail fast; the user's Retry button (or
+            # the runner's queue) is the honest path (F-H5).
+            raise EngineError(
+                f"claude CLI timed out after {self.timeout_s}s", retryable=False
+            ) from e
         latency_ms = int((time.monotonic() - started) * 1000)
         if proc.returncode != 0:
             raise EngineError(

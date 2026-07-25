@@ -27,7 +27,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Callable
+import shutil
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,7 @@ from sidecar.packages.jobapplier.fake import FakeApplyEngine
 from sidecar.packages.jobapplier.loop import ApplyEngine
 
 from ..db.base import now_utc
-from ..db.database import resolve_data_dir
+from ..db.database import Database, resolve_data_dir
 from ..events import make_event
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome
@@ -97,6 +98,11 @@ def _apply(ctx: OperationContext) -> OperationOutcome:
         raise ValueError("apply requires application_id")
 
     control = APPLY_CONTROL.setdefault(ctx.operation_id, ApplyControl())
+    # F-M7: a runner-level cancel can land in the window between dispatch and
+    # this control being registered — carry it into the ApplyControl so the
+    # run finalizes as cancelled instead of proceeding under a stale request.
+    if ctx.cancelled is not None and ctx.cancelled():
+        control.cancel()
     try:
         return asyncio.run(_apply_async(ctx, application_id, control))
     finally:
@@ -123,6 +129,32 @@ def _run_dir(run_id: str) -> Path:
     return resolve_data_dir() / "apply_runs" / run_id
 
 
+def purge_run_dirs(run_ids: Iterable[str]) -> None:
+    """F-M8: remove `apply_runs/<run_id>/` artifact dirs (frozen resume PDF +
+    per-step PNGs) when their rows are purged — card delete and retention purge
+    both call this, or the evidence outlives the record forever.
+
+    Best-effort by design: a missing dir is fine, and an unremovable one must
+    never fail the delete/purge that triggered it — it is only logged. Path
+    safety: a target is removed only when its resolved path is a strict child
+    of the resolved `apply_runs` base (a hostile/corrupt run id can never walk
+    out of it). Blocking (shutil.rmtree) — call via `asyncio.to_thread` from
+    async request paths."""
+    log = logging.getLogger("fyj.sidecar")
+    base = (resolve_data_dir() / "apply_runs").resolve()
+    for run_id in run_ids:
+        target = (base / run_id).resolve()
+        if target == base or base not in target.parents:
+            log.warning("apply-run dir purge refused for %r: outside %s", run_id, base)
+            continue
+        try:
+            shutil.rmtree(target)
+        except FileNotFoundError:
+            continue  # never materialized (run failed before its first write)
+        except OSError as exc:
+            log.warning("apply-run dir purge failed for %s: %s", target, exc)
+
+
 async def _apply_async(
     ctx: OperationContext, application_id: str, control: ApplyControl
 ) -> OperationOutcome:
@@ -137,7 +169,16 @@ async def _apply_async(
         job = repos.jobs.get(app_row.job_id)
         if job is None:
             raise ValueError(f"job {app_row.job_id!r} not found")
-        run = repos.apply_runs.get_by_operation(ctx.operation_id or "")
+        # Adopt the route-created row by its snapshot id first: the route
+        # commits it BEFORE runner.submit, so it is always visible here, while
+        # `operation_id` may not be attached yet (the route writes that after
+        # submit — racing it minted duplicate runs, 2026-07-25).
+        run = None
+        snap_run_id = str(ctx.input_snapshot.get("run_id") or "")
+        if snap_run_id:
+            run = repos.apply_runs.get(snap_run_id)
+        if run is None:
+            run = repos.apply_runs.get_by_operation(ctx.operation_id or "")
         if run is None:
             run = repos.apply_runs.create(
                 application_id,
@@ -146,107 +187,140 @@ async def _apply_async(
                 source_url=job.canonical_url,
                 deadline_at=now_utc() + timedelta(minutes=20),
             )
+        elif run.operation_id != ctx.operation_id:
+            run = repos.apply_runs.update(run.id, operation_id=ctx.operation_id)
         run_id = run.id
         job_url = job.canonical_url
         company = job.company
         role = job.title
         jd_text = (job.description or "")[:12_000]
 
-    # -- wait for the packet, freeze the exact artifacts (§8.1) --------------
-    resume_md, resume_label, resume_artifact_id = await _wait_for_packet(
-        ctx, application_id, run_id, control
-    )
-    if control.cancelled:
-        return _finalize_cancel(ctx, run_id)
+    # Late-failure finalize (F-M3 follow-up, extended 2026-07-25): ANY
+    # exception escaping the post-adoption body below — the packet wait (which
+    # may raise AFTER setting the row `waiting_for_packet`), the PDF render,
+    # the browser launch, `run_apply` itself — must land the durable run row
+    # terminal before the op fails, or the Applier panel shows a live status
+    # forever (until boot sweep). The runner still fails the *operation*
+    # verbatim; a user cancel lands `interrupted`, never `failed`; both
+    # finalizers are guarded to ACTIVE rows, so a row `_finalize` already
+    # landed is never re-written.
+    try:
+        # -- wait for the packet, freeze the exact artifacts (§8.1) ----------
+        resume_md, resume_label, resume_artifact_id = await _wait_for_packet(
+            ctx, application_id, run_id, control
+        )
+        if control.cancelled:
+            return _finalize_cancel(ctx, run_id)
 
-    with db.repos() as repos:
-        profile = repos.profile.get_current()
-        facts: dict[str, str] = {}
-        if profile is not None and isinstance(profile.application_profile, dict):
-            facts = {
+        with db.repos() as repos:
+            profile = repos.profile.get_current()
+            facts: dict[str, str] = {}
+            if profile is not None and isinstance(profile.application_profile, dict):
+                facts = {
+                    str(k): str(v)
+                    for k, v in profile.application_profile.items()
+                    if isinstance(v, str | int | float) and str(v)
+                }
+            prefs_row = repos.preferences.get_or_create()
+            ui_state = prefs_row.ui_state or {}
+            preferences = {
                 str(k): str(v)
-                for k, v in profile.application_profile.items()
-                if isinstance(v, str | int | float) and str(v)
+                for k, v in (ui_state.get("apply_preferences") or {}).items()
             }
-        prefs_row = repos.preferences.get_or_create()
-        ui_state = prefs_row.ui_state or {}
-        preferences = {
-            str(k): str(v)
-            for k, v in (ui_state.get("apply_preferences") or {}).items()
-        }
-        repos.apply_runs.update(
-            run_id,
-            status="running",
-            phase="opening",
-            resume_artifact_id=resume_artifact_id,
-        )
+            repos.apply_runs.update(
+                run_id,
+                status="running",
+                phase="opening",
+                resume_artifact_id=resume_artifact_id,
+            )
 
-    run_dir = _run_dir(run_id)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    resume_pdf = run_dir / "resume.pdf"
+        run_dir = _run_dir(run_id)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        resume_pdf = run_dir / "resume.pdf"
 
-    dev = _dev_enabled()
-    allow_local = bool(dev and ctx.input_snapshot.get("dev_allow_local"))
-    headed = not (dev and ctx.input_snapshot.get("dev_headed") is False)
-    review_wait_s = _REVIEW_WAIT_S
-    if dev and ctx.input_snapshot.get("dev_review_wait_s") is not None:
-        review_wait_s = float(ctx.input_snapshot["dev_review_wait_s"])
+        dev = _dev_enabled()
+        allow_local = bool(dev and ctx.input_snapshot.get("dev_allow_local"))
+        headed = not (dev and ctx.input_snapshot.get("dev_headed") is False)
+        review_wait_s = _REVIEW_WAIT_S
+        if dev and ctx.input_snapshot.get("dev_review_wait_s") is not None:
+            review_wait_s = float(ctx.input_snapshot["dev_review_wait_s"])
 
-    engine = ENGINE_FACTORY(ctx)
+        engine = ENGINE_FACTORY(ctx)
 
-    from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright
 
-    async with async_playwright() as pw:
-        await render_resume_pdf_async(pw, resume_md, str(resume_pdf))
+        async with async_playwright() as pw:
+            await render_resume_pdf_async(pw, resume_md, str(resume_pdf))
 
-        request = ApplyRequest(
-            run_id=run_id,
-            application_id=application_id,
-            job_url=job_url,
-            company=company,
-            role=role,
-            jd_text=jd_text,
-            profile_facts=facts,
-            preferences=preferences,
-            approved_links=(),
-            artifacts=(
-                ArtifactRef(
-                    artifact_id="resume-pdf",
-                    label=f"{resume_label} (PDF)",
-                    path=str(resume_pdf),
-                    kind="resume",
+            request = ApplyRequest(
+                run_id=run_id,
+                application_id=application_id,
+                job_url=job_url,
+                company=company,
+                role=role,
+                jd_text=jd_text,
+                profile_facts=facts,
+                preferences=preferences,
+                approved_links=(),
+                artifacts=(
+                    ArtifactRef(
+                        artifact_id="resume-pdf",
+                        label=f"{resume_label} (PDF)",
+                        path=str(resume_pdf),
+                        kind="resume",
+                    ),
                 ),
-            ),
-            resume_label=resume_label,
-            screenshot_dir=str(run_dir / "screenshots"),
-        )
-
-        browser = await pw.chromium.launch(headless=not headed)
-        page = await browser.new_page()
-
-        def on_event(event: ApplyEvent) -> None:
-            _publish(ctx, run_id, event)
-            _persist_event(ctx, run_id, event)
-
-        try:
-            result = await run_apply(
-                page,
-                request,
-                engine,
-                on_event,
-                control,
-                policy=UrlPolicy(allow_local=allow_local),
+                resume_label=resume_label,
+                screenshot_dir=str(run_dir / "screenshots"),
             )
-            result = await _review_window(
-                ctx, run_id, page, result, review_wait_s, control
-            )
-        finally:
+
+            browser = await pw.chromium.launch(headless=not headed)
+            page = await browser.new_page()
+
+            def on_event(event: ApplyEvent) -> None:
+                _publish(ctx, run_id, event)
+                _persist_event(ctx, run_id, event)
+
             try:
-                await browser.close()
-            except Exception:  # noqa: S110 — already closed by the user
-                logging.getLogger("fyj.sidecar").debug("browser close raced", exc_info=True)
+                result = await run_apply(
+                    page,
+                    request,
+                    engine,
+                    on_event,
+                    control,
+                    policy=UrlPolicy(allow_local=allow_local),
+                )
+                result = await _review_window(
+                    ctx, run_id, page, result, review_wait_s, control
+                )
+            finally:
+                try:
+                    await browser.close()
+                except Exception:  # noqa: S110 — already closed by the user
+                    logging.getLogger("fyj.sidecar").debug(
+                        "browser close raced", exc_info=True
+                    )
 
-    return _finalize(ctx, application_id, run_id, result)
+        return _finalize(ctx, application_id, run_id, result)
+    except Exception as exc:
+        # The run-row finalize is best-effort relative to the ORIGINAL failure:
+        # if the finalize itself raises (a transient DB error), that must NOT
+        # replace `exc` as what propagates — the runner captures `exc` verbatim
+        # into the ledger (NFR-SIDE-04), and a swapped-in finalize error would
+        # corrupt that capture (2026-07-25).
+        try:
+            if control.cancelled:
+                _finalize_cancel(ctx, run_id)
+            else:
+                finalize_run_failed(db, run_id, f"{type(exc).__name__}: {exc}")
+        except Exception:  # noqa: BLE001 — never let a finalize failure mask the real error
+            logging.getLogger("fyj.sidecar").exception(
+                "apply-run finalize failed for %s while handling %s; "
+                "propagating the ORIGINAL error",
+                run_id,
+                type(exc).__name__,
+            )
+        raise
 
 
 async def _wait_for_packet(
@@ -291,8 +365,21 @@ async def _wait_for_packet(
                     },
                 )
             )
-        if control.cancelled or waited >= _PACKET_WAIT_MAX_S:
+        if control.cancelled:
+            # Discarded by the caller (it finalizes as cancelled immediately).
             return "", "master resume", None
+        if waited >= _PACKET_WAIT_MAX_S:
+            # F-M3: the packet never arrived — fall back to the REAL master
+            # resume exactly like the no-pending branch above; never hand the
+            # agent a blank attachment whose label claims to be a resume.
+            with db.repos() as repos:
+                profile = repos.profile.get_current()
+                if profile is None or not profile.resume_markdown:
+                    raise ValueError(
+                        "tailored resume never arrived within "
+                        f"{int(_PACKET_WAIT_MAX_S)}s and no master resume is saved"
+                    )
+                return profile.resume_markdown, "master resume", None
         await asyncio.sleep(_PACKET_POLL_S)
         waited += _PACKET_POLL_S
 
@@ -375,17 +462,60 @@ async def _review_window(
     return result
 
 
-def _finalize_cancel(ctx: OperationContext, run_id: str) -> OperationOutcome:
-    db = ctx.db
-    assert db is not None
+# Statuses a live run holds before it lands terminal — the only states a
+# late-failure/cancel finalize may overwrite (double-finalize impossible:
+# a row that already landed terminal is left untouched).
+_ACTIVE_RUN_STATUSES = ("queued", "waiting_for_packet", "running")
+
+
+def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
+    """Land the run row terminal (`failed`) when the entrypoint dies before
+    `_finalize` owns the row — or when the route's enqueue itself fails (the
+    start_apply strand, 2026-07-25). Mirrors `_finalize_cancel`'s mechanics,
+    guarded to ACTIVE rows only. The OPERATION failure (row + ledger + SSE) is
+    the runner's job; this only keeps the durable run from sitting in a live
+    status forever."""
     with db.repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is None or run.status not in _ACTIVE_RUN_STATUSES:
+            return
+        repos.apply_runs.update(
+            run_id,
+            status="failed",
+            phase="failed",
+            summary=summary,
+            ended_at=now_utc(),
+        )
+
+
+def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
+    """Land the run row terminal (`interrupted`) when a QUEUED `apply` op is
+    cancelled before its entrypoint ever runs (the start_apply single-flight
+    strand, 2026-07-25): the generic operations-cancel route marks the queued
+    op `cancelled`, but nothing else finalizes the durable run — it would sit
+    in an ACTIVE status forever, so `start_apply`'s single-flight would keep
+    returning the dead run on every later Apply click for that card. A user
+    cancel lands `interrupted`, never `failed`. Mirrors `finalize_run_failed`'s
+    mechanics, guarded to ACTIVE rows only (double-finalize impossible: a row
+    that already landed terminal is left untouched — so this is a no-op if the
+    entrypoint raced ahead and finalized the run itself)."""
+    with db.repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is None or run.status not in _ACTIVE_RUN_STATUSES:
+            return
         repos.apply_runs.update(
             run_id,
             status="interrupted",
             phase="interrupted",
-            summary="cancelled by the user",
+            summary=summary,
             ended_at=now_utc(),
         )
+
+
+def _finalize_cancel(ctx: OperationContext, run_id: str) -> OperationOutcome:
+    db = ctx.db
+    assert db is not None
+    finalize_run_interrupted(db, run_id, "cancelled by the user")
     return OperationOutcome(result_ref={"run_id": run_id, "status": "interrupted"})
 
 

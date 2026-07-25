@@ -45,6 +45,12 @@ export function RescoreAiDialog({
         void api
           .rescoreBoard()
           .then(() => invalidateFeed(qc))
+          .catch((e: unknown) => {
+            // Never a silent no-op: the user confirmed a paid re-score
+            // (2026-07-24 graceful-failure audit).
+            console.error("[finds-you-jobs] re-score failed:", e);
+            window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: e }));
+          })
           .finally(() => {
             setBusy(false);
             onClose();

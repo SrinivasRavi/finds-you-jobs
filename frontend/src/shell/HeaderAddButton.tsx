@@ -45,8 +45,9 @@ export function HeaderAddButton({
 // add button in all three headers, but sized by an INVISIBLE copy of the
 // longest label ("Deleted Applications") instead of a hand-measured pixel
 // constant — the longest button is exactly its natural size, the shorter two
-// match it, and nothing drifts if the font changes. The count badge floats on
-// the corner so it never adds width.
+// match it, and nothing drifts if the font changes. The count reads as a
+// quiet "(N)" suffix, not a notification badge (maintainer 2026-07-24); the
+// sizer reserves two digits of suffix so a count appearing never shifts width.
 export function HeaderDeletedButton({
   label,
   count,
@@ -67,17 +68,12 @@ export function HeaderDeletedButton({
     >
       <span aria-hidden="true" className="invisible flex items-center gap-1.5 whitespace-nowrap">
         <Icon name="trash" size={14} strokeWidth={2} />
-        {t("shell.deletedSizerLabel")}
+        {t("shell.deletedSizerLabel")} (99)
       </span>
       <span className="absolute inset-y-0 left-3 flex items-center gap-1.5 whitespace-nowrap">
         <Icon name="trash" size={14} strokeWidth={2} />
-        {label}
+        {count > 0 ? `${label} (${count})` : label}
       </span>
-      {count > 0 ? (
-        <span className="absolute -right-1.5 -top-1.5 inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-bad px-1 font-mono text-[10px] font-bold text-white">
-          {count}
-        </span>
-      ) : null}
     </button>
   );
 }

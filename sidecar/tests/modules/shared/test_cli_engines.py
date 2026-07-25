@@ -1,6 +1,8 @@
 """Covers: the subscription-CLI engine family (`_shared/cli_engines.py`).
 
-Fake `subprocess.run` throughout — no real CLI, no network. The contracts under
+Fake `run_cli` (completions) / `subprocess.run` (probes) throughout — no real
+CLI, no network — except the `run_cli` process-group section at the bottom,
+which drives real short-lived `/bin/sh` children (F-L9). The contracts under
 test are the ones the engines promise the app:
 
 - Codex: containment flags (`--sandbox read-only`, scratch cwd, prompt via
@@ -18,12 +20,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from typing import Any
 
 import pytest
 
 from sidecar.modules._shared import cli_engines as ce
-from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.claude_engine import EngineError, run_cli
 
 # Captured at import time — the autouse fixture below replaces the module
 # attribute, so the cache test needs the genuine function.
@@ -38,7 +41,7 @@ class FakeProc:
 
 
 class RunRecorder:
-    """Captures the subprocess.run call the engine makes."""
+    """Captures the run_cli / subprocess.run call the engine makes."""
 
     def __init__(self, proc: FakeProc) -> None:
         self.proc = proc
@@ -84,7 +87,7 @@ def _pinned_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_codex_complete_containment_and_parse(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = RunRecorder(FakeProc(stdout=_codex_jsonl()))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-should-never-reach-child")
 
     text, usage = ce.CodexCliEngine().complete("SYSTEM RULES", "USER TASK")
@@ -108,7 +111,7 @@ def test_codex_complete_containment_and_parse(monkeypatch: pytest.MonkeyPatch) -
 
 def test_codex_complete_model_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = RunRecorder(FakeProc(stdout=_codex_jsonl()))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     ce.CodexCliEngine(model="gpt-5-codex").complete("", "task")
     assert rec.cmd[rec.cmd.index("--model") + 1] == "gpt-5-codex"
     assert rec.kwargs["input"] == "task"  # empty system prompt is not prepended
@@ -117,14 +120,14 @@ def test_codex_complete_model_flag(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_codex_top_level_last_agent_message_variant(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout = json.dumps({"type": "turn.completed", "last_agent_message": "top-level text"})
     rec = RunRecorder(FakeProc(stdout=stdout))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     text, _ = ce.CodexCliEngine().complete("", "task")
     assert text == "top-level text"
 
 
 def test_codex_unparseable_stdout_degrades_to_text(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = RunRecorder(FakeProc(stdout="plain text answer, older CLI"))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     text, usage = ce.CodexCliEngine().complete("", "task")
     assert text == "plain text answer, older CLI"
     assert usage.tokens_in is None
@@ -138,7 +141,7 @@ def test_codex_missing_binary_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_codex_nonzero_exit_carries_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = RunRecorder(FakeProc(stderr="stream error: login required", returncode=1))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     with pytest.raises(EngineError, match="login required"):
         ce.CodexCliEngine().complete("", "task")
 
@@ -146,18 +149,21 @@ def test_codex_nonzero_exit_carries_stderr(monkeypatch: pytest.MonkeyPatch) -> N
 def test_codex_empty_result_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     empty = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1}})
     rec = RunRecorder(FakeProc(stdout=empty))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     with pytest.raises(EngineError, match="empty result"):
         ce.CodexCliEngine().complete("", "task")
 
 
-def test_codex_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_timeout_raises_and_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(cmd: list[str], **kwargs: Any) -> FakeProc:
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=5)
 
-    monkeypatch.setattr(ce.subprocess, "run", boom)
-    with pytest.raises(EngineError, match="timed out"):
+    monkeypatch.setattr(ce, "run_cli", boom)
+    with pytest.raises(EngineError, match="timed out") as ei:
         ce.CodexCliEngine(timeout_s=5).complete("", "task")
+    # F-H5: the full per-attempt budget is spent — the shared retry policy
+    # must not spend another one on the same prompt.
+    assert ei.value.retryable is False
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +203,7 @@ def test_codex_login_status_unknown_is_none(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_agy_complete_scrub_and_scratch_cwd(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = RunRecorder(FakeProc(stdout="the answer\n"))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     monkeypatch.setenv("GEMINI_API_KEY", "leak")
     monkeypatch.setenv("GOOGLE_API_KEY", "leak")
 
@@ -215,7 +221,7 @@ def test_agy_complete_scrub_and_scratch_cwd(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_agy_empty_stdout_names_upstream_bug(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = RunRecorder(FakeProc(stdout=""))
-    monkeypatch.setattr(ce.subprocess, "run", rec)
+    monkeypatch.setattr(ce, "run_cli", rec)
     with pytest.raises(EngineError, match="non-interactive"):
         ce.AntigravityCliEngine().complete("", "task")
 
@@ -246,3 +252,63 @@ def test_resolve_cli_caches_per_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls == ["codex"]  # second hit served from cache
     assert _REAL_RESOLVE_CLI("agy") == "/fake/bin/agy"
     assert calls == ["codex", "agy"]  # cache is per-binary
+
+
+# ---------------------------------------------------------------------------
+# run_cli — process-group launch + group kill on timeout (F-L9)
+# ---------------------------------------------------------------------------
+# Real short-lived /bin/sh subprocesses (POSIX only — the Windows leg uses
+# taskkill /T and can only be exercised on a Windows runner).
+
+
+def _wait_until_dead(pid: int, timeout_s: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        time.sleep(0.05)
+    return False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group path")
+def test_run_cli_happy_path_captures_output_and_input() -> None:
+    proc = run_cli(
+        ["/bin/sh", "-c", "read line; echo got:$line; echo err >&2; exit 3"],
+        input="hello\n",
+        timeout=10,
+    )
+    assert proc.returncode == 3
+    assert proc.stdout.strip() == "got:hello"
+    assert proc.stderr.strip() == "err"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group path")
+def test_run_cli_timeout_kills_the_whole_process_group(tmp_path) -> None:  # noqa: ANN001
+    """The audit's F-L9 scenario: the CLI (an agent) spawned a grandchild that
+    inherited the pipes. On timeout the WHOLE group must die promptly — the
+    worker thread must not wedge on communicate(), and no orphan may survive
+    until app exit."""
+    pidfile = tmp_path / "grandchild.pid"
+    # sh spawns a background grandchild (same process group, inherits stdout),
+    # writes its pid, then blocks. Plain subprocess.run would kill only sh.
+    cmd = ["/bin/sh", "-c", f"sleep 300 & echo $! > {pidfile}; wait"]
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_cli(cmd, timeout=1.0)
+    # Returned promptly — no post-kill communicate() wedge.
+    assert time.monotonic() - started < 10
+    grandchild = int(pidfile.read_text().strip())
+    assert _wait_until_dead(grandchild), "grandchild survived the group kill"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group path")
+def test_run_cli_child_runs_in_its_own_process_group() -> None:
+    # setsid: the child's pgid is its own pid, not the sidecar's — killpg on
+    # timeout can never take out the app's own group.
+    proc = run_cli(["/bin/sh", "-c", "ps -o pgid= -p $$"], timeout=10)
+    assert proc.returncode == 0
+    assert int(proc.stdout.strip()) != os.getpgrp()

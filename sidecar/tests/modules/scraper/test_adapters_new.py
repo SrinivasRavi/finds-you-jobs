@@ -85,6 +85,16 @@ def test_workday_page_cap_bounds_request_budget() -> None:
     assert fetcher.usage.internal_calls == workday.MAX_PAGES
 
 
+def test_workday_pauses_between_pages_never_before_the_first(monkeypatch) -> None:
+    """F-M9 — pagination is spaced by the jittered pause, no back-to-back burst."""
+    pauses = {"n": 0}
+    monkeypatch.setattr(workday, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
+    fetcher = routed({"/wday/cxs/acme/AcmeCareers/jobs": _wd_pages(45)})()
+    workday.fetch(SourceEntry(url=_WD_URL), fetcher)
+    assert fetcher.usage.internal_calls == 3
+    assert pauses["n"] == 2  # between pages only — never before the first request
+
+
 def test_workday_bad_payload_raises() -> None:
     fetcher = routed({"/wday/cxs/": {"nope": True}})()
     with pytest.raises(ScraperError, match="jobPostings"):
@@ -176,6 +186,34 @@ def test_themuse_board_keyword_and_fetch() -> None:
     assert job.company == "Example Corp"
     assert job.location == "Flexible / Remote, New York, NY"
     assert "platform" in job.description and "<" not in job.description
+
+
+def test_themuse_pauses_between_pages_never_before_the_first(monkeypatch) -> None:
+    """F-M9 — pagination is spaced by the jittered pause, no back-to-back burst."""
+    pauses = {"n": 0}
+    monkeypatch.setattr(themuse, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
+    page = {
+        "page_count": 3,
+        "results": [{
+            "name": "Role",
+            "company": {"name": "Acme"},
+            "locations": [{"name": "Pune"}],
+            "refs": {"landing_page": "https://www.themuse.com/jobs/acme/role"},
+            "contents": "text",
+        }],
+    }
+
+    class Paged(FakeFetcher):
+        calls = 0
+
+        def get_json(self, url: str, headers: dict[str, str] | None = None) -> object:
+            Paged.calls += 1
+            self.usage.internal_calls += 1
+            return page
+
+    themuse.fetch(SourceEntry(board="themuse"), Paged())
+    assert Paged.calls == themuse.MAX_PAGES  # page_count=3 ⇒ all three pages
+    assert pauses["n"] == themuse.MAX_PAGES - 1  # between pages only
 
 
 # ---------------------------------------------------------------------------
