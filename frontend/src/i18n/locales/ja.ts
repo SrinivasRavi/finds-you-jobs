@@ -135,6 +135,12 @@ const ja: DeepPartial<Messages> = {
     allSetSettings: "プロバイダーや人脈の設定は「設定」で調整できます",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "新しい求人を検索中",
+      scoring: "AI が新しく見つかった求人を評価中",
+      done: "完了",
+      count: "{{found}} 件中 {{done}} 件",
+    },
     header: {
       masterResume: "マスター職務経歴書",
       masterResumeTitle:
@@ -584,6 +590,8 @@ const ja: DeepPartial<Messages> = {
       retried: "再試行済み",
       retry: "再試行",
       retrying: "再試行中…",
+      stop: "停止",
+      stopping: "停止中…",
       restarted: "生成中にアプリが再起動されました。",
       seconds: "{{value}}秒",
       costUnknown: "このモデルのコストは不明です",
@@ -1094,6 +1102,8 @@ const ja: DeepPartial<Messages> = {
     moreDetail: "詳細",
     deletedSizerLabel: "削除したコンタクト",
     bootSplash: "ローカルバックエンドを起動しています… 初回起動には少し時間がかかることがあります。",
+    streamReconnecting:
+      "ローカルバックエンドに再接続しています… ライブ更新は一時停止中で、復帰後に自動的に追いつきます。",
     backendStoppedFallback: "バックエンドが応答しなくなりました",
     sidecarFatalBanner:
       "バックエンドが停止しました: {{message}}。アプリを終了して再起動するまで、操作は一切保存されません。",
@@ -1110,6 +1120,7 @@ const ja: DeepPartial<Messages> = {
     mutationError: {
       body: "変更を保存できませんでした — ローカルバックエンドとの通信でエラーが発生しました。",
       dismiss: "閉じる",
+      more_other: "ほかに{{count}}件の以前の失敗が非表示です",
     },
     rescore: {
       title: "AIで求人を再スコアリングしますか?",

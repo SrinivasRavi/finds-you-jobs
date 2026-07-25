@@ -34,6 +34,12 @@ const jobBoard = {
     sortRecency: "Recency",
     searchPlaceholder: "Search",
   },
+  scanProgress: {
+    scanning: "Scanning for new roles",
+    scoring: "AI is scoring the newly found jobs",
+    done: "Done",
+    count: "{{done}} of {{found}}",
+  },
   list: {
     jobsCount_one: "{{count}} job",
     jobsCount_other: "{{count}} jobs",

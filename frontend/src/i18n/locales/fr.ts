@@ -139,6 +139,12 @@ const fr: DeepPartial<Messages> = {
     allSetSettings: "Ajustez fournisseurs et réseau dans Réglages",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Recherche de nouveaux postes",
+      scoring: "L'IA évalue les offres qui viennent d'être trouvées",
+      done: "Terminé",
+      count: "{{done}} sur {{found}}",
+    },
     header: {
       masterResume: "CV de référence",
       masterResumeTitle:
@@ -598,6 +604,8 @@ const fr: DeepPartial<Messages> = {
       retried: "réessayée",
       retry: "Réessayer",
       retrying: "Nouvel essai…",
+      stop: "Arrêter",
+      stopping: "Arrêt en cours…",
       restarted: "L'app a redémarré pendant la génération.",
       seconds: "{{value}} s",
       costUnknown: "coût inconnu pour ce modèle",
@@ -1131,6 +1139,8 @@ const fr: DeepPartial<Messages> = {
     moreDetail: "Plus de détails",
     deletedSizerLabel: "Candidatures supprimées",
     bootSplash: "Démarrage du backend local… le premier lancement peut prendre un moment.",
+    streamReconnecting:
+      "Reconnexion au backend local… les mises à jour en direct sont en pause et se rattraperont automatiquement.",
     backendStoppedFallback: "le backend ne répond plus",
     sidecarFatalBanner:
       "Backend arrêté : {{message}}. Rien de ce que vous faites ne sera enregistré tant que vous n'aurez pas quitté puis rouvert l'app.",
@@ -1147,6 +1157,8 @@ const fr: DeepPartial<Messages> = {
     mutationError: {
       body: "Cette modification n'a pas été enregistrée — l'app a rencontré une erreur en contactant le backend local.",
       dismiss: "Fermer",
+      more_one: "+{{count}} échec précédent non affiché",
+      more_other: "+{{count}} échecs précédents non affichés",
     },
     rescore: {
       title: "Réévaluer les offres avec l'IA ?",

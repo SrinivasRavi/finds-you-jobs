@@ -144,6 +144,12 @@ const pl: DeepPartial<Messages> = {
     allSetSettings: "Dostawców i networking dostroisz w Ustawieniach",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Wyszukiwanie nowych ofert",
+      scoring: "AI ocenia nowo znalezione oferty",
+      done: "Gotowe",
+      count: "{{done}} z {{found}}",
+    },
     header: {
       masterResume: "Główne CV",
       masterResumeTitle:
@@ -609,6 +615,8 @@ const pl: DeepPartial<Messages> = {
       retried: "ponowiono",
       retry: "Ponów",
       retrying: "Ponawianie…",
+      stop: "Zatrzymaj",
+      stopping: "Zatrzymywanie…",
       restarted: "Aplikacja została uruchomiona ponownie w trakcie generowania.",
       seconds: "{{value}} s",
       costUnknown: "koszt nieznany dla tego modelu",
@@ -1159,6 +1167,8 @@ const pl: DeepPartial<Messages> = {
     // Widest of the three "Deleted …" header labels (see HeaderAddButton.tsx).
     deletedSizerLabel: "Usunięte aplikacje",
     bootSplash: "Uruchamianie lokalnego backendu… pierwszy start może chwilę potrwać.",
+    streamReconnecting:
+      "Ponowne łączenie z lokalnym backendem… aktualizacje na żywo są wstrzymane i nadrobią zaległości automatycznie.",
     backendStoppedFallback: "backend przestał odpowiadać",
     sidecarFatalBanner:
       "Backend zatrzymany: {{message}}. Nic się nie zapisze, dopóki nie zamkniesz i nie otworzysz aplikacji ponownie.",
@@ -1175,6 +1185,11 @@ const pl: DeepPartial<Messages> = {
     mutationError: {
       body: "Ta zmiana nie została zapisana — aplikacja napotkała błąd podczas łączenia z lokalnym backendem.",
       dismiss: "Zamknij",
+      more_one: "+{{count}} wcześniejszy błąd nie jest pokazany",
+      ...{
+        more_few: "+{{count}} wcześniejsze błędy nie są pokazane",
+        more_many: "+{{count}} wcześniejszych błędów nie jest pokazanych",
+      },
     },
     rescore: {
       title: "Ocenić oferty ponownie z użyciem AI?",

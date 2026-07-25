@@ -135,6 +135,12 @@ const it: DeepPartial<Messages> = {
     allSetSettings: "Configura provider e rete nelle Impostazioni",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Ricerca di nuove posizioni",
+      scoring: "L'IA sta valutando gli annunci appena trovati",
+      done: "Fatto",
+      count: "{{done}} di {{found}}",
+    },
     header: {
       masterResume: "Curriculum principale",
       masterResumeTitle:
@@ -589,6 +595,8 @@ const it: DeepPartial<Messages> = {
       retried: "ritentata",
       retry: "Riprova",
       retrying: "Nuovo tentativo…",
+      stop: "Interrompi",
+      stopping: "Interruzione in corso…",
       restarted: "App riavviata durante la generazione.",
       seconds: "{{value}} s",
       costUnknown: "costo sconosciuto per questo modello",
@@ -1111,6 +1119,8 @@ const it: DeepPartial<Messages> = {
     moreDetail: "Più dettagli",
     deletedSizerLabel: "Candidature eliminate",
     bootSplash: "Avvio del backend locale… il primo avvio può richiedere un momento.",
+    streamReconnecting:
+      "Riconnessione al backend locale… gli aggiornamenti in tempo reale sono in pausa e si rimetteranno in pari automaticamente.",
     backendStoppedFallback: "il backend ha smesso di rispondere",
     sidecarFatalBanner:
       "Backend arrestato: {{message}}. Nulla di ciò che fai verrà salvato finché non chiudi e riapri l'app.",
@@ -1127,6 +1137,8 @@ const it: DeepPartial<Messages> = {
     mutationError: {
       body: "La modifica non è stata salvata: l'app ha riscontrato un errore comunicando con il backend locale.",
       dismiss: "Chiudi",
+      more_one: "+{{count}} errore precedente non mostrato",
+      more_other: "+{{count}} errori precedenti non mostrati",
     },
     rescore: {
       title: "Rivalutare le offerte con l'IA?",

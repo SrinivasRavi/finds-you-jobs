@@ -137,6 +137,12 @@ const hi: DeepPartial<Messages> = {
     allSetSettings: "सेटिंग्स में प्रदाता + नेटवर्किंग समायोजित करें",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "नई भूमिकाओं की खोज हो रही है",
+      scoring: "AI नई मिली नौकरियों का मूल्यांकन कर रहा है",
+      done: "पूर्ण",
+      count: "{{found}} में से {{done}}",
+    },
     header: {
       masterResume: "मास्टर रेज़्यूमे",
       masterResumeTitle:
@@ -591,6 +597,8 @@ const hi: DeepPartial<Messages> = {
       retried: "दोबारा चला",
       retry: "फिर कोशिश करें",
       retrying: "फिर कोशिश हो रही है…",
+      stop: "रोकें",
+      stopping: "रोका जा रहा है…",
       restarted: "जनरेशन के दौरान ऐप रीस्टार्ट हुआ।",
       seconds: "{{value}}s",
       costUnknown: "इस मॉडल की लागत अज्ञात है",
@@ -1112,6 +1120,8 @@ const hi: DeepPartial<Messages> = {
     moreDetail: "अधिक विवरण",
     deletedSizerLabel: "हटाए गए आवेदन",
     bootSplash: "स्थानीय बैकएंड शुरू हो रहा है… पहली बार में थोड़ा समय लग सकता है।",
+    streamReconnecting:
+      "स्थानीय बैकएंड से दोबारा कनेक्ट हो रहा है… लाइव अपडेट रुके हुए हैं और अपने आप अप-टू-डेट हो जाएँगे।",
     backendStoppedFallback: "बैकएंड ने जवाब देना बंद कर दिया",
     sidecarFatalBanner:
       "बैकएंड रुक गया: {{message}}। ऐप बंद करके दोबारा खोलने तक कुछ भी सहेजा नहीं जाएगा।",
@@ -1128,6 +1138,8 @@ const hi: DeepPartial<Messages> = {
     mutationError: {
       body: "वह बदलाव सहेजा नहीं गया — लोकल बैकएंड से संपर्क करते समय ऐप में त्रुटि आई।",
       dismiss: "हटाएँ",
+      more_one: "+{{count}} पहले की विफलता नहीं दिखाई गई",
+      more_other: "+{{count}} पहले की विफलताएँ नहीं दिखाई गईं",
     },
     rescore: {
       title: "जॉब्स AI से दोबारा स्कोर करें?",

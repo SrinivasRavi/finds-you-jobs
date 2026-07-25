@@ -138,6 +138,12 @@ const de: DeepPartial<Messages> = {
     allSetSettings: "Passe Anbieter + Netzwerk in den Einstellungen an",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Suche nach neuen Stellen",
+      scoring: "KI bewertet die neu gefundenen Jobs",
+      done: "Fertig",
+      count: "{{done}} von {{found}}",
+    },
     header: {
       masterResume: "Master-Lebenslauf",
       masterResumeTitle:
@@ -595,6 +601,8 @@ const de: DeepPartial<Messages> = {
       retried: "wiederholt",
       retry: "Wiederholen",
       retrying: "Wird wiederholt…",
+      stop: "Stopp",
+      stopping: "Wird gestoppt…",
       restarted: "App wurde während der Generierung neu gestartet.",
       seconds: "{{value}}s",
       costUnknown: "Kosten für dieses Modell unbekannt",
@@ -1117,6 +1125,8 @@ const de: DeepPartial<Messages> = {
     moreDetail: "Mehr Details",
     deletedSizerLabel: "Gelöschte Bewerbungen",
     bootSplash: "Das lokale Backend startet… der erste Start kann einen Moment dauern.",
+    streamReconnecting:
+      "Verbindung zum lokalen Backend wird wiederhergestellt… Live-Updates sind pausiert und holen automatisch auf.",
     backendStoppedFallback: "das Backend reagiert nicht mehr",
     sidecarFatalBanner:
       "Backend gestoppt: {{message}}. Nichts wird gespeichert, bis du die App beendest und neu öffnest.",
@@ -1133,6 +1143,8 @@ const de: DeepPartial<Messages> = {
     mutationError: {
       body: "Diese Änderung wurde nicht gespeichert — die App ist beim Zugriff auf das lokale Backend auf einen Fehler gestoßen.",
       dismiss: "Schließen",
+      more_one: "+{{count}} früherer Fehlschlag nicht angezeigt",
+      more_other: "+{{count}} frühere Fehlschläge nicht angezeigt",
     },
     rescore: {
       title: "Jobs mit KI neu bewerten?",

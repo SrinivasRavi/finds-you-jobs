@@ -138,6 +138,12 @@ const es: DeepPartial<Messages> = {
     allSetSettings: "Ajusta proveedores y networking en Ajustes",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Buscando nuevos puestos",
+      scoring: "La IA está puntuando los empleos recién encontrados",
+      done: "Listo",
+      count: "{{done}} de {{found}}",
+    },
     header: {
       masterResume: "Currículum maestro",
       masterResumeTitle:
@@ -597,6 +603,8 @@ const es: DeepPartial<Messages> = {
       retried: "reintentada",
       retry: "Reintentar",
       retrying: "Reintentando…",
+      stop: "Detener",
+      stopping: "Deteniendo…",
       restarted: "La app se reinició durante la generación.",
       seconds: "{{value}}s",
       costUnknown: "coste desconocido para este modelo",
@@ -1121,6 +1129,8 @@ const es: DeepPartial<Messages> = {
     moreDetail: "Más detalle",
     deletedSizerLabel: "Solicitudes eliminadas",
     bootSplash: "Iniciando el backend local… el primer arranque puede tardar un poco.",
+    streamReconnecting:
+      "Reconectando con el backend local… las actualizaciones en vivo están en pausa y se pondrán al día automáticamente.",
     backendStoppedFallback: "el backend dejó de responder",
     sidecarFatalBanner:
       "Backend detenido: {{message}}. Nada de lo que hagas se guardará hasta que cierres y vuelvas a abrir la app.",
@@ -1137,6 +1147,8 @@ const es: DeepPartial<Messages> = {
     mutationError: {
       body: "Ese cambio no se guardó: la app encontró un error al comunicarse con el backend local.",
       dismiss: "Descartar",
+      more_one: "+{{count}} fallo anterior no mostrado",
+      more_other: "+{{count}} fallos anteriores no mostrados",
     },
     rescore: {
       title: "¿Volver a puntuar los empleos con IA?",

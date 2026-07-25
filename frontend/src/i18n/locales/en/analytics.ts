@@ -51,6 +51,8 @@ const analytics = {
     retried: "retried",
     retry: "Retry",
     retrying: "Retrying…",
+    stop: "Stop",
+    stopping: "Stopping…",
     restarted: "App restarted while generating.",
     seconds: "{{value}}s",
     costUnknown: "cost unknown for this model",

@@ -135,6 +135,12 @@ const zh: DeepPartial<Messages> = {
     allSetSettings: "在设置中调整提供商与人脉功能",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "正在搜索新职位",
+      scoring: "AI 正在为新发现的职位评分",
+      done: "完成",
+      count: "{{found}} 个中的 {{done}} 个",
+    },
     header: {
       masterResume: "主简历",
       masterResumeTitle:
@@ -584,6 +590,8 @@ const zh: DeepPartial<Messages> = {
       retried: "已重试",
       retry: "重试",
       retrying: "重试中…",
+      stop: "停止",
+      stopping: "正在停止…",
       restarted: "生成期间应用重启了。",
       seconds: "{{value}} 秒",
       costUnknown: "该模型成本未知",
@@ -1094,6 +1102,8 @@ const zh: DeepPartial<Messages> = {
     moreDetail: "更多详情",
     deletedSizerLabel: "已删除联系人",
     bootSplash: "正在启动本地后端… 首次启动可能需要一点时间。",
+    streamReconnecting:
+      "正在重新连接本地后端… 实时更新已暂停，恢复后会自动补上。",
     backendStoppedFallback: "后端已停止响应",
     sidecarFatalBanner:
       "后端已停止：{{message}}。在退出并重新打开应用之前，你的任何操作都不会被保存。",
@@ -1110,6 +1120,7 @@ const zh: DeepPartial<Messages> = {
     mutationError: {
       body: "该更改未能保存——应用在与本地后端通信时出错。",
       dismiss: "关闭",
+      more_other: "另有 {{count}} 个较早的失败未显示",
     },
     rescore: {
       title: "用 AI 重新评分这些职位？",

@@ -148,6 +148,12 @@ const nl: DeepPartial<Messages> = {
     allSetSettings: "Beheer providers + netwerk in Instellingen",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Zoeken naar nieuwe functies",
+      scoring: "AI beoordeelt de nieuw gevonden vacatures",
+      done: "Klaar",
+      count: "{{done}} van {{found}}",
+    },
     header: {
       masterResume: "Master-cv",
       masterResumeTitle:
@@ -611,6 +617,8 @@ const nl: DeepPartial<Messages> = {
       retried: "opnieuw geprobeerd",
       retry: "Opnieuw",
       retrying: "Opnieuw proberen…",
+      stop: "Stoppen",
+      stopping: "Bezig met stoppen…",
       restarted: "App herstart tijdens het genereren.",
       seconds: "{{value}}s",
       costUnknown: "kosten onbekend voor dit model",
@@ -1138,6 +1146,8 @@ const nl: DeepPartial<Messages> = {
     // width of the longest label (HeaderAddButton.tsx).
     deletedSizerLabel: "Verwijderde sollicitaties",
     bootSplash: "De lokale backend wordt gestart… de eerste keer kan dit even duren.",
+    streamReconnecting:
+      "Opnieuw verbinden met de lokale backend… live-updates zijn gepauzeerd en halen automatisch de achterstand in.",
     backendStoppedFallback: "de backend reageert niet meer",
     sidecarFatalBanner:
       "Backend gestopt: {{message}}. Niets wat je doet wordt opgeslagen totdat je de app afsluit en opnieuw opent.",
@@ -1154,6 +1164,8 @@ const nl: DeepPartial<Messages> = {
     mutationError: {
       body: "Die wijziging is niet opgeslagen — de app kreeg een fout bij het bereiken van de lokale backend.",
       dismiss: "Sluiten",
+      more_one: "+{{count}} eerdere fout niet getoond",
+      more_other: "+{{count}} eerdere fouten niet getoond",
     },
     rescore: {
       title: "Vacatures opnieuw scoren met AI?",

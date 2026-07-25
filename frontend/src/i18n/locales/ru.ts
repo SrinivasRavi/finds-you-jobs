@@ -148,6 +148,12 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     allSetSettings: "Настраивайте провайдеров и нетворкинг в Настройках",
   },
   jobBoard: {
+    scanProgress: {
+      scanning: "Поиск новых вакансий",
+      scoring: "ИИ оценивает недавно найденные вакансии",
+      done: "Готово",
+      count: "{{done}} из {{found}}",
+    },
     header: {
       masterResume: "Мастер-резюме",
       masterResumeTitle:
@@ -619,6 +625,8 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       retried: "повтор",
       retry: "Повторить",
       retrying: "Повтор…",
+      stop: "Остановить",
+      stopping: "Остановка…",
       restarted: "Приложение перезапустилось во время генерации.",
       seconds: "{{value}} с",
       costUnknown: "стоимость для этой модели неизвестна",
@@ -1165,6 +1173,8 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     moreDetail: "Подробнее",
     deletedSizerLabel: "Удалённые контакты",
     bootSplash: "Запускаем локальный бэкенд… первый запуск может занять время.",
+    streamReconnecting:
+      "Переподключаемся к локальному бэкенду… обновления в реальном времени приостановлены и подтянутся автоматически.",
     backendStoppedFallback: "бэкенд перестал отвечать",
     sidecarFatalBanner:
       "Бэкенд остановлен: {{message}}. Ничего не сохранится, пока вы не закроете и не откроете приложение заново.",
@@ -1181,6 +1191,10 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     mutationError: {
       body: "Изменение не сохранилось — приложение столкнулось с ошибкой при обращении к локальному бэкенду.",
       dismiss: "Закрыть",
+      more_one: "+{{count}} более ранняя ошибка не показана",
+      more_few: "+{{count}} более ранние ошибки не показаны",
+      more_many: "+{{count}} более ранних ошибок не показано",
+      more_other: "+{{count}} более ранние ошибки не показаны",
     },
     rescore: {
       title: "Оценить вакансии ИИ заново?",

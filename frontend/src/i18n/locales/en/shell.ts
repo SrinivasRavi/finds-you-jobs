@@ -11,6 +11,10 @@ const shell = {
   // width of the longest label (HeaderAddButton.tsx).
   deletedSizerLabel: "Deleted Applications",
   bootSplash: "Starting the local backend… first launch can take a moment.",
+  // Live-update stream gap (Layout.tsx, F-M5) — data refetches automatically
+  // once the stream is back.
+  streamReconnecting:
+    "Reconnecting to the local backend… live updates are paused and will catch up automatically.",
   backendStoppedFallback: "the backend stopped responding",
   sidecarFatalBanner:
     "Backend stopped: {{message}}. Nothing you do will save until you quit and reopen the app.",
@@ -31,6 +35,9 @@ const shell = {
   mutationError: {
     body: "That change didn't save — the app hit an error talking to the local backend.",
     dismiss: "Dismiss",
+    // Overflow line when a burst of failures exceeds the visible stack (F-L12).
+    more_one: "+{{count}} earlier failure not shown",
+    more_other: "+{{count}} earlier failures not shown",
   },
   rescore: {
     title: "Re-score jobs with AI?",
