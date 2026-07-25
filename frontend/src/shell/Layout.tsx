@@ -9,6 +9,12 @@ import { eventBus, type StreamState } from "../api/events";
 import i18n from "../i18n";
 import { LeftRail } from "./LeftRail";
 import { MutationErrorBanner } from "./MutationErrorBanner";
+import {
+  autoUpdateCheckEnabled,
+  checkForUpdate,
+  updaterAvailable,
+  type CheckResult,
+} from "./updater";
 
 /** Listen for the Tauri shell's sidecar supervision events. The shell emitted
  *  `sidecar://fatal` (backend killed, supervisor gave up) into a void — the UI
@@ -45,14 +51,76 @@ function useStreamState(): StreamState {
   return stream;
 }
 
+type AvailableUpdate = Extract<CheckResult, { available: true }>;
+
+/** One quiet update check at launch, only when the user opted in (About pane).
+ *  A found update surfaces a dismissible banner; a failed check stays silent —
+ *  the manual "Check for updates" button is the deliberate path. */
+function useLaunchUpdateCheck(): AvailableUpdate | null {
+  const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+  useEffect(() => {
+    if (!updaterAvailable() || !autoUpdateCheckEnabled()) return;
+    let alive = true;
+    void checkForUpdate()
+      .then((result) => {
+        if (alive && result.available) setUpdate(result);
+      })
+      .catch(() => {
+        /* a launch-time check failure is not worth interrupting the user */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return update;
+}
+
+function UpdateBanner({ update }: { update: AvailableUpdate }) {
+  const { t } = useTranslation();
+  const [dismissed, setDismissed] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  if (dismissed) return null;
+  return (
+    <div
+      className="flex items-center gap-3 border-b border-accent/30 bg-accent-wash px-4 py-1.5 text-[12.5px] text-accent-ink"
+      data-testid="update-available-banner"
+    >
+      <span className="flex-1">{t("shell.updateBanner.available", { version: update.version })}</span>
+      <button
+        type="button"
+        data-testid="update-banner-install"
+        disabled={installing}
+        onClick={() => {
+          setInstalling(true);
+          void update.install().catch(() => setInstalling(false));
+        }}
+        className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-accent/90 disabled:opacity-60"
+      >
+        {installing ? t("shell.updateBanner.installing") : t("shell.updateBanner.install")}
+      </button>
+      <button
+        type="button"
+        data-testid="update-banner-dismiss"
+        onClick={() => setDismissed(true)}
+        className="text-ink-3 hover:text-ink"
+        aria-label={t("shell.updateBanner.dismiss")}
+      >
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
+  );
+}
+
 export function Layout() {
   const { t } = useTranslation();
   const fatal = useSidecarFatal();
   const stream = useStreamState();
+  const update = useLaunchUpdateCheck();
   return (
     <div className="grid h-screen grid-cols-[76px_1fr] overflow-hidden bg-canvas">
       <LeftRail />
       <div className="flex min-h-0 flex-col overflow-hidden">
+        {update ? <UpdateBanner update={update} /> : null}
         {fatal ? (
           <div
             className="border-b border-bad bg-bad-wash px-4 py-2 text-[12.5px] text-bad"

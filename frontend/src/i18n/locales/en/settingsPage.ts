@@ -9,6 +9,44 @@ const settingsPage = {
   riskDetailLabel: "Full LinkedIn risk detail",
   acknowledgedOn: "Acknowledged on {{date}}",
   navAriaLabel: "Settings categories",
+  about: {
+    // Version & software update
+    updatesTitle: "Software update",
+    currentVersion: "Current version",
+    checkButton: "Check for updates",
+    checking: "Checking for updates…",
+    upToDate: "You're on the latest version.",
+    updateAvailable: "Version {{version}} is available.",
+    downloadInstall: "Download & install",
+    downloading: "Downloading… {{percent}}%",
+    downloadingIndeterminate: "Downloading…",
+    restartNote: "The app will restart to finish updating.",
+    checkError: "Couldn't check for updates. Check your connection and try again.",
+    unavailableInBrowser: "Updates are managed by the desktop app.",
+    autoCheckLabel: "Check for updates when the app starts",
+    autoCheckHint:
+      "Off by default. When on, finds-you-jobs quietly checks for a newer release at launch — the only automatic network call it makes — and always asks before anything installs.",
+    dataSafe:
+      "Updating never touches your data. Your profile, saved jobs, applications, resumes, and API keys stay on your machine — an update only replaces the app itself.",
+    // Support
+    supportTitle: "Support finds-you-jobs",
+    supportBody:
+      "finds-you-jobs is free and open source, built in the open. If it's saving you time in your job search, consider supporting its development — it directly funds new features, model tuning, and signed releases.",
+    sponsorButton: "Sponsor on GitHub",
+    // Community
+    communityTitle: "Community",
+    communityBody:
+      "Join the Discord to swap job-search tactics, get beta help, and help shape where the app goes next.",
+    discordButton: "Join our Discord",
+    promptsCallout:
+      "Found a prompt or configuration that works great? Share it in the #prompts-and-configs channel — the best community setups get folded into the app.",
+    // About / legal
+    aboutTitle: "About",
+    licenseLine:
+      "finds-you-jobs is licensed under AGPL-3.0-only. You're free to inspect, run, modify, and share it under the same terms.",
+    sourceButton: "Source code",
+    issuesButton: "Report a bug or request a feature",
+  },
   sources: {
     title: "Select the sources for the next scan",
     ats: {

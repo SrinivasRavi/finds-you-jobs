@@ -18,6 +18,14 @@ const shell = {
   backendStoppedFallback: "the backend stopped responding",
   sidecarFatalBanner:
     "Backend stopped: {{message}}. Nothing you do will save until you quit and reopen the app.",
+  // Auto-update banner (Layout.tsx) — shown only when "check on launch" is on
+  // and a newer release was found. Installing preserves all local data.
+  updateBanner: {
+    available: "A new version ({{version}}) is available.",
+    install: "Update now",
+    installing: "Downloading…",
+    dismiss: "Dismiss",
+  },
   work: {
     remote: "Remote",
     hybrid: "Hybrid",

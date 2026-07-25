@@ -100,6 +100,6 @@ OS keychain under `finds-you-jobs` if you want to remove that as well.
 - Third-party provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [UPSTREAMS.md](UPSTREAMS.md). Release process: [RELEASING.md](RELEASING.md). Contributing (DCO sign-off required): [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Discord
-Join the discord for job search discussions and beta testing - https://discord.gg/hQRjKw6QS
+Join the discord for job search discussions and beta testing - https://discord.gg/YsMxkwu7SY
 
 Licensed [AGPL-3.0-only](LICENSE); carried upstream portions keep their own notices.

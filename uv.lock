@@ -283,7 +283,7 @@ wheels = [
 
 [[package]]
 name = "finds-you-jobs"
-version = "0.5.3"
+version = "0.5.5"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },

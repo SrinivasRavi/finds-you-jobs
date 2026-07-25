@@ -21,6 +21,8 @@ const common = {
     dataBlurb: "Logging & data cleanup",
     appearance: "Appearance",
     appearanceBlurb: "Theme & language",
+    about: "About & Updates",
+    aboutBlurb: "Version, updates & support",
   },
   appearance: {
     theme: "Theme",
