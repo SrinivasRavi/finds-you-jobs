@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -36,6 +37,11 @@ from ..observability.config import observability_config
 from ..priority import STATS_KEY, zband_priority
 from ..registry import EngineRegistry
 from ..registry import networker_ops as networker_ops
+from ..registry.apply_op import (
+    finalize_run_failed,
+    finalize_run_interrupted,
+    purge_run_dirs,
+)
 from ..registry.company_anchor import resolution_key
 from ..registry.engine_config import apply_routing
 from ..registry.linkedin_op import LOGIN_CONTROL
@@ -139,19 +145,24 @@ def _scan_new_ids(last_scan: Any) -> set[str]:
 
 @router.get("/api/jobs")
 async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
-    with _db(request).repos() as repos:
-        jobs = repos.jobs.list(feed_state=feed_state or None)
-        scores = _display_scores(repos, [j.id for j in jobs])
-        score_op_states = repos.operations.score_states_by_job()
-        dtos = [
-            dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
-            for j in jobs
-        ]
-        new_ids = _scan_new_ids(repos.operations.latest_succeeded_by_kind("scan"))
-    for d in dtos:
-        d.is_new = d.id in new_ids
-    _sort_board(dtos)
-    return dtos
+    # Bounded (200 rows), but assembled off the event loop anyway — consistent
+    # with the board/applications pattern (async-first rule / F-H2).
+    def _assemble() -> list[dto.JobDTO]:
+        with _db(request).repos() as repos:
+            jobs = repos.jobs.list(feed_state=feed_state or None)
+            scores = _display_scores(repos, [j.id for j in jobs])
+            score_op_states = repos.operations.score_states_by_job()
+            dtos = [
+                dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
+                for j in jobs
+            ]
+            new_ids = _scan_new_ids(repos.operations.latest_succeeded_by_kind("scan"))
+        for d in dtos:
+            d.is_new = d.id in new_ids
+        _sort_board(dtos)
+        return dtos
+
+    return await asyncio.to_thread(_assemble)
 
 
 def _display_scores(repos, job_ids: list[str]) -> dict:
@@ -203,16 +214,19 @@ def _suppressed_by_excludes(state: Any, hard_excludes: dict, jobs: list[Any]) ->
     return suppressed
 
 
-def _board_search_haystack(d: dto.JobDTO, deep: bool) -> str:
+def _board_search_haystack(job: Any, score: Any, deep: bool) -> str:
     """FR-JB-13: the searchable text of one board row. Shallow (`list_q`) covers
     what the list row shows — title/company/location; deep (`text_q`) adds the
-    JD body and the match-score texts (reasons + breakdown)."""
-    parts = [d.title, d.company, d.location]
+    JD body and the match-score texts (reasons + breakdown). Reads the ORM row
+    (+ its display JobScore), not the DTO — the strings are identical, and it
+    lets the per-row DTO build (with its regex-derived workStyle) wait until
+    after search + pagination (F-H2)."""
+    parts = [job.title, job.company, job.location]
     if deep:
-        parts += [d.salary or "", d.source_adapter, d.description]
-        if d.score is not None:
-            parts += [str(r) for r in d.score.reasons]
-            parts.append(d.score.breakdown_md)
+        parts += [job.salary or "", job.source_adapter, job.description]
+        if score is not None:
+            parts += [str(r) for r in score.reasons]
+            parts.append(score.breakdown_md)
     return "\n".join(parts).lower()
 
 
@@ -229,65 +243,128 @@ async def board(
     a real last-scan time/status — never a silent 200-row cap or hardcoded refresh.
     `list_q` / `text_q` (FR-JB-13) filter server-side *before* pagination — the
     feed is paginated, so a client-side filter over loaded pages would silently
-    miss matches on unloaded pages."""
+    miss matches on unloaded pages.
+
+    The whole assembly runs off the event loop (async-first rule / F-H2 — at a
+    few thousand jobs it could hold the loop past the shell's 2 s health window),
+    and the DTO build (three regexes over the full JD each) happens only for the
+    returned page, not every eligible row."""
     page = max(0, page)
     page_size = max(1, min(_BOARD_PAGE_SIZE, page_size))
-    with _db(request).repos() as repos:
-        saved = _saved_job_ids(repos)
-        jobs = [
-            j for j in repos.jobs.list_by_states(_BOARD_FEED_STATES) if j.id not in saved
-        ]
-        # Personal hard excludes apply to already-discovered rows too —
-        # hidden (cached set), never deleted (maintainer 2026-07-22).
-        excludes = repos.preferences.get_or_create().hard_excludes or {}
-        suppressed = _suppressed_by_excludes(request.app.state, excludes, jobs)
-        if suppressed:
-            jobs = [j for j in jobs if j.id not in suppressed]
-        scores = _display_scores(repos, [j.id for j in jobs])
-        score_op_states = repos.operations.score_states_by_job()
-        dtos = [
-            dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
-            for j in jobs
-        ]
-        # Scrape status/meta (FR-JB-10) — from the operations ledger, live via SSE.
-        scan_running = repos.operations.any_in_flight("scan")
-        last_scan = repos.operations.latest_succeeded_by_kind("scan")
-        latest_scan = repos.operations.latest_by_kind("scan")
-        new_ids = _scan_new_ids(last_scan)
-    for d in dtos:
-        d.is_new = d.id in new_ids
-    _sort_board(dtos)
-    # `empty` means the scrape found nothing — judged before search filtering,
-    # so a search miss reads as a filter miss, not an empty scrape (FR-JB-13).
-    feed_empty = len(dtos) == 0
-    needle = list_q.strip().lower()
-    if needle:
-        dtos = [d for d in dtos if needle in _board_search_haystack(d, deep=False)]
-    needle = text_q.strip().lower()
-    if needle:
-        dtos = [d for d in dtos if needle in _board_search_haystack(d, deep=True)]
-    total = len(dtos)
-    window = dtos[page * page_size : page * page_size + page_size]
 
-    scan_error: str | None = None
-    if scan_running:
-        scan_status = "running"
-    elif latest_scan is not None and latest_scan.state == "failed":
-        scan_status = "error"
-        scan_error = latest_scan.error
-    elif feed_empty:
-        scan_status = "empty"
-    else:
-        scan_status = "idle"
-    return dto.BoardPageDTO(
-        jobs=window,
-        total=total,
-        page=page,
-        page_size=page_size,
-        scan_status=scan_status,
-        last_scan_at=last_scan.finished_at if last_scan is not None else None,
-        scan_error=scan_error,
-    )
+    def _assemble() -> dto.BoardPageDTO:
+        with _db(request).repos() as repos:
+            saved = _saved_job_ids(repos)
+            jobs = [
+                j
+                for j in repos.jobs.list_by_states(_BOARD_FEED_STATES)
+                if j.id not in saved
+            ]
+            # Personal hard excludes apply to already-discovered rows too —
+            # hidden (cached set), never deleted (maintainer 2026-07-22).
+            excludes = repos.preferences.get_or_create().hard_excludes or {}
+            suppressed = _suppressed_by_excludes(request.app.state, excludes, jobs)
+            if suppressed:
+                jobs = [j for j in jobs if j.id not in suppressed]
+            scores = _display_scores(repos, [j.id for j in jobs])
+            score_op_states = repos.operations.score_states_by_job()
+            # Scrape status/meta (FR-JB-10) — from the operations ledger, live via SSE.
+            scan_running = repos.operations.any_in_flight("scan")
+            last_scan = repos.operations.latest_succeeded_by_kind("scan")
+            latest_scan = repos.operations.latest_by_kind("scan")
+            new_ids = _scan_new_ids(last_scan)
+        # Sort + search over (job, score) rows — same key/haystack as the DTO
+        # path (FR-JB-01 / FR-JB-13); the DTO is built only for the window below.
+        rows = [(j, scores.get(j.id)) for j in jobs]
+        rows.sort(
+            key=lambda r: (
+                r[1].score_0_100 if r[1] is not None else -1,
+                r[0].ingested_at,
+            ),
+            reverse=True,
+        )
+        # `empty` means the scrape found nothing — judged before search filtering,
+        # so a search miss reads as a filter miss, not an empty scrape (FR-JB-13).
+        feed_empty = len(rows) == 0
+        needle = list_q.strip().lower()
+        if needle:
+            rows = [r for r in rows if needle in _board_search_haystack(*r, deep=False)]
+        needle = text_q.strip().lower()
+        if needle:
+            rows = [r for r in rows if needle in _board_search_haystack(*r, deep=True)]
+        total = len(rows)
+        window = [
+            dto.job_dto(j, s, score_op_states=score_op_states.get(j.id))
+            for j, s in rows[page * page_size : page * page_size + page_size]
+        ]
+        for d in window:
+            d.is_new = d.id in new_ids
+
+        scan_error: str | None = None
+        if scan_running:
+            scan_status = "running"
+        elif latest_scan is not None and latest_scan.state == "failed":
+            scan_status = "error"
+            scan_error = latest_scan.error
+        elif feed_empty:
+            scan_status = "empty"
+        else:
+            scan_status = "idle"
+        return dto.BoardPageDTO(
+            jobs=window,
+            total=total,
+            page=page,
+            page_size=page_size,
+            scan_status=scan_status,
+            last_scan_at=last_scan.finished_at if last_scan is not None else None,
+            scan_error=scan_error,
+        )
+
+    return await asyncio.to_thread(_assemble)
+
+
+@router.get("/api/scan/progress")
+async def scan_progress(request: Request) -> dto.ScanProgressDTO:
+    """Board-level scan + scoring progress (observed-issue #2): a small,
+    schema-free read the board polls to show "scanning…" and "M of N scored".
+
+    Assembled entirely from the operations ledger (no new persisted state):
+    `scan_running` = a scan op is in flight; `last_scan_at` = the latest
+    succeeded scan's finish time; `new_found` = that scan's recorded
+    `new_job_ids` count; and the scoring split — `score_pending` is the live
+    (queued/running) score-op count, `score_done` is how many of THIS scan's
+    new jobs have reached a terminal (succeeded/failed) score. Off the event
+    loop (async-first rule), one session inside the callable."""
+
+    def _assemble() -> dto.ScanProgressDTO:
+        with _db(request).repos() as repos:
+            scan_running = repos.operations.any_in_flight("scan")
+            last_scan = repos.operations.latest_succeeded_by_kind("scan")
+            new_ids = _scan_new_ids(last_scan)
+            score_pending = len(
+                repos.operations.list_by_kind_states("score", {"queued", "running"})
+            )
+            # Batch-scoped "done": score ops for THIS scan's new jobs that have
+            # reached a terminal state and are not currently re-pending. The
+            # job_id lives in each score op's input_snapshot; score_states_by_job
+            # maps it to that job's set of score-op states in one pass.
+            score_states = repos.operations.score_states_by_job()
+            score_done = 0
+            for job_id in new_ids:
+                states = score_states.get(job_id, set())
+                if states & {"queued", "running"}:
+                    continue
+                if states & {"succeeded", "failed"}:
+                    score_done += 1
+            return dto.ScanProgressDTO(
+                scan_running=scan_running,
+                last_scan_at=last_scan.finished_at if last_scan is not None else None,
+                new_found=len(new_ids),
+                score_pending=score_pending,
+                score_done=score_done,
+            )
+
+    return await asyncio.to_thread(_assemble)
 
 
 # Honest user-facing copy for a re-add of a permanently-deleted (tombstoned)
@@ -730,74 +807,120 @@ async def replace_settings(
 # -- applications (with derived packetState) --------------------------------
 
 
-def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
-    # Only head artifacts (not superseded) surface + drive packetState.
-    artifacts = [
-        a
-        for a in repos.artifacts.list_for_application(application.id)
-        if a.superseded_by is None
-    ]
-    with_states: list[tuple[Any, str | None]] = []
-    for artifact in artifacts:
-        state: str | None = None
-        if artifact.operation_id is not None:
-            op = repos.operations.get(artifact.operation_id)
-            state = op.state if op is not None else None
-        with_states.append((artifact, state))
-    job = repos.jobs.get(application.job_id)
+def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.ApplicationDTO]:
+    """Assemble ApplicationDTOs for a batch of cards (F-H2): the card-invariant
+    lookups (profile version, score-op scan, send/discover op lists) run ONCE
+    per call, and every child table is fetched with one IN(ids) query — so the
+    tracker list at N cards issues a constant number of queries, never ~12+ per
+    card."""
+    if not applications:
+        return []
+    app_ids = [a.id for a in applications]
+    job_ids = list({a.job_id for a in applications})
+    # Card-invariant lookups — hoisted out of the per-card loop.
     version = _current_profile_version(repos)
-    job_dto_val = None
-    if job is not None:
-        score = repos.job_scores.get_cached(job.id, version)
-        op_states = repos.operations.score_states_by_job().get(job.id)
-        job_dto_val = dto.job_dto(job, score, score_op_states=op_states)
-    # Referral progress (FR-NW-01 canonical enum): landed-send count, in-flight
-    # send ops, whether a discover op is running, whether a roster was found for
-    # the role, and the latest reach-out batch's outcomes.
-    job_id = application.job_id
-    referrals_count = repos.outreach_logs.count_sent_for_job(job_id)
-    send_states = [
-        op.state
-        for op in repos.operations.list_by_kind_states(
-            "send", {"queued", "running", "failed", "succeeded"}
+    score_op_states = repos.operations.score_states_by_job()
+    send_ops = repos.operations.list_by_kind_states(
+        "send", {"queued", "running", "failed", "succeeded"}
+    )
+    discover_ops = repos.operations.list_by_kind_states(
+        "discover", {"queued", "running"}
+    )
+    # Batched child rows — one IN query per table.
+    # Only head artifacts (not superseded) surface + drive packetState.
+    artifacts_by_app: dict[str, list[Any]] = {}
+    for artifact in repos.artifacts.list_for_applications(app_ids):
+        if artifact.superseded_by is None:
+            artifacts_by_app.setdefault(artifact.application_id, []).append(artifact)
+    ops_by_id = repos.operations.get_many(
+        [
+            a.operation_id
+            for artifacts in artifacts_by_app.values()
+            for a in artifacts
+            if a.operation_id is not None
+        ]
+    )
+    jobs_by_id = repos.jobs.get_many(job_ids)
+    scores = repos.job_scores.latest_for_jobs(job_ids, version)
+    sent_counts = repos.outreach_logs.count_sent_for_jobs(job_ids)
+    latest_batches = repos.outreach_logs.latest_batches_for_jobs(job_ids)
+    jobs_with_candidates = repos.contact_job_assocs.job_ids_with_contacts(job_ids)
+    links_by_app: dict[str, list[Any]] = {}
+    for link in repos.application_documents.list_for_applications(app_ids):
+        links_by_app.setdefault(link.application_id, []).append(link)
+    docs_by_id = repos.documents.get_many(
+        [link.document_id for links in links_by_app.values() for link in links]
+    )
+    latest_runs = repos.apply_runs.latest_for_applications(app_ids)
+
+    results: list[dto.ApplicationDTO] = []
+    for application in applications:
+        job_id = application.job_id
+        with_states: list[tuple[Any, str | None]] = []
+        for artifact in artifacts_by_app.get(application.id, []):
+            state: str | None = None
+            if artifact.operation_id is not None:
+                op = ops_by_id.get(artifact.operation_id)
+                state = op.state if op is not None else None
+            with_states.append((artifact, state))
+        job = jobs_by_id.get(job_id)
+        job_dto_val = None
+        if job is not None:
+            job_dto_val = dto.job_dto(
+                job, scores.get(job_id), score_op_states=score_op_states.get(job_id)
+            )
+        # Referral progress (FR-NW-01 canonical enum): landed-send count, in-flight
+        # send ops, whether a discover op is running, whether a roster was found for
+        # the role, and the latest reach-out batch's outcomes.
+        send_states = [
+            op.state
+            for op in send_ops
+            if (op.input_snapshot or {}).get("job_id") == job_id
+        ]
+        discover_in_flight = any(
+            (op.input_snapshot or {}).get("job_id") == job_id for op in discover_ops
         )
-        if (op.input_snapshot or {}).get("job_id") == job_id
-    ]
-    discover_in_flight = any(
-        (op.input_snapshot or {}).get("job_id") == job_id
-        for op in repos.operations.list_by_kind_states("discover", {"queued", "running"})
-    )
-    has_candidates = len(repos.contact_job_assocs.list_for_job(job_id)) > 0
-    latest_batch_outcomes = [
-        log.outcome for log in repos.outreach_logs.latest_batch_for_job(job_id)
-    ]
-    # Attached documents (manual cards) — the resume/cover the user submitted.
-    attached_docs = [
-        (link, repos.documents.get(link.document_id))
-        for link in repos.application_documents.list_for_application(application.id)
-    ]
-    attached_docs = [(link, doc) for link, doc in attached_docs if doc is not None]
-    return dto.application_dto(
-        application,
-        with_states,
-        job=job_dto_val,
-        referrals_count=referrals_count,
-        referrals_op_states=send_states,
-        discover_in_flight=discover_in_flight,
-        has_candidates=has_candidates,
-        latest_batch_outcomes=latest_batch_outcomes,
-        latest_apply_run=repos.apply_runs.latest_for_application(application.id),
-        documents=attached_docs,
-    )
+        # Attached documents (manual cards) — the resume/cover the user submitted.
+        attached_docs = [
+            (link, docs_by_id[link.document_id])
+            for link in links_by_app.get(application.id, [])
+            if link.document_id in docs_by_id
+        ]
+        results.append(
+            dto.application_dto(
+                application,
+                with_states,
+                job=job_dto_val,
+                referrals_count=sent_counts.get(job_id, 0),
+                referrals_op_states=send_states,
+                discover_in_flight=discover_in_flight,
+                has_candidates=job_id in jobs_with_candidates,
+                latest_batch_outcomes=[
+                    log.outcome for log in latest_batches.get(job_id, [])
+                ],
+                latest_apply_run=latest_runs.get(application.id),
+                documents=attached_docs,
+            )
+        )
+    return results
+
+
+def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
+    return _application_dtos(repos, [application])[0]
 
 
 @router.get("/api/applications")
 async def list_applications(
     request: Request, include_archived: bool = False
 ) -> list[dto.ApplicationDTO]:
-    with _db(request).repos() as repos:
-        apps = repos.applications.list(include_archived=include_archived)
-        return [_application_dto(repos, app) for app in apps]
+    # Assembly runs off the event loop (async-first rule / F-H2): the session is
+    # created AND used entirely inside the worker thread, never shared with it.
+    def _assemble() -> list[dto.ApplicationDTO]:
+        with _db(request).repos() as repos:
+            apps = repos.applications.list(include_archived=include_archived)
+            return _application_dtos(repos, apps)
+
+    return await asyncio.to_thread(_assemble)
 
 
 @router.post("/api/applications", status_code=201)
@@ -1203,10 +1326,15 @@ async def delete_application(request: Request, application_id: str) -> None:
         # Purge every FK child first (`foreign_keys=ON`): events, uploaded-
         # document links (manual cards — 2026-07-24 customer bug class), and
         # apply runs. Artifacts cascade via the ORM relationship.
+        run_ids = [r.id for r in repos.apply_runs.list_for_application(application_id)]
         repos.application_events.delete_for_application(application_id)
         repos.application_documents.delete_for_application(application_id)
         repos.apply_runs.delete_for_application(application_id)
         repos.applications.delete(application_id)
+    # F-M8: the runs' on-disk artifacts (frozen PDF + step PNGs) go with the
+    # rows. Best-effort + path-guarded; off-loop (rmtree blocks).
+    if run_ids:
+        await asyncio.to_thread(purge_run_dirs, run_ids)
 
 
 # -- schedules -------------------------------------------------------------
@@ -1330,6 +1458,54 @@ async def retry_operation(request: Request, operation_id: str) -> dto.OperationA
         if op is not None and op.state == "failed":
             op.result_ref = {**(op.result_ref or {}), "retried_as": new_id}
     return dto.OperationAccepted(id=new_id, kind=kind, state="queued")
+
+
+@router.post("/api/operations/{operation_id}/cancel", status_code=202)
+async def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccepted:
+    """Cancel an operation (F-M7): a still-`queued` op (any kind) is cancelled
+    outright; a `running` one is accepted ONLY for the kinds that cooperatively
+    poll the cancel token (score/tailor/cover — `CANCELLABLE_RUNNING_KINDS`),
+    landing `cancelled` at the entrypoint's next checkpoint. 404 for an unknown
+    id; 409 when there is nothing this endpoint can honestly cancel — the op is
+    already terminal, or it is running a kind that never observes the token
+    (a running `apply` is cancelled via POST /api/apply-runs/{id}/cancel)."""
+    runner = _runner(request)
+    db = _db(request)
+    with db.repos() as repos:
+        op = repos.operations.get(operation_id)
+        if op is None:
+            raise HTTPException(
+                status_code=404, detail=f"operation {operation_id!r} not found"
+            )
+        kind = op.kind
+        # A queued `apply` op carries a durable ApplyRun row (start_apply creates
+        # it before submit). If we cancel the op here, that row must be finalized
+        # too — resolve its id now (snapshot `run_id`, else the operation link).
+        apply_run_id = ""
+        if kind == "apply":
+            apply_run_id = str((op.input_snapshot or {}).get("run_id") or "")
+            if not apply_run_id:
+                existing = repos.apply_runs.get_by_operation(operation_id)
+                apply_run_id = existing.id if existing is not None else ""
+    if not runner.cancel(operation_id):
+        raise HTTPException(
+            status_code=409, detail=f"operation {operation_id!r} is not cancellable"
+        )
+    # Cancelling a QUEUED `apply` op strands its ApplyRun row live forever
+    # (the entrypoint that would finalize it never runs), so start_apply's
+    # single-flight keeps returning the dead run on every later Apply click.
+    # Land it `interrupted` (never `failed`) — a user cancel. Guarded to ACTIVE
+    # rows, so a run the entrypoint already finalized is left untouched. Only a
+    # queued apply reaches here: a running apply is refused above (409) and
+    # cancelled via POST /api/apply-runs/{id}/cancel instead (2026-07-25).
+    if kind == "apply" and apply_run_id:
+        finalize_run_interrupted(db, apply_run_id, "cancelled before the run started")
+    # Honest post-cancel state: a queued op is already `cancelled`; a running
+    # one is still `running` until its next cooperative checkpoint.
+    with db.repos() as repos:
+        op = repos.operations.get(operation_id)
+        state = op.state if op is not None else "cancelled"
+    return dto.OperationAccepted(id=operation_id, kind=kind, state=state)
 
 
 @router.get("/api/operations")
@@ -1936,6 +2112,14 @@ async def linkedin_set_tier(
 # A single-user local app on the user's own machine — these fault-injection
 # endpoints power the Dev surface (US-DEV-01, dev-only): simulate an expired
 # LinkedIn cookie mid-action, a crash mid-generation, and quick seed data.
+# F-L4: they mutate/corrupt real state, so they answer only when the process
+# was started with FYJ_DEV=1 (scripts/dev-web.mjs sets it; the packaged app
+# never does) — otherwise 404, indistinguishable from an unknown route.
+
+
+def _require_dev_mode() -> None:
+    if os.environ.get("FYJ_DEV") != "1":
+        raise HTTPException(status_code=404, detail="Not Found")
 
 
 @router.post("/api/dev/linkedin/expire-cookie")
@@ -1949,6 +2133,7 @@ async def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
     or legacy plaintext: it unseals with the session key, sets `li_at`'s expiry to
     the past, and reseals in the SAME format. Before this fix it parsed the file
     as plaintext and silently no-op'd on any sealed session."""
+    _require_dev_mode()
     from pathlib import Path
 
     from ..db.database import resolve_data_dir
@@ -2035,23 +2220,40 @@ async def start_apply(
         snapshot["retry_of_run_id"] = payload.retry_of_run_id
     if payload.dev:
         snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
-    operation_id = runner.submit("apply", snapshot)
 
     # Write phase — settle the exclusive intent (roadmap §5.1) and create the
-    # durable run. Honest initial state: QUEUED until the op actually starts
-    # (the op flips it to waiting_for_packet/running) — the panel must not
-    # claim "waiting for résumé" while the dispatcher hasn't picked it up.
+    # durable run BEFORE enqueueing the op, in its own committed txn (no
+    # pending write is held across runner.submit — the 2026-07-17 locked-DB
+    # discipline). The worker can dispatch within milliseconds of submit, and
+    # it must adopt THIS row (by snapshot `run_id`): creating the row after
+    # submit raced the op's `get_by_operation` lookup, which then minted a
+    # duplicate run while the panel watched the route's row sit `queued`
+    # forever. Honest initial state: QUEUED until the op actually starts.
     with db.repos() as repos:
         if needs_intent:
             repos.applications.update(application_id, intent="apply")
         run = repos.apply_runs.create(
             application_id,
-            operation_id=operation_id,
             retry_of_run_id=payload.retry_of_run_id,
             source_url=job_url,
             status="queued",
             phase="queued",
         )
+        run_id = run.id
+    snapshot["run_id"] = run_id
+    try:
+        operation_id = runner.submit("apply", snapshot)
+    except Exception as exc:
+        # Enqueue failed (2026-07-25): the just-created row would strand
+        # `queued` until boot sweep — land it terminal-failed, then let the
+        # error surface exactly as it otherwise would (flight-recorded 500).
+        finalize_run_failed(db, run_id, f"enqueue failed — {type(exc).__name__}: {exc}")
+        raise
+
+    with db.repos() as repos:
+        # Attach the ledger link; the op writes the same value on adoption, so
+        # whichever lands second is a no-op. Progress columns are untouched.
+        run = repos.apply_runs.update(run_id, operation_id=operation_id)
         return dto.apply_run_dto(run)
 
 
@@ -2291,8 +2493,10 @@ async def dev_fail_running(request: Request) -> dict[str, Any]:
     """Mark every currently-`running` operation failed with the boot-recovery
     note — simulates the app crashing mid-generation so the Logs 'App restarted
     while generating — Retry' path (US-LOG-01) can be exercised on demand."""
+    from ..events import operation_event
     from ..runner.runner import RESTART_NOTE
 
+    _require_dev_mode()
     hub = getattr(request.app.state, "hub", None)
     failed: list[str] = []
     with _db(request).repos() as repos:
@@ -2300,11 +2504,31 @@ async def dev_fail_running(request: Request) -> dict[str, Any]:
             repos.operations.mark_failed(op.id, error=RESTART_NOTE)
             failed.append(op.id)
             if hub is not None:
-                hub.publish(
-                    {"type": "operation", "payload": {"operation_id": op.id, "kind": op.kind,
-                                                       "state": "failed", "error": RESTART_NOTE}}
-                )
+                # Canonical payload shape (`id`, like every runner publish) —
+                # this route used to ship `operation_id`, the one divergence
+                # that kept OperationEventPayload.id optional.
+                hub.publish(operation_event(op.id, op.kind, "failed", error=RESTART_NOTE))
     return {"ok": True, "failed": failed, "count": len(failed)}
+
+
+@router.post("/api/dev/operations/seed-queued", status_code=201)
+async def dev_seed_queued_operation(request: Request) -> dict[str, Any]:
+    """Create a `queued` operation ROW directly — without pumping the runner —
+    so it STAYS queued until something else submits work. Lets the Logs Stop
+    control (F-M7) be exercised deterministically in e2e (the generic enqueue
+    dispatches almost immediately, so a queued row is otherwise a race). Kind
+    `cleanup_trash`: zero-LLM and harmless if a later pump does dispatch it.
+    Dev-only."""
+    from ..events import operation_event
+
+    _require_dev_mode()
+    hub = getattr(request.app.state, "hub", None)
+    with _db(request).repos() as repos:
+        op = repos.operations.create("cleanup_trash", {})
+        op_id, kind = op.id, op.kind
+    if hub is not None:
+        hub.publish(operation_event(op_id, kind, "queued"))
+    return {"ok": True, "id": op_id, "kind": kind, "state": "queued"}
 
 
 @router.post("/api/dev/seed-application", status_code=201)
@@ -2312,6 +2536,8 @@ async def dev_seed_application(request: Request) -> dict[str, Any]:
     """Create a sample Job + Saved Application so the Tracker has a card to drive
     (drag, generate, apply) without a live scrape/score. Dev-only."""
     import uuid
+
+    _require_dev_mode()
 
     suffix = uuid.uuid4().hex[:8]
     with _db(request).repos() as repos:

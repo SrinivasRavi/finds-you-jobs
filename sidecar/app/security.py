@@ -7,6 +7,11 @@ API keys and the LinkedIn session storage-state). Key resolution
 dir with owner-only permissions (the NFR's stated fallback when no keychain
 backend exists). The key is never logged and never passed via argv.
 
+Threat-model honesty (F-L2): on the key-FILE fallback the key sits beside the
+ciphertext it protects, so an attacker with read access to the data dir gets
+both — that path is obfuscation with a 0600 permission bar, not encryption
+against them. See `_key_from_file`.
+
 The LinkedIn session-file seal/read/write helpers interoperate with
 `referral_outreach/upstream/secure_store.py` (the GPL side) via the shared
 sealed-JSON shape `{"fyj_sealed": 1, "token": "<Fernet token>"}` — the two
@@ -62,7 +67,14 @@ def _key_from_keyring() -> str | None:
 
 
 def _key_from_file(data_dir: Path) -> str:
-    """App-managed key file, owner-only perms (0600) — the NFR-SEC-01 fallback."""
+    """App-managed key file, owner-only perms (0600) — the NFR-SEC-01 fallback.
+
+    Honest guarantee (F-L2): this key lives in the SAME data dir as the
+    ciphertext it seals, so against an attacker who can read the user's files
+    it is obfuscation plus a 0600 permission bar, not real encryption — they
+    can read the key exactly as the app does. True at-rest secrecy on this
+    path exists only with the OS keychain (or the env override); the file
+    fallback keeps secrets out of casual greps/backups, no more."""
     path = data_dir / KEY_FILE_NAME
     if path.exists():
         key = path.read_text(encoding="utf-8").strip()

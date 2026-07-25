@@ -508,20 +508,27 @@ def purge_archived_applications(
     application ids."""
     if db is None:
         return []
+    from .apply_op import purge_run_dirs
+
     now = now or now_utc()
     cutoff = now - timedelta(days=retention_days)
     purged: list[str] = []
+    run_ids: list[str] = []
     with db.repos() as repos:
         for app in repos.applications.list_archived_before(cutoff):
             # Purge every FK child (`foreign_keys=ON`): events, uploaded-
             # document links (manual cards — 2026-07-24 bug class), and apply
             # runs — an archived manual card used to IntegrityError here and
             # wedge the whole retention pass.
+            run_ids += [r.id for r in repos.apply_runs.list_for_application(app.id)]
             repos.application_events.delete_for_application(app.id)
             repos.application_documents.delete_for_application(app.id)
             repos.apply_runs.delete_for_application(app.id)
             if repos.applications.delete(app.id):
                 purged.append(app.id)
+    # F-M8: the runs' on-disk artifact dirs go with the rows (best-effort,
+    # path-guarded). Sync context — retention runs on a runner worker thread.
+    purge_run_dirs(run_ids)
     return purged
 
 
