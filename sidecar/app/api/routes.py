@@ -1086,6 +1086,75 @@ async def create_manual_application(
         return _application_dto(repos, repos.applications.get(application_id))
 
 
+_DOC_KINDS = ("tailored_resume", "cover_letter")
+
+
+@router.post("/api/applications/{application_id}/documents", status_code=201)
+async def attach_application_document(
+    request: Request,
+    application_id: str,
+    kind: Annotated[str, Form()],
+    file: Annotated[UploadFile, File()],
+) -> dto.ApplicationDTO:
+    """Attach a resume/cover FILE to an EXISTING application — the Upload button
+    on the Tailored resume / Cover letter editors. Stores it content-addressed
+    (deduped) and links it as the application's `kind` slot, replacing any prior
+    file for that kind (one resume + one cover per card). This is the exact
+    document the user submits on Apply / the record for a manual card logged
+    without a file. `kind` ∈ {'tailored_resume', 'cover_letter'}."""
+    if kind not in _DOC_KINDS:
+        raise HTTPException(
+            status_code=422, detail=f"kind must be one of {list(_DOC_KINDS)}"
+        )
+    db = _db(request)
+    filename = file.filename or ""
+    if not filename:
+        raise HTTPException(status_code=422, detail="No file was uploaded.")
+    data = await file.read()
+    try:
+        docstore.validate(filename, data)
+    except (docstore.DocumentTooLarge, docstore.UnsupportedDocumentType) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    # Fail before storing the blob if the card is gone (no orphan on disk).
+    with db.repos() as repos:
+        if repos.applications.get(application_id) is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+
+    sha = await asyncio.to_thread(docstore.store_bytes, data, db.data_dir)
+    with db.repos() as repos:
+        doc = repos.documents.get_or_create(
+            sha256=sha,
+            byte_size=len(data),
+            mime_type=docstore.mime_for_filename(filename),
+            original_filename=filename,
+        )
+        repos.application_documents.set(application_id, kind, doc.id)
+        return _application_dto(repos, repos.applications.get(application_id))
+
+
+@router.delete("/api/applications/{application_id}/documents/{kind}")
+async def detach_application_document(
+    request: Request, application_id: str, kind: str
+) -> dto.ApplicationDTO:
+    """Detach the (application, kind) resume/cover file — the ✕ on the attached-
+    file chip. The content-addressed blob stays (it may back other cards)."""
+    if kind not in _DOC_KINDS:
+        raise HTTPException(
+            status_code=422, detail=f"kind must be one of {list(_DOC_KINDS)}"
+        )
+    db = _db(request)
+    with db.repos() as repos:
+        if repos.applications.get(application_id) is None:
+            raise HTTPException(
+                status_code=404, detail=f"application {application_id!r} not found"
+            )
+        repos.application_documents.delete(application_id, kind)
+        return _application_dto(repos, repos.applications.get(application_id))
+
+
 @router.get("/api/documents/{document_id}")
 async def download_document(request: Request, document_id: str) -> FileResponse:
     """Serve an uploaded document verbatim (the resume/cover a user attached to a
@@ -1164,7 +1233,25 @@ async def patch_artifact(
             None,
         )
         if head is None:
-            raise HTTPException(status_code=404, detail=f"no {kind} artifact to update")
+            # No generated variant exists — the user pasted or typed their own
+            # (for example, from their own ChatGPT or Gemini subscription). Create
+            # a manual artifact with no operation, so packetState derives to
+            # `ready` (editable and approvable). An approve-only flip with no text
+            # has nothing to create, so it still 404s.
+            if payload.markdown is None:
+                raise HTTPException(status_code=404, detail=f"no {kind} artifact to update")
+            repos.artifacts.create(
+                application_id,
+                kind=kind,
+                markdown=payload.markdown,
+                notes=[],
+                profile_version=_current_profile_version(repos),
+                guidance_used=None,
+                operation_id=None,
+                approved_at=now_utc() if payload.approved else None,
+            )
+            repos.applications.update(application_id, last_touched_at=now_utc())
+            return _application_dto(repos, repos.applications.get(application_id))
         fields: dict[str, Any] = {}
         if payload.markdown is not None:
             fields["markdown"] = payload.markdown

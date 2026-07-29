@@ -820,6 +820,18 @@ class ApplicationDocumentsRepo:
         self._s.flush()
         return link
 
+    def delete(self, application_id: str, kind: str) -> bool:
+        """Detach the (application, kind) document link (the resume/cover ✕ in
+        the editor). The content-addressed `Document` row and blob stay — one
+        blob may back many links. Returns whether a link was removed."""
+        result = self._s.execute(
+            delete(ApplicationDocument).where(
+                ApplicationDocument.application_id == application_id,
+                ApplicationDocument.kind == kind,
+            )
+        )
+        return cast("CursorResult[Any]", result).rowcount > 0
+
     def delete_for_application(self, application_id: str) -> int:
         """Remove an application's document LINKS when the card is purged
         (`foreign_keys=ON` forbids orphans). The content-addressed `Document`

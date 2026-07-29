@@ -27,6 +27,8 @@ ALLOWED_TYPES: dict[str, str] = {
     ".pdf": "application/pdf",
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".pages": "application/vnd.apple.pages",
     ".txt": "text/plain",
     ".md": "text/markdown",
     ".rtf": "application/rtf",
