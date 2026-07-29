@@ -905,7 +905,6 @@ const ja: DeepPartial<Messages> = {
       },
       mode: {
         preview: "プレビュー",
-        edit: "編集",
       },
       masterTitle: "マスター職務経歴書",
       submittedPill: "提出済み · 読み取り専用",
@@ -924,8 +923,6 @@ const ja: DeepPartial<Messages> = {
       masterColumn: "マスター",
       readOnly: "読み取り専用",
       tailoredVariant: "カスタマイズ版",
-      editing: "編集中",
-      editableSwitch: "編集できます — 「編集」に切り替え",
       unsavedChanges: "未保存の変更",
       staleVariant: "古いバージョンのマスター職務経歴書から生成されています",
       regenerate: "再生成",

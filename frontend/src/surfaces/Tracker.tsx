@@ -19,16 +19,19 @@ import {
   useApplications,
   useArchived,
   useArchiveApplication,
+  useAttachDocument,
   useGeneratePacket,
   useMoveApplication,
   usePatchArtifact,
   useProfile,
+  useRemoveDocument,
   useReturnToBoard,
   useSetPriority,
   useStartApply,
   useUpdateApplication,
 } from "../api/queries";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
+import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import type { Application, Priority, Stage } from "../api/types";
 import { STAGES } from "../api/types";
 import { ApplierPanel } from "../popups/ApplierPanel";
@@ -55,6 +58,8 @@ export function Tracker() {
   const returnToBoard = useReturnToBoard();
   const genPacket = useGeneratePacket();
   const patchArtifact = usePatchArtifact();
+  const attachDocument = useAttachDocument();
+  const removeDocument = useRemoveDocument();
   const startApply = useStartApply();
 
   const [search, setSearch] = useState("");
@@ -197,6 +202,9 @@ export function Tracker() {
       <header className="flex min-h-[48px] items-center border-b border-border bg-surface px-5">
         <h1 className="text-[14px] font-semibold text-ink">{t("tracker.title")}</h1>
         <div className="ml-auto flex items-center gap-3 py-1.5">
+          {/* Master Resume: shared launcher, one spot left of the Deleted+Add
+              cluster — pixel-aligned with the Job Board / Networking tabs. */}
+          <MasterResumeLauncher />
           <HeaderDeletedButton
             label={t("tracker.deletedApplications")}
             count={archived.length}
@@ -414,6 +422,29 @@ export function Tracker() {
                   (d) => d.kind === (popup.kind === "cover" ? "cover_letter" : "tailored_resume"),
                 )
               : undefined
+          }
+          // The external file attached to this variant's slot (shown as a chip
+          // beside the editable variant; what Apply submits). Available on any
+          // card via the Upload button, not just manual ones.
+          attachedDoc={popupApp.documents.find(
+            (d) => d.kind === (popup.kind === "cover" ? "cover_letter" : "tailored_resume"),
+          )}
+          onAttachDocument={(file) =>
+            attachDocument
+              .mutateAsync({
+                id: popupApp.id,
+                kind: popup.kind === "cover" ? "cover_letter" : "tailored_resume",
+                file,
+              })
+              .then(() => {})
+          }
+          onRemoveDocument={() =>
+            removeDocument
+              .mutateAsync({
+                id: popupApp.id,
+                kind: popup.kind === "cover" ? "cover_letter" : "tailored_resume",
+              })
+              .then(() => {})
           }
           onClose={() => setPopup(null)}
           onApprove={(markdown) => {

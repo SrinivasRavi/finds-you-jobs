@@ -943,7 +943,6 @@ const ar = {
       },
       mode: {
         preview: "معاينة",
-        edit: "تحرير",
       },
       masterTitle: "السيرة الذاتية الرئيسية",
       submittedPill: "مُرسَل · للقراءة فقط",
@@ -962,8 +961,6 @@ const ar = {
       masterColumn: "الرئيسية",
       readOnly: "للقراءة فقط",
       tailoredVariant: "نسخة مخصَّصة",
-      editing: "جارٍ التحرير",
-      editableSwitch: "قابل للتحرير — بدِّل إلى «تحرير»",
       unsavedChanges: "تغييرات غير محفوظة",
       staleVariant: "أُنشئت من نسخة أقدم من سيرتك الرئيسية",
       regenerate: "أعد الإنشاء",

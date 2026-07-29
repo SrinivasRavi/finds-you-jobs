@@ -940,7 +940,6 @@ const pl: DeepPartial<Messages> = {
       },
       mode: {
         preview: "Podgląd",
-        edit: "Edycja",
       },
       masterTitle: "Główne CV",
       submittedPill: "Wysłane · tylko do odczytu",
@@ -959,8 +958,6 @@ const pl: DeepPartial<Messages> = {
       masterColumn: "Główne",
       readOnly: "Tylko do odczytu",
       tailoredVariant: "Wariant dopasowany",
-      editing: "Edycja",
-      editableSwitch: "Edytowalne — przełącz na Edycję",
       unsavedChanges: "Niezapisane zmiany",
       staleVariant: "Wygenerowano ze starszej wersji twojego głównego CV",
       regenerate: "Wygeneruj ponownie",

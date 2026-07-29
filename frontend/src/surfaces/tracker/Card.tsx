@@ -190,7 +190,7 @@ export const Card = memo(function Card({
         {/* A manual card with an uploaded resume/cover shows a green "present"
             slot; clicking opens the read-only submitted-doc viewer instead of
             the generate flow (FR-TR manual-add). */}
-        <button onClick={() => onSlot(app, "tailored")}>
+        <button onClick={() => onSlot(app, "tailored")} data-testid="card-resume-slot">
           <PacketSlotTag
             label={t("tracker.card.resume")}
             state={
@@ -200,7 +200,7 @@ export const Card = memo(function Card({
             }
           />
         </button>
-        <button onClick={() => onSlot(app, "cover")}>
+        <button onClick={() => onSlot(app, "cover")} data-testid="card-cover-slot">
           <PacketSlotTag
             label={t("tracker.card.coverLetter")}
             state={

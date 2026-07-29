@@ -706,6 +706,41 @@ export function usePatchArtifact() {
   });
 }
 
+/** Attach an external resume/cover FILE to an application (the Upload button on
+ *  the Tailored resume / Cover letter editors). Failure renders inline. */
+export function useAttachDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      kind,
+      file,
+    }: {
+      id: string;
+      kind: "tailored_resume" | "cover_letter";
+      file: File;
+    }) => Promise.resolve(api.attachDocument(id, kind, file)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.applications }),
+    meta: { errorHandledLocally: true },
+  });
+}
+
+/** Detach the attached resume/cover file (the ✕ on the chip). */
+export function useRemoveDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      kind,
+    }: {
+      id: string;
+      kind: "tailored_resume" | "cover_letter";
+    }) => Promise.resolve(api.removeDocument(id, kind)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.applications }),
+    meta: { errorHandledLocally: true },
+  });
+}
+
 // ─── Apply Runs (the agentic Applier — applier.md §8/§9) ─────────────────────
 
 /** All Apply Runs for one application (§8.3 — the immutable attempt history). */

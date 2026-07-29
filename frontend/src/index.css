@@ -244,6 +244,31 @@ body {
 .resume-prose a:hover {
   text-decoration: underline;
 }
+.resume-prose ol {
+  padding-left: 20px;
+  margin: 8px 0;
+  list-style: decimal;
+}
+.resume-prose blockquote {
+  border-left: 2px solid var(--border-2);
+  margin: 8px 0;
+  padding-left: 12px;
+  color: var(--ink-3);
+}
+/* True italics for *italic* — <i>, because .resume-prose em is repurposed as
+   the mono annotation recipe above. */
+.resume-prose i {
+  font-style: italic;
+}
+
+/* The directly-editable Preview surface (MarkdownEditor). :empty only matches
+   the pristine state — good enough for a first-open hint. */
+.md-editable:empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-4);
+  font-size: 12.5px;
+  pointer-events: none;
+}
 
 /* Soft fade between themes. */
 body,

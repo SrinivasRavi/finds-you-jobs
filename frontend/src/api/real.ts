@@ -560,6 +560,48 @@ export class RealApi {
     return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
   }
 
+  /** Attach a resume/cover FILE to an existing application — the Upload button
+   *  on the Tailored resume / Cover letter editors. Multipart; replaces any
+   *  prior file of that kind. Surfaces the sidecar's verbatim detail on 422. */
+  async attachDocument(
+    applicationId: string,
+    kind: "tailored_resume" | "cover_letter",
+    file: File,
+  ): Promise<Application> {
+    const info = await this.info();
+    const form = new FormData();
+    form.append("kind", kind);
+    form.append("file", file);
+    const res = await apiFetch(info, `/api/applications/${applicationId}/documents`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let detail = body;
+      try {
+        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
+      } catch {
+        /* non-JSON body — surface as-is */
+      }
+      throw new ApiError(res.status, detail || `attach document failed (${res.status})`);
+    }
+    const d = (await res.json()) as ApplicationDTO;
+    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+  }
+
+  /** Detach the (application, kind) resume/cover file — the ✕ on the chip. */
+  async removeDocument(
+    applicationId: string,
+    kind: "tailored_resume" | "cover_letter",
+  ): Promise<Application> {
+    const d = await this.req<ApplicationDTO>(
+      `/api/applications/${applicationId}/documents/${kind}`,
+      { method: "DELETE" },
+    );
+    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+  }
+
   /** One attached document as a Blob (authed — a plain href can't carry the
    *  bearer token). The caller wraps it in an object URL to trigger a download. */
   async fetchDocument(documentId: string): Promise<Blob> {

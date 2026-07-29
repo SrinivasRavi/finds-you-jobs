@@ -22,6 +22,7 @@ import {
 } from "../api/queries";
 import type { AudienceTag, ConnectionStatus, NetContact } from "../api/types";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
+import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 
@@ -130,6 +131,9 @@ export function Networking() {
               {connState.label}
             </span>
           )}
+          {/* Master Resume: shared launcher, one spot left of the Deleted+Add
+              cluster — pixel-aligned with the Job Board / Applications tabs. */}
+          <MasterResumeLauncher />
           <HeaderDeletedButton
             label={t("networking.deleted.title")}
             count={archivedCount}

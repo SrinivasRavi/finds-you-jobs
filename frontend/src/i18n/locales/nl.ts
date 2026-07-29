@@ -937,7 +937,6 @@ const nl: DeepPartial<Messages> = {
       },
       mode: {
         preview: "Voorbeeld",
-        edit: "Bewerken",
       },
       masterTitle: "Master-cv",
       submittedPill: "Verstuurd · alleen-lezen",
@@ -956,8 +955,6 @@ const nl: DeepPartial<Messages> = {
       masterColumn: "Master",
       readOnly: "Alleen-lezen",
       tailoredVariant: "Variant op maat",
-      editing: "Bewerken",
-      editableSwitch: "Bewerkbaar — schakel naar Bewerken",
       unsavedChanges: "Niet-opgeslagen wijzigingen",
       staleVariant: "Gegenereerd vanuit een oudere versie van je master-cv",
       regenerate: "Opnieuw genereren",
