@@ -31,6 +31,7 @@ dependencies = [
     "logfire>=3.0",
     "pypdf>=5",
     "python-multipart>=0.0.32",
+    "pdfplumber>=0.11.10",
 ]
 
 [tool.hatch.build.targets.wheel]
