@@ -930,7 +930,6 @@ const fr: DeepPartial<Messages> = {
       },
       mode: {
         preview: "Aperçu",
-        edit: "Modifier",
       },
       masterTitle: "CV de référence",
       submittedPill: "Soumis · lecture seule",
@@ -949,8 +948,6 @@ const fr: DeepPartial<Messages> = {
       masterColumn: "Référence",
       readOnly: "Lecture seule",
       tailoredVariant: "Variante personnalisée",
-      editing: "Modification",
-      editableSwitch: "Modifiable — passez en Modifier",
       unsavedChanges: "Modifications non enregistrées",
       staleVariant: "Généré depuis une version antérieure de votre CV de référence",
       regenerate: "Régénérer",

@@ -952,7 +952,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       },
       mode: {
         preview: "Просмотр",
-        edit: "Правка",
       },
       masterTitle: "Мастер-резюме",
       submittedPill: "Отправлено · только чтение",
@@ -971,8 +970,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       masterColumn: "Мастер",
       readOnly: "Только чтение",
       tailoredVariant: "Адаптированный вариант",
-      editing: "Правка",
-      editableSwitch: "Можно редактировать — переключитесь в «Правку»",
       unsavedChanges: "Несохранённые изменения",
       staleVariant: "Сгенерировано из более старой версии мастер-резюме",
       regenerate: "Перегенерировать",

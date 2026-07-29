@@ -924,7 +924,6 @@ const es: DeepPartial<Messages> = {
       },
       mode: {
         preview: "Vista previa",
-        edit: "Editar",
       },
       masterTitle: "Currículum maestro",
       submittedPill: "Enviado · solo lectura",
@@ -943,8 +942,6 @@ const es: DeepPartial<Messages> = {
       masterColumn: "Maestro",
       readOnly: "Solo lectura",
       tailoredVariant: "Variante adaptada",
-      editing: "Editando",
-      editableSwitch: "Editable — cambia a Editar",
       unsavedChanges: "Cambios sin guardar",
       staleVariant: "Generado a partir de una versión anterior de tu currículum maestro",
       regenerate: "Regenerar",

@@ -49,7 +49,7 @@ you from your own LinkedIn account.★
 onboarding: paste your resume, set your job preferences, pick an AI provider,
 and add your key. No terminal, no build steps.
 
-### [⬇ Download finds-you-jobs v0.5.3-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.3-beta)
+### [⬇ Download finds-you-jobs v0.5.6-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.6-beta)
 
 | Your computer | Download this file | On first launch |
 |---|---|---|

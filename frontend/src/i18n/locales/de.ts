@@ -920,7 +920,6 @@ const de: DeepPartial<Messages> = {
       },
       mode: {
         preview: "Vorschau",
-        edit: "Bearbeiten",
       },
       masterTitle: "Master-Lebenslauf",
       submittedPill: "Eingereicht · schreibgeschützt",
@@ -939,8 +938,6 @@ const de: DeepPartial<Messages> = {
       masterColumn: "Master",
       readOnly: "Schreibgeschützt",
       tailoredVariant: "Angepasste Variante",
-      editing: "Wird bearbeitet",
-      editableSwitch: "Bearbeitbar — zu „Bearbeiten“ wechseln",
       unsavedChanges: "Ungespeicherte Änderungen",
       staleVariant: "Aus einer älteren Version deines Master-Lebenslaufs generiert",
       regenerate: "Neu generieren",

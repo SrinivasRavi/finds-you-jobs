@@ -155,13 +155,27 @@ def test_ingest_undecodable_text_refused(app_client: tuple[FastAPI, TestClient])
 
 def test_ingest_unsupported_type_refused(app_client: tuple[FastAPI, TestClient]) -> None:
     _app, client = app_client
+    # A type the extractor doesn't handle (.docx/.odt/.pages are now supported).
+    resp = client.post(
+        "/api/profile/ingest",
+        headers=AUTH,
+        files={"file": ("resume.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+    )
+    assert resp.status_code == 422
+    assert "paste" in resp.json()["detail"].lower()
+
+
+def test_ingest_malformed_docx_refused(app_client: tuple[FastAPI, TestClient]) -> None:
+    _app, client = app_client
+    # A now-SUPPORTED type that isn't actually a valid docx → honest 422, never
+    # a garbage draft.
     resp = client.post(
         "/api/profile/ingest",
         headers=AUTH,
         files={"file": ("resume.docx", b"PK\x03\x04 not a docx", "application/octet-stream")},
     )
     assert resp.status_code == 422
-    assert "paste" in resp.json()["detail"].lower()
+    assert "word" in resp.json()["detail"].lower()
 
 
 def test_ingest_image_only_pdf_refused(app_client: tuple[FastAPI, TestClient]) -> None:

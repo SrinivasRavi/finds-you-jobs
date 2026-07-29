@@ -905,7 +905,6 @@ const zh: DeepPartial<Messages> = {
       },
       mode: {
         preview: "预览",
-        edit: "编辑",
       },
       masterTitle: "主简历",
       submittedPill: "已提交 · 只读",
@@ -924,8 +923,6 @@ const zh: DeepPartial<Messages> = {
       masterColumn: "主简历",
       readOnly: "只读",
       tailoredVariant: "定制版本",
-      editing: "编辑中",
-      editableSwitch: "可编辑 — 切换到“编辑”",
       unsavedChanges: "有未保存的更改",
       staleVariant: "由较早版本的主简历生成",
       regenerate: "重新生成",

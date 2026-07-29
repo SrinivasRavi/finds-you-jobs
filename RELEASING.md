@@ -22,11 +22,16 @@ The e2e suite must be run with its screenshots *looked at*, not just green —
 
 ## 2. Bump the pinned install tag (per release)
 
-`scripts/setup.sh`, `scripts/setup.ps1`, and README.md's three "Everyday commands"
-blocks all pin end-user installs to a specific release tag (not `main` — see
+`scripts/setup.sh`, `scripts/setup.ps1`, and README.md's download link pin
+end-user installs to a specific release tag (not `main` — see
 `docs/internal/audit-and-adoption.md` P0-2-1) so a bad push to `main` can't brick
-every install worldwide. Bump `LATEST_TAG`/`$LatestTag` in both scripts and the
-`v0.5.0` references in README.md to the new tag in the same commit as the release.
+every install worldwide. The pin is the `v<version>-beta` tag (the only tag the
+release pipeline creates).
+
+**`pnpm ship release` does this automatically** — it rewrites `LATEST_TAG` /
+`$LatestTag` / the README download link to the new tag and commits that before
+publishing. So this is a manual step only if you're cutting a release some other
+way.
 
 ## 3. Provenance / notice audit (per release)
 
@@ -65,9 +70,10 @@ pnpm ship release    # ALSO: merge main->release & push (fires the Release
 ```
 
 `<version>` comes from `src-tauri/tauri.conf.json`. Before `pnpm ship release`,
-bump the version in the five files (tauri.conf.json, both Cargo, both package.json,
-pyproject.toml + the sidecar `main.py` string) and the pinned install tag (§2),
-commit, then run it. The site repo is expected at `~/dev/findsyoujobs-site`
+bump the version in the six version strings (tauri.conf.json, both Cargo, both
+package.json, pyproject.toml + the sidecar `main.py` string) and commit. The
+pinned install tag (§2) is bumped by the script itself. The site repo is expected
+at `~/dev/findsyoujobs-site`
 (override `FYJ_SITE_DIR`). The Ed25519 secret `TAURI_SIGNING_PRIVATE_KEY` must be
 set on the repo or the build fails by design (see `docs/internal/distribution.md` §9).
 

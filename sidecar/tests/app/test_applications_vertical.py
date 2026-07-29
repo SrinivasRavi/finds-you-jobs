@@ -120,17 +120,43 @@ def test_patch_artifact_unknown_kind_400(app_client: tuple[FastAPI, TestClient])
     assert resp.status_code == 400
 
 
-def test_patch_artifact_missing_artifact_404(app_client: tuple[FastAPI, TestClient]) -> None:
+def test_patch_artifact_creates_manual_variant_when_missing(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Paste-your-own variant saves even when nothing was generated
+    (create-if-missing): a PATCH carrying markdown on a missing artifact creates a
+    manual artifact (no operation) that reads `ready`; an approve-only PATCH with
+    no text on a missing artifact still 404s."""
     app, client = app_client
     job_id = _seed_job(app)
     db = app.state.db
     with db.repos() as repos:
         app_id = repos.applications.create(job_id, column="saved").id  # no artifacts
+
+    # Markdown on a missing artifact creates it (the paste-your-own path).
     resp = client.patch(
         f"/api/applications/{app_id}/artifacts/tailored_resume",
-        headers=AUTH, json={"markdown": "x"},
+        headers=AUTH,
+        json={"markdown": "# My own tailored resume"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json()["packetResumeState"] == "ready"
+    with db.repos() as repos:
+        head = next(
+            a
+            for a in repos.artifacts.list_for_application(app_id)
+            if a.kind == "tailored_resume" and a.superseded_by is None
+        )
+        assert head.markdown == "# My own tailored resume"
+        assert head.operation_id is None
+
+    # An approve-only flip with no text has nothing to create → still 404.
+    resp2 = client.patch(
+        f"/api/applications/{app_id}/artifacts/cover_letter",
+        headers=AUTH,
+        json={"approved": True},
+    )
+    assert resp2.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -379,5 +405,129 @@ def test_intent_rejects_unknown_values(
     app_id = _saved_application(app, client)
     resp = client.patch(
         f"/api/applications/{app_id}", headers=AUTH, json={"intent": "autopilot"}
+    )
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# attach / detach a document to an EXISTING application (the Upload button on
+# the Tailored resume + Cover letter editors — post-creation parity with the
+# manual-add attach). docstore.validate is extension+size only, so fake bytes
+# with a real extension exercise the store/link path without a real parser.
+# ---------------------------------------------------------------------------
+
+
+def _attach(
+    client: TestClient, app_id: str, kind: str, filename: str, data: bytes, mime: str
+):
+    return client.post(
+        f"/api/applications/{app_id}/documents",
+        headers=AUTH,
+        data={"kind": kind},
+        files={"file": (filename, data, mime)},
+    )
+
+
+def test_attach_document_links_file_to_existing_application(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    resp = _attach(
+        client, app_id, "tailored_resume", "my-resume.pdf", b"%PDF-1.4 fake", "application/pdf"
+    )
+    assert resp.status_code == 201
+    docs = resp.json()["documents"]
+    assert len(docs) == 1
+    assert docs[0]["kind"] == "tailored_resume"
+    assert docs[0]["original_filename"] == "my-resume.pdf"
+    # Persisted + downloadable verbatim.
+    got = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert [d["kind"] for d in got["documents"]] == ["tailored_resume"]
+    blob = client.get(f"/api/documents/{docs[0]['document_id']}", headers=AUTH)
+    assert blob.status_code == 200
+    assert blob.content == b"%PDF-1.4 fake"
+
+
+def test_attach_replaces_prior_file_for_same_kind(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    _attach(client, app_id, "tailored_resume", "first.pdf", b"%PDF first", "application/pdf")
+    docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    resp = _attach(client, app_id, "tailored_resume", "second.docx", b"PK\x03\x04 two", docx)
+    docs = resp.json()["documents"]
+    assert len(docs) == 1  # one resume slot per card — replaced, not appended
+    assert docs[0]["original_filename"] == "second.docx"
+
+
+def test_attach_resume_and_cover_coexist(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    _attach(client, app_id, "tailored_resume", "r.pdf", b"%PDF r", "application/pdf")
+    resp = _attach(client, app_id, "cover_letter", "c.pdf", b"%PDF c", "application/pdf")
+    assert {d["kind"] for d in resp.json()["documents"]} == {
+        "tailored_resume",
+        "cover_letter",
+    }
+
+
+def test_attach_accepts_odt_and_pages(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    assert _attach(
+        client, app_id, "tailored_resume", "r.odt", b"PK\x03\x04 odt",
+        "application/vnd.oasis.opendocument.text",
+    ).status_code == 201
+    assert _attach(
+        client, app_id, "cover_letter", "c.pages", b"PK\x03\x04 pages",
+        "application/vnd.apple.pages",
+    ).status_code == 201
+
+
+def test_attach_rejects_unsupported_type(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    resp = _attach(client, app_id, "tailored_resume", "photo.png", b"\x89PNG", "image/png")
+    assert resp.status_code == 422
+
+
+def test_attach_rejects_bad_kind(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    resp = _attach(client, app_id, "banner", "r.pdf", b"%PDF", "application/pdf")
+    assert resp.status_code == 422
+
+
+def test_attach_404_for_missing_application(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _, client = app_client
+    resp = _attach(client, "no-such-app", "tailored_resume", "r.pdf", b"%PDF", "application/pdf")
+    assert resp.status_code == 404
+
+
+def test_detach_removes_the_link(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    _attach(client, app_id, "tailored_resume", "r.pdf", b"%PDF r", "application/pdf")
+    _attach(client, app_id, "cover_letter", "c.pdf", b"%PDF c", "application/pdf")
+    resp = client.delete(
+        f"/api/applications/{app_id}/documents/tailored_resume", headers=AUTH
+    )
+    assert resp.status_code == 200
+    assert [d["kind"] for d in resp.json()["documents"]] == ["cover_letter"]
+
+
+def test_detach_rejects_bad_kind(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    app_id = _seed_ready_packet(app, _seed_job(app))
+    resp = client.delete(
+        f"/api/applications/{app_id}/documents/banner", headers=AUTH
     )
     assert resp.status_code == 422

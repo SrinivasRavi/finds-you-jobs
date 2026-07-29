@@ -31,6 +31,21 @@ const shell = {
     hybrid: "Hybrid",
     onsite: "Onsite",
   },
+  // Directly-editable markdown surface (MarkdownEditor.tsx) — toolbar labels.
+  mdEditor: {
+    bold: "Bold",
+    italic: "Italic",
+    h1: "Heading 1",
+    h2: "Heading 2",
+    h3: "Heading 3",
+    paragraph: "Paragraph",
+    bullet: "Bulleted list",
+    numbered: "Numbered list",
+    quote: "Quote",
+    code: "Inline code",
+    link: "Link",
+    placeholder: "Write here, or paste your own resume text…",
+  },
   // Route-level error boundary (SurfaceError.tsx) — contains a surface crash
   // instead of letting it hijack the whole app (2026-07-24 customer bug).
   surfaceError: {

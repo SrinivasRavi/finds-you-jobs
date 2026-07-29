@@ -37,13 +37,32 @@ cd "$(git rev-parse --show-toplevel)" || die "not in a git repo"
 
 VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
 TAG="v${VERSION}-beta"
+RELEASE=0
+[ "$#" -gt 0 ] && RELEASE=1
+
+# In release mode, pin the from-source install scripts + README download link to
+# this tag BEFORE publishing main, so the released source carries the right pin
+# (RELEASING.md §2). The pipeline only ever creates the "-beta" tag, so that's
+# what we pin to. Committed here because it's a purely derived, mechanical bump.
+if [ "$RELEASE" -eq 1 ]; then
+  echo "ship: pinning from-source installs + README to ${TAG}"
+  perl -pi -e 's/^LATEST_TAG=.*/LATEST_TAG="'"$TAG"'"/'       scripts/setup.sh
+  perl -pi -e 's/^\$LatestTag = .*/\$LatestTag = "'"$TAG"'"/' scripts/setup.ps1
+  perl -pi -e 's{v[0-9]+\.[0-9]+\.[0-9]+-beta}{'"$TAG"'}g'    README.md
+  if ! git diff --quiet -- scripts/setup.sh scripts/setup.ps1 README.md; then
+    git add scripts/setup.sh scripts/setup.ps1 README.md
+    git commit -s -m "release: pin from-source installs to ${TAG}
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+  fi
+fi
 
 # --- always: publish main ----------------------------------------------------
 echo "ship: pushing main -> origin/main"
 git push origin main
 
 # no argument → done (this was approval to publish main only)
-if [ "$#" -eq 0 ]; then
+if [ "$RELEASE" -eq 0 ]; then
   echo "ship: main published. Run 'pnpm ship release' to also cut ${TAG}."
   exit 0
 fi

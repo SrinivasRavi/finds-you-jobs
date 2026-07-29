@@ -1,23 +1,28 @@
 // The `openResumeModal` trio — one shared component switched by `kind`
-// (US-RES-01, US-RES-02, US-CL-01). Ports assets/shell.js openResumeModal():
-//   master  → single-column editor, Preview⇄Edit toggle, MASTER pill.
+// (US-RES-01, US-RES-02, US-CL-01).
+//   master  → single-column editor, Preview⇄Raw toggle, MASTER pill, Upload PDF.
 //   tailored→ two-column (master read-only | tailored editable), TAILORED pill,
-//             fabrication-guard NOTES footer, stale + Re-generate.
+//             Generate at the top, fabrication-guard NOTES rail, stale hint.
 //   cover   → single-column tailored editor, COVER LETTER pill.
-// packetState drives the state-aware body (generating spinner / none CTA / editor).
+// Preview is ONE directly-editable rendered surface (contentEditable WYSIWYG-
+// lite; markdown stays the document of record — see shell/mdHtml.ts); Raw is
+// the same pane as markdown source. The variant box is always editable, so a
+// user can paste their own (from their own ChatGPT/Gemini). packetState only
+// gates the generating spinner.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../api/index";
 
 import type { Application, ApplicationDocument, PacketState, Profile } from "../api/types";
-import { Markdown } from "../shell/Markdown";
+import { Icon } from "../shell/icons";
+import { MarkdownEditor } from "../shell/MarkdownEditor";
 import { Modal } from "../shell/Modal";
 
 export type ResumeModalKind = "master" | "tailored" | "cover";
 
-type Mode = "preview" | "edit";
+type Mode = "preview" | "raw";
 
 // i18n key maps — translated with t(...) at render.
 const PILL: Record<ResumeModalKind, { label: string; cls: string }> = {
@@ -243,14 +248,14 @@ function DownloadDocButton({ doc }: { doc: ApplicationDocument }) {
 
 const MODE_LABEL: Record<Mode, string> = {
   preview: "popups.resume.mode.preview",
-  edit: "popups.resume.mode.edit",
+  raw: "popups.resume.mode.raw",
 };
 
 function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   const { t } = useTranslation();
   return (
     <div className="inline-flex overflow-hidden rounded-7 border border-border text-[11.5px]">
-      {(["preview", "edit"] as Mode[]).map((m) => (
+      {(["preview", "raw"] as Mode[]).map((m) => (
         <button
           key={m}
           data-testid={`mode-${m}`}
@@ -267,34 +272,106 @@ function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void 
   );
 }
 
-/** Editable pane: Preview (rendered, contentEditable-lite) or raw Markdown. */
-function EditorPane({
-  value,
-  onChange,
-  mode,
-  readOnly = false,
+// Every format the sidecar can EXTRACT (master resume → editor) or STORE as a
+// binary attachment (tailored/cover → submitted document). One list so all
+// three uploaders offer the same set (pdf/docx/odt/pages/txt/md/rtf/doc).
+const UPLOAD_ACCEPT =
+  ".pdf,.docx,.odt,.pages,.txt,.md,.rtf,.doc,application/pdf," +
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
+  "application/vnd.oasis.opendocument.text,application/vnd.apple.pages," +
+  "text/plain,text/markdown,application/rtf,application/msword";
+
+/** The shared "Upload" control (icon + short label). It only PICKS a file and
+ *  hands it to `onFile`; the caller decides what to do — extract-to-editor for
+ *  the master resume, attach-as-submitted-document for the tailored / cover
+ *  variant. Supports pdf/docx/odt/pages/txt/md/rtf/doc. */
+function UploadButton({
+  onFile,
+  busy,
+  error,
   testid,
 }: {
-  value: string;
-  onChange?: (v: string) => void;
-  mode: Mode;
-  readOnly?: boolean;
-  testid?: string;
+  onFile: (file: File) => void;
+  busy: boolean;
+  error: string | null;
+  testid: string;
 }) {
-  if (mode === "edit" && !readOnly) {
-    return (
-      <textarea
-        data-testid={testid}
-        value={value}
-        onChange={(e) => onChange?.(e.target.value)}
-        className="h-full w-full resize-none rounded-md border border-accent bg-surface p-3 font-mono text-[12px] text-ink focus:border-accent focus:outline-none"
-      />
-    );
-  }
+  const { t } = useTranslation();
+  const inputRef = useRef<HTMLInputElement | null>(null);
   return (
-    <div data-testid={testid} className="h-full overflow-auto rounded-md border border-border bg-surface p-4">
-      <Markdown md={value} />
-    </div>
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={UPLOAD_ACCEPT}
+        data-testid={`${testid}-input`}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = ""; // allow re-selecting the same file
+          if (file) onFile(file);
+        }}
+      />
+      <button
+        type="button"
+        data-testid={testid}
+        disabled={busy}
+        onClick={() => inputRef.current?.click()}
+        title={error ? t("popups.resume.uploadFailed", { error }) : t("popups.resume.uploadTitle")}
+        className={
+          "inline-flex h-[28px] shrink-0 items-center gap-1 rounded-7 border px-2.5 text-[12px] font-medium hover:bg-surface-3 disabled:opacity-50 " +
+          (error ? "border-bad text-bad" : "border-border-2 bg-surface text-ink-2")
+        }
+      >
+        <Icon name="upload" size={13} strokeWidth={2} />
+        {busy ? t("popups.resume.uploading") : t("popups.resume.upload")}
+      </button>
+    </>
+  );
+}
+
+/** The attached submitted-document chip (tailored/cover) — the exact file the
+ *  user will submit on Apply, sitting beside any generated variant. Click the
+ *  name to download it verbatim; ✕ detaches it. */
+function AttachedDocChip({ doc, onRemove }: { doc: ApplicationDocument; onRemove: () => void }) {
+  const { t } = useTranslation();
+  const download = () => {
+    void api
+      .fetchDocument(doc.document_id)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = doc.filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      })
+      .catch((e: unknown) => {
+        console.error("[finds-you-jobs] document download failed:", e);
+        window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: e }));
+      });
+  };
+  return (
+    <span
+      data-testid="attached-doc-chip"
+      className="inline-flex h-[28px] max-w-[260px] shrink-0 items-center gap-1.5 rounded-7 border border-accent/40 bg-accent-wash px-2.5 text-[12px] text-accent-ink"
+      title={t("popups.resume.attachedTitle", { filename: doc.filename })}
+    >
+      <Icon name="file" size={13} strokeWidth={2} />
+      <button onClick={download} data-testid="attached-doc-download" className="truncate hover:underline">
+        {doc.filename}
+      </button>
+      <button
+        onClick={onRemove}
+        data-testid="attached-doc-remove"
+        aria-label={t("popups.resume.removeAttachment")}
+        className="shrink-0 text-accent-ink/70 hover:text-bad"
+      >
+        <Icon name="x" size={13} strokeWidth={2} />
+      </button>
+    </span>
   );
 }
 
@@ -304,6 +381,9 @@ export function ResumeModal({
   profile,
   application,
   submittedDoc,
+  attachedDoc,
+  onAttachDocument,
+  onRemoveDocument,
   onSaveMaster,
   onApprove,
   onSaveVariant,
@@ -317,6 +397,15 @@ export function ResumeModal({
    *  When set, this popup is a read-only viewer of that file, not the
    *  generate/tailor flow. */
   submittedDoc?: ApplicationDocument;
+  /** The external file attached to THIS application's tailored/cover slot (the
+   *  document submitted on Apply). Shown as a chip beside the editable variant;
+   *  coexists with a generated markdown variant. */
+  attachedDoc?: ApplicationDocument;
+  /** Attach an external file (tailored/cover Upload button). Resolves once the
+   *  upload persists so the button can clear its busy/error state. */
+  onAttachDocument?: (file: File) => Promise<void> | void;
+  /** Detach the attached file (the chip ✕). */
+  onRemoveDocument?: () => Promise<void> | void;
   onSaveMaster?: (md: string) => void;
   onApprove?: (markdown: string) => void;
   onSaveVariant?: (markdown: string) => void;
@@ -354,6 +443,33 @@ export function ResumeModal({
   const [value, setValue] = useState(initial);
   const [mode, setMode] = useState<Mode>("preview");
   const [dirty, setDirty] = useState(false);
+  // Master upload EXTRACTS into the editor; tailored/cover Upload ATTACHES a
+  // file — separate busy/error so one can't mask the other.
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestError, setIngestError] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+
+  const handleMasterUpload = (file: File) => {
+    setIngesting(true);
+    setIngestError(null);
+    void api
+      .ingestResume(file)
+      .then((res) => {
+        setValue(res.text);
+        setDirty(true);
+        setMode("preview");
+      })
+      .catch((e: unknown) => setIngestError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setIngesting(false));
+  };
+  const handleAttach = (file: File) => {
+    setAttaching(true);
+    setAttachError(null);
+    void Promise.resolve(onAttachDocument?.(file))
+      .catch((e: unknown) => setAttachError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setAttaching(false));
+  };
 
   const title = isMaster
     ? t("popups.resume.masterTitle")
@@ -363,6 +479,56 @@ export function ResumeModal({
   // shell clamps to 96vw / 94vh, backdrop + × stay visible (2026-07-12 beta
   // feedback, twice — these carry a lot of text; give them the room).
   const width = kind === "tailored" ? 1840 : kind === "cover" ? 1480 : 1100;
+
+  // Right-aligned control cluster, rendered beside the pane it controls: in the
+  // modal header for master/cover, in the tailored pane's own header row for the
+  // tailored view (maintainer: they relate to the variant, not the whole modal).
+  // Order (right side): Generate · Upload · Preview|Raw.
+  const generateBtn =
+    !isMaster && packet !== "generating" ? (
+      <button
+        data-testid="generate-variant"
+        onClick={onRegenerate}
+        className="inline-flex h-[28px] shrink-0 items-center rounded-7 bg-accent px-2.5 text-[12px] font-medium text-white hover:bg-accent-ink"
+      >
+        {value ? t("popups.resume.regenerate") : t("popups.resume.generate")}
+      </button>
+    ) : null;
+
+  // Master: Upload (extract into editor) + Preview|Raw.
+  const masterControls = (
+    <div className="ml-auto flex items-center gap-2">
+      <UploadButton
+        onFile={handleMasterUpload}
+        busy={ingesting}
+        error={ingestError}
+        testid="upload-doc-master"
+      />
+      <ModeToggle mode={mode} setMode={setMode} />
+    </div>
+  );
+
+  // Tailored/Cover: Generate + Upload (attach the submitted file) + Preview|Raw.
+  const variantControls = (
+    <div className="ml-auto flex items-center gap-2">
+      {generateBtn}
+      {onAttachDocument ? (
+        <UploadButton
+          onFile={handleAttach}
+          busy={attaching}
+          error={attachError}
+          testid="upload-doc-variant"
+        />
+      ) : null}
+      <ModeToggle mode={mode} setMode={setMode} />
+    </div>
+  );
+
+  // The attached submitted-file chip (tailored/cover), shown beside the variant.
+  const attachedChip =
+    !isMaster && attachedDoc && onRemoveDocument ? (
+      <AttachedDocChip doc={attachedDoc} onRemove={() => void Promise.resolve(onRemoveDocument())} />
+    ) : null;
 
   const header = submitted ? (
     <div className="flex items-center gap-2">
@@ -379,8 +545,21 @@ export function ResumeModal({
       <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wider ${PILL[kind].cls}`}>
         {t(PILL[kind].label)}
       </span>
+      {/* The review-state pill: "Ready to review" flips to "Approved" once the
+          user clicks Approve and Save (approved_at on the artifact). */}
       {!isMaster ? <PacketPill state={packet} /> : null}
-      <ModeToggle mode={mode} setMode={setMode} />
+      {/* The tailored view renders its controls + attached-file chip in ITS
+          pane's header (they belong to the variant, not the whole modal —
+          maintainer); master/cover keep them here, right-aligned, beside the
+          pane they describe. */}
+      {isMaster ? (
+        masterControls
+      ) : kind === "cover" ? (
+        <>
+          {attachedChip}
+          {variantControls}
+        </>
+      ) : null}
     </div>
   );
 
@@ -396,25 +575,11 @@ export function ResumeModal({
         </div>
       );
     }
-    if (packet === "none" || packet === "failed") {
-      return (
-        <div className="grid h-full place-items-center text-center" data-testid="packet-none">
-          <div className="space-y-3">
-            <p className="text-[13px] text-ink-3">
-              {packet === "failed" ? t("popups.resume.generationFailed") : t("popups.resume.notGenerated")}
-            </p>
-            <button
-              onClick={onRegenerate}
-              className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
-            >
-              {kind === "cover" ? t("popups.resume.generateCover") : t("popups.resume.generateResume")}
-            </button>
-          </div>
-        </div>
-      );
-    }
+    // Always editable now (Req): the box is present whether or not a variant was
+    // generated, so the user can paste their own (from their own ChatGPT/Gemini)
+    // and edit it. Generate lives at the top of the header.
     return (
-      <EditorPane
+      <MarkdownEditor
         value={value}
         onChange={(v) => {
           setValue(v);
@@ -446,7 +611,7 @@ export function ResumeModal({
               </span>
             </div>
             <div className="min-h-0 flex-1">
-              <EditorPane value={profile.master_md} mode="preview" readOnly testid="tailored-master-ref" />
+              <MarkdownEditor value={profile.master_md} mode="preview" readOnly testid="tailored-master-ref" />
             </div>
           </div>
           <div className="flex min-h-0 flex-col">
@@ -472,7 +637,7 @@ export function ResumeModal({
         {header}
         <p className="text-[12.5px] text-ink-3">{t(BLURB.master)}</p>
         <div className="min-h-0 flex-1">
-          <EditorPane
+          <MarkdownEditor
             value={value}
             onChange={(v) => {
               setValue(v);
@@ -501,20 +666,17 @@ export function ResumeModal({
               </span>
             </div>
             <div className="min-h-0 flex-1">
-              <EditorPane value={profile.master_md} mode="preview" readOnly testid="tailored-master-ref" />
+              <MarkdownEditor value={profile.master_md} mode="preview" readOnly testid="tailored-master-ref" />
             </div>
           </div>
           <div className="flex min-h-0 flex-col">
             <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-ink-3">
               {t("popups.resume.tailoredVariant")}
-              <span
-                className={
-                  "rounded-full px-1.5 py-px text-[9.5px] " +
-                  (mode === "edit" ? "bg-accent-wash text-accent" : "bg-good-wash text-good")
-                }
-              >
-                {mode === "edit" ? t("popups.resume.editing") : t("popups.resume.editableSwitch")}
+              <span className="rounded-full bg-good-wash px-1.5 py-px text-[9.5px] text-good">
+                {t("popups.resume.editable")}
               </span>
+              {attachedChip}
+              {variantControls}
             </div>
             <div className="min-h-0 flex-1">{stateBody()}</div>
           </div>
@@ -540,7 +702,9 @@ export function ResumeModal({
       </div>
     );
 
-  const showEditor = !submitted && (isMaster || packet === "ready" || packet === "approved");
+  // The variant is always editable (paste-your-own), so the save footer shows on
+  // every non-generating, non-submitted view — not only ready/approved.
+  const showEditor = !submitted && (isMaster || packet !== "generating");
   const footer = showEditor ? (
     <div className="flex items-center gap-3">
       {/* Fabrication-guard NOTES (FR-TL-01) live in the right-rail panel for
@@ -554,14 +718,6 @@ export function ResumeModal({
         </span>
       ) : null}
       <div className="ml-auto flex items-center gap-2">
-        {!isMaster ? (
-          <button
-            onClick={onRegenerate}
-            className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
-          >
-            {t("popups.resume.regenerate")}
-          </button>
-        ) : null}
         {isMaster ? (
           <button
             onClick={() => {

@@ -415,6 +415,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications/{application_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach Application Document
+         * @description Attach a resume/cover FILE to an EXISTING application — the Upload button
+         *     on the Tailored resume / Cover letter editors. Stores it content-addressed
+         *     (deduped) and links it as the application's `kind` slot, replacing any prior
+         *     file for that kind (one resume + one cover per card). This is the exact
+         *     document the user submits on Apply / the record for a manual card logged
+         *     without a file. `kind` ∈ {'tailored_resume', 'cover_letter'}.
+         */
+        post: operations["attach_application_document_api_applications__application_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/{application_id}/documents/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Detach Application Document
+         * @description Detach the (application, kind) resume/cover file — the ✕ on the attached-
+         *     file chip. The content-addressed blob stays (it may back other cards).
+         */
+        delete: operations["detach_application_document_api_applications__application_id__documents__kind__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/documents/{document_id}": {
         parameters: {
             query?: never;
@@ -1907,6 +1953,13 @@ export interface components {
             lastScanAt?: string | null;
             /** Scanerror */
             scanError?: string | null;
+        };
+        /** Body_attach_application_document_api_applications__application_id__documents_post */
+        Body_attach_application_document_api_applications__application_id__documents_post: {
+            /** Kind */
+            kind: string;
+            /** File */
+            file: string;
         };
         /** Body_create_manual_application_api_applications_manual_post */
         Body_create_manual_application_api_applications_manual_post: {
@@ -3916,6 +3969,73 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_application_document_api_applications__application_id__documents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_attach_application_document_api_applications__application_id__documents_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detach_application_document_api_applications__application_id__documents__kind__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

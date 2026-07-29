@@ -914,7 +914,6 @@ const it: DeepPartial<Messages> = {
       },
       mode: {
         preview: "Anteprima",
-        edit: "Modifica",
       },
       masterTitle: "Curriculum principale",
       submittedPill: "Inviato · sola lettura",
@@ -933,8 +932,6 @@ const it: DeepPartial<Messages> = {
       masterColumn: "Principale",
       readOnly: "Sola lettura",
       tailoredVariant: "Variante personalizzata",
-      editing: "In modifica",
-      editableSwitch: "Modificabile — passa a Modifica",
       unsavedChanges: "Modifiche non salvate",
       staleVariant: "Generato da una versione precedente del tuo curriculum principale",
       regenerate: "Rigenera",

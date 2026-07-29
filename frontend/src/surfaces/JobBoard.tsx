@@ -16,7 +16,6 @@ import {
   useAddJobByUrl,
   useDiscoverReferrals,
   useLinkedInSession,
-  useUpdateProfile,
   useBoard,
   useEmptyTrash,
   useJobPreview,
@@ -38,15 +37,13 @@ import {
   type BoardPage,
   type Job,
   type JobDraft,
-  type RescorePreview,
 } from "../api/types";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { Icon } from "../shell/icons";
 import { Chip, SearchBox } from "../shell/FilterRow";
+import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Modal } from "../shell/Modal";
-import { RescoreAiDialog } from "../shell/RescoreAiDialog";
 import { Markdown } from "../shell/Markdown";
-import { ResumeModal } from "../popups/ResumeModal";
 import { ScanProgressPill } from "./ScanProgressPill";
 import {
   firstHeading,
@@ -690,8 +687,6 @@ export function JobBoard() {
   const tombstoneJob = useTombstoneJob();
   const addByUrl = useAddJobByUrl();
   const { data: settings } = useSettings();
-  const { data: profile } = useProfile();
-  const updateProfile = useUpdateProfile();
   const session = useLinkedInSession();
   const discoverReferrals = useDiscoverReferrals();
 
@@ -708,13 +703,7 @@ export function JobBoard() {
   });
   const [showAdd, setShowAdd] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
-  const [showMaster, setShowMaster] = useState(false);
   const [showPrefs, setShowPrefs] = useState(false);
-  // After a master-resume edit in AI mode, ask before spending tokens to
-  // re-score the board (maintainer 2026-07-23). Holds the server's preview of
-  // the cache misses a confirmed run would enqueue, or null when hidden.
-  const [rescoreAsk, setRescoreAsk] = useState<RescorePreview | null>(null);
-  const qc = useQueryClient();
   const dragging = useRef(false);
 
   // The board feed is served paginated + saved-excluded server-side (FR-JB-02);
@@ -810,28 +799,22 @@ export function JobBoard() {
         <h1 className="text-[14px] font-semibold text-ink">{t("nav.jobBoard")}</h1>
         <div className="ml-auto flex items-center gap-3 py-1.5">
           {/* Board-level Rescan status (observed-issue #2) — renders only while a
-              scan/scoring cycle is live (or just finished); nothing otherwise.
-              Sits just left of Master Resume (maintainer 2026-07-25). */}
+              scan/scoring cycle is live (or just finished); nothing otherwise. */}
           <ScanProgressPill />
-          {/* Master Resume before finder prefs (maintainer 2026-07-23 swap). */}
-          <button
-            onClick={() => setShowMaster(true)}
-            data-action="open-master-resume"
-            title={t("jobBoard.header.masterResumeTitle")}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
-          >
-            <Icon name="file" size={14} strokeWidth={2} />
-            {t("jobBoard.header.masterResume")}
-          </button>
+          {/* Finder prefs (Job-Board-only) sits LEFT of Master Resume so Master
+              Resume lands immediately before the shared Deleted+Add cluster —
+              the one spot it can share pixel-for-pixel with the Applications and
+              Networking tabs (maintainer 2026-07-28 swap). */}
           <button
             onClick={() => setShowPrefs(true)}
             data-testid="finder-prefs"
             title={t("jobBoard.header.finderPrefsTitle")}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
+            className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
           >
             <Icon name="settings" size={14} strokeWidth={2} />
             {t("jobBoard.header.finderPrefs")}
           </button>
+          <MasterResumeLauncher />
           <HeaderDeletedButton
             label={t("jobBoard.header.deletedJobs")}
             count={trashed.length}
@@ -1079,38 +1062,6 @@ export function JobBoard() {
           onUndo={(id) => trashJob.mutate({ id, trashed: false })}
           onDeleteForever={(id) => tombstoneJob.mutate(id)}
           onEmpty={() => emptyTrash.mutate()}
-        />
-      ) : null}
-      {showMaster && profile ? (
-        <ResumeModal
-          kind="master"
-          profile={profile}
-          onClose={() => setShowMaster(false)}
-          onSaveMaster={(md: string) => {
-            // Save the resume; scores are cached per resume version. Keyword
-            // mode re-scores server-side for free at save; AI mode costs
-            // tokens, so preview the cache misses and ask first (declining
-            // keeps the prior scores visible — the board shows the latest
-            // version). An unchanged save bumps nothing and asks nothing.
-            void updateProfile.mutateAsync(md).then(async () => {
-              if (settings?.scoring_mode === "llm") {
-                const preview = await api.rescorePreview();
-                if (preview.to_score > 0) {
-                  setShowMaster(false); // close the editor so the prompt stands alone
-                  setRescoreAsk(preview);
-                  return;
-                }
-              }
-              invalidateFeed(qc); // keyword mode already re-scored / nothing to score
-            });
-          }}
-        />
-      ) : null}
-      {rescoreAsk !== null ? (
-        <RescoreAiDialog
-          preview={rescoreAsk}
-          reason="resume-edit"
-          onClose={() => setRescoreAsk(null)}
         />
       ) : null}
       {showPrefs ? <FinderPrefsModal onClose={() => setShowPrefs(false)} /> : null}

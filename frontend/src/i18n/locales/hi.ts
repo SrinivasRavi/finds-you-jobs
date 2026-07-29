@@ -915,7 +915,6 @@ const hi: DeepPartial<Messages> = {
       },
       mode: {
         preview: "पूर्वावलोकन",
-        edit: "संपादन",
       },
       masterTitle: "मास्टर रेज़्यूमे",
       submittedPill: "सबमिट किया · केवल-पठन",
@@ -934,8 +933,6 @@ const hi: DeepPartial<Messages> = {
       masterColumn: "मास्टर",
       readOnly: "केवल-पठन",
       tailoredVariant: "अनुकूलित संस्करण",
-      editing: "संपादन जारी",
-      editableSwitch: "संपादन योग्य — “संपादन” पर जाएँ",
       unsavedChanges: "असहेजे बदलाव",
       staleVariant: "आपके मास्टर रेज़्यूमे के पुराने संस्करण से बना",
       regenerate: "दोबारा बनाएँ",
