@@ -66,7 +66,7 @@ jobs:
         # No `python-version:` input — astral-sh/setup-uv doesn't have one;
         # `.python-version` (3.13) is the source of truth (see
         # build-windows.yml for the history).
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install pnpm
         # No explicit `version:` — package.json's `packageManager` field is
