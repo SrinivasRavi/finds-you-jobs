@@ -53,15 +53,17 @@ and add your key. No terminal, no build steps.
 
 | Your computer | Download this file | On first launch |
 |---|---|---|
-| **Windows** 10/11 | `finds-you-jobs_0.5.3-beta_x64-setup.exe` | SmartScreen warns because the beta isn't code-signed yet: click **More info → Run anyway** |
-| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.3-beta_aarch64.dmg` | Gatekeeper blocks unsigned apps: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** |
-| **Mac** (Intel) | `finds-you-jobs_0.5.3-beta_x64.dmg` | same as above |
-| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.3-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
-| **Linux** (any distro, portable) | `finds-you-jobs_0.5.3-beta_amd64.AppImage` | `chmod +x` the file, then run it |
+| **Windows** 10/11 | `finds-you-jobs_0.5.6-beta_x64-setup.exe` | SmartScreen warns because the beta isn't code-signed yet: click **More info → Run anyway** |
+| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.6-beta_aarch64.dmg` | macOS falsely reports unsigned apps as **"damaged"** — the download is fine. Drag the app into **Applications**, then run this one command in Terminal: `xattr -cr /Applications/finds-you-jobs.app` — it opens normally from then on |
+| **Mac** (Intel) | `finds-you-jobs_0.5.6-beta_x64.dmg` | same as above |
+| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.6-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
+| **Linux** (any distro, portable) | `finds-you-jobs_0.5.6-beta_amd64.AppImage` | `chmod +x` the file, then run it |
 
 The one-time warnings exist only because the beta installers aren't code-signed
 yet (Apple's developer-identity review is pending; Windows signing follows
-after). Every release is built in public by
+after). On macOS the message is genuinely misleading: "damaged" just means
+"downloaded from a browser and not notarized" — the `xattr` command above
+clears that flag and is the standard workaround until signing lands. Every release is built in public by
 [GitHub Actions](.github/workflows/release.yml) from the source in this repo.
 All versions live on the
 [releases page](https://github.com/SrinivasRavi/finds-you-jobs/releases).

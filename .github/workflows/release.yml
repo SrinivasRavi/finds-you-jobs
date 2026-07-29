@@ -207,15 +207,15 @@ jobs:
           prerelease: true
           files: dist/*
           body: |
-            **Beta build — unsigned installers.** Your OS will warn you the
-            first time; that's expected until code signing lands (it's
+            **Beta build — unsigned installers.** Each OS pushes back once on
+            first launch; that's expected until code signing lands (it's
             funded and in progress, waiting on Apple/Microsoft identity
-            review — not on the code).
+            review — not on the code). The exact step that works per OS:
 
             | OS | Download | First-launch note |
             |---|---|---|
             | Windows | the `*-setup.exe` (NSIS) — or the `.msi` if you prefer | SmartScreen: **More info → Run anyway** |
-            | macOS (Apple Silicon) | the `*_aarch64.dmg` | Gatekeeper: **System Settings → Privacy & Security → Open Anyway** |
+            | macOS (Apple Silicon) | the `*_aarch64.dmg` | macOS falsely reports unsigned apps as **"damaged"** — the download is fine. Drag the app into **Applications**, then run once in Terminal: `xattr -cr /Applications/finds-you-jobs.app` — it opens normally from then on |
             | macOS (Intel) | the `*_x64.dmg` | same as above |
             | Linux | the `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` (Fedora) | `chmod +x` the AppImage |
 
