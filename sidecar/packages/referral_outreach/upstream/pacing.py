@@ -13,9 +13,14 @@
 """Account-safety pacing: tiered rolling caps, jittered send delays, backoff.
 
 State is persisted to a JSON file so caps survive across one-shot CLI
-invocations (each `python -m voyager_py <cmd>` is a fresh process). All limits
-here are voyager_py-owned; the numbers are illustrative OpenOutreach-style
-defaults, not a promise LinkedIn honours.
+invocations (each `python -m voyager_py <cmd>` is a fresh process), and so a
+batch dispatched as N separate operations still shares one ledger.
+
+All limits here are voyager_py-owned. They are set at 50-70% of the *estimated*
+LinkedIn ceiling — estimated because LinkedIn publishes almost none of them.
+They are not a promise LinkedIn honours, and not a safety guarantee; they are
+harm reduction against someone else's undocumented limit. Derivation and sources:
+`docs/internal/linkedin-posture.md` §4.
 """
 
 from __future__ import annotations
@@ -35,31 +40,122 @@ HUMAN_TYPE_MAX_DELAY_MS = 200
 SEND_DELAY_MIN_S = 30.0
 SEND_DELAY_MAX_S = 90.0
 
+# --- pause between consecutive pages of a read the user is waiting on ---
+# Short on purpose: the send jitter band (30-90 s) is right for irreversible
+# outbound actions and absurd for paging a job search. The point is that pages
+# are not issued at machine speed, not that the user waits minutes.
+PAGE_PAUSE_RANGE_S = (0.8, 2.2)
+
 # --- backoff window after a rate-limit signal (NFR-LI-03: ≈ 24 h) ---
 BACKOFF_SECONDS = 24 * 60 * 60
 
 DAY_SECONDS = 24 * 60 * 60
 WEEK_SECONDS = 7 * 24 * 60 * 60
+# The Commercial Use Limit resets midnight PST on the 1st of each calendar
+# month. We meter it on a rolling 31-day window instead: strictly MORE
+# conservative than a calendar month (it never hands back allowance early), and
+# it needs no timezone handling in a ledger that stores bare epoch seconds.
+MONTH_SECONDS = 31 * 24 * 60 * 60
+# Free-plan personalized invitation notes are commonly reported as ~5/month.
+# Rolling 30 days, same reasoning as above.
+NOTE_WINDOW_SECONDS = 30 * 24 * 60 * 60
+
+
+@dataclass(frozen=True)
+class Budget:
+    """One meter's ceiling. `None` means "this meter has no limit of that kind".
+
+    `day`/`week` are rolling windows measured back from now — LinkedIn's
+    invitation quota is itself a rolling 7-day window, not a calendar week.
+    """
+
+    day: int | None = None
+    week: int | None = None
+    month: int | None = None
 
 
 @dataclass(frozen=True)
 class Tier:
-    """A user-selectable account tier. Caps count connection-requests-with-note
-    (2nd/3rd-degree invites); 1st-degree DMs are tracked separately and never
-    decrement these (FR-NW-04)."""
+    """A user-selectable account tier: one budget per metered LinkedIn action.
+
+    Every number here is OUR enforced soft cap, set at 50–70% of the *estimated*
+    LinkedIn ceiling. LinkedIn publishes none of those ceilings (only the 30,000
+    connection cap, the restriction ladder, and the CUL reset date), so the
+    estimates are corroborated vendor observation with no primary confirmation
+    and LinkedIn changes them without notice. See
+    `docs/internal/linkedin-posture.md` §4 for the derivation table and
+    `linkedin-limits-audit-2026-07-29.md` for the source audit.
+
+    Nothing here is a promise about account safety. It is harm reduction against
+    someone else's undocumented limit.
+    """
 
     name: str
-    daily: int
-    weekly: int
+    invites: Budget
+    dms: Budget
+    profile_views: Budget
+    searches: Budget
+    notes: Budget
+
+    # Back-compat accessors: the app-side DTO and the typed facade still speak
+    # "daily/weekly" for invites, the only meter that existed before.
+    @property
+    def daily(self) -> int:
+        return self.invites.day or 0
+
+    @property
+    def weekly(self) -> int:
+        return self.invites.week or 0
 
 
-# Two tiers, global across jobs (FR-NW-04 / US-REF-08). Numbers are illustrative
-# OpenOutreach-style defaults; New is the safe default for a fresh account.
+# Global across jobs (FR-NW-04 / US-REF-08). `new` is the default for a fresh
+# account; `recovering` is entered automatically after repeat restrictions.
+#
+# Derivation (estimated LinkedIn ceiling → ours):
+#   invites/wk    ~50 new · ~100 established  → 30 (×0.60) · 65 (×0.65) · 15
+#   invites/day   15–25 safe band, LOW end    →  8 ·  10 ·  3   (weekly stays binding)
+#   dms           NO corroborated limit       → policy cap, ours alone, not a %
+#   profile views 80 (disputed low) – 500     → 25 (×0.31) · 50 (×0.625) · 10
+#   searches (CUL) ~250–350 / month           → 150 (×0.60). Job search is EXEMPT.
+#   notes (free)  ~5 / month                  →  3 (×0.60)
 TIERS: dict[str, Tier] = {
-    "new": Tier("new", daily=15, weekly=100),
-    "seasoned": Tier("seasoned", daily=30, weekly=200),
+    "new": Tier(
+        "new",
+        invites=Budget(day=8, week=30),
+        dms=Budget(day=10, week=50),
+        profile_views=Budget(day=25),
+        searches=Budget(month=150),
+        notes=Budget(month=3),
+    ),
+    "seasoned": Tier(
+        "seasoned",
+        invites=Budget(day=10, week=65),
+        dms=Budget(day=25, week=120),
+        profile_views=Budget(day=50),
+        searches=Budget(month=150),
+        notes=Budget(month=3),
+    ),
+    "recovering": Tier(
+        "recovering",
+        invites=Budget(day=3, week=15),
+        dms=Budget(day=5, week=20),
+        profile_views=Budget(day=10),
+        searches=Budget(month=150),
+        notes=Budget(month=3),
+    ),
 }
 DEFAULT_TIER = "new"
+
+# Which ledger each metered action writes to, and the widest window that ledger
+# is pruned to. Pruning used to be a flat one week for everything, which would
+# have silently destroyed the 30-day note ledger and the monthly CUL ledger.
+METER_WINDOWS: dict[str, int] = {
+    "invites": WEEK_SECONDS,
+    "dms": WEEK_SECONDS,
+    "profile_views": WEEK_SECONDS,  # budgeted daily; a week retained for reporting
+    "searches": MONTH_SECONDS,
+    "notes": NOTE_WINDOW_SECONDS,
+}
 
 
 def resolve_tier(name: str | None) -> Tier:
@@ -81,20 +177,36 @@ def send_delay_seconds() -> float:
 
 @dataclass
 class PacingState:
-    """Persisted pacing ledger. `invites` are epoch-seconds timestamps of
-    connection-requests-with-note (the capped action); `dms` are 1st-degree
-    referral-ask DMs (tracked, uncapped). `paused_until` is the backoff
-    deadline (epoch seconds), 0 when not paused."""
+    """Persisted pacing ledger — one epoch-seconds timestamp list per meter.
+
+    `invites` are connection requests, `dms` 1st-degree messages, `profile_views`
+    authenticated profile fetches, `searches` CUL-counted searches (People and
+    company search — job search is exempt and charges nothing), `notes` the
+    free-plan personalized invitation notes. `paused_until` is the backoff
+    deadline (epoch seconds), 0 when not paused.
+
+    Older ledgers on disk carry only `invites`/`dms`; the new meters default to
+    empty, so an existing install upgrades with its invite history intact.
+    """
 
     invites: list[float] = field(default_factory=list)
     dms: list[float] = field(default_factory=list)
+    profile_views: list[float] = field(default_factory=list)
+    searches: list[float] = field(default_factory=list)
+    notes: list[float] = field(default_factory=list)
     paused_until: float = 0.0
     paused_reason: str = ""
+
+    def meter(self, name: str) -> list[float]:
+        return getattr(self, name)  # KeyError-equivalent via AttributeError
 
     def to_json(self) -> dict:
         return {
             "invites": self.invites,
             "dms": self.dms,
+            "profile_views": self.profile_views,
+            "searches": self.searches,
+            "notes": self.notes,
             "paused_until": self.paused_until,
             "paused_reason": self.paused_reason,
         }
@@ -104,6 +216,9 @@ class PacingState:
         return cls(
             invites=list(data.get("invites", [])),
             dms=list(data.get("dms", [])),
+            profile_views=list(data.get("profile_views", [])),
+            searches=list(data.get("searches", [])),
+            notes=list(data.get("notes", [])),
             paused_until=float(data.get("paused_until", 0.0)),
             paused_reason=str(data.get("paused_reason", "")),
         )
@@ -124,9 +239,11 @@ def _count_within(timestamps: list[float], window_s: float, now: float) -> int:
     return sum(1 for t in timestamps if t >= cutoff)
 
 
-def _prune(timestamps: list[float], now: float) -> list[float]:
-    """Drop entries older than the weekly window (the widest we account on)."""
-    cutoff = now - WEEK_SECONDS
+def _prune(timestamps: list[float], now: float, window_s: float = WEEK_SECONDS) -> list[float]:
+    """Drop entries older than that meter's widest accounting window. Per-meter,
+    because a flat one-week prune would silently erase the 30-day note ledger and
+    the monthly CUL ledger the moment they were added."""
+    cutoff = now - window_s
     return [t for t in timestamps if t >= cutoff]
 
 
@@ -160,8 +277,8 @@ class Pacer:
     def save(self, now: float | None = None) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         now = time.time() if now is None else now
-        self.state.invites = _prune(self.state.invites, now)
-        self.state.dms = _prune(self.state.dms, now)
+        for meter, window in METER_WINDOWS.items():
+            setattr(self.state, meter, _prune(self.state.meter(meter), now, window))
         self._state_path.write_text(json.dumps(self.state.to_json(), indent=2))
 
     # --- backoff (NFR-LI-03) ---
@@ -183,63 +300,127 @@ class Pacer:
         self.state.paused_reason = ""
 
     # --- caps (FR-NW-04 / NFR-LI-02) ---
-    def remaining(self, now: float | None = None) -> dict:
-        """The live quota the host displays and gates the popup on."""
+    def _paused_reason(self) -> str:
+        return (
+            f"voyager paused until {self.state.paused_until:.0f} "
+            f"({self.state.paused_reason or 'rate-limit backoff'})"
+        )
+
+    def _budget_for(self, meter: str) -> Budget:
+        return getattr(self.tier, meter)
+
+    def usage(self, meter: str, now: float | None = None) -> dict:
+        """Used / cap / remaining for one meter, per window it budgets on."""
         now = time.time() if now is None else now
-        used_day = _count_within(self.state.invites, DAY_SECONDS, now)
-        used_week = _count_within(self.state.invites, WEEK_SECONDS, now)
-        daily_remaining = max(0, self.tier.daily - used_day)
-        weekly_remaining = max(0, self.tier.weekly - used_week)
+        budget, stamps = self._budget_for(meter), self.state.meter(meter)
+        out: dict[str, int | None] = {}
+        for window_name, window_s in (
+            ("day", DAY_SECONDS), ("week", WEEK_SECONDS), ("month", MONTH_SECONDS),
+        ):
+            cap = getattr(budget, window_name)
+            if cap is None:
+                continue
+            # `notes` budgets on `month` but is retained on a 30-day window.
+            if meter == "notes" and window_name == "month":
+                window_s = NOTE_WINDOW_SECONDS
+            used = _count_within(stamps, window_s, now)
+            out[f"{window_name}_cap"] = cap
+            out[f"{window_name}_used"] = used
+            out[f"{window_name}_remaining"] = max(0, cap - used)
+        return out
+
+    def check(self, meter: str, now: float | None = None) -> tuple[bool, str]:
+        """(allowed, reason) for any metered action.
+
+        Backoff blocks EVERY meter, reads included. That is the point: a backoff
+        that only stopped sends left the app running People searches and profile
+        fetches — exactly the reads the restriction ladder watches — while
+        LinkedIn was already telling us to stop.
+        """
+        now = time.time() if now is None else now
+        if self.is_paused(now):
+            return False, self._paused_reason()
+        u = self.usage(meter, now)
+        for window_name in ("day", "week", "month"):
+            if u.get(f"{window_name}_remaining") == 0:
+                cap = u[f"{window_name}_cap"]
+                return False, (
+                    f"{meter} cap reached ({cap}/{window_name}, tier={self.tier.name})"
+                )
+        return True, ""
+
+    def record(self, meter: str, now: float | None = None, count: int = 1) -> None:
+        """Charge a meter. Charge on ATTEMPT, not on confirmed success: a send
+        that landed but failed post-send verification must not go uncounted, or
+        the ledger drifts low in the unsafe direction."""
+        stamps = self.state.meter(meter)
+        at = time.time() if now is None else now
+        stamps.extend([at] * max(0, count))
+
+    def remaining(self, now: float | None = None) -> dict:
+        """The live quota the host displays and gates the popup on.
+
+        The invite keys are the original flat shape (`daily_cap`, `weekly_used`,
+        …) so the app-side DTO and the typed facade keep working unchanged; the
+        other meters are nested under `meters`.
+        """
+        now = time.time() if now is None else now
+        inv = self.usage("invites", now)
+        daily_remaining = inv["day_remaining"] or 0
+        weekly_remaining = inv["week_remaining"] or 0
         return {
             "tier": self.tier.name,
-            "daily_cap": self.tier.daily,
-            "weekly_cap": self.tier.weekly,
-            "daily_used": used_day,
-            "weekly_used": used_week,
+            "daily_cap": inv["day_cap"],
+            "weekly_cap": inv["week_cap"],
+            "daily_used": inv["day_used"],
+            "weekly_used": inv["week_used"],
             "daily_remaining": daily_remaining,
             "weekly_remaining": weekly_remaining,
-            # 1st-degree DMs: tracked + reported, never capped (FR-NW-04 —
-            # "DMs do not decrement the invite counter"). Surfaced so a sent DM
-            # is visible in the quota view instead of reading as "0 used".
+            # 1st-degree DMs are now capped too (they were tracked-but-uncapped,
+            # which combined with an unbounded reach-out list meant one click
+            # could enqueue arbitrarily many real messages). Keys kept for the
+            # existing quota view.
             "dm_daily_sent": _count_within(self.state.dms, DAY_SECONDS, now),
             "dm_weekly_sent": _count_within(self.state.dms, WEEK_SECONDS, now),
-            # what an over-cap-aware caller may still send right now:
             "invites_available": min(daily_remaining, weekly_remaining),
+            "meters": {m: self.usage(m, now) for m in METER_WINDOWS},
             "paused": self.is_paused(now),
             "paused_until": self.state.paused_until,
             "paused_reason": self.state.paused_reason,
         }
 
     def can_send_invite(self, now: float | None = None) -> tuple[bool, str]:
-        """(allowed, reason). Enforced here before any network call."""
-        now = time.time() if now is None else now
-        if self.is_paused(now):
-            return False, (
-                f"voyager paused until {self.state.paused_until:.0f} "
-                f"({self.state.paused_reason or 'rate-limit backoff'})"
-            )
-        r = self.remaining(now)
-        if r["daily_remaining"] <= 0:
-            return False, f"daily cap reached ({self.tier.daily}/day, tier={self.tier.name})"
-        if r["weekly_remaining"] <= 0:
-            return False, f"weekly cap reached ({self.tier.weekly}/wk, tier={self.tier.name})"
-        return True, ""
+        return self.check("invites", now)
 
     def can_send_dm(self, now: float | None = None) -> tuple[bool, str]:
-        """1st-degree DMs are uncapped but still blocked during backoff."""
-        now = time.time() if now is None else now
-        if self.is_paused(now):
-            return False, (
-                f"voyager paused until {self.state.paused_until:.0f} "
-                f"({self.state.paused_reason or 'rate-limit backoff'})"
-            )
-        return True, ""
+        return self.check("dms", now)
+
+    def can_view_profile(self, now: float | None = None) -> tuple[bool, str]:
+        return self.check("profile_views", now)
+
+    def can_search(self, now: float | None = None) -> tuple[bool, str]:
+        """CUL-counted search (People / company results). **Job search is exempt**
+        per LinkedIn help `a564226`, so it must NOT call this — metering it here
+        would throttle the product's primary use case for zero real risk."""
+        return self.check("searches", now)
+
+    def can_use_note(self, now: float | None = None) -> tuple[bool, str]:
+        return self.check("notes", now)
 
     def record_invite(self, now: float | None = None) -> None:
-        self.state.invites.append(time.time() if now is None else now)
+        self.record("invites", now)
 
     def record_dm(self, now: float | None = None) -> None:
-        self.state.dms.append(time.time() if now is None else now)
+        self.record("dms", now)
+
+    def record_profile_view(self, now: float | None = None, count: int = 1) -> None:
+        self.record("profile_views", now, count)
+
+    def record_search(self, now: float | None = None) -> None:
+        self.record("searches", now)
+
+    def record_note(self, now: float | None = None) -> None:
+        self.record("notes", now)
 
     # --- inter-send spacing (NFR-LI-01) ---
     def last_send_at(self) -> float:

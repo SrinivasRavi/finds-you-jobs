@@ -5,7 +5,9 @@
 # the pacing/caps ledger (pacing.py) to the live browser actions (session.py,
 # actions.py, discovery.py) and returns plain dicts the CLI serialises to JSON.
 # Caps + backoff are ENFORCED here, inside the subprocess (ROADMAP §66,
-# NFR-LI-01/02/03) — the MIT host never re-implements them.
+# NFR-LI-01/02/03) — the MIT host never re-implements them. Enforcement covers
+# READS as well as sends: discover/contact-sync/search-jobs are metered and
+# refused during backoff (2026-07-30 — before that they built no Pacer at all).
 """The bounded operations: discover, send-connection, send-dm, status, quota,
 contact-sync, login, and search-jobs (the read-only logged-in job search —
 finds-you-jobs discovery-expansion #6). Every operation supports dry_run (no
@@ -14,11 +16,13 @@ browser, no network — plan only)."""
 from __future__ import annotations
 
 import logging
+import random
+import time
 from pathlib import Path
 
 from .errors import RateLimited, ReachedConnectionLimit, VoyagerError
 from .url_utils import url_to_public_id
-from .pacing import Pacer, resolve_tier
+from .pacing import PAGE_PAUSE_RANGE_S, Pacer, resolve_tier
 
 logger = logging.getLogger("voyager_py.worker")
 
@@ -137,6 +141,8 @@ def discover(
     limit: int = 10,
     page: int = 1,
     *,
+    tier: str | None = None,
+    state_dir: str | None = None,
     company_urn: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
@@ -162,6 +168,26 @@ def discover(
                     f"sort degree-first",
             "contacts": [],
         }
+    # Reads are metered and backoff-gated too (NFR-LI-02). This used to build no
+    # Pacer at all: after a rate-limit signal the app kept running People
+    # searches and bulk profile enrichment — precisely the reads the restriction
+    # ladder watches — while LinkedIn was already telling us to stop.
+    #
+    # One discover() costs 1 CUL-counted People search plus up to ~2 profile
+    # views per candidate (the profile fetch, plus a degree fallback), so both
+    # budgets are checked up front and charged for what the run actually did.
+    pacer = _pacer(tier, state_dir)
+    allowed, reason = pacer.can_search()
+    if not allowed:
+        return {"op": "discover", "ok": False, "company": company, "count": 0,
+                "contacts": [], "error": "cap_or_backoff", "reason": reason,
+                "quota": pacer.remaining()}
+    allowed, reason = pacer.can_view_profile()
+    if not allowed:
+        return {"op": "discover", "ok": False, "company": company, "count": 0,
+                "contacts": [], "error": "cap_or_backoff", "reason": reason,
+                "quota": pacer.remaining()}
+
     from .discovery import discover_company_contacts
     from .session import AccountSession
 
@@ -169,12 +195,23 @@ def discover(
         storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
     )
     try:
+        pacer.record_search()
         contacts = discover_company_contacts(
             session, company, limit=limit, page=page, company_urn=company_urn
         )
+        # Charge one profile view per candidate we actually enriched. Filtered-out
+        # candidates still cost a request upstream, so this under-counts slightly;
+        # `discovery.py` is where a precise per-fetch charge would go.
+        pacer.record_profile_view(count=len(contacts))
         return {"op": "discover", "ok": True, "company": company, "company_urn": company_urn,
-                "count": len(contacts), "contacts": contacts}
+                "count": len(contacts), "contacts": contacts, "quota": pacer.remaining()}
+    except RateLimited as e:
+        deadline = pacer.pause_for_backoff(str(e))
+        return {"op": "discover", "ok": False, "company": company, "count": 0,
+                "contacts": [], "error": "rate_limited", "reason": str(e),
+                "paused_until": deadline, "quota": pacer.remaining()}
     finally:
+        pacer.save()
         session.close()
 
 
@@ -183,6 +220,8 @@ def search_jobs(
     location: str = "",
     limit: int = 50,
     *,
+    tier: str | None = None,
+    state_dir: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
@@ -190,8 +229,14 @@ def search_jobs(
 ) -> dict:
     """Logged-in LinkedIn job search (read-only) → up to `limit` normalized-ish
     plain job dicts. NEW for finds-you-jobs — the one-shot job-discovery entry
-    point; never a background scan source. Read-only: no send, no caps decrement
-    (caps govern outreach *sends*, not reads — same stance as `contact_sync`).
+    point; never a background scan source.
+
+    **Deliberately charges no CUL search budget.** Job search on the Jobs page is
+    exempt from LinkedIn's Commercial Use Limit (help `a564226`), and it is the
+    product's highest-volume read — metering it against the People-search budget
+    would throttle the primary use case for zero real risk. It IS backoff-gated
+    and paced: it used to be neither, making one click the largest unpaced
+    authenticated burst in the codebase (~120 requests across 12 launches).
 
     Paginates in pages of 25 (LinkedIn's page size) until `limit` or exhaustion.
     A page failure keeps what earlier pages returned (rank-don't-gate)."""
@@ -205,6 +250,16 @@ def search_jobs(
                     f"{f' in {location!r}' if location else ''}, page through ≤{limit} results",
             "jobs": [], "total": 0,
         }
+    # Backoff gates reads too: when LinkedIn has already told us to stop, the
+    # loudest read path in the app must not keep going.
+    pacer = _pacer(tier, state_dir)
+    if pacer.is_paused():
+        _, reason = pacer.check("profile_views")
+        return {"op": "search-jobs", "ok": False, "keywords": keywords,
+                "location": location, "count": 0, "total": 0, "jobs": [],
+                "error": "cap_or_backoff", "reason": reason,
+                "quota": pacer.remaining()}
+
     from .client import PlaywrightLinkedinAPI
     from .session import AccountSession
 
@@ -219,6 +274,12 @@ def search_jobs(
         client = PlaywrightLinkedinAPI(session)
         seen: set[str] = set()
         for start in range(0, max(limit, 1), _PAGE):
+            if start:
+                # Pace between pages. Reusing the send jitter band would be far
+                # too slow for a read the user is waiting on, so this is a short
+                # human-scale pause — the point is that consecutive pages are not
+                # issued at machine speed.
+                time.sleep(random.uniform(*PAGE_PAUSE_RANGE_S))
             page = client.search_jobs(keywords, location, start=start, count=_PAGE)
             total = page.get("total", total) or total
             batch = page.get("jobs", [])
@@ -393,6 +454,8 @@ def send_dm(
 def contact_sync(
     public_identifier: str,
     *,
+    tier: str | None = None,
+    state_dir: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
@@ -401,9 +464,14 @@ def contact_sync(
     """Read-only contact-status probe (FR-NW-15): connection degree + the 1:1
     thread's last-message direction/timestamp. NEVER writes to LinkedIn.
 
-    The MIT host's `contact_sync` scheduler tick drives one of these per tracked
-    contact (batched small, gentle) and maps the result onto the kanban
-    transitions. `dry_run` plans only (no browser, no network)."""
+    Each probe is an authenticated profile read, so it charges the profile-view
+    budget and is refused during backoff. That matters more here than anywhere
+    else: the host drives one of these per tracked contact in a batch, so an
+    unmetered sync could exhaust a whole day's read budget before the user sent a
+    single invite — and a dashboard would still have read "healthy".
+
+    Driven by the user pressing Sync (or opening the Networking surface, once per
+    15 min) — there is no scheduler any more. `dry_run` plans only."""
     if not public_identifier:
         raise VoyagerError("contact-sync requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
@@ -416,6 +484,16 @@ def contact_sync(
             "degree": None, "is_first_degree": False,
             "last_message_direction": None, "last_message_at": None,
         }
+    pacer = _pacer(tier, state_dir)
+    allowed, reason = pacer.can_view_profile()
+    if not allowed:
+        return {"op": "contact-sync", "ok": False,
+                "public_identifier": public_identifier,
+                "error": "cap_or_backoff", "reason": reason,
+                "degree": None, "is_first_degree": False,
+                "last_message_direction": None, "last_message_at": None,
+                "quota": pacer.remaining()}
+
     from .actions import get_contact_sync_state
     from .session import AccountSession
 
@@ -423,10 +501,24 @@ def contact_sync(
         storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
     )
     try:
+        pacer.record_profile_view()
         state = get_contact_sync_state(session, public_identifier)
         return {"op": "contact-sync", "ok": True,
-                "public_identifier": public_identifier, **state}
+                "public_identifier": public_identifier, **state,
+                "quota": pacer.remaining()}
+    except RateLimited as e:
+        # A block on contact 1 used to be logged and swallowed, so the host kept
+        # hammering contacts 2-20 in the same batch. Entering backoff here stops
+        # the whole batch, because every subsequent probe is refused.
+        deadline = pacer.pause_for_backoff(str(e))
+        return {"op": "contact-sync", "ok": False,
+                "public_identifier": public_identifier,
+                "error": "rate_limited", "reason": str(e), "paused_until": deadline,
+                "degree": None, "is_first_degree": False,
+                "last_message_direction": None, "last_message_at": None,
+                "quota": pacer.remaining()}
     finally:
+        pacer.save()
         session.close()
 
 

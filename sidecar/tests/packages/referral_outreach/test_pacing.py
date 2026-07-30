@@ -20,8 +20,13 @@ from sidecar.packages.referral_outreach.upstream.pacing import (
 def test_tier_resolution_defaults_to_new():
     assert resolve_tier(None).name == "new"
     assert resolve_tier("SEASONED").name == "seasoned"
-    assert TIERS["new"].daily == 15 and TIERS["new"].weekly == 100
-    assert TIERS["seasoned"].daily == 30 and TIERS["seasoned"].weekly == 200
+    # 50-70% of the ESTIMATED LinkedIn ceiling (posture doc §4). These were
+    # 15/100 and 30/200 — i.e. `seasoned` weekly sat at ~200% of the ~100/wk
+    # soft cap, so the app was a foot-gun rather than a guard.
+    assert TIERS["new"].daily == 8 and TIERS["new"].weekly == 30
+    assert TIERS["seasoned"].daily == 10 and TIERS["seasoned"].weekly == 65
+    assert resolve_tier("recovering").name == "recovering"
+    assert TIERS["recovering"].daily == 3 and TIERS["recovering"].weekly == 15
 
 
 def test_unknown_tier_raises():
@@ -34,53 +39,55 @@ def _pacer(tmp_path, tier="new"):
 
 
 def test_daily_cap_blocks_after_limit(tmp_path):
-    pacer = _pacer(tmp_path)  # new: 15/day
+    pacer = _pacer(tmp_path)  # new: 8/day
     now = 1_000_000.0
-    for _ in range(15):
+    for _ in range(8):
         allowed, _ = pacer.can_send_invite(now=now)
         assert allowed
         pacer.record_invite(now=now)
     allowed, reason = pacer.can_send_invite(now=now)
     assert not allowed
-    assert "daily cap" in reason
+    assert "invites cap reached" in reason and "/day" in reason
     assert pacer.remaining(now=now)["daily_remaining"] == 0
 
 
 def test_daily_window_rolls_off(tmp_path):
     pacer = _pacer(tmp_path)
     start = 1_000_000.0
-    for _ in range(15):
+    for _ in range(8):
         pacer.record_invite(now=start)
     # 25 hours later the day-window has rolled; daily quota is back.
     later = start + DAY_SECONDS + 3600
     r = pacer.remaining(now=later)
-    assert r["daily_remaining"] == 15
+    assert r["daily_remaining"] == 8
     allowed, _ = pacer.can_send_invite(now=later)
     assert allowed
 
 
 def test_weekly_cap_independent_of_daily(tmp_path):
-    pacer = _pacer(tmp_path, tier="seasoned")  # 30/day, 200/wk
+    pacer = _pacer(tmp_path, tier="seasoned")  # 10/day, 65/wk
     now = 2_000_000.0
-    # 200 invites all OUTSIDE the daily window (>24 h ago) but INSIDE the week:
+    # 65 invites all OUTSIDE the daily window (>24 h ago) but INSIDE the week:
     # daily has room, weekly is exhausted, so the weekly cap is what blocks.
-    for i in range(200):
+    for i in range(65):
         pacer.record_invite(now=now - DAY_SECONDS - 3600 - i * 2000)
     r = pacer.remaining(now=now)
-    assert r["daily_used"] == 0 and r["daily_remaining"] == 30
+    assert r["daily_used"] == 0 and r["daily_remaining"] == 10
     assert r["weekly_remaining"] == 0
     allowed, reason = pacer.can_send_invite(now=now)
-    assert not allowed and "weekly cap" in reason
+    assert not allowed and "invites cap reached" in reason and "/week" in reason
 
 
 def test_dms_do_not_count_against_invite_cap(tmp_path):
+    """DMs still have their OWN ledger and never decrement invites (FR-NW-04) —
+    but they are no longer uncapped."""
     pacer = _pacer(tmp_path)
     now = 1_500_000.0
-    for _ in range(50):
+    for _ in range(5):
         pacer.record_dm(now=now)
     r = pacer.remaining(now=now)
     assert r["daily_used"] == 0  # DMs are separate (FR-NW-04)
-    assert r["daily_remaining"] == 15
+    assert r["daily_remaining"] == 8
     allowed, _ = pacer.can_send_dm(now=now)
     assert allowed
 
@@ -206,3 +213,90 @@ def test_wait_before_send_does_not_sleep_when_no_gap_is_owed(tmp_path):
     slept: list[float] = []
     assert pacer.wait_before_send(now=1_000_000.0, sleep=slept.append) == 0.0
     assert slept == []
+
+
+# --- reads are metered and backoff-gated (2026-07-30) -----------------------
+# Before this, only sends built a Pacer. After a rate-limit signal the app kept
+# running People searches, profile enrichment and contact-sync probes — the
+# reads the restriction ladder actually watches. See posture doc §1.
+
+
+def test_backoff_blocks_reads_not_just_sends(tmp_path):
+    pacer = _pacer(tmp_path)
+    now = 1_000_000.0
+    pacer.pause_for_backoff("LinkedIn 999", now=now)
+    for meter in ("invites", "dms", "profile_views", "searches", "notes"):
+        allowed, reason = pacer.check(meter, now=now)
+        assert not allowed, f"{meter} should be blocked during backoff"
+        assert "paused" in reason
+
+
+def test_profile_views_are_capped_daily(tmp_path):
+    pacer = _pacer(tmp_path)  # new: 25 profile views/day
+    now = 1_000_000.0
+    pacer.record_profile_view(now=now, count=25)
+    allowed, reason = pacer.can_view_profile(now=now)
+    assert not allowed and "profile_views cap reached" in reason
+    # Rolls off with the day window.
+    assert pacer.can_view_profile(now=now + DAY_SECONDS + 60)[0]
+
+
+def test_cul_searches_are_capped_monthly(tmp_path):
+    pacer = _pacer(tmp_path)  # 150 CUL-counted searches/month
+    now = 1_000_000.0
+    for _ in range(150):
+        pacer.record_search(now=now)
+    allowed, reason = pacer.can_search(now=now)
+    assert not allowed and "searches cap reached" in reason
+    # A week later it is still blocked — this is a monthly window, and a flat
+    # weekly prune used to be the bug that would have silently reset it.
+    assert not pacer.can_search(now=now + WEEK_SECONDS)[0]
+
+
+def test_dms_are_capped_and_no_longer_unlimited(tmp_path):
+    pacer = _pacer(tmp_path)  # new: 10 DMs/day, 50/week
+    now = 1_000_000.0
+    for _ in range(10):
+        assert pacer.can_send_dm(now=now)[0]
+        pacer.record_dm(now=now)
+    allowed, reason = pacer.can_send_dm(now=now)
+    assert not allowed and "dms cap reached" in reason
+
+
+def test_free_plan_note_budget_is_monthly(tmp_path):
+    pacer = _pacer(tmp_path)  # 3 personalized notes / 30 d
+    now = 1_000_000.0
+    for _ in range(3):
+        assert pacer.can_use_note(now=now)[0]
+        pacer.record_note(now=now)
+    assert not pacer.can_use_note(now=now)[0]
+
+
+def test_per_meter_pruning_preserves_the_long_windows(tmp_path):
+    """A flat one-week prune would have erased the note and CUL ledgers."""
+    pacer = _pacer(tmp_path)
+    now = 1_000_000.0
+    ten_days_ago = now - 10 * DAY_SECONDS
+    pacer.record_note(now=ten_days_ago)
+    pacer.record_search(now=ten_days_ago)
+    pacer.record_invite(now=ten_days_ago)
+    pacer.save(now=now)
+
+    reloaded = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    # Notes (30 d) and searches (31 d) survive; the invite (7 d) is pruned.
+    assert len(reloaded.state.notes) == 1
+    assert len(reloaded.state.searches) == 1
+    assert reloaded.state.invites == []
+
+
+def test_ledger_from_before_the_new_meters_still_loads(tmp_path):
+    """An install upgrading in place must keep its invite history."""
+    import json as _json
+
+    (tmp_path / Pacer.STATE_FILENAME).write_text(
+        _json.dumps({"invites": [1.0, 2.0], "dms": [3.0], "paused_until": 0.0})
+    )
+    pacer = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    assert pacer.state.invites == [1.0, 2.0]
+    assert pacer.state.dms == [3.0]
+    assert pacer.state.profile_views == [] and pacer.state.searches == []

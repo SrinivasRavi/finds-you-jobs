@@ -165,6 +165,8 @@ class DirectVoyagerDriver:
             limit=limit,
             page=page,
             company_urn=company_urn,
+            tier=self.tier,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
@@ -179,6 +181,8 @@ class DirectVoyagerDriver:
             keywords=keywords,
             location=location,
             limit=limit,
+            tier=self.tier,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
@@ -227,10 +231,13 @@ class DirectVoyagerDriver:
 
     def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict:
         """Read-only contact-status probe (FR-NW-15): degree + last-message
-        direction/timestamp. No caps decrement (a read, not a send)."""
+        direction/timestamp. Charges the profile-view budget — it is a read, but
+        an authenticated one, and reads are what the restriction ladder watches."""
         return self._call(
             self._worker().contact_sync,
             public_identifier=public_identifier,
+            tier=self.tier,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,

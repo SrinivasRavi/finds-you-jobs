@@ -2265,12 +2265,20 @@ def _require_dev_mode() -> None:
 
 @router.post("/api/dev/linkedin/mark-session-valid")
 async def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
-    """Mark the LinkedIn session row `valid` **without** a real login, so the
-    session-gated UI (the Networking Sync button) can be rendered and screenshot
-    in e2e. Writes no cookies and no storage-state file, so any action that
-    actually reaches LinkedIn still fails on auth — e2e asserts the control
-    renders and never clicks it, the same discipline `networking.spec.ts`
-    already uses for the reach-out popup."""
+    """Set `LinkedInSession.status = "valid"` so session-gated UI can be
+    exercised without a real LinkedIn login.
+
+    Some controls (the Networking **Sync** button) only render once a session
+    exists, and a real session needs an interactive human login at LinkedIn's
+    own page — which a test cannot perform and must never attempt. This sets the
+    one status field the UI reads, exactly like the sibling
+    `/api/dev/linkedin/expire-cookie` route sets the opposite condition.
+
+    It writes **no** cookies and **no** storage-state file. That is the honest
+    part: the session is a real row that is genuinely unusable, so any code path
+    that actually reaches LinkedIn fails on auth as it should. Nothing about
+    LinkedIn's behaviour is faked, and no production code branches on this — the
+    row is the same row a real login writes, with the same fields."""
     _require_dev_mode()
     with _db(request).repos() as repos:
         repos.linkedin_session.get_or_create()
