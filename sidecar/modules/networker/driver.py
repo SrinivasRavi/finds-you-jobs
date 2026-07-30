@@ -90,6 +90,7 @@ class DirectVoyagerDriver:
         user_data_dir: str | None = None,
         state_dir: str | None = None,
         tier: str | None = None,
+        linkedin_plan: str = "free",
         headed: bool = False,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -97,6 +98,9 @@ class DirectVoyagerDriver:
         self.user_data_dir = user_data_dir
         self.state_dir = state_dir
         self.tier = tier
+        # free|premium — conditions the worker's personalized-note budget
+        # (free-only allowance). 'free' is the conservative default.
+        self.linkedin_plan = linkedin_plan
         self.headed = headed
         # Applied to os.environ for the duration of a call (e.g. FYJ_SESSION_KEY,
         # which `upstream.secure_store` reads to seal/open the storage-state).
@@ -149,6 +153,8 @@ class DirectVoyagerDriver:
             url=url,
             limit=limit,
             prefer_domain=prefer_domain,
+            tier=self.tier,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
@@ -197,6 +203,7 @@ class DirectVoyagerDriver:
             public_identifier=public_identifier,
             note=note,
             tier=tier if tier is not None else self.tier,
+            linkedin_plan=self.linkedin_plan,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,

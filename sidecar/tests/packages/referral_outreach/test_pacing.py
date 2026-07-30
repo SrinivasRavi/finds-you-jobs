@@ -300,3 +300,69 @@ def test_ledger_from_before_the_new_meters_still_loads(tmp_path):
     assert pacer.state.invites == [1.0, 2.0]
     assert pacer.state.dms == [3.0]
     assert pacer.state.profile_views == [] and pacer.state.searches == []
+
+
+# ── concurrency: merge-on-save, refunds, observed exhaustion ─────────────────
+# Reads are metered now, and send / discover / contact-sync / job-search run in
+# SEPARATE runner concurrency groups — so two Pacers can hold the ledger at
+# once. save() must merge, not overwrite (posture doc §4 fix 6).
+
+
+def test_concurrent_saves_merge_instead_of_clobbering(tmp_path):
+    now = 1_000_000.0
+    a = _pacer(tmp_path)
+    b = _pacer(tmp_path)  # loaded before A saves — the lost-update setup
+    a.record_invite(now=now)
+    a.save(now=now)
+    b.record_profile_view(now=now)
+    b.save(now=now)  # used to write B's stale view and erase A's invite
+
+    merged = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    assert len(merged.state.invites) == 1
+    assert len(merged.state.profile_views) == 1
+
+
+def test_save_is_atomic_no_tmp_file_left(tmp_path):
+    pacer = _pacer(tmp_path)
+    pacer.record_invite(now=1_000_000.0)
+    pacer.save(now=1_000_000.0)
+    leftovers = [p.name for p in tmp_path.iterdir() if p.suffix == ".tmp"]
+    assert leftovers == []
+
+
+def test_refund_gives_back_only_this_pacers_pending_charges(tmp_path):
+    now = 1_000_000.0
+    a = _pacer(tmp_path)
+    a.record_invite(now=now)
+    a.save(now=now)
+
+    b = _pacer(tmp_path)  # sees A's invite as history, not as its own
+    assert b.refund("invites") == 0  # must NOT strip another op's charge
+    b.record_invite(now=now)
+    assert b.refund("invites") == 1
+    b.save(now=now)
+    merged = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    assert len(merged.state.invites) == 1  # A's charge survived the refund
+
+
+def test_pause_merges_by_max_and_resume_clears(tmp_path):
+    now = 1_000_000.0
+    a = _pacer(tmp_path)
+    a.pause_for_backoff("throttled", now=now)
+    a.save(now=now)
+
+    # A resume issued by another pacer instance must beat the on-disk deadline —
+    # otherwise the Settings Resume button silently does nothing.
+    b = _pacer(tmp_path)
+    b.resume()
+    b.save(now=now)
+    assert not Pacer(resolve_tier("new"), state_dir=tmp_path).is_paused(now=now)
+
+
+def test_saturate_marks_a_meter_observed_exhausted(tmp_path):
+    now = 1_000_000.0
+    pacer = _pacer(tmp_path)
+    pacer.record_note(now=now)
+    pacer.saturate("notes", now=now)
+    assert pacer.usage("notes", now=now)["month_remaining"] == 0
+    assert not pacer.can_use_note(now=now)[0]

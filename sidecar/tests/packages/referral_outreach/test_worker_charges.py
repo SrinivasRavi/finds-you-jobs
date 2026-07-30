@@ -1,0 +1,188 @@
+# voyager_py/tests/test_worker_charges.py — GPL v3 (see ../LICENSE).
+# SPDX-License-Identifier: GPL-3.0-only
+"""Charge-on-attempt, refunds, and the plan-aware notes budget in the worker
+send paths (posture doc §4 fixes 4 + 10, §6).
+
+The ledger must drift in the SAFE direction: an unproven send stays charged
+(it may have reached LinkedIn), while a PROVEN no-send — LinkedIn's weekly-cap
+dialog, a definite DM no-thread miss — refunds its attempt charge. The
+personalized-note budget binds only on free-plan accounts, and a note dropped
+by LinkedIn's own upsell marks the allowance observed-exhausted.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from sidecar.packages.referral_outreach.upstream import actions, pacing, session, worker
+from sidecar.packages.referral_outreach.upstream.errors import (
+    RateLimited,
+    ReachedConnectionLimit,
+)
+from sidecar.packages.referral_outreach.upstream.pacing import Pacer, resolve_tier
+
+
+class _FakeSession:
+    def __init__(self, **kwargs):  # noqa: D401 — mirrors AccountSession's ctor
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def no_jitter(monkeypatch):
+    """Zero the inter-send gap so multi-send tests never sleep 30-90 s."""
+    monkeypatch.setattr(pacing, "send_delay_seconds", lambda: 0.0)
+
+
+@pytest.fixture
+def fake_browser(monkeypatch):
+    monkeypatch.setattr(session, "AccountSession", _FakeSession)
+
+
+def _invites_used(state_dir) -> int:
+    return Pacer(resolve_tier("new"), state_dir=state_dir).remaining()["daily_used"]
+
+
+def _notes_used(state_dir) -> int:
+    p = Pacer(resolve_tier("new"), state_dir=state_dir)
+    return p.usage("notes")["month_used"]
+
+
+# ── invites: charge on attempt, refund on proven no-send ─────────────────────
+
+
+def test_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monkeypatch):
+    """A crash AFTER the click may still have sent the invite — keep the charge
+    (drifting low is the unsafe direction)."""
+    def _boom(sess, pid, note=""):
+        raise RuntimeError("browser died mid-verification")
+
+    monkeypatch.setattr(actions, "send_connection_request", _boom)
+    with pytest.raises(RuntimeError):
+        worker.send_connection("someone", tier="new", state_dir=str(tmp_path))
+    assert _invites_used(tmp_path) == 1
+
+
+def test_weekly_limit_dialog_refunds_the_attempt(tmp_path, fake_browser, no_jitter, monkeypatch):
+    """LinkedIn's weekly-cap dialog appears INSTEAD of the invite sending — a
+    proven no-send: refund, then enter backoff."""
+    def _blocked(sess, pid, note=""):
+        raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
+
+    monkeypatch.setattr(actions, "send_connection_request", _blocked)
+    out = worker.send_connection("someone", tier="new", state_dir=str(tmp_path))
+    assert out["error"] == "rate_limited"
+    assert _invites_used(tmp_path) == 0
+    assert Pacer(resolve_tier("new"), state_dir=tmp_path).is_paused()
+
+
+def test_successful_send_is_charged_once(tmp_path, fake_browser, no_jitter, monkeypatch):
+    monkeypatch.setattr(
+        actions, "send_connection_request", lambda s, p, note="": ("pending", "")
+    )
+    out = worker.send_connection("someone", tier="new", state_dir=str(tmp_path))
+    assert out["ok"] and out["sent"]
+    assert _invites_used(tmp_path) == 1
+
+
+# ── notes: plan-aware budget + observed exhaustion ───────────────────────────
+
+
+def test_free_plan_charges_the_note_and_gates_at_the_cap(
+    tmp_path, fake_browser, no_jitter, monkeypatch
+):
+    monkeypatch.setattr(
+        actions, "send_connection_request", lambda s, p, note="": ("pending", "with_note")
+    )
+    for i in range(3):  # notes cap: 3 / rolling 30 d
+        out = worker.send_connection(
+            f"p{i}", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+        )
+        assert out["ok"], out
+    assert _notes_used(tmp_path) == 3
+    refused = worker.send_connection(
+        "p4", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+    )
+    assert refused["error"] == "cap_or_backoff"
+    assert "note" in refused["reason"]
+    # The refused send never touched the invite budget either.
+    assert _invites_used(tmp_path) == 3
+
+
+def test_premium_plan_never_gates_on_notes(tmp_path, fake_browser, no_jitter, monkeypatch):
+    monkeypatch.setattr(
+        actions, "send_connection_request", lambda s, p, note="": ("pending", "with_note")
+    )
+    for i in range(5):
+        out = worker.send_connection(
+            f"p{i}", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="premium"
+        )
+        assert out["ok"], out
+    assert _notes_used(tmp_path) == 0  # premium: not charged at all
+
+
+def test_upsell_degrade_saturates_the_note_allowance(
+    tmp_path, fake_browser, no_jitter, monkeypatch
+):
+    """LinkedIn's Premium upsell = ground truth that the free allowance is out:
+    the dropped note is refunded, the meter is marked exhausted, and the next
+    note-bearing send is refused up front instead of silently degrading."""
+    monkeypatch.setattr(
+        actions,
+        "send_connection_request",
+        lambda s, p, note="": ("pending", "noteless_upsell"),
+    )
+    out = worker.send_connection(
+        "p1", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+    )
+    assert out["ok"] and out["note_outcome"] == "noteless_upsell"
+    p = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    assert p.usage("notes")["month_remaining"] == 0
+    refused = worker.send_connection(
+        "p2", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+    )
+    assert refused["error"] == "cap_or_backoff"
+
+
+# ── DMs: charge on attempt, refund on proven no-send ─────────────────────────
+
+
+def test_dm_proven_no_send_is_refunded(tmp_path, fake_browser, no_jitter, monkeypatch):
+    monkeypatch.setattr(actions, "send_dm", lambda s, p, m: False)
+    out = worker.send_dm("someone", "hello", tier="new", state_dir=str(tmp_path))
+    assert out["ok"] is False and out["sent"] is False
+    assert Pacer(resolve_tier("new"), state_dir=tmp_path).remaining()["dm_daily_sent"] == 0
+
+
+def test_dm_rate_limit_refunds_and_backs_off(tmp_path, fake_browser, no_jitter, monkeypatch):
+    def _throttled(s, p, m):
+        raise RateLimited("LinkedIn returned HTTP 429 (throttled/blocked)")
+
+    monkeypatch.setattr(actions, "send_dm", _throttled)
+    out = worker.send_dm("someone", "hello", tier="new", state_dir=str(tmp_path))
+    assert out["error"] == "rate_limited"
+    p = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    assert p.remaining()["dm_daily_sent"] == 0
+    assert p.is_paused()
+
+
+def test_dm_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monkeypatch):
+    def _boom(s, p, m):
+        raise RuntimeError("browser died mid-send")
+
+    monkeypatch.setattr(actions, "send_dm", _boom)
+    with pytest.raises(RuntimeError):
+        worker.send_dm("someone", "hello", tier="new", state_dir=str(tmp_path))
+    assert Pacer(resolve_tier("new"), state_dir=tmp_path).remaining()["dm_daily_sent"] == 1
+
+
+# ── job search: the package-owned 25 ceiling ─────────────────────────────────
+
+
+def test_search_jobs_limit_clamps_to_one_page(tmp_path):
+    out = worker.search_jobs(
+        "python", limit=250, tier="new", state_dir=str(tmp_path), dry_run=True
+    )
+    assert "≤25" in out["plan"]

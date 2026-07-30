@@ -36,7 +36,17 @@ from .types import (
     SessionStatusRequest,
 )
 
+# The enforced cap tables (NFR-LI-02). Re-exported so the app derives every
+# user-visible cap from the SAME numbers the send path enforces — the app-side
+# duplicate table (`dto._TIER_CAPS`) once drifted to 2-3× the enforced values
+# (posture doc §4 fix 7). Read-only for the host: it displays these, never
+# re-implements or overrides them.
+from .upstream.pacing import DEFAULT_TIER, TIERS, resolve_tier
+
 __all__ = [
+    "DEFAULT_TIER",
+    "TIERS",
+    "resolve_tier",
     "AccountRef",
     "AuthenticationError",
     "BrowserFailure",

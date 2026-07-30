@@ -428,7 +428,7 @@ def _fill_note_and_send(session: AccountSession, note: str, *, timeout_ms: int) 
     return True
 
 
-def _click_with_note(session: AccountSession, note: str) -> None:
+def _click_with_note(session: AccountSession, note: str) -> str:
     """Best-effort connection-request-WITH-note flow (FR-NW-03). Surface-aware
     because LinkedIn ships two invite layouts:
 
@@ -442,12 +442,21 @@ def _click_with_note(session: AccountSession, note: str) -> None:
     Order: use an already-present note field first; else click "Add a note" and
     use the field it reveals; else degrade honestly to a note-less send (the
     connect still lands; the ask can follow as a post-accept DM). Tested against
-    both layouts as local fixtures — see tests/test_connect_note_flow.py."""
+    both layouts as local fixtures — see tests/test_connect_note_flow.py.
+
+    Returns what actually happened to the note, so the caller can meter and
+    report it instead of the degrade staying a log-only event (posture doc §6):
+      "with_note"        — the note was typed and sent
+      "noteless_upsell"  — free-plan note allowance exhausted (Premium upsell);
+                           sent note-less, and the caller should mark the
+                           allowance exhausted
+      "noteless_missing" — markup churn, no note field reachable; sent note-less
+    """
     session.wait()
     # SDUI / Premium: note field opens directly. Short probe so the classic path
     # (field absent until "Add a note") doesn't eat the full timeout here.
     if _fill_note_and_send(session, note, timeout_ms=2_000):
-        return
+        return "with_note"
 
     # Classic modal: reveal the note field via "Add a note", then fill it.
     add_note = session.page.locator(CONNECT_SELECTORS["add_note"])
@@ -455,7 +464,7 @@ def _click_with_note(session: AccountSession, note: str) -> None:
         add_note.first.click()
         session.wait()
         if _fill_note_and_send(session, note, timeout_ms=8_000):
-            return
+            return "with_note"
 
     # No note field reachable. On the FREE tier "Add a note" opens a Premium
     # UPSELL instead of the note box (2026-07-12 capture …-note-box-missing);
@@ -463,7 +472,9 @@ def _click_with_note(session: AccountSession, note: str) -> None:
     from .session import capture_failure
 
     upsell = session.page.locator(CONNECT_SELECTORS["premium_upsell"])
+    note_outcome = "noteless_missing"
     if upsell.count() > 0:
+        note_outcome = "noteless_upsell"
         logger.warning(
             "LinkedIn free custom-note limit reached (Premium upsell shown) "
             "— dismissing and sending WITHOUT the note"
@@ -487,6 +498,7 @@ def _click_with_note(session: AccountSession, note: str) -> None:
         find_and_click_connect(session.page)
         _click_without_note(session)
     session.wait()
+    return note_outcome
 
 
 def _verify_invite_sent(session: AccountSession, *, timeout_ms: int = 6000) -> bool:
@@ -518,10 +530,14 @@ def _verify_invite_sent(session: AccountSession, *, timeout_ms: int = 6000) -> b
 
 def send_connection_request(
     session: AccountSession, public_identifier: str, note: str = ""
-) -> str:
+) -> tuple[str, str]:
     """Send a LinkedIn connection request. With a `note` it uses the with-note
     flow (cold referral-ask rides in the note, FR-NW-03); without one it sends
-    note-less (upstream default — fastest/safest). Returns the new status.
+    note-less (upstream default — fastest/safest). Returns
+    `(new_status, note_outcome)` — `note_outcome` is `_click_with_note`'s result
+    ("with_note" / "noteless_upsell" / "noteless_missing"), or "" when no note
+    was requested, so the caller can meter the free-note allowance and surface a
+    degrade instead of it staying a log-only event (posture doc §6).
 
     Raises ReachedConnectionLimit if LinkedIn's weekly-cap UI appears (the host
     maps that to voyager-owned backoff), and a typed SkipProfile (naming the
@@ -537,8 +553,9 @@ def send_connection_request(
         session.page, capture=lambda: capture_failure(session, "connect-no-affordance")
     )
     logger.debug("connect affordance via %s for %s", probe, public_identifier)
+    note_outcome = ""
     if note:
-        _click_with_note(session, note)
+        note_outcome = _click_with_note(session, note)
     else:
         _click_without_note(session)
     if session.page.locator(CONNECT_SELECTORS["weekly_limit"]).count() > 0:
@@ -552,7 +569,7 @@ def send_connection_request(
             "toast and no Pending state after the Send click (the click may have "
             f"landed on a control that didn't submit the invite); debug capture: {debug}"
         )
-    return STATUS_PENDING
+    return STATUS_PENDING, note_outcome
 
 
 # ── DM send (warm referral-ask path) ──────────────────────────────

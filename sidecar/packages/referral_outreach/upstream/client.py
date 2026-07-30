@@ -169,10 +169,12 @@ class PlaywrightLinkedinAPI:
         it here deliberately escapes the retry loop.
 
         999 is LinkedIn's own non-standard anti-bot status; 429 is the standard
-        one. 503 is included because LinkedIn serves it for shed load under the
-        same conditions and retrying it is the same mistake.
+        one. 503 is deliberately NOT here: LinkedIn serves transient 503s for
+        ordinary shed load, and mapping one blip to a 24 h full-stop across every
+        meter is the wrong penalty — the plain OSError path's bounded retry is
+        the standard treatment for it.
         """
-        if res.status in (429, 999, 503):
+        if res.status in (429, 999):
             raise RateLimited(f"LinkedIn returned HTTP {res.status} (throttled/blocked)")
 
     def _check_profile_response(self, res: _FetchResponse, public_identifier: str) -> None:
@@ -240,6 +242,11 @@ class PlaywrightLinkedinAPI:
         )
         if res.status == 401:
             raise AuthenticationError("Messaging API returned 401 Unauthorized.")
+        # A throttle here must NOT degrade to "no history": contact-sync drives
+        # one of these per probe, so swallowing a 429/999 as a soft miss kept
+        # the batch hammering the messaging endpoint mid-block (and `RateLimited`
+        # escapes `_retry_io`, so it enters backoff instead of being retried).
+        self.raise_if_throttled(res)
         if not res.ok:
             # A read miss (no thread, 404, transient) is not fatal — no history.
             return {"direction": None, "sent_at": None}

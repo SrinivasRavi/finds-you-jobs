@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .errors import RateLimited, ReachedConnectionLimit, VoyagerError
 from .url_utils import url_to_public_id
-from .pacing import PAGE_PAUSE_RANGE_S, Pacer, resolve_tier
+from .pacing import MAX_JOBS_PER_SEARCH, PAGE_PAUSE_RANGE_S, Pacer, resolve_tier
 
 logger = logging.getLogger("voyager_py.worker")
 
@@ -97,6 +97,8 @@ def resolve_company(
     url: str | None = None,
     limit: int = 5,
     prefer_domain: str | None = None,
+    tier: str | None = None,
+    state_dir: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
@@ -121,6 +123,23 @@ def resolve_company(
                     + (f", domain-anchor on {prefer_domain!r}" if prefer_domain else ""),
             "companies": [],
         }
+    # The last read path that built no Pacer at all (posture doc §4 fix 2):
+    # refuse during backoff, and charge the CUL search budget for the keyword
+    # typeahead (company search is CUL-counted). A pasted URL is a direct
+    # single-entity fetch, not a search — backoff-gated but not CUL-charged.
+    pacer = _pacer(tier, state_dir)
+    charge_search = not (url and url.strip())
+    if charge_search:
+        allowed, reason = pacer.can_search()
+    else:
+        # URL path: only the backoff gate applies — a direct fetch spends no
+        # search budget, but must still stop when LinkedIn said stop.
+        allowed, reason = (False, pacer._paused_reason()) if pacer.is_paused() else (True, "")
+    if not allowed:
+        return {"op": "resolve-company", "ok": False, "keywords": keywords,
+                "url": url, "error": "cap_or_backoff", "reason": reason,
+                "count": 0, "companies": [], "quota": pacer.remaining()}
+
     from .company import resolve_company as _resolve
     from .session import AccountSession
 
@@ -128,11 +147,19 @@ def resolve_company(
         storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
     )
     try:
+        if charge_search:
+            pacer.record_search()
         companies = _resolve(session, keywords, url=url, limit=limit, prefer_domain=prefer_domain)
         return {"op": "resolve-company", "ok": True, "keywords": keywords, "url": url,
                 "prefer_domain": prefer_domain, "count": len(companies),
-                "companies": companies}
+                "companies": companies, "quota": pacer.remaining()}
+    except RateLimited as e:
+        deadline = pacer.pause_for_backoff(str(e))
+        return {"op": "resolve-company", "ok": False, "keywords": keywords, "url": url,
+                "error": "rate_limited", "reason": str(e), "paused_until": deadline,
+                "count": 0, "companies": [], "quota": pacer.remaining()}
     finally:
+        pacer.save()
         session.close()
 
 
@@ -196,6 +223,12 @@ def discover(
     )
     try:
         pacer.record_search()
+        # Reserve, don't just gate: a boolean check with 1 view remaining would
+        # happily enrich a whole page and overshoot the day budget by the batch
+        # size. Clamp the enrichment count to what the budget can actually pay.
+        remaining_views = pacer.usage("profile_views").get("day_remaining")
+        if remaining_views is not None:
+            limit = max(1, min(limit, int(remaining_views)))
         contacts = discover_company_contacts(
             session, company, limit=limit, page=page, company_urn=company_urn
         )
@@ -239,7 +272,11 @@ def search_jobs(
     authenticated burst in the codebase (~120 requests across 12 launches).
 
     Paginates in pages of 25 (LinkedIn's page size) until `limit` or exhaustion.
+    `limit` is clamped to `MAX_JOBS_PER_SEARCH` (25 — one page) HERE, inside the
+    package, so no host request can turn one click into a multi-hundred-row
+    authenticated crawl (maintainer directive 2026-07-30).
     A page failure keeps what earlier pages returned (rank-don't-gate)."""
+    limit = max(1, min(limit, MAX_JOBS_PER_SEARCH))
     if not keywords:
         raise VoyagerError("search_jobs requires keywords")
     if dry_run:
@@ -315,6 +352,7 @@ def send_connection(
     note: str = "",
     tier: str | None = None,
     state_dir: str | None = None,
+    linkedin_plan: str = "free",
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
@@ -324,12 +362,28 @@ def send_connection(
     FR-NW-03; note-less otherwise, US-REF-04).
 
     Caps + backoff are enforced HERE before any network call. On LinkedIn's own
-    weekly-cap UI, the pacer enters backoff and the op returns rate_limited."""
+    weekly-cap UI, the pacer enters backoff and the op returns rate_limited.
+
+    `linkedin_plan` conditions the personalized-note budget: the ~5/month note
+    allowance exists only on free accounts, so `free` (the conservative default)
+    gates note-bearing sends on the notes meter while `premium` never does.
+    A note-bearing send on a free plan whose allowance is out is REFUSED, not
+    silently stripped — the note is the referral ask; the user decides whether
+    to send note-less."""
     if not public_identifier:
         raise VoyagerError("send-connection requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
     pacer = _pacer(tier, state_dir)
+    charge_note = bool(note) and linkedin_plan != "premium"
     allowed, reason = pacer.can_send_invite()
+    if allowed and charge_note:
+        allowed, note_reason = pacer.can_use_note()
+        if not allowed:
+            reason = (
+                f"{note_reason} — the free-plan personalized-note allowance is out; "
+                "send note-less (ask via DM after they accept) or set your plan to "
+                "Premium in Settings if this account has one"
+            )
 
     if dry_run:
         return {
@@ -353,6 +407,15 @@ def send_connection(
     # is what keeps a batch from going out at machine pace.
     waited_s = pacer.wait_before_send()
 
+    # Charge on ATTEMPT, before the browser launches (posture doc §4 fix 4): a
+    # send that reached LinkedIn but died in post-send verification must not go
+    # uncounted, or the ledger drifts low in the unsafe direction. Proven
+    # no-sends below refund the charge.
+    pacer.record_invite()
+    if charge_note:
+        pacer.record_note()
+    pacer.save()
+
     from .actions import send_connection_request
     from .session import AccountSession
 
@@ -361,8 +424,15 @@ def send_connection(
     )
     try:
         try:
-            status = send_connection_request(session, public_identifier, note=note)
+            status, note_outcome = send_connection_request(
+                session, public_identifier, note=note
+            )
         except ReachedConnectionLimit as e:
+            # LinkedIn's weekly-cap dialog appeared INSTEAD of the invite going
+            # out — a proven no-send, so give the attempt charges back.
+            pacer.refund("invites")
+            if charge_note:
+                pacer.refund("notes")
             deadline = pacer.pause_for_backoff(str(e))
             pacer.save()
             return {
@@ -370,17 +440,31 @@ def send_connection(
                 "public_identifier": public_identifier, "error": "rate_limited",
                 "reason": str(e), "paused_until": deadline, "quota": pacer.remaining(),
             }
-        pacer.record_invite()
+        if charge_note and note_outcome != "with_note":
+            # The invite went out but the note did not (Premium upsell / markup
+            # churn) — refund the note charge; on the upsell, LinkedIn itself
+            # said the allowance is exhausted, which beats our estimate, so mark
+            # the meter observed-exhausted for the rest of the window.
+            pacer.refund("notes")
+            if note_outcome == "noteless_upsell":
+                pacer.saturate("notes")
         pacer.save()
         return {
             "op": "send-connection", "ok": True, "sent": True,
             "public_identifier": public_identifier, "status": status,
+            # Surfaced (not just logged) so a dropped note is visible to the
+            # host: the referral ask rides in the note (posture doc §6).
+            "note_outcome": note_outcome,
             # What we ACTUALLY slept before this send. Was `delay_hint_s` — a
             # re-jittered number nothing consumed, which made the pacing look
             # implemented when it was not.
             "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
         }
     finally:
+        # Persist whatever is pending even on an unexpected error mid-send: an
+        # unproven send stays charged (unsafe-direction drift is the one we
+        # refuse). save() is idempotent — the happy paths above already ran it.
+        pacer.save()
         session.close()
 
 
@@ -395,8 +479,10 @@ def send_dm(
     headed: bool = False,
     dry_run: bool = False,
 ) -> dict:
-    """Send a warm 1st-degree referral-ask DM (US-REF-10). DMs are uncapped but
-    still blocked during backoff; they never decrement the invite counter."""
+    """Send a warm 1st-degree referral-ask DM (US-REF-10). DMs have their own
+    daily/weekly budget (a policy cap of ours — no corroborated LinkedIn DM
+    limit exists), are blocked during backoff, and never decrement the invite
+    counter."""
     if not public_identifier:
         raise VoyagerError("send-dm requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
@@ -414,14 +500,20 @@ def send_dm(
         }
     if not allowed:
         return {
+            # `cap_or_backoff`, matching the invite path: since DMs gained a
+            # budget this refusal can be a cap as well as a backoff.
             "op": "send-dm", "ok": False, "sent": False,
-            "public_identifier": public_identifier, "error": "backoff",
+            "public_identifier": public_identifier, "error": "cap_or_backoff",
             "reason": reason, "quota": pacer.remaining(),
         }
 
     # Same inter-send spacing as the invite path — one account, one clock
-    # (NFR-LI-01). DMs are uncapped but they are still outbound traffic.
+    # (NFR-LI-01).
     waited_s = pacer.wait_before_send()
+
+    # Charge on ATTEMPT (posture doc §4 fix 4); a proven no-send refunds below.
+    pacer.record_dm()
+    pacer.save()
 
     from .actions import send_dm as _send_dm
     from .session import AccountSession
@@ -431,15 +523,19 @@ def send_dm(
     )
     try:
         sent = _send_dm(session, public_identifier, message)
-        if sent:
-            pacer.record_dm()
-            pacer.save()
+        if not sent:
+            # actions.send_dm returned a definite "did not send" (no thread /
+            # no compose) — a proven no-send, so the attempt charge goes back.
+            pacer.refund("dms")
+        pacer.save()
         return {
             "op": "send-dm", "ok": bool(sent), "sent": bool(sent),
             "public_identifier": public_identifier,
             "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
         }
     except RateLimited as e:
+        # The throttle hit before the message could go out — refund, then back off.
+        pacer.refund("dms")
         deadline = pacer.pause_for_backoff(str(e))
         pacer.save()
         return {
@@ -448,6 +544,9 @@ def send_dm(
             "reason": str(e), "paused_until": deadline,
         }
     finally:
+        # An unexpected error mid-send keeps its attempt charge (unsafe-direction
+        # drift is the one we refuse); save() is idempotent on the happy paths.
+        pacer.save()
         session.close()
 
 
