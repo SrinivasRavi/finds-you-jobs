@@ -629,6 +629,10 @@ class LinkedInSession(Base):
     # Outreach package reports a rate-limit pause (FR-NW-05) — cleared by resume.
     status: Mapped[str] = mapped_column(String, nullable=False, default="never_set")
     account_tier: Mapped[str] = mapped_column(String, nullable=False, default="new")  # new|seasoned
+    # free|premium — conditions the outreach package's personalized-note budget
+    # (the ~5/month allowance exists only on free accounts; posture doc §4 #10).
+    # 'free' is the conservative default; a Premium holder lifts it in Settings.
+    linkedin_plan: Mapped[str] = mapped_column(String, nullable=False, default="free")
     # N4 session-capture metadata for Settings → LinkedIn session (US-SET-06).
     # `connected_as` is the member's display name (best-effort, DOM-read at login);
     # `li_at_expires_at` drives the expiry pill; `last_validated_at` is the local

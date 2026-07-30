@@ -22,6 +22,8 @@ from typing import Any
 # existed (trashed jobs = the old TRASH_TTL_DAYS=7) and (b) be sensible bootstraps
 # where none did. All are whole days except the sync cadence (hours).
 LIFECYCLE_DEFAULTS: dict[str, int] = {
+    # NOTE: `contact_sync_cadence_hours` is gone — contact sync is user-initiated
+    # only (no schedule to retime; see CONTACT_SYNC_MIN_INTERVAL_MINUTES below).
     # Contact kanban ghosting (FR-NW-15). Engagement threads go quiet → Ghosted;
     # a separate, longer window covers Sent/Accepted-but-never-replied stalls.
     "engagement_ghosted_days": 14,
@@ -30,8 +32,6 @@ LIFECYCLE_DEFAULTS: dict[str, int] = {
     "contact_purge_days": 60,           # deleted (archived) contacts
     "trashed_jobs_purge_days": 7,       # trashed jobs (was TRASH_TTL_DAYS)
     "archived_applications_purge_days": 30,  # archived tracker cards (was: never)
-    # Contact-status sync cadence (hours). Also mirrored to the schedule row.
-    "contact_sync_cadence_hours": 12,
 }
 
 # Contact sync is user-initiated only (no scheduled LinkedIn traffic — see

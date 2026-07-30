@@ -698,14 +698,20 @@ class DiscoverReferralsRequest(BaseModel):
 
 
 class ReachOutRequest(BaseModel):
-    """Batch reach-out (US-NW-09). Each contact gets ITS audience/warmth template
-    (fanned out per person, not one string). Per-action confirmation lives in the
-    UI; `dry_run` plans the sends without touching LinkedIn."""
+    """Reach-out (US-NW-09). Each contact gets ITS audience/warmth template
+    (fanned out per person, not one string). The pre-send confirmation gate
+    lives in the UI (per contact since 2026-07-30 — each row's Connect/Message
+    button confirms and sends one person); `dry_run` plans without touching
+    LinkedIn.
+
+    `contacts` is hard-capped: an unbounded list meant one HTTP request could
+    authorise arbitrarily many real sends (posture doc §5.1 — a user-control
+    ceiling, not a compliance claim). The UI sends one contact per confirm."""
 
     job_id: str | None = None
     application_id: str | None = None
     dry_run: bool = False
-    contacts: list[ReachOutContact]
+    contacts: list[ReachOutContact] = Field(min_length=1, max_length=10)
 
 
 class ReachOutResult(BaseModel):
@@ -734,10 +740,14 @@ class QuotaDTO(BaseModel):
     daily_limit: int
     weekly_used: int
     weekly_limit: int
-    # 1st-degree DMs: tracked + displayed, never capped — they do not decrement
-    # the invite counters above (FR-NW-04 / NFR-LI-02).
+    # 1st-degree DMs: separately budgeted (they never decrement the invite
+    # counters above — FR-NW-04), and since 2026-07-30 they ARE capped: an
+    # unbounded DM channel next to a capped invite channel was a loophole
+    # (posture doc §4). Limits mirror the package's enforced tier table.
     dm_daily_sent: int = 0
     dm_weekly_sent: int = 0
+    dm_daily_limit: int = 0
+    dm_weekly_limit: int = 0
 
 
 class LinkedInSessionDTO(BaseModel):
@@ -750,7 +760,9 @@ class LinkedInSessionDTO(BaseModel):
 
     enabled: bool
     status: str        # valid | expired | never_set | connecting | backing_off
-    account_tier: str  # new | seasoned
+    account_tier: str  # new | seasoned  ("recovering" is reserved for the
+                       # restriction ladder — not user-selectable yet)
+    linkedin_plan: str = "free"  # free | premium — conditions the notes budget
     connected_as: str = ""
     li_at_expires_at: datetime | None = None
     last_validated_at: datetime | None = None
@@ -776,9 +788,11 @@ class LinkedInSearchRequest(BaseModel):
 
 
 class LinkedInTierRequest(BaseModel):
-    """Set the account-tier the app passes to the outreach package (US-REF-08)."""
+    """Set the account-tier and/or plan the app passes to the outreach package
+    (US-REF-08). Both optional — only the provided field changes."""
 
-    account_tier: str  # new | seasoned
+    account_tier: str | None = None  # new | seasoned
+    linkedin_plan: str | None = None  # free | premium (notes budget condition)
 
 
 class PromptDTO(BaseModel):
@@ -1176,22 +1190,26 @@ def referral_candidate_dto(
     )
 
 
-# Account-tier rolling caps (US-NW-10 illustrative OpenOutreach defaults). NOT a
-# hard contract — the outreach package owns the authoritative caps (§17).
-# Surfaced for the popup's counter only.
-_TIER_CAPS = {"new": (15, 100), "seasoned": (30, 200)}
-
-
 def quota_dto(
     *, connected: bool, tier: str, daily_used: int, weekly_used: int,
     dm_daily_sent: int = 0, dm_weekly_sent: int = 0,
 ) -> QuotaDTO:
-    daily_limit, weekly_limit = _TIER_CAPS.get(tier, _TIER_CAPS["new"])
+    """Caps come from the outreach package's OWN tier table — the app-side
+    duplicate (`_TIER_CAPS`) is gone: it had drifted to 2-3× the enforced values,
+    so the popup gated batches the send path then refused (posture doc §4 #7).
+    The used-counters stay app-derived (OutreachLog windows)."""
+    from sidecar.packages.referral_outreach import TIERS, resolve_tier
+
+    try:
+        t = resolve_tier(tier)
+    except ValueError:
+        t = TIERS["new"]
     return QuotaDTO(
-        connected=connected, tier=tier,
-        daily_used=daily_used, daily_limit=daily_limit,
-        weekly_used=weekly_used, weekly_limit=weekly_limit,
+        connected=connected, tier=t.name,
+        daily_used=daily_used, daily_limit=t.invites.day or 0,
+        weekly_used=weekly_used, weekly_limit=t.invites.week or 0,
         dm_daily_sent=dm_daily_sent, dm_weekly_sent=dm_weekly_sent,
+        dm_daily_limit=t.dms.day or 0, dm_weekly_limit=t.dms.week or 0,
     )
 
 
@@ -1204,6 +1222,7 @@ def linkedin_session_dto(
         enabled=enabled,
         status=session.status,
         account_tier=session.account_tier,
+        linkedin_plan=session.linkedin_plan,
         connected_as=session.connected_as,
         li_at_expires_at=session.li_at_expires_at,
         last_validated_at=session.last_validated_at,

@@ -108,6 +108,14 @@ def _resolve_tier(repos: Repos) -> str | None:
     return session.account_tier if session is not None else None
 
 
+def _resolve_plan(repos: Repos) -> str:
+    """free|premium — conditions the worker's personalized-note budget (the
+    free-only ~5/month allowance; posture doc §4 #10). Free is the conservative
+    default when no session row exists yet."""
+    session = repos.linkedin_session.get()
+    return session.linkedin_plan if session is not None else "free"
+
+
 # ---------------------------------------------------------------------------
 # ORM Contact ↔ silo Contact mapping
 # ---------------------------------------------------------------------------
@@ -476,9 +484,14 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
             raise LookupError(f"contact {contact_id!r} not found")
         net_contact = _net_contact_from_row(row)
         tier = _resolve_tier(repos)
+        plan = _resolve_plan(repos)
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
     driver = DRIVER_FACTORY(tier)
+    # The factory seam stays single-argument (every test fake is `lambda tier:
+    # drv`); the plan rides as a driver attribute the Direct driver forwards to
+    # the worker and fakes simply ignore.
+    setattr(driver, "linkedin_plan", plan)  # noqa: B010 — VoyagerDriver protocol has no plan attr
 
     try:
         result = net_send(message, net_contact, driver=driver, tier=tier, dry_run=dry_run)

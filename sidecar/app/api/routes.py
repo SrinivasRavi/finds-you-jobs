@@ -723,27 +723,6 @@ def _thread_scan_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
     )
 
 
-def _thread_contact_sync_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
-    """Retime the `contact_sync` schedule from `lifecycle.contact_sync_cadence_hours`
-    (FR-NW-15 / FR-SYS-06). The schedule stays enabled (the entrypoint self-gates on
-    the toggle + session); we only adjust its interval so the user owns the cadence.
-    Clamped to ≥ 1 h so a fat-fingered 0 can't hot-loop the LinkedIn probe."""
-    lifecycle = (ui_state or {}).get("lifecycle")
-    if not isinstance(lifecycle, dict):
-        return
-    hours = lifecycle.get("contact_sync_cadence_hours")
-    if not isinstance(hours, (int, float)) or hours <= 0:
-        return
-    minutes = int(max(1, hours) * 60)
-    sched = next((s for s in repos.schedules.list_all() if s.kind == "contact_sync"), None)
-    if sched is None or sched.interval_minutes == minutes:
-        return
-    repos.schedules.update(
-        sched.id, interval_minutes=minutes,
-        next_due_at=now_utc() + timedelta(minutes=minutes),
-    )
-
-
 @router.post("/api/settings")
 async def update_settings(
     request: Request, payload: dto.PreferencesUpdate
@@ -757,7 +736,6 @@ async def update_settings(
         prefs_thresholds = dict(prefs.thresholds or {})
         if "ui_state" in fields:
             _thread_scan_cadence(repos, ui_state)
-            _thread_contact_sync_cadence(repos, ui_state)
         result = _settings_dto(repos)
     # Switching Scoring to keyword mode scores the whole board right here —
     # ~0.5 ms/job, no LLM — so the change is visible on the next board fetch
@@ -2104,9 +2082,13 @@ async def linkedin_connect(
 # deduped). A budget on the logged-in session (account-safety axis), NOT the
 # ethos volume rule — clamped so a typo can't fire hundreds of pages at the
 # user's own account in one burst.
-LINKEDIN_SEARCH_LIMIT_MIN = 25
-LINKEDIN_SEARCH_LIMIT_MAX = 250
-LINKEDIN_SEARCH_LIMIT_DEFAULT = 50
+# One page of LinkedIn's own page size, and no more (maintainer directive
+# 2026-07-30): the logged-in search is the loudest read in the app, and 25 is
+# also enforced package-side (`pacing.MAX_JOBS_PER_SEARCH`) so this route
+# clamp is a courtesy, not the security boundary.
+LINKEDIN_SEARCH_LIMIT_MIN = 10
+LINKEDIN_SEARCH_LIMIT_MAX = 25
+LINKEDIN_SEARCH_LIMIT_DEFAULT = 25
 
 
 @router.post("/api/linkedin/search", status_code=202)
@@ -2239,12 +2221,30 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
 async def linkedin_set_tier(
     request: Request, payload: dto.LinkedInTierRequest
 ) -> dto.LinkedInSessionDTO:
-    """Set the account-tier (New / Seasoned) the app passes to voyager (US-REF-08).
-    voyager owns the cap *values*; this is only the user's tier selection."""
-    if payload.account_tier not in ("new", "seasoned"):
-        raise HTTPException(status_code=422, detail="account_tier must be 'new' or 'seasoned'")
+    """Set the account-tier (New / Seasoned) and/or plan (Free / Premium) the app
+    passes to voyager (US-REF-08). voyager owns the cap *values*; this is only
+    the user's selection. `recovering` is deliberately NOT selectable — it is
+    reserved for the restriction ladder to enter automatically (posture doc §4).
+    The plan conditions the free-only personalized-note budget (§4 #10)."""
+    fields: dict[str, str] = {}
+    if payload.account_tier is not None:
+        if payload.account_tier not in ("new", "seasoned"):
+            raise HTTPException(
+                status_code=422, detail="account_tier must be 'new' or 'seasoned'"
+            )
+        fields["account_tier"] = payload.account_tier
+    if payload.linkedin_plan is not None:
+        if payload.linkedin_plan not in ("free", "premium"):
+            raise HTTPException(
+                status_code=422, detail="linkedin_plan must be 'free' or 'premium'"
+            )
+        fields["linkedin_plan"] = payload.linkedin_plan
+    if not fields:
+        raise HTTPException(
+            status_code=422, detail="provide account_tier and/or linkedin_plan"
+        )
     with _db(request).repos() as repos:
-        session = repos.linkedin_session.update(account_tier=payload.account_tier)
+        session = repos.linkedin_session.update(**fields)
         prefs = repos.preferences.get_or_create()
         return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
 

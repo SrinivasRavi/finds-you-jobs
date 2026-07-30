@@ -338,27 +338,29 @@ def test_linkedin_search_limit_is_configurable_and_clamped(search_client) -> Non
     _set_prefs(client)
 
     # A custom limit flows into the op snapshot verbatim (within range).
-    resp = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 100})
+    resp = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 10})
     assert resp.status_code == 202
     op_id = resp.json()["id"]
     wait_for_state(_app.state.db, op_id, "succeeded")
     with _app.state.db.repos() as repos:
-        assert repos.operations.get(op_id).input_snapshot["limit"] == 100
+        assert repos.operations.get(op_id).input_snapshot["limit"] == 10
 
-    # Out-of-range values are clamped to [25, 250], never passed raw.
+    # Out-of-range values are clamped to [10, 25] — one page of LinkedIn's own
+    # page size is the ceiling (maintainer directive 2026-07-30; the outreach
+    # package clamps to 25 again on its side).
     hi = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 9999})
     wait_for_state(_app.state.db, hi.json()["id"], "succeeded")
     lo = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 1})
     wait_for_state(_app.state.db, lo.json()["id"], "succeeded")
     with _app.state.db.repos() as repos:
-        assert repos.operations.get(hi.json()["id"]).input_snapshot["limit"] == 250
-        assert repos.operations.get(lo.json()["id"]).input_snapshot["limit"] == 25
+        assert repos.operations.get(hi.json()["id"]).input_snapshot["limit"] == 25
+        assert repos.operations.get(lo.json()["id"]).input_snapshot["limit"] == 10
 
-    # Omitted → the server default.
+    # Omitted → the server default (the ceiling itself).
     d = client.post("/api/linkedin/search", headers=AUTH, json={})
     wait_for_state(_app.state.db, d.json()["id"], "succeeded")
     with _app.state.db.repos() as repos:
-        assert repos.operations.get(d.json()["id"]).input_snapshot["limit"] == 50
+        assert repos.operations.get(d.json()["id"]).input_snapshot["limit"] == 25
 
 
 def test_linkedin_search_dedups_against_existing_guest_row(search_client) -> None:
@@ -448,3 +450,59 @@ def test_opportunistic_refresh_is_throttled_but_the_button_is_not(app_client) ->
     ).json()
     assert forced["state"] == "queued"
     assert forced["id"]
+
+
+# --- caps + plan surface (posture doc §4 fixes 7 + 10) ----------------------
+
+
+def test_quota_caps_come_from_the_package(app_client) -> None:
+    """The popup's displayed caps must be the ENFORCED caps. `dto._TIER_CAPS`
+    (15/100 · 30/200) drifted to 2-3× the package's real values and is gone —
+    this pins the route to the package tier table, DM budgets included."""
+    from sidecar.packages.referral_outreach import TIERS
+
+    _app, client = app_client
+    q = client.get("/api/referrals/quota", headers=AUTH).json()
+    new = TIERS["new"]
+    assert q["daily_limit"] == new.invites.day == 8
+    assert q["weekly_limit"] == new.invites.week == 30
+    assert q["dm_daily_limit"] == new.dms.day == 10
+    assert q["dm_weekly_limit"] == new.dms.week == 50
+
+
+def test_linkedin_plan_is_settable_and_surfaced(app_client) -> None:
+    _app, client = app_client
+    s = client.get("/api/linkedin/session", headers=AUTH).json()
+    assert s["linkedin_plan"] == "free"  # conservative default
+
+    updated = client.post(
+        "/api/linkedin/tier", headers=AUTH, json={"linkedin_plan": "premium"}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["linkedin_plan"] == "premium"
+    # Tier untouched by a plan-only update.
+    assert updated.json()["account_tier"] == "new"
+
+
+def test_tier_route_rejects_bad_values(app_client) -> None:
+    _app, client = app_client
+    # `recovering` is reserved for the restriction ladder — not user-selectable.
+    r = client.post("/api/linkedin/tier", headers=AUTH, json={"account_tier": "recovering"})
+    assert r.status_code == 422
+    r = client.post("/api/linkedin/tier", headers=AUTH, json={"linkedin_plan": "gold"})
+    assert r.status_code == 422
+    r = client.post("/api/linkedin/tier", headers=AUTH, json={})
+    assert r.status_code == 422
+
+
+def test_reach_out_contact_list_is_capped(app_client) -> None:
+    """An unbounded contact list meant one request could authorise arbitrarily
+    many real sends (posture doc §5.1). The UI sends one per confirm; the DTO
+    hard-caps at 10."""
+    _app, client = app_client
+    contacts = [{"contact_id": f"c{i}", "message": "hi"} for i in range(11)]
+    r = client.post(
+        "/api/referrals/reach-out", headers=AUTH,
+        json={"contacts": contacts},
+    )
+    assert r.status_code == 422

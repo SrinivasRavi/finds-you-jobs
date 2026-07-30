@@ -1168,8 +1168,11 @@ export interface paths {
         put?: never;
         /**
          * Linkedin Set Tier
-         * @description Set the account-tier (New / Seasoned) the app passes to voyager (US-REF-08).
-         *     voyager owns the cap *values*; this is only the user's tier selection.
+         * @description Set the account-tier (New / Seasoned) and/or plan (Free / Premium) the app
+         *     passes to voyager (US-REF-08). voyager owns the cap *values*; this is only
+         *     the user's selection. `recovering` is deliberately NOT selectable — it is
+         *     reserved for the restriction ladder to enter automatically (posture doc §4).
+         *     The plan conditions the free-only personalized-note budget (§4 #10).
          */
         post: operations["linkedin_set_tier_api_linkedin_tier_post"];
         delete?: never;
@@ -2647,6 +2650,11 @@ export interface components {
             /** Account Tier */
             account_tier: string;
             /**
+             * Linkedin Plan
+             * @default free
+             */
+            linkedin_plan: string;
+            /**
              * Connected As
              * @default
              */
@@ -2665,11 +2673,14 @@ export interface components {
         };
         /**
          * LinkedInTierRequest
-         * @description Set the account-tier the app passes to the outreach package (US-REF-08).
+         * @description Set the account-tier and/or plan the app passes to the outreach package
+         *     (US-REF-08). Both optional — only the provided field changes.
          */
         LinkedInTierRequest: {
             /** Account Tier */
-            account_tier: string;
+            account_tier?: string | null;
+            /** Linkedin Plan */
+            linkedin_plan?: string | null;
         };
         /**
          * NetworkingContactDTO
@@ -2941,6 +2952,16 @@ export interface components {
              * @default 0
              */
             dm_weekly_sent: number;
+            /**
+             * Dm Daily Limit
+             * @default 0
+             */
+            dm_daily_limit: number;
+            /**
+             * Dm Weekly Limit
+             * @default 0
+             */
+            dm_weekly_limit: number;
         };
         /** ReachOutContact */
         ReachOutContact: {
@@ -2951,9 +2972,15 @@ export interface components {
         };
         /**
          * ReachOutRequest
-         * @description Batch reach-out (US-NW-09). Each contact gets ITS audience/warmth template
-         *     (fanned out per person, not one string). Per-action confirmation lives in the
-         *     UI; `dry_run` plans the sends without touching LinkedIn.
+         * @description Reach-out (US-NW-09). Each contact gets ITS audience/warmth template
+         *     (fanned out per person, not one string). The pre-send confirmation gate
+         *     lives in the UI (per contact since 2026-07-30 — each row's Connect/Message
+         *     button confirms and sends one person); `dry_run` plans without touching
+         *     LinkedIn.
+         *
+         *     `contacts` is hard-capped: an unbounded list meant one HTTP request could
+         *     authorise arbitrarily many real sends (posture doc §5.1 — a user-control
+         *     ceiling, not a compliance claim). The UI sends one contact per confirm.
          */
         ReachOutRequest: {
             /** Job Id */
