@@ -208,3 +208,139 @@ test("Sync is gated on a live session and never runs on a timer", async ({
   await expect(sync).toBeEnabled();
   await page.screenshot({ path: `${DIR}/sync-present-with-session.png`, fullPage: true });
 });
+
+// US-NW-09 as-reworked 2026-07-30 (posture doc §5.1): the checkbox multi-select
+// + "Reach out (N)" batch became a per-row Connect/Message button, each opening
+// a pre-send confirmation for exactly one contact that shows the message text.
+//
+// ZERO live LinkedIn: the session is dev-marked valid (no cookies exist), and
+// the test opens the confirm overlay — pure local UI — then CANCELS. Send is
+// never clicked, so no send op ever enqueues and no browser launches.
+
+test("referral rows send one at a time via a per-row confirm", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: true },
+  });
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.post(`${base}/api/dev/linkedin/mark-session-valid`, { headers: auth });
+
+  // A role at Hooli plus one Hooli contact → the popup boots straight into
+  // review with a roster (no discovery runs when candidates already exist).
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "https://example.com/e2e-rowwise-job",
+        title: "Staff Engineer",
+        company: "Hooli",
+        location: "Remote",
+        description: "Ship it.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  await request.post(`${base}/api/applications`, {
+    headers: auth,
+    data: { job_id: job.id, generate_resume: false, generate_cover: false },
+  });
+  await request.post(`${base}/api/contacts`, {
+    headers: auth,
+    data: {
+      linkedin_url: "https://www.linkedin.com/in/e2e-gavin",
+      name: "Gavin Belson",
+      current_company: "Hooli",
+      current_role: "Engineer",
+      connection_status: "sent",
+    },
+  });
+
+  await page.goto("/applications");
+  await expect(page.getByText("Staff Engineer").first()).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("card-referrals-slot").first().click();
+  await expect(page.getByTestId("find-referrals-popup")).toBeVisible();
+
+  const row = page.getByTestId("referrals-row").filter({ hasText: "Gavin Belson" });
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  // The multi-select is gone — no checkbox anywhere, a per-row send button
+  // instead ("Connect" for a cold non-1st-degree contact).
+  await expect(page.getByTestId("referrals-row-checkbox")).toHaveCount(0);
+  const send = row.getByTestId("referrals-row-send");
+  await expect(send).toHaveText("Connect");
+  await page.screenshot({ path: `${DIR}/referrals-rowwise-buttons.png`, fullPage: true });
+
+  // Clicking Connect opens the confirm for THIS person, message text shown.
+  await send.click();
+  await expect(page.getByTestId("reach-out-confirm")).toBeVisible();
+  await expect(page.getByText("Send this to Gavin Belson?")).toBeVisible();
+  await expect(page.getByTestId("reach-out-confirm-message")).not.toBeEmpty();
+  await page.screenshot({ path: `${DIR}/referrals-rowwise-confirm.png`, fullPage: true });
+
+  // Cancel — nothing sends, the roster is still there.
+  await page.getByText("Cancel", { exact: true }).click();
+  await expect(page.getByTestId("reach-out-confirm")).toHaveCount(0);
+  await expect(row).toBeVisible();
+});
+
+// Settings surface for the caps work (2026-07-30): the LinkedIn plan selector
+// (conditions the free-only note budget) and the job-search pull capped at 25.
+// ZERO live LinkedIn: only local settings mutations; Search is never clicked.
+
+test("settings expose the plan selector and the 25-job search cap", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: true },
+  });
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.post(`${base}/api/dev/linkedin/mark-session-valid`, { headers: auth });
+
+  await page.goto("/settings");
+  // The LinkedIn sections live in the Networking settings category.
+  await page.getByRole("button", { name: /Referral outreach & LinkedIn/ }).click();
+  // Expand the (connected → collapsed) session card inside Referral Outreach.
+  await page.getByTestId("linkedin-session-toggle").first().click();
+  const plan = page.getByTestId("linkedin-plan-select").first();
+  await expect(plan).toBeVisible();
+  await expect(plan).toHaveValue("free"); // conservative default
+  await plan.selectOption("premium");
+  await expect(plan).toHaveValue("premium");
+  await page.screenshot({ path: `${DIR}/settings-plan-selector.png`, fullPage: true });
+  await plan.selectOption("free"); // leave state as found for later tests
+
+  // The logged-in job search lives in the Discover-jobs settings category and
+  // offers at most 25 per pull (one LinkedIn page).
+  await page.getByRole("button", { name: /Sources, scoring & automation/ }).click();
+  const ack = page.getByTestId("linkedin-search-ack");
+  await ack.scrollIntoViewIfNeeded();
+  await ack.check();
+  await page.getByTestId("linkedin-search-toggle").click();
+  const limit = page.getByTestId("linkedin-jobsearch-limit");
+  await expect(limit).toBeVisible();
+  await expect(limit).toHaveValue("25");
+  const options = await limit.locator("option").allTextContents();
+  expect(options).toHaveLength(2); // 10 and 25 — nothing above one page
+  await page.screenshot({ path: `${DIR}/settings-search-cap-25.png`, fullPage: true });
+
+  // Leave the shared profile as found: search off again, session disconnected
+  // (settings-analytics asserts the block is ABSENT while not connected).
+  await page.getByTestId("linkedin-search-toggle").click();
+  await request.post(`${base}/api/linkedin/disconnect`, { headers: auth });
+});

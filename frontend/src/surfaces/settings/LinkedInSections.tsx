@@ -18,6 +18,7 @@ import {
   useLinkedinSearch,
   useLinkedInSession,
   useResumeLinkedIn,
+  useSetLinkedInPlan,
   useSetLinkedInTier,
   useSettings,
   useUpdateSettings,
@@ -88,6 +89,7 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   const validate = useValidateLinkedIn();
   const resume = useResumeLinkedIn();
   const setTier = useSetLinkedInTier();
+  const setPlan = useSetLinkedInPlan();
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
 
   if (!session) return null;
@@ -249,15 +251,40 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
               <option value="seasoned">{t("settingsPage.session.tierSeasoned")}</option>
             </select>
           </div>
+
+          {/* LinkedIn plan (free/premium) — conditions the personalized-note
+              budget: the ~5/month note allowance exists only on free accounts,
+              so Premium lifts our conservative 3/month gate. */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <div className="flex items-center text-[13px] font-medium text-ink">
+                {t("settingsPage.session.plan")}
+                <InfoDot label={t("settingsPage.session.plan")}>
+                  {t("settingsPage.session.planInfo")}
+                </InfoDot>
+              </div>
+              <div className="text-[12px] text-ink-3">{t("settingsPage.session.planHint")}</div>
+            </div>
+            <select
+              data-testid="linkedin-plan-select"
+              value={session.linkedin_plan}
+              onChange={(e) => setPlan.mutate(e.target.value as "free" | "premium")}
+              className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
+            >
+              <option value="free">{t("settingsPage.session.planFree")}</option>
+              <option value="premium">{t("settingsPage.session.planPremium")}</option>
+            </select>
+          </div>
         </div>
       ) : null}
     </div>
   );
 });
 
-// Server clamps to this range; keep the UI honest to it.
-const LI_LIMIT_MIN = 25;
-const LI_LIMIT_MAX = 250;
+// Server clamps to this range (and the outreach package clamps to 25 again on
+// its side); keep the UI honest to it. 25 = one page of LinkedIn's own page
+// size — the maintainer capped the per-click pull there (2026-07-30).
+const LI_LIMIT_OPTIONS = [10, 25] as const;
 
 // The experimental gate around LinkedIn job search — mirrors Referral Outreach
 // (hazard badge + ToS risk line + ack + Enable toggle), with its OWN opt-in but
@@ -344,7 +371,10 @@ function LinkedInJobSearchBlock() {
   const search = useLinkedinSearch();
   const { data: settings } = useSettings();
   const update = useUpdateSettings();
-  const limit = settings?.linkedin_search_limit ?? 50;
+  // Stored values from before the 25-cap (50…250) render as 25 — the server
+  // clamps them anyway, so show what will actually run.
+  const stored = settings?.linkedin_search_limit ?? 25;
+  const limit = Math.min(stored, 25);
   const onChangeLimit = (v: number) => update.mutate({ linkedin_search_limit: v });
   return (
     <div className="space-y-3" data-testid="linkedin-jobsearch-block">
@@ -379,10 +409,7 @@ function LinkedInJobSearchBlock() {
           onChange={(e) => onChangeLimit(Number(e.target.value))}
           className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
         >
-          {Array.from(
-            { length: (LI_LIMIT_MAX - LI_LIMIT_MIN) / 25 + 1 },
-            (_, i) => LI_LIMIT_MIN + i * 25,
-          ).map((n) => (
+          {LI_LIMIT_OPTIONS.map((n) => (
             <option key={n} value={n}>
               {t("settingsPage.linkedinSearch.jobsOption", { n })}
             </option>

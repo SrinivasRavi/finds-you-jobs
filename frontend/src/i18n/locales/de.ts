@@ -960,7 +960,6 @@ const de: DeepPartial<Messages> = {
         nth: "{{degree}}.",
       },
       titleConfirmCompany: "Firma bestätigen",
-      titleSendingMessages: "Nachrichten werden gesendet",
       titleFinding: "Empfehlungen werden gesucht…",
       titleView: "Empfehlungen ansehen",
       findReferrals: "Empfehlungen finden",
@@ -1009,9 +1008,6 @@ const de: DeepPartial<Messages> = {
       findingContacts: "Kontakte bei {{company}} werden gesucht…",
       scanningHint:
         "LinkedIn wird über deine Sitzung gescannt · typisch 10–30 s. Ist der Firmenname mehrdeutig, pausieren wir und bitten dich, ihn zu bestätigen.",
-      sendingTitle: "Nachrichten werden gesendet…",
-      sendingHint:
-        "Einzeln in menschlicher Tippgeschwindigkeit gesendet, um natürliches Verhalten nachzubilden. Du kannst das schließen — der Versand läuft im Hintergrund weiter.",
       emptyConnected: "Bei dieser Firma wurden noch keine Kontakte gefunden.",
       emptyManual:
         "Noch keine Kontakte — füge einen per URL auf der Netzwerk-Seite hinzu oder schalte Referral Outreach in den Einstellungen ein, um Leute bei dieser Firma automatisch zu finden.",
@@ -1022,9 +1018,6 @@ const de: DeepPartial<Messages> = {
       findMore: "10 weitere finden",
       confirmCompanyNext: "Firma bestätigen →",
       close: "Schließen",
-      reachOut: "Kontaktieren ({{count}})",
-      sendConfirmTitle_one: "{{count}} Outreach-Nachricht senden?",
-      sendConfirmTitle_other: "{{count}} Outreach-Nachrichten senden?",
       sendConfirmBody:
         "Das sendet echte LinkedIn-Kontaktanfragen / DMs von deinem Konto, eine nach der anderen. finds-you-jobs kann sie nicht zurücknehmen — um eine Anfrage zurückzuziehen oder eine Nachricht zu löschen, mach das selbst auf <span>linkedin.com</span>.",
       sendingEllipsis: "Wird gesendet…",

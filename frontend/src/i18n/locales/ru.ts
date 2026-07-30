@@ -994,7 +994,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
         nth: "{{degree}}-я",
       },
       titleConfirmCompany: "Подтвердите компанию",
-      titleSendingMessages: "Отправка сообщений",
       titleFinding: "Ищем рекомендателей…",
       titleView: "Рекомендатели",
       findReferrals: "Найти рекомендателей",
@@ -1051,9 +1050,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       findingContacts: "Ищем контакты в {{company}}…",
       scanningHint:
         "Сканируем LinkedIn через вашу сессию · обычно 10–30 с. Если название компании неоднозначно, мы остановимся и попросим подтвердить его.",
-      sendingTitle: "Отправляем сообщения…",
-      sendingHint:
-        "Отправляются по одному со скоростью человеческой печати, чтобы выглядеть естественно. Окно можно закрыть — отправка продолжится в фоне.",
       emptyConnected: "В этой компании пока не найдено контактов.",
       emptyManual:
         "Контактов пока нет — добавьте по URL со страницы «Нетворкинг» или включите Referral Outreach в Настройках, чтобы автоматически находить людей в этой компании.",
@@ -1066,11 +1062,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       findMore: "Найти ещё 10",
       confirmCompanyNext: "Подтвердить компанию →",
       close: "Закрыть",
-      reachOut: "Написать ({{count}})",
-      sendConfirmTitle_one: "Отправить {{count}} сообщение?",
-      sendConfirmTitle_few: "Отправить {{count}} сообщения?",
-      sendConfirmTitle_many: "Отправить {{count}} сообщений?",
-      sendConfirmTitle_other: "Отправить {{count}} сообщения?",
       sendConfirmBody:
         "Будут отправлены настоящие запросы на контакт / DM в LinkedIn с вашего аккаунта, по одному. finds-you-jobs не может их отозвать — чтобы отменить запрос или удалить сообщение, сделайте это сами на <span>linkedin.com</span>.",
       sendingEllipsis: "Отправка…",

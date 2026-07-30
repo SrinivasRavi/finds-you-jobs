@@ -178,7 +178,7 @@ const settingsPage = {
   referral: {
     title: "Referral Outreach",
     intro:
-      "Automatically message people at a company you're applying to — from your own LinkedIn account — to ask for a referral. You confirm every batch before it sends.",
+      "Automatically message people at a company you're applying to — from your own LinkedIn account — to ask for a referral. You review and confirm each message before it sends.",
     howLabel: "How Referral Outreach works",
     howInfo:
       "It finds <em>current</em> employees at the company and drafts a short message for each from a fixed per-role template (peer / hiring-manager / recruiter / leadership) that you can edit — or hit Regenerate for an AI version grounded in your profile. Sending goes through your own LinkedIn session as connection requests or DMs, spaced out between sends, with conservative daily and weekly caps set below the limits LinkedIn is believed to enforce. Off by default; you can also use it drafts-only and send yourself. Tracking contacts by hand (the Networking tab) is always on and needs none of this.",
@@ -207,7 +207,7 @@ const settingsPage = {
     searchBtn: "Search LinkedIn jobs",
     resultsPerSearch: "Results per search",
     resultsPerSearchInfo:
-      "How many jobs to pull per role × location, in pages of 25. Higher means more results — but more requests fired on <strong>your own</strong> LinkedIn account in one burst, which raises rate-limit / account risk. Keep it modest.",
+      "How many jobs to pull per role × location — capped at <strong>25 (one page)</strong>, because every row is a request on <strong>your own</strong> LinkedIn account. The cap is enforced in the sending code, not just here.",
     jobsOption: "{{n}} jobs",
     started: "Search started — new matches will appear in Discover jobs shortly.",
     failed: "Search failed.",
@@ -244,10 +244,16 @@ const settingsPage = {
     tier: "Account tier",
     tierCapsLabel: "Account-tier caps",
     tierInfo:
-      "The LinkedIn worker enforces these caps. New = 15/day · 100/wk. Seasoned = 30/day · 200/wk. Pick the one that honestly matches your account.",
+      "The LinkedIn worker enforces these caps — they sit well below the limits LinkedIn is believed to enforce. Invites: New = 8/day · 30/wk, Seasoned = 10/day · 65/wk. DMs: New = 10/day · 50/wk, Seasoned = 25/day · 120/wk. Pick the one that honestly matches your account.",
     tierHint: "Pick the tier that matches your account.",
     tierNew: "New account (safe default)",
     tierSeasoned: "Seasoned account",
+    plan: "LinkedIn plan",
+    planInfo:
+      "Free LinkedIn accounts get roughly 5 personalized invitation notes per month; the worker conservatively allows 3 and then asks you to send note-less (you can DM the referral ask after they accept). Premium accounts have no note limit, so setting Premium lifts that gate. This changes nothing else.",
+    planHint: "Free accounts have a monthly cap on invitation notes.",
+    planFree: "Free",
+    planPremium: "Premium",
   },
   observability: {
     title: "Observability",

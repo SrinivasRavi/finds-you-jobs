@@ -955,7 +955,6 @@ const hi: DeepPartial<Messages> = {
         nth: "{{degree}}th",
       },
       titleConfirmCompany: "कंपनी की पुष्टि करें",
-      titleSendingMessages: "संदेश भेजे जा रहे हैं",
       titleFinding: "रेफ़रल खोजे जा रहे हैं…",
       titleView: "रेफ़रल देखें",
       findReferrals: "रेफ़रल खोजें",
@@ -1004,9 +1003,6 @@ const hi: DeepPartial<Messages> = {
       findingContacts: "{{company}} में संपर्क खोजे जा रहे हैं…",
       scanningHint:
         "आपके सेशन से LinkedIn स्कैन हो रहा है · सामान्यतः 10–30 सेकंड। कंपनी का नाम अस्पष्ट हुआ तो हम रुककर आपसे पुष्टि माँगेंगे।",
-      sendingTitle: "संदेश भेजे जा रहे हैं…",
-      sendingHint:
-        "प्राकृतिक व्यवहार की नक़ल के लिए एक-एक करके इंसानी टाइपिंग गति से भेजे जाते हैं। इसे बंद कर सकते हैं — भेजना बैकग्राउंड में जारी रहता है।",
       emptyConnected: "इस कंपनी में अभी कोई संपर्क नहीं मिला।",
       emptyManual:
         "अभी कोई संपर्क नहीं — नेटवर्किंग पेज से URL द्वारा एक जोड़ें, या इस कंपनी के लोगों की स्वतः-खोज के लिए सेटिंग्स में रेफ़रल आउटरीच चालू करें।",
@@ -1017,9 +1013,6 @@ const hi: DeepPartial<Messages> = {
       findMore: "10 और खोजें",
       confirmCompanyNext: "कंपनी की पुष्टि करें →",
       close: "बंद करें",
-      reachOut: "संपर्क करें ({{count}})",
-      sendConfirmTitle_one: "{{count}} आउटरीच संदेश भेजें?",
-      sendConfirmTitle_other: "{{count}} आउटरीच संदेश भेजें?",
       sendConfirmBody:
         "यह आपके खाते से असली LinkedIn कनेक्शन अनुरोध / DM एक-एक करके भेजता है। finds-you-jobs इन्हें वापस नहीं ले सकता — अनुरोध वापस लेने या संदेश मिटाने के लिए <span>linkedin.com</span> पर ख़ुद करें।",
       sendingEllipsis: "भेजा जा रहा है…",

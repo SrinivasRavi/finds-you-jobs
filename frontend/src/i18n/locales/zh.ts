@@ -944,7 +944,6 @@ const zh: DeepPartial<Messages> = {
         nth: "{{degree}}度",
       },
       titleConfirmCompany: "确认公司",
-      titleSendingMessages: "正在发送消息",
       titleFinding: "正在寻找内推…",
       titleView: "查看内推",
       findReferrals: "寻找内推",
@@ -989,9 +988,6 @@ const zh: DeepPartial<Messages> = {
       findingContacts: "正在寻找 {{company}} 的联系人…",
       scanningHint:
         "正在通过你的会话扫描 LinkedIn · 通常需要 10–30 秒。如果公司名称有歧义，我们会暂停并请你确认。",
-      sendingTitle: "正在发送消息…",
-      sendingHint:
-        "以人类打字速度逐条发送，模拟自然行为。你可以关闭此窗口 — 发送会在后台继续。",
       emptyConnected: "尚未在该公司找到联系人。",
       emptyManual:
         "还没有联系人 — 在人脉页通过 URL 添加，或在设置中开启内推联络以自动发现该公司的员工。",
@@ -1001,8 +997,6 @@ const zh: DeepPartial<Messages> = {
       findMore: "再找 10 位",
       confirmCompanyNext: "确认公司 →",
       close: "关闭",
-      reachOut: "发起联络（{{count}}）",
-      sendConfirmTitle_other: "发送 {{count}} 条联络消息？",
       sendConfirmBody:
         "这会从你的账号逐条发送真实的 LinkedIn 连接请求 / DM。finds-you-jobs 无法撤回它们 — 要撤回请求或删除消息，请自行前往 <span>linkedin.com</span> 操作。",
       sendingEllipsis: "发送中…",

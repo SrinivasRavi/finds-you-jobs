@@ -139,7 +139,6 @@ const LIFECYCLE_DEFAULTS = {
   contact_purge_days: 60,
   trashed_jobs_purge_days: 7,
   archived_applications_purge_days: 30,
-  contact_sync_cadence_hours: 12,
 } as const;
 
 function readLifecycle(raw: unknown): Settings["lifecycle"] {
@@ -1419,6 +1418,8 @@ export class RealApi {
       weekly_limit: d.weekly_limit,
       dm_daily_sent: d.dm_daily_sent ?? 0,
       dm_weekly_sent: d.dm_weekly_sent ?? 0,
+      dm_daily_limit: d.dm_daily_limit ?? 0,
+      dm_weekly_limit: d.dm_weekly_limit ?? 0,
     };
   }
 
@@ -1479,6 +1480,14 @@ export class RealApi {
     )) as LinkedInSessionDTO);
   }
 
+  /** Set the LinkedIn plan (free | premium) — conditions the free-only
+   *  personalized-note budget in the outreach package (posture doc §4 #10). */
+  async setLinkedInPlan(plan: "free" | "premium"): Promise<LinkedInSessionState> {
+    return toLinkedInSession((await this.json(
+      "POST", "/api/linkedin/tier", { linkedin_plan: plan },
+    )) as LinkedInSessionDTO);
+  }
+
   // ── Dev tools (local fault injection — US-DEV-01) ──────────────────────────
   async devExpireCookie(): Promise<DevResult> {
     return (await this.json("POST", "/api/dev/linkedin/expire-cookie", {})) as DevResult;
@@ -1496,6 +1505,7 @@ function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
     enabled: d.enabled,
     status: d.status as LinkedInSessionState["status"],
     account_tier: d.account_tier as LinkedInSessionState["account_tier"],
+    linkedin_plan: (d.linkedin_plan ?? "free") as LinkedInSessionState["linkedin_plan"],
     connected_as: d.connected_as ?? "",
     li_at_expires_at: d.li_at_expires_at ?? null,
     last_validated_at: d.last_validated_at ?? null,

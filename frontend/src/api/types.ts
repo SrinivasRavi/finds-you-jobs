@@ -483,10 +483,12 @@ export interface ReferralQuota {
   daily_limit: number;
   weekly_used: number;
   weekly_limit: number;
-  /** 1st-degree DMs: tracked + displayed, never capped (FR-NW-04) — they do
-   *  not decrement the invite counters above. */
+  /** 1st-degree DMs: separately budgeted (FR-NW-04) — they never decrement the
+   *  invite counters above, and since 2026-07-30 they have their own caps. */
   dm_daily_sent: number;
   dm_weekly_sent: number;
+  dm_daily_limit: number;
+  dm_weekly_limit: number;
 }
 
 /** LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
@@ -497,6 +499,9 @@ export interface LinkedInSessionState {
   enabled: boolean;
   status: "valid" | "expired" | "never_set" | "connecting" | "backing_off";
   account_tier: "new" | "seasoned";
+  /** free | premium — conditions the outreach package's personalized-note
+   *  budget (the ~5/month allowance exists only on free accounts). */
+  linkedin_plan: "free" | "premium";
   connected_as: string;
   li_at_expires_at: string | null;
   last_validated_at: string | null;
@@ -839,16 +844,15 @@ export interface Settings {
   };
   /** Configurable entity-lifecycle windows (FR-SYS-06 / FR-NW-15, 2026-07-15).
    *  Every auto-lifecycle timer — contact kanban ghosting, deleted-contact /
-   *  trashed-job / archived-application purge, and the contact-status sync
-   *  cadence — reads its window from here (persisted in `ui_state.lifecycle`).
-   *  Days, except `contact_sync_cadence_hours`. */
+   *  trashed-job / archived-application purge — reads its window from here
+   *  (persisted in `ui_state.lifecycle`). All days. (The contact-sync cadence
+   *  is gone: syncing is user-initiated only — posture doc §1.) */
   lifecycle: {
     engagement_ghosted_days: number;
     sent_ghosted_days: number;
     contact_purge_days: number;
     trashed_jobs_purge_days: number;
     archived_applications_purge_days: number;
-    contact_sync_cadence_hours: number;
   };
 }
 

@@ -914,6 +914,19 @@ export function useSetLinkedInTier() {
   });
 }
 
+/** Set the LinkedIn plan (free | premium). Premium lifts the free-only
+ *  personalized-note budget the send path enforces. */
+export function useSetLinkedInPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (plan: "free" | "premium") => Promise.resolve(api.setLinkedInPlan(plan)),
+    onSuccess: (session) => {
+      qc.setQueryData(qk.linkedinSession, session);
+      qc.invalidateQueries({ queryKey: qk.referralQuota });
+    },
+  });
+}
+
 /** The find-referrals popup candidate list for one job (US-NW-09). `enabled`
  *  gates the fetch to when the popup is open for a specific job. */
 export function useReferralCandidates(jobId: string | null) {

@@ -987,7 +987,6 @@ const ar = {
         nth: "{{degree}}",
       },
       titleConfirmCompany: "أكِّد الشركة",
-      titleSendingMessages: "جارٍ إرسال الرسائل",
       titleFinding: "جارٍ البحث عن توصيات…",
       titleView: "عرض التوصيات",
       findReferrals: "ابحث عن توصيات",
@@ -1051,9 +1050,6 @@ const ar = {
       findingContacts: "جارٍ البحث عن جهات اتصال في {{company}}…",
       scanningHint:
         "جارٍ فحص LinkedIn عبر جلستك · عادةً 10–30 ث. إذا كان اسم الشركة ملتبسًا فسنتوقف ونطلب منك تأكيده.",
-      sendingTitle: "جارٍ إرسال الرسائل…",
-      sendingHint:
-        "تُرسل واحدة تلو الأخرى بسرعة الكتابة البشرية لمحاكاة السلوك الطبيعي. يمكنك إغلاق هذا — يستمر الإرسال في الخلفية.",
       emptyConnected: "لم يُعثر على جهات اتصال في هذه الشركة بعد.",
       emptyManual:
         "لا جهات اتصال بعد — أضف واحدة عبر URL من صفحة التواصل، أو فعِّل التواصل لطلب التوصيات من الإعدادات لاكتشاف الأشخاص في هذه الشركة تلقائيًا.",
@@ -1068,13 +1064,6 @@ const ar = {
       findMore: "ابحث عن 10 آخرين",
       confirmCompanyNext: "أكِّد الشركة →",
       close: "إغلاق",
-      reachOut: "تواصل ({{count}})",
-      sendConfirmTitle_zero: "لا رسائل تواصل للإرسال",
-      sendConfirmTitle_one: "إرسال رسالة تواصل واحدة؟",
-      sendConfirmTitle_two: "إرسال رسالتي تواصل؟",
-      sendConfirmTitle_few: "إرسال {{count}} رسائل تواصل؟",
-      sendConfirmTitle_many: "إرسال {{count}} رسالة تواصل؟",
-      sendConfirmTitle_other: "إرسال {{count}} رسالة تواصل؟",
       sendConfirmBody:
         "هذا يرسل طلبات اتصال / رسائل DM حقيقية على LinkedIn من حسابك، واحدة تلو الأخرى. لا يستطيع finds-you-jobs التراجع عنها — لسحب طلب أو حذف رسالة، افعل ذلك بنفسك على <span>linkedin.com</span>.",
       sendingEllipsis: "جارٍ الإرسال…",

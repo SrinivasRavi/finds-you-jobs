@@ -965,7 +965,6 @@ const pt: DeepPartial<Messages> = {
         nth: "{{degree}}º",
       },
       titleConfirmCompany: "Confirme a empresa",
-      titleSendingMessages: "Enviando mensagens",
       titleFinding: "Encontrando indicações…",
       titleView: "Ver indicações",
       findReferrals: "Encontrar indicações",
@@ -1014,9 +1013,6 @@ const pt: DeepPartial<Messages> = {
       findingContacts: "Encontrando contatos na {{company}}…",
       scanningHint:
         "Varrendo o LinkedIn pela sua sessão · normalmente 10–30 s. Se o nome da empresa for ambíguo, vamos pausar e pedir que você o confirme.",
-      sendingTitle: "Enviando mensagens…",
-      sendingHint:
-        "Enviadas uma a uma, na velocidade de digitação humana, para imitar o comportamento natural. Você pode fechar isto — o envio continua em segundo plano.",
       emptyConnected: "Nenhum contato encontrado nesta empresa ainda.",
       emptyManual:
         "Nenhum contato ainda — adicione um por URL na página Networking, ou ligue os Pedidos de Indicação em Ajustes para descobrir pessoas desta empresa automaticamente.",
@@ -1027,9 +1023,6 @@ const pt: DeepPartial<Messages> = {
       findMore: "Encontrar mais 10",
       confirmCompanyNext: "Confirmar empresa →",
       close: "Fechar",
-      reachOut: "Abordar ({{count}})",
-      sendConfirmTitle_one: "Enviar {{count}} mensagem de abordagem?",
-      sendConfirmTitle_other: "Enviar {{count}} mensagens de abordagem?",
       sendConfirmBody:
         "Isto envia convites de conexão / DMs reais no LinkedIn a partir da sua conta, um por vez. O finds-you-jobs não consegue desfazê-los — para retirar um convite ou apagar uma mensagem, faça isso você mesmo em <span>linkedin.com</span>.",
       sendingEllipsis: "Enviando…",

@@ -944,7 +944,6 @@ const ja: DeepPartial<Messages> = {
         nth: "{{degree}}次",
       },
       titleConfirmCompany: "企業を確認",
-      titleSendingMessages: "メッセージを送信中",
       titleFinding: "リファラルを探しています…",
       titleView: "リファラルを表示",
       findReferrals: "リファラルを探す",
@@ -989,9 +988,6 @@ const ja: DeepPartial<Messages> = {
       findingContacts: "{{company}}のコンタクトを探しています…",
       scanningHint:
         "あなたのセッション経由でLinkedInをスキャン中 · 通常10〜30秒。企業名が曖昧な場合は一時停止し、確認をお願いします。",
-      sendingTitle: "メッセージを送信中…",
-      sendingHint:
-        "自然な挙動に見せるため、人間のタイピング速度で1件ずつ送信します。この画面は閉じても構いません — 送信はバックグラウンドで続きます。",
       emptyConnected: "この企業のコンタクトはまだ見つかっていません。",
       emptyManual:
         "コンタクトはまだありません — 人脈ページからURLで追加するか、設定でリファラルアウトリーチをオンにしてこの企業の人を自動発見してください。",
@@ -1001,8 +997,6 @@ const ja: DeepPartial<Messages> = {
       findMore: "さらに10人探す",
       confirmCompanyNext: "企業を確認 →",
       close: "閉じる",
-      reachOut: "連絡する({{count}})",
-      sendConfirmTitle_other: "{{count}}件のアウトリーチメッセージを送信しますか?",
       sendConfirmBody:
         "これはあなたのアカウントから、実際のLinkedInつながりリクエスト/DMを1件ずつ送信します。finds-you-jobsは取り消すことができません — リクエストの取り下げやメッセージの削除は、<span>linkedin.com</span>でご自身で行ってください。",
       sendingEllipsis: "送信中…",

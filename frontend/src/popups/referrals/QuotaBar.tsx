@@ -59,7 +59,7 @@ export const QuotaBar = memo(function QuotaBar({
             >
               <Trans
                 i18nKey="popups.referrals.dmCounter"
-                values={{ dmSent: quota.dm_daily_sent }}
+                values={{ dmSent: quota.dm_daily_sent, dmLimit: quota.dm_daily_limit }}
                 components={{ strong: <strong /> }}
               />
             </span>

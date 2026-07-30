@@ -977,7 +977,6 @@ const nl: DeepPartial<Messages> = {
         nth: "{{degree}}e",
       },
       titleConfirmCompany: "Bevestig het bedrijf",
-      titleSendingMessages: "Berichten versturen",
       titleFinding: "Referrals zoeken…",
       titleView: "Referrals bekijken",
       findReferrals: "Referrals zoeken",
@@ -1026,9 +1025,6 @@ const nl: DeepPartial<Messages> = {
       findingContacts: "Contacten zoeken bij {{company}}…",
       scanningHint:
         "LinkedIn scannen via je sessie · meestal 10–30 s. Is de bedrijfsnaam dubbelzinnig, dan pauzeren we en vragen we je hem te bevestigen.",
-      sendingTitle: "Berichten versturen…",
-      sendingHint:
-        "Eén voor één verstuurd op menselijke typsnelheid om natuurlijk gedrag na te bootsen. Je kunt dit sluiten — het versturen gaat door op de achtergrond.",
       emptyConnected: "Nog geen contacten gevonden bij dit bedrijf.",
       emptyManual:
         "Nog geen contacten — voeg er een toe via URL vanaf de pagina Netwerk, of zet Referral Outreach aan in Instellingen om automatisch mensen bij dit bedrijf te vinden.",
@@ -1039,9 +1035,6 @@ const nl: DeepPartial<Messages> = {
       findMore: "Zoek 10 meer",
       confirmCompanyNext: "Bedrijf bevestigen →",
       close: "Sluiten",
-      reachOut: "Contact leggen ({{count}})",
-      sendConfirmTitle_one: "{{count}} outreach-bericht versturen?",
-      sendConfirmTitle_other: "{{count}} outreach-berichten versturen?",
       sendConfirmBody:
         "Dit verstuurt echte LinkedIn-connectieverzoeken / DM's vanaf je account, één voor één. finds-you-jobs kan ze niet terughalen — wil je een verzoek intrekken of een bericht verwijderen, doe dat dan zelf op <span>linkedin.com</span>.",
       sendingEllipsis: "Versturen…",

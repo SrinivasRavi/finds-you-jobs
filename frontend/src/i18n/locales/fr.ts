@@ -970,7 +970,6 @@ const fr: DeepPartial<Messages> = {
         nth: "{{degree}}e",
       },
       titleConfirmCompany: "Confirmez l'entreprise",
-      titleSendingMessages: "Envoi des messages",
       titleFinding: "Recherche de recommandations…",
       titleView: "Voir les recommandations",
       findReferrals: "Trouver des recommandations",
@@ -1022,9 +1021,6 @@ const fr: DeepPartial<Messages> = {
       findingContacts: "Recherche de contacts chez {{company}}…",
       scanningHint:
         "Scan de LinkedIn via votre session · en général 10–30 s. Si le nom de l'entreprise est ambigu, nous ferons une pause pour vous demander de le confirmer.",
-      sendingTitle: "Envoi des messages…",
-      sendingHint:
-        "Envoyés un par un, à vitesse de frappe humaine, pour imiter un comportement naturel. Vous pouvez fermer — l'envoi continue en arrière-plan.",
       emptyConnected: "Aucun contact trouvé dans cette entreprise pour l'instant.",
       emptyManual:
         "Pas encore de contacts — ajoutez-en un par URL depuis la page Réseau, ou activez les demandes de recommandation dans Réglages pour découvrir automatiquement des personnes de cette entreprise.",
@@ -1035,9 +1031,6 @@ const fr: DeepPartial<Messages> = {
       findMore: "Trouver 10 de plus",
       confirmCompanyNext: "Confirmer l'entreprise →",
       close: "Fermer",
-      reachOut: "Contacter ({{count}})",
-      sendConfirmTitle_one: "Envoyer {{count}} message de prise de contact ?",
-      sendConfirmTitle_other: "Envoyer {{count}} messages de prise de contact ?",
       sendConfirmBody:
         "Cela envoie de vraies invitations LinkedIn / de vrais DM depuis votre compte, un par un. finds-you-jobs ne peut pas les rappeler — pour retirer une invitation ou supprimer un message, faites-le vous-même sur <span>linkedin.com</span>.",
       sendingEllipsis: "Envoi…",

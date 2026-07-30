@@ -106,16 +106,9 @@ export const LifecycleSection = memo(function LifecycleSection({
           onChange={set("archived_applications_purge_days")}
           testid="archived-apps-purge"
         />
-        {settings.networking_enabled ? (
-          <LifecycleRow
-            label={t("settingsPage.lifecycle.syncCadenceLabel")}
-            hint={t("settingsPage.lifecycle.syncCadenceHint")}
-            unit={t("settingsPage.lifecycle.hours")}
-            value={lc.contact_sync_cadence_hours}
-            onChange={set("contact_sync_cadence_hours")}
-            testid="sync-cadence"
-          />
-        ) : null}
+        {/* The contact-sync cadence control is gone with the schedule itself:
+            syncing is user-initiated only (the Sync button / on-open refresh —
+            docs/internal/linkedin-posture.md §1). */}
       </div>
     </Section>
   );
