@@ -37,6 +37,7 @@ import type {
   EngineVerifyResult,
   Job,
   JobDraft,
+  ContactSyncResult,
   LinkedInSessionState,
   NetContact,
   NetworkingContact,
@@ -1453,6 +1454,23 @@ export class RealApi {
     return toLinkedInSession((await this.json(
       "POST", "/api/linkedin/resume", {},
     )) as LinkedInSessionDTO);
+  }
+
+  /** Refresh contact statuses from LinkedIn (FR-NW-15). `force` is the user
+   *  pressing Sync; without it the sidecar throttles the opportunistic refresh
+   *  that fires when the Networking surface opens. There is no scheduled sync —
+   *  see `docs/internal/linkedin-posture.md` §1. */
+  async syncContacts(force = false): Promise<ContactSyncResult> {
+    const q = force ? "?force=true" : "";
+    const dto = (await this.json("POST", `/api/networking/contact-sync${q}`, {})) as {
+      id?: string | null; state: string; throttled?: boolean; next_eligible_at?: string | null;
+    };
+    return {
+      id: dto.id ?? null,
+      state: dto.state as ContactSyncResult["state"],
+      throttled: Boolean(dto.throttled),
+      nextEligibleAt: dto.next_eligible_at ?? null,
+    };
   }
 
   async setLinkedInTier(tier: "new" | "seasoned"): Promise<LinkedInSessionState> {

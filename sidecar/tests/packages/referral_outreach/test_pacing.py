@@ -137,3 +137,72 @@ def test_send_delay_is_within_jitter_band():
     for _ in range(50):
         d = send_delay_seconds()
         assert 30.0 <= d <= 90.0
+
+
+# --- inter-send spacing (NFR-LI-01) -----------------------------------------
+# Regression cover for the defect where the 30-90 s jitter was only ever
+# *reported* as `delay_hint_s` and nothing slept on it, so a batch drained the
+# daily cap at machine pace. See `docs/internal/linkedin-posture.md` §1.
+
+
+def test_first_send_of_account_life_never_waits(tmp_path):
+    pacer = _pacer(tmp_path)
+    assert pacer.last_send_at() == 0.0
+    assert pacer.seconds_until_next_send(now=1_000_000.0) == 0.0
+
+
+def test_wait_is_required_immediately_after_a_send(tmp_path):
+    pacer = _pacer(tmp_path)
+    now = 1_000_000.0
+    pacer.record_invite(now=now)
+    wait = pacer.seconds_until_next_send(now=now)
+    # Jitter band is 30-90 s, so straight after a send the wait is within it.
+    assert 30.0 <= wait <= 90.0
+
+
+def test_wait_decays_and_reaches_zero_past_the_band(tmp_path):
+    pacer = _pacer(tmp_path)
+    now = 1_000_000.0
+    pacer.record_invite(now=now)
+    # Past the widest possible gap, no wait remains however the jitter falls.
+    assert pacer.seconds_until_next_send(now=now + 91.0) == 0.0
+
+
+def test_dms_and_invites_share_one_send_clock(tmp_path):
+    """LinkedIn sees one account: a DM must space the next invite and vice
+    versa, even though only invites decrement a cap (FR-NW-04)."""
+    pacer = _pacer(tmp_path)
+    now = 1_000_000.0
+    pacer.record_dm(now=now)
+    assert pacer.last_send_at() == now
+    assert pacer.seconds_until_next_send(now=now) > 0.0
+
+
+def test_spacing_survives_a_reload_so_batched_ops_cannot_bypass_it(tmp_path):
+    """A batch is dispatched as N separate one-shot `send` ops, each building a
+    fresh Pacer — so the gap has to come off the persisted ledger, not memory."""
+    first = _pacer(tmp_path)
+    now = 1_000_000.0
+    first.record_invite(now=now)
+    first.save(now=now)
+
+    second = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    assert second.last_send_at() == pytest.approx(now)
+    assert second.seconds_until_next_send(now=now) > 0.0
+
+
+def test_wait_before_send_sleeps_the_computed_gap(tmp_path):
+    pacer = _pacer(tmp_path)
+    now = 1_000_000.0
+    pacer.record_invite(now=now)
+    slept: list[float] = []
+    waited = pacer.wait_before_send(now=now, sleep=slept.append)
+    assert slept and slept[0] == waited
+    assert 30.0 <= waited <= 90.0
+
+
+def test_wait_before_send_does_not_sleep_when_no_gap_is_owed(tmp_path):
+    pacer = _pacer(tmp_path)
+    slept: list[float] = []
+    assert pacer.wait_before_send(now=1_000_000.0, sleep=slept.append) == 0.0
+    assert slept == []

@@ -31,6 +31,7 @@ from .. import documents as docstore
 from ..db import Database
 from ..db.base import now_utc
 from ..events import heartbeat_stream
+from ..lifecycle import CONTACT_SYNC_MIN_INTERVAL_MINUTES
 from ..logging_setup import get_logger
 from ..observability import reconfigure_observability
 from ..observability.config import observability_config
@@ -1513,6 +1514,11 @@ async def create_operation(
             status_code=422,
             detail="use POST /api/linkedin/search to run a logged-in LinkedIn job search",
         )
+    if kind == "contact_sync":
+        raise HTTPException(
+            status_code=422,
+            detail="use POST /api/networking/contact-sync to refresh contact statuses",
+        )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
     operation_id = runner.submit(kind, input_snapshot or {})
@@ -2016,6 +2022,54 @@ async def referrals_quota(request: Request) -> dto.QuotaDTO:
     )
 
 
+@router.post("/api/networking/contact-sync", status_code=202)
+async def networking_contact_sync(
+    request: Request, force: bool = False
+) -> dto.ContactSyncAccepted:
+    """Refresh LinkedIn contact statuses for the Networking kanban (US-NW-12 /
+    FR-NW-15) — **user-initiated only**.
+
+    This replaces the old 12 h `contact_sync` schedule, which touched LinkedIn
+    with nobody present (`docs/internal/linkedin-posture.md` §1). Two callers:
+
+    - the explicit **Sync** button, which passes `force=true` and always runs —
+      an on-demand refresh the user asked for, no more LinkedIn traffic than
+      them opening linkedin.com and looking at their invitations themselves;
+    - opening the **Networking** surface, which passes `force=false` and is
+      throttled to `CONTACT_SYNC_MIN_INTERVAL_MINUTES` so navigating back and
+      forth cannot turn into a request loop.
+
+    Already-running syncs are joined rather than duplicated, so a double click
+    or a remount mid-sync does not fan out.
+    """
+    with _db(request).repos() as repos:
+        _require_networking_enabled(repos)
+        session = repos.linkedin_session.get()
+        if session is None or session.status != "valid":
+            raise HTTPException(
+                status_code=409,
+                detail="No valid LinkedIn session — connect in Settings first.",
+            )
+        in_flight = repos.operations.any_in_flight("contact_sync")
+        last = repos.operations.latest_by_kind("contact_sync")
+
+    if in_flight:
+        return dto.ContactSyncAccepted(state="already_running", throttled=False)
+
+    if not force and last is not None:
+        min_gap = timedelta(minutes=CONTACT_SYNC_MIN_INTERVAL_MINUTES)
+        next_eligible = last.created_at + min_gap
+        if next_eligible > now_utc():
+            # Not an error: the kanban the user is looking at was refreshed
+            # recently enough. The Sync button is right there if they disagree.
+            return dto.ContactSyncAccepted(
+                state="throttled", throttled=True, next_eligible_at=next_eligible
+            )
+
+    operation_id = _runner(request).submit("contact_sync", {})
+    return dto.ContactSyncAccepted(id=operation_id, state="queued", throttled=False)
+
+
 @router.get("/api/linkedin/session")
 async def linkedin_session(request: Request) -> dto.LinkedInSessionDTO:
     """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
@@ -2207,6 +2261,21 @@ async def linkedin_set_tier(
 def _require_dev_mode() -> None:
     if os.environ.get("FYJ_DEV") != "1":
         raise HTTPException(status_code=404, detail="Not Found")
+
+
+@router.post("/api/dev/linkedin/mark-session-valid")
+async def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
+    """Mark the LinkedIn session row `valid` **without** a real login, so the
+    session-gated UI (the Networking Sync button) can be rendered and screenshot
+    in e2e. Writes no cookies and no storage-state file, so any action that
+    actually reaches LinkedIn still fails on auth — e2e asserts the control
+    renders and never clicks it, the same discipline `networking.spec.ts`
+    already uses for the reach-out popup."""
+    _require_dev_mode()
+    with _db(request).repos() as repos:
+        repos.linkedin_session.get_or_create()
+        repos.linkedin_session.update(status="valid", connected_as="Dev Session")
+    return {"ok": True, "status": "valid"}
 
 
 @router.post("/api/dev/linkedin/expire-cookie")

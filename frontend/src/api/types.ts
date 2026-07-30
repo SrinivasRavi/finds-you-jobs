@@ -504,6 +504,18 @@ export interface LinkedInSessionState {
   paused_reason: string;
 }
 
+/** Result of a user-initiated contact-status refresh (FR-NW-15).
+ *  `queued` — a sync started. `already_running` — joined the one in flight.
+ *  `throttled` — the opportunistic on-open refresh declined because the last
+ *  sync was too recent; `nextEligibleAt` says when it would run, and the Sync
+ *  button ignores it. There is no scheduled sync. */
+export interface ContactSyncResult {
+  id: string | null;
+  state: "queued" | "already_running" | "throttled";
+  throttled: boolean;
+  nextEligibleAt: string | null;
+}
+
 /** Manual add-a-contact input (US-NW-02). */
 export interface ContactInput {
   linkedin_url: string;

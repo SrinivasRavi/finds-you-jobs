@@ -8,6 +8,11 @@ const networking = {
     title: "Read-only — connect/enable LinkedIn from Settings",
   },
   addByUrl: "Add a contact by URL",
+  sync: {
+    label: "Sync",
+    busy: "Syncing…",
+    title: "Check LinkedIn for status changes on your contacts. Runs only when you ask — nothing syncs in the background.",
+  },
   connectionCount_one: "{{count}} connection",
   connectionCount_other: "{{count}} connections",
   degreeSummary: "{{first}} 1st · {{second}} 2nd",

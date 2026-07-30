@@ -899,6 +899,22 @@ class OperationAccepted(BaseModel):
     state: str
 
 
+class ContactSyncAccepted(BaseModel):
+    """Result of a user-initiated contact-status refresh (FR-NW-15).
+
+    `state` is `queued` (a sync started), `already_running` (joined the one in
+    flight), or `throttled` (the opportunistic surface-open refresh declined
+    because the last sync was too recent — `next_eligible_at` says when it would
+    run, and the explicit Sync button ignores it). `id` is set only for `queued`.
+    """
+
+    id: str | None = None
+    kind: str = "contact_sync"
+    state: str
+    throttled: bool = False
+    next_eligible_at: datetime | None = None
+
+
 class CostTotalsDTO(BaseModel):
     """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
 

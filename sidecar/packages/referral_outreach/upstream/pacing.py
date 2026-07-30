@@ -240,3 +240,40 @@ class Pacer:
 
     def record_dm(self, now: float | None = None) -> None:
         self.state.dms.append(time.time() if now is None else now)
+
+    # --- inter-send spacing (NFR-LI-01) ---
+    def last_send_at(self) -> float:
+        """Epoch seconds of the most recent outbound action of ANY kind, 0 if none.
+        Invites and DMs share one clock: LinkedIn sees one account, so spacing
+        must span both even though only invites decrement a cap."""
+        return max(
+            self.state.invites[-1] if self.state.invites else 0.0,
+            self.state.dms[-1] if self.state.dms else 0.0,
+        )
+
+    def seconds_until_next_send(self, now: float | None = None) -> float:
+        """How long the caller MUST sleep before the next send, 0 if enough time
+        has already elapsed.
+
+        This is the enforcement half of `send_delay_seconds()`, which for a long
+        time was only ever *reported* as a `delay_hint_s` field that nothing slept
+        on — so batched sends went out back-to-back at machine pace. The gap is
+        re-jittered on every call so a batch never settles into a fixed rhythm,
+        and it is derived from the persisted ledger rather than in-process state,
+        so it holds across the separate one-shot `send` operations the runner
+        dispatches for a batch.
+        """
+        now = time.time() if now is None else now
+        last = self.last_send_at()
+        if last <= 0.0:
+            return 0.0  # first send of this account's life — nothing to space from
+        return max(0.0, (last + send_delay_seconds()) - now)
+
+    def wait_before_send(self, now: float | None = None, *, sleep=time.sleep) -> float:
+        """Block for `seconds_until_next_send()` and return what was actually
+        slept. Safe to call from an operation thread (the runner's
+        ThreadPoolExecutor) — never from the event loop."""
+        wait = self.seconds_until_next_send(now)
+        if wait > 0:
+            sleep(wait)
+        return wait

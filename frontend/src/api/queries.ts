@@ -886,6 +886,23 @@ export function useResumeLinkedIn() {
   return useLinkedInSessionMutation(() => api.resumeLinkedIn());
 }
 
+/** Refresh contact statuses from LinkedIn (FR-NW-15). Pass `true` for the Sync
+ *  button (always runs); `false`/omitted is the opportunistic refresh the
+ *  Networking surface fires on open, which the sidecar throttles. Replaces the
+ *  retired 12 h schedule — no LinkedIn traffic happens without a user present
+ *  (`docs/internal/linkedin-posture.md` §1). */
+export function useSyncContacts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (force?: boolean) => Promise.resolve(api.syncContacts(Boolean(force))),
+    onSuccess: (result) => {
+      // A throttled call did no work, so there is nothing to refetch.
+      if (result.state === "throttled") return;
+      qc.invalidateQueries({ queryKey: qk.contacts });
+    },
+  });
+}
+
 export function useSetLinkedInTier() {
   const qc = useQueryClient();
   return useMutation({

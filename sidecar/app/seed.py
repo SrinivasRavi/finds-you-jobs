@@ -78,16 +78,22 @@ def seed_defaults(db: Database) -> None:
                 "cleanup_trash", 1440,
                 next_due_at=now_utc() + timedelta(days=1), enabled=True,
             )
-        # US-NW-12 / FR-NW-15: periodic LinkedIn contact-status sync. Seeded
-        # **enabled** but the entrypoint no-ops cleanly when Referral Outreach is
-        # OFF or the session is disconnected (zero LinkedIn traffic until the user
-        # opts in), so it's safe on by default. Modest 12 h cadence (720 min);
-        # user-adjustable in Settings → Contact & data lifecycle. First run 1 h out.
-        if "contact_sync" not in existing:
-            from .lifecycle import LIFECYCLE_DEFAULTS
-
-            repos.schedules.create(
-                "contact_sync",
-                LIFECYCLE_DEFAULTS["contact_sync_cadence_hours"] * 60,
-                next_due_at=now_utc() + timedelta(hours=1), enabled=True,
-            )
+        # US-NW-12 / FR-NW-15: contact-status sync is NO LONGER SCHEDULED.
+        #
+        # It used to be seeded **enabled** on a 12 h cadence, on the reasoning
+        # that the entrypoint no-ops while Referral Outreach is off. That gate is
+        # real, but once a user opts in it made the app touch LinkedIn on a timer
+        # with nobody present — an unattended background daemon against LinkedIn,
+        # which is the single hardest thing to defend and the one fact that broke
+        # the "every LinkedIn action is user-initiated" claim
+        # (`docs/internal/linkedin-posture.md` §1, maintainer directive
+        # 2026-07-30). Refreshing is now something the user asks for: an explicit
+        # Sync button, plus an opportunistic refresh when they open the Networking
+        # surface (throttled — see CONTACT_SYNC_MIN_INTERVAL_MINUTES).
+        #
+        # Existing installs carry an enabled row from before this change, so
+        # retire it here rather than leaving a timer running after an update.
+        stale_sync = next((s for s in repos.schedules.list_all() if s.kind == "contact_sync"), None)
+        if stale_sync is not None and stale_sync.enabled:
+            repos.schedules.update(stale_sync.id, enabled=False)
+            get_logger().info("seed: retired the scheduled contact_sync (user-initiated only now)")

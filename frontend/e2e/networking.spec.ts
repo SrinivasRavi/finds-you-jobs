@@ -156,3 +156,55 @@ test("tracker referrals slot opens the find-referrals popup", async ({
   ).toBeVisible();
   await page.screenshot({ path: `${DIR}/referrals-popup-start.png`, fullPage: true });
 });
+
+// FR-NW-15 / posture §1: contact_sync is user-initiated only — the 12 h
+// schedule that touched LinkedIn with nobody present is gone. Two things to
+// verify visually: the Sync control is ABSENT until the feature is actually
+// usable (toggle on AND a live session), and PRESENT once it is.
+//
+// ZERO live LinkedIn: the session is marked valid through the FYJ_DEV-only
+// route, which writes no cookies. The test never CLICKS Sync — same discipline
+// this file already uses for the reach-out popup, so no contact_sync op ever
+// enqueues and no browser is ever launched at linkedin.com.
+
+test("Sync is gated on a live session and never runs on a timer", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: true },
+  });
+
+  // No scheduled contact_sync exists at all — this is the regression that
+  // matters most, because a timer is what broke "no LinkedIn traffic without a
+  // user present".
+  const schedules = await (await request.get(`${base}/api/schedules`, { headers: auth })).json();
+  expect(schedules.map((s: { kind: string }) => s.kind)).not.toContain("contact_sync");
+
+  // Toggle on but no session → the control must not be offered.
+  await page.goto("/networking");
+  await expect(page.getByTestId("networking-kanban")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("sync-contacts-btn")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/sync-absent-no-session.png`, fullPage: true });
+
+  // Now a live session → the control appears.
+  const marked = await request.post(`${base}/api/dev/linkedin/mark-session-valid`, {
+    headers: auth,
+  });
+  expect(marked.ok()).toBeTruthy();
+
+  await page.goto("/networking");
+  await expect(page.getByTestId("networking-kanban")).toBeVisible({ timeout: 15_000 });
+  const sync = page.getByTestId("sync-contacts-btn");
+  await expect(sync).toBeVisible();
+  await expect(sync).toBeEnabled();
+  await page.screenshot({ path: `${DIR}/sync-present-with-session.png`, fullPage: true });
+});

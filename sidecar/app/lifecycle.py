@@ -34,6 +34,13 @@ LIFECYCLE_DEFAULTS: dict[str, int] = {
     "contact_sync_cadence_hours": 12,
 }
 
+# Contact sync is user-initiated only (no scheduled LinkedIn traffic — see
+# `seed.py` and `docs/internal/linkedin-posture.md` §1). Opening the Networking
+# surface may trigger an opportunistic refresh, but no more often than this. The
+# explicit Sync button bypasses it: an on-demand refresh is the user asking, and
+# is no more traffic than them opening linkedin.com themselves.
+CONTACT_SYNC_MIN_INTERVAL_MINUTES = 15
+
 # How recently a MANUAL kanban drag protects a contact from being auto-overridden
 # (manual-wins). Not surfaced in the UI — a fixed guard so auto never immediately
 # fights a fresh manual move (US-NW-12 acceptance). Days.

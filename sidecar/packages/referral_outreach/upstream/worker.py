@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .errors import RateLimited, ReachedConnectionLimit, VoyagerError
 from .url_utils import url_to_public_id
-from .pacing import Pacer, resolve_tier, send_delay_seconds
+from .pacing import Pacer, resolve_tier
 
 logger = logging.getLogger("voyager_py.worker")
 
@@ -285,6 +285,13 @@ def send_connection(
             "reason": reason, "quota": pacer.remaining(),
         }
 
+    # Space this send from the previous one (NFR-LI-01). Runs AFTER the cap check
+    # so a refused send never sleeps, and BEFORE the browser launch so the pause
+    # is real wall-clock silence rather than a gap between two page loads. The
+    # runner dispatches a batch as N separate single-flight `send` ops, so this
+    # is what keeps a batch from going out at machine pace.
+    waited_s = pacer.wait_before_send()
+
     from .actions import send_connection_request
     from .session import AccountSession
 
@@ -307,7 +314,10 @@ def send_connection(
         return {
             "op": "send-connection", "ok": True, "sent": True,
             "public_identifier": public_identifier, "status": status,
-            "delay_hint_s": round(send_delay_seconds(), 1), "quota": pacer.remaining(),
+            # What we ACTUALLY slept before this send. Was `delay_hint_s` — a
+            # re-jittered number nothing consumed, which made the pacing look
+            # implemented when it was not.
+            "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
         }
     finally:
         session.close()
@@ -348,6 +358,10 @@ def send_dm(
             "reason": reason, "quota": pacer.remaining(),
         }
 
+    # Same inter-send spacing as the invite path — one account, one clock
+    # (NFR-LI-01). DMs are uncapped but they are still outbound traffic.
+    waited_s = pacer.wait_before_send()
+
     from .actions import send_dm as _send_dm
     from .session import AccountSession
 
@@ -361,7 +375,8 @@ def send_dm(
             pacer.save()
         return {
             "op": "send-dm", "ok": bool(sent), "sent": bool(sent),
-            "public_identifier": public_identifier, "quota": pacer.remaining(),
+            "public_identifier": public_identifier,
+            "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
         }
     except RateLimited as e:
         deadline = pacer.pause_for_backoff(str(e))

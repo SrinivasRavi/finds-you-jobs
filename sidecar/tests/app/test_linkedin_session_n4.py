@@ -381,3 +381,70 @@ def test_linkedin_search_dedups_against_existing_guest_row(search_client) -> Non
     scan = op["result_ref"]["scan"]
     assert scan["deduped"] == 1
     assert scan["persisted"] == 1
+
+
+# --- user-initiated contact sync (FR-NW-15) --------------------------------
+# contact_sync used to be a 12 h schedule that touched LinkedIn with nobody
+# present. It is now user-initiated only: an explicit Sync button (force=true)
+# plus a throttled opportunistic refresh when the Networking surface opens.
+# See `docs/internal/linkedin-posture.md` §1.
+
+
+def test_contact_sync_is_not_a_seeded_schedule(app_client) -> None:
+    _app, client = app_client
+    kinds = {s["kind"] for s in client.get("/api/schedules", headers=AUTH).json()}
+    assert "contact_sync" not in kinds
+
+
+def test_contact_sync_cannot_be_enqueued_generically(app_client) -> None:
+    """The generic enqueue route must not be a way around the consent gate and
+    the throttle — it previously accepted `contact_sync` ungated."""
+    _app, client = app_client
+    resp = client.post("/api/operations/contact_sync", headers=AUTH, json={})
+    assert resp.status_code == 422
+    assert "/api/networking/contact-sync" in resp.json()["detail"]
+
+
+def test_contact_sync_requires_the_master_toggle(app_client) -> None:
+    _app, client = app_client
+    resp = client.post("/api/networking/contact-sync", headers=AUTH)
+    assert resp.status_code == 403
+
+
+def test_contact_sync_requires_a_valid_session(app_client) -> None:
+    _app, client = app_client
+    _enable_networking(client)
+    resp = client.post("/api/networking/contact-sync", headers=AUTH)
+    assert resp.status_code == 409
+
+
+def test_contact_sync_runs_when_enabled_and_connected(app_client) -> None:
+    _app, client = app_client
+    _connect(_app, client)
+    resp = client.post("/api/networking/contact-sync", headers=AUTH)
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["state"] == "queued"
+    assert body["throttled"] is False
+    assert body["id"]
+
+
+def test_opportunistic_refresh_is_throttled_but_the_button_is_not(app_client) -> None:
+    _app, client = app_client
+    _connect(_app, client)
+    first = client.post("/api/networking/contact-sync", headers=AUTH).json()
+    wait_for_state(_app.state.db, first["id"], "succeeded")
+
+    # Surface re-open (force absent → false): declined, with a next-eligible time.
+    throttled = client.post("/api/networking/contact-sync", headers=AUTH).json()
+    assert throttled["state"] == "throttled"
+    assert throttled["throttled"] is True
+    assert throttled["next_eligible_at"]
+    assert throttled["id"] is None
+
+    # The user pressing Sync overrides the throttle — they asked for it.
+    forced = client.post(
+        "/api/networking/contact-sync?force=true", headers=AUTH
+    ).json()
+    assert forced["state"] == "queued"
+    assert forced["id"]

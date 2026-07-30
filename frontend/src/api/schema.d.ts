@@ -965,6 +965,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/networking/contact-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Networking Contact Sync
+         * @description Refresh LinkedIn contact statuses for the Networking kanban (US-NW-12 /
+         *     FR-NW-15) — **user-initiated only**.
+         *
+         *     This replaces the old 12 h `contact_sync` schedule, which touched LinkedIn
+         *     with nobody present (`docs/internal/linkedin-posture.md` §1). Two callers:
+         *
+         *     - the explicit **Sync** button, which passes `force=true` and always runs —
+         *       an on-demand refresh the user asked for, no more LinkedIn traffic than
+         *       them opening linkedin.com and looking at their invitations themselves;
+         *     - opening the **Networking** surface, which passes `force=false` and is
+         *       throttled to `CONTACT_SYNC_MIN_INTERVAL_MINUTES` so navigating back and
+         *       forth cannot turn into a request loop.
+         *
+         *     Already-running syncs are joined rather than duplicated, so a double click
+         *     or a remount mid-sync does not fan out.
+         */
+        post: operations["networking_contact_sync_api_networking_contact_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/linkedin/session": {
         parameters: {
             query?: never;
@@ -1138,6 +1172,31 @@ export interface paths {
          *     voyager owns the cap *values*; this is only the user's tier selection.
          */
         post: operations["linkedin_set_tier_api_linkedin_tier_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/linkedin/mark-session-valid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Mark Linkedin Session Valid
+         * @description Mark the LinkedIn session row `valid` **without** a real login, so the
+         *     session-gated UI (the Networking Sync button) can be rendered and screenshot
+         *     in e2e. Writes no cookies and no storage-state file, so any action that
+         *     actually reaches LinkedIn still fails on auth — e2e asserts the control
+         *     renders and never clicks it, the same discipline `networking.spec.ts`
+         *     already uses for the reach-out popup.
+         */
+        post: operations["dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2114,6 +2173,33 @@ export interface components {
             last_message?: string | null;
             /** Last Message At */
             last_message_at?: string | null;
+        };
+        /**
+         * ContactSyncAccepted
+         * @description Result of a user-initiated contact-status refresh (FR-NW-15).
+         *
+         *     `state` is `queued` (a sync started), `already_running` (joined the one in
+         *     flight), or `throttled` (the opportunistic surface-open refresh declined
+         *     because the last sync was too recent — `next_eligible_at` says when it would
+         *     run, and the explicit Sync button ignores it). `id` is set only for `queued`.
+         */
+        ContactSyncAccepted: {
+            /** Id */
+            id?: string | null;
+            /**
+             * Kind
+             * @default contact_sync
+             */
+            kind: string;
+            /** State */
+            state: string;
+            /**
+             * Throttled
+             * @default false
+             */
+            throttled: boolean;
+            /** Next Eligible At */
+            next_eligible_at?: string | null;
         };
         /**
          * ContactUpdate
@@ -4835,6 +4921,37 @@ export interface operations {
             };
         };
     };
+    networking_contact_sync_api_networking_contact_sync_post: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactSyncAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     linkedin_session_api_linkedin_session_get: {
         parameters: {
             query?: never;
@@ -5032,6 +5149,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
