@@ -20,6 +20,7 @@ from ..db.models import (
     EngineSettings,
     Job,
     JobScore,
+    LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
     Operation,
@@ -750,24 +751,75 @@ class QuotaDTO(BaseModel):
     dm_weekly_limit: int = 0
 
 
+class LinkedInSearchCursorDTO(BaseModel):
+    """Fresh-search pagination state for "Scan LinkedIn jobs" (Fresh search /
+    Next page). `next_page_available` is the one flag the UI gates the
+    Next-page button on; the rest explains why it is what it is. The TTL is a
+    host freshness policy (result coherence) — LinkedIn's own pagination is
+    stateless and never expires."""
+
+    fresh_at: datetime
+    expires_at: datetime          # fresh_at + SEARCH_CURSOR_TTL
+    expired: bool
+    exhausted: bool               # every snapshotted query hit end-of-results
+    pages_fetched: int            # deepest page pulled so far (display only)
+    next_page_available: bool     # not expired and not exhausted
+
+
+class LinkedInCapDTO(BaseModel):
+    """One self-imposed cap the user can override. `effective` is the enforced
+    number (an override, or ceiling × risk%); `ceiling` is the estimated
+    LinkedIn limit (the 100% reference); `overridden` says whether `effective`
+    is a manual pin. `key` is the `{meter}_{window}` wire id."""
+
+    key: str
+    meter: str
+    window: str
+    label: str
+    effective: int
+    ceiling: int
+    overridden: bool
+
+
+class LinkedInRateLimitsDTO(BaseModel):
+    """The self-imposed LinkedIn rate-limit profile (maintainer directive
+    2026-08-01). Membership picks the estimated ceilings; `risk_pct` (10–100)
+    scales them (100% = sitting at the estimated real limit); each cap is
+    independently overridable. `job_search_hour_*` is the live pages/hour budget
+    the Next-page button gates on."""
+
+    membership_type: str
+    risk_pct: int
+    memberships: list[str]
+    caps: list[LinkedInCapDTO]
+    job_search_hour_cap: int
+    job_search_hour_used: int
+    job_search_hour_remaining: int
+
+
 class LinkedInSessionDTO(BaseModel):
     """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
 
     `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
     `status` is the session validity. The popup send path unlocks only when
     enabled AND status == 'valid'. N4 adds the session-capture metadata the
-    Settings → LinkedIn session UI renders (connected-as, expiry, backoff)."""
+    Settings → LinkedIn session UI renders (connected-as, expiry, backoff);
+    `search_cursor` (2026-08-01) is the job-search pagination state — None
+    until a Fresh search has run; `rate_limits` is the self-imposed
+    membership/risk/override profile."""
 
     enabled: bool
     status: str        # valid | expired | never_set | connecting | backing_off
-    account_tier: str  # new | seasoned  ("recovering" is reserved for the
-                       # restriction ladder — not user-selectable yet)
-    linkedin_plan: str = "free"  # free | premium — conditions the notes budget
+    account_tier: str  # legacy; superseded by rate_limits.membership_type (kept
+                       # for back-compat until the frontend fully migrates)
+    linkedin_plan: str = "free"  # legacy; derived from membership now
     connected_as: str = ""
     li_at_expires_at: datetime | None = None
     last_validated_at: datetime | None = None
     paused_until: datetime | None = None
     paused_reason: str = ""
+    search_cursor: LinkedInSearchCursorDTO | None = None
+    rate_limits: LinkedInRateLimitsDTO | None = None
 
 
 class LinkedInConnectRequest(BaseModel):
@@ -782,17 +834,26 @@ class LinkedInConnectRequest(BaseModel):
 class LinkedInSearchRequest(BaseModel):
     """One-shot logged-in job search (discovery-expansion #6). `limit` is the
     per-query fetch budget (rows per role-alias × location pair); the route
-    clamps it to a safe range. Omitted → the server default."""
+    clamps it to a safe range. Omitted → the server default. `mode` picks the
+    button: `fresh` runs page 0 from current prefs and resets the pagination
+    cursor; `next` continues the last Fresh search's snapshot (409 when there
+    is none, it expired, or it is exhausted)."""
 
     limit: int | None = None
+    mode: Literal["fresh", "next"] = "fresh"
 
 
-class LinkedInTierRequest(BaseModel):
-    """Set the account-tier and/or plan the app passes to the outreach package
-    (US-REF-08). Both optional — only the provided field changes."""
+class LinkedInRateLimitsRequest(BaseModel):
+    """Set the self-imposed rate-limit profile (2026-08-01). Provide the basis
+    (`membership_type` and/or `risk_pct`) — which resets overrides — OR pin one
+    cap via `override_key`/`override_value`, OR `reset_overrides`. The route
+    rejects a request that provides none of these."""
 
-    account_tier: str | None = None  # new | seasoned
-    linkedin_plan: str | None = None  # free | premium (notes budget condition)
+    membership_type: str | None = None  # free | premium | sales_navigator | recruiter_lite
+    risk_pct: int | None = None          # 10–100 (clamped)
+    override_key: str | None = None      # "{meter}_{window}", e.g. "invites_week"
+    override_value: int | None = None    # absolute pin, >= 0
+    reset_overrides: bool = False
 
 
 class PromptDTO(BaseModel):
@@ -1191,19 +1252,17 @@ def referral_candidate_dto(
 
 
 def quota_dto(
-    *, connected: bool, tier: str, daily_used: int, weekly_used: int,
+    *, connected: bool, profile: Any, daily_used: int, weekly_used: int,
     dm_daily_sent: int = 0, dm_weekly_sent: int = 0,
 ) -> QuotaDTO:
-    """Caps come from the outreach package's OWN tier table — the app-side
-    duplicate (`_TIER_CAPS`) is gone: it had drifted to 2-3× the enforced values,
-    so the popup gated batches the send path then refused (posture doc §4 #7).
-    The used-counters stay app-derived (OutreachLog windows)."""
-    from sidecar.packages.referral_outreach import TIERS, resolve_tier
+    """Caps come from the outreach package's resolved profile (membership × risk%
+    × overrides) — the app-side duplicate (`_TIER_CAPS`) is gone: it had drifted
+    to 2-3× the enforced values, so the popup gated batches the send path then
+    refused (posture doc §4 #7). `profile` is a `PacingProfile`; the effective
+    caps are computed HERE via the package. Used-counters stay app-derived."""
+    from sidecar.packages.referral_outreach import resolve_profile
 
-    try:
-        t = resolve_tier(tier)
-    except ValueError:
-        t = TIERS["new"]
+    t = resolve_profile(profile)
     return QuotaDTO(
         connected=connected, tier=t.name,
         daily_used=daily_used, daily_limit=t.invites.day or 0,
@@ -1213,11 +1272,56 @@ def quota_dto(
     )
 
 
+def linkedin_search_cursor_dto(
+    cursor: LinkedInSearchCursor | None,
+) -> LinkedInSearchCursorDTO | None:
+    """Cursor row → wire state, None while no Fresh search has ever run."""
+    if cursor is None or cursor.fresh_at is None or not cursor.queries:
+        return None
+    from datetime import UTC, datetime
+
+    from ..registry.linkedin_op import SEARCH_CURSOR_TTL
+
+    entries = list(cursor.queries)
+    expires_at = cursor.fresh_at + SEARCH_CURSOR_TTL
+    expired = datetime.now(UTC) > expires_at
+    exhausted = all(bool(e.get("exhausted")) for e in entries)
+    pages = max((int(e.get("next_start", 0)) for e in entries), default=0) // 25
+    return LinkedInSearchCursorDTO(
+        fresh_at=cursor.fresh_at,
+        expires_at=expires_at,
+        expired=expired,
+        exhausted=exhausted,
+        pages_fetched=pages,
+        next_page_available=not expired and not exhausted,
+    )
+
+
+def _rate_limits_dto(snapshot: dict | None) -> LinkedInRateLimitsDTO | None:
+    if snapshot is None:
+        return None
+    return LinkedInRateLimitsDTO(
+        membership_type=snapshot["membership_type"],
+        risk_pct=snapshot["risk_pct"],
+        memberships=list(snapshot["memberships"]),
+        caps=[LinkedInCapDTO(**c) for c in snapshot["caps"]],
+        job_search_hour_cap=snapshot["job_search_hour_cap"],
+        job_search_hour_used=snapshot["job_search_hour_used"],
+        job_search_hour_remaining=snapshot["job_search_hour_remaining"],
+    )
+
+
 def linkedin_session_dto(
-    session: LinkedInSession | None, *, enabled: bool
+    session: LinkedInSession | None, *, enabled: bool,
+    cursor: LinkedInSearchCursor | None = None,
+    rate_limits: dict | None = None,
 ) -> LinkedInSessionDTO:
     if session is None:
-        return LinkedInSessionDTO(enabled=enabled, status="never_set", account_tier="new")
+        return LinkedInSessionDTO(
+            enabled=enabled, status="never_set", account_tier="new",
+            search_cursor=linkedin_search_cursor_dto(cursor),
+            rate_limits=_rate_limits_dto(rate_limits),
+        )
     return LinkedInSessionDTO(
         enabled=enabled,
         status=session.status,
@@ -1228,6 +1332,8 @@ def linkedin_session_dto(
         last_validated_at=session.last_validated_at,
         paused_until=session.paused_until,
         paused_reason=session.paused_reason,
+        search_cursor=linkedin_search_cursor_dto(cursor),
+        rate_limits=_rate_limits_dto(rate_limits),
     )
 
 

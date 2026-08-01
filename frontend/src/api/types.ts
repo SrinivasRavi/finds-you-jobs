@@ -491,6 +491,45 @@ export interface ReferralQuota {
   dm_weekly_limit: number;
 }
 
+/** Fresh-search pagination state for "Scan LinkedIn jobs". The Next-page
+ *  button gates on `next_page_available`; the rest explains why. The 12 h TTL
+ *  is a host freshness policy (result coherence) — LinkedIn's own pagination
+ *  is stateless and never expires. */
+export interface LinkedInSearchCursorState {
+  fresh_at: string;
+  expires_at: string;
+  expired: boolean;
+  exhausted: boolean;
+  pages_fetched: number;
+  next_page_available: boolean;
+}
+
+/** One self-imposed cap the user can override. `effective` is the enforced
+ *  number (override, or ceiling × risk%); `ceiling` is the estimated LinkedIn
+ *  limit (100% reference); `overridden` flags a manual pin. */
+export interface LinkedInCap {
+  key: string;
+  meter: string;
+  window: string;
+  label: string;
+  effective: number;
+  ceiling: number;
+  overridden: boolean;
+}
+
+/** The self-imposed LinkedIn rate-limit profile (2026-08-01): membership picks
+ *  the estimated ceilings, `risk_pct` (10–100) scales them (100% = at the
+ *  estimated real limit), each cap independently overridable. */
+export interface LinkedInRateLimitsState {
+  membership_type: string;
+  risk_pct: number;
+  memberships: string[];
+  caps: LinkedInCap[];
+  job_search_hour_cap: number;
+  job_search_hour_used: number;
+  job_search_hour_remaining: number;
+}
+
 /** LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
  *  The send path unlocks only when `enabled` AND `status === "valid"`. The
  *  connect/enable controls live in Settings (not built on this repo yet —
@@ -498,15 +537,19 @@ export interface ReferralQuota {
 export interface LinkedInSessionState {
   enabled: boolean;
   status: "valid" | "expired" | "never_set" | "connecting" | "backing_off";
+  /** Legacy; superseded by rate_limits.membership_type. */
   account_tier: "new" | "seasoned";
-  /** free | premium — conditions the outreach package's personalized-note
-   *  budget (the ~5/month allowance exists only on free accounts). */
+  /** Legacy; derived from membership now (free vs paid). */
   linkedin_plan: "free" | "premium";
   connected_as: string;
   li_at_expires_at: string | null;
   last_validated_at: string | null;
   paused_until: string | null;
   paused_reason: string;
+  /** null until a Fresh search has ever run. */
+  search_cursor: LinkedInSearchCursorState | null;
+  /** The self-imposed rate-limit profile (membership × risk% × overrides). */
+  rate_limits: LinkedInRateLimitsState | null;
 }
 
 /** Result of a user-initiated contact-status refresh (FR-NW-15).
@@ -850,6 +893,7 @@ export interface Settings {
   lifecycle: {
     engagement_ghosted_days: number;
     sent_ghosted_days: number;
+    expire_listing_days: number;
     contact_purge_days: number;
     trashed_jobs_purge_days: number;
     archived_applications_purge_days: number;

@@ -784,12 +784,53 @@ const it: DeepPartial<Messages> = {
       runNow:
         "Esegui subito una ricerca con i ruoli e le località salvati — i risultati arrivano nel tuo feed Scopri offerte.",
       searching: "Ricerca in corso…",
-      searchBtn: "Cerca offerte LinkedIn",
+      freshBtn: "Nuova ricerca",
+      nextBtn: "Pagina successiva",
+      nextHint: "Continua l'ultima ricerca da dove si era fermata — i prossimi 25 risultati per ruolo × località.",
+      nextInfo:
+        "«Pagina successiva» riesegue l'ultima nuova ricerca con esattamente gli stessi ruoli e località all'offset successivo — modificare le preferenze nel frattempo non la cambia (per quello serve una nuova ricerca). È disponibile per 12 ore dopo una nuova ricerca, poi scompare: LinkedIn riordina i risultati di continuo, quindi un offset vecchio punterebbe a una lista spostata. LinkedIn non ha alcun timeout di paginazione — la finestra è una nostra regola di freschezza. Scompare anche quando i risultati di LinkedIn si esauriscono.",
       resultsPerSearch: "Risultati per ricerca",
       resultsPerSearchInfo:
         "Quante offerte prelevare per ruolo × località, in pagine da 25. Più alto significa più risultati — ma più richieste lanciate in un'unica raffica sul <strong>tuo</strong> account LinkedIn, il che aumenta il rischio di rate limit e per l'account. Mantienilo contenuto.",
       started: "Ricerca avviata — le nuove corrispondenze appariranno a breve in Scopri offerte.",
       failed: "Ricerca non riuscita.",
+      scanning: "Scansione di LinkedIn…",
+      hourlyReached:
+        "Limite orario di ricerca offerte raggiunto — si azzera entro l'ora, oppure aumentalo in “Limiti di frequenza auto-imposti su LinkedIn”.",
+    },
+    rateLimits: {
+      title: "Limiti di frequenza auto-imposti su LinkedIn",
+      intro:
+        "Quanto duramente finds-you-jobs si autolimita rispetto a LinkedIn. Scegli il tuo tipo di abbonamento, poi imposta quanto vuoi avvicinarti ai limiti stimati di LinkedIn.",
+      info:
+        "Questi limiti sono NOSTRI — LinkedIn pubblica quasi nessuno dei suoi limiti reali, quindi ogni soglia qui è una stima. Il tuo abbonamento imposta i tetti stimati; il cursore del rischio li scala; e puoi sovrascrivere qualsiasi singolo limite. Il codice di outreach applica esattamente questi numeri.",
+      membershipLabel: "Abbonamento LinkedIn",
+      membershipHint: "Imposta i tetti stimati per azione da cui scaliamo.",
+      membership: {
+        free: "Gratuito (Base)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Propensione al rischio",
+      riskWarn:
+        "Al 100%, ogni limite corrisponde alla nostra migliore stima del limite effettivo di LinkedIn per il tuo abbonamento. LinkedIn non pubblica questi numeri, quindi sono stime — più affidabili per un account in regola. Un valore più basso lascia un maggiore margine di sicurezza; nulla qui può garantire che il tuo account non venga limitato.",
+      capsLabel: "Limiti individuali",
+      capsInfo:
+        "Ogni limite parte dal tetto dell'abbonamento × rischio%. Digita un numero per fissarlo. Cambiare l'abbonamento o il cursore del rischio riporta ogni limite fissato al valore predefinito calcolato.",
+      cap: {
+        invites_day: "Richieste di collegamento / giorno",
+        invites_week: "Richieste di collegamento / settimana",
+        dms_day: "Messaggi diretti / giorno",
+        dms_week: "Messaggi diretti / settimana",
+        profile_views_day: "Visualizzazioni di profilo / giorno",
+        searches_month: "Ricerche di persone / mese",
+        notes_month: "Note di invito / mese",
+        job_search_pages_hour: "Pagine di ricerca offerte / ora (25 offerte ciascuna)",
+      },
+      ofCeiling: "Max: ~{{ceiling}}",
+      custom: "personalizzato",
+      resetBtn: "Ripristina i valori predefiniti",
     },
     session: {
       title: "Sessione LinkedIn",
@@ -857,6 +898,9 @@ const it: DeepPartial<Messages> = {
         "Una richiesta di collegamento mai accettata (o accettata ma rimasta senza risposta) da questo numero di giorni.",
       contactPurgeLabel: "Cancella definitivamente i contatti eliminati dopo",
       contactPurgeHint: "I contatti eliminati vengono cancellati definitivamente dopo questo numero di giorni.",
+      expireListingLabel: "Segna un'offerta di lavoro come “Più vecchia” dopo",
+      expireListingHint:
+        "Un'offerta che non rivediamo in una scansione da questo numero di giorni viene resa in grigio come “offerta più vecchia” — resta comunque nella bacheca e puoi ripristinarla.",
       trashedJobsLabel: "Cancella definitivamente le offerte eliminate dopo",
       trashedJobsHint:
         "Le offerte eliminate vengono cancellate definitivamente (e non verranno più recuperate dallo scraping) dopo questo numero di giorni.",

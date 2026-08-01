@@ -222,11 +222,13 @@ export function useDeleteDiscoveryCredential() {
   });
 }
 /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Invalidates
- *  the feed on success so the newly-found rows appear. */
+ *  the feed on success so the newly-found rows appear; the session query (which
+ *  carries the pagination cursor for the Next-page button) repaints via the
+ *  op's `linkedin` SSE events. `mode: "next"` continues the last Fresh search. */
 export function useLinkedinSearch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (limit?: number) => api.linkedinSearch(limit),
+    mutationFn: (mode: "fresh" | "next" = "fresh") => api.linkedinSearch(mode),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.jobs });
       qc.invalidateQueries({ queryKey: qk.board });
@@ -903,23 +905,20 @@ export function useSyncContacts() {
   });
 }
 
-export function useSetLinkedInTier() {
+/** Set the self-imposed LinkedIn rate-limit profile (2026-08-01): membership,
+ *  risk%, per-cap override, or reset. Membership/risk changes reset overrides
+ *  server-side; the returned session carries the recomputed caps. Invalidates
+ *  the referral quota so the popup counter reflects the new caps immediately. */
+export function useSetLinkedInRateLimits() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (tier: "new" | "seasoned") => Promise.resolve(api.setLinkedInTier(tier)),
-    onSuccess: (session) => {
-      qc.setQueryData(qk.linkedinSession, session);
-      qc.invalidateQueries({ queryKey: qk.referralQuota });
-    },
-  });
-}
-
-/** Set the LinkedIn plan (free | premium). Premium lifts the free-only
- *  personalized-note budget the send path enforces. */
-export function useSetLinkedInPlan() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (plan: "free" | "premium") => Promise.resolve(api.setLinkedInPlan(plan)),
+    mutationFn: (body: {
+      membership_type?: string;
+      risk_pct?: number;
+      override_key?: string;
+      override_value?: number;
+      reset_overrides?: boolean;
+    }) => Promise.resolve(api.setLinkedInRateLimits(body)),
     onSuccess: (session) => {
       qc.setQueryData(qk.linkedinSession, session);
       qc.invalidateQueries({ queryKey: qk.referralQuota });

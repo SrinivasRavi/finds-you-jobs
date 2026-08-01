@@ -793,12 +793,53 @@ const es: DeepPartial<Messages> = {
       runNow:
         "Ejecuta una búsqueda ahora con tus puestos y ubicaciones guardados — los resultados llegan a tu tablón de Descubrir empleos.",
       searching: "Buscando…",
-      searchBtn: "Buscar empleos en LinkedIn",
+      freshBtn: "Búsqueda nueva",
+      nextBtn: "Página siguiente",
+      nextHint: "Continúa la última búsqueda donde se quedó: los siguientes 25 resultados por rol × ubicación.",
+      nextInfo:
+        "«Página siguiente» vuelve a ejecutar la última búsqueda nueva con exactamente los mismos roles y ubicaciones en el siguiente offset — editar las preferencias entre medias no la cambia (para eso, haz una búsqueda nueva). Se ofrece durante 12 horas tras una búsqueda nueva y luego desaparece: LinkedIn reordena los resultados continuamente, así que un offset antiguo apuntaría a una lista desplazada. LinkedIn no tiene ningún tiempo límite de paginación — la ventana es nuestra propia regla de frescura. También desaparece cuando se agotan los resultados de LinkedIn.",
       resultsPerSearch: "Resultados por búsqueda",
       resultsPerSearchInfo:
         "Cuántos empleos traer por puesto × ubicación, en páginas de 25. Más alto significa más resultados — pero más peticiones lanzadas desde <strong>tu propia</strong> cuenta de LinkedIn en una sola ráfaga, lo que aumenta el riesgo de límites y para la cuenta. Mantenlo moderado.",
       started: "Búsqueda iniciada — las nuevas coincidencias aparecerán en Descubrir empleos en breve.",
       failed: "La búsqueda falló.",
+      scanning: "Escaneando LinkedIn…",
+      hourlyReached:
+        "Límite de búsqueda de empleo por hora alcanzado — se restablece dentro de la hora, o súbelo en «Límites de frecuencia autoimpuestos de LinkedIn».",
+    },
+    rateLimits: {
+      title: "Límites de frecuencia autoimpuestos en LinkedIn",
+      intro:
+        "Con cuánta fuerza se autolimita finds-you-jobs frente a LinkedIn. Elige tu membresía y luego define qué tan cerca de los límites estimados de LinkedIn estás dispuesto a operar.",
+      info:
+        "Estos topes son NUESTROS — LinkedIn no publica casi ninguno de sus límites reales, así que cada techo aquí es una estimación. Tu membresía fija los techos estimados; el control deslizante de riesgo los escala; y puedes anular cualquier tope individual. El código de outreach aplica exactamente estos números.",
+      membershipLabel: "Membresía de LinkedIn",
+      membershipHint: "Fija los techos estimados por acción desde los que escalamos.",
+      membership: {
+        free: "Gratis (Básico)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Apetito de riesgo",
+      riskWarn:
+        "Al 100 %, cada tope se sitúa en nuestra mejor estimación del propio límite de LinkedIn para tu membresía. LinkedIn no publica estas cifras, así que son estimaciones — más fiables para una cuenta en regla. Un valor más bajo deja más margen de seguridad; nada aquí puede garantizar que tu cuenta no sea restringida.",
+      capsLabel: "Límites individuales",
+      capsInfo:
+        "Cada límite empieza en el techo de la membresía × riesgo %. Escribe un número para fijarlo. Cambiar tu membresía o el control deslizante de riesgo restablece cada límite fijado a su valor calculado por defecto.",
+      cap: {
+        invites_day: "Solicitudes de conexión / día",
+        invites_week: "Solicitudes de conexión / semana",
+        dms_day: "Mensajes directos / día",
+        dms_week: "Mensajes directos / semana",
+        profile_views_day: "Vistas de perfil / día",
+        searches_month: "Búsquedas de personas / mes",
+        notes_month: "Notas de invitación / mes",
+        job_search_pages_hour: "Páginas de búsqueda de empleo / hora (25 empleos cada una)",
+      },
+      ofCeiling: "Máx.: ~{{ceiling}}",
+      custom: "personalizado",
+      resetBtn: "Restablecer valores por defecto",
     },
     session: {
       title: "Sesión de LinkedIn",
@@ -867,6 +908,9 @@ const es: DeepPartial<Messages> = {
       contactPurgeLabel: "Borrar definitivamente los contactos eliminados tras",
       contactPurgeHint:
         "Los contactos eliminados se borran definitivamente estos días después.",
+      expireListingLabel: "Marcar una oferta de empleo como “Más antigua” después de",
+      expireListingHint:
+        "Una oferta que no hemos vuelto a ver en un escaneo durante estos días se atenúa como “oferta más antigua” — sigue en el tablero y puedes restaurarla.",
       trashedJobsLabel: "Borrar definitivamente los empleos eliminados tras",
       trashedJobsHint:
         "Los empleos eliminados se borran definitivamente (y no se vuelven a rastrear) estos días después.",

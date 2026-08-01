@@ -632,7 +632,20 @@ class LinkedInSession(Base):
     # free|premium — conditions the outreach package's personalized-note budget
     # (the ~5/month allowance exists only on free accounts; posture doc §4 #10).
     # 'free' is the conservative default; a Premium holder lifts it in Settings.
+    # SUPERSEDED 2026-08-01 by `membership_type` as the user-facing selector, but
+    # kept because the note-budget path still keys on free-vs-paid; the driver
+    # derives it from membership ("free" → free, anything else → premium).
     linkedin_plan: Mapped[str] = mapped_column(String, nullable=False, default="free")
+    # Self-imposed rate-limit basis (maintainer directive 2026-08-01, replacing
+    # the New/Seasoned tier — that gradation now lives in `risk_pct`).
+    # `membership_type` ∈ free | premium | sales_navigator | recruiter_lite picks
+    # the estimated LinkedIn ceilings; `risk_pct` (10–100) scales them; and
+    # `cap_overrides` pins individual "{meter}_{window}" caps to absolute numbers.
+    # The outreach package computes the effective caps from these three inputs
+    # (`pacing.resolve_profile`); the app only stores the choices.
+    membership_type: Mapped[str] = mapped_column(String, nullable=False, default="free")
+    risk_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    cap_overrides: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     # N4 session-capture metadata for Settings → LinkedIn session (US-SET-06).
     # `connected_as` is the member's display name (best-effort, DOM-read at login);
     # `li_at_expires_at` drives the expiry pill; `last_validated_at` is the local
@@ -642,6 +655,31 @@ class LinkedInSession(Base):
     last_validated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     paused_until: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     paused_reason: Mapped[str] = mapped_column(String, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )
+
+
+class LinkedInSearchCursor(Base):
+    """Single-row pagination cursor for "Scan LinkedIn jobs" (Fresh search /
+    Next page). A Fresh search snapshots the queries it ran (role alias ×
+    location as they were at click time) with each pair's next page offset;
+    Next page resumes the SNAPSHOT — never live preferences, so editing prefs
+    mid-pagination can't make "page 2" mean page 2 of a search that never ran.
+
+    The cursor is honoured only within `SEARCH_CURSOR_TTL` of `fresh_at`
+    (host policy, `linkedin_op.py`). LinkedIn's own pagination is stateless —
+    offset in the URL, nothing server-side to expire — so the TTL exists for
+    result coherence (rankings drift between requests), not to mirror any
+    LinkedIn timeout."""
+
+    __tablename__ = "linkedin_search_cursors"
+
+    id: Mapped[str] = _pk()
+    # When the snapshot was taken (the Fresh search click). None → no cursor.
+    fresh_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # [{"keyword": str, "location": str, "next_start": int, "exhausted": bool}]
+    queries: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
     )

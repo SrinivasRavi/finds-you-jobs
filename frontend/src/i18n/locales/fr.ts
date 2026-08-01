@@ -797,13 +797,54 @@ const fr: DeepPartial<Messages> = {
       runNow:
         "Lancez une recherche maintenant avec vos rôles et lieux enregistrés — les résultats arrivent dans votre flux d'offres.",
       searching: "Recherche…",
-      searchBtn: "Rechercher des offres LinkedIn",
+      freshBtn: "Nouvelle recherche",
+      nextBtn: "Page suivante",
+      nextHint: "Reprendre la dernière recherche là où elle s'est arrêtée — les 25 résultats suivants par rôle × lieu.",
+      nextInfo:
+        "« Page suivante » relance la dernière nouvelle recherche avec exactement les mêmes rôles et lieux au prochain offset — modifier les préférences entre-temps n'y change rien (faites une nouvelle recherche pour cela). Le bouton est proposé pendant 12 heures après une nouvelle recherche, puis disparaît : LinkedIn reclasse les résultats en continu, un ancien offset pointerait donc vers une liste décalée. LinkedIn n'a aucun délai d'expiration de pagination — cette fenêtre est notre propre règle de fraîcheur. Il disparaît aussi quand les résultats de LinkedIn sont épuisés.",
       resultsPerSearch: "Résultats par recherche",
       resultsPerSearchInfo:
         "Combien d'offres récupérer par rôle × lieu, par pages de 25. Plus haut = plus de résultats — mais plus de requêtes envoyées en une rafale sur <strong>votre propre</strong> compte LinkedIn, ce qui augmente le risque de rate-limit / de compte. Restez modeste.",
       started:
         "Recherche lancée — les nouvelles correspondances apparaîtront bientôt dans vos offres.",
       failed: "La recherche a échoué.",
+      scanning: "Analyse de LinkedIn…",
+      hourlyReached:
+        "Limite horaire de recherche d'offres atteinte — elle se réinitialise dans l'heure, ou augmentez-la sous « Limites de débit LinkedIn auto-imposées ».",
+    },
+    rateLimits: {
+      title: "Limites de débit auto-imposées sur LinkedIn",
+      intro:
+        "À quel point finds-you-jobs se limite face à LinkedIn. Choisissez votre abonnement, puis définissez à quel point vous acceptez de vous rapprocher des limites estimées de LinkedIn.",
+      info:
+        "Ces plafonds sont les NÔTRES — LinkedIn ne publie presque aucune de ses vraies limites, donc chaque plafond ici est une estimation. Votre abonnement fixe les plafonds estimés ; le curseur de risque les ajuste ; et vous pouvez redéfinir n'importe quel plafond. Le code de démarchage applique exactement ces chiffres.",
+      membershipLabel: "Abonnement LinkedIn",
+      membershipHint: "Fixe les plafonds estimés par action à partir desquels nous ajustons.",
+      membership: {
+        free: "Gratuit (Basique)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Appétit pour le risque",
+      riskWarn:
+        "À 100 %, chaque plafond correspond à notre meilleure estimation de la propre limite de LinkedIn pour votre abonnement. LinkedIn ne publie pas ces chiffres, ce sont donc des estimations — les plus fiables pour un compte en règle. Plus bas laisse une plus grande marge de sécurité ; rien ici ne peut garantir que votre compte ne sera pas restreint.",
+      capsLabel: "Limites individuelles",
+      capsInfo:
+        "Chaque limite démarre au plafond de l'abonnement × risque %. Saisissez un nombre pour la fixer. Changer votre abonnement ou le curseur de risque réinitialise chaque limite fixée à la valeur calculée par défaut.",
+      cap: {
+        invites_day: "Demandes de connexion / jour",
+        invites_week: "Demandes de connexion / semaine",
+        dms_day: "Messages directs / jour",
+        dms_week: "Messages directs / semaine",
+        profile_views_day: "Vues de profil / jour",
+        searches_month: "Recherches de personnes / mois",
+        notes_month: "Notes d'invitation / mois",
+        job_search_pages_hour: "Pages de recherche d'offres / heure (25 offres chacune)",
+      },
+      ofCeiling: "Max : ~{{ceiling}}",
+      custom: "personnalisé",
+      resetBtn: "Réinitialiser aux valeurs par défaut",
     },
     session: {
       title: "Session LinkedIn",
@@ -872,6 +913,9 @@ const fr: DeepPartial<Messages> = {
       contactPurgeLabel: "Effacer définitivement les contacts supprimés après",
       contactPurgeHint:
         "Les contacts supprimés sont effacés définitivement ce nombre de jours plus tard.",
+      expireListingLabel: "Marquer une offre “Plus ancienne” après",
+      expireListingHint:
+        "Une offre que nous n'avons pas revue lors d'un scan depuis ce nombre de jours est grisée comme “Annonce plus ancienne” — toujours présente sur le tableau, et vous pouvez la restaurer.",
       trashedJobsLabel: "Effacer définitivement les offres supprimées après",
       trashedJobsHint:
         "Les offres supprimées sont effacées définitivement (et ne seront pas re-scrapées) ce nombre de jours plus tard.",

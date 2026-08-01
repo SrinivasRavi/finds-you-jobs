@@ -25,9 +25,12 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .types import NetworkerError
+
+if TYPE_CHECKING:
+    from sidecar.packages.referral_outreach.upstream.pacing import PacingProfile
 
 
 class VoyagerDriver(Protocol):
@@ -49,7 +52,8 @@ class VoyagerDriver(Protocol):
         page: int = 1, dry_run: bool
     ) -> dict: ...
     def search_jobs(
-        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+        self, keywords: str, location: str = "", *, limit: int = 50,
+        start: int = 0, dry_run: bool = False
     ) -> dict: ...
     def send_connection(
         self, public_identifier: str, note: str, tier: str | None, *, dry_run: bool
@@ -90,6 +94,7 @@ class DirectVoyagerDriver:
         user_data_dir: str | None = None,
         state_dir: str | None = None,
         tier: str | None = None,
+        pacing_profile: PacingProfile | None = None,
         linkedin_plan: str = "free",
         headed: bool = False,
         env: dict[str, str] | None = None,
@@ -98,6 +103,10 @@ class DirectVoyagerDriver:
         self.user_data_dir = user_data_dir
         self.state_dir = state_dir
         self.tier = tier
+        # The membership × risk% × override basis (2026-08-01). When set it drives
+        # every cap (the worker computes the numbers from it); `tier` remains only
+        # as the legacy fallback for callers that predate the profile.
+        self.pacing_profile = pacing_profile
         # free|premium — conditions the worker's personalized-note budget
         # (free-only allowance). 'free' is the conservative default.
         self.linkedin_plan = linkedin_plan
@@ -154,6 +163,7 @@ class DirectVoyagerDriver:
             limit=limit,
             prefer_domain=prefer_domain,
             tier=self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
@@ -172,6 +182,7 @@ class DirectVoyagerDriver:
             page=page,
             company_urn=company_urn,
             tier=self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
@@ -180,14 +191,17 @@ class DirectVoyagerDriver:
         )
 
     def search_jobs(
-        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+        self, keywords: str, location: str = "", *, limit: int = 50,
+        start: int = 0, dry_run: bool = False
     ) -> dict:
         return self._call(
             self._worker().search_jobs,
             keywords=keywords,
             location=location,
             limit=limit,
+            start=start,
             tier=self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
@@ -203,6 +217,7 @@ class DirectVoyagerDriver:
             public_identifier=public_identifier,
             note=note,
             tier=tier if tier is not None else self.tier,
+            profile=self.pacing_profile,
             linkedin_plan=self.linkedin_plan,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
@@ -219,6 +234,7 @@ class DirectVoyagerDriver:
             public_identifier=public_identifier,
             message=message,
             tier=tier if tier is not None else self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
@@ -244,6 +260,7 @@ class DirectVoyagerDriver:
             self._worker().contact_sync,
             public_identifier=public_identifier,
             tier=self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
@@ -255,6 +272,7 @@ class DirectVoyagerDriver:
         return self._call(
             self._worker().quota,
             tier=tier if tier is not None else self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
         )
 
@@ -262,7 +280,8 @@ class DirectVoyagerDriver:
         """Clear the pacing backoff pause (FR-NW-05 manual resume). Local ledger
         only — no browser, no network."""
         return self._call(
-            self._worker().resume, tier=self.tier, state_dir=self.state_dir
+            self._worker().resume, tier=self.tier, profile=self.pacing_profile,
+            state_dir=self.state_dir
         )
 
     def session_status(self) -> dict:

@@ -413,6 +413,49 @@ def test_unexpire_resets_the_14_day_timer(migrated_db: Database) -> None:
         assert _job(repos, job_id).feed_state == "active"
 
 
+def test_expire_window_is_configurable(migrated_db: Database) -> None:
+    """The `expire_after_days` window is honoured — a 10-day-old job stays active
+    at the default 14 but greys at a configured 7 (maintainer directive
+    2026-08-01: the "Older listing" threshold is now user-owned)."""
+    db = migrated_db
+    now = now_utc()
+    with db.repos() as repos:
+        job = repos.jobs.create(
+            canonical_url="cfg", title="C", source_adapter="lever",
+            ingested_at=now - timedelta(days=10),
+        )
+        job_id = job.id
+    assert age_expired_jobs(db, now=now)["expired"] == []  # default 14 keeps it
+    with db.repos() as repos:
+        assert _job(repos, job_id).feed_state == "active"
+    assert age_expired_jobs(db, now=now, expire_after_days=7)["expired"] == [job_id]
+
+
+def test_daily_tick_uses_the_configured_expire_window(migrated_db: Database) -> None:
+    """The maintenance tick reads `ui_state.lifecycle.expire_listing_days` and
+    passes it to `age_expired_jobs`, so the Settings value actually governs when
+    a listing greys to 'Older' (it used to call `age_expired_jobs` with the
+    hard-coded default, ignoring the setting)."""
+    from sidecar.app.registry.operations import OperationContext, cleanup_trash_entrypoint
+
+    db = migrated_db
+    now = now_utc()
+    with db.repos() as repos:
+        repos.preferences.update(ui_state={"lifecycle": {"expire_listing_days": 7}})
+        job = repos.jobs.create(
+            canonical_url="tick", title="T", source_adapter="lever",
+            ingested_at=now - timedelta(days=10),
+        )
+        job_id = job.id
+    outcome = cleanup_trash_entrypoint(
+        OperationContext(kind="cleanup_trash", input_snapshot={}, db=db)
+    )
+    assert outcome.result_ref is not None
+    assert job_id in outcome.result_ref["expired_ids"]  # 10 days > configured 7
+    with db.repos() as repos:
+        assert _job(repos, job_id).feed_state == "expired"
+
+
 # ---------------------------------------------------------------------------
 # work_style derivation (US-JB-01 chip / FR-JB-04 filter — one source)
 # ---------------------------------------------------------------------------

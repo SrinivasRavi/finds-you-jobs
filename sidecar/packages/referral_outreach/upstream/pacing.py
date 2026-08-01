@@ -62,6 +62,7 @@ MAX_JOBS_PER_SEARCH = 25
 # --- backoff window after a rate-limit signal (NFR-LI-03: ≈ 24 h) ---
 BACKOFF_SECONDS = 24 * 60 * 60
 
+HOUR_SECONDS = 60 * 60
 DAY_SECONDS = 24 * 60 * 60
 WEEK_SECONDS = 7 * 24 * 60 * 60
 # The Commercial Use Limit resets midnight PST on the 1st of each calendar
@@ -78,13 +79,25 @@ NOTE_WINDOW_SECONDS = 30 * 24 * 60 * 60
 class Budget:
     """One meter's ceiling. `None` means "this meter has no limit of that kind".
 
-    `day`/`week` are rolling windows measured back from now — LinkedIn's
-    invitation quota is itself a rolling 7-day window, not a calendar week.
+    `hour`/`day`/`week` are rolling windows measured back from now — LinkedIn's
+    invitation quota is itself a rolling 7-day window, not a calendar week. `hour`
+    exists for the logged-in job-search page meter (self-imposed pages/hour).
     """
 
+    hour: int | None = None
     day: int | None = None
     week: int | None = None
     month: int | None = None
+
+    def scaled(self, risk_pct: int) -> Budget:
+        """This ceiling scaled to `risk_pct` percent of itself, each window
+        rounded and floored at 1 so a live meter never collapses to 0 (a 0-cap
+        meter would refuse every action; the floor keeps low risk usable). A
+        `None` window stays `None` — scaling an absent limit is still absent."""
+        def s(v: int | None) -> int | None:
+            return None if v is None else max(1, round(v * risk_pct / 100))
+        return Budget(hour=s(self.hour), day=s(self.day),
+                      week=s(self.week), month=s(self.month))
 
 
 @dataclass(frozen=True)
@@ -109,6 +122,12 @@ class Tier:
     profile_views: Budget
     searches: Budget
     notes: Budget
+    # Self-imposed logged-in job-search ceiling, pages/hour (25 jobs/page). NOT a
+    # LinkedIn limit — job search is CUL-exempt (help `a564226`); this is purely
+    # our own throttle so one sitting can't fan a role list into a large
+    # authenticated burst. Defaults to no limit for legacy `TIERS` (which predate
+    # it); the membership ceilings below set it.
+    job_search_pages: Budget = field(default_factory=Budget)
 
     # Back-compat accessors: the app-side DTO and the typed facade still speak
     # "daily/weekly" for invites, the only meter that existed before.
@@ -168,7 +187,16 @@ METER_WINDOWS: dict[str, int] = {
     "profile_views": WEEK_SECONDS,  # budgeted daily; a week retained for reporting
     "searches": MONTH_SECONDS,
     "notes": NOTE_WINDOW_SECONDS,
+    "job_search_pages": DAY_SECONDS,  # budgeted hourly; a day retained for reporting
 }
+
+# Every window a Budget can express, longest first for `usage()` reporting.
+BUDGET_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("hour", HOUR_SECONDS),
+    ("day", DAY_SECONDS),
+    ("week", WEEK_SECONDS),
+    ("month", MONTH_SECONDS),
+)
 
 
 def resolve_tier(name: str | None) -> Tier:
@@ -176,6 +204,185 @@ def resolve_tier(name: str | None) -> Tier:
     if key not in TIERS:
         raise ValueError(f"unknown tier {name!r}; choose one of {sorted(TIERS)}")
     return TIERS[key]
+
+
+# ---------------------------------------------------------------------------
+# Membership × risk% × per-meter override (maintainer directive 2026-08-01)
+# ---------------------------------------------------------------------------
+#
+# The user selects a LinkedIn **membership type** and a **risk appetite** (0-100
+# %). Each membership carries an *estimated LinkedIn ceiling* per meter — the
+# "100 %" reference. The self-imposed cap = ceiling × risk%, unless a per-meter
+# override pins an absolute number. This REPLACES the fixed new/seasoned tier as
+# the app-facing basis (the risk slider now expresses "new vs seasoned"): the
+# host stores (membership, risk_pct, overrides) and asks THIS module for the
+# numbers — the caps stay owned and enforced here (NFR-LI-02).
+#
+# **Every ceiling below is our estimate; LinkedIn publishes almost none of them**
+# (only the 30 000 connection cap, the CUL reset date, and the restriction
+# ladder). The Free column is calibrated so `ceiling × DEFAULT_RISK_PCT`
+# reproduces the old `TIERS["new"]` caps EXACTLY, so switching to this system
+# changes nothing until the user moves the slider. The non-Free columns are
+# coarser — LinkedIn's plan-tier limits are even less documented — and are
+# deliberately conservative. Nothing here is a promise about account safety; it
+# is harm reduction against someone else's undocumented limit. Derivation and
+# sources: `docs/internal/linkedin-posture.md` §4 and
+# `linkedin-limits-audit-2026-07-29.md`.
+#
+#   meter          Free (100%)         basis
+#   invites        13/day · 50/wk      account-level, not plan → same across plans
+#   dms            17/day · 83/wk      Premium/SalesNav/Recruiter add InMail credits
+#   profile views  42/day              80 (disputed low) – 500; scales with plan
+#   searches(CUL)  250/month           Premium/SalesNav/Recruiter higher or exempt
+#   notes          5/month             free ~5; paid plans effectively unlimited
+#   job pages/hr   7/hour              OUR throttle; job search is CUL-exempt, plan-independent
+DEFAULT_MEMBERSHIP = "free"
+DEFAULT_RISK_PCT = 60
+MIN_RISK_PCT = 10  # below this a live meter rounds toward unusable; clamp up
+MAX_RISK_PCT = 100  # 100% = sitting at the estimated LinkedIn ceiling (max risk)
+
+CEILINGS: dict[str, Tier] = {
+    "free": Tier(
+        "free",
+        invites=Budget(day=13, week=50),
+        dms=Budget(day=17, week=83),
+        profile_views=Budget(day=42),
+        searches=Budget(month=250),
+        notes=Budget(month=5),
+        job_search_pages=Budget(hour=7),
+    ),
+    "premium": Tier(
+        "premium",
+        invites=Budget(day=13, week=50),
+        dms=Budget(day=25, week=125),
+        profile_views=Budget(day=83),
+        searches=Budget(month=500),
+        notes=Budget(month=100),  # effectively unlimited on paid plans
+        job_search_pages=Budget(hour=7),
+    ),
+    "sales_navigator": Tier(
+        "sales_navigator",
+        invites=Budget(day=13, week=50),
+        dms=Budget(day=33, week=160),
+        profile_views=Budget(day=125),
+        searches=Budget(month=800),
+        notes=Budget(month=100),
+        job_search_pages=Budget(hour=7),
+    ),
+    "recruiter_lite": Tier(
+        "recruiter_lite",
+        invites=Budget(day=13, week=50),
+        dms=Budget(day=42, week=200),
+        profile_views=Budget(day=165),
+        searches=Budget(month=1000),
+        notes=Budget(month=100),
+        job_search_pages=Budget(hour=7),
+    ),
+}
+MEMBERSHIPS: tuple[str, ...] = tuple(CEILINGS)
+
+# Every (meter, window) pair the user can override, in display order. The key
+# form `"{meter}_{window}"` is the wire/storage contract for overrides.
+OVERRIDABLE: tuple[tuple[str, str], ...] = (
+    ("invites", "day"), ("invites", "week"),
+    ("dms", "day"), ("dms", "week"),
+    ("profile_views", "day"),
+    ("searches", "month"),
+    ("notes", "month"),
+    ("job_search_pages", "hour"),
+)
+
+
+def resolve_membership(name: str | None) -> Tier:
+    """The 100% estimated-ceiling Tier for a membership (unscaled)."""
+    key = (name or DEFAULT_MEMBERSHIP).strip().lower()
+    if key not in CEILINGS:
+        raise ValueError(
+            f"unknown membership {name!r}; choose one of {sorted(CEILINGS)}"
+        )
+    return CEILINGS[key]
+
+
+def clamp_risk(risk_pct: int | None) -> int:
+    """Risk into [MIN, MAX]. None → the conservative default."""
+    if risk_pct is None:
+        return DEFAULT_RISK_PCT
+    return max(MIN_RISK_PCT, min(MAX_RISK_PCT, int(risk_pct)))
+
+
+@dataclass(frozen=True)
+class PacingProfile:
+    """The user's three inputs the host stores and hands to this module. The
+    numbers are derived HERE, never by the host: `resolve_profile` turns these
+    into the effective `Tier` the `Pacer` enforces."""
+
+    membership: str = DEFAULT_MEMBERSHIP
+    risk_pct: int = DEFAULT_RISK_PCT
+    # {"invites_week": 42, "job_search_pages_hour": 3, ...} — absolute pins that
+    # win over the scaled ceiling for that one (meter, window).
+    overrides: dict[str, int] = field(default_factory=dict)
+
+
+def _apply_override(
+    budget: Budget, ceiling: Budget, meter: str, overrides: dict[str, int]
+) -> Budget:
+    """Return `budget` (the scaled cap) with any per-window override for `meter`
+    applied. An override is an absolute pin, clamped to `[0, ceiling]` — it can
+    never exceed our estimate of LinkedIn's own limit (the UI offers only
+    in-range values via a dropdown; this is the enforcement backstop, so the
+    "never above the estimated max" guarantee holds whatever a client sends). A
+    window with no override keeps its scaled value."""
+    changed: dict[str, int] = {}
+    for window in ("hour", "day", "week", "month"):
+        key = f"{meter}_{window}"
+        cap = getattr(ceiling, window)
+        if key in overrides and getattr(budget, window) is not None:
+            value = max(0, int(overrides[key]))
+            changed[window] = min(value, cap) if cap is not None else value
+    if not changed:
+        return budget
+    return Budget(
+        hour=changed.get("hour", budget.hour),
+        day=changed.get("day", budget.day),
+        week=changed.get("week", budget.week),
+        month=changed.get("month", budget.month),
+    )
+
+
+def resolve_profile(profile: PacingProfile | None) -> Tier:
+    """Membership ceilings × risk%, with per-meter overrides applied → the
+    effective `Tier` the `Pacer` enforces. This is the one place the numbers are
+    computed; the host passes only the three inputs."""
+    p = profile or PacingProfile()
+    risk = clamp_risk(p.risk_pct)
+    base = resolve_membership(p.membership)
+    ov = p.overrides or {}
+    return Tier(
+        name=base.name,
+        invites=_apply_override(base.invites.scaled(risk), base.invites, "invites", ov),
+        dms=_apply_override(base.dms.scaled(risk), base.dms, "dms", ov),
+        profile_views=_apply_override(
+            base.profile_views.scaled(risk), base.profile_views, "profile_views", ov),
+        searches=_apply_override(base.searches.scaled(risk), base.searches, "searches", ov),
+        notes=_apply_override(base.notes.scaled(risk), base.notes, "notes", ov),
+        job_search_pages=_apply_override(
+            base.job_search_pages.scaled(risk), base.job_search_pages, "job_search_pages", ov),
+    )
+
+
+def default_overrides(membership: str | None, risk_pct: int | None) -> dict[str, int]:
+    """The computed (ceiling × risk%) value for every overridable (meter,
+    window) — i.e. what the per-meter override boxes reset TO when the
+    membership or the risk slider changes. The host writes exactly this back so
+    a stored override always shows the current basis's default until edited."""
+    risk = clamp_risk(risk_pct)
+    base = resolve_membership(membership)
+    out: dict[str, int] = {}
+    for meter, window in OVERRIDABLE:
+        scaled = getattr(getattr(base, meter).scaled(risk), window)
+        if scaled is not None:
+            out[f"{meter}_{window}"] = scaled
+    return out
 
 
 def human_type_delay_ms() -> int:
@@ -207,6 +414,9 @@ class PacingState:
     profile_views: list[float] = field(default_factory=list)
     searches: list[float] = field(default_factory=list)
     notes: list[float] = field(default_factory=list)
+    # Logged-in job-search page fetches — budgeted hourly (self-imposed throttle).
+    # Older ledgers predate it and default empty, so an install upgrades cleanly.
+    job_search_pages: list[float] = field(default_factory=list)
     paused_until: float = 0.0
     paused_reason: str = ""
 
@@ -220,6 +430,7 @@ class PacingState:
             "profile_views": self.profile_views,
             "searches": self.searches,
             "notes": self.notes,
+            "job_search_pages": self.job_search_pages,
             "paused_until": self.paused_until,
             "paused_reason": self.paused_reason,
         }
@@ -232,6 +443,7 @@ class PacingState:
             profile_views=list(data.get("profile_views", [])),
             searches=list(data.get("searches", [])),
             notes=list(data.get("notes", [])),
+            job_search_pages=list(data.get("job_search_pages", [])),
             paused_until=float(data.get("paused_until", 0.0)),
             paused_reason=str(data.get("paused_reason", "")),
         )
@@ -406,9 +618,7 @@ class Pacer:
         now = time.time() if now is None else now
         budget, stamps = self._budget_for(meter), self.state.meter(meter)
         out: dict[str, int | None] = {}
-        for window_name, window_s in (
-            ("day", DAY_SECONDS), ("week", WEEK_SECONDS), ("month", MONTH_SECONDS),
-        ):
+        for window_name, window_s in BUDGET_WINDOWS:
             cap = getattr(budget, window_name)
             if cap is None:
                 continue
@@ -433,11 +643,11 @@ class Pacer:
         if self.is_paused(now):
             return False, self._paused_reason()
         u = self.usage(meter, now)
-        for window_name in ("day", "week", "month"):
+        for window_name in ("hour", "day", "week", "month"):
             if u.get(f"{window_name}_remaining") == 0:
                 cap = u[f"{window_name}_cap"]
                 return False, (
-                    f"{meter} cap reached ({cap}/{window_name}, tier={self.tier.name})"
+                    f"{meter} cap reached ({cap}/{window_name}, plan={self.tier.name})"
                 )
         return True, ""
 
@@ -545,6 +755,16 @@ class Pacer:
     def can_use_note(self, now: float | None = None) -> tuple[bool, str]:
         return self.check("notes", now)
 
+    def can_search_jobs(self, now: float | None = None) -> tuple[bool, str]:
+        """The self-imposed pages/hour throttle on logged-in job search. This is
+        OURS, not LinkedIn's — job search is CUL-exempt (help `a564226`) — so it
+        does NOT charge the `searches` (People-search CUL) meter. It only paces
+        the authenticated page fetches so one sitting can't fan a role list into
+        a large burst. A membership with no hourly ceiling → always allowed."""
+        if getattr(self.tier.job_search_pages, "hour", None) is None:
+            return True, ""
+        return self.check("job_search_pages", now)
+
     def record_invite(self, now: float | None = None) -> None:
         self.record("invites", now)
 
@@ -559,6 +779,12 @@ class Pacer:
 
     def record_note(self, now: float | None = None) -> None:
         self.record("notes", now)
+
+    def record_search_page(self, now: float | None = None) -> None:
+        """Charge one logged-in job-search page fetch against the pages/hour
+        throttle. No-op when the membership has no hourly ceiling."""
+        if getattr(self.tier.job_search_pages, "hour", None) is not None:
+            self.record("job_search_pages", now)
 
     # --- inter-send spacing (NFR-LI-01) ---
     def last_send_at(self) -> float:

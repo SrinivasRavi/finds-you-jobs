@@ -44,7 +44,7 @@ from sidecar.modules.networker.types import NetworkerError
 from ..db.base import now_utc
 from ..lifecycle import MANUAL_OVERRIDE_COOLDOWN_DAYS, resolve_lifecycle
 from ..logging_setup import get_logger
-from .networker_ops import DRIVER_FACTORY, _net_contact_from_row, _resolve_tier
+from .networker_ops import DRIVER_FACTORY, _net_contact_from_row, _resolve_profile
 from .operations import OperationContext, OperationOutcome
 
 if TYPE_CHECKING:
@@ -167,7 +167,7 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
         session = repos.linkedin_session.get()
         session_valid = session is not None and session.status == "valid"
         settings = resolve_lifecycle(prefs)
-        tier = _resolve_tier(repos)
+        profile = _resolve_profile(repos)
 
     # Gate: OFF or disconnected → clean no-op (zero LinkedIn traffic).
     if not enabled or not session_valid:
@@ -200,7 +200,7 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             sent_at = contact.sent_at
             accepted_at = contact.accepted_at
 
-        driver = DRIVER_FACTORY(tier)
+        driver = DRIVER_FACTORY(profile)
         try:
             probe = net_probe(net_contact, driver=driver)
         except NetworkerError as exc:

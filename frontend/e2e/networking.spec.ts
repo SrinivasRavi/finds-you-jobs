@@ -105,7 +105,14 @@ test("tracker referrals slot opens the find-referrals popup", async ({
 
   await request.post(`${base}/api/settings`, {
     headers: auth,
-    data: { voyager_risk_marker_on: true },
+    // The Discover feed filters by the Job-finder preferences (career-ops
+    // filter parity, discovery.md 2026-07-21) — without a matching role alias
+    // the seeded job below never renders and the JD pane can't open.
+    data: {
+      voyager_risk_marker_on: true,
+      role_aliases: ["platform engineer"],
+      locations: ["Remote"],
+    },
   });
   await request.post(`${base}/api/profile`, {
     headers: auth,
@@ -313,17 +320,25 @@ test("settings expose the plan selector and the 25-job search cap", async ({
   await request.post(`${base}/api/dev/linkedin/mark-session-valid`, { headers: auth });
 
   await page.goto("/settings");
-  // The LinkedIn sections live in the Networking settings category.
-  await page.getByRole("button", { name: /Referral outreach & LinkedIn/ }).click();
-  // Expand the (connected → collapsed) session card inside Referral Outreach.
-  await page.getByTestId("linkedin-session-toggle").first().click();
-  const plan = page.getByTestId("linkedin-plan-select").first();
-  await expect(plan).toBeVisible();
-  await expect(plan).toHaveValue("free"); // conservative default
-  await plan.selectOption("premium");
-  await expect(plan).toHaveValue("premium");
-  await page.screenshot({ path: `${DIR}/settings-plan-selector.png`, fullPage: true });
-  await plan.selectOption("free"); // leave state as found for later tests
+  // Self-imposed rate limits (2026-08-01): its own always-visible card on the
+  // Privacy & Data category (maintainer directive — it governs both LinkedIn
+  // features' caps, so it lives beside data lifecycle, not inside one feature).
+  // One membership dropdown + risk slider drive all caps; membership replaces
+  // the old New/Seasoned tier + Free/Premium plan selectors.
+  await page.getByTestId("settings-nav-data").click();
+  const membership = page.getByTestId("linkedin-membership-select");
+  await membership.scrollIntoViewIfNeeded();
+  await expect(membership).toBeVisible();
+  await expect(membership).toHaveValue("free"); // conservative default
+  const risk = page.getByTestId("linkedin-risk-slider");
+  await expect(risk).toHaveValue("60"); // default reproduces today's caps
+  // Each cap is a dropdown bounded at the estimated ceiling (you can't pick
+  // above the max); it's pre-selected to the effective cap (invites/week = 30).
+  await expect(page.getByTestId("linkedin-cap-select-invites_week")).toHaveValue("30");
+  await membership.selectOption("premium");
+  await expect(membership).toHaveValue("premium");
+  await page.screenshot({ path: `${DIR}/settings-rate-limits.png`, fullPage: true });
+  await membership.selectOption("free"); // leave state as found for later tests
 
   // The logged-in job search lives in the Discover-jobs settings category and
   // pulls exactly one LinkedIn page (25) — fixed, not a selector: the request
@@ -339,8 +354,25 @@ test("settings expose the plan selector and the 25-job search cap", async ({
   await expect(limit.locator("option")).toHaveCount(0); // no selector at all
   await page.screenshot({ path: `${DIR}/settings-search-cap-25.png`, fullPage: true });
 
+  // Fresh search / Next page (2026-08-01): Next page renders only while a
+  // continuable cursor exists. Seeded via the dev route — a real Fresh search
+  // would need a genuinely usable LinkedIn session, which a test never has.
+  const freshBtn = page.getByTestId("linkedin-jobsearch-btn");
+  await expect(freshBtn).toBeVisible();
+  await expect(freshBtn).toHaveText("Fresh search");
+  await expect(page.getByTestId("linkedin-jobsearch-next-btn")).toHaveCount(0);
+  await request.post(`${base}/api/dev/linkedin/seed-search-cursor`, { headers: auth });
+  await page.reload();
+  await page.getByRole("button", { name: /Sources, scoring & automation/ }).click();
+  const nextBtn = page.getByTestId("linkedin-jobsearch-next-btn");
+  await nextBtn.scrollIntoViewIfNeeded();
+  await expect(nextBtn).toBeVisible();
+  await expect(nextBtn).toHaveText("Next page");
+  await page.screenshot({ path: `${DIR}/settings-search-next-page.png`, fullPage: true });
+
   // Leave the shared profile as found: search off again, session disconnected
-  // (settings-analytics asserts the block is ABSENT while not connected).
+  // (settings-analytics asserts the block is ABSENT while not connected; the
+  // disconnect also clears the seeded pagination cursor).
   await page.getByTestId("linkedin-search-toggle").click();
   await request.post(`${base}/api/linkedin/disconnect`, { headers: auth });
 });

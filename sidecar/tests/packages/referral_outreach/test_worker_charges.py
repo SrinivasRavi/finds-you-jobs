@@ -186,3 +186,134 @@ def test_search_jobs_limit_clamps_to_one_page(tmp_path):
         "python", limit=250, tier="new", state_dir=str(tmp_path), dry_run=True
     )
     assert "≤25" in out["plan"]
+
+
+def test_search_jobs_dry_run_reports_offset(tmp_path):
+    out = worker.search_jobs(
+        "python", start=50, tier="new", state_dir=str(tmp_path), dry_run=True
+    )
+    assert "offset 50" in out["plan"]
+
+
+class _FakeSearchSession:
+    def __init__(self, **kwargs):
+        pass
+
+    def ensure_browser(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _fake_search_api(calls, total=60):
+    """A PlaywrightLinkedinAPI stand-in serving `total` jobs in pages of `count`."""
+
+    class _API:
+        def __init__(self, sess):
+            pass
+
+        def search_jobs(self, keywords, location, *, start, count):
+            calls.append((start, count))
+            n = max(0, min(count, total - start))
+            return {"total": total, "jobs": [
+                {"id": str(start + i), "title": "t", "url": f"u{start + i}"}
+                for i in range(n)
+            ]}
+
+    return _API
+
+
+def test_search_jobs_start_offsets_the_single_page(tmp_path, monkeypatch):
+    """`start` (the host's Next-page cursor) shifts the one-page window: the
+    wire request carries the offset verbatim, the page size stays 25 (the
+    per-call clamp is untouched), and `next_start` points at the next page."""
+    from sidecar.packages.referral_outreach.upstream import client as client_mod
+
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(session, "AccountSession", _FakeSearchSession)
+    monkeypatch.setattr(client_mod, "PlaywrightLinkedinAPI", _fake_search_api(calls))
+
+    out = worker.search_jobs(
+        "python", limit=250, start=25, tier="new", state_dir=str(tmp_path)
+    )
+    assert calls == [(25, 25)]  # one request: offset verbatim, count fixed
+    assert out["start"] == 25
+    assert out["next_start"] == 50
+    assert out["exhausted"] is False  # 60 total → a page 3 exists
+    assert out["count"] == 25
+
+
+def test_search_jobs_reports_end_of_results(tmp_path, monkeypatch):
+    """The last page (short page / total reached) surfaces `exhausted` so the
+    host cursor can stop offering Next page without wasting a request."""
+    from sidecar.packages.referral_outreach.upstream import client as client_mod
+
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(session, "AccountSession", _FakeSearchSession)
+    monkeypatch.setattr(client_mod, "PlaywrightLinkedinAPI", _fake_search_api(calls))
+
+    out = worker.search_jobs(
+        "python", limit=25, start=50, tier="new", state_dir=str(tmp_path)
+    )
+    assert calls == [(50, 25)]
+    assert out["count"] == 10  # 60 total — only 10 left at offset 50
+    assert out["exhausted"] is True
+
+
+def test_search_jobs_charges_and_throttles_pages_per_hour(tmp_path, monkeypatch):
+    """The self-imposed pages/hour throttle: each search charges one page against
+    the shared hourly ledger, and once the budget is spent search_jobs refuses
+    BEFORE issuing another request (no LinkedIn traffic for a blocked call)."""
+    from sidecar.packages.referral_outreach.upstream import client as client_mod
+    from sidecar.packages.referral_outreach.upstream.pacing import PacingProfile
+
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(session, "AccountSession", _FakeSearchSession)
+    monkeypatch.setattr(client_mod, "PlaywrightLinkedinAPI", _fake_search_api(calls))
+
+    # Pin the hourly ceiling to 2 pages so the throttle is quick to reach.
+    profile = PacingProfile(overrides={"job_search_pages_hour": 2})
+    for _ in range(2):
+        out = worker.search_jobs("python", profile=profile, state_dir=str(tmp_path))
+        assert out["ok"] is True
+    # Third call is refused with no new LinkedIn request.
+    before = len(calls)
+    out = worker.search_jobs("python", profile=profile, state_dir=str(tmp_path))
+    assert out["ok"] is False
+    assert out["error"] == "rate_limited_hourly"
+    assert len(calls) == before  # no request issued for the blocked call
+
+
+def test_search_jobs_enters_backoff_on_throttle(tmp_path, monkeypatch):
+    """A LinkedIn throttle (429/999/503 → RateLimited) DURING job search must
+    enter the 24 h backoff — like `discover` — so later pairs and later searches
+    stop. search_jobs used to let RateLimited propagate uncaught, entering no
+    backoff, and the loudest read path kept hammering after LinkedIn said stop."""
+    from sidecar.packages.referral_outreach.upstream import client as client_mod
+
+    class _ThrottlingAPI:
+        def __init__(self, sess):
+            pass
+
+        def search_jobs(self, keywords, location, *, start, count):
+            raise RateLimited("LinkedIn returned HTTP 429 (throttled/blocked)")
+
+    from sidecar.packages.referral_outreach.upstream.pacing import (
+        PacingProfile,
+        resolve_profile,
+    )
+
+    monkeypatch.setattr(session, "AccountSession", _FakeSearchSession)
+    monkeypatch.setattr(client_mod, "PlaywrightLinkedinAPI", _ThrottlingAPI)
+
+    profile = PacingProfile()  # free · 60% → a real job_search_pages hourly ceiling
+    out = worker.search_jobs("python", profile=profile, state_dir=str(tmp_path))
+    assert out["ok"] is False
+    assert out["error"] == "rate_limited"
+    # Backoff is now persisted — a fresh pacer reads the pause.
+    p = Pacer(resolve_profile(profile), state_dir=tmp_path)
+    assert p.is_paused()
+    # The attempted page (which reached LinkedIn and 429'd) is still charged —
+    # charge-on-attempt keeps the hourly ledger from drifting low.
+    assert p.usage("job_search_pages")["hour_used"] == 1

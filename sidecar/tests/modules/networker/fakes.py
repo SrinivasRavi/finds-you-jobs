@@ -87,8 +87,11 @@ class FakeVoyagerDriver:
         self._maybe_raise("discover")
         return self._discover
 
-    def search_jobs(self, keywords, location="", *, limit: int = 50, dry_run: bool = False) -> dict:
-        self.calls.append(("search_jobs", keywords, location, limit, dry_run))
+    def search_jobs(
+        self, keywords, location="", *, limit: int = 50, start: int = 0,
+        dry_run: bool = False,
+    ) -> dict:
+        self.calls.append(("search_jobs", keywords, location, limit, start, dry_run))
         self._maybe_raise("search_jobs")
         return self._search_jobs
 

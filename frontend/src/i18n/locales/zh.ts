@@ -775,12 +775,53 @@ const zh: DeepPartial<Messages> = {
       runNow:
         "现在用你保存的职位和地点运行一次搜索 — 结果会进入你的发现职位信息流。",
       searching: "搜索中…",
-      searchBtn: "搜索 LinkedIn 职位",
+      freshBtn: "全新搜索",
+      nextBtn: "下一页",
+      nextHint: "从上次搜索停下的位置继续 — 每个职位×地点再取 25 条结果。",
+      nextInfo:
+        "“下一页”会以下一个偏移量重新执行上次全新搜索的完全相同的职位与地点 — 中途修改偏好不会影响它（要生效请执行全新搜索）。全新搜索后 12 小时内可用，之后消失：LinkedIn 会持续重新排序结果，旧的偏移量会指向已经移位的列表。LinkedIn 本身没有分页超时 — 这个时间窗口是我们自己的新鲜度规则。当 LinkedIn 的结果取完时按钮也会消失。",
       resultsPerSearch: "每次搜索结果数",
       resultsPerSearchInfo:
         "每个职位 × 地点组合拉取多少个职位，按每页 25 个分页。数值越高结果越多 — 但也意味着在<strong>你自己的</strong> LinkedIn 账号上一次性发出更多请求，会提高限流/账号风险。请保持适度。",
       started: "搜索已启动 — 新匹配的职位很快会出现在发现职位中。",
       failed: "搜索失败。",
+      scanning: "正在扫描 LinkedIn…",
+      hourlyReached:
+        "已达到每小时职位搜索上限 — 一小时内会自动重置，或在“LinkedIn 自设速率限制”中调高。",
+    },
+    rateLimits: {
+      title: "对 LinkedIn 的自设速率限制",
+      intro:
+        "finds-you-jobs 针对 LinkedIn 对自身的限流强度。选择你的会员类型，然后设定你愿意在多接近 LinkedIn 估计上限的程度下运行。",
+      info:
+        "这些上限是我们【自己】设的 — LinkedIn 几乎不公开其真实限制，因此这里每个上限都是估计值。你的会员类型决定估计上限；风险滑块对其进行缩放；你也可以覆盖任意单个上限。联络代码严格执行这些数值。",
+      membershipLabel: "LinkedIn 会员",
+      membershipHint: "决定我们据以缩放的每项操作估计上限。",
+      membership: {
+        free: "免费版（基础版）",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "风险偏好",
+      riskWarn:
+        "在 100% 时，每个上限都设在我们对 LinkedIn 针对你会员类型自身限制的最佳估计值上。LinkedIn 不公开这些数字，因此它们都是估计值 — 对状态良好的账号最为可靠。数值越低，安全余量越大；这里的任何设置都无法保证你的账号不会被限制。",
+      capsLabel: "各项限制",
+      capsInfo:
+        "每项限制从“会员上限 × 风险%”开始。输入一个数字即可固定它。更改会员类型或风险滑块会将所有已固定的限制重置回计算得到的默认值。",
+      cap: {
+        invites_day: "每天连接请求数",
+        invites_week: "每周连接请求数",
+        dms_day: "每天私信数",
+        dms_week: "每周私信数",
+        profile_views_day: "每天查看个人资料数",
+        searches_month: "每月人员搜索数",
+        notes_month: "每月邀请附言数",
+        job_search_pages_hour: "每小时职位搜索页数（每页 25 个职位）",
+      },
+      ofCeiling: "上限：~{{ceiling}}",
+      custom: "自定义",
+      resetBtn: "重置为默认值",
     },
     session: {
       title: "LinkedIn 会话",
@@ -848,6 +889,9 @@ const zh: DeepPartial<Messages> = {
         "连接请求始终未被接受（或接受后始终未回复）达这么多天。",
       contactPurgeLabel: "已删除的联系人在以下时长后永久清除",
       contactPurgeHint: "已删除的联系人会在这么多天后被永久清除。",
+      expireListingLabel: "在以下时长后将职位标记为“较早”",
+      expireListingHint:
+        "在扫描中已有这么多天未再出现的职位会被置灰为“较早的职位” — 仍留在看板上，你可以将其恢复。",
       trashedJobsLabel: "已删除的职位在以下时长后永久清除",
       trashedJobsHint:
         "已删除的职位会在这么多天后被永久清除（且不会被重新抓取）。",

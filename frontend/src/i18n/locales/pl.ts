@@ -810,12 +810,53 @@ const pl: DeepPartial<Messages> = {
       runNow:
         "Uruchom wyszukiwanie teraz z zapisanymi rolami i lokalizacjami — wyniki trafią do twojego kanału ofert.",
       searching: "Wyszukiwanie…",
-      searchBtn: "Szukaj ofert LinkedIn",
+      freshBtn: "Nowe wyszukiwanie",
+      nextBtn: "Następna strona",
+      nextHint: "Kontynuuj ostatnie wyszukiwanie od miejsca, w którym się zatrzymało — kolejne 25 wyników na rolę × lokalizację.",
+      nextInfo:
+        "„Następna strona” ponawia ostatnie nowe wyszukiwanie z dokładnie tymi samymi rolami i lokalizacjami od kolejnego offsetu — zmiana preferencji w międzyczasie nic nie zmienia (do tego służy nowe wyszukiwanie). Przycisk jest dostępny przez 12 godzin po nowym wyszukiwaniu, potem znika: LinkedIn stale zmienia kolejność wyników, więc stary offset wskazywałby przesuniętą listę. Sam LinkedIn nie ma limitu czasu paginacji — to nasza własna reguła świeżości. Przycisk znika też, gdy wyniki LinkedIn się wyczerpią.",
       resultsPerSearch: "Wyników na wyszukiwanie",
       resultsPerSearchInfo:
         "Ile ofert pobierać na parę rola × lokalizacja, w stronach po 25. Więcej znaczy więcej wyników — ale i więcej żądań wystrzelonych z <strong>twojego własnego</strong> konta LinkedIn w jednej serii, co zwiększa ryzyko limitów / blokady konta. Zachowaj umiar.",
       started: "Wyszukiwanie rozpoczęte — nowe dopasowania wkrótce pojawią się w Ofertach.",
       failed: "Wyszukiwanie nie powiodło się.",
+      scanning: "Skanowanie LinkedIn…",
+      hourlyReached:
+        "Osiągnięto godzinowy limit wyszukiwania ofert — resetuje się w ciągu godziny lub zwiększ go w sekcji „Samodzielnie ustawione limity szybkości LinkedIn”.",
+    },
+    rateLimits: {
+      title: "Samodzielnie narzucone limity szybkości wobec LinkedIn",
+      intro:
+        "Jak mocno finds-you-jobs sam się ogranicza wobec LinkedIn. Wybierz swoje członkostwo, a następnie ustaw, jak blisko szacowanych limitów LinkedIn chcesz działać.",
+      info:
+        "Te limity są NASZE własne — LinkedIn niemal nie publikuje swoich rzeczywistych limitów, więc każdy pułap tutaj jest szacunkiem. Twoje członkostwo ustala szacowane pułapy; suwak ryzyka je skaluje; a każdy pojedynczy limit możesz nadpisać. Kod wysyłki egzekwuje dokładnie te liczby.",
+      membershipLabel: "Członkostwo LinkedIn",
+      membershipHint: "Ustala szacowane pułapy na akcję, od których skalujemy.",
+      membership: {
+        free: "Darmowe (Podstawowe)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Apetyt na ryzyko",
+      riskWarn:
+        "Przy 100% każdy limit odpowiada naszemu najlepszemu szacunkowi własnego limitu LinkedIn dla twojego członkostwa. LinkedIn nie publikuje tych liczb, więc są to szacunki — najbardziej wiarygodne dla konta w dobrej kondycji. Niżej zostawia większy margines bezpieczeństwa; nic tutaj nie może zagwarantować, że twoje konto nie zostanie ograniczone.",
+      capsLabel: "Poszczególne limity",
+      capsInfo:
+        "Każdy limit zaczyna od pułapu członkostwa × ryzyko%. Wpisz liczbę, aby go przypiąć. Zmiana członkostwa lub suwaka ryzyka resetuje każdy przypięty limit z powrotem do wyliczonej wartości domyślnej.",
+      cap: {
+        invites_day: "Zaproszenia do kontaktu / dzień",
+        invites_week: "Zaproszenia do kontaktu / tydzień",
+        dms_day: "Wiadomości bezpośrednie / dzień",
+        dms_week: "Wiadomości bezpośrednie / tydzień",
+        profile_views_day: "Wyświetlenia profilu / dzień",
+        searches_month: "Wyszukiwania osób / miesiąc",
+        notes_month: "Notatki do zaproszeń / miesiąc",
+        job_search_pages_hour: "Strony wyszukiwania ofert / godzinę (po 25 ofert)",
+      },
+      ofCeiling: "Maks.: ~{{ceiling}}",
+      custom: "niestandardowy",
+      resetBtn: "Przywróć wartości domyślne",
     },
     session: {
       title: "Sesja LinkedIn",
@@ -883,6 +924,9 @@ const pl: DeepPartial<Messages> = {
         "Zaproszenie nigdy niezaakceptowane (albo zaakceptowane, ale bez żadnej odpowiedzi) przez tyle dni.",
       contactPurgeLabel: "Usuwaj na dobre usunięte kontakty po upływie",
       contactPurgeHint: "Usunięte kontakty są kasowane trwale po tylu dniach.",
+      expireListingLabel: "Oznaczaj ofertę jako „Starsza” po upływie",
+      expireListingHint:
+        "Oferta, której nie zobaczyliśmy ponownie podczas skanowania przez tyle dni, jest wyszarzana jako „Starsza oferta” — nadal jest na tablicy i możesz ją przywrócić.",
       trashedJobsLabel: "Usuwaj na dobre usunięte oferty po upływie",
       trashedJobsHint:
         "Usunięte oferty są kasowane trwale (i nie będą ponownie skanowane) po tylu dniach.",

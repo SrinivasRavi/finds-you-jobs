@@ -141,11 +141,18 @@ def test_validate_expired_session(tmp_path) -> None:
         it.close()
 
 
-def test_set_tier(app_client) -> None:
+def test_set_membership(app_client) -> None:
     _app, client = app_client
-    resp = client.post("/api/linkedin/tier", headers=AUTH, json={"account_tier": "seasoned"})
-    assert resp.status_code == 200 and resp.json()["account_tier"] == "seasoned"
-    bad = client.post("/api/linkedin/tier", headers=AUTH, json={"account_tier": "wild"})
+    resp = client.post(
+        "/api/linkedin/rate-limits", headers=AUTH, json={"membership_type": "premium"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["rate_limits"]["membership_type"] == "premium"
+    # Legacy plan flag stays consistent so the note-budget path keeps working.
+    assert resp.json()["linkedin_plan"] == "premium"
+    bad = client.post(
+        "/api/linkedin/rate-limits", headers=AUTH, json={"membership_type": "wild"}
+    )
     assert bad.status_code == 422
 
 
@@ -406,6 +413,171 @@ def test_linkedin_search_dedups_against_existing_guest_row(search_client) -> Non
     assert scan["persisted"] == 1
 
 
+# --- Fresh search / Next page (pagination cursor, 2026-08-01) ---------------
+# One click is still exactly one page of 25 per query pair; `mode: next`
+# continues the last Fresh search's SNAPSHOT (never live prefs) within the
+# 12 h `SEARCH_CURSOR_TTL`. LinkedIn's own pagination is stateless — the TTL
+# is our result-coherence policy, not a LinkedIn limit.
+
+
+def _paged_driver() -> FakeVoyagerDriver:
+    """A fake whose search result says LinkedIn has more pages (total=60)."""
+    return FakeVoyagerDriver(
+        login_result={
+            "op": "login", "ok": True, "connected": True,
+            "connected_as": "Ada Lovelace", "li_at_expires": None, "cookie_count": 4,
+        },
+        search_jobs_result={
+            "op": "search-jobs", "ok": True, "count": 2, "total": 60,
+            "exhausted": False, "next_start": 25,
+            "jobs": [
+                {"id": "111", "url": "https://www.linkedin.com/jobs/view/111",
+                 "title": "Backend Engineer", "company": "Acme",
+                 "location": "Bengaluru, India (Remote)"},
+                {"id": "222", "url": "https://www.linkedin.com/jobs/view/222",
+                 "title": "Platform Engineer", "company": "Beta",
+                 "location": "Remote, India"},
+            ],
+        },
+    )
+
+
+@pytest.fixture
+def paged_search_client(
+    tmp_path: Path,
+) -> Iterator[tuple[FastAPI, TestClient, FakeVoyagerDriver]]:
+    driver = _paged_driver()
+    for app, client in _make_client(tmp_path, lambda tier: driver):
+        yield app, client, driver
+
+
+def _search_starts(driver: FakeVoyagerDriver) -> list[int]:
+    """The `start` offset of every search_jobs call the fake driver served."""
+    return [c[4] for c in driver.calls if c[0] == "search_jobs"]
+
+
+def _run_search(app: FastAPI, client: TestClient, mode: str) -> str:
+    resp = client.post("/api/linkedin/search", headers=AUTH, json={"mode": mode})
+    assert resp.status_code == 202
+    op_id = resp.json()["id"]
+    wait_for_state(app.state.db, op_id, "succeeded")
+    return op_id
+
+
+def test_fresh_search_snapshots_the_cursor(paged_search_client) -> None:
+    app, client, driver = paged_search_client
+    _connect(app, client)
+    _enable_job_search(client)
+    _set_prefs(client)
+
+    op_id = _run_search(app, client, "fresh")
+    with app.state.db.repos() as repos:
+        assert repos.operations.get(op_id).input_snapshot["mode"] == "fresh"
+    assert _search_starts(driver) == [0]
+
+    cur = client.get("/api/linkedin/session", headers=AUTH).json()["search_cursor"]
+    assert cur is not None
+    assert cur["expired"] is False
+    assert cur["exhausted"] is False
+    assert cur["pages_fetched"] == 1
+    assert cur["next_page_available"] is True
+
+
+def test_next_page_continues_the_snapshot(paged_search_client) -> None:
+    app, client, driver = paged_search_client
+    _connect(app, client)
+    _enable_job_search(client)
+    _set_prefs(client)
+
+    _run_search(app, client, "fresh")
+    op_id = _run_search(app, client, "next")
+    with app.state.db.repos() as repos:
+        assert repos.operations.get(op_id).input_snapshot["mode"] == "next"
+    # Page 0 on Fresh, page 1 (offset 25) on Next — one request each.
+    assert _search_starts(driver) == [0, 25]
+
+
+def test_next_page_uses_the_snapshot_not_live_prefs(paged_search_client) -> None:
+    """Editing preferences mid-pagination must not make "page 2" mean page 2
+    of a search that never ran page 1."""
+    app, client, driver = paged_search_client
+    _connect(app, client)
+    _enable_job_search(client)
+    _set_prefs(client)  # "backend engineer" @ "India"
+
+    _run_search(app, client, "fresh")
+    resp = client.post("/api/settings", headers=AUTH, json={
+        "role_aliases": ["data engineer"], "locations": ["Berlin"],
+    })
+    assert resp.status_code == 200
+    _run_search(app, client, "next")
+
+    keywords = [c[1] for c in driver.calls if c[0] == "search_jobs"]
+    assert keywords == ["backend engineer", "backend engineer"]
+
+
+def test_next_page_refused_without_a_fresh_search(search_client) -> None:
+    _app, client = search_client
+    _connect(_app, client)
+    _enable_job_search(client)
+    resp = client.post("/api/linkedin/search", headers=AUTH, json={"mode": "next"})
+    assert resp.status_code == 409
+    assert "Fresh search" in resp.json()["detail"]
+
+
+def test_next_page_refused_after_the_ttl(paged_search_client) -> None:
+    app, client, _driver = paged_search_client
+    _connect(app, client)
+    _enable_job_search(client)
+    _set_prefs(client)
+    _run_search(app, client, "fresh")
+
+    with app.state.db.repos() as repos:
+        repos.linkedin_search_cursor.update(fresh_at=now_utc() - timedelta(hours=13))
+        repos.commit()
+
+    resp = client.post("/api/linkedin/search", headers=AUTH, json={"mode": "next"})
+    assert resp.status_code == 409
+    assert "expired" in resp.json()["detail"]
+    # The DTO stops offering the button for the same reason.
+    cur = client.get("/api/linkedin/session", headers=AUTH).json()["search_cursor"]
+    assert cur is not None
+    assert cur["expired"] is True
+    assert cur["next_page_available"] is False
+
+
+def test_next_page_refused_when_exhausted(search_client) -> None:
+    """The plain search fake returns 2 rows with no `exhausted` key — a short
+    page, so the op derives end-of-results and Next has nothing to fetch."""
+    _app, client = search_client
+    _connect(_app, client)
+    _enable_job_search(client)
+    _set_prefs(client)
+    resp = client.post("/api/linkedin/search", headers=AUTH, json={"mode": "fresh"})
+    wait_for_state(_app.state.db, resp.json()["id"], "succeeded")
+
+    cur = client.get("/api/linkedin/session", headers=AUTH).json()["search_cursor"]
+    assert cur["exhausted"] is True
+    assert cur["next_page_available"] is False
+
+    resp = client.post("/api/linkedin/search", headers=AUTH, json={"mode": "next"})
+    assert resp.status_code == 409
+    assert "No more results" in resp.json()["detail"]
+
+
+def test_disconnect_clears_the_search_cursor(paged_search_client) -> None:
+    app, client, _driver = paged_search_client
+    _connect(app, client)
+    _enable_job_search(client)
+    _set_prefs(client)
+    _run_search(app, client, "fresh")
+    assert client.get("/api/linkedin/session", headers=AUTH).json()["search_cursor"]
+
+    client.post("/api/linkedin/disconnect", headers=AUTH)
+    cur = client.get("/api/linkedin/session", headers=AUTH).json()["search_cursor"]
+    assert cur is None
+
+
 # --- user-initiated contact sync (FR-NW-15) --------------------------------
 # contact_sync used to be a 12 h schedule that touched LinkedIn with nobody
 # present. It is now user-initiated only: an explicit Sync button (force=true)
@@ -473,46 +645,111 @@ def test_opportunistic_refresh_is_throttled_but_the_button_is_not(app_client) ->
     assert forced["id"]
 
 
-# --- caps + plan surface (posture doc §4 fixes 7 + 10) ----------------------
+# --- caps + self-imposed rate-limit profile (posture doc §4 fixes 7 + 10;
+#     membership × risk% × override, maintainer directive 2026-08-01) ----------
 
 
 def test_quota_caps_come_from_the_package(app_client) -> None:
-    """The popup's displayed caps must be the ENFORCED caps. `dto._TIER_CAPS`
-    (15/100 · 30/200) drifted to 2-3× the package's real values and is gone —
-    this pins the route to the package tier table, DM budgets included."""
-    from sidecar.packages.referral_outreach import TIERS
-
+    """The popup's displayed caps must be the ENFORCED caps. The default profile
+    (free membership × 60% risk) reproduces the historical New-tier caps EXACTLY,
+    so switching to the membership/risk model changed no shipped number."""
     _app, client = app_client
     q = client.get("/api/referrals/quota", headers=AUTH).json()
-    new = TIERS["new"]
-    assert q["daily_limit"] == new.invites.day == 8
-    assert q["weekly_limit"] == new.invites.week == 30
-    assert q["dm_daily_limit"] == new.dms.day == 10
-    assert q["dm_weekly_limit"] == new.dms.week == 50
+    assert q["daily_limit"] == 8      # free invites.day 13 × 0.60 → 8
+    assert q["weekly_limit"] == 30    # 50 × 0.60 → 30
+    assert q["dm_daily_limit"] == 10  # 17 × 0.60 → 10
+    assert q["dm_weekly_limit"] == 50  # 83 × 0.60 → 50
 
 
-def test_linkedin_plan_is_settable_and_surfaced(app_client) -> None:
+def test_rate_limits_default_profile_surfaced(app_client) -> None:
     _app, client = app_client
-    s = client.get("/api/linkedin/session", headers=AUTH).json()
-    assert s["linkedin_plan"] == "free"  # conservative default
+    rl = client.get("/api/linkedin/session", headers=AUTH).json()["rate_limits"]
+    assert rl["membership_type"] == "free"  # conservative default
+    assert rl["risk_pct"] == 60
+    assert "premium" in rl["memberships"]
+    caps = {c["key"]: c for c in rl["caps"]}
+    # Effective = ceiling × risk%; ceiling is the 100% estimate; not overridden.
+    assert caps["invites_week"]["effective"] == 30
+    assert caps["invites_week"]["ceiling"] == 50
+    assert caps["invites_week"]["overridden"] is False
+    # The new self-imposed job-search throttle: 7 pages/hr ceiling × 0.60 → 4.
+    assert caps["job_search_pages_hour"]["effective"] == 4
+    assert rl["job_search_hour_cap"] == 4
+    assert rl["job_search_hour_remaining"] == 4
 
-    updated = client.post(
-        "/api/linkedin/tier", headers=AUTH, json={"linkedin_plan": "premium"}
+
+def test_risk_slider_scales_caps(app_client) -> None:
+    _app, client = app_client
+    r = client.post("/api/linkedin/rate-limits", headers=AUTH, json={"risk_pct": 100})
+    assert r.status_code == 200
+    caps = {c["key"]: c for c in r.json()["rate_limits"]["caps"]}
+    # 100% risk sits at the estimated ceiling itself (max risk, no margin).
+    assert caps["invites_week"]["effective"] == 50
+    assert caps["job_search_pages_hour"]["effective"] == 7
+    # Risk clamps into [10, 100].
+    r = client.post("/api/linkedin/rate-limits", headers=AUTH, json={"risk_pct": 999})
+    assert r.json()["rate_limits"]["risk_pct"] == 100
+    r = client.post("/api/linkedin/rate-limits", headers=AUTH, json={"risk_pct": 1})
+    assert r.json()["rate_limits"]["risk_pct"] == 10
+
+
+def test_override_pins_one_cap(app_client) -> None:
+    _app, client = app_client
+    r = client.post(
+        "/api/linkedin/rate-limits", headers=AUTH,
+        json={"override_key": "invites_week", "override_value": 42},
     )
-    assert updated.status_code == 200
-    assert updated.json()["linkedin_plan"] == "premium"
-    # Tier untouched by a plan-only update.
-    assert updated.json()["account_tier"] == "new"
+    assert r.status_code == 200
+    caps = {c["key"]: c for c in r.json()["rate_limits"]["caps"]}
+    assert caps["invites_week"]["effective"] == 42
+    assert caps["invites_week"]["overridden"] is True
+    # Other caps stay on the scaled default.
+    assert caps["dms_week"]["overridden"] is False
 
 
-def test_tier_route_rejects_bad_values(app_client) -> None:
+def test_changing_basis_resets_overrides(app_client) -> None:
+    """The maintainer's 'both reset' rule: changing membership OR risk wipes every
+    manual override back to the freshly computed default."""
     _app, client = app_client
-    # `recovering` is reserved for the restriction ladder — not user-selectable.
-    r = client.post("/api/linkedin/tier", headers=AUTH, json={"account_tier": "recovering"})
+    client.post(
+        "/api/linkedin/rate-limits", headers=AUTH,
+        json={"override_key": "invites_week", "override_value": 42},
+    )
+    # Changing risk resets the override.
+    r = client.post("/api/linkedin/rate-limits", headers=AUTH, json={"risk_pct": 80})
+    caps = {c["key"]: c for c in r.json()["rate_limits"]["caps"]}
+    assert caps["invites_week"]["overridden"] is False
+    assert caps["invites_week"]["effective"] == 40  # 50 × 0.80
+
+    # Re-pin, then change membership — also resets.
+    client.post(
+        "/api/linkedin/rate-limits", headers=AUTH,
+        json={"override_key": "invites_week", "override_value": 42},
+    )
+    r = client.post(
+        "/api/linkedin/rate-limits", headers=AUTH, json={"membership_type": "premium"}
+    )
+    caps = {c["key"]: c for c in r.json()["rate_limits"]["caps"]}
+    assert caps["invites_week"]["overridden"] is False
+
+
+def test_rate_limits_route_rejects_bad_values(app_client) -> None:
+    _app, client = app_client
+    r = client.post(
+        "/api/linkedin/rate-limits", headers=AUTH, json={"membership_type": "platinum"}
+    )
     assert r.status_code == 422
-    r = client.post("/api/linkedin/tier", headers=AUTH, json={"linkedin_plan": "gold"})
+    r = client.post(
+        "/api/linkedin/rate-limits", headers=AUTH,
+        json={"override_key": "not_a_meter", "override_value": 5},
+    )
     assert r.status_code == 422
-    r = client.post("/api/linkedin/tier", headers=AUTH, json={})
+    r = client.post(
+        "/api/linkedin/rate-limits", headers=AUTH,
+        json={"override_key": "invites_week", "override_value": -3},
+    )
+    assert r.status_code == 422
+    r = client.post("/api/linkedin/rate-limits", headers=AUTH, json={})
     assert r.status_code == 422
 
 
@@ -569,5 +806,6 @@ def test_login_op_self_gates_even_if_enqueued(app_client) -> None:
         kind="linkedin_login", input_snapshot={}, db=_app.state.db, operation_id="op-test"
     )
     outcome = login_entrypoint(ctx)
+    assert outcome.result_ref is not None
     assert outcome.result_ref["skipped"] == "no_linkedin_feature_enabled"
     assert outcome.result_ref["connected"] is False

@@ -2018,7 +2018,7 @@ async def referrals_quota(request: Request) -> dto.QuotaDTO:
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
         prefs = repos.preferences.get_or_create()
-        tier = session.account_tier if session is not None else "new"
+        profile = networker_ops._resolve_profile(repos)
         connected = bool(prefs.voyager_risk_marker_on) and (
             session is not None and session.status == "valid"
         )
@@ -2039,7 +2039,7 @@ async def referrals_quota(request: Request) -> dto.QuotaDTO:
                     dm_daily += is_dm
                     daily += not is_dm
     return dto.quota_dto(
-        connected=connected, tier=tier, daily_used=daily, weekly_used=weekly,
+        connected=connected, profile=profile, daily_used=daily, weekly_used=weekly,
         dm_daily_sent=dm_daily, dm_weekly_sent=dm_weekly,
     )
 
@@ -2101,7 +2101,9 @@ async def linkedin_session(request: Request) -> dto.LinkedInSessionDTO:
         session = repos.linkedin_session.get()
         prefs = repos.preferences.get_or_create()
         return dto.linkedin_session_dto(
-            session, enabled=bool(prefs.voyager_risk_marker_on)
+            session, enabled=bool(prefs.voyager_risk_marker_on),
+            cursor=repos.linkedin_search_cursor.get(),
+            rate_limits=networker_ops.linkedin_caps_snapshot(repos),
         )
 
 
@@ -2157,7 +2159,14 @@ async def linkedin_search(
     no-op. (It used to check the *Referral Outreach* toggle instead — the wrong
     consent, in both directions: enabling referrals alone unlocked searches the
     user never acknowledged, while a search-only user was refused. Posture doc
-    §4 #8.) Results land in the same discovery funnel as every other source."""
+    §4 #8.) Results land in the same discovery funnel as every other source.
+
+    `mode` (2026-08-01): `fresh` runs page 0 from current prefs and resets the
+    pagination cursor; `next` continues the last Fresh search's snapshot from
+    each pair's own offset. Next is refused (409) when no continuable cursor
+    exists — never run, expired past `SEARCH_CURSOR_TTL`, or every pair
+    exhausted. The op re-checks the same precondition (self-gate)."""
+    mode = payload.mode if payload is not None else "fresh"
     with _db(request).repos() as repos:
         _require_job_search_opt_in(repos)
         session = repos.linkedin_session.get()
@@ -2166,11 +2175,40 @@ async def linkedin_search(
                 status_code=409,
                 detail="LinkedIn is not connected — connect your session in Settings first.",
             )
+        # Self-imposed pages/hour throttle: refuse when the hourly budget is spent
+        # (both modes — every search fetches pages). The worker enforces this too;
+        # the route surfaces it as a clean 429 rather than a 0-result search.
+        if networker_ops.linkedin_caps_snapshot(repos)["job_search_hour_remaining"] <= 0:
+            raise HTTPException(
+                status_code=429,
+                detail="LinkedIn job-search hourly limit reached — wait for it to "
+                       "reset, or raise it in Settings › LinkedIn self-imposed rate limits.",
+            )
+        if mode == "next":
+            state = dto.linkedin_search_cursor_dto(repos.linkedin_search_cursor.get())
+            if state is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No search to continue — run a Fresh search first.",
+                )
+            if state.expired:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The last Fresh search has expired — run a Fresh search first.",
+                )
+            if state.exhausted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No more results — the last search reached LinkedIn's "
+                           "end of results. Run a Fresh search.",
+                )
     requested = payload.limit if payload is not None and payload.limit is not None else (
         LINKEDIN_SEARCH_LIMIT_DEFAULT
     )
     limit = max(LINKEDIN_SEARCH_LIMIT_MIN, min(LINKEDIN_SEARCH_LIMIT_MAX, int(requested)))
-    operation_id = _runner(request).submit("linkedin_search", {"limit": limit})
+    operation_id = _runner(request).submit(
+        "linkedin_search", {"limit": limit, "mode": mode}
+    )
     return dto.OperationAccepted(id=operation_id, kind="linkedin_search", state="queued")
 
 
@@ -2213,8 +2251,14 @@ async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
             status="never_set", connected_as="", li_at_expires_at=None,
             last_validated_at=None, paused_until=None, paused_reason="",
         )
+        # A pagination cursor without its session is meaningless — drop it.
+        repos.linkedin_search_cursor.clear()
         prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+        return dto.linkedin_session_dto(
+            session, enabled=bool(prefs.voyager_risk_marker_on),
+            cursor=repos.linkedin_search_cursor.get(),
+            rate_limits=networker_ops.linkedin_caps_snapshot(repos),
+        )
 
 
 @router.post("/api/linkedin/validate")
@@ -2224,12 +2268,12 @@ async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
     and stamps `last_validated_at`."""
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
-        tier = session.account_tier if session is not None else "new"
+        profile = networker_ops._resolve_profile(repos)
     # Off the loop (async-first rule): session_status is local-only, but the
     # first call lazily imports playwright.sync_api — up to ~1 s on a cold
     # packaged build.
     def _local_status() -> dict:
-        driver = networker_ops.DRIVER_FACTORY(tier)
+        driver = networker_ops.DRIVER_FACTORY(profile)
         try:
             return driver.session_status()
         finally:
@@ -2243,7 +2287,11 @@ async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
             fields["connected_as"] = ""
         session = repos.linkedin_session.update(**fields)
         prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+        return dto.linkedin_session_dto(
+            session, enabled=bool(prefs.voyager_risk_marker_on),
+            cursor=repos.linkedin_search_cursor.get(),
+            rate_limits=networker_ops.linkedin_caps_snapshot(repos),
+        )
 
 
 @router.post("/api/linkedin/resume")
@@ -2257,11 +2305,11 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         _require_any_linkedin_feature(repos)
         session = repos.linkedin_session.get()
-        tier = session.account_tier if session is not None else "new"
+        profile = networker_ops._resolve_profile(repos)
     # Off the loop (async-first rule): same first-call playwright import cost
     # as validate, plus the pacing-ledger file writes.
     def _resume_and_status() -> dict:
-        driver = networker_ops.DRIVER_FACTORY(tier)
+        driver = networker_ops.DRIVER_FACTORY(profile)
         try:
             driver.resume()
             return driver.session_status()
@@ -2276,39 +2324,84 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
             last_validated_at=now_utc(),
         )
         prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
-
-
-@router.post("/api/linkedin/tier")
-async def linkedin_set_tier(
-    request: Request, payload: dto.LinkedInTierRequest
-) -> dto.LinkedInSessionDTO:
-    """Set the account-tier (New / Seasoned) and/or plan (Free / Premium) the app
-    passes to voyager (US-REF-08). voyager owns the cap *values*; this is only
-    the user's selection. `recovering` is deliberately NOT selectable — it is
-    reserved for the restriction ladder to enter automatically (posture doc §4).
-    The plan conditions the free-only personalized-note budget (§4 #10)."""
-    fields: dict[str, str] = {}
-    if payload.account_tier is not None:
-        if payload.account_tier not in ("new", "seasoned"):
-            raise HTTPException(
-                status_code=422, detail="account_tier must be 'new' or 'seasoned'"
-            )
-        fields["account_tier"] = payload.account_tier
-    if payload.linkedin_plan is not None:
-        if payload.linkedin_plan not in ("free", "premium"):
-            raise HTTPException(
-                status_code=422, detail="linkedin_plan must be 'free' or 'premium'"
-            )
-        fields["linkedin_plan"] = payload.linkedin_plan
-    if not fields:
-        raise HTTPException(
-            status_code=422, detail="provide account_tier and/or linkedin_plan"
+        return dto.linkedin_session_dto(
+            session, enabled=bool(prefs.voyager_risk_marker_on),
+            cursor=repos.linkedin_search_cursor.get(),
+            rate_limits=networker_ops.linkedin_caps_snapshot(repos),
         )
+
+
+@router.post("/api/linkedin/rate-limits")
+async def linkedin_set_rate_limits(
+    request: Request, payload: dto.LinkedInRateLimitsRequest
+) -> dto.LinkedInSessionDTO:
+    """Set the self-imposed LinkedIn rate-limit profile (maintainer directive
+    2026-08-01, replacing the New/Seasoned tier + Free/Premium plan selectors).
+
+    The package owns the cap *values*; this stores only the user's choices:
+    - **membership_type** and/or **risk_pct** — the basis. Changing either
+      RESETS every per-meter override to the freshly computed default (the
+      maintainer's "both reset" rule): the ceilings or the scale changed, so any
+      old absolute pin is stale. `linkedin_plan` is kept in sync (free vs paid)
+      so the note-budget path keeps working.
+    - **override_key / override_value** — pin one `{meter}_{window}` cap to an
+      absolute number (only when NOT also changing the basis).
+    - **reset_overrides** — drop all pins back to the computed defaults.
+
+    voyager still enforces the numbers (NFR-LI-02); this is the selection only."""
+    from sidecar.packages.referral_outreach import (
+        MEMBERSHIPS,
+        OVERRIDABLE,
+        clamp_risk,
+    )
+
+    override_keys = {f"{m}_{w}" for m, w in OVERRIDABLE}
+    changes_basis = payload.membership_type is not None or payload.risk_pct is not None
     with _db(request).repos() as repos:
+        current = repos.linkedin_session.get_or_create()
+        fields: dict[str, Any] = {}
+        if changes_basis or payload.reset_overrides:
+            if payload.membership_type is not None:
+                if payload.membership_type not in MEMBERSHIPS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"membership_type must be one of {sorted(MEMBERSHIPS)}",
+                    )
+                fields["membership_type"] = payload.membership_type
+                # Keep the legacy plan flag consistent (note-budget path).
+                fields["linkedin_plan"] = (
+                    "free" if payload.membership_type == "free" else "premium"
+                )
+            if payload.risk_pct is not None:
+                fields["risk_pct"] = clamp_risk(payload.risk_pct)
+            # Both-reset rule: a basis change (or an explicit reset) clears every
+            # override so the caps revert to the new (ceiling × risk%) default.
+            fields["cap_overrides"] = {}
+        elif payload.override_key is not None:
+            if payload.override_key not in override_keys:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"override_key must be one of {sorted(override_keys)}",
+                )
+            if payload.override_value is None or payload.override_value < 0:
+                raise HTTPException(
+                    status_code=422, detail="override_value must be a non-negative integer"
+                )
+            overrides = dict(current.cap_overrides or {})
+            overrides[payload.override_key] = int(payload.override_value)
+            fields["cap_overrides"] = overrides
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="provide membership_type/risk_pct, an override, or reset_overrides",
+            )
         session = repos.linkedin_session.update(**fields)
         prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+        return dto.linkedin_session_dto(
+            session, enabled=bool(prefs.voyager_risk_marker_on),
+            cursor=repos.linkedin_search_cursor.get(),
+            rate_limits=networker_ops.linkedin_caps_snapshot(repos),
+        )
 
 
 # -- Dev tools (local testing only) ----------------------------------------
@@ -2346,6 +2439,23 @@ async def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
         repos.linkedin_session.get_or_create()
         repos.linkedin_session.update(status="valid", connected_as="Dev Session")
     return {"ok": True, "status": "valid"}
+
+
+@router.post("/api/dev/linkedin/seed-search-cursor")
+async def dev_seed_linkedin_search_cursor(request: Request) -> dict[str, Any]:
+    """Write a live (non-expired, non-exhausted) job-search pagination cursor
+    so the Next-page button can be exercised without a real LinkedIn search —
+    which needs a real logged-in session a test must never use. Same honesty
+    contract as `mark-session-valid`: the row is the same row a real Fresh
+    search writes, and nothing in production branches on this."""
+    _require_dev_mode()
+    with _db(request).repos() as repos:
+        repos.linkedin_search_cursor.update(
+            fresh_at=now_utc(),
+            queries=[{"keyword": "backend engineer", "location": "Remote",
+                      "next_start": 25, "exhausted": False}],
+        )
+    return {"ok": True}
 
 
 @router.post("/api/dev/linkedin/expire-cookie")

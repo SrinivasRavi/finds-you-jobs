@@ -30,6 +30,7 @@ from .models import (
     EngineSettings,
     Job,
     JobScore,
+    LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
     Operation,
@@ -1300,6 +1301,38 @@ class LinkedInSessionRepo:
         return row
 
 
+class LinkedInSearchCursorRepo:
+    """Single-row pagination cursor for the logged-in job search (Fresh search /
+    Next page). Same single-row pattern as `LinkedInSessionRepo`."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self) -> LinkedInSearchCursor | None:
+        return self._s.scalars(select(LinkedInSearchCursor).limit(1)).first()
+
+    def get_or_create(self) -> LinkedInSearchCursor:
+        row = self.get()
+        if row is None:
+            row = LinkedInSearchCursor()
+            self._s.add(row)
+            self._s.flush()
+        return row
+
+    def update(self, **fields: Any) -> LinkedInSearchCursor:
+        row = self.get_or_create()
+        for key, value in fields.items():
+            setattr(row, key, value)
+        return row
+
+    def clear(self) -> None:
+        """Drop the cursor (Fresh search resets it; Disconnect clears it)."""
+        row = self.get()
+        if row is not None:
+            row.fresh_at = None
+            row.queries = []
+
+
 class ApplyRunsRepo:
     """Durable Applier attempts (`docs/internal/applier.md` §9.1). Runs are
     append-only evidence: `update` mutates only the LIVE run's progress
@@ -1400,6 +1433,7 @@ class Repos:
         self.outreach_logs = OutreachLogsRepo(session)
         self.sequences = SequencesRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
+        self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)
         self.apply_runs = ApplyRunsRepo(session)
 
     def prune_ledger(self, keep: int) -> int:

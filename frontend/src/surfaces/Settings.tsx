@@ -19,7 +19,7 @@ import { AppearanceSection } from "./settings/AppearanceSection";
 import { AutomationSection } from "./settings/AutomationSection";
 import { DiscoveryKeysSection, DiscoverySourcesSection } from "./settings/DiscoverySources";
 import { LifecycleSection } from "./settings/LifecycleSection";
-import { LinkedInJobSearchSection } from "./settings/LinkedInSections";
+import { LinkedInJobSearchSection, LinkedInRateLimitsSection } from "./settings/LinkedInSections";
 import { ObservabilitySection } from "./settings/ObservabilitySection";
 import { EngineRoutingSection } from "./settings/PromptsSection";
 import { ReferralOutreachSection } from "./settings/ReferralOutreachSection";
@@ -166,6 +166,12 @@ export function Settings() {
           {/* Contact & data lifecycle (FR-SYS-06 / FR-NW-15) — configurable
               windows for kanban ghosting, purge, and the contact-sync cadence. */}
           <LifecycleSection settings={settings} patch={patch} />
+
+          {/* LinkedIn self-imposed rate limits (maintainer directive 2026-08-01):
+              its own always-visible card here. Governs both job-search and
+              Referral Outreach caps; the section reads the shared session and
+              renders nothing until a LinkedIn session/profile exists. */}
+          <LinkedInRateLimitsSection />
           </div>
           )}
 

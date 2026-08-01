@@ -1068,6 +1068,12 @@ export interface paths {
          *     consent, in both directions: enabling referrals alone unlocked searches the
          *     user never acknowledged, while a search-only user was refused. Posture doc
          *     §4 #8.) Results land in the same discovery funnel as every other source.
+         *
+         *     `mode` (2026-08-01): `fresh` runs page 0 from current prefs and resets the
+         *     pagination cursor; `next` continues the last Fresh search's snapshot from
+         *     each pair's own offset. Next is refused (409) when no continuable cursor
+         *     exists — never run, expired past `SEARCH_CURSOR_TTL`, or every pair
+         *     exhausted. The op re-checks the same precondition (self-gate).
          */
         post: operations["linkedin_search_api_linkedin_search_post"];
         delete?: never;
@@ -1168,7 +1174,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/linkedin/tier": {
+    "/api/linkedin/rate-limits": {
         parameters: {
             query?: never;
             header?: never;
@@ -1178,14 +1184,23 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Linkedin Set Tier
-         * @description Set the account-tier (New / Seasoned) and/or plan (Free / Premium) the app
-         *     passes to voyager (US-REF-08). voyager owns the cap *values*; this is only
-         *     the user's selection. `recovering` is deliberately NOT selectable — it is
-         *     reserved for the restriction ladder to enter automatically (posture doc §4).
-         *     The plan conditions the free-only personalized-note budget (§4 #10).
+         * Linkedin Set Rate Limits
+         * @description Set the self-imposed LinkedIn rate-limit profile (maintainer directive
+         *     2026-08-01, replacing the New/Seasoned tier + Free/Premium plan selectors).
+         *
+         *     The package owns the cap *values*; this stores only the user's choices:
+         *     - **membership_type** and/or **risk_pct** — the basis. Changing either
+         *       RESETS every per-meter override to the freshly computed default (the
+         *       maintainer's "both reset" rule): the ceilings or the scale changed, so any
+         *       old absolute pin is stale. `linkedin_plan` is kept in sync (free vs paid)
+         *       so the note-budget path keeps working.
+         *     - **override_key / override_value** — pin one `{meter}_{window}` cap to an
+         *       absolute number (only when NOT also changing the basis).
+         *     - **reset_overrides** — drop all pins back to the computed defaults.
+         *
+         *     voyager still enforces the numbers (NFR-LI-02); this is the selection only.
          */
-        post: operations["linkedin_set_tier_api_linkedin_tier_post"];
+        post: operations["linkedin_set_rate_limits_api_linkedin_rate_limits_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1219,6 +1234,30 @@ export interface paths {
          *     row is the same row a real login writes, with the same fields.
          */
         post: operations["dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/linkedin/seed-search-cursor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Seed Linkedin Search Cursor
+         * @description Write a live (non-expired, non-exhausted) job-search pagination cursor
+         *     so the Next-page button can be exercised without a real LinkedIn search —
+         *     which needs a real logged-in session a test must never use. Same honesty
+         *     contract as `mark-session-valid`: the row is the same row a real Fresh
+         *     search writes, and nothing in production branches on this.
+         */
+        post: operations["dev_seed_linkedin_search_cursor_api_dev_linkedin_seed_search_cursor_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2623,6 +2662,29 @@ export interface components {
             feed_state?: string | null;
         };
         /**
+         * LinkedInCapDTO
+         * @description One self-imposed cap the user can override. `effective` is the enforced
+         *     number (an override, or ceiling × risk%); `ceiling` is the estimated
+         *     LinkedIn limit (the 100% reference); `overridden` says whether `effective`
+         *     is a manual pin. `key` is the `{meter}_{window}` wire id.
+         */
+        LinkedInCapDTO: {
+            /** Key */
+            key: string;
+            /** Meter */
+            meter: string;
+            /** Window */
+            window: string;
+            /** Label */
+            label: string;
+            /** Effective */
+            effective: number;
+            /** Ceiling */
+            ceiling: number;
+            /** Overridden */
+            overridden: boolean;
+        };
+        /**
          * LinkedInConnectRequest
          * @description Start the headed LinkedIn login (US-SET-06 as-built). `login_url` +
          *     `timeout_s` are maintainer/test overrides (a LOCAL fixture — never
@@ -2635,14 +2697,97 @@ export interface components {
             timeout_s?: number | null;
         };
         /**
+         * LinkedInRateLimitsDTO
+         * @description The self-imposed LinkedIn rate-limit profile (maintainer directive
+         *     2026-08-01). Membership picks the estimated ceilings; `risk_pct` (10–100)
+         *     scales them (100% = sitting at the estimated real limit); each cap is
+         *     independently overridable. `job_search_hour_*` is the live pages/hour budget
+         *     the Next-page button gates on.
+         */
+        LinkedInRateLimitsDTO: {
+            /** Membership Type */
+            membership_type: string;
+            /** Risk Pct */
+            risk_pct: number;
+            /** Memberships */
+            memberships: string[];
+            /** Caps */
+            caps: components["schemas"]["LinkedInCapDTO"][];
+            /** Job Search Hour Cap */
+            job_search_hour_cap: number;
+            /** Job Search Hour Used */
+            job_search_hour_used: number;
+            /** Job Search Hour Remaining */
+            job_search_hour_remaining: number;
+        };
+        /**
+         * LinkedInRateLimitsRequest
+         * @description Set the self-imposed rate-limit profile (2026-08-01). Provide the basis
+         *     (`membership_type` and/or `risk_pct`) — which resets overrides — OR pin one
+         *     cap via `override_key`/`override_value`, OR `reset_overrides`. The route
+         *     rejects a request that provides none of these.
+         */
+        LinkedInRateLimitsRequest: {
+            /** Membership Type */
+            membership_type?: string | null;
+            /** Risk Pct */
+            risk_pct?: number | null;
+            /** Override Key */
+            override_key?: string | null;
+            /** Override Value */
+            override_value?: number | null;
+            /**
+             * Reset Overrides
+             * @default false
+             */
+            reset_overrides: boolean;
+        };
+        /**
+         * LinkedInSearchCursorDTO
+         * @description Fresh-search pagination state for "Scan LinkedIn jobs" (Fresh search /
+         *     Next page). `next_page_available` is the one flag the UI gates the
+         *     Next-page button on; the rest explains why it is what it is. The TTL is a
+         *     host freshness policy (result coherence) — LinkedIn's own pagination is
+         *     stateless and never expires.
+         */
+        LinkedInSearchCursorDTO: {
+            /**
+             * Fresh At
+             * Format: date-time
+             */
+            fresh_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Expired */
+            expired: boolean;
+            /** Exhausted */
+            exhausted: boolean;
+            /** Pages Fetched */
+            pages_fetched: number;
+            /** Next Page Available */
+            next_page_available: boolean;
+        };
+        /**
          * LinkedInSearchRequest
          * @description One-shot logged-in job search (discovery-expansion #6). `limit` is the
          *     per-query fetch budget (rows per role-alias × location pair); the route
-         *     clamps it to a safe range. Omitted → the server default.
+         *     clamps it to a safe range. Omitted → the server default. `mode` picks the
+         *     button: `fresh` runs page 0 from current prefs and resets the pagination
+         *     cursor; `next` continues the last Fresh search's snapshot (409 when there
+         *     is none, it expired, or it is exhausted).
          */
         LinkedInSearchRequest: {
             /** Limit */
             limit?: number | null;
+            /**
+             * Mode
+             * @default fresh
+             * @enum {string}
+             */
+            mode: "fresh" | "next";
         };
         /**
          * LinkedInSessionDTO
@@ -2651,7 +2796,10 @@ export interface components {
          *     `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
          *     `status` is the session validity. The popup send path unlocks only when
          *     enabled AND status == 'valid'. N4 adds the session-capture metadata the
-         *     Settings → LinkedIn session UI renders (connected-as, expiry, backoff).
+         *     Settings → LinkedIn session UI renders (connected-as, expiry, backoff);
+         *     `search_cursor` (2026-08-01) is the job-search pagination state — None
+         *     until a Fresh search has run; `rate_limits` is the self-imposed
+         *     membership/risk/override profile.
          */
         LinkedInSessionDTO: {
             /** Enabled */
@@ -2681,17 +2829,8 @@ export interface components {
              * @default
              */
             paused_reason: string;
-        };
-        /**
-         * LinkedInTierRequest
-         * @description Set the account-tier and/or plan the app passes to the outreach package
-         *     (US-REF-08). Both optional — only the provided field changes.
-         */
-        LinkedInTierRequest: {
-            /** Account Tier */
-            account_tier?: string | null;
-            /** Linkedin Plan */
-            linkedin_plan?: string | null;
+            search_cursor?: components["schemas"]["LinkedInSearchCursorDTO"] | null;
+            rate_limits?: components["schemas"]["LinkedInRateLimitsDTO"] | null;
         };
         /**
          * NetworkingContactDTO
@@ -5166,7 +5305,7 @@ export interface operations {
             };
         };
     };
-    linkedin_set_tier_api_linkedin_tier_post: {
+    linkedin_set_rate_limits_api_linkedin_rate_limits_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -5175,7 +5314,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LinkedInTierRequest"];
+                "application/json": components["schemas"]["LinkedInRateLimitsRequest"];
             };
         };
         responses: {
@@ -5200,6 +5339,28 @@ export interface operations {
         };
     };
     dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    dev_seed_linkedin_search_cursor_api_dev_linkedin_seed_search_cursor_post: {
         parameters: {
             query?: never;
             header?: never;

@@ -91,6 +91,14 @@ export const LifecycleSection = memo(function LifecycleSection({
           testid="contact-purge"
         />
         <LifecycleRow
+          label={t("settingsPage.lifecycle.expireListingLabel")}
+          hint={t("settingsPage.lifecycle.expireListingHint")}
+          unit={t("settingsPage.lifecycle.days")}
+          value={lc.expire_listing_days}
+          onChange={set("expire_listing_days")}
+          testid="expire-listing"
+        />
+        <LifecycleRow
           label={t("settingsPage.lifecycle.trashedJobsLabel")}
           hint={t("settingsPage.lifecycle.trashedJobsHint")}
           unit={t("settingsPage.lifecycle.days")}

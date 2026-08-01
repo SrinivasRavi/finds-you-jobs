@@ -794,12 +794,53 @@ const pt: DeepPartial<Messages> = {
       runNow:
         "Rode uma busca agora com seus cargos e localidades salvos — os resultados chegam ao seu feed de Descobrir vagas.",
       searching: "Buscando…",
-      searchBtn: "Buscar vagas no LinkedIn",
+      freshBtn: "Nova pesquisa",
+      nextBtn: "Próxima página",
+      nextHint: "Continue a última pesquisa de onde parou — os próximos 25 resultados por função × localização.",
+      nextInfo:
+        "\"Próxima página\" reexecuta a última nova pesquisa com exatamente as mesmas funções e localizações no próximo offset — editar as preferências no meio não a altera (para isso, faça uma nova pesquisa). Fica disponível por 12 horas após uma nova pesquisa e depois desaparece: o LinkedIn reordena os resultados continuamente, então um offset antigo apontaria para uma lista deslocada. O LinkedIn não tem nenhum tempo limite de paginação — a janela é a nossa própria regra de frescor. Também desaparece quando os resultados do LinkedIn se esgotam.",
       resultsPerSearch: "Resultados por busca",
       resultsPerSearchInfo:
         "Quantas vagas puxar por cargo × localidade, em páginas de 25. Mais alto significa mais resultados — mas mais requisições disparadas na <strong>sua própria</strong> conta do LinkedIn de uma vez, o que aumenta o risco de limitação e para a conta. Mantenha um valor modesto.",
       started: "Busca iniciada — novas correspondências aparecerão em Descobrir vagas em breve.",
       failed: "A busca falhou.",
+      scanning: "Varrendo o LinkedIn…",
+      hourlyReached:
+        "Limite de busca de vagas por hora atingido — ele é reiniciado dentro da hora, ou aumente-o em “Limites de taxa autoimpostos do LinkedIn”.",
+    },
+    rateLimits: {
+      title: "Limites de taxa autoimpostos no LinkedIn",
+      intro:
+        "O quanto o finds-you-jobs se autolimita em relação ao LinkedIn. Escolha sua assinatura e depois defina o quão perto dos limites estimados do LinkedIn você está disposto a operar.",
+      info:
+        "Estes limites são NOSSOS próprios — o LinkedIn quase não publica seus limites reais, então cada teto aqui é uma estimativa. Sua assinatura define os tetos estimados; o controle de risco os escala; e você pode sobrescrever qualquer limite individual. O código de contato aplica exatamente estes números.",
+      membershipLabel: "Assinatura do LinkedIn",
+      membershipHint: "Define os tetos estimados por ação a partir dos quais escalamos.",
+      membership: {
+        free: "Gratuita (Básica)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Apetite de risco",
+      riskWarn:
+        "Em 100%, cada limite fica na nossa melhor estimativa do próprio limite do LinkedIn para sua assinatura. O LinkedIn não publica esses números, então são estimativas — mais confiáveis para uma conta em situação regular. Mais baixo deixa mais margem de segurança; nada aqui pode garantir que sua conta não será restringida.",
+      capsLabel: "Limites individuais",
+      capsInfo:
+        "Cada limite começa em teto da assinatura × risco%. Digite um número para fixá-lo. Alterar sua assinatura ou o controle de risco redefine cada limite fixado de volta ao padrão calculado.",
+      cap: {
+        invites_day: "Pedidos de conexão / dia",
+        invites_week: "Pedidos de conexão / semana",
+        dms_day: "Mensagens diretas / dia",
+        dms_week: "Mensagens diretas / semana",
+        profile_views_day: "Visualizações de perfil / dia",
+        searches_month: "Buscas de pessoas / mês",
+        notes_month: "Notas de convite / mês",
+        job_search_pages_hour: "Páginas de busca de vagas / hora (25 vagas cada)",
+      },
+      ofCeiling: "Máx.: ~{{ceiling}}",
+      custom: "personalizado",
+      resetBtn: "Redefinir para os padrões",
     },
     session: {
       title: "Sessão do LinkedIn",
@@ -868,6 +909,9 @@ const pt: DeepPartial<Messages> = {
       contactPurgeLabel: "Apagar de vez contatos excluídos após",
       contactPurgeHint:
         "Contatos excluídos são apagados permanentemente esses dias depois.",
+      expireListingLabel: "Marcar uma vaga como “Mais antiga” após",
+      expireListingHint:
+        "Uma vaga que não voltamos a ver em uma varredura por esses dias fica acinzentada como “Vaga mais antiga” — continua no quadro, e você pode restaurá-la.",
       trashedJobsLabel: "Apagar de vez vagas excluídas após",
       trashedJobsHint:
         "Vagas excluídas são apagadas permanentemente (e não voltam em varreduras) esses dias depois.",

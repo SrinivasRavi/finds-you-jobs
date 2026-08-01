@@ -9,7 +9,7 @@
 // appears. Status chip + connected-as + expiry + Validate/Disconnect/Resume
 // mirror settings-linkedin.html.
 
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import {
@@ -18,11 +18,10 @@ import {
   useLinkedinSearch,
   useLinkedInSession,
   useResumeLinkedIn,
-  useSetLinkedInPlan,
-  useSetLinkedInTier,
+  useSetLinkedInRateLimits,
   useValidateLinkedIn,
 } from "../../api/queries";
-import type { LinkedInSessionState, Settings as SettingsT } from "../../api/types";
+import type { LinkedInCap, LinkedInSessionState, Settings as SettingsT } from "../../api/types";
 import { InfoDot } from "../../shell/InfoDot";
 import { ExperimentalHazard, LinkedInRiskLine, MUTED_WARN_BOX, Section, Toggle } from "./shared";
 
@@ -86,8 +85,6 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   const disconnect = useDisconnectLinkedIn();
   const validate = useValidateLinkedIn();
   const resume = useResumeLinkedIn();
-  const setTier = useSetLinkedInTier();
-  const setPlan = useSetLinkedInPlan();
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
 
   if (!session) return null;
@@ -228,61 +225,14 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
             </div>
           </div>
 
-          {/* Account tier (US-REF-08 / US-NW-10) */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <div className="flex items-center text-[13px] font-medium text-ink">
-                {t("settingsPage.session.tier")}
-                <InfoDot label={t("settingsPage.session.tierCapsLabel")}>
-                  {t("settingsPage.session.tierInfo")}
-                </InfoDot>
-              </div>
-              <div className="text-[12px] text-ink-3">{t("settingsPage.session.tierHint")}</div>
-            </div>
-            <select
-              data-testid="linkedin-tier-select"
-              value={session.account_tier}
-              onChange={(e) => setTier.mutate(e.target.value as "new" | "seasoned")}
-              className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
-            >
-              <option value="new">{t("settingsPage.session.tierNew")}</option>
-              <option value="seasoned">{t("settingsPage.session.tierSeasoned")}</option>
-            </select>
-          </div>
-
-          {/* LinkedIn plan (free/premium) — conditions the personalized-note
-              budget: the ~5/month note allowance exists only on free accounts,
-              so Premium lifts our conservative 3/month gate. */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <div className="flex items-center text-[13px] font-medium text-ink">
-                {t("settingsPage.session.plan")}
-                <InfoDot label={t("settingsPage.session.plan")}>
-                  {t("settingsPage.session.planInfo")}
-                </InfoDot>
-              </div>
-              <div className="text-[12px] text-ink-3">{t("settingsPage.session.planHint")}</div>
-            </div>
-            <select
-              data-testid="linkedin-plan-select"
-              value={session.linkedin_plan}
-              onChange={(e) => setPlan.mutate(e.target.value as "free" | "premium")}
-              className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
-            >
-              <option value="free">{t("settingsPage.session.planFree")}</option>
-              <option value="premium">{t("settingsPage.session.planPremium")}</option>
-            </select>
-          </div>
+          {/* Membership + risk% + per-cap overrides now live in their own
+              section (LinkedInRateLimitsSection), since they govern BOTH
+              Referral Outreach and job-search caps. */}
         </div>
       ) : null}
     </div>
   );
 });
-
-// One page of LinkedIn's own page size per click — fixed, not configurable.
-// The Voyager request always carries `count=25`, so any smaller setting was
-// cosmetic (2026-08-01); the server and the outreach package both clamp here.
-const LI_SEARCH_LIMIT = 25;
 
 // The experimental gate around LinkedIn job search — mirrors Referral Outreach
 // (hazard badge + ToS risk line + ack + Enable toggle), with its OWN opt-in but
@@ -366,8 +316,18 @@ export const LinkedInJobSearchSection = memo(function LinkedInJobSearchSection({
 
 function LinkedInJobSearchBlock() {
   const { t } = useTranslation();
+  const { data: session } = useLinkedInSession();
   const search = useLinkedinSearch();
-  const limit = LI_SEARCH_LIMIT;
+  // The hourly job-search budget is our own throttle (pages/hour). When it's
+  // spent, neither Fresh nor Next can fetch — reflect that in the UI (the
+  // server enforces it too, returning 429).
+  const hourRemaining = session?.rate_limits?.job_search_hour_remaining ?? 1;
+  const throttled = hourRemaining <= 0;
+  // The Next-page button shows only while the last Fresh search is continuable
+  // (younger than the 12 h window, not at LinkedIn's end of results) AND the
+  // hourly budget allows another page. The server enforces the same (409/429).
+  const nextAvailable = Boolean(session?.search_cursor?.next_page_available) && !throttled;
+  const busy = search.isPending;
   return (
     <div className="space-y-3" data-testid="linkedin-jobsearch-block">
       <div className="flex items-center gap-3">
@@ -376,15 +336,47 @@ function LinkedInJobSearchBlock() {
         </div>
         <button
           data-testid="linkedin-jobsearch-btn"
-          onClick={() => search.mutate(limit)}
-          disabled={search.isPending}
+          onClick={() => search.mutate("fresh")}
+          disabled={busy || throttled}
           className="inline-flex h-[30px] shrink-0 items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
         >
-          {search.isPending
-            ? t("settingsPage.linkedinSearch.searching")
-            : t("settingsPage.linkedinSearch.searchBtn")}
+          {t("settingsPage.linkedinSearch.freshBtn")}
         </button>
       </div>
+      {/* Scanning indicator (like the Discover scan pill) while a search runs —
+          both buttons are disabled above until it resolves. */}
+      {busy ? (
+        <div
+          className="flex items-center gap-2 text-[12px] italic text-ink-3"
+          data-testid="linkedin-jobsearch-scanning"
+        >
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border-2 border-t-accent" />
+          {t("settingsPage.linkedinSearch.scanning")}
+        </div>
+      ) : null}
+      {nextAvailable ? (
+        <div className="flex items-center gap-3">
+          <div className="flex-1 text-[12.5px] text-ink-2">
+            {t("settingsPage.linkedinSearch.nextHint")}
+            <InfoDot label={t("settingsPage.linkedinSearch.nextBtn")}>
+              {t("settingsPage.linkedinSearch.nextInfo")}
+            </InfoDot>
+          </div>
+          <button
+            data-testid="linkedin-jobsearch-next-btn"
+            onClick={() => search.mutate("next")}
+            disabled={busy}
+            className="inline-flex h-[30px] shrink-0 items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-60"
+          >
+            {t("settingsPage.linkedinSearch.nextBtn")}
+          </button>
+        </div>
+      ) : null}
+      {throttled ? (
+        <div className="text-[11.5px] text-warn" data-testid="linkedin-jobsearch-throttled">
+          {t("settingsPage.linkedinSearch.hourlyReached")}
+        </div>
+      ) : null}
       {/* Not a selector any more (2026-08-01). The request carries `count=25`
           whatever number a caller asks for, so a smaller setting never made a
           smaller request — it only threw away rows already fetched, while
@@ -421,3 +413,182 @@ function LinkedInJobSearchBlock() {
     </div>
   );
 }
+
+// One override input: pre-filled with the effective cap, committed on blur or
+// The selectable values for one cap: every value up to the estimated ceiling,
+// so the user can never pick above the max (the whole point of a dropdown over a
+// free-text box). Fine-grained for small ceilings (every integer ≤ 20), stepped
+// for larger ones so the list stays usable; the ceiling and the current value
+// are always present so both are selectable.
+function capOptions(ceiling: number, current: number): number[] {
+  const step = ceiling <= 20 ? 1 : ceiling <= 60 ? 5 : ceiling <= 500 ? 25 : 50;
+  const set = new Set<number>([1, ceiling, current]);
+  for (let v = step; v < ceiling; v += step) set.add(v);
+  // `current` is always kept (even a legacy 0) so the select's value is present.
+  return [...set].filter((v) => v === current || (v >= 1 && v <= ceiling)).sort((a, b) => a - b);
+}
+
+// One override control: a dropdown bounded at the estimated ceiling. Selecting a
+// value commits it immediately; the server recomputes and the query update flows
+// the new caps back. Bounded options mean an override can never exceed the max
+// (the server clamps too, as defence in depth).
+function OverrideSelect({
+  cap,
+  onCommit,
+  disabled,
+}: {
+  cap: LinkedInCap;
+  onCommit: (value: number) => void;
+  disabled: boolean;
+}) {
+  const options = capOptions(cap.ceiling, cap.effective);
+  return (
+    <select
+      value={cap.effective}
+      disabled={disabled}
+      data-testid={`linkedin-cap-select-${cap.key}`}
+      onChange={(e) => {
+        const n = Number(e.target.value);
+        if (Number.isFinite(n) && n !== cap.effective) onCommit(n);
+      }}
+      className="w-[72px] rounded-md border border-border bg-surface px-2 py-1 text-right text-[12.5px] text-ink disabled:opacity-60"
+    >
+      {options.map((v) => (
+        <option key={v} value={v}>
+          {v}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// LinkedIn self-imposed rate limits (maintainer directive 2026-08-01). One
+// membership dropdown + one risk slider drive every cap; each cap is
+// independently overridable. Changing membership OR risk resets overrides
+// (enforced server-side). Governs BOTH Referral Outreach and job-search caps —
+// so it sits beside the shared session, not inside one feature.
+export const LinkedInRateLimitsSection = memo(function LinkedInRateLimitsSection() {
+  const { t } = useTranslation();
+  const { data: session } = useLinkedInSession();
+  const setLimits = useSetLinkedInRateLimits();
+  const rl = session?.rate_limits ?? null;
+  // Local slider draft for smooth dragging; committed on release. Re-seeds
+  // whenever the server value changes (incl. the clamp on an out-of-range value).
+  const [riskDraft, setRiskDraft] = useState<number | null>(null);
+  const serverRisk = rl?.risk_pct ?? 60;
+  const risk = riskDraft ?? serverRisk;
+  const busy = setLimits.isPending;
+  // Once the server's committed risk changes (incl. a clamp), drop the local
+  // drag draft so the slider follows the authoritative value.
+  useEffect(() => setRiskDraft(null), [serverRisk]);
+  if (!rl) return null;
+
+  return (
+    <Section title={t("settingsPage.rateLimits.title")}>
+      <div className="space-y-4">
+        <p className="text-[12.5px] text-ink-2">
+          {t("settingsPage.rateLimits.intro")}
+          <InfoDot label={t("settingsPage.rateLimits.title")}>
+            {t("settingsPage.rateLimits.info")}
+          </InfoDot>
+        </p>
+
+        {/* Membership type — the estimated-ceiling basis. */}
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <div className="text-[13px] font-medium text-ink">
+              {t("settingsPage.rateLimits.membershipLabel")}
+            </div>
+            <div className="text-[12px] text-ink-3">
+              {t("settingsPage.rateLimits.membershipHint")}
+            </div>
+          </div>
+          <select
+            data-testid="linkedin-membership-select"
+            value={rl.membership_type}
+            disabled={busy}
+            onChange={(e) => setLimits.mutate({ membership_type: e.target.value })}
+            className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink disabled:opacity-60"
+          >
+            {rl.memberships.map((m) => (
+              <option key={m} value={m}>
+                {t(`settingsPage.rateLimits.membership.${m}`)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Risk appetite — scales the ceilings. 100% = at the estimated limit. */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="text-[13px] font-medium text-ink">
+              {t("settingsPage.rateLimits.riskLabel")}
+            </div>
+            <div
+              className="text-[12.5px] font-medium tabular-nums text-ink-2"
+              data-testid="linkedin-risk-value"
+            >
+              {risk}%
+            </div>
+          </div>
+          <input
+            type="range"
+            min={10}
+            max={100}
+            step={5}
+            value={risk}
+            disabled={busy}
+            data-testid="linkedin-risk-slider"
+            onChange={(e) => setRiskDraft(Number(e.target.value))}
+            onPointerUp={(e) => setLimits.mutate({ risk_pct: Number((e.target as HTMLInputElement).value) })}
+            onKeyUp={(e) => setLimits.mutate({ risk_pct: Number((e.target as HTMLInputElement).value) })}
+            className="w-full accent-accent disabled:opacity-60"
+          />
+          <div className="text-[11.5px] text-warn" data-testid="linkedin-risk-warn">
+            {t("settingsPage.rateLimits.riskWarn")}
+          </div>
+        </div>
+
+        {/* Per-meter overrides — each pre-filled with the effective cap. */}
+        <div className="space-y-2">
+          <div className="flex items-center text-[13px] font-medium text-ink">
+            {t("settingsPage.rateLimits.capsLabel")}
+            <InfoDot label={t("settingsPage.rateLimits.capsLabel")}>
+              {t("settingsPage.rateLimits.capsInfo")}
+            </InfoDot>
+          </div>
+          <div className="divide-y divide-border-2 rounded-md border border-border-2">
+            {rl.caps.map((cap) => (
+              <div key={cap.key} className="flex items-center gap-3 px-3 py-2">
+                <div className="flex-1">
+                  <div className="text-[12.5px] text-ink">
+                    {t(`settingsPage.rateLimits.cap.${cap.key}`, { defaultValue: cap.label })}
+                  </div>
+                  <div className="text-[11px] text-ink-4">
+                    {t("settingsPage.rateLimits.ofCeiling", { ceiling: cap.ceiling })}
+                    {cap.overridden ? ` · ${t("settingsPage.rateLimits.custom")}` : ""}
+                  </div>
+                </div>
+                <OverrideSelect
+                  cap={cap}
+                  disabled={busy}
+                  onCommit={(value) =>
+                    setLimits.mutate({ override_key: cap.key, override_value: value })
+                  }
+                />
+              </div>
+            ))}
+          </div>
+          <button
+            data-testid="linkedin-caps-reset-btn"
+            disabled={busy}
+            onClick={() => setLimits.mutate({ reset_overrides: true })}
+            className="inline-flex h-[28px] items-center rounded-md border border-border-2 bg-surface px-2.5 text-[11.5px] font-medium text-ink-2 hover:bg-surface-3 disabled:opacity-60"
+          >
+            {t("settingsPage.rateLimits.resetBtn")}
+          </button>
+        </div>
+      </div>
+    </Section>
+  );
+});

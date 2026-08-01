@@ -41,6 +41,7 @@ from sidecar.modules.networker import resolve as net_resolve
 from sidecar.modules.networker import send as net_send
 from sidecar.modules.networker.driver import DirectVoyagerDriver, VoyagerDriver
 from sidecar.modules.networker.types import Audience, NetworkerError, Warmth
+from sidecar.packages.referral_outreach import PacingProfile
 
 from ..db.base import now_utc
 from ..db.database import resolve_data_dir
@@ -57,7 +58,10 @@ if TYPE_CHECKING:
 # Driver factory seam (tests override this; production builds the real one).
 # ---------------------------------------------------------------------------
 
-DriverFactory = Callable[[str | None], VoyagerDriver]
+# The factory now receives the full pacing PROFILE (membership × risk% ×
+# overrides), not a bare tier string — the caps derive from all three. Tests
+# override this seam with a fake that ignores the arg.
+DriverFactory = Callable[["PacingProfile | None"], VoyagerDriver]
 
 
 def linkedin_data_dir() -> Path:
@@ -78,8 +82,8 @@ def linkedin_profile_dir() -> Path:
     return linkedin_data_dir() / "profile"
 
 
-def _default_driver_factory(tier: str | None) -> VoyagerDriver:
-    """Build the production subprocess driver from the app-data dir.
+def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:
+    """Build the production in-process driver from the app-data dir.
 
     `storage_state` is the saved-cookie file the LinkedIn-connect flow writes
     (the path is always passed — `login` *creates* it, and discover/send fail
@@ -87,15 +91,22 @@ def _default_driver_factory(tier: str | None) -> VoyagerDriver:
     voyager pacing ledger. Both live under the data dir. The session-store
     encryption key rides in the child env (NFR-SEC-01) so voyager seals/reads
     the storage-state file — env, never argv. This is only ever *run* live by
-    the maintainer — automated tests inject a fake driver (wire stays cold)."""
+    the maintainer — automated tests inject a fake driver (wire stays cold).
+
+    `profile` (membership × risk% × overrides) drives every cap. `linkedin_plan`
+    is derived from the membership purely so the note-budget path (which still
+    branches on free-vs-paid) keeps working: any paid membership → 'premium'."""
     from ..security import SESSION_KEY_ENV, get_session_key
 
+    membership = profile.membership if profile is not None else "free"
+    plan = "free" if membership == "free" else "premium"
     data = linkedin_data_dir()
     return DirectVoyagerDriver(
         storage_state=str(data / "storage_state.json"),
         user_data_dir=str(data / "profile"),
         state_dir=str(data / "state"),
-        tier=tier,
+        pacing_profile=profile,
+        linkedin_plan=plan,
         env={SESSION_KEY_ENV: get_session_key(resolve_data_dir())},
     )
 
@@ -103,9 +114,75 @@ def _default_driver_factory(tier: str | None) -> VoyagerDriver:
 DRIVER_FACTORY: DriverFactory = _default_driver_factory
 
 
-def _resolve_tier(repos: Repos) -> str | None:
+def _resolve_profile(repos: Repos) -> PacingProfile:
+    """The user's pacing choices (membership, risk%, overrides) → the profile the
+    package derives caps from. Defaults (free · 60% · no overrides) when no
+    session row exists yet — the same conservative baseline as before."""
     session = repos.linkedin_session.get()
-    return session.account_tier if session is not None else None
+    if session is None:
+        return PacingProfile()
+    return PacingProfile(
+        membership=session.membership_type or "free",
+        risk_pct=session.risk_pct if session.risk_pct is not None else 60,
+        overrides=dict(session.cap_overrides or {}),
+    )
+
+
+# Per-meter human labels for the "self-imposed rate limits" UI. Kept here (not in
+# the frontend) so the wire contract and the enforced meters can never drift.
+CAP_LABELS: dict[str, str] = {
+    "invites_day": "Connection requests / day",
+    "invites_week": "Connection requests / week",
+    "dms_day": "Direct messages / day",
+    "dms_week": "Direct messages / week",
+    "profile_views_day": "Profile views / day",
+    "searches_month": "People searches / month",
+    "notes_month": "Invitation notes / month",
+    "job_search_pages_hour": "Job-search pages / hour",
+}
+
+
+def linkedin_caps_snapshot(repos: Repos) -> dict:
+    """The effective self-imposed caps for the current profile, for the Settings
+    UI and Next-page gating. The NUMBERS come from the package
+    (`resolve_profile`, `resolve_membership`) — the host never computes them — and
+    the live hourly job-search usage is read from the same ledger the worker
+    charges, so the display and the enforcement can never disagree (NFR-LI-02)."""
+    from sidecar.packages.referral_outreach import (
+        MEMBERSHIPS,
+        OVERRIDABLE,
+        resolve_membership,
+        resolve_profile,
+    )
+    from sidecar.packages.referral_outreach.upstream.pacing import Pacer
+
+    profile = _resolve_profile(repos)
+    effective = resolve_profile(profile)            # ceiling × risk% + overrides
+    ceilings = resolve_membership(profile.membership)  # the 100% estimates
+    overrides = profile.overrides or {}
+    caps = []
+    for meter, window in OVERRIDABLE:
+        key = f"{meter}_{window}"
+        eff = getattr(getattr(effective, meter), window)
+        ceil = getattr(getattr(ceilings, meter), window)
+        if eff is None or ceil is None:
+            continue
+        caps.append({
+            "key": key, "meter": meter, "window": window, "label": CAP_LABELS.get(key, key),
+            "effective": int(eff), "ceiling": int(ceil), "overridden": key in overrides,
+        })
+    # Live hourly job-search budget — read from the enforcing ledger, not recomputed.
+    pacer = Pacer(effective, state_dir=linkedin_data_dir() / "state")
+    js = pacer.usage("job_search_pages")
+    return {
+        "membership_type": profile.membership,
+        "risk_pct": profile.risk_pct,
+        "memberships": list(MEMBERSHIPS),
+        "caps": caps,
+        "job_search_hour_cap": int(js.get("hour_cap") or 0),
+        "job_search_hour_used": int(js.get("hour_used") or 0),
+        "job_search_hour_remaining": int(js.get("hour_remaining") or 0),
+    }
 
 
 def linkedin_feature_flags(repos: Repos) -> tuple[bool, bool]:
@@ -116,14 +193,6 @@ def linkedin_feature_flags(repos: Repos) -> tuple[bool, bool]:
     prefs = repos.preferences.get_or_create()
     ui = prefs.ui_state or {}
     return bool(prefs.voyager_risk_marker_on), bool(ui.get("linkedin_search_enabled"))
-
-
-def _resolve_plan(repos: Repos) -> str:
-    """free|premium — conditions the worker's personalized-note budget (the
-    free-only ~5/month allowance; posture doc §4 #10). Free is the conservative
-    default when no session row exists yet."""
-    session = repos.linkedin_session.get()
-    return session.linkedin_plan if session is not None else "free"
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +270,7 @@ def _resolve_company_urn(
     company: str,
     canonical_url: str,
     source_adapter: str,
-    tier: str | None,
+    profile: PacingProfile | None,
     company_url: str | None,
     dry_run: bool,
 ) -> tuple[str | None, str, list[dict], dict]:
@@ -223,7 +292,7 @@ def _resolve_company_urn(
 
     # 1) Authoritative: the user pasted the company's LinkedIn URL.
     if company_url:
-        driver = DRIVER_FACTORY(tier)
+        driver = DRIVER_FACTORY(profile)
         result = net_resolve("", driver=driver, url=company_url, dry_run=dry_run)
         if result.candidates:
             c = result.candidates[0]
@@ -240,7 +309,7 @@ def _resolve_company_urn(
 
     # 3) Fresh typeahead — ONLY a domain-website match is confident enough to auto-pick.
     domain = employer_domain(canonical_url)
-    driver = DRIVER_FACTORY(tier)
+    driver = DRIVER_FACTORY(profile)
     result = net_resolve(
         company, driver=driver, prefer_domain=domain or None, limit=5, dry_run=dry_run
     )
@@ -273,7 +342,7 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         raise RuntimeError("discover operation requires a database context")
 
     with ctx.db.repos() as repos:
-        tier = _resolve_tier(repos)
+        profile = _resolve_profile(repos)
         job = repos.jobs.get(job_id) if job_id else None
         job_text = job.description if job is not None else ""
         canonical_url = job.canonical_url if job is not None else ""
@@ -295,7 +364,8 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     else:
         company_urn, resolved_name, confirm_cands, resolve_usage = _resolve_company_urn(
             ctx, company=company, canonical_url=canonical_url,
-            source_adapter=source_adapter, tier=tier, company_url=company_url, dry_run=dry_run,
+            source_adapter=source_adapter, profile=profile, company_url=company_url,
+            dry_run=dry_run,
         )
         if company_urn is None:
             # We could NOT confidently resolve the target company. Do NOT discover
@@ -316,7 +386,7 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 usage=resolve_usage,
             )
 
-    driver = DRIVER_FACTORY(tier)
+    driver = DRIVER_FACTORY(profile)
     result = net_discover(
         company, job_text, driver=driver, limit=limit, dry_run=dry_run,
         company_urn=company_urn, page=page,
@@ -493,18 +563,18 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         if row is None:
             raise LookupError(f"contact {contact_id!r} not found")
         net_contact = _net_contact_from_row(row)
-        tier = _resolve_tier(repos)
-        plan = _resolve_plan(repos)
+        profile = _resolve_profile(repos)
+        plan = "free" if profile.membership == "free" else "premium"
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
-    driver = DRIVER_FACTORY(tier)
+    driver = DRIVER_FACTORY(profile)
     # The factory seam stays single-argument (every test fake is `lambda tier:
     # drv`); the plan rides as a driver attribute the Direct driver forwards to
     # the worker and fakes simply ignore.
     setattr(driver, "linkedin_plan", plan)  # noqa: B010 — VoyagerDriver protocol has no plan attr
 
     try:
-        result = net_send(message, net_contact, driver=driver, tier=tier, dry_run=dry_run)
+        result = net_send(message, net_contact, driver=driver, tier=None, dry_run=dry_run)
     except NetworkerError as exc:
         # A hard voyager failure (stale selector, subprocess crash, unparseable
         # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,

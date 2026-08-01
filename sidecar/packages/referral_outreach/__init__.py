@@ -41,11 +41,35 @@ from .types import (
 # duplicate table (`dto._TIER_CAPS`) once drifted to 2-3× the enforced values
 # (posture doc §4 fix 7). Read-only for the host: it displays these, never
 # re-implements or overrides them.
-from .upstream.pacing import DEFAULT_TIER, TIERS, resolve_tier
+from .upstream.pacing import (
+    CEILINGS,
+    DEFAULT_MEMBERSHIP,
+    DEFAULT_RISK_PCT,
+    DEFAULT_TIER,
+    MEMBERSHIPS,
+    OVERRIDABLE,
+    TIERS,
+    PacingProfile,
+    clamp_risk,
+    default_overrides,
+    resolve_membership,
+    resolve_profile,
+    resolve_tier,
+)
 
 __all__ = [
+    "CEILINGS",
+    "DEFAULT_MEMBERSHIP",
+    "DEFAULT_RISK_PCT",
     "DEFAULT_TIER",
+    "MEMBERSHIPS",
+    "OVERRIDABLE",
     "TIERS",
+    "PacingProfile",
+    "clamp_risk",
+    "default_overrides",
+    "resolve_membership",
+    "resolve_profile",
     "resolve_tier",
     "AccountRef",
     "AuthenticationError",

@@ -9,9 +9,14 @@ import pytest
 
 from sidecar.packages.referral_outreach.upstream.pacing import (
     DAY_SECONDS,
+    DEFAULT_RISK_PCT,
+    HOUR_SECONDS,
     TIERS,
     WEEK_SECONDS,
     Pacer,
+    PacingProfile,
+    default_overrides,
+    resolve_profile,
     resolve_tier,
     send_delay_seconds,
 )
@@ -32,6 +37,76 @@ def test_tier_resolution_defaults_to_new():
 def test_unknown_tier_raises():
     with pytest.raises(ValueError):
         resolve_tier("platinum")
+
+
+# --- membership × risk% × override (maintainer directive 2026-08-01) ---------
+
+
+def test_default_profile_reproduces_todays_new_caps():
+    """The whole calibration: free membership × the default 60% risk lands on
+    the historical New-tier caps exactly, so nothing shipped changed."""
+    assert DEFAULT_RISK_PCT == 60
+    t = resolve_profile(PacingProfile())  # free · 60% · no overrides
+    assert t.invites.day == 8 and t.invites.week == 30
+    assert t.dms.day == 10 and t.dms.week == 50
+    assert t.profile_views.day == 25
+    assert t.searches.month == 150
+    assert t.notes.month == 3
+    assert t.job_search_pages.hour == 4  # 7 × 0.60 → 4
+
+
+def test_risk_100_sits_at_the_ceiling():
+    t = resolve_profile(PacingProfile(risk_pct=100))
+    assert t.invites.week == 50  # the estimated ceiling itself
+    assert t.job_search_pages.hour == 7
+
+
+def test_risk_clamps_and_never_zeroes_a_live_meter():
+    # risk floors at 10%; scaled caps floor at 1 so a meter never becomes 0/unusable.
+    t = resolve_profile(PacingProfile(risk_pct=1))  # clamped to 10
+    assert (t.notes.month or 0) >= 1  # 5 × 0.10 = 0.5 → floored to 1, not 0
+
+
+def test_override_pins_a_single_meter_window():
+    t = resolve_profile(PacingProfile(overrides={"invites_week": 42}))
+    assert t.invites.week == 42          # pinned
+    assert t.invites.day == 8            # untouched, still scaled
+    assert t.dms.week == 50              # other meters untouched
+
+
+def test_override_is_clamped_to_the_ceiling():
+    """An override can never exceed our estimate of LinkedIn's own limit — the UI
+    dropdown offers only in-range values, and the package clamps as the backstop
+    so the 'never above the estimated max' guarantee holds whatever is stored."""
+    t = resolve_profile(PacingProfile(overrides={"invites_week": 9999}))
+    assert t.invites.week == 50          # free ceiling, not 9999
+    t = resolve_profile(PacingProfile(membership="free", overrides={"searches_month": 10_000}))
+    assert t.searches.month == 250       # free searches ceiling
+
+
+def test_premium_lifts_the_paid_ceilings():
+    free = resolve_profile(PacingProfile(membership="free", risk_pct=100))
+    prem = resolve_profile(PacingProfile(membership="premium", risk_pct=100))
+    assert (prem.dms.week or 0) > (free.dms.week or 0)
+    assert (prem.searches.month or 0) > (free.searches.month or 0)
+
+
+def test_default_overrides_matches_the_scaled_caps():
+    """`default_overrides` (what the UI resets pins TO) equals the scaled caps."""
+    d = default_overrides("free", 60)
+    assert d["invites_week"] == 30
+    assert d["job_search_pages_hour"] == 4
+
+
+def test_job_search_pages_meter_is_hourly():
+    p = Pacer(resolve_profile(PacingProfile()), state_dir=None)
+    now = 1_000_000.0
+    for _ in range(4):
+        p.record_search_page(now=now)
+    allowed, reason = p.can_search_jobs(now=now)
+    assert not allowed and "job_search_pages" in reason
+    # An hour later the rolling window has cleared.
+    assert p.can_search_jobs(now=now + HOUR_SECONDS + 1)[0]
 
 
 def _pacer(tmp_path, tier="new"):

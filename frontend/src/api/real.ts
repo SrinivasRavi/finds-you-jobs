@@ -136,6 +136,7 @@ const STAGE_TO_COLUMN: Record<Stage, string> = {
 const LIFECYCLE_DEFAULTS = {
   engagement_ghosted_days: 14,
   sent_ghosted_days: 21,
+  expire_listing_days: 14,
   contact_purge_days: 60,
   trashed_jobs_purge_days: 7,
   archived_applications_purge_days: 30,
@@ -1168,12 +1169,16 @@ export class RealApi {
   }
   /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Returns
    *  the enqueued op; results land in the normal feed. 403 (toggle off) / 409
-   *  (not connected) surface as errors. */
-  async linkedinSearch(limit?: number): Promise<{ id: string; kind: string; state: string }> {
+   *  (not connected / no continuable cursor) surface as errors. `mode: "next"`
+   *  continues the last Fresh search's snapshot from its saved offset. */
+  async linkedinSearch(
+    mode: "fresh" | "next" = "fresh",
+    limit?: number,
+  ): Promise<{ id: string; kind: string; state: string }> {
     return (await this.json(
       "POST",
       "/api/linkedin/search",
-      limit !== undefined ? { limit } : {},
+      limit !== undefined ? { mode, limit } : { mode },
     )) as { id: string; kind: string; state: string };
   }
   async watchCompany(input: {
@@ -1474,17 +1479,18 @@ export class RealApi {
     };
   }
 
-  async setLinkedInTier(tier: "new" | "seasoned"): Promise<LinkedInSessionState> {
+  /** Set the self-imposed LinkedIn rate-limit profile (2026-08-01). Pass the
+   *  basis (`membership_type` and/or `risk_pct`) — which resets every override —
+   *  OR one `override_key`/`override_value` pin, OR `reset_overrides`. */
+  async setLinkedInRateLimits(body: {
+    membership_type?: string;
+    risk_pct?: number;
+    override_key?: string;
+    override_value?: number;
+    reset_overrides?: boolean;
+  }): Promise<LinkedInSessionState> {
     return toLinkedInSession((await this.json(
-      "POST", "/api/linkedin/tier", { account_tier: tier },
-    )) as LinkedInSessionDTO);
-  }
-
-  /** Set the LinkedIn plan (free | premium) — conditions the free-only
-   *  personalized-note budget in the outreach package (posture doc §4 #10). */
-  async setLinkedInPlan(plan: "free" | "premium"): Promise<LinkedInSessionState> {
-    return toLinkedInSession((await this.json(
-      "POST", "/api/linkedin/tier", { linkedin_plan: plan },
+      "POST", "/api/linkedin/rate-limits", body,
     )) as LinkedInSessionDTO);
   }
 
@@ -1501,6 +1507,8 @@ export class RealApi {
 }
 
 function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
+  const c = d.search_cursor ?? null;
+  const rl = d.rate_limits ?? null;
   return {
     enabled: d.enabled,
     status: d.status as LinkedInSessionState["status"],
@@ -1511,6 +1519,35 @@ function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
     last_validated_at: d.last_validated_at ?? null,
     paused_until: d.paused_until ?? null,
     paused_reason: d.paused_reason ?? "",
+    search_cursor: c
+      ? {
+          fresh_at: c.fresh_at,
+          expires_at: c.expires_at,
+          expired: c.expired,
+          exhausted: c.exhausted,
+          pages_fetched: c.pages_fetched,
+          next_page_available: c.next_page_available,
+        }
+      : null,
+    rate_limits: rl
+      ? {
+          membership_type: rl.membership_type,
+          risk_pct: rl.risk_pct,
+          memberships: [...rl.memberships],
+          caps: rl.caps.map((x) => ({
+            key: x.key,
+            meter: x.meter,
+            window: x.window,
+            label: x.label,
+            effective: x.effective,
+            ceiling: x.ceiling,
+            overridden: x.overridden,
+          })),
+          job_search_hour_cap: rl.job_search_hour_cap,
+          job_search_hour_used: rl.job_search_hour_used,
+          job_search_hour_remaining: rl.job_search_hour_remaining,
+        }
+      : null,
   };
 }
 

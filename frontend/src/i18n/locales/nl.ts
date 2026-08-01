@@ -807,12 +807,53 @@ const nl: DeepPartial<Messages> = {
       runNow:
         "Voer nu een zoekopdracht uit met je opgeslagen functies & locaties — resultaten verschijnen in je feed in Vacatures ontdekken.",
       searching: "Zoeken…",
-      searchBtn: "LinkedIn-vacatures zoeken",
+      freshBtn: "Nieuwe zoekopdracht",
+      nextBtn: "Volgende pagina",
+      nextHint: "Ga verder waar de laatste zoekopdracht stopte — de volgende 25 resultaten per rol × locatie.",
+      nextInfo:
+        "\"Volgende pagina\" voert de laatste nieuwe zoekopdracht met exact dezelfde rollen en locaties op de volgende offset opnieuw uit — tussentijdse wijzigingen in je voorkeuren veranderen daar niets aan (start daarvoor een nieuwe zoekopdracht). De knop is 12 uur na een nieuwe zoekopdracht beschikbaar en verdwijnt daarna: LinkedIn herschikt resultaten voortdurend, dus een oude offset zou naar een verschoven lijst wijzen. LinkedIn zelf kent geen paginerings-timeout — het venster is onze eigen versheidsregel. De knop verdwijnt ook zodra LinkedIns resultaten op zijn.",
       resultsPerSearch: "Resultaten per zoekopdracht",
       resultsPerSearchInfo:
         "Hoeveel vacatures per functie × locatie worden opgehaald, in pagina's van 25. Hoger betekent meer resultaten — maar ook meer verzoeken in één burst op <strong>je eigen</strong> LinkedIn-account, wat het rate-limit-/accountrisico verhoogt. Houd het bescheiden.",
       started: "Zoekopdracht gestart — nieuwe matches verschijnen zo in Vacatures ontdekken.",
       failed: "Zoekopdracht mislukt.",
+      scanning: "LinkedIn scannen…",
+      hourlyReached:
+        "Uurlimiet voor vacaturezoeken bereikt — die wordt binnen het uur opnieuw ingesteld, of verhoog hem onder “LinkedIn zelfopgelegde rate-limieten”.",
+    },
+    rateLimits: {
+      title: "Zelfopgelegde rate-limieten op LinkedIn",
+      intro:
+        "Hoe hard finds-you-jobs zichzelf afremt tegenover LinkedIn. Kies je lidmaatschap en stel dan in hoe dicht bij LinkedIns geschatte limieten je durft te draaien.",
+      info:
+        "Deze limieten zijn ONZE eigen — LinkedIn publiceert vrijwel geen van zijn echte limieten, dus elk plafond hier is een schatting. Je lidmaatschap bepaalt de geschatte plafonds; de risicoschuif schaalt ze; en je kunt elke afzonderlijke limiet overschrijven. De outreach-code handhaaft exact deze getallen.",
+      membershipLabel: "LinkedIn-lidmaatschap",
+      membershipHint: "Bepaalt de geschatte plafonds per actie waarvan we schalen.",
+      membership: {
+        free: "Gratis (Basis)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Risicobereidheid",
+      riskWarn:
+        "Bij 100% ligt elke limiet op onze beste schatting van LinkedIns eigen limiet voor jouw lidmaatschap. LinkedIn publiceert deze getallen niet, dus het zijn schattingen — het meest betrouwbaar voor een account in goede staat. Lager laat meer veiligheidsmarge; niets hier kan garanderen dat je account niet wordt beperkt.",
+      capsLabel: "Afzonderlijke limieten",
+      capsInfo:
+        "Elke limiet begint op lidmaatschapsplafond × risico%. Typ een getal om hem vast te zetten. Het wijzigen van je lidmaatschap of de risicoschuif zet elke vastgezette limiet terug op de berekende standaardwaarde.",
+      cap: {
+        invites_day: "Connectieverzoeken / dag",
+        invites_week: "Connectieverzoeken / week",
+        dms_day: "Directe berichten / dag",
+        dms_week: "Directe berichten / week",
+        profile_views_day: "Profielweergaven / dag",
+        searches_month: "Personenzoekopdrachten / maand",
+        notes_month: "Uitnodigingsnotities / maand",
+        job_search_pages_hour: "Vacaturezoekpagina's / uur (25 vacatures per stuk)",
+      },
+      ofCeiling: "Max: ~{{ceiling}}",
+      custom: "aangepast",
+      resetBtn: "Terug naar standaardwaarden",
     },
     session: {
       title: "LinkedIn-sessie",
@@ -880,6 +921,9 @@ const nl: DeepPartial<Messages> = {
         "Een connectieverzoek dat zoveel dagen niet is geaccepteerd (of geaccepteerd maar nooit beantwoord).",
       contactPurgeLabel: "Wis verwijderde contacten definitief na",
       contactPurgeHint: "Verwijderde contacten worden zoveel dagen later permanent gewist.",
+      expireListingLabel: "Markeer een vacature als “Ouder” na",
+      expireListingHint:
+        "Een vacature die we zoveel dagen niet meer in een scan hebben gezien wordt grijs weergegeven als “Oudere vacature” — nog steeds op het bord, en je kunt hem herstellen.",
       trashedJobsLabel: "Wis verwijderde vacatures definitief na",
       trashedJobsHint:
         "Verwijderde vacatures worden zoveel dagen later permanent gewist (en niet opnieuw gescand).",

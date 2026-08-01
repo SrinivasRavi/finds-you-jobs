@@ -790,12 +790,53 @@ const de: DeepPartial<Messages> = {
       runNow:
         "Starte jetzt eine Suche mit deinen gespeicherten Rollen & Orten — die Ergebnisse landen in deinem „Jobs“-Feed.",
       searching: "Suche läuft…",
-      searchBtn: "LinkedIn-Jobs suchen",
+      freshBtn: "Neue Suche",
+      nextBtn: "Nächste Seite",
+      nextHint: "Die letzte Suche dort fortsetzen, wo sie aufgehört hat — die nächsten 25 Ergebnisse pro Rolle × Standort.",
+      nextInfo:
+        "„Nächste Seite“ führt die letzte neue Suche mit exakt denselben Rollen & Standorten am nächsten Offset weiter — zwischenzeitliche Änderungen an den Präferenzen ändern daran nichts (dafür eine neue Suche starten). Der Knopf steht 12 Stunden nach einer neuen Suche bereit und verschwindet dann: LinkedIn sortiert die Ergebnisse laufend neu, ein alter Offset zeigte also in eine verschobene Liste. LinkedIn selbst kennt keinen Paginierungs-Timeout — das Fenster ist unsere eigene Frische-Regel. Der Knopf verschwindet auch, wenn LinkedIns Ergebnisse erschöpft sind.",
       resultsPerSearch: "Ergebnisse pro Suche",
       resultsPerSearchInfo:
         "Wie viele Jobs pro Rolle × Ort geholt werden, in Seiten à 25. Mehr heißt mehr Ergebnisse — aber auch mehr Anfragen auf <strong>deinem eigenen</strong> LinkedIn-Konto in einem Schwung, was das Rate-Limit- / Kontorisiko erhöht. Bleib moderat.",
       started: "Suche gestartet — neue Treffer erscheinen in Kürze unter „Jobs“.",
       failed: "Suche fehlgeschlagen.",
+      scanning: "LinkedIn wird gescannt…",
+      hourlyReached:
+        "Stündliches Jobsuch-Limit erreicht — es wird innerhalb der Stunde zurückgesetzt, oder erhöhe es unter „Selbst auferlegte LinkedIn-Rate-Limits“.",
+    },
+    rateLimits: {
+      title: "Selbst auferlegte Rate-Limits für LinkedIn",
+      intro:
+        "Wie stark sich finds-you-jobs gegenüber LinkedIn selbst drosselt. Wähle deine Mitgliedschaft und lege dann fest, wie nah an LinkedIns geschätzten Limits du laufen möchtest.",
+      info:
+        "Diese Obergrenzen sind UNSERE eigenen — LinkedIn veröffentlicht fast keine seiner echten Limits, jede Obergrenze hier ist also eine Schätzung. Deine Mitgliedschaft legt die geschätzten Obergrenzen fest; der Risiko-Regler skaliert sie; und du kannst jede einzelne Obergrenze überschreiben. Der Outreach-Code setzt genau diese Zahlen durch.",
+      membershipLabel: "LinkedIn-Mitgliedschaft",
+      membershipHint: "Legt die geschätzten Obergrenzen pro Aktion fest, von denen wir skalieren.",
+      membership: {
+        free: "Kostenlos (Basic)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Risikobereitschaft",
+      riskWarn:
+        "Bei 100 % liegt jedes Limit bei unserer besten Schätzung von LinkedIns eigenem Limit für deine Mitgliedschaft. LinkedIn veröffentlicht diese Zahlen nicht, es sind also Schätzungen — am zuverlässigsten für ein Konto in gutem Stand. Niedriger lässt mehr Sicherheitspuffer; nichts hier kann garantieren, dass dein Konto nicht eingeschränkt wird.",
+      capsLabel: "Einzelne Limits",
+      capsInfo:
+        "Jedes Limit beginnt bei Mitgliedschafts-Obergrenze × Risiko %. Gib eine Zahl ein, um es festzupinnen. Wenn du deine Mitgliedschaft oder den Risiko-Regler änderst, wird jedes festgepinnte Limit auf den berechneten Standardwert zurückgesetzt.",
+      cap: {
+        invites_day: "Kontaktanfragen / Tag",
+        invites_week: "Kontaktanfragen / Woche",
+        dms_day: "Direktnachrichten / Tag",
+        dms_week: "Direktnachrichten / Woche",
+        profile_views_day: "Profilaufrufe / Tag",
+        searches_month: "Personensuchen / Monat",
+        notes_month: "Einladungsnotizen / Monat",
+        job_search_pages_hour: "Jobsuch-Seiten / Stunde (je 25 Jobs)",
+      },
+      ofCeiling: "Max.: ~{{ceiling}}",
+      custom: "benutzerdefiniert",
+      resetBtn: "Auf Standard zurücksetzen",
     },
     session: {
       title: "LinkedIn-Sitzung",
@@ -863,6 +904,9 @@ const de: DeepPartial<Messages> = {
         "Eine Kontaktanfrage, die so viele Tage nie angenommen (oder angenommen, aber nie beantwortet) wurde.",
       contactPurgeLabel: "Gelöschte Kontakte endgültig löschen nach",
       contactPurgeHint: "Gelöschte Kontakte werden so viele Tage später endgültig gelöscht.",
+      expireListingLabel: "Jobanzeige als “Älter” markieren nach",
+      expireListingHint:
+        "Ein Job, den wir seit so vielen Tagen in keinem Scan mehr gesehen haben, wird als “Ältere Anzeige” ausgegraut — bleibt aber auf dem Board, und du kannst ihn wiederherstellen.",
       trashedJobsLabel: "Gelöschte Jobs endgültig löschen nach",
       trashedJobsHint:
         "Gelöschte Jobs werden so viele Tage später endgültig gelöscht (und nicht erneut gescannt).",

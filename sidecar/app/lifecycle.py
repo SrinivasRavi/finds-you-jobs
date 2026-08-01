@@ -28,6 +28,10 @@ LIFECYCLE_DEFAULTS: dict[str, int] = {
     # a separate, longer window covers Sent/Accepted-but-never-replied stalls.
     "engagement_ghosted_days": 14,
     "sent_ghosted_days": 21,
+    # Feed aging (FR-SYS-03): a job not re-seen in a scan for this many days is
+    # greyed as an "Older listing" — still on the board and restorable. Was the
+    # hard-coded `persistence.EXPIRE_AFTER_DAYS=14`; now user-owned like the rest.
+    "expire_listing_days": 14,
     # Permanent purge of soft-deleted (archived) rows.
     "contact_purge_days": 60,           # deleted (archived) contacts
     "trashed_jobs_purge_days": 7,       # trashed jobs (was TRASH_TTL_DAYS)

@@ -204,13 +204,54 @@ const settingsPage = {
     runNow:
       "Run a search now with your saved roles & locations — results land in your Discover jobs feed.",
     searching: "Searching…",
-    searchBtn: "Search LinkedIn jobs",
+    freshBtn: "Fresh search",
+    nextBtn: "Next page",
+    nextHint: "Continue the last search where it left off — the next 25 results per role × location.",
+    nextInfo:
+      "Next page re-runs the last Fresh search's exact roles & locations at the next offset — editing preferences in between doesn't change it (run a Fresh search for that). It's offered for 12 hours after a Fresh search, then disappears: LinkedIn re-ranks results continuously, so an old offset would point into a shifted list. LinkedIn itself has no pagination timeout — the window is our own freshness rule. It also disappears once LinkedIn's results run out.",
     resultsPerSearch: "Results per search",
     onePage: "25 jobs (one page)",
     resultsPerSearchInfo:
       "Fixed at one page per role × location — the same <strong>25</strong> LinkedIn's own Jobs page asks for. It isn't adjustable on purpose: the request carries that page size whatever number we pick, so a lower setting would only discard results already fetched while looking like a lighter footprint. Enforced in the sending code, not just here.",
     started: "Search started — new matches will appear in Discover jobs shortly.",
     failed: "Search failed.",
+    scanning: "Scanning LinkedIn…",
+    hourlyReached:
+      "Hourly job-search limit reached — it resets within the hour, or raise it under “LinkedIn self-imposed rate limits”.",
+  },
+  rateLimits: {
+    title: "Self-imposed rate limits on LinkedIn",
+    intro:
+      "How hard finds-you-jobs throttles itself against LinkedIn. Pick your membership, then set how close to LinkedIn's estimated limits you're willing to run.",
+    info:
+      "These caps are OUR own — LinkedIn publishes almost none of its real limits, so every ceiling here is an estimate. Your membership sets the estimated ceilings; the risk slider scales them; and you can override any single cap. The outreach code enforces exactly these numbers.",
+    membershipLabel: "LinkedIn membership",
+    membershipHint: "Sets the estimated per-action ceilings we scale from.",
+    membership: {
+      free: "Free (Basic)",
+      premium: "Premium",
+      sales_navigator: "Sales Navigator",
+      recruiter_lite: "Recruiter Lite",
+    },
+    riskLabel: "Risk appetite",
+    riskWarn:
+      "At 100%, each cap sits at our best estimate of LinkedIn's own limit for your membership. LinkedIn doesn't publish these numbers, so they're estimates — most reliable for an account in good standing. Lower leaves more safety margin; nothing here can guarantee your account won't be restricted.",
+    capsLabel: "Individual limits",
+    capsInfo:
+      "Each limit starts at membership ceiling × risk%. Type a number to pin it. Changing your membership or the risk slider resets every pinned limit back to the computed default.",
+    cap: {
+      invites_day: "Connection requests / day",
+      invites_week: "Connection requests / week",
+      dms_day: "Direct messages / day",
+      dms_week: "Direct messages / week",
+      profile_views_day: "Profile views / day",
+      searches_month: "People searches / month",
+      notes_month: "Invitation notes / month",
+      job_search_pages_hour: "Job-search pages / hour (25 jobs each)",
+    },
+    ofCeiling: "Max: ~{{ceiling}}",
+    custom: "custom",
+    resetBtn: "Reset to defaults",
   },
   session: {
     title: "LinkedIn session",
@@ -284,6 +325,9 @@ const settingsPage = {
       "A connection request never accepted (or accepted but never replied to) this many days.",
     contactPurgeLabel: "Erase deleted contacts for good after",
     contactPurgeHint: "Deleted contacts are erased permanently this many days later.",
+    expireListingLabel: "Mark a job listing “Older” after",
+    expireListingHint:
+      "A job we haven't seen again in a scan for this many days is greyed as an “Older listing” — still on the board, and you can restore it.",
     trashedJobsLabel: "Erase deleted jobs for good after",
     trashedJobsHint:
       "Deleted jobs are erased permanently (and won't be re-scraped) this many days later.",
