@@ -788,7 +788,6 @@ const it: DeepPartial<Messages> = {
       resultsPerSearch: "Risultati per ricerca",
       resultsPerSearchInfo:
         "Quante offerte prelevare per ruolo × località, in pagine da 25. Più alto significa più risultati — ma più richieste lanciate in un'unica raffica sul <strong>tuo</strong> account LinkedIn, il che aumenta il rischio di rate limit e per l'account. Mantienilo contenuto.",
-      jobsOption: "{{n}} offerte",
       started: "Ricerca avviata — le nuove corrispondenze appariranno a breve in Scopri offerte.",
       failed: "Ricerca non riuscita.",
     },

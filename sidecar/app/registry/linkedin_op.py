@@ -30,7 +30,7 @@ from sidecar.modules.networker.types import NetworkerError
 from ..db.base import now_utc
 from ..events import make_event
 from . import networker_ops
-from .networker_ops import _resolve_tier, linkedin_storage_path
+from .networker_ops import _resolve_tier, linkedin_feature_flags, linkedin_storage_path
 from .operations import OperationContext, OperationOutcome
 
 if TYPE_CHECKING:
@@ -121,6 +121,17 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
     snap = ctx.input_snapshot
     login_url = snap.get("login_url")  # None in production; a fixture for the maintainer
     timeout_s = float(snap.get("timeout_s", LOGIN_TIMEOUT_S))
+
+    # Self-gate, like `contact_sync` (posture doc §4 #8): the route gates too,
+    # but this op *launches a real browser at linkedin.com*, so it re-checks its
+    # own precondition rather than trusting whoever enqueued it. Both opt-ins
+    # off → clean no-op, zero LinkedIn traffic.
+    with ctx.db.repos() as repos:
+        referral_on, search_on = linkedin_feature_flags(repos)
+    if not (referral_on or search_on):
+        return OperationOutcome(
+            result_ref={"connected": False, "skipped": "no_linkedin_feature_enabled"}
+        )
 
     with ctx.db.repos() as repos:
         tier = _resolve_tier(repos)

@@ -20,8 +20,6 @@ import {
   useResumeLinkedIn,
   useSetLinkedInPlan,
   useSetLinkedInTier,
-  useSettings,
-  useUpdateSettings,
   useValidateLinkedIn,
 } from "../../api/queries";
 import type { LinkedInSessionState, Settings as SettingsT } from "../../api/types";
@@ -281,10 +279,10 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   );
 });
 
-// Server clamps to this range (and the outreach package clamps to 25 again on
-// its side); keep the UI honest to it. 25 = one page of LinkedIn's own page
-// size — the maintainer capped the per-click pull there (2026-07-30).
-const LI_LIMIT_OPTIONS = [10, 25] as const;
+// One page of LinkedIn's own page size per click — fixed, not configurable.
+// The Voyager request always carries `count=25`, so any smaller setting was
+// cosmetic (2026-08-01); the server and the outreach package both clamp here.
+const LI_SEARCH_LIMIT = 25;
 
 // The experimental gate around LinkedIn job search — mirrors Referral Outreach
 // (hazard badge + ToS risk line + ack + Enable toggle), with its OWN opt-in but
@@ -369,13 +367,7 @@ export const LinkedInJobSearchSection = memo(function LinkedInJobSearchSection({
 function LinkedInJobSearchBlock() {
   const { t } = useTranslation();
   const search = useLinkedinSearch();
-  const { data: settings } = useSettings();
-  const update = useUpdateSettings();
-  // Stored values from before the 25-cap (50…250) render as 25 — the server
-  // clamps them anyway, so show what will actually run.
-  const stored = settings?.linkedin_search_limit ?? 25;
-  const limit = Math.min(stored, 25);
-  const onChangeLimit = (v: number) => update.mutate({ linkedin_search_limit: v });
+  const limit = LI_SEARCH_LIMIT;
   return (
     <div className="space-y-3" data-testid="linkedin-jobsearch-block">
       <div className="flex items-center gap-3">
@@ -393,6 +385,10 @@ function LinkedInJobSearchBlock() {
             : t("settingsPage.linkedinSearch.searchBtn")}
         </button>
       </div>
+      {/* Not a selector any more (2026-08-01). The request carries `count=25`
+          whatever number a caller asks for, so a smaller setting never made a
+          smaller request — it only threw away rows already fetched, while
+          implying a lighter footprint. One page, stated plainly. */}
       <div className="flex items-center gap-3">
         <div className="flex-1 text-[12.5px] text-ink-2">
           {t("settingsPage.linkedinSearch.resultsPerSearch")}
@@ -403,18 +399,12 @@ function LinkedInJobSearchBlock() {
             />
           </InfoDot>
         </div>
-        <select
-          value={String(limit)}
+        <span
           data-testid="linkedin-jobsearch-limit"
-          onChange={(e) => onChangeLimit(Number(e.target.value))}
-          className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+          className="text-[12px] font-medium text-ink-2"
         >
-          {LI_LIMIT_OPTIONS.map((n) => (
-            <option key={n} value={n}>
-              {t("settingsPage.linkedinSearch.jobsOption", { n })}
-            </option>
-          ))}
-        </select>
+          {t("settingsPage.linkedinSearch.onePage")}
+        </span>
       </div>
       {search.isSuccess ? (
         <div className="text-[11.5px] text-good" data-testid="linkedin-jobsearch-started">

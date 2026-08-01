@@ -288,16 +288,42 @@ def _set_prefs(client: TestClient) -> None:
     assert resp.status_code == 200
 
 
-def test_linkedin_search_requires_networking_enabled(search_client) -> None:
+def _enable_job_search(client: TestClient, *, ack: bool = True) -> None:
+    """The job search has its OWN opt-in + typed ack, stored in `ui_state` —
+    a separate consent from the Referral Outreach toggle (posture doc §4 #8)."""
+    ui: dict = {"linkedin_search_enabled": True}
+    if ack:
+        ui["linkedin_search_ack_at"] = "2026-08-01T00:00:00Z"
+    resp = client.post("/api/settings", headers=AUTH, json={"ui_state": ui})
+    assert resp.status_code == 200
+
+
+def test_linkedin_search_requires_its_own_opt_in(search_client) -> None:
+    """Referral Outreach being on is NOT consent for job search: the route used
+    to check the wrong toggle, so enabling referrals alone unlocked searches the
+    user never acknowledged."""
     _app, client = search_client
-    # Toggle OFF → 403 (defense-in-depth server gate).
     resp = client.post("/api/linkedin/search", headers=AUTH)
     assert resp.status_code == 403
+
+    _enable_networking(client)  # the OTHER feature's consent — still refused
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    assert resp.status_code == 403
+    assert "job search is disabled" in resp.json()["detail"]
+
+
+def test_linkedin_search_requires_the_typed_ack(search_client) -> None:
+    """The ack checkbox was React `useState` only — never a server precondition."""
+    _app, client = search_client
+    _enable_job_search(client, ack=False)
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    assert resp.status_code == 403
+    assert "acknowledgement" in resp.json()["detail"]
 
 
 def test_linkedin_search_requires_connected_session(search_client) -> None:
     _app, client = search_client
-    _enable_networking(client)  # enabled but never connected
+    _enable_job_search(client)  # opted in but never connected
     resp = client.post("/api/linkedin/search", headers=AUTH)
     assert resp.status_code == 409
     assert "not connected" in resp.json()["detail"]
@@ -313,6 +339,7 @@ def test_linkedin_search_cannot_be_enqueued_generically(search_client) -> None:
 def test_linkedin_search_persists_into_the_feed(search_client) -> None:
     _app, client = search_client
     _connect(_app, client)
+    _enable_job_search(client)
     _set_prefs(client)
 
     resp = client.post("/api/linkedin/search", headers=AUTH)
@@ -332,31 +359,24 @@ def test_linkedin_search_persists_into_the_feed(search_client) -> None:
     )
 
 
-def test_linkedin_search_limit_is_configurable_and_clamped(search_client) -> None:
+def test_linkedin_search_limit_is_fixed_at_one_page(search_client) -> None:
     _app, client = search_client
     _connect(_app, client)
+    _enable_job_search(client)
     _set_prefs(client)
 
-    # A custom limit flows into the op snapshot verbatim (within range).
-    resp = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 10})
-    assert resp.status_code == 202
-    op_id = resp.json()["id"]
-    wait_for_state(_app.state.db, op_id, "succeeded")
-    with _app.state.db.repos() as repos:
-        assert repos.operations.get(op_id).input_snapshot["limit"] == 10
+    # EVERY request runs one page of 25, whatever the caller asks for. The wire
+    # request carries `count=25` regardless (worker pages at _PAGE=25), so a
+    # smaller limit never made a smaller request — it only discarded rows we
+    # had already received while looking like a lighter footprint.
+    for asked in (10, 1, 9999):
+        r = client.post("/api/linkedin/search", headers=AUTH, json={"limit": asked})
+        assert r.status_code == 202
+        wait_for_state(_app.state.db, r.json()["id"], "succeeded")
+        with _app.state.db.repos() as repos:
+            assert repos.operations.get(r.json()["id"]).input_snapshot["limit"] == 25
 
-    # Out-of-range values are clamped to [10, 25] — one page of LinkedIn's own
-    # page size is the ceiling (maintainer directive 2026-07-30; the outreach
-    # package clamps to 25 again on its side).
-    hi = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 9999})
-    wait_for_state(_app.state.db, hi.json()["id"], "succeeded")
-    lo = client.post("/api/linkedin/search", headers=AUTH, json={"limit": 1})
-    wait_for_state(_app.state.db, lo.json()["id"], "succeeded")
-    with _app.state.db.repos() as repos:
-        assert repos.operations.get(hi.json()["id"]).input_snapshot["limit"] == 25
-        assert repos.operations.get(lo.json()["id"]).input_snapshot["limit"] == 10
-
-    # Omitted → the server default (the ceiling itself).
+    # Omitted → the same single page.
     d = client.post("/api/linkedin/search", headers=AUTH, json={})
     wait_for_state(_app.state.db, d.json()["id"], "succeeded")
     with _app.state.db.repos() as repos:
@@ -366,6 +386,7 @@ def test_linkedin_search_limit_is_configurable_and_clamped(search_client) -> Non
 def test_linkedin_search_dedups_against_existing_guest_row(search_client) -> None:
     _app, client = search_client
     _connect(_app, client)
+    _enable_job_search(client)
     _set_prefs(client)
     # A job the guest adapter already stored at the same canonical URL.
     db = _app.state.db
@@ -506,3 +527,47 @@ def test_reach_out_contact_list_is_capped(app_client) -> None:
         json={"contacts": contacts},
     )
     assert r.status_code == 422
+
+
+# --- gate holes (posture doc §4 #8, closed 2026-08-01) ---------------------
+# connect/resume ran with NO gate at all: anything reaching the sidecar could
+# open a real browser at linkedin.com, or clear the 24 h rate-limit backoff,
+# with both LinkedIn features switched off.
+
+
+def test_connect_refused_when_no_linkedin_feature_is_enabled(app_client) -> None:
+    _app, client = app_client
+    resp = client.post("/api/linkedin/connect", headers=AUTH, json={})
+    assert resp.status_code == 403
+    assert "No LinkedIn feature is enabled" in resp.json()["detail"]
+
+
+def test_connect_allowed_by_either_feature(app_client) -> None:
+    """The session is shared: job-search-only users must be able to connect."""
+    _app, client = app_client
+    _enable_job_search(client)  # job search only, referrals still off
+    resp = client.post("/api/linkedin/connect", headers=AUTH, json={})
+    assert resp.status_code == 202
+
+
+def test_resume_refused_when_no_linkedin_feature_is_enabled(app_client) -> None:
+    """Resume is the one route that switches a SAFETY mechanism off — it clears
+    the backoff LinkedIn's own throttle signal put us in."""
+    _app, client = app_client
+    resp = client.post("/api/linkedin/resume", headers=AUTH)
+    assert resp.status_code == 403
+
+
+def test_login_op_self_gates_even_if_enqueued(app_client) -> None:
+    """Defence in depth: the op re-checks its own precondition rather than
+    trusting whoever enqueued it — it launches a real browser."""
+    from sidecar.app.registry.linkedin_op import login_entrypoint
+    from sidecar.app.registry.operations import OperationContext
+
+    _app, _client = app_client
+    ctx = OperationContext(
+        kind="linkedin_login", input_snapshot={}, db=_app.state.db, operation_id="op-test"
+    )
+    outcome = login_entrypoint(ctx)
+    assert outcome.result_ref["skipped"] == "no_linkedin_feature_enabled"
+    assert outcome.result_ref["connected"] is False

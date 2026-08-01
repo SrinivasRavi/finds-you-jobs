@@ -811,7 +811,6 @@ const nl: DeepPartial<Messages> = {
       resultsPerSearch: "Resultaten per zoekopdracht",
       resultsPerSearchInfo:
         "Hoeveel vacatures per functie × locatie worden opgehaald, in pagina's van 25. Hoger betekent meer resultaten — maar ook meer verzoeken in één burst op <strong>je eigen</strong> LinkedIn-account, wat het rate-limit-/accountrisico verhoogt. Houd het bescheiden.",
-      jobsOption: "{{n}} vacatures",
       started: "Zoekopdracht gestart — nieuwe matches verschijnen zo in Vacatures ontdekken.",
       failed: "Zoekopdracht mislukt.",
     },

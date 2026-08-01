@@ -108,6 +108,16 @@ def _resolve_tier(repos: Repos) -> str | None:
     return session.account_tier if session is not None else None
 
 
+def linkedin_feature_flags(repos: Repos) -> tuple[bool, bool]:
+    """`(referral_outreach_on, job_search_on)` — the two INDEPENDENT opt-ins that
+    share one LinkedIn session. Each has its own toggle + typed ack in Settings;
+    either one alone justifies holding a session. Lives here (not in the API
+    layer) so registry ops can self-gate on it without importing routes."""
+    prefs = repos.preferences.get_or_create()
+    ui = prefs.ui_state or {}
+    return bool(prefs.voyager_risk_marker_on), bool(ui.get("linkedin_search_enabled"))
+
+
 def _resolve_plan(repos: Repos) -> str:
     """free|premium — conditions the worker's personalized-note budget (the
     free-only ~5/month allowance; posture doc §4 #10). Free is the conservative

@@ -326,7 +326,8 @@ test("settings expose the plan selector and the 25-job search cap", async ({
   await plan.selectOption("free"); // leave state as found for later tests
 
   // The logged-in job search lives in the Discover-jobs settings category and
-  // offers at most 25 per pull (one LinkedIn page).
+  // pulls exactly one LinkedIn page (25) — fixed, not a selector: the request
+  // carries count=25 whatever we ask for, so a knob would only be cosmetic.
   await page.getByRole("button", { name: /Sources, scoring & automation/ }).click();
   const ack = page.getByTestId("linkedin-search-ack");
   await ack.scrollIntoViewIfNeeded();
@@ -334,9 +335,8 @@ test("settings expose the plan selector and the 25-job search cap", async ({
   await page.getByTestId("linkedin-search-toggle").click();
   const limit = page.getByTestId("linkedin-jobsearch-limit");
   await expect(limit).toBeVisible();
-  await expect(limit).toHaveValue("25");
-  const options = await limit.locator("option").allTextContents();
-  expect(options).toHaveLength(2); // 10 and 25 — nothing above one page
+  await expect(limit).toHaveText("25 jobs (one page)");
+  await expect(limit.locator("option")).toHaveCount(0); // no selector at all
   await page.screenshot({ path: `${DIR}/settings-search-cap-25.png`, fullPage: true });
 
   // Leave the shared profile as found: search off again, session disconnected

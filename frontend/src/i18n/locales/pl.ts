@@ -814,7 +814,6 @@ const pl: DeepPartial<Messages> = {
       resultsPerSearch: "Wyników na wyszukiwanie",
       resultsPerSearchInfo:
         "Ile ofert pobierać na parę rola × lokalizacja, w stronach po 25. Więcej znaczy więcej wyników — ale i więcej żądań wystrzelonych z <strong>twojego własnego</strong> konta LinkedIn w jednej serii, co zwiększa ryzyko limitów / blokady konta. Zachowaj umiar.",
-      jobsOption: "{{n}} ofert",
       started: "Wyszukiwanie rozpoczęte — nowe dopasowania wkrótce pojawią się w Ofertach.",
       failed: "Wyszukiwanie nie powiodło się.",
     },

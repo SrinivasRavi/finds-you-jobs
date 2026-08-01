@@ -46,7 +46,7 @@ from ..registry.apply_op import (
 from ..registry.company_anchor import resolution_key
 from ..registry.engine_config import apply_routing
 from ..registry.linkedin_op import LOGIN_CONTROL
-from ..registry.networker_ops import linkedin_storage_path
+from ..registry.networker_ops import linkedin_feature_flags, linkedin_storage_path
 from ..registry.persistence import (
     SCORER_IMPL,
     SCORER_IMPL_DETERMINISTIC,
@@ -1759,6 +1759,50 @@ def _require_networking_enabled(repos: Any) -> None:
         )
 
 
+def _require_any_linkedin_feature(repos: Any) -> None:
+    """Gate for the shared-session lifecycle routes (connect / resume).
+
+    These were ungated (posture doc §4 #8): anything reaching the sidecar could
+    open a real browser at linkedin.com, or clear the 24 h rate-limit backoff,
+    with both features switched off. The session exists only to serve one of the
+    two opt-ins, so at least one must be on."""
+    referral_on, search_on = linkedin_feature_flags(repos)
+    if not (referral_on or search_on):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "No LinkedIn feature is enabled — turn on Referral Outreach or "
+                "LinkedIn job search in Settings first."
+            ),
+        )
+
+
+def _require_job_search_opt_in(repos: Any) -> None:
+    """The logged-in job search has its OWN toggle and its OWN typed ack, and
+    both lived only in React (`ui_state`, never read by the sidecar) while the
+    route checked the *Referral Outreach* toggle instead — so the wrong consent
+    unlocked it, and enabling referrals alone was enough to run searches the
+    user never acknowledged (posture doc §4 #8). Read the real flags here."""
+    prefs = repos.preferences.get_or_create()
+    ui = prefs.ui_state or {}
+    if not bool(ui.get("linkedin_search_enabled")):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "LinkedIn job search is disabled — enable it in "
+                "Settings → Discover jobs first."
+            ),
+        )
+    if not ui.get("linkedin_search_ack_at"):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "LinkedIn job search needs its risk acknowledgement — re-enable "
+                "it in Settings → Discover jobs to record it."
+            ),
+        )
+
+
 @router.get("/api/jobs/{job_id}/referrals/candidates")
 async def list_referral_candidates(
     request: Request, job_id: str
@@ -2068,7 +2112,13 @@ async def linkedin_connect(
     """Start the headed-login session capture (US-SET-06 as-built). Enqueues the
     exclusive `linkedin_login` op — a visible browser opens at LinkedIn's login
     page; the user logs in themselves (the password never touches finds-you-jobs).
-    `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture."""
+    `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture.
+
+    Gated on at least one LinkedIn feature being enabled: this route *opens a
+    real browser at linkedin.com*, and it accepted that request with both
+    opt-ins off until 2026-08-01 (posture doc §4 #8)."""
+    with _db(request).repos() as repos:
+        _require_any_linkedin_feature(repos)
     snap: dict[str, Any] = {}
     if payload is not None and payload.login_url:
         snap["login_url"] = payload.login_url
@@ -2082,11 +2132,15 @@ async def linkedin_connect(
 # deduped). A budget on the logged-in session (account-safety axis), NOT the
 # ethos volume rule — clamped so a typo can't fire hundreds of pages at the
 # user's own account in one burst.
-# One page of LinkedIn's own page size, and no more (maintainer directive
-# 2026-07-30): the logged-in search is the loudest read in the app, and 25 is
-# also enforced package-side (`pacing.MAX_JOBS_PER_SEARCH`) so this route
-# clamp is a courtesy, not the security boundary.
-LINKEDIN_SEARCH_LIMIT_MIN = 10
+# Exactly one page of LinkedIn's own page size — not a range (maintainer
+# directive 2026-08-01). The wire request carries `count=25` no matter what a
+# caller asks for (`worker.search_jobs` pages at `_PAGE = 25`), so a smaller
+# `limit` never made the request smaller — it only discarded rows we had
+# already received, while making the UI *look* like a lighter footprint. One
+# page, one request, the same `count` LinkedIn's own Jobs page sends.
+# 25 is enforced again package-side (`pacing.MAX_JOBS_PER_SEARCH`); this clamp
+# is a courtesy, not the security boundary.
+LINKEDIN_SEARCH_LIMIT_MIN = 25
 LINKEDIN_SEARCH_LIMIT_MAX = 25
 LINKEDIN_SEARCH_LIMIT_DEFAULT = 25
 
@@ -2098,11 +2152,14 @@ async def linkedin_search(
     """Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
 
     User-clicked only — never a scheduled scan (scheduled scans must never touch
-    a logged-in session). Gated server-side: Referral Outreach must be enabled
-    AND the session must be connected; otherwise a clear error, not a silent
-    no-op. Results land in the same discovery funnel as every other source."""
+    a logged-in session). Gated server-side on **this feature's own** toggle +
+    typed ack and a connected session; otherwise a clear error, not a silent
+    no-op. (It used to check the *Referral Outreach* toggle instead — the wrong
+    consent, in both directions: enabling referrals alone unlocked searches the
+    user never acknowledged, while a search-only user was refused. Posture doc
+    §4 #8.) Results land in the same discovery funnel as every other source."""
     with _db(request).repos() as repos:
-        _require_networking_enabled(repos)
+        _require_job_search_opt_in(repos)
         session = repos.linkedin_session.get()
         if session is None or session.status != "valid":
             raise HTTPException(
@@ -2192,8 +2249,13 @@ async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
 @router.post("/api/linkedin/resume")
 async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     """Clear the voyager-owned backoff pause (Settings → Networking manual resume,
-    FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates."""
+    FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates.
+
+    Gated: this is the one route that *switches a safety mechanism off* — it
+    clears the 24 h backoff LinkedIn's own throttle signal put us in — and it ran
+    ungated until 2026-08-01 (posture doc §4 #8)."""
     with _db(request).repos() as repos:
+        _require_any_linkedin_feature(repos)
         session = repos.linkedin_session.get()
         tier = session.account_tier if session is not None else "new"
     # Off the loop (async-first rule): same first-call playwright import cost

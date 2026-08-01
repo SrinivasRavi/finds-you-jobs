@@ -779,7 +779,6 @@ const ja: DeepPartial<Messages> = {
       resultsPerSearch: "1回の検索あたりの結果数",
       resultsPerSearchInfo:
         "職種 × 勤務地ごとに取得する求人数です(25件単位のページ)。多いほど結果は増えますが、<strong>あなた自身の</strong>LinkedInアカウントから一度に発するリクエストも増え、レート制限やアカウントのリスクが高まります。控えめにしてください。",
-      jobsOption: "{{n}}件",
       started: "検索を開始しました — 新しいマッチはまもなく求人検索に表示されます。",
       failed: "検索に失敗しました。",
     },

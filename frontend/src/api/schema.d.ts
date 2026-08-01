@@ -1036,6 +1036,10 @@ export interface paths {
          *     exclusive `linkedin_login` op — a visible browser opens at LinkedIn's login
          *     page; the user logs in themselves (the password never touches finds-you-jobs).
          *     `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture.
+         *
+         *     Gated on at least one LinkedIn feature being enabled: this route *opens a
+         *     real browser at linkedin.com*, and it accepted that request with both
+         *     opt-ins off until 2026-08-01 (posture doc §4 #8).
          */
         post: operations["linkedin_connect_api_linkedin_connect_post"];
         delete?: never;
@@ -1058,9 +1062,12 @@ export interface paths {
          * @description Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
          *
          *     User-clicked only — never a scheduled scan (scheduled scans must never touch
-         *     a logged-in session). Gated server-side: Referral Outreach must be enabled
-         *     AND the session must be connected; otherwise a clear error, not a silent
-         *     no-op. Results land in the same discovery funnel as every other source.
+         *     a logged-in session). Gated server-side on **this feature's own** toggle +
+         *     typed ack and a connected session; otherwise a clear error, not a silent
+         *     no-op. (It used to check the *Referral Outreach* toggle instead — the wrong
+         *     consent, in both directions: enabling referrals alone unlocked searches the
+         *     user never acknowledged, while a search-only user was refused. Posture doc
+         *     §4 #8.) Results land in the same discovery funnel as every other source.
          */
         post: operations["linkedin_search_api_linkedin_search_post"];
         delete?: never;
@@ -1149,6 +1156,10 @@ export interface paths {
          * Linkedin Resume
          * @description Clear the voyager-owned backoff pause (Settings → Networking manual resume,
          *     FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates.
+         *
+         *     Gated: this is the one route that *switches a safety mechanism off* — it
+         *     clears the 24 h backoff LinkedIn's own throttle signal put us in — and it ran
+         *     ungated until 2026-08-01 (posture doc §4 #8).
          */
         post: operations["linkedin_resume_api_linkedin_resume_post"];
         delete?: never;

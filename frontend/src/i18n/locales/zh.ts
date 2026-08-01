@@ -779,7 +779,6 @@ const zh: DeepPartial<Messages> = {
       resultsPerSearch: "每次搜索结果数",
       resultsPerSearchInfo:
         "每个职位 × 地点组合拉取多少个职位，按每页 25 个分页。数值越高结果越多 — 但也意味着在<strong>你自己的</strong> LinkedIn 账号上一次性发出更多请求，会提高限流/账号风险。请保持适度。",
-      jobsOption: "{{n}} 个职位",
       started: "搜索已启动 — 新匹配的职位很快会出现在发现职位中。",
       failed: "搜索失败。",
     },

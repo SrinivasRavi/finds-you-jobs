@@ -797,7 +797,6 @@ const es: DeepPartial<Messages> = {
       resultsPerSearch: "Resultados por búsqueda",
       resultsPerSearchInfo:
         "Cuántos empleos traer por puesto × ubicación, en páginas de 25. Más alto significa más resultados — pero más peticiones lanzadas desde <strong>tu propia</strong> cuenta de LinkedIn en una sola ráfaga, lo que aumenta el riesgo de límites y para la cuenta. Mantenlo moderado.",
-      jobsOption: "{{n}} empleos",
       started: "Búsqueda iniciada — las nuevas coincidencias aparecerán en Descubrir empleos en breve.",
       failed: "La búsqueda falló.",
     },

@@ -206,9 +206,9 @@ const settingsPage = {
     searching: "Searching…",
     searchBtn: "Search LinkedIn jobs",
     resultsPerSearch: "Results per search",
+    onePage: "25 jobs (one page)",
     resultsPerSearchInfo:
-      "How many jobs to pull per role × location — capped at <strong>25 (one page)</strong>, because every row is a request on <strong>your own</strong> LinkedIn account. The cap is enforced in the sending code, not just here.",
-    jobsOption: "{{n}} jobs",
+      "Fixed at one page per role × location — the same <strong>25</strong> LinkedIn's own Jobs page asks for. It isn't adjustable on purpose: the request carries that page size whatever number we pick, so a lower setting would only discard results already fetched while looking like a lighter footprint. Enforced in the sending code, not just here.",
     started: "Search started — new matches will appear in Discover jobs shortly.",
     failed: "Search failed.",
   },

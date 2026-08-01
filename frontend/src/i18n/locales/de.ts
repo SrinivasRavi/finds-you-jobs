@@ -794,7 +794,6 @@ const de: DeepPartial<Messages> = {
       resultsPerSearch: "Ergebnisse pro Suche",
       resultsPerSearchInfo:
         "Wie viele Jobs pro Rolle × Ort geholt werden, in Seiten à 25. Mehr heißt mehr Ergebnisse — aber auch mehr Anfragen auf <strong>deinem eigenen</strong> LinkedIn-Konto in einem Schwung, was das Rate-Limit- / Kontorisiko erhöht. Bleib moderat.",
-      jobsOption: "{{n}} Jobs",
       started: "Suche gestartet — neue Treffer erscheinen in Kürze unter „Jobs“.",
       failed: "Suche fehlgeschlagen.",
     },
