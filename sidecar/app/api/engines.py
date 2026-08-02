@@ -21,40 +21,18 @@ Keys never appear in a response (masked only), a log line, or an error message.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from ..db import Database
-from ..registry import EngineRegistry
 from ..registry.engine_config import PROVIDERS, configure_engines, verify_provider
 from ..registry.engines_http import HttpTransport
 from ..security import get_app_key, mask_key, seal_secret
 from . import dto
+from .deps import data_dir as _data_dir
+from .deps import db as _db
+from .deps import engines as _engines
 
 router = APIRouter()
-
-
-# -- app.state accessors ---------------------------------------------------
-
-
-def _db(request: Request) -> Database:
-    db = getattr(request.app.state, "db", None)
-    if db is None:
-        raise HTTPException(status_code=503, detail="storage not initialized")
-    return db
-
-
-def _engines(request: Request) -> EngineRegistry | None:
-    return getattr(request.app.state, "engines", None)
-
-
-def _data_dir(request: Request) -> Path:
-    data_dir = getattr(request.app.state, "data_dir", None)
-    if data_dir is None:
-        raise HTTPException(status_code=503, detail="data dir not initialized")
-    return Path(data_dir)
 
 
 def _transport(request: Request) -> HttpTransport | None:

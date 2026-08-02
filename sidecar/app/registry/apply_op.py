@@ -49,6 +49,7 @@ from sidecar.packages.jobapplier import (
 from sidecar.packages.jobapplier.fake import FakeApplyEngine
 from sidecar.packages.jobapplier.loop import ApplyEngine
 
+from ..db import Repos
 from ..db.base import now_utc
 from ..db.database import Database, resolve_data_dir
 from ..events import make_event
@@ -512,6 +513,25 @@ def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
         )
 
 
+def advance_card_to_applied(repos: Repos, application_id: str, *, by: str) -> None:
+    """Move a pre-submission card to Applied and record the move (§8.4).
+
+    The ONE implementation of the transition (D-A7): the applier's own
+    confirmation detection (`by="applier"`) and the human's attestation
+    (`by="user_attested"`) differ only in who is credited in the event detail —
+    they must never diverge in *what* they write. A card already past
+    Saved/Seeking Referral is left alone (never dragged backward)."""
+    app_row = repos.applications.get(application_id)
+    if app_row is None or app_row.column not in ("saved", "seeking_referral"):
+        return
+    repos.applications.update(application_id, column="applied", applied_via="applier")
+    repos.application_events.create(
+        application_id,
+        "column_change",
+        {"from": app_row.column, "to": "applied", "by": by},
+    )
+
+
 def _finalize_cancel(ctx: OperationContext, run_id: str) -> OperationOutcome:
     db = ctx.db
     assert db is not None
@@ -556,16 +576,7 @@ def _finalize(
             ended_at=now_utc(),
         )
         if confirmed:
-            app_row = repos.applications.get(application_id)
-            if app_row is not None and app_row.column in ("saved", "seeking_referral"):
-                repos.applications.update(
-                    application_id, column="applied", applied_via="applier"
-                )
-                repos.application_events.create(
-                    application_id,
-                    "column_change",
-                    {"from": app_row.column, "to": "applied", "by": "applier"},
-                )
+            advance_card_to_applied(repos, application_id, by="applier")
     usage = {
         "tokens_in": result.usage.tokens_in,
         "tokens_out": result.usage.tokens_out,

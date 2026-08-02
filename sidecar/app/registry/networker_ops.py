@@ -560,9 +560,10 @@ def _maybe_move_on_batch_settle(
     if batch_id:
         siblings = [
             op
-            for op in repos.operations.list_by_kind_states("send", set(_SEND_ALL))
-            if (op.input_snapshot or {}).get("batch_id") == batch_id
-            and op.id != current_op_id
+            for op in repos.operations.list_for_snapshot(
+                "send", set(_SEND_ALL), key="batch_id", value=batch_id
+            )
+            if op.id != current_op_id
         ]
         if any(op.state in _SEND_ACTIVE for op in siblings):
             return  # batch has not settled yet — a sibling is still queued/running

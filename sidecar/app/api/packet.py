@@ -17,6 +17,12 @@ from ..runner import OperationRunner
 
 _ARTIFACT_KIND = {"tailor": "tailored_resume", "cover": "cover_letter"}
 
+# The packet's artifact kinds, in packet order — the ONE vocabulary (D-A14) for
+# every "resume or cover?" check: `Artifact.kind`, the uploaded-document slots
+# (`ApplicationDocument.kind`), and the `tailor`/`cover` ops that produce them.
+# Order is user-visible: it is what the "kind must be one of …" 422 lists.
+PACKET_KINDS: tuple[str, ...] = tuple(_ARTIFACT_KIND.values())
+
 
 def auto_resume_default(thresholds: dict | None) -> bool:
     thresholds = thresholds or {}

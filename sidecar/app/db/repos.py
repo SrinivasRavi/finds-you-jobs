@@ -92,6 +92,14 @@ def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
     return merged
 
 
+def snapshot_matches(op: Operation, key: str, value: Any) -> bool:
+    """`op.input_snapshot[key] == value` — the ONE spelling of the ledger-scan
+    predicate (D-A13). Callers that already hold a batch of ops (the tracker's
+    hoisted per-card lookups) use it directly; callers that don't go through
+    `OperationsRepo.list_for_snapshot`."""
+    return (op.input_snapshot or {}).get(key) == value
+
+
 class OperationsRepo:
     """The runner's durable queue + the cost ledger."""
 
@@ -172,6 +180,20 @@ class OperationsRepo:
             Operation.kind == kind, Operation.state.in_(states)
         )
         return list(self._s.scalars(stmt))
+
+    def list_for_snapshot(
+        self, kind: str, states: set[str], *, key: str, value: Any
+    ) -> list[Operation]:
+        """Ops of `kind` in `states` whose `input_snapshot[key] == value` — the
+        "which ops belong to this job / batch / contact?" question every ledger
+        surface asks (D-A13). The snapshot is opaque JSON, so the match happens
+        in Python over the same bounded `list_by_kind_states` set the callers
+        already fetched by hand."""
+        return [
+            op
+            for op in self.list_by_kind_states(kind, states)
+            if snapshot_matches(op, key, value)
+        ]
 
     def score_states_by_job(self) -> dict[str, set[str]]:
         """job_id → the set of its `score` operation states — the board's
