@@ -99,7 +99,9 @@ OS keychain under `finds-you-jobs` if you want to remove that as well.
 - Run from source: clone this repo, then `pnpm boot && pnpm dev` (toolchain: Node 20+ with pnpm 9, [uv](https://docs.astral.sh/uv/) for Python 3.13, and Rust/cargo — the first build compiles the desktop shell and takes a few minutes).
 - `pnpm test` · `pnpm lint` · `pnpm typecheck` — the gates.
 - `pnpm dev:web` — run the sidecar + UI in a browser (no desktop window) for quick iteration.
-- Third-party provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [UPSTREAMS.md](UPSTREAMS.md). Release process: [RELEASING.md](RELEASING.md). Contributing (DCO sign-off required): [CONTRIBUTING.md](CONTRIBUTING.md).
+- `FYJ_LINKEDIN_HEADED=1 pnpm dev` — a debugging switch: runs every LinkedIn operation in a visible browser window instead of headless, so you can open DevTools → Network in that window and inspect each request the app makes.
+- Maintainers: releases ship via `pnpm ship` — see [RELEASING.md](RELEASING.md) for the full checklist (it approves + publishes the beta release and updates the website).
+- Third-party provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [UPSTREAMS.md](UPSTREAMS.md). Contributing (DCO sign-off required): [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Discord
 Join the discord for job search discussions and beta testing - https://discord.gg/YsMxkwu7SY
