@@ -22,10 +22,15 @@ import {
   useUpdateContact,
 } from "../api/queries";
 import type { AudienceTag, ConnectionStatus, NetContact } from "../api/types";
+import { audienceTag } from "../shell/audienceTag";
+import { Avatar } from "../shell/Avatar";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
+import { RecoveryListModal } from "../shell/RecoveryListModal";
+import { daysBetween } from "./jobFormat";
+import { type LinkedInPillState, type LinkedInPillTone, linkedInStatusPill } from "./linkedInStatus";
 
 // label/empty hold i18n keys — wrapped with t(...) at render.
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
@@ -36,17 +41,25 @@ const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string
   { id: "converted", label: "networking.columns.converted", dot: "bg-good", empty: "networking.columnEmpty.converted" },
 ];
 
-const TAG_LABEL: Record<AudienceTag, string> = {
-  peer: "networking.audience.peer", hm: "networking.audience.hm", recruiter: "networking.audience.recruiter",
-  leadership: "networking.audience.leadership", other: "networking.audience.other",
+// The header's read-only session chip. Tone + which state a status means come
+// from the shared table (duplication audit D-F8); the classes and the copy stay
+// here because this chip is not the one Settings renders.
+const PILL_CLS: Record<LinkedInPillTone, string> = {
+  good: "bg-good-wash border-good text-good",
+  warn: "bg-warn-wash border-warn text-warn",
+  bad: "bg-bad-wash border-bad text-bad",
+};
+const PILL_LABEL: Record<LinkedInPillState, string> = {
+  connected: "networking.linkedinPill.connected",
+  connecting: "networking.linkedinPill.connecting",
+  backingOff: "networking.linkedinPill.backingOff",
+  expired: "networking.linkedinPill.expired",
+  disconnected: "networking.linkedinPill.connect",
 };
 
-function initials(name: string): string {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
-}
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  return daysBetween(iso, "floor");
 }
 
 export function Networking() {
@@ -124,14 +137,9 @@ export function Networking() {
   const firstDeg = scoped.filter((c) => c.connection_degree === 1).length;
   const secondDeg = scoped.filter((c) => c.connection_degree === 2).length;
 
-  const connState = session.data?.enabled
-    ? session.data.status === "valid"
-      ? { cls: "bg-good-wash border-good text-good", label: t("networking.linkedinPill.connected") }
-      : session.data.status === "connecting"
-        ? { cls: "bg-warn-wash border-warn text-warn", label: t("networking.linkedinPill.connecting") }
-        : session.data.status === "backing_off"
-          ? { cls: "bg-bad-wash border-bad text-bad", label: t("networking.linkedinPill.backingOff") }
-          : { cls: "bg-bad-wash border-bad text-bad", label: t("networking.linkedinPill.connect") }
+  const pill = session.data?.enabled ? linkedInStatusPill(session.data.status) : null;
+  const connState = pill
+    ? { cls: PILL_CLS[pill.tone], label: t(PILL_LABEL[pill.state]) }
     : null;
 
   return (
@@ -222,7 +230,7 @@ export function Networking() {
                 active={audienceFilter === a}
                 onClick={() => setAudienceFilter(audienceFilter === a ? null : a)}
               >
-                {t(TAG_LABEL[a])} ({n})
+                {t(audienceTag(a).labelKey)} ({n})
               </Chip>
             );
           })}
@@ -303,51 +311,33 @@ export function Networking() {
   );
 }
 
+// No Delete forever here on purpose: contacts have no permanent-delete endpoint
+// (the shared roster leaves that action out when it isn't passed).
 function DeletedContactsModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const archivedQ = useArchivedContacts();
   const update = useUpdateContact();
   const rows = archivedQ.data ?? [];
   return (
-    <Modal title={t("networking.deleted.title")} onClose={onClose} width={520}>
-      <div data-testid="deleted-contacts-modal" className="px-5 py-4">
-        <p className="mb-3 text-[11.5px] text-ink-3">
-          {t("networking.deleted.blurb")}
-        </p>
-        {rows.length === 0 ? (
-          <p className="text-[13px] text-ink-3">{t("networking.deleted.empty")}</p>
-        ) : (
-          <ul className="space-y-2">
-            {rows.map((c) => (
-              <li
-                key={c.id}
-                data-testid="deleted-contact-row"
-                className="flex items-center gap-3 rounded-md border border-border px-3 py-2"
-              >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-surface-2 text-[11px] font-semibold text-ink-2">
-                  {initials(c.name)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-medium text-ink">{c.name || "—"}</div>
-                  <div className="truncate text-[11px] text-ink-3">
-                    {c.current_role}
-                    {c.current_role && c.current_company ? " · " : ""}
-                    {c.current_company}
-                  </div>
-                </div>
-                <button
-                  data-testid="restore-contact-btn"
-                  onClick={() => update.mutate({ id: c.id, patch: { archived: false } })}
-                  className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
-                >
-                  {t("networking.deleted.restore")}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </Modal>
+    <RecoveryListModal
+      title={t("networking.deleted.title")}
+      onClose={onClose}
+      bodyTestid="deleted-contacts-modal"
+      rowTestid="deleted-contact-row"
+      blurb={t("networking.deleted.blurb")}
+      empty={t("networking.deleted.empty")}
+      rows={rows.map((c) => ({
+        id: c.id,
+        avatarName: c.name,
+        title: c.name || "—",
+        subtitle: `${c.current_role}${c.current_role && c.current_company ? " · " : ""}${c.current_company}`,
+      }))}
+      restore={{
+        label: t("networking.deleted.restore"),
+        testid: "restore-contact-btn",
+        onRun: (id) => update.mutate({ id, patch: { archived: false } }),
+      }}
+    />
   );
 }
 
@@ -375,10 +365,7 @@ function ContactCard({
       className="flex w-full flex-col gap-1.5 rounded-lg border border-border bg-surface p-3 text-left shadow-sm transition hover:border-border-2 focus:outline-none focus:ring-2 focus:ring-accent"
     >
       <div className="flex items-center gap-2">
-        {/* Square initials block — matches the Applications card avatar. */}
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-surface-2 text-[11px] font-semibold text-ink-2">
-          {initials(c.name)}
-        </span>
+        <Avatar name={c.name} />
         <div className="min-w-0 flex-1">
           <h4 className="truncate text-[12.5px] font-semibold leading-tight text-ink">{c.name}</h4>
           <div className="truncate text-[11px] text-ink-3">{c.current_role}{c.current_role && c.current_company ? " · " : ""}{c.current_company}</div>

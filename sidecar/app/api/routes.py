@@ -28,34 +28,50 @@ from sidecar.modules.scraper.filters import passes_company, passes_content
 from sidecar.modules.scraper.types import ScanPrefs
 
 from .. import documents as docstore
-from ..db import Database
 from ..db.base import now_utc
+from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
+from ..db.repos import snapshot_matches
 from ..events import heartbeat_stream
 from ..lifecycle import CONTACT_SYNC_MIN_INTERVAL_MINUTES
 from ..logging_setup import get_logger
 from ..observability import reconfigure_observability
 from ..observability.config import observability_config
 from ..priority import STATS_KEY, zband_priority
-from ..registry import EngineRegistry
 from ..registry import networker_ops as networker_ops
 from ..registry.apply_op import (
+    advance_card_to_applied,
     finalize_run_failed,
     finalize_run_interrupted,
     purge_run_dirs,
 )
 from ..registry.company_anchor import resolution_key
+from ..registry.contact_sync_op import payload_with_status_meta
 from ..registry.engine_config import apply_routing
-from ..registry.linkedin_op import LOGIN_CONTROL
+from ..registry.linkedin_op import (
+    LOGIN_CONTROL,
+    SEARCH_CURSOR_EXHAUSTED,
+    SEARCH_CURSOR_EXPIRED,
+    SEARCH_NO_CURSOR,
+    SEARCH_NOT_CONNECTED,
+)
 from ..registry.networker_ops import linkedin_feature_flags, linkedin_storage_path
 from ..registry.persistence import (
     SCORER_IMPL,
     SCORER_IMPL_DETERMINISTIC,
+    delete_application_cascade,
     scoring_mode,
 )
 from ..runner import OperationRunner
 from ..scheduler.planner import plan_schedule
 from . import dto
-from .packet import auto_cover_default, auto_resume_default, enqueue_packet
+from .deps import db as _db
+from .deps import engines as _engines
+from .packet import (
+    PACKET_KINDS,
+    auto_cover_default,
+    auto_resume_default,
+    enqueue_packet,
+)
 
 router = APIRouter()
 
@@ -66,14 +82,7 @@ _SSE_HEADERS = {
 }
 
 
-# -- app.state accessors ---------------------------------------------------
-
-
-def _db(request: Request) -> Database:
-    db = getattr(request.app.state, "db", None)
-    if db is None:
-        raise HTTPException(status_code=503, detail="storage not initialized")
-    return db
+# -- app.state accessors (the shared three live in `deps.py` — D-A9) --------
 
 
 def _runner(request: Request) -> OperationRunner:
@@ -81,6 +90,16 @@ def _runner(request: Request) -> OperationRunner:
     if runner is None:
         raise HTTPException(status_code=503, detail="runner not initialized")
     return runner
+
+
+def _found[T](row: T | None, label: str, ident: object) -> T:
+    """Get-or-404: return `row`, or raise the canonical missing-row 404.
+
+    ONE wording for every "the id you asked for isn't there" answer (D-A5) —
+    they were hand-written per site and had already drifted apart."""
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"{label} {ident!r} not found")
+    return row
 
 
 # -- lifecycle -------------------------------------------------------------
@@ -343,7 +362,7 @@ async def scan_progress(request: Request) -> dto.ScanProgressDTO:
             last_scan = repos.operations.latest_succeeded_by_kind("scan")
             new_ids = _scan_new_ids(last_scan)
             score_pending = len(
-                repos.operations.list_by_kind_states("score", {"queued", "running"})
+                repos.operations.list_by_kind_states("score", OP_ACTIVE_STATES)
             )
             # Batch-scoped "done": score ops for THIS scan's new jobs that have
             # reached a terminal state and are not currently re-pending. The
@@ -353,7 +372,7 @@ async def scan_progress(request: Request) -> dto.ScanProgressDTO:
             score_done = 0
             for job_id in new_ids:
                 states = score_states.get(job_id, set())
-                if states & {"queued", "running"}:
+                if states & OP_ACTIVE_STATES:
                     continue
                 if states & {"succeeded", "failed"}:
                     score_done += 1
@@ -488,9 +507,7 @@ async def update_job(
     `expired` job routes through `unexpire` (resets the 14-day timer)."""
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
-        current = repos.jobs.get(job_id)
-        if current is None:
-            raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
+        current = _found(repos.jobs.get(job_id), "job", job_id)
         feed_state = fields.get("feed_state")
         if feed_state == "removed":
             job = repos.jobs.set_trash_state(job_id, trashed=True)
@@ -513,9 +530,7 @@ async def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO
     canonical URL, then hard-delete the row. A tombstone is final — a future
     scan or Add-by-URL can never re-surface it (FR-SYS-04)."""
     with _db(request).repos() as repos:
-        job = repos.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
+        job = _found(repos.jobs.get(job_id), "job", job_id)
         canonical = job.canonical_url
         if not repos.tombstones.exists(canonical):
             repos.tombstones.create(canonical, reason="user_delete")
@@ -540,9 +555,7 @@ async def empty_trash(request: Request) -> dto.TombstoneResultDTO:
 @router.get("/api/jobs/{job_id}")
 async def get_job(request: Request, job_id: str) -> dto.JobDTO:
     with _db(request).repos() as repos:
-        job = repos.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
+        job = _found(repos.jobs.get(job_id), "job", job_id)
         version = _current_profile_version(repos)
         score = repos.job_scores.get_cached(job_id, version)
         op_states = repos.operations.score_states_by_job().get(job_id)
@@ -681,10 +694,6 @@ async def get_settings(request: Request) -> dto.SettingsDTO:
         return _settings_dto(repos)
 
 
-def _engines(request: Request) -> EngineRegistry | None:
-    return getattr(request.app.state, "engines", None)
-
-
 # Background-scrape cadence ladder (US-OB-03 / US-SET-01) → scan-schedule
 # interval. Threading happens HERE, server-side, so every writer (onboarding
 # Finish, the job-finder-preferences modal, any future surface) enables the
@@ -803,7 +812,7 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         "send", {"queued", "running", "failed", "succeeded"}
     )
     discover_ops = repos.operations.list_by_kind_states(
-        "discover", {"queued", "running"}
+        "discover", OP_ACTIVE_STATES
     )
     # Batched child rows — one IN query per table.
     # Only head artifacts (not superseded) surface + drive packetState.
@@ -852,12 +861,10 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         # send ops, whether a discover op is running, whether a roster was found for
         # the role, and the latest reach-out batch's outcomes.
         send_states = [
-            op.state
-            for op in send_ops
-            if (op.input_snapshot or {}).get("job_id") == job_id
+            op.state for op in send_ops if snapshot_matches(op, "job_id", job_id)
         ]
         discover_in_flight = any(
-            (op.input_snapshot or {}).get("job_id") == job_id for op in discover_ops
+            snapshot_matches(op, "job_id", job_id) for op in discover_ops
         )
         # Attached documents (manual cards) — the resume/cover the user submitted.
         attached_docs = [
@@ -909,8 +916,7 @@ async def create_application(
     db = _db(request)
     # 1. Create + commit the Application first (the worker must see it).
     with db.repos() as repos:
-        if repos.jobs.get(payload.job_id) is None:
-            raise HTTPException(status_code=404, detail=f"job {payload.job_id!r} not found")
+        _found(repos.jobs.get(payload.job_id), "job", payload.job_id)
         prefs = repos.preferences.get_or_create()
         # Priority assignment (FR-TR-09): an explicit value is a manual choice;
         # otherwise the z-band of the job's current score, or P0 if saved while
@@ -958,7 +964,6 @@ async def create_application(
 # Manual application `column` values shown on the Tracker card menu — the
 # post-referral pipeline stages a real-world "already applied" record can land in.
 _MANUAL_COLUMNS = {"applied", "interviewing", "offer", "rejected"}
-_DOC_KINDS = {"tailored_resume", "cover_letter"}
 
 
 @router.post("/api/applications/manual", status_code=201)
@@ -1065,9 +1070,6 @@ async def create_manual_application(
         return _application_dto(repos, repos.applications.get(application_id))
 
 
-_DOC_KINDS = ("tailored_resume", "cover_letter")
-
-
 @router.post("/api/applications/{application_id}/documents", status_code=201)
 async def attach_application_document(
     request: Request,
@@ -1081,9 +1083,9 @@ async def attach_application_document(
     file for that kind (one resume + one cover per card). This is the exact
     document the user submits on Apply / the record for a manual card logged
     without a file. `kind` ∈ {'tailored_resume', 'cover_letter'}."""
-    if kind not in _DOC_KINDS:
+    if kind not in PACKET_KINDS:
         raise HTTPException(
-            status_code=422, detail=f"kind must be one of {list(_DOC_KINDS)}"
+            status_code=422, detail=f"kind must be one of {list(PACKET_KINDS)}"
         )
     db = _db(request)
     filename = file.filename or ""
@@ -1097,10 +1099,7 @@ async def attach_application_document(
 
     # Fail before storing the blob if the card is gone (no orphan on disk).
     with db.repos() as repos:
-        if repos.applications.get(application_id) is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        _found(repos.applications.get(application_id), "application", application_id)
 
     sha = await asyncio.to_thread(docstore.store_bytes, data, db.data_dir)
     with db.repos() as repos:
@@ -1120,16 +1119,13 @@ async def detach_application_document(
 ) -> dto.ApplicationDTO:
     """Detach the (application, kind) resume/cover file — the ✕ on the attached-
     file chip. The content-addressed blob stays (it may back other cards)."""
-    if kind not in _DOC_KINDS:
+    if kind not in PACKET_KINDS:
         raise HTTPException(
-            status_code=422, detail=f"kind must be one of {list(_DOC_KINDS)}"
+            status_code=422, detail=f"kind must be one of {list(PACKET_KINDS)}"
         )
     db = _db(request)
     with db.repos() as repos:
-        if repos.applications.get(application_id) is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        _found(repos.applications.get(application_id), "application", application_id)
         repos.application_documents.delete(application_id, kind)
         return _application_dto(repos, repos.applications.get(application_id))
 
@@ -1140,11 +1136,7 @@ async def download_document(request: Request, document_id: str) -> FileResponse:
     manual card). Content-addressed on disk; streamed with its original name."""
     db = _db(request)
     with db.repos() as repos:
-        doc = repos.documents.get(document_id)
-        if doc is None:
-            raise HTTPException(
-                status_code=404, detail=f"document {document_id!r} not found"
-            )
+        doc = _found(repos.documents.get(document_id), "document", document_id)
         sha, mime, filename = doc.sha256, doc.mime_type, doc.original_filename
     path = docstore.blob_path(sha, db.data_dir)
     if not path.exists():
@@ -1163,11 +1155,7 @@ async def generate_packet(
     """Manual/regenerate packet build (US-TL-02) — supersedes prior artifacts."""
     db = _db(request)
     with db.repos() as repos:
-        app = repos.applications.get(application_id)
-        if app is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        app = _found(repos.applications.get(application_id), "application", application_id)
         job_id = app.job_id
     enqueue_packet(
         db,
@@ -1182,9 +1170,6 @@ async def generate_packet(
         return _application_dto(repos, repos.applications.get(application_id))
 
 
-_ARTIFACT_KINDS = {"tailored_resume", "cover_letter"}
-
-
 @router.patch("/api/applications/{application_id}/artifacts/{kind}")
 async def patch_artifact(
     request: Request, application_id: str, kind: str, payload: dto.ArtifactPatch
@@ -1195,14 +1180,10 @@ async def patch_artifact(
     `markdown` overwrites the text (edits apply only to this variant — the master
     is untouched); `approved` stamps/clears `approved_at` (the `ready ⇄ approved`
     flip). Per-artifact, so the resume and cover letter are approved separately."""
-    if kind not in _ARTIFACT_KINDS:
+    if kind not in PACKET_KINDS:
         raise HTTPException(status_code=400, detail=f"unknown artifact kind {kind!r}")
     with _db(request).repos() as repos:
-        app = repos.applications.get(application_id)
-        if app is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        _found(repos.applications.get(application_id), "application", application_id)
         head = next(
             (
                 a
@@ -1246,24 +1227,17 @@ async def patch_artifact(
 @router.get("/api/applications/{application_id}")
 async def get_application(request: Request, application_id: str) -> dto.ApplicationDTO:
     with _db(request).repos() as repos:
-        app = repos.applications.get(application_id)
-        if app is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        app = _found(repos.applications.get(application_id), "application", application_id)
         return _application_dto(repos, app)
 
 
-_ALL_OP_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
 _SCORE_LABELS = {"failed": "Score failed", "succeeded": "Scored"}
 
 
 def _ops_for_job(repos: Any, kind: str, job_id: str) -> list[Any]:
-    return [
-        op
-        for op in repos.operations.list_by_kind_states(kind, _ALL_OP_STATES)
-        if (op.input_snapshot or {}).get("job_id") == job_id
-    ]
+    return repos.operations.list_for_snapshot(
+        kind, OP_ALL_STATES, key="job_id", value=job_id
+    )
 
 
 def _column_label(column: str) -> str:
@@ -1296,11 +1270,7 @@ async def application_activity(
     added-to-tracker, score, tailor/cover generation, column moves, notes edits,
     archive/unarchive. (Apply + outreach entries return with their commits.)"""
     with _db(request).repos() as repos:
-        app = repos.applications.get(application_id)
-        if app is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        app = _found(repos.applications.get(application_id), "application", application_id)
         entries: list[dto.ActivityEntryDTO] = [
             dto.ActivityEntryDTO(kind="added", label="Added to tracker", at=app.saved_at)
         ]
@@ -1357,11 +1327,9 @@ async def update_application(
     fields = payload.model_dump(exclude_none=True)
     archived_flag = fields.pop("archived", None)
     with _db(request).repos() as repos:
-        existing = repos.applications.get(application_id)
-        if existing is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        existing = _found(
+            repos.applications.get(application_id), "application", application_id
+        )
         events: list[tuple[str, dict[str, Any]]] = []
         if "column" in fields and fields["column"] != existing.column:
             events.append(("column_change", {"from": existing.column, "to": fields["column"]}))
@@ -1384,19 +1352,8 @@ async def update_application(
 async def delete_application(request: Request, application_id: str) -> None:
     """Remove a card (unsave / return-to-board — US-JB / US-TR-07)."""
     with _db(request).repos() as repos:
-        app = repos.applications.get(application_id)
-        if app is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
-        # Purge every FK child first (`foreign_keys=ON`): events, uploaded-
-        # document links (manual cards — 2026-07-24 customer bug class), and
-        # apply runs. Artifacts cascade via the ORM relationship.
-        run_ids = [r.id for r in repos.apply_runs.list_for_application(application_id)]
-        repos.application_events.delete_for_application(application_id)
-        repos.application_documents.delete_for_application(application_id)
-        repos.apply_runs.delete_for_application(application_id)
-        repos.applications.delete(application_id)
+        _found(repos.applications.get(application_id), "application", application_id)
+        _deleted, run_ids = delete_application_cascade(repos, application_id)
     # F-M8: the runs' on-disk artifacts (frozen PDF + step PNGs) go with the
     # rows. Best-effort + path-guarded; off-loop (rmtree blocks).
     if run_ids:
@@ -1421,9 +1378,7 @@ async def update_schedule(
     disabled schedule makes it due on the next tick (next_due_at → now)."""
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
-        sched = repos.schedules.get(schedule_id)
-        if sched is None:
-            raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
+        sched = _found(repos.schedules.get(schedule_id), "schedule", schedule_id)
         # Flip on → run promptly (the seeded next_due is far-future, §7 seed).
         if fields.get("enabled") is True and not sched.enabled:
             fields["next_due_at"] = now_utc()
@@ -1439,9 +1394,7 @@ async def run_schedule(request: Request, schedule_id: str) -> dto.ScheduleRunRes
     db = _db(request)
     runner = _runner(request)
     with db.repos() as repos:
-        sched = repos.schedules.get(schedule_id)
-        if sched is None:
-            raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
+        sched = _found(repos.schedules.get(schedule_id), "schedule", schedule_id)
         kind = sched.kind
         interval_minutes = sched.interval_minutes
 
@@ -1455,9 +1408,8 @@ async def run_schedule(request: Request, schedule_id: str) -> dto.ScheduleRunRes
             operation_id=enqueued[-1] if enqueued else None,
             next_due_at=next_due,
         )
-        updated = repos.schedules.get(schedule_id)
-        if updated is None:  # unreachable — same txn — but keeps the type honest
-            raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
+        # The re-read is unreachable-None — same txn — but keeps the type honest.
+        updated = _found(repos.schedules.get(schedule_id), "schedule", schedule_id)
         return dto.ScheduleRunResult(schedule=dto.schedule_dto(updated), enqueued=enqueued)
 
 
@@ -1511,9 +1463,7 @@ async def retry_operation(request: Request, operation_id: str) -> dto.OperationA
     `apply`/`linkedin_login` are excluded (interactive, non-generic paths)."""
     db = _db(request)
     with db.repos() as repos:
-        op = repos.operations.get(operation_id)
-        if op is None:
-            raise HTTPException(status_code=404, detail=f"operation {operation_id!r} not found")
+        op = _found(repos.operations.get(operation_id), "operation", operation_id)
         kind, snapshot = op.kind, dict(op.input_snapshot or {})
     if kind in ("apply", "linkedin_login"):
         raise HTTPException(
@@ -1543,11 +1493,7 @@ async def cancel_operation(request: Request, operation_id: str) -> dto.Operation
     runner = _runner(request)
     db = _db(request)
     with db.repos() as repos:
-        op = repos.operations.get(operation_id)
-        if op is None:
-            raise HTTPException(
-                status_code=404, detail=f"operation {operation_id!r} not found"
-            )
+        op = _found(repos.operations.get(operation_id), "operation", operation_id)
         kind = op.kind
         # A queued `apply` op carries a durable ApplyRun row (start_apply creates
         # it before submit). If we cancel the op here, that row must be finalized
@@ -1601,11 +1547,7 @@ async def cost_totals(request: Request) -> dto.CostTotalsDTO:
 @router.get("/api/operations/{operation_id}")
 async def get_operation(request: Request, operation_id: str) -> dto.OperationDTO:
     with _db(request).repos() as repos:
-        op = repos.operations.get(operation_id)
-        if op is None:
-            raise HTTPException(
-                status_code=404, detail=f"operation {operation_id!r} not found"
-            )
+        op = _found(repos.operations.get(operation_id), "operation", operation_id)
         return dto.operation_dto(op)
 
 
@@ -1618,11 +1560,7 @@ async def application_networking(
     """The referral contacts linked to this role + their statuses — the detail
     modal's Networking tab (US-TR-03, shown only when LinkedIn is ON)."""
     with _db(request).repos() as repos:
-        app = repos.applications.get(application_id)
-        if app is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        app = _found(repos.applications.get(application_id), "application", application_id)
         # Latest outreach per contact for this role.
         last_by_contact: dict[str, Any] = {}
         for log in repos.outreach_logs.list_for_job(app.job_id):
@@ -1727,16 +1665,11 @@ async def update_contact(
     if "archived" in fields:
         fields["archived_at"] = now_utc() if fields.pop("archived") else None
     with _db(request).repos() as repos:
-        existing = repos.contacts.get(contact_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail=f"contact {contact_id!r} not found")
+        existing = _found(repos.contacts.get(contact_id), "contact", contact_id)
         # Manual wins (US-NW-12): a user-driven column move stamps the status as
         # `manual` so the contact-status sync engine won't immediately override it.
         if "connection_status" in fields:
-            fields["profile_payload"] = {
-                **(existing.profile_payload or {}),
-                "status_meta": {"source": "manual", "changed_at": now_utc().isoformat()},
-            }
+            fields["profile_payload"] = payload_with_status_meta(existing, "manual", now_utc())
         contact = repos.contacts.update(contact_id, **fields)
         return _contact_dto(repos, contact)
 
@@ -1809,9 +1742,7 @@ async def list_referral_candidates(
     at the job's company + per-contact template drafts + already-reached derived
     from the OutreachLog. Run discover first to populate candidates."""
     with _db(request).repos() as repos:
-        job = repos.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
+        job = _found(repos.jobs.get(job_id), "job", job_id)
         company = job.company
         # Roster = contacts at the target company (raw ATS name AND the resolved
         # LinkedIn entity name — they differ, e.g. `hopper` vs `Hopper`) OR already
@@ -1849,13 +1780,9 @@ async def list_referral_candidates(
         discover_state = "never"
         company_confirm: list[dict[str, Any]] = []
         confirm_url_failed = False
-        discover_ops = [
-            op
-            for op in repos.operations.list_by_kind_states(
-                "discover", {"succeeded"}
-            )
-            if (op.input_snapshot or {}).get("job_id") == job_id
-        ]
+        discover_ops = repos.operations.list_for_snapshot(
+            "discover", {"succeeded"}, key="job_id", value=job_id
+        )
         if discover_ops:
             latest = max(discover_ops, key=lambda op: op.created_at)
             ref = latest.result_ref or {}
@@ -1900,20 +1827,18 @@ async def discover_referrals(
     is_confirm = bool(payload.company_urn or payload.company_url)
     with _db(request).repos() as repos:
         _require_networking_enabled(repos)
-        job = repos.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
+        job = _found(repos.jobs.get(job_id), "job", job_id)
         company = job.company
         # Single-flight the plain boot discover per job (NFR-LI account safety +
         # the confirm→ask-again loop fix): if an un-confirmed discover for this job
         # is already queued/running, reuse it rather than launching a second live
         # LinkedIn scan. A confirm (URN/URL) always runs — it supersedes the boot.
         if not is_confirm:
-            for op in repos.operations.list_by_kind_states("discover", {"queued", "running"}):
+            for op in repos.operations.list_for_snapshot(
+                "discover", OP_ACTIVE_STATES, key="job_id", value=job_id
+            ):
                 snap = op.input_snapshot or {}
-                if snap.get("job_id") == job_id and not (
-                    snap.get("company_urn") or snap.get("company_url")
-                ):
+                if not (snap.get("company_urn") or snap.get("company_url")):
                     return dto.OperationAccepted(id=op.id, kind="discover", state=op.state)
     snapshot: dict[str, Any] = {
         "company": company, "job_id": job_id, "limit": max(1, payload.limit),
@@ -1937,8 +1862,7 @@ async def draft_referral(
     """Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate).
     Enqueues a `draft` op; read the message from the operation's result_ref."""
     with _db(request).repos() as repos:
-        if repos.contacts.get(contact_id) is None:
-            raise HTTPException(status_code=404, detail=f"contact {contact_id!r} not found")
+        _found(repos.contacts.get(contact_id), "contact", contact_id)
     operation_id = _runner(request).submit(
         "draft", {"contact_id": contact_id, "job_id": job_id}
     )
@@ -1956,10 +1880,7 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
     with _db(request).repos() as repos:
         _require_networking_enabled(repos)
         for c in payload.contacts:
-            if repos.contacts.get(c.contact_id) is None:
-                raise HTTPException(
-                    status_code=404, detail=f"contact {c.contact_id!r} not found"
-                )
+            _found(repos.contacts.get(c.contact_id), "contact", c.contact_id)
         # Persist the selection (FR-NW-01): mark every picked contact selected for
         # this role so a `pending` popup (partial / cap-stopped batch) restores who
         # was chosen on reopen. Un-picked contacts keep their prior flag — un-sent
@@ -1977,11 +1898,11 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
         # must not enqueue a second real invite for a contact whose send for this
         # role is already queued or running. Skip those; the UI disables the button
         # and shows "Sending…" but this is the authoritative backstop.
-        active_sends = repos.operations.list_by_kind_states("send", {"queued", "running"})
+        active_sends = repos.operations.list_for_snapshot(
+            "send", OP_ACTIVE_STATES, key="job_id", value=payload.job_id
+        )
         inflight = {
-            (op.input_snapshot or {}).get("contact_id")
-            for op in active_sends
-            if (op.input_snapshot or {}).get("job_id") == payload.job_id
+            (op.input_snapshot or {}).get("contact_id") for op in active_sends
         }
     # One batch id ties every send of this reach-out together, so each send's
     # entrypoint can detect *batch settle* and move the card once (FR-NW-03).
@@ -2160,29 +2081,16 @@ async def linkedin_search(
         _require_job_search_opt_in(repos)
         session = repos.linkedin_session.get()
         if session is None or session.status != "valid":
-            raise HTTPException(
-                status_code=409,
-                detail="LinkedIn is not connected — connect your session in Settings first.",
-            )
+            raise HTTPException(status_code=409, detail=SEARCH_NOT_CONNECTED)
         profile = networker_ops.resolve_pacing_profile(repos, session=session)
         if mode == "next":
             state = dto.linkedin_search_cursor_dto(repos.linkedin_search_cursor.get())
             if state is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="No search to continue — run a Fresh search first.",
-                )
+                raise HTTPException(status_code=409, detail=SEARCH_NO_CURSOR)
             if state.expired:
-                raise HTTPException(
-                    status_code=409,
-                    detail="The last Fresh search has expired — run a Fresh search first.",
-                )
+                raise HTTPException(status_code=409, detail=SEARCH_CURSOR_EXPIRED)
             if state.exhausted:
-                raise HTTPException(
-                    status_code=409,
-                    detail="No more results — the last search reached LinkedIn's "
-                           "end of results. Run a Fresh search.",
-                )
+                raise HTTPException(status_code=409, detail=SEARCH_CURSOR_EXHAUSTED)
     # Self-imposed pages/hour throttle: refuse when the hourly budget is spent
     # (both modes — every search fetches a page). The worker enforces this too;
     # the route surfaces it as a clean 429 rather than a 0-result search. Ledger
@@ -2489,16 +2397,12 @@ async def start_apply(
     # on the next query and hold SQLite's write lock while runner.submit
     # inserts on its own connection (the 2026-07-17 "database is locked").
     with db.repos() as repos:
-        app_row = repos.applications.get(application_id)
-        if app_row is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
-        job = repos.jobs.get(app_row.job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="job row missing")
+        app_row = _found(
+            repos.applications.get(application_id), "application", application_id
+        )
+        job = _found(repos.jobs.get(app_row.job_id), "job", app_row.job_id)
         active = repos.apply_runs.latest_for_application(application_id)
-        if active is not None and active.status in ("queued", "waiting_for_packet", "running"):
+        if active is not None and active.status in APPLY_RUN_ACTIVE_STATUSES:
             # Single-flight per card: reopening the companion binds to the
             # active run instead of double-launching a browser (§8.2).
             return dto.apply_run_dto(active)
@@ -2552,10 +2456,7 @@ async def list_apply_runs(
     request: Request, application_id: str
 ) -> list[dto.ApplyRunDTO]:
     with _db(request).repos() as repos:
-        if repos.applications.get(application_id) is None:
-            raise HTTPException(
-                status_code=404, detail=f"application {application_id!r} not found"
-            )
+        _found(repos.applications.get(application_id), "application", application_id)
         return [
             dto.apply_run_dto(r)
             for r in repos.apply_runs.list_for_application(application_id)
@@ -2567,9 +2468,7 @@ async def get_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
     """The run snapshot — a reopened companion fetches this instead of
     depending on having seen every prior SSE event (§9.2)."""
     with _db(request).repos() as repos:
-        run = repos.apply_runs.get(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        run = _found(repos.apply_runs.get(run_id), "run", run_id)
         return dto.apply_run_dto(run)
 
 
@@ -2580,9 +2479,7 @@ async def get_apply_run_screenshot(
     """Serve one evidence PNG by index. Paths come from the run row only —
     never from the client — so this cannot read arbitrary files."""
     with _db(request).repos() as repos:
-        run = repos.apply_runs.get(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        run = _found(repos.apply_runs.get(run_id), "run", run_id)
         shots = list(run.screenshots)
     if not (0 <= index < len(shots)):
         raise HTTPException(status_code=404, detail="no such screenshot")
@@ -2600,24 +2497,24 @@ async def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
     from ..registry.apply_op import APPLY_CONTROL
 
     runner = _runner(request)
-    with _db(request).repos() as repos:
-        run = repos.apply_runs.get(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    db = _db(request)
+    cancelled_queued = False
+    with db.repos() as repos:
+        run = _found(repos.apply_runs.get(run_id), "run", run_id)
         if run.operation_id and run.operation_id in APPLY_CONTROL:
             # In flight: cooperative — the loop notices between steps.
             APPLY_CONTROL[run.operation_id].cancel()
         elif run.operation_id and run.status == "queued":
             # Still queued: cancel the op outright and land the run honestly.
-            if runner.cancel(run.operation_id):
-                run = repos.apply_runs.update(
-                    run_id,
-                    status="interrupted",
-                    phase="interrupted",
-                    summary="cancelled before the run started",
-                    ended_at=now_utc(),
-                )
-        return dto.apply_run_dto(run)
+            cancelled_queued = runner.cancel(run.operation_id)
+        if not cancelled_queued:
+            return dto.apply_run_dto(run)
+    # The landing goes through the ONE interrupted-transition implementation
+    # (D-A7) — the same call the generic operations-cancel route makes, so the
+    # two cancel surfaces can never write different terminal state.
+    finalize_run_interrupted(db, run_id, "cancelled before the run started")
+    with db.repos() as repos:
+        return dto.apply_run_dto(_found(repos.apply_runs.get(run_id), "run", run_id))
 
 
 @router.post("/api/apply-runs/{run_id}/attest")
@@ -2628,9 +2525,7 @@ async def attest_apply_run(
     user-attested submission and advances the card to Applied; 'didn't submit'
     leaves the card in its pre-submission column with the honest run result."""
     with _db(request).repos() as repos:
-        run = repos.apply_runs.get(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+        run = _found(repos.apply_runs.get(run_id), "run", run_id)
         if run.status not in ("ready_for_human", "interrupted", "timed_out", "blocked"):
             if not (run.status == "submitted" and payload.submitted):
                 raise HTTPException(
@@ -2641,16 +2536,7 @@ async def attest_apply_run(
             run = repos.apply_runs.update(
                 run_id, status="submitted", submit_evidence="user_attested"
             )
-            app_row = repos.applications.get(run.application_id)
-            if app_row is not None and app_row.column in ("saved", "seeking_referral"):
-                repos.applications.update(
-                    run.application_id, column="applied", applied_via="applier"
-                )
-                repos.application_events.create(
-                    run.application_id,
-                    "column_change",
-                    {"from": app_row.column, "to": "applied", "by": "user_attested"},
-                )
+            advance_card_to_applied(repos, run.application_id, by="user_attested")
         return dto.apply_run_dto(run)
 
 

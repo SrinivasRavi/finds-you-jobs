@@ -347,12 +347,13 @@ def goto_page(session: AccountSession, action, expected_url_pattern: str,
 
 
 def human_type(locator, text: str, min_delay: int | None = None, max_delay: int | None = None):
-    """Type with randomized per-keystroke delay (upstream nav.human_type)."""
-    from .pacing import HUMAN_TYPE_MAX_DELAY_MS, HUMAN_TYPE_MIN_DELAY_MS
+    """Type with randomized per-keystroke delay (upstream nav.human_type).
 
-    lo = HUMAN_TYPE_MIN_DELAY_MS if min_delay is None else min_delay
-    hi = HUMAN_TYPE_MAX_DELAY_MS if max_delay is None else max_delay
-    locator.type(text, delay=random.randint(lo, hi))
+    The delay itself comes from `pacing.human_type_delay_ms` — the same jitter
+    this used to re-implement inline while that helper sat callerless."""
+    from .pacing import human_type_delay_ms
+
+    locator.type(text, delay=human_type_delay_ms(min_delay, max_delay))
 
 
 def raise_if_unresponsive(fired: bool, label: str, deadline_s: float) -> None:

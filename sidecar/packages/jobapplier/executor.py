@@ -46,6 +46,13 @@ class ExecOutcome:
 class UrlPolicy:
     """Scheme/host policy for navigate + redirect checks (§4.3).
 
+    Literal IPs only, on purpose: Playwright resolves inside the browser, so a
+    resolve-then-navigate check here would be a second lookup proving nothing.
+    The fetch layer's guard (`modules/_shared/url_guard.url_refusal`) DOES
+    resolve; the two are pinned against one shared case table in
+    `sidecar/tests/modules/shared/test_url_guard_corpus.py`, which is where that
+    divergence is recorded (duplication audit D-M10).
+
     ``allow_local`` exists ONLY so tests can drive local fixture pages
     (file:// and loopback); the production loop constructs the default."""
 

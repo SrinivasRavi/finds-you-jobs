@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import pytest
 
+from sidecar.packages.referral_outreach import types as facade
 from sidecar.packages.referral_outreach.driver import _translate_error
 from sidecar.packages.referral_outreach.types import RateLimited as FacadeRateLimited
+from sidecar.packages.referral_outreach.upstream import errors as upstream_errors
 from sidecar.packages.referral_outreach.upstream.client import (
     PlaywrightLinkedinAPI,
     _FetchResponse,
@@ -48,8 +50,36 @@ def test_rate_limited_is_not_an_oserror_so_it_escapes_the_retry_loop() -> None:
     assert not issubclass(RateLimited, OSError)
 
 
-def test_a_999_message_translates_to_the_facade_rate_limit_type() -> None:
-    """The facade matches on message text. A 999 matched none of the rate-limit
-    tokens and fell through to `BrowserFailure`, so it never entered backoff."""
-    translated = _translate_error(RateLimited("LinkedIn returned HTTP 999 (throttled/blocked)"))
-    assert isinstance(translated, FacadeRateLimited)
+@pytest.mark.parametrize("status", [429, 999])
+def test_a_throttle_status_translates_to_the_facade_rate_limit_type(status: int) -> None:
+    """End-to-end: what `raise_if_throttled` raises must land on the facade's
+    `RateLimited`. The facade used to match on message text, so a 999 matched
+    none of the rate-limit tokens and fell through to `BrowserFailure` —
+    it never entered backoff."""
+    with pytest.raises(RateLimited) as exc:
+        PlaywrightLinkedinAPI.raise_if_throttled(_res(status))
+    assert isinstance(_translate_error(exc.value), FacadeRateLimited)
+
+
+@pytest.mark.parametrize(
+    ("upstream_error", "facade_error"),
+    [
+        (upstream_errors.RateLimited, facade.RateLimited),
+        (upstream_errors.ReachedConnectionLimit, facade.InviteCapReached),
+        (upstream_errors.CapExceeded, facade.InviteCapReached),
+        (upstream_errors.AuthenticationError, facade.AuthenticationError),
+        (upstream_errors.ProfileInaccessibleError, facade.ProfileUnavailable),
+        (upstream_errors.SkipProfile, facade.BrowserFailure),
+        (upstream_errors.VoyagerError, facade.BrowserFailure),
+        (RuntimeError, facade.BrowserFailure),
+    ],
+)
+def test_translation_is_typed_not_word_matched(
+    upstream_error: type[Exception], facade_error: type[facade.ReferralError]
+) -> None:
+    """Classification reads the upstream error TYPE, so a message that carries
+    none of the old tokens still lands on the right facade type (and a wording
+    change upstream can no longer silently re-route an error)."""
+    translated = _translate_error(upstream_error("no tokens in this message"))
+    assert isinstance(translated, facade_error)
+    assert str(translated) == "no tokens in this message"

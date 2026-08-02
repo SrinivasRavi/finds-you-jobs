@@ -30,8 +30,9 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from ..config import SourceEntry
-from ..http import Fetcher, page_pause
+from ..http import Fetcher, paced_pages
 from ..types import NormalizedJob, ScraperError
+from .base import path_segments
 
 ID = "workday"
 
@@ -47,12 +48,11 @@ MAX_PAGES = 10
 
 def _parse_site(url: str) -> tuple[str, str, str]:
     """(host, tenant, site) from a career-site URL, or ("", "", "")."""
-    parts = urlsplit(url)
-    host = parts.netloc.lower()
+    host = urlsplit(url).netloc.lower()
     m = _HOST_RE.match(host)
     if not m:
         return "", "", ""
-    segments = [s for s in parts.path.split("/") if s]
+    segments = path_segments(url)
     # Skip a leading locale segment (en-US, fr-CA, …); ignore CxS/API paths.
     if segments and _LOCALE_RE.match(segments[0]):
         segments = segments[1:]
@@ -94,12 +94,11 @@ def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
     `jobPostingInfo.jobDescription` (HTML). "" when the shape is unexpected."""
     from ..htmltext import strip_html
 
-    parts = urlsplit(job.canonical_url)
-    host = parts.netloc.lower()
+    host = urlsplit(job.canonical_url).netloc.lower()
     m = _HOST_RE.match(host)
     if not m:
         return ""
-    segments = [s for s in parts.path.split("/") if s]
+    segments = path_segments(job.canonical_url)
     if len(segments) < 2:
         return ""
     site, external_path = segments[0], "/" + "/".join(segments[1:])
@@ -119,9 +118,7 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
 
     jobs: list[NormalizedJob] = []
     offset = 0
-    for _page in range(MAX_PAGES):
-        if _page:  # jittered inter-page pause — no back-to-back bursts (F-M9)
-            page_pause()
+    for _page in paced_pages(range(MAX_PAGES)):
         payload = fetcher.post_json(
             endpoint,
             {"limit": _PAGE_SIZE, "offset": offset, "searchText": "", "appliedFacets": {}},

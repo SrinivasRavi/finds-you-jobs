@@ -23,19 +23,11 @@ the host op maps these dicts into the shared discovery funnel.
 from __future__ import annotations
 
 import re
-from typing import Any
+
+from .voyager import text_of
 
 _JOB_ID_RE = re.compile(r"urn:li:fsd_jobPosting:(\d+)")
 _CARD_TYPE = "com.linkedin.voyager.dash.jobs.JobPostingCard"
-
-
-def _text(node: Any) -> str:
-    """A voyager TextViewModel's `.text`, else ""."""
-    if isinstance(node, dict):
-        value = node.get("text")
-        if isinstance(value, str):
-            return value.strip()
-    return ""
 
 
 def _job_id(urn: str) -> str:
@@ -83,7 +75,9 @@ def parse_job_search_response(data: dict) -> dict:
     seen: set[str] = set()
     for card in ordered_cards:
         job_id = _job_id(str(card.get("jobPostingUrn") or ""))
-        title = _text(card.get("title"))
+        # `strip=True` at every card field: LinkedIn pads these with non-breaking
+        # spaces, and a whitespace-only title must still read as "no title".
+        title = text_of(card.get("title"), strip=True)
         if not job_id or not title or job_id in seen:
             continue
         seen.add(job_id)
@@ -92,8 +86,8 @@ def parse_job_search_response(data: dict) -> dict:
                 "id": job_id,
                 "url": f"https://www.linkedin.com/jobs/view/{job_id}",
                 "title": title,
-                "company": _text(card.get("primaryDescription")),
-                "location": _text(card.get("secondaryDescription")),
+                "company": text_of(card.get("primaryDescription"), strip=True),
+                "location": text_of(card.get("secondaryDescription"), strip=True),
             }
         )
 

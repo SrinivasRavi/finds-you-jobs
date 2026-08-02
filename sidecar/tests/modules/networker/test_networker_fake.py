@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import pytest
 
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import MAX_ATTEMPTS, CompletionCancelled
 from sidecar.modules.networker.networker import discover, draft, probe, quota, send
 from sidecar.modules.networker.types import (
     Audience,
     Channel,
     Contact,
     NetworkerError,
+    Usage,
     Warmth,
 )
 
@@ -112,6 +115,115 @@ def test_draft_parse_error_on_bad_contract():
 def test_draft_missing_public_identifier_raises():
     with pytest.raises(NetworkerError):
         draft(Contact(public_identifier=""), JOB, master_md="x", engine=FakeEngine())
+
+
+# ── draft retry hardening (technical audit F-H5; duplication audit D-M1) ──
+# draft() shipped without the bounded re-ask the other three LLM modules got,
+# so one provider hiccup failed the whole operation onto the user's Retry button.
+
+
+class FlakyThenGoodEngine:
+    """Raises a bare EngineError (an empty-content-style provider hiccup) the
+    first `fail_times` calls, then returns the canned good draft."""
+
+    def __init__(self, fail_times: int) -> None:
+        self.fail_times = fail_times
+        self.calls = 0
+        self._good = FakeEngine()
+
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise EngineError("LLM API returned empty content")
+        return self._good.complete(system_prompt, user_prompt)
+
+
+class BadThenGoodDraftEngine:
+    """Returns a contract-violating response once (billed — a real completion
+    happened), then the canned good draft."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self._good = FakeEngine()
+
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Usage]:
+        self.calls += 1
+        if self.calls == 1:
+            return "not the contract", Usage(
+                internal_calls=1, tokens_in=10, tokens_out=3, usd=0.06
+            )
+        return self._good.complete(system_prompt, user_prompt)
+
+
+@pytest.fixture(autouse=True)
+def _record_backoff_no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Backoff delays are classified and recorded but never slept — semantics
+    under test, not wall-clock waits (the wait itself is unit-tested in
+    tests/modules/shared/test_completion_retry.py)."""
+    import sidecar.modules.networker.networker as net_mod
+
+    waits: list[float] = []
+    monkeypatch.setattr(
+        net_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
+    )
+    return waits
+
+
+def test_draft_retries_transient_engine_error_and_succeeds():
+    eng = FlakyThenGoodEngine(fail_times=1)
+    result = draft(_contact(), JOB, master_md="x" * 100, engine=eng)
+    assert result.message.startswith("Hi Jane")
+    assert eng.calls == 2
+    # A call that raised before returning has no usage to bill — only the
+    # winning attempt's usage counts here.
+    assert result.usage.usd == pytest.approx(0.01)
+
+
+def test_draft_exhausts_retries_and_raises_last_engine_error():
+    eng = FlakyThenGoodEngine(fail_times=MAX_ATTEMPTS)
+    with pytest.raises(EngineError, match="empty content"):
+        draft(_contact(), JOB, master_md="x" * 100, engine=eng)
+    assert eng.calls == MAX_ATTEMPTS
+
+
+def test_draft_retries_parse_contract_failure_and_sums_billed_usage():
+    eng = BadThenGoodDraftEngine()
+    result = draft(_contact(), JOB, master_md="x" * 100, engine=eng)
+    assert eng.calls == 2
+    # Cost honesty: the failed-but-billed first attempt's spend must not
+    # vanish from the ledger just because the retry succeeded.
+    assert result.usage.usd == pytest.approx(0.07)
+    assert result.usage.internal_calls == 2
+    assert result.usage.model == "fake"
+
+
+def test_draft_fails_fast_on_deterministic_rejection(
+    _record_backoff_no_sleep: list[float],
+) -> None:
+    calls = {"n": 0}
+
+    class Rejecting:
+        def complete(self, system_prompt: str, user_prompt: str):
+            calls["n"] += 1
+            raise EngineError("LLM API 402: insufficient credits", status=402)
+
+    with pytest.raises(EngineError, match="insufficient credits"):
+        draft(_contact(), JOB, master_md="x" * 100, engine=Rejecting())
+    assert calls["n"] == 1  # no second attempt, no backoff
+    assert _record_backoff_no_sleep == []
+
+
+def test_draft_cancel_checkpoint_precedes_any_attempt() -> None:
+    calls = {"n": 0}
+
+    class Never:
+        def complete(self, system_prompt: str, user_prompt: str):
+            calls["n"] += 1
+            raise AssertionError("must not be reached")
+
+    with pytest.raises(CompletionCancelled):
+        draft(_contact(), JOB, master_md="x" * 100, engine=Never(), cancelled=lambda: True)
+    assert calls["n"] == 0
 
 
 # ── send ──────────────────────────────────────────────────────────

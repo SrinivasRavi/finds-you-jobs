@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
@@ -76,6 +77,21 @@ PAGE_PAUSE_RANGE_S: tuple[float, float] = (0.3, 0.9)
 def page_pause() -> None:
     """Sleep a small jittered interval between page fetches (worker threads)."""
     time.sleep(random.uniform(*PAGE_PAUSE_RANGE_S))  # noqa: S311 — jitter, not crypto
+
+
+def paced_pages(pages: Iterable[int], *, already_requested: bool = False) -> Iterator[int]:
+    """Yield each page of a paginating adapter's bounded loop, pausing before
+    every request except the very first (duplication audit D-M9 — the four
+    paginating adapters each re-derived this guard in a different spelling).
+
+    `already_requested=True` when the caller has *already* hit this host in the
+    same run, so this page is not the first request either — the LinkedIn-guest
+    adapter's per-query inner loop, where query 2 page 0 still follows query 1
+    page 1 back-to-back."""
+    for i, page in enumerate(pages):
+        if i or already_requested:
+            page_pause()
+        yield page
 
 
 def _retry_after_s(value: str | None) -> float:

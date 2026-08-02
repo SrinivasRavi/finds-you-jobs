@@ -27,7 +27,17 @@ Open question for the maintainer — see the ROADMAP N2 as-built note.
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import (
+    MAX_ATTEMPTS,
+    merge_usage,
+    raise_if_cancelled,
+    retry_delay_s,
+    wait_before_retry,
+)
+from sidecar.modules._shared.dry_run import assemble_dry_run
 from sidecar.modules._shared.job_input import JobInputError
 from sidecar.modules._shared.job_input import resolve_job as _resolve_job
 
@@ -152,6 +162,7 @@ def draft(
     engine: Engine | None = None,
     keep_scratch: bool = False,
     skill_md: str | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> DraftResult:
     """Draft one grounded referral-ask for `contact` (US-REF-03 / FR-REF-02).
 
@@ -163,7 +174,10 @@ def draft(
     `skill_md`, when provided, replaces the on-disk draft skill file as the
     system prompt (the app's user-editable-prompt override, §5). None → the
     default. The bound audience playbook is unaffected — it stays appended to the
-    user prompt."""
+    user prompt.
+
+    `cancelled`, when provided, is polled at the retry checkpoints (loop top,
+    mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7)."""
     if not contact.public_identifier:
         raise NetworkerError("draft", "contact.public_identifier is required")
     engine = engine or ClaudeCliEngine()
@@ -178,17 +192,45 @@ def draft(
 
     scratch = tempfile.TemporaryDirectory(prefix="fyj-draft-")
     try:
-        raw, usage = engine.complete(system_prompt, user_prompt)
-        message, notes = parse_output(raw)
-        return DraftResult(
-            message=message,
-            audience=contact.audience,
-            warmth=warmth,
-            channel=channel,
-            notes=notes,
-            char_count=len(message),
-            usage=usage,
-        )
+        # A single completion is non-deterministic enough that a transient
+        # engine failure (EngineError) or a contract-drifted response
+        # (NetworkerError, stage="parse") is worth a bounded re-ask before the
+        # whole operation fails onto the user's Retry button. Engine failures
+        # are classified (F-H5): deterministic rejections fail fast; transient
+        # ones back off (jittered, Retry-After honored) before the re-ask.
+        # Parse drift keeps its immediate re-ask. Every attempt that actually
+        # produced billable output — even one that then failed to parse — is
+        # folded into the final usage (cost honesty: a retry must never make
+        # a real spend vanish from the ledger).
+        billed: list[Usage] = []
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            raise_if_cancelled(cancelled)
+            try:
+                raw, usage = engine.complete(system_prompt, user_prompt)
+            except EngineError as e:
+                delay = retry_delay_s(e, attempt)
+                if delay is None:
+                    raise
+                wait_before_retry(delay, cancelled)
+                continue
+            try:
+                message, notes = parse_output(raw)
+            except NetworkerError as e:
+                billed.append(usage)
+                if e.stage != "parse" or attempt == MAX_ATTEMPTS:
+                    raise
+                continue
+            billed.append(usage)
+            return DraftResult(
+                message=message,
+                audience=contact.audience,
+                warmth=warmth,
+                channel=channel,
+                notes=notes,
+                char_count=len(message),
+                usage=Usage(**merge_usage(billed)),
+            )
+        raise AssertionError("unreachable — loop always returns or raises")
     finally:
         if not keep_scratch:
             scratch.cleanup()
@@ -295,9 +337,8 @@ def dry_run_prompt(contact: Contact, job: str, master_md: str = "", guidance: st
     warmth = warmth_for_degree(contact.connection_degree)
     channel = channel_for_warmth(warmth)
     playbook_md = load_playbook(contact.audience)
-    return (
-        "########## SYSTEM (draft skill) ##########\n"
-        + load_skill()
-        + "\n########## USER ##########\n"
-        + build_user_prompt(master_md, jd_md, contact, warmth, channel, playbook_md, guidance)
+    return assemble_dry_run(
+        load_skill(),
+        build_user_prompt(master_md, jd_md, contact, warmth, channel, playbook_md, guidance),
+        "draft skill",
     )

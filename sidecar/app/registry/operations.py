@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from .engines import EngineNotConfiguredError, ResolvedEngine
 
 if TYPE_CHECKING:
-    from ..db import Database
+    from ..db import Database, Repos
 
 PublishFn = Callable[[dict[str, Any]], None]
 
@@ -108,6 +108,50 @@ def _require_engine(ctx: OperationContext) -> ResolvedEngine:
     if ctx.engine is None:
         raise EngineNotConfiguredError(ctx.kind)
     return ctx.engine
+
+
+def _load_job_inputs(
+    ctx: OperationContext, *, also: Callable[[Repos], Any] | None = None
+) -> tuple[str, str, int, Any]:
+    """The ONE load-job block of the job-shaped LLM entrypoints (score / tailor /
+    cover): `(job_text, master_md, profile_version)` out of the DB, or straight
+    off the snapshot on the DB-free fake-entrypoint path.
+
+    `also` runs inside the SAME repos context (score reads its scoring mode
+    there — one session, as before) and comes back as the 4th element; it is
+    None whenever there is no DB."""
+    from .persistence import load_job_and_master
+
+    snap = ctx.input_snapshot
+    if ctx.db is None:
+        return snap["job"], snap["master_md"], 0, None
+    with ctx.db.repos() as repos:
+        job_text, master_md, profile_version = load_job_and_master(repos, snap)
+        extra = also(repos) if also is not None else None
+    return job_text, master_md, profile_version, extra
+
+
+def llm_outcome(
+    result_ref: dict[str, Any] | None,
+    *,
+    usage: Any,
+    resolved: ResolvedEngine,
+    model: str | None = None,
+) -> OperationOutcome:
+    """The ONE usage/outcome tail every routed-engine entrypoint returns: the
+    ledger's usage dict plus the engine/model audit pair. A usage-accounting
+    change lands here, not once per kind.
+
+    `model` overrides the model precedence for a caller that computes it its own
+    way — `draft` (networker_ops) reads `result.usage.model` off the dataclass
+    where the kinds here read it out of the usage dict. Passed through verbatim
+    rather than silently aligned (D-A2)."""
+    usage_dict = _usage_to_dict(usage)
+    if model is None:
+        model = (usage_dict or {}).get("model") or resolved.model
+    return OperationOutcome(
+        result_ref=result_ref, usage=usage_dict, engine=resolved.name, model=model
+    )
 
 
 def scan_entrypoint(ctx: OperationContext) -> OperationOutcome:
@@ -290,24 +334,16 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
       pass). No hidden re-scoring; nothing to fall back below keyword.
     """
     from ..prompt_overrides import get_override
-    from .persistence import (
-        SCORER_IMPL,
-        SCORER_IMPL_DETERMINISTIC,
-        load_job_and_master,
-        scoring_mode,
-    )
+    from .persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC, scoring_mode
 
     snap = ctx.input_snapshot
     job_id = snap.get("job_id")
 
-    mode = "llm"
-    if ctx.db is not None:
-        with ctx.db.repos() as repos:
-            job_text, master_md, profile_version = load_job_and_master(repos, snap)
-            mode = scoring_mode(repos.preferences.get_or_create())
-    else:
-        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
-        mode = str(snap.get("scoring_mode") or "llm")
+    job_text, master_md, profile_version, stored_mode = _load_job_inputs(
+        ctx, also=lambda repos: scoring_mode(repos.preferences.get_or_create())
+    )
+    # DB-free path (fake-entrypoint tests): the mode rides the snapshot instead.
+    mode: str = stored_mode if ctx.db is not None else str(snap.get("scoring_mode") or "llm")
 
     if mode == "keyword":
         from sidecar.modules.scorer.deterministic import score_deterministic
@@ -369,11 +405,10 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             scorer_impl=SCORER_IMPL,
             feed_priority_stats=True,
         )
-    return OperationOutcome(
-        result_ref={"score": result.score, "job_id": job_id, "score_id": score_id},
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+    return llm_outcome(
+        {"score": result.score, "job_id": job_id, "score_id": score_id},
+        usage=result.usage,
+        resolved=resolved,
     )
 
 
@@ -490,14 +525,9 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from sidecar.modules.tailorer import tailor
 
     from ..prompt_overrides import get_override
-    from .persistence import load_job_and_master
 
     snap = ctx.input_snapshot
-    if ctx.db is not None:
-        with ctx.db.repos() as repos:
-            job_text, master_md, profile_version = load_job_and_master(repos, snap)
-    else:
-        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
 
     result = tailor(
         master_md,
@@ -515,15 +545,14 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile_version=profile_version,
         guidance=snap.get("guidance", ""),
     )
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "artifact_id": artifact_id,
             "application_id": snap.get("application_id"),
             "kind": "tailored_resume",
         },
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+        usage=result.usage,
+        resolved=resolved,
     )
 
 
@@ -533,14 +562,9 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from sidecar.modules.coverletterer.coverletterer import cover
 
     from ..prompt_overrides import get_override
-    from .persistence import load_job_and_master
 
     snap = ctx.input_snapshot
-    if ctx.db is not None:
-        with ctx.db.repos() as repos:
-            job_text, master_md, profile_version = load_job_and_master(repos, snap)
-    else:
-        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
 
     result = cover(
         master_md,
@@ -558,15 +582,14 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile_version=profile_version,
         guidance=snap.get("guidance", ""),
     )
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "artifact_id": artifact_id,
             "application_id": snap.get("application_id"),
             "kind": "cover_letter",
         },
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+        usage=result.usage,
+        resolved=resolved,
     )
 
 
@@ -594,14 +617,13 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
     record = {**result.profile, "profile_version": version, "source": "extracted"}
     with ctx.db.repos() as repos:
         repos.profile.set_application_profile(record)
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "profile_version": version,
             "keys_filled": sorted(k for k, v in result.profile.items() if v),
         },
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+        usage=result.usage,
+        resolved=resolved,
     )
 
 

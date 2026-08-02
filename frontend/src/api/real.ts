@@ -266,6 +266,14 @@ function toApplication(d: ApplicationDTO, job: Job): Application {
   };
 }
 
+/** The one way to read an ApplicationDTO off the wire: the job rides embedded
+ *  on the DTO (server-side join — never joined against a capped /api/jobs list,
+ *  the "(job removed)" bug), with the placeholder as the last resort. Always
+ *  `saved: true` — a card exists ⟺ the job is saved. */
+function appFromDto(d: ApplicationDTO): Application {
+  return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+}
+
 // The run's usage dict is a redacted ledger snapshot (applier.md §9.1) — read
 // the applier field names, falling back to the shared Usage names so an early
 // sidecar shape still surfaces a cost line. `cost_usd` stays null when unknown.
@@ -314,6 +322,34 @@ function toApplyRun(d: ApplyRunDTO): ApplyRun {
   };
 }
 
+/** The one statement of the cost invariant: a null/absent `usd` (unknown cost,
+ *  e.g. an unpriced model) must stay null, never collapse to 0 — a real paid
+ *  call must never read as verified-free. Exported for its unit test. */
+export function usdOrNull(v: unknown): number | null {
+  return typeof v === "number" ? v : null;
+}
+
+/** What the enqueue/retry/cancel routes answer with (not in the codegen'd
+ *  schema — they're declared untyped sidecar-side). */
+type OperationStubDTO = { id: string; kind: string; state: string };
+
+/** The enqueue/retry/cancel responses carry only `{id, kind, state}` — the rest
+ *  of an Operation is genuinely unknown until its ledger row lands, so the stub
+ *  says so (no usage, no error, progress 0) instead of inventing values.
+ *  Exported for its unit test. */
+export function stubOperation(d: OperationStubDTO): Operation {
+  return {
+    id: d.id,
+    kind: d.kind as OperationKind,
+    state: d.state as Operation["state"],
+    progress: 0,
+    step: d.state,
+    usage: null,
+    error: null,
+    created_at: new Date().toISOString(),
+  };
+}
+
 function toOperation(d: OperationDTO): Operation {
   const terminal = d.state === "succeeded" || d.state === "failed";
   return {
@@ -327,9 +363,7 @@ function toOperation(d: OperationDTO): Operation {
           internal_calls: Number(d.usage.internal_calls ?? 0),
           tokens_in: Number(d.usage.tokens_in ?? 0),
           tokens_out: Number(d.usage.tokens_out ?? 0),
-          // null (unknown cost, e.g. an unpriced model) must stay null, never
-          // collapse to 0 — a real paid call must never read as verified-free.
-          usd: typeof d.usage.usd === "number" ? d.usage.usd : null,
+          usd: usdOrNull(d.usage.usd),
           latency_ms: (d.usage.latency_ms as number | null) ?? null,
           model: (d.usage.model as string | null) ?? null,
         }
@@ -345,9 +379,7 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
     id: d.id,
     kind: d.kind as OperationKind,
     state: d.state as LedgerEntry["state"],
-    // null (unknown cost, e.g. an unpriced model) must stay null, never
-    // collapse to 0 — a real paid call must never read as verified-free.
-    usd: typeof usage.usd === "number" ? usage.usd : null,
+    usd: usdOrNull(usage.usd),
     tokens_in: Number(usage.tokens_in ?? 0),
     tokens_out: Number(usage.tokens_out ?? 0),
     model: (usage.model as string | null) ?? d.model ?? null,
@@ -425,6 +457,28 @@ export class RealApi {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  }
+
+  /** POST a multipart body. No explicit Content-Type — the browser sets the
+   *  multipart boundary. On failure surfaces the sidecar's **verbatim** `detail`
+   *  (the "paste instead" / 409 / 422 messages the surfaces render), and always
+   *  as an `ApiError` so the status code survives for callers that branch on it
+   *  — the resume-ingest path used to drop it (D-F13). `what` names the action
+   *  for the fallback message when the body carries no detail. */
+  private async postForm<T>(path: string, form: FormData, what: string): Promise<T> {
+    const info = await this.info();
+    const res = await apiFetch(info, path, { method: "POST", body: form });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let detail = body;
+      try {
+        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
+      } catch {
+        /* non-JSON body — surface as-is */
+      }
+      throw new ApiError(res.status, detail || `${what} failed (${res.status})`);
+    }
+    return (await res.json()) as T;
   }
 
   // ── jobs ───────────────────────────────────────────────────────────────
@@ -532,7 +586,6 @@ export class RealApi {
    *  upserts the job, creates an `origin=manual` card, and stores the docs
    *  content-addressed. Surfaces the sidecar's verbatim detail on 409/422. */
   async createManualApplication(input: ManualApplicationInput): Promise<Application> {
-    const info = await this.info();
     const form = new FormData();
     form.append("canonical_url", input.canonical_url);
     form.append("title", input.title);
@@ -545,20 +598,9 @@ export class RealApi {
     form.append("notes_markdown", input.notes);
     if (input.resume) form.append("resume", input.resume);
     if (input.cover) form.append("cover", input.cover);
-    // No explicit Content-Type — the browser sets the multipart boundary.
-    const res = await apiFetch(info, "/api/applications/manual", { method: "POST", body: form });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let detail = body;
-      try {
-        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
-      } catch {
-        /* non-JSON body — surface as-is */
-      }
-      throw new ApiError(res.status, detail || `add application failed (${res.status})`);
-    }
-    const d = (await res.json()) as ApplicationDTO;
-    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+    return appFromDto(
+      await this.postForm<ApplicationDTO>("/api/applications/manual", form, "add application"),
+    );
   }
 
   /** Attach a resume/cover FILE to an existing application — the Upload button
@@ -569,26 +611,16 @@ export class RealApi {
     kind: "tailored_resume" | "cover_letter",
     file: File,
   ): Promise<Application> {
-    const info = await this.info();
     const form = new FormData();
     form.append("kind", kind);
     form.append("file", file);
-    const res = await apiFetch(info, `/api/applications/${applicationId}/documents`, {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let detail = body;
-      try {
-        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
-      } catch {
-        /* non-JSON body — surface as-is */
-      }
-      throw new ApiError(res.status, detail || `attach document failed (${res.status})`);
-    }
-    const d = (await res.json()) as ApplicationDTO;
-    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+    return appFromDto(
+      await this.postForm<ApplicationDTO>(
+        `/api/applications/${applicationId}/documents`,
+        form,
+        "attach document",
+      ),
+    );
   }
 
   /** Detach the (application, kind) resume/cover file — the ✕ on the chip. */
@@ -596,11 +628,11 @@ export class RealApi {
     applicationId: string,
     kind: "tailored_resume" | "cover_letter",
   ): Promise<Application> {
-    const d = await this.req<ApplicationDTO>(
-      `/api/applications/${applicationId}/documents/${kind}`,
-      { method: "DELETE" },
+    return appFromDto(
+      await this.req<ApplicationDTO>(`/api/applications/${applicationId}/documents/${kind}`, {
+        method: "DELETE",
+      }),
     );
-    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
   }
 
   /** One attached document as a Blob (authed — a plain href can't carry the
@@ -664,13 +696,12 @@ export class RealApi {
   // against a capped /api/jobs list (the "(job removed)" bug).
   async listApplications(): Promise<Application[]> {
     const apps = await this.req<ApplicationDTO[]>("/api/applications");
-    return apps.map((d) => toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true)));
+    return apps.map(appFromDto);
   }
 
   async getApplication(id: string): Promise<Application | undefined> {
     try {
-      const d = await this.req<ApplicationDTO>(`/api/applications/${id}`);
-      return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+      return appFromDto(await this.req<ApplicationDTO>(`/api/applications/${id}`));
     } catch (e) {
       // 404 → genuinely gone; every other failure propagates instead of
       // masquerading as "not found" (2026-07-24 graceful-failure audit).
@@ -712,15 +743,21 @@ export class RealApi {
 
   async listArchived(): Promise<Application[]> {
     const apps = await this.req<ApplicationDTO[]>("/api/applications?include_archived=true");
-    return apps
-      .filter((d) => d.archived_at != null)
-      .map((d) => toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true)));
+    return apps.filter((d) => d.archived_at != null).map(appFromDto);
+  }
+
+  /** The two PATCH paths (card patch, artifact patch) re-read the job by id
+   *  rather than trusting the response's embedded `job` — kept as-is, so the
+   *  placeholder here covers a job that has since gone, not an absent join. */
+  private async appFromPatchedDto(d: ApplicationDTO): Promise<Application> {
+    const job = await this.getJob(d.job_id);
+    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
   }
 
   private async patchApp(id: string, body: unknown): Promise<Application | undefined> {
-    const d = (await this.json("PATCH", `/api/applications/${id}`, body)) as ApplicationDTO;
-    const job = await this.getJob(d.job_id);
-    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
+    return this.appFromPatchedDto(
+      (await this.json("PATCH", `/api/applications/${id}`, body)) as ApplicationDTO,
+    );
   }
 
   async updateApplication(id: string, patch: Partial<Application>): Promise<Application | undefined> {
@@ -782,11 +819,11 @@ export class RealApi {
     patch: { markdown?: string; approved?: boolean },
   ): Promise<Application | undefined> {
     const artifactKind = kind === "cover" ? "cover_letter" : "tailored_resume";
-    const d = (await this.json(
-      "PATCH", `/api/applications/${appId}/artifacts/${artifactKind}`, patch,
-    )) as ApplicationDTO;
-    const job = await this.getJob(d.job_id);
-    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
+    return this.appFromPatchedDto(
+      (await this.json(
+        "PATCH", `/api/applications/${appId}/artifacts/${artifactKind}`, patch,
+      )) as ApplicationDTO,
+    );
   }
 
   async packetState(appId: string): Promise<PacketState> {
@@ -898,22 +935,9 @@ export class RealApi {
    *  review. On failure surfaces the sidecar's **verbatim** detail (the
    *  paste-instead message) so the wizard can show it, never a silent empty draft. */
   async ingestResume(file: File): Promise<ProfileIngestResult> {
-    const info = await this.info();
     const form = new FormData();
     form.append("file", file);
-    // No explicit Content-Type — the browser sets the multipart boundary.
-    const res = await apiFetch(info, "/api/profile/ingest", { method: "POST", body: form });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let detail = body;
-      try {
-        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
-      } catch {
-        /* non-JSON body — surface as-is */
-      }
-      throw new Error(detail || `ingest failed (${res.status})`);
-    }
-    return (await res.json()) as ProfileIngestResult;
+    return this.postForm<ProfileIngestResult>("/api/profile/ingest", form, "ingest");
   }
 
   /** Render markdown → PDF into ~/Downloads via the sidecar's Chromium
@@ -1245,41 +1269,17 @@ export class RealApi {
 
   /** Re-run a failed op with its original inputs (US-LOG-01 Retry). */
   async retryOperation(id: string): Promise<Operation> {
-    const d = (await this.json("POST", `/api/operations/${id}/retry`, {})) as {
-      id: string;
-      kind: string;
-      state: string;
-    };
-    return {
-      id: d.id,
-      kind: d.kind as OperationKind,
-      state: d.state as Operation["state"],
-      progress: 0,
-      step: d.state,
-      usage: null,
-      error: null,
-      created_at: new Date().toISOString(),
-    };
+    return stubOperation(
+      (await this.json("POST", `/api/operations/${id}/retry`, {})) as OperationStubDTO,
+    );
   }
 
   /** Stop a queued/running op (F-M7 Stop button). 202 with the honest
    *  post-cancel state; 404 unknown; 409 when nothing can honestly cancel. */
   async cancelOperation(id: string): Promise<Operation> {
-    const d = (await this.json("POST", `/api/operations/${id}/cancel`, {})) as {
-      id: string;
-      kind: string;
-      state: string;
-    };
-    return {
-      id: d.id,
-      kind: d.kind as OperationKind,
-      state: d.state as Operation["state"],
-      progress: 0,
-      step: d.state,
-      usage: null,
-      error: null,
-      created_at: new Date().toISOString(),
-    };
+    return stubOperation(
+      (await this.json("POST", `/api/operations/${id}/cancel`, {})) as OperationStubDTO,
+    );
   }
 
   async getOperation(id: string): Promise<Operation | undefined> {
@@ -1294,21 +1294,9 @@ export class RealApi {
   }
 
   async enqueueOperation(kind: OperationKind, _subject = "", _fail = false): Promise<Operation> {
-    const d = (await this.json("POST", `/api/operations/${kind}`, {})) as {
-      id: string;
-      kind: string;
-      state: string;
-    };
-    return {
-      id: d.id,
-      kind: d.kind as OperationKind,
-      state: d.state as Operation["state"],
-      progress: 0,
-      step: d.state,
-      usage: null,
-      error: null,
-      created_at: new Date().toISOString(),
-    };
+    return stubOperation(
+      (await this.json("POST", `/api/operations/${kind}`, {})) as OperationStubDTO,
+    );
   }
 
   // ── networking (Track N3) — restored 2026-07-16 from the prior repo's

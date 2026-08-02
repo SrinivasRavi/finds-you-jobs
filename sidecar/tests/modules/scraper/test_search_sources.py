@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from sidecar.modules.scraper import adapters
+from sidecar.modules.scraper import adapters, http
 from sidecar.modules.scraper.adapters import linkedin_guest
 from sidecar.modules.scraper.config import SourceEntry
 from sidecar.modules.scraper.http import BROWSER_HEADERS
@@ -135,9 +135,7 @@ def test_linkedin_pauses_between_guest_requests(monkeypatch) -> None:
     """F-M9 — guest requests (pages and queries alike hit the same host) are
     spaced by the jittered pause, never fired back-to-back."""
     pauses = {"n": 0}
-    monkeypatch.setattr(
-        linkedin_guest, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1)
-    )
+    monkeypatch.setattr(http, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
     prefs = ScanPrefs(title_allow=["backend engineer"], location_allow=["remote"])
     fetcher = routed({"seeMoreJobPostings/search": "linkedin_guest.html"})()
     linkedin_guest.search(SourceEntry(board="linkedin"), prefs, fetcher)

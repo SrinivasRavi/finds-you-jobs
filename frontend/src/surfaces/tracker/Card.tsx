@@ -9,8 +9,10 @@ import { useTranslation } from "react-i18next";
 
 import type { Application, Priority, Stage } from "../../api/types";
 import type { ResumeModalKind } from "../../popups/ResumeModal";
+import { applyRunDisplay } from "../../shell/applyRunDisplay";
+import { Avatar } from "../../shell/Avatar";
 import { Icon } from "../../shell/icons";
-import { initials, scoreTier } from "../jobFormat";
+import { daysBetween, scoreTier } from "../jobFormat";
 
 const PRIORITY_CLS: Record<Priority, string> = {
   P0: "bg-bad-wash text-bad",
@@ -41,23 +43,12 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
   failed: "failed",
 };
 
-// Apply slot maps the latest Apply Run's status (applier.md §8.2) onto the
+// The Apply slot maps the latest Apply Run's status (applier.md §8.2) onto the
 // shared PacketSlotTag state keys: none→"Apply" (grey), waiting_for_packet/
 // running→"Applying…" (grey+spinner), ready_for_human→"Review & submit"
 // (yellow), submitted→"Submitted" (green check), and the honest non-success
-// terminals→"Retry" (red).
-const APPLY_SLOT: Record<Application["apply_run_status"], { labelKey: string; state: string }> = {
-  queued: { labelKey: "tracker.applySlot.applying", state: "generating" },
-  none: { labelKey: "tracker.applySlot.apply", state: "none" },
-  waiting_for_packet: { labelKey: "tracker.applySlot.applying", state: "generating" },
-  running: { labelKey: "tracker.applySlot.applying", state: "generating" },
-  ready_for_human: { labelKey: "tracker.applySlot.review", state: "pending" },
-  submitted: { labelKey: "tracker.applySlot.submitted", state: "approved" },
-  blocked: { labelKey: "tracker.applySlot.retry", state: "failed" },
-  timed_out: { labelKey: "tracker.applySlot.retry", state: "failed" },
-  interrupted: { labelKey: "tracker.applySlot.retry", state: "failed" },
-  failed: { labelKey: "tracker.applySlot.retry", state: "failed" },
-};
+// terminals→"Retry" (red). The table itself lives in shell/applyRunDisplay,
+// shared with the Applier panel's phase pill (duplication audit D-F14).
 
 // Stages where the job has already been applied to — the Apply slot must not
 // start a fresh run there (2026-07-17 dogfood).
@@ -94,7 +85,7 @@ function PacketSlotTag({ label, state }: { label: string; state: string }) {
 
 /** Days since ISO timestamp, as "3d" / "<1d" (US-TR-01 days-in-column). */
 function daysIn(iso: string): string {
-  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  const d = daysBetween(iso, "floor");
   return d <= 0 ? "<1d" : `${d}d`;
 }
 
@@ -120,7 +111,7 @@ export const Card = memo(function Card({
   // Defensive: an apply-run status this build doesn't know yet must degrade to
   // the grey "Apply" slot, never crash the whole board render (2026-07-24
   // unsafe-lookup audit).
-  const applySlot = APPLY_SLOT[app.apply_run_status] ?? APPLY_SLOT.none;
+  const applySlot = applyRunDisplay(app.apply_run_status);
   return (
     <div
       draggable
@@ -138,9 +129,7 @@ export const Card = memo(function Card({
       }
     >
       <div className="flex items-start gap-2">
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded bg-surface-2 text-[11px] font-semibold text-ink-2">
-          {initials(app.job.company)}
-        </div>
+        <Avatar name={app.job.company} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12.5px] font-semibold text-ink" data-testid="card-title">
             {app.job.title}
@@ -225,7 +214,7 @@ export const Card = memo(function Card({
           </span>
         ) : (
           <button onClick={() => onSlot(app, "apply")} data-testid="card-apply-slot">
-            <PacketSlotTag label={t(applySlot.labelKey)} state={applySlot.state} />
+            <PacketSlotTag label={t(applySlot.slotKey)} state={applySlot.slotState} />
           </button>
         )}
       </div>

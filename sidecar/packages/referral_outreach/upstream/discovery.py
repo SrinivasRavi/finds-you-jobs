@@ -14,15 +14,13 @@ from __future__ import annotations
 
 import json
 import logging
-import random
-import time
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 
-from .client import PlaywrightLinkedinAPI
+from .client import PlaywrightLinkedinAPI, resolve_degree
 from .company import company_id_from_urn
 from .errors import ProfileInaccessibleError
 from .pacing import ENRICH_PAUSE_RANGE_S
-from .session import AccountSession, goto_page
+from .session import AccountSession, goto_page, random_sleep
 from .url_utils import url_to_public_id
 
 logger = logging.getLogger("voyager_py.discovery")
@@ -145,7 +143,7 @@ def discover_company_contacts(
         # than the tool we forked on the axis scraping detection actually keys
         # on (OpenOutreach sleeps 6-10 s per scraped profile; posture doc §2).
         if fetched:
-            time.sleep(random.uniform(*ENRICH_PAUSE_RANGE_S))
+            random_sleep(*ENRICH_PAUSE_RANGE_S)
         fetched += 1
         try:
             parsed, _raw = api.get_profile(public_identifier=public_id)
@@ -161,15 +159,9 @@ def discover_company_contacts(
             )
             continue
         current = parsed.get("current_position") or {}
-        degree = parsed.get("connection_degree")
-        if degree is None:
-            # FullProfileWithEntities omits the relationship for some profiles
-            # (verified live 2026-07-08: valilenk → null while stasg7 → 3). The
-            # TOPCARD decoration still carries it — one extra bounded call.
-            try:
-                degree = api.get_connection_degree(public_id)
-            except Exception:  # noqa: BLE001 — degree is best-effort, never fatal
-                degree = None
+        # Bulk enrichment: a degree we cannot read must never kill the page, so
+        # the TOPCARD fallback runs best-effort (client.resolve_degree).
+        degree = resolve_degree(api, parsed, public_id, best_effort=True)
         if degree is None:
             # Genuinely unknown after linked + included-scan + TOPCARD — leave
             # NULL (warmth defaults to cold) but log it so a systemic degree-parse

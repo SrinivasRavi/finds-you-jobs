@@ -38,16 +38,25 @@ import {
   type Job,
   type JobDraft,
 } from "../api/types";
+import { Avatar } from "../shell/Avatar";
+import { ChipInput } from "../shell/ChipInput";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { Icon } from "../shell/icons";
 import { Chip, SearchBox } from "../shell/FilterRow";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Modal } from "../shell/Modal";
 import { Markdown } from "../shell/Markdown";
+import { RecoveryListModal } from "../shell/RecoveryListModal";
 import { ScanProgressPill } from "./ScanProgressPill";
 import {
+  CADENCE_OPTIONS,
+  FRESHNESS_DAYS,
+  FRESHNESS_LABEL,
+  FRESHNESS_OPTIONS,
+} from "./scanPrefs";
+import {
+  daysBetween,
   firstHeading,
-  initials,
   salaryFloor,
   scoreTier,
   shortAgo,
@@ -163,12 +172,7 @@ const JobRow = memo(function JobRow({
         (selected ? "bg-accent-wash/50" : "hover:bg-surface-2")
       }
     >
-      <div
-        className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-gradient-to-br from-accent-wash to-purple-wash text-[13px] font-semibold text-accent-ink"
-        aria-hidden="true"
-      >
-        {initials(job.company)}
-      </div>
+      <Avatar name={job.company} size={10} shape="md" tone="brand" decorative />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[13px] font-semibold text-ink">
@@ -340,12 +344,7 @@ function JobDetail({
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-start gap-4 px-6 pt-6">
-        <div
-          className="grid h-14 w-14 shrink-0 place-items-center rounded-md bg-gradient-to-br from-accent-wash to-purple-wash text-[18px] font-semibold text-accent-ink"
-          aria-hidden="true"
-        >
-          {initials(job.company)}
-        </div>
+        <Avatar name={job.company} size={14} shape="md" tone="brand" decorative />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h2 className="truncate text-[17px] font-semibold leading-tight text-ink">{job.title}</h2>
@@ -734,8 +733,9 @@ export function JobBoard() {
     if (posted > 0) {
       list = list.filter((j) => {
         if (!j.posted_at) return false;
-        const days = (Date.now() - new Date(j.posted_at).getTime()) / 86_400_000;
-        return days <= posted;
+        // "exact" on purpose: this feeds the filter, not a label — rounding
+        // here would move the boundary a whole day (duplication audit D-F11).
+        return daysBetween(j.posted_at, "exact") <= posted;
       });
     }
     if (salaryMin > 0) {
@@ -1073,69 +1073,6 @@ export function JobBoard() {
 
 // ─── Job finder preferences (US-JB-01 topbar / US-SET-01; doubles as settings-prefs) ──
 
-function PrefChipInput({
-  label,
-  hint,
-  items,
-  onRemove,
-  onAdd,
-  placeholder,
-  testid,
-}: {
-  label: string;
-  hint: string;
-  items: string[];
-  onRemove: (v: string) => void;
-  onAdd: (v: string) => void;
-  placeholder: string;
-  testid: string;
-}) {
-  const { t } = useTranslation();
-  const [input, setInput] = useState("");
-  return (
-    <section className="space-y-2">
-      <header>
-        <h3 className="text-[13px] font-semibold text-ink">{label}</h3>
-        <p className="text-[11.5px] text-ink-3">{hint}</p>
-      </header>
-      <div
-        data-testid={testid}
-        className="flex min-h-[36px] flex-wrap items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-2 py-1.5 focus-within:border-accent"
-      >
-        {items.map((it) => (
-          <span
-            key={it}
-            className="inline-flex items-center gap-1 rounded-full border border-border-2 bg-surface-2 px-2 py-0.5 text-[12px] text-ink"
-          >
-            {it}
-            <button
-              type="button"
-              onClick={() => onRemove(it)}
-              className="text-ink-3 hover:text-bad"
-              aria-label={t("jobBoard.prefs.removeAria")}
-            >
-              ×
-            </button>
-          </span>
-        ))}
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.key === "Enter" || e.key === ",") && input.trim()) {
-              e.preventDefault();
-              onAdd(input.trim());
-              setInput("");
-            }
-          }}
-          placeholder={placeholder}
-          className="min-w-[120px] flex-1 bg-transparent text-[12.5px] text-ink placeholder:text-ink-4 focus:outline-none"
-        />
-      </div>
-    </section>
-  );
-}
-
 function RadioRow({
   options,
   value,
@@ -1143,7 +1080,7 @@ function RadioRow({
   testid,
   display,
 }: {
-  options: string[];
+  options: readonly string[];
   value: string;
   onChange: (v: string) => void;
   testid: string;
@@ -1296,10 +1233,6 @@ function nextScanLabel(iso: string): string {
   return i18n.t("jobBoard.prefs.inDays", { n: Math.round(mins / (24 * 60)) });
 }
 
-// Freshness label ⇄ days (0 = "Any" = no freshness window, ScanPrefs semantics).
-const FINDER_FRESHNESS_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, Any: 0 };
-const FINDER_FRESHNESS_LABEL: Record<number, string> = { 1: "24h", 7: "7d", 30: "30d", 0: "Any" };
-
 function FinderPrefsModal({
   onClose,
 }: {
@@ -1315,7 +1248,7 @@ function FinderPrefsModal({
   const [roles, setRoles] = useState<string[]>(settings?.job_prefs.role_aliases ?? []);
   const [locations, setLocations] = useState<string[]>(settings?.job_prefs.locations ?? []);
   const [freshness, setFreshness] = useState(
-    FINDER_FRESHNESS_LABEL[settings?.job_prefs.freshness_days ?? 7] ?? "7d",
+    FRESHNESS_LABEL[settings?.job_prefs.freshness_days ?? 7] ?? "7d",
   );
   const [cadence, setCadence] = useState(settings?.job_prefs.scrape_cadence ?? "Every 24h");
   const [excludedCompanies, setExcludedCompanies] = useState<string[]>(
@@ -1355,7 +1288,7 @@ function FinderPrefsModal({
     await api.savePreferences({
       role_aliases: roles,
       locations,
-      freshness_days: FINDER_FRESHNESS_DAYS[freshness] ?? 7,
+      freshness_days: FRESHNESS_DAYS[freshness] ?? 7,
       scrape_cadence: cadence,
       excluded_companies: excludedCompanies,
       excluded_keywords: excludedKeywords,
@@ -1404,38 +1337,38 @@ function FinderPrefsModal({
         <p className="-mt-2 text-[12px] text-ink-3">
           {t("jobBoard.prefs.intro")}
         </p>
-        <PrefChipInput
+        <ChipInput
           label={t("jobBoard.prefs.roles.label")}
           hint={t("jobBoard.prefs.roles.hint")}
           items={roles}
-          onAdd={(v) => setRoles((r) => (r.includes(v) ? r : [...r, v]))}
+          onAdd={(v) => setRoles((r) => [...r, v])}
           onRemove={(v) => setRoles((r) => r.filter((x) => x !== v))}
           placeholder={t("jobBoard.prefs.roles.placeholder")}
           testid="fp-roles"
         />
-        <PrefChipInput
+        <ChipInput
           label={t("jobBoard.prefs.locations.label")}
           hint={t("jobBoard.prefs.locations.hint")}
           items={locations}
-          onAdd={(v) => setLocations((r) => (r.includes(v) ? r : [...r, v]))}
+          onAdd={(v) => setLocations((r) => [...r, v])}
           onRemove={(v) => setLocations((r) => r.filter((x) => x !== v))}
           placeholder={t("jobBoard.prefs.locations.placeholder")}
           testid="fp-locations"
         />
-        <PrefChipInput
+        <ChipInput
           label={t("jobBoard.prefs.excludedCompanies.label")}
           hint={t("jobBoard.prefs.excludedCompanies.hint")}
           items={excludedCompanies}
-          onAdd={(v) => setExcludedCompanies((r) => (r.includes(v) ? r : [...r, v]))}
+          onAdd={(v) => setExcludedCompanies((r) => [...r, v])}
           onRemove={(v) => setExcludedCompanies((r) => r.filter((x) => x !== v))}
           placeholder={t("jobBoard.prefs.excludedCompanies.placeholder")}
           testid="fp-exclude-companies"
         />
-        <PrefChipInput
+        <ChipInput
           label={t("jobBoard.prefs.excludedKeywords.label")}
           hint={t("jobBoard.prefs.excludedKeywords.hint")}
           items={excludedKeywords}
-          onAdd={(v) => setExcludedKeywords((r) => (r.includes(v) ? r : [...r, v]))}
+          onAdd={(v) => setExcludedKeywords((r) => [...r, v])}
           onRemove={(v) => setExcludedKeywords((r) => r.filter((x) => x !== v))}
           placeholder={t("jobBoard.prefs.excludedKeywords.placeholder")}
           testid="fp-exclude-keywords"
@@ -1449,7 +1382,7 @@ function FinderPrefsModal({
             </p>
           </header>
           <RadioRow
-            options={["24h", "7d", "30d", "Any"]}
+            options={FRESHNESS_OPTIONS}
             value={freshness}
             onChange={setFreshness}
             testid="fp-freshness"
@@ -1464,7 +1397,7 @@ function FinderPrefsModal({
             </p>
           </header>
           <RadioRow
-            options={["Every 6h", "Every 12h", "Every 24h", "Every 48h", "Every 72h"]}
+            options={CADENCE_OPTIONS}
             value={cadence}
             onChange={setCadence}
             testid="fp-cadence"
@@ -1747,17 +1680,37 @@ function TrashModal({
   onEmpty: () => void;
 }) {
   // Two-step confirms before anything irreversible (US-JB-11 ethos: the user
-  // signs off on every irreversible action). `confirmId` = per-row Delete
-  // forever; `confirmEmpty` = Empty Trash.
+  // signs off on every irreversible action). The per-row Delete-forever confirm
+  // lives in the shared roster (duplication audit D-F2); `confirmEmpty` is this
+  // modal's own — Empty Trash has no counterpart on the other two rosters.
   const { t } = useTranslation();
   const [confirmEmpty, setConfirmEmpty] = useState(false);
-  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   return (
-    <Modal
+    <RecoveryListModal
       title={t("jobBoard.trashModal.title")}
       onClose={onClose}
-      width={520}
+      bodyTestid="trash-modal"
+      empty={t("jobBoard.trashModal.empty")}
+      rows={trashed.map((j) => ({
+        id: j.id,
+        avatarName: j.company,
+        title: j.title,
+        subtitle: t("jobBoard.trashModal.removedRecently", { company: j.company }),
+      }))}
+      restore={{
+        label: t("jobBoard.trashModal.undo"),
+        testid: "trash-undo-btn",
+        onRun: onUndo,
+      }}
+      deleteForever={{
+        label: t("jobBoard.trashModal.deleteForever"),
+        cancelLabel: t("jobBoard.trashModal.cancel"),
+        testid: "trash-delete-forever-btn",
+        confirmTestid: "trash-delete-forever-confirm-btn",
+        title: t("jobBoard.trashModal.deleteForever"),
+        onRun: onDeleteForever,
+      }}
       footer={
         <div className="flex items-center justify-between gap-3 text-[11.5px] text-ink-3">
           <span>{t("jobBoard.trashModal.retention")}</span>
@@ -1795,66 +1748,6 @@ function TrashModal({
           )}
         </div>
       }
-    >
-      <div data-testid="trash-modal" className="px-5 py-4">
-        {trashed.length === 0 ? (
-          <p className="text-[13px] text-ink-3">{t("jobBoard.trashModal.empty")}</p>
-        ) : (
-          <ul className="space-y-2">
-            {trashed.map((j) => (
-              <li key={j.id} className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
-                <div className="grid h-8 w-8 place-items-center rounded bg-surface-2 text-[11px] font-semibold text-ink-2">
-                  {initials(j.company)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-medium text-ink">{j.title}</div>
-                  <div className="text-[11px] text-ink-3">
-                    {t("jobBoard.trashModal.removedRecently", { company: j.company })}
-                  </div>
-                </div>
-                {confirmId === j.id ? (
-                  <>
-                    <button
-                      data-testid="trash-delete-forever-confirm-btn"
-                      onClick={() => {
-                        onDeleteForever(j.id);
-                        setConfirmId(null);
-                      }}
-                      className="rounded-md border border-bad/40 bg-bad px-2 py-1 text-[11.5px] font-medium text-white hover:opacity-90"
-                    >
-                      {t("jobBoard.trashModal.deleteForever")}
-                    </button>
-                    <button
-                      onClick={() => setConfirmId(null)}
-                      className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
-                    >
-                      {t("jobBoard.trashModal.cancel")}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      data-testid="trash-undo-btn"
-                      onClick={() => onUndo(j.id)}
-                      className="rounded-md border border-border-2 px-2 py-1 text-[11.5px] text-ink-2 hover:bg-surface-3"
-                    >
-                      {t("jobBoard.trashModal.undo")}
-                    </button>
-                    <button
-                      data-testid="trash-delete-forever-btn"
-                      title={t("jobBoard.trashModal.deleteForever")}
-                      onClick={() => setConfirmId(j.id)}
-                      className="rounded-md border border-bad/40 px-2 py-1 text-[11.5px] text-bad hover:bg-bad-wash"
-                    >
-                      {t("jobBoard.trashModal.deleteForever")}
-                    </button>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </Modal>
+    />
   );
 }

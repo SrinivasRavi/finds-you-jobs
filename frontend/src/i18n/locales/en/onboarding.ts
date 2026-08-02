@@ -38,6 +38,7 @@ const onboarding = {
         "24h": "24h",
         "7d": "7d",
         "30d": "30d",
+        Any: "Any",
     },
     cadenceLabel: "Background scrape cadence",
     cadence: {

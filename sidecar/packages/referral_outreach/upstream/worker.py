@@ -15,6 +15,7 @@ browser, no network — plan only)."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 
@@ -36,6 +37,50 @@ def _pacer(profile: PacingProfile | None, state_dir: str | None) -> Pacer:
     caps are computed HERE, in the package (NFR-LI-02)."""
     sd = Path(state_dir) if state_dir else None
     return Pacer(resolve_profile(profile), state_dir=sd)
+
+
+@contextlib.contextmanager
+def _paced_session(
+    pacer: Pacer | None,
+    *,
+    storage_state: str | None = None,
+    user_data_dir: str | None = None,
+    headed: bool = False,
+):
+    """The scaffold EVERY browser-touching operation shares: build the session,
+    and on the way out ALWAYS persist the pacing ledger and then close the
+    browser — in that order, whatever happened in between (a return, a refusal,
+    a RateLimited, or an unexpected crash mid-send).
+
+    Three of the past account-safety bugs were one op missing one piece of this
+    scaffold (a read path that built no Pacer at all, a charge that was never
+    saved, a browser left open), which is why it is one function now: the next
+    piece gets added HERE, for every op at once.
+
+    `pacer=None` is the `status` op — the one browser op that meters nothing.
+
+    What deliberately stays in the ops: the caps/backoff gates (each has its own
+    meters), and the `except RateLimited → envelope` translation, because the
+    envelope is the wire contract with the host and its fields differ per op.
+    That `except` must sit INSIDE this block: `pause_for_backoff` only records
+    the pause in memory, so the `finally` save below is what persists it — catch
+    it outside and the 24 h backoff is silently lost.
+
+    The session import is function-local on purpose: importing `.session` pulls
+    in Playwright, which the no-browser ops (quota / resume / session-status)
+    must not pay for.
+    """
+    from .session import AccountSession
+
+    session = AccountSession(
+        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
+    )
+    try:
+        yield session
+    finally:
+        if pacer is not None:
+            pacer.save()
+        session.close()
 
 
 def quota(
@@ -155,26 +200,23 @@ def resolve_company(
                 "count": 0, "companies": [], "quota": pacer.remaining()}
 
     from .company import resolve_company as _resolve
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        if charge_search:
-            pacer.record_search()
-        companies = _resolve(session, keywords, url=url, limit=limit, prefer_domain=prefer_domain)
-        return {"op": "resolve-company", "ok": True, "keywords": keywords, "url": url,
-                "prefer_domain": prefer_domain, "count": len(companies),
-                "companies": companies, "quota": pacer.remaining()}
-    except RateLimited as e:
-        deadline = pacer.pause_for_backoff(str(e))
-        return {"op": "resolve-company", "ok": False, "keywords": keywords, "url": url,
-                "error": "rate_limited", "reason": str(e), "paused_until": deadline,
-                "count": 0, "companies": [], "quota": pacer.remaining()}
-    finally:
-        pacer.save()
-        session.close()
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
+        try:
+            if charge_search:
+                pacer.record_search()
+            companies = _resolve(
+                session, keywords, url=url, limit=limit, prefer_domain=prefer_domain
+            )
+            return {"op": "resolve-company", "ok": True, "keywords": keywords, "url": url,
+                    "prefer_domain": prefer_domain, "count": len(companies),
+                    "companies": companies, "quota": pacer.remaining()}
+        except RateLimited as e:
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "resolve-company", "ok": False, "keywords": keywords, "url": url,
+                    "error": "rate_limited", "reason": str(e), "paused_until": deadline,
+                    "count": 0, "companies": [], "quota": pacer.remaining()}
 
 
 def discover(
@@ -230,36 +272,31 @@ def discover(
                 "quota": pacer.remaining()}
 
     from .discovery import discover_company_contacts
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        pacer.record_search()
-        # Reserve, don't just gate: a boolean check with 1 view remaining would
-        # happily enrich a whole page and overshoot the day budget by the batch
-        # size. Clamp the enrichment count to what the budget can actually pay.
-        remaining_views = pacer.usage("profile_views").get("day_remaining")
-        if remaining_views is not None:
-            limit = max(1, min(limit, int(remaining_views)))
-        contacts = discover_company_contacts(
-            session, company, limit=limit, page=page, company_urn=company_urn
-        )
-        # Charge one profile view per candidate we actually enriched. Filtered-out
-        # candidates still cost a request upstream, so this under-counts slightly;
-        # `discovery.py` is where a precise per-fetch charge would go.
-        pacer.record_profile_view(count=len(contacts))
-        return {"op": "discover", "ok": True, "company": company, "company_urn": company_urn,
-                "count": len(contacts), "contacts": contacts, "quota": pacer.remaining()}
-    except RateLimited as e:
-        deadline = pacer.pause_for_backoff(str(e))
-        return {"op": "discover", "ok": False, "company": company, "count": 0,
-                "contacts": [], "error": "rate_limited", "reason": str(e),
-                "paused_until": deadline, "quota": pacer.remaining()}
-    finally:
-        pacer.save()
-        session.close()
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
+        try:
+            pacer.record_search()
+            # Reserve, don't just gate: a boolean check with 1 view remaining would
+            # happily enrich a whole page and overshoot the day budget by the batch
+            # size. Clamp the enrichment count to what the budget can actually pay.
+            remaining_views = pacer.usage("profile_views").get("day_remaining")
+            if remaining_views is not None:
+                limit = max(1, min(limit, int(remaining_views)))
+            contacts = discover_company_contacts(
+                session, company, limit=limit, page=page, company_urn=company_urn
+            )
+            # Charge one profile view per candidate we actually enriched. Filtered-out
+            # candidates still cost a request upstream, so this under-counts slightly;
+            # `discovery.py` is where a precise per-fetch charge would go.
+            pacer.record_profile_view(count=len(contacts))
+            return {"op": "discover", "ok": True, "company": company, "company_urn": company_urn,
+                    "count": len(contacts), "contacts": contacts, "quota": pacer.remaining()}
+        except RateLimited as e:
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "discover", "ok": False, "company": company, "count": 0,
+                    "contacts": [], "error": "rate_limited", "reason": str(e),
+                    "paused_until": deadline, "quota": pacer.remaining()}
 
 
 def search_jobs(
@@ -324,48 +361,44 @@ def search_jobs(
                 "exhausted": False, "quota": pacer.remaining()}
 
     from .client import PlaywrightLinkedinAPI
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        session.ensure_browser()
-        client = PlaywrightLinkedinAPI(session)
-        # Charge on ATTEMPT, before issuing the request — a page that reaches
-        # LinkedIn but then 429s or fails to parse still consumed a request
-        # (same safe-direction rule as the send ops).
-        pacer.record_search_page()
-        page = client.search_jobs(
-            keywords, location, start=start, count=MAX_JOBS_PER_SEARCH
-        )
-        total = int(page.get("total", 0) or 0)
-        jobs = list(page.get("jobs", []))
-        # A short page is LinkedIn's own end-of-results signal; a known total
-        # that the next offset would meet or pass says the same thing.
-        exhausted = len(jobs) < MAX_JOBS_PER_SEARCH or (
-            0 < total <= start + MAX_JOBS_PER_SEARCH
-        )
-        return {"op": "search-jobs", "ok": True, "keywords": keywords,
-                "location": location, "start": start, "count": len(jobs),
-                "total": total, "jobs": jobs, "exhausted": exhausted,
-                "next_start": start + MAX_JOBS_PER_SEARCH}
-    except RateLimited as e:
-        # LinkedIn told us to stop on the loudest authenticated read path. Enter
-        # backoff exactly like `discover` — search_jobs used to let RateLimited
-        # propagate uncaught, so a 429 entered NO backoff and every later
-        # Fresh/Next search kept hammering the throttled endpoint.
-        deadline = pacer.pause_for_backoff(str(e))
-        return {"op": "search-jobs", "ok": False, "keywords": keywords,
-                "location": location, "start": start, "count": 0, "total": 0,
-                "jobs": [], "error": "rate_limited",
-                "reason": str(e), "paused_until": deadline, "exhausted": False,
-                "quota": pacer.remaining()}
-    finally:
-        # Persist the page charge and/or the backoff pause to the shared ledger
-        # (no-op if neither happened — save() early-returns).
-        pacer.save()
-        session.close()
+    # The `finally` inside `_paced_session` persists the page charge and/or the
+    # backoff pause to the shared ledger (a no-op if neither happened — save()
+    # early-returns) and closes the browser.
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
+        try:
+            session.ensure_browser()
+            client = PlaywrightLinkedinAPI(session)
+            # Charge on ATTEMPT, before issuing the request — a page that reaches
+            # LinkedIn but then 429s or fails to parse still consumed a request
+            # (same safe-direction rule as the send ops).
+            pacer.record_search_page()
+            page = client.search_jobs(
+                keywords, location, start=start, count=MAX_JOBS_PER_SEARCH
+            )
+            total = int(page.get("total", 0) or 0)
+            jobs = list(page.get("jobs", []))
+            # A short page is LinkedIn's own end-of-results signal; a known total
+            # that the next offset would meet or pass says the same thing.
+            exhausted = len(jobs) < MAX_JOBS_PER_SEARCH or (
+                0 < total <= start + MAX_JOBS_PER_SEARCH
+            )
+            return {"op": "search-jobs", "ok": True, "keywords": keywords,
+                    "location": location, "start": start, "count": len(jobs),
+                    "total": total, "jobs": jobs, "exhausted": exhausted,
+                    "next_start": start + MAX_JOBS_PER_SEARCH}
+        except RateLimited as e:
+            # LinkedIn told us to stop on the loudest authenticated read path. Enter
+            # backoff exactly like `discover` — search_jobs used to let RateLimited
+            # propagate uncaught, so a 429 entered NO backoff and every later
+            # Fresh/Next search kept hammering the throttled endpoint.
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "search-jobs", "ok": False, "keywords": keywords,
+                    "location": location, "start": start, "count": 0, "total": 0,
+                    "jobs": [], "error": "rate_limited",
+                    "reason": str(e), "paused_until": deadline, "exhausted": False,
+                    "quota": pacer.remaining()}
 
 
 def _normalize_public_id(value: str) -> str:
@@ -449,12 +482,13 @@ def send_connection(
     pacer.save()
 
     from .actions import send_connection_request
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
+    # `_paced_session`'s finally persists whatever is pending even on an
+    # unexpected error mid-send: an unproven send stays charged (unsafe-direction
+    # drift is the one we refuse). save() is idempotent — the paths below that
+    # return already ran it.
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
         try:
             status, note_outcome = send_connection_request(
                 session, public_identifier, note=note
@@ -492,12 +526,6 @@ def send_connection(
             # implemented when it was not.
             "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
         }
-    finally:
-        # Persist whatever is pending even on an unexpected error mid-send: an
-        # unproven send stays charged (unsafe-direction drift is the one we
-        # refuse). save() is idempotent — the happy paths above already ran it.
-        pacer.save()
-        session.close()
 
 
 def send_dm(
@@ -548,38 +576,34 @@ def send_dm(
     pacer.save()
 
     from .actions import send_dm as _send_dm
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        sent = _send_dm(session, public_identifier, message)
-        if not sent:
-            # actions.send_dm returned a definite "did not send" (no thread /
-            # no compose) — a proven no-send, so the attempt charge goes back.
+    # An unexpected error mid-send keeps its attempt charge (unsafe-direction
+    # drift is the one we refuse) — `_paced_session`'s finally still saves;
+    # save() is idempotent on the paths below that already ran it.
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
+        try:
+            sent = _send_dm(session, public_identifier, message)
+            if not sent:
+                # actions.send_dm returned a definite "did not send" (no thread /
+                # no compose) — a proven no-send, so the attempt charge goes back.
+                pacer.refund("dms")
+            pacer.save()
+            return {
+                "op": "send-dm", "ok": bool(sent), "sent": bool(sent),
+                "public_identifier": public_identifier,
+                "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
+            }
+        except RateLimited as e:
+            # The throttle hit before the message could go out — refund, then back off.
             pacer.refund("dms")
-        pacer.save()
-        return {
-            "op": "send-dm", "ok": bool(sent), "sent": bool(sent),
-            "public_identifier": public_identifier,
-            "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
-        }
-    except RateLimited as e:
-        # The throttle hit before the message could go out — refund, then back off.
-        pacer.refund("dms")
-        deadline = pacer.pause_for_backoff(str(e))
-        pacer.save()
-        return {
-            "op": "send-dm", "ok": False, "sent": False,
-            "public_identifier": public_identifier, "error": "rate_limited",
-            "reason": str(e), "paused_until": deadline,
-        }
-    finally:
-        # An unexpected error mid-send keeps its attempt charge (unsafe-direction
-        # drift is the one we refuse); save() is idempotent on the happy paths.
-        pacer.save()
-        session.close()
+            deadline = pacer.pause_for_backoff(str(e))
+            pacer.save()
+            return {
+                "op": "send-dm", "ok": False, "sent": False,
+                "public_identifier": public_identifier, "error": "rate_limited",
+                "reason": str(e), "paused_until": deadline,
+            }
 
 
 def contact_sync(
@@ -626,31 +650,26 @@ def contact_sync(
                 "quota": pacer.remaining()}
 
     from .actions import get_contact_sync_state
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        pacer.record_profile_view()
-        state = get_contact_sync_state(session, public_identifier)
-        return {"op": "contact-sync", "ok": True,
-                "public_identifier": public_identifier, **state,
-                "quota": pacer.remaining()}
-    except RateLimited as e:
-        # A block on contact 1 used to be logged and swallowed, so the host kept
-        # hammering contacts 2-20 in the same batch. Entering backoff here stops
-        # the whole batch, because every subsequent probe is refused.
-        deadline = pacer.pause_for_backoff(str(e))
-        return {"op": "contact-sync", "ok": False,
-                "public_identifier": public_identifier,
-                "error": "rate_limited", "reason": str(e), "paused_until": deadline,
-                "degree": None, "is_first_degree": False,
-                "last_message_direction": None, "last_message_at": None,
-                "quota": pacer.remaining()}
-    finally:
-        pacer.save()
-        session.close()
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
+        try:
+            pacer.record_profile_view()
+            state = get_contact_sync_state(session, public_identifier)
+            return {"op": "contact-sync", "ok": True,
+                    "public_identifier": public_identifier, **state,
+                    "quota": pacer.remaining()}
+        except RateLimited as e:
+            # A block on contact 1 used to be logged and swallowed, so the host kept
+            # hammering contacts 2-20 in the same batch. Entering backoff here stops
+            # the whole batch, because every subsequent probe is refused.
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "contact-sync", "ok": False,
+                    "public_identifier": public_identifier,
+                    "error": "rate_limited", "reason": str(e), "paused_until": deadline,
+                    "degree": None, "is_first_degree": False,
+                    "last_message_direction": None, "last_message_at": None,
+                    "quota": pacer.remaining()}
 
 
 def status(
@@ -672,14 +691,12 @@ def status(
             "plan": "would resolve connection degree via Voyager (UI fallback)",
         }
     from .actions import get_connection_status
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
+    # No pacer: `status` is the one browser op that meters nothing (it is driven
+    # by the host's own already-metered flows), so the scaffold only owns the
+    # browser teardown here.
+    with _paced_session(None, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
         state = get_connection_status(session, public_identifier)
         return {"op": "status", "ok": True,
                 "public_identifier": public_identifier, "status": state}
-    finally:
-        session.close()

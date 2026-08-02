@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sidecar.modules.networker.types import NetworkerError
 from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
@@ -31,11 +31,8 @@ from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
 from ..db.base import now_utc
 from ..events import make_event
 from . import networker_ops
-from .networker_ops import linkedin_feature_flags, linkedin_storage_path, resolve_pacing_profile
+from .networker_ops import linkedin_feature_flags, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # 60-day never-accepted auto-archive window (US-NW-11 / FR-NW-13).
 STALE_CONTACT_DAYS = 60
@@ -48,6 +45,22 @@ LOGIN_TIMEOUT_S = 300
 # points into a different list) to one job-hunting session (maintainer,
 # 2026-08-01). After it lapses, only a Fresh search makes sense.
 SEARCH_CURSOR_TTL = timedelta(hours=12)
+
+# Refusal copy for the LinkedIn-search preconditions, worded once. The route
+# pre-checks each of these for a fast 4xx and this op re-checks the same thing
+# as its own self-gate, so the two sites must never say different things — the
+# not-connected copy had already drifted into pointing a search-only user at
+# Referral Outreach, the wrong opt-in for the feature they enabled.
+SEARCH_NOT_CONNECTED = (
+    "LinkedIn is not connected — connect your session under Referral Outreach "
+    "or LinkedIn job search in Settings first."
+)
+SEARCH_NO_CURSOR = "No search to continue — run a Fresh search first."
+SEARCH_CURSOR_EXPIRED = "The last Fresh search has expired — run a Fresh search first."
+SEARCH_CURSOR_EXHAUSTED = (
+    "No more results — the last search reached LinkedIn's end of results. "
+    "Run a Fresh search."
+)
 
 
 def cursor_state(
@@ -260,11 +273,7 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
     with ctx.db.repos() as repos:
         session = repos.linkedin_session.get_or_create()
         if session.status != "valid":
-            raise NetworkerError(
-                "voyager",
-                "LinkedIn is not connected — connect your session in "
-                "Settings → Referral Outreach before running a LinkedIn search",
-            )
+            raise NetworkerError("voyager", SEARCH_NOT_CONNECTED)
         profile = resolve_pacing_profile(repos)
         prefs = resolve_scan_prefs(snap, repos=repos) or ScanPrefs(
             title_allow=[str(a) for a in (repos.preferences.get_or_create().role_aliases or [])],
@@ -279,21 +288,12 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
     now = datetime.now(UTC)
     if mode == "next":
         if cursor_fresh_at is None or not cursor_entries:
-            raise NetworkerError(
-                "voyager", "No search to continue — run a Fresh search first"
-            )
+            raise NetworkerError("voyager", SEARCH_NO_CURSOR)
         expired, exhausted = cursor_state(cursor_fresh_at, cursor_entries, now)
         if expired:
-            raise NetworkerError(
-                "voyager",
-                "The last Fresh search has expired — run a Fresh search first",
-            )
+            raise NetworkerError("voyager", SEARCH_CURSOR_EXPIRED)
         if exhausted:
-            raise NetworkerError(
-                "voyager",
-                "No more results — the last search reached LinkedIn's end of "
-                "results. Run a Fresh search.",
-            )
+            raise NetworkerError("voyager", SEARCH_CURSOR_EXHAUSTED)
         entries = cursor_entries
     else:
         queries = build_queries(prefs)
@@ -420,8 +420,3 @@ def linkedin_entrypoints() -> dict[str, Any]:
         "linkedin_search": linkedin_search_entrypoint,
         "archive_stale_contacts": archive_stale_contacts_entrypoint,
     }
-
-
-def storage_path_for_disconnect() -> Path:
-    """Exposed for the disconnect route (delete the saved session file)."""
-    return linkedin_storage_path()

@@ -22,59 +22,44 @@ import {
   useSettings,
   useValidateLinkedIn,
 } from "../../api/queries";
-import type { LinkedInCap, LinkedInSessionState, Settings as SettingsT } from "../../api/types";
+import type { LinkedInCap, Settings as SettingsT } from "../../api/types";
 import { ConfirmDialog } from "../../shell/ConfirmDialog";
+import { formatWhen } from "../../shell/datetime";
 import { InfoDot } from "../../shell/InfoDot";
-import { ExperimentalHazard, LinkedInRiskLine, MUTED_WARN_BOX, Section, Toggle } from "./shared";
+import {
+  type LinkedInPillState,
+  type LinkedInPillTone,
+  linkedInStatusPill,
+} from "../linkedInStatus";
+import { LinkedInOptIn } from "./LinkedInOptIn";
+import { MUTED_WARN_BOX, Section } from "./shared";
 
 // LinkedIn Job Search breaks ToS by SCRAPING listings (not messaging) — its own
 // warning copy: user-clicked one-offs, one page of 25, no claims about how
 // LinkedIn classifies the traffic.
 const JOB_SEARCH_WARNING = "settingsPage.linkedinSearch.warning";
 
-type PillVariant = { cls: string; dot: string; label: string };
-
-// `label` is an i18n key — t()'d where the pill renders.
-function statusPill(status: LinkedInSessionState["status"]): PillVariant {
-  switch (status) {
-    case "valid":
-      return {
-        cls: "bg-good-wash border-good-2 text-good",
-        dot: "#1F9D55",
-        label: "settingsPage.session.statusConnected",
-      };
-    case "connecting":
-      return {
-        cls: "bg-warn-wash border-warn-2 text-warn",
-        dot: "#C5A24A",
-        label: "settingsPage.session.statusConnecting",
-      };
-    case "backing_off":
-      return {
-        cls: "bg-bad-wash border-bad-2 text-bad",
-        dot: "#B23A3A",
-        label: "settingsPage.session.statusBackingOff",
-      };
-    case "expired":
-      return {
-        cls: "bg-bad-wash border-bad-2 text-bad",
-        dot: "#B23A3A",
-        label: "settingsPage.session.statusExpired",
-      };
-    default:
-      return {
-        cls: "bg-bad-wash border-bad-2 text-bad",
-        dot: "#B23A3A",
-        label: "settingsPage.session.statusDisconnected",
-      };
-  }
-}
-
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
-}
+// Chrome + copy for the Settings session chip. Which state a status *means*
+// comes from the shared table (duplication audit D-F8) — the Networking header
+// renders its own 22px chip from the same decision.
+const PILL_CLS: Record<LinkedInPillTone, string> = {
+  good: "bg-good-wash border-good-2 text-good",
+  warn: "bg-warn-wash border-warn-2 text-warn",
+  bad: "bg-bad-wash border-bad-2 text-bad",
+};
+const PILL_DOT: Record<LinkedInPillTone, string> = {
+  good: "#1F9D55",
+  warn: "#C5A24A",
+  bad: "#B23A3A",
+};
+// i18n keys — t()'d where the pill renders.
+const PILL_LABEL: Record<LinkedInPillState, string> = {
+  connected: "settingsPage.session.statusConnected",
+  connecting: "settingsPage.session.statusConnecting",
+  backingOff: "settingsPage.session.statusBackingOff",
+  expired: "settingsPage.session.statusExpired",
+  disconnected: "settingsPage.session.statusDisconnected",
+};
 
 // Collapsible + SHARED (2026-07-23): one LinkedIn session drives both Referral
 // Outreach and LinkedIn Job Search. Rendered in both places; because both read
@@ -93,7 +78,7 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
 
   if (!session) return null;
   const status = session.status;
-  const pill = statusPill(status);
+  const pill = linkedInStatusPill(status);
   const connecting = status === "connecting" || connect.isPending;
   const connected = status === "valid";
   const open = openOverride ?? !connected; // expanded until connected, then tidy
@@ -121,11 +106,11 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
           data-testid="linkedin-status-pill"
           className={
             "ml-auto inline-flex h-[20px] items-center gap-[5px] rounded-full border px-2 text-[11px] font-medium " +
-            pill.cls
+            PILL_CLS[pill.tone]
           }
         >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: pill.dot }} />
-          {t(pill.label)}
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: PILL_DOT[pill.tone] }} />
+          {t(PILL_LABEL[pill.state])}
         </span>
       </button>
       {open ? (
@@ -145,9 +130,9 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
                 {session.connected_as || "—"}
               </dd>
               <dt>{t("settingsPage.session.expires")}</dt>
-              <dd>{fmtDate(session.li_at_expires_at)}</dd>
+              <dd>{formatWhen(session.li_at_expires_at)}</dd>
               <dt>{t("settingsPage.session.lastValidated")}</dt>
-              <dd>{fmtDate(session.last_validated_at)}</dd>
+              <dd>{formatWhen(session.last_validated_at)}</dd>
             </dl>
 
             {status === "backing_off" && (
@@ -244,7 +229,7 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
         <ConfirmDialog
           title={t("settingsPage.session.resumeConfirmTitle")}
           body={t("settingsPage.session.resumeConfirmBody", {
-            until: fmtDate(session.paused_until),
+            until: formatWhen(session.paused_until),
           })}
           confirmLabel={t("settingsPage.session.resumeConfirmOk")}
           onConfirm={() => {
@@ -258,9 +243,12 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   );
 });
 
-// The experimental gate around LinkedIn job search — mirrors Referral Outreach
-// (hazard badge + ToS risk line + ack + Enable toggle), with its OWN opt-in but
-// the SAME shared LinkedIn session (connect once, stays until Disconnect).
+// The experimental gate around LinkedIn job search — the SAME consent scaffold
+// as Referral Outreach (hazard badge + ToS risk line + ack + Enable toggle),
+// shared as `LinkedInOptIn` since 2026-08-02 (duplication audit D-F3), with its
+// OWN opt-in but the SAME shared LinkedIn session (connect once, stays until
+// Disconnect). `ack` is local state here on purpose: it resets whenever the
+// Discover pane unmounts, so consent is re-given per visit.
 // Memoized: `settings` is the query-stable object, `patch` a root useCallback.
 export const LinkedInJobSearchSection = memo(function LinkedInJobSearchSection({
   settings,
@@ -275,66 +263,39 @@ export const LinkedInJobSearchSection = memo(function LinkedInJobSearchSection({
   const enabled = settings.linkedin_search_enabled;
   const connected = session?.status === "valid";
   return (
-    <Section title={t("settingsPage.linkedinSearch.title")} titleExtra={<ExperimentalHazard />}>
+    <LinkedInOptIn
+      title={t("settingsPage.linkedinSearch.title")}
+      intro={t("settingsPage.linkedinSearch.intro")}
+      howLabel={t("settingsPage.linkedinSearch.howLabel")}
+      howInfo={t("settingsPage.linkedinSearch.howInfo")}
+      warning={t(JOB_SEARCH_WARNING)}
+      ackLabel={t("settingsPage.linkedinSearch.ack")}
+      ackTestid="linkedin-search-ack"
+      ack={ack}
+      onAck={setAck}
+      enableLabel={t("settingsPage.linkedinSearch.enable")}
+      enabled={enabled}
+      onEnable={(ackAt) =>
+        patch({ linkedin_search_enabled: true, linkedin_search_ack_at: ackAt })
+      }
+      onDisable={() => patch({ linkedin_search_enabled: false })}
+      toggleTestid="linkedin-search-toggle"
+      ackAt={settings.linkedin_search_ack_at}
+      ackAtTestid="linkedin-search-ack-at"
+    >
       <div className="space-y-3">
-        <p className="text-[12.5px] text-ink-2">
-          {t("settingsPage.linkedinSearch.intro")}
-          <InfoDot label={t("settingsPage.linkedinSearch.howLabel")}>
-            {t("settingsPage.linkedinSearch.howInfo")}
-          </InfoDot>
-        </p>
-        <LinkedInRiskLine detail={t(JOB_SEARCH_WARNING)} />
-        <label className="flex items-start gap-2 text-[12px] font-medium text-ink-2">
-          <input
-            type="checkbox"
-            checked={ack || enabled}
-            onChange={(e) => setAck(e.target.checked)}
-            data-testid="linkedin-search-ack"
-            className="mt-0.5"
-          />
-          {t("settingsPage.linkedinSearch.ack")}
-        </label>
-        <div className="flex items-center gap-3">
-          <div className="flex-1 text-[13px] font-medium text-ink">
-            {t("settingsPage.linkedinSearch.enable")}
-          </div>
-          <Toggle
-            on={enabled}
-            onChange={(v) => {
-              if (v && !ack) return;
-              patch(
-                v
-                  ? { linkedin_search_enabled: v, linkedin_search_ack_at: new Date().toISOString() }
-                  : { linkedin_search_enabled: v },
-              );
-              if (!v) setAck(false);
-            }}
-            testid="linkedin-search-toggle"
-          />
-        </div>
-        {settings.linkedin_search_ack_at ? (
-          <div className="text-[11px] text-ink-4" data-testid="linkedin-search-ack-at">
-            {t("settingsPage.acknowledgedOn", {
-              date: new Date(settings.linkedin_search_ack_at).toLocaleDateString(),
-            })}
-          </div>
-        ) : null}
-        {enabled ? (
-          <div className="space-y-3">
-            {/* Same collapsible session as Referral Outreach — connect/disconnect
-                here or there, it's one shared session. */}
-            <LinkedInSessionSection />
-            {connected ? (
-              <LinkedInJobSearchBlock />
-            ) : (
-              <p className="text-[11.5px] text-ink-4">
-                {t("settingsPage.linkedinSearch.connectHint")}
-              </p>
-            )}
-          </div>
-        ) : null}
+        {/* Same collapsible session as Referral Outreach — connect/disconnect
+            here or there, it's one shared session. */}
+        <LinkedInSessionSection />
+        {connected ? (
+          <LinkedInJobSearchBlock />
+        ) : (
+          <p className="text-[11.5px] text-ink-4">
+            {t("settingsPage.linkedinSearch.connectHint")}
+          </p>
+        )}
       </div>
-    </Section>
+    </LinkedInOptIn>
   );
 });
 

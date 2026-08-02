@@ -177,9 +177,21 @@ class PlaywrightLinkedinAPI:
         if res.status in (429, 999):
             raise RateLimited(f"LinkedIn returned HTTP {res.status} (throttled/blocked)")
 
-    def _check_profile_response(self, res: _FetchResponse, public_identifier: str) -> None:
+    @staticmethod
+    def _raise_if_unauthorized(res: _FetchResponse, message: str) -> None:
+        """Turn LinkedIn's 401 into `AuthenticationError` (session expired /
+        invalid / blocked — the host prompts a re-login).
+
+        Lives beside `raise_if_throttled` because the two checks are ORDERED at
+        every call site: 401 first, throttle second. A 401 is a dead session, not
+        a pace problem, and must never enter the 24 h backoff (nor be retried as
+        an `OSError`). Each caller passes its own verbatim message — the endpoint
+        that refused is part of what the host surfaces."""
         if res.status == 401:
-            raise AuthenticationError("LinkedIn API returned 401 Unauthorized.")
+            raise AuthenticationError(message)
+
+    def _check_profile_response(self, res: _FetchResponse, public_identifier: str) -> None:
+        self._raise_if_unauthorized(res, "LinkedIn API returned 401 Unauthorized.")
         self.raise_if_throttled(res)
         if res.status in (403, 404):
             raise ProfileInaccessibleError(f"{public_identifier} (HTTP {res.status})")
@@ -240,8 +252,7 @@ class PlaywrightLinkedinAPI:
                 "recipients": f"List({target_urn})",
             },
         )
-        if res.status == 401:
-            raise AuthenticationError("Messaging API returned 401 Unauthorized.")
+        self._raise_if_unauthorized(res, "Messaging API returned 401 Unauthorized.")
         # A throttle here must NOT degrade to "no history": contact-sync drives
         # one of these per probe, so swallowing a 429/999 as a soft miss kept
         # the batch hammering the messaging endpoint mid-block (and `RateLimited`
@@ -295,9 +306,43 @@ class PlaywrightLinkedinAPI:
             f"&count={count}&q=jobSearch&query={safe_query}&start={start}"
         )
         res = self.get(url)
-        if res.status == 401:
-            raise AuthenticationError("Jobs search API returned 401 Unauthorized.")
+        self._raise_if_unauthorized(res, "Jobs search API returned 401 Unauthorized.")
         self.raise_if_throttled(res)
         if not res.ok:
             raise OSError(f"Jobs search API error {res.status}: {res.text()[:500]}")
         return parse_job_search_response(res.json())
+
+
+def resolve_degree(
+    api: PlaywrightLinkedinAPI,
+    parsed: dict | None,
+    public_identifier: str,
+    *,
+    best_effort: bool,
+) -> int | None:
+    """The contact's connection degree: the parsed profile's own value, else one
+    bounded TOPCARD fallback call.
+
+    FullProfileWithEntities omits the relationship for some profiles (verified
+    live 2026-07-08: valilenk → null while stasg7 → 3), so every degree consumer
+    needs the same second call — the fallback used to be pasted at three sites
+    that had already drifted apart on failure handling:
+
+      `best_effort=True`  — discovery's bulk enrichment: a failed fallback
+                            degrades to None (unknown degree ⇒ cold warmth) and
+                            the loop keeps going; one profile must never kill a
+                            whole page of candidates.
+      `best_effort=False` — the single-contact action paths (status, contact
+                            sync): the failure IS the result, so it propagates
+                            and the op reports it (a 401 must reach the host as a
+                            dead session, not as "degree unknown").
+    """
+    degree = (parsed or {}).get("connection_degree")
+    if degree is not None:
+        return degree
+    if not best_effort:
+        return api.get_connection_degree(public_identifier)
+    try:
+        return api.get_connection_degree(public_identifier)
+    except Exception:  # noqa: BLE001 — degree is best-effort, never fatal
+        return None
