@@ -147,7 +147,11 @@ def _is_manual_frozen(contact: ContactRow, now: datetime) -> bool:
     return (now - moment).total_seconds() / 86400.0 < MANUAL_OVERRIDE_COOLDOWN_DAYS
 
 
-def _payload_with_meta(contact: ContactRow, source: str, now: datetime) -> dict[str, Any]:
+def payload_with_status_meta(contact: ContactRow, source: str, now: datetime) -> dict[str, Any]:
+    """The one place the `status_meta` stamp is written — this engine stamps
+    `auto`, the contact PATCH route stamps `manual`, and `_is_manual_frozen`
+    above reads both. Public so the route stamps the same shape the reader
+    expects (a key/format drift silently disables the manual-wins cooldown)."""
     return {
         **(contact.profile_payload or {}),
         "status_meta": {"source": source, "changed_at": now.isoformat()},
@@ -229,7 +233,7 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 fields["is_first_degree"] = probe.is_first_degree
             if decision.new_status and decision.new_status != current:
                 fields["connection_status"] = decision.new_status
-                fields["profile_payload"] = _payload_with_meta(contact, "auto", now)
+                fields["profile_payload"] = payload_with_status_meta(contact, "auto", now)
                 if decision.set_accepted_at and contact.accepted_at is None:
                     fields["accepted_at"] = now
                 transitions[f"{current}->{decision.new_status}"] = (

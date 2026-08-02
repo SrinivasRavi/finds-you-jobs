@@ -44,8 +44,15 @@ from ..registry.apply_op import (
     purge_run_dirs,
 )
 from ..registry.company_anchor import resolution_key
+from ..registry.contact_sync_op import payload_with_status_meta
 from ..registry.engine_config import apply_routing
-from ..registry.linkedin_op import LOGIN_CONTROL
+from ..registry.linkedin_op import (
+    LOGIN_CONTROL,
+    SEARCH_CURSOR_EXHAUSTED,
+    SEARCH_CURSOR_EXPIRED,
+    SEARCH_NO_CURSOR,
+    SEARCH_NOT_CONNECTED,
+)
 from ..registry.networker_ops import linkedin_feature_flags, linkedin_storage_path
 from ..registry.persistence import (
     SCORER_IMPL,
@@ -1733,10 +1740,7 @@ async def update_contact(
         # Manual wins (US-NW-12): a user-driven column move stamps the status as
         # `manual` so the contact-status sync engine won't immediately override it.
         if "connection_status" in fields:
-            fields["profile_payload"] = {
-                **(existing.profile_payload or {}),
-                "status_meta": {"source": "manual", "changed_at": now_utc().isoformat()},
-            }
+            fields["profile_payload"] = payload_with_status_meta(existing, "manual", now_utc())
         contact = repos.contacts.update(contact_id, **fields)
         return _contact_dto(repos, contact)
 
@@ -2160,29 +2164,16 @@ async def linkedin_search(
         _require_job_search_opt_in(repos)
         session = repos.linkedin_session.get()
         if session is None or session.status != "valid":
-            raise HTTPException(
-                status_code=409,
-                detail="LinkedIn is not connected — connect your session in Settings first.",
-            )
+            raise HTTPException(status_code=409, detail=SEARCH_NOT_CONNECTED)
         profile = networker_ops.resolve_pacing_profile(repos, session=session)
         if mode == "next":
             state = dto.linkedin_search_cursor_dto(repos.linkedin_search_cursor.get())
             if state is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="No search to continue — run a Fresh search first.",
-                )
+                raise HTTPException(status_code=409, detail=SEARCH_NO_CURSOR)
             if state.expired:
-                raise HTTPException(
-                    status_code=409,
-                    detail="The last Fresh search has expired — run a Fresh search first.",
-                )
+                raise HTTPException(status_code=409, detail=SEARCH_CURSOR_EXPIRED)
             if state.exhausted:
-                raise HTTPException(
-                    status_code=409,
-                    detail="No more results — the last search reached LinkedIn's "
-                           "end of results. Run a Fresh search.",
-                )
+                raise HTTPException(status_code=409, detail=SEARCH_CURSOR_EXHAUSTED)
     # Self-imposed pages/hour throttle: refuse when the hourly budget is spent
     # (both modes — every search fetches a page). The worker enforces this too;
     # the route surfaces it as a clean 429 rather than a 0-result search. Ledger
