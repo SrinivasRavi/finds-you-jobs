@@ -504,6 +504,7 @@ def draft_entrypoint(ctx: OperationContext) -> OperationOutcome:
         net_contact, job_text, guidance=guidance,
         master_md=master_md, engine=ctx.engine.engine,
         skill_md=get_override("networker_draft"),
+        cancelled=ctx.cancelled,
     )
     return OperationOutcome(
         result_ref={
