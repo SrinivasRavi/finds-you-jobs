@@ -757,13 +757,7 @@ const it: DeepPartial<Messages> = {
     },
     referral: {
       title: "Referral Outreach",
-      intro:
-        "Scrivi automaticamente alle persone dell'azienda a cui ti stai candidando — dal tuo account LinkedIn — per chiedere un referral. Confermi ogni batch prima dell'invio.",
       howLabel: "Come funziona Referral Outreach",
-      howInfo:
-        "Trova i dipendenti <em>attuali</em> dell'azienda e prepara per ciascuno un breve messaggio da un modello fisso per ruolo (collega / hiring manager / recruiter / dirigenza) che puoi modificare — oppure premi Rigenera per una versione IA basata sul tuo profilo. L'invio passa dalla tua sessione LinkedIn come richieste di collegamento o DM, a ritmo lento e con limiti giornalieri/settimanali prudenti per ridurre il rischio di rilevamento. Disattivato per impostazione predefinita; puoi anche usarlo solo per le bozze e inviare tu. Tracciare i contatti a mano (la scheda Rete) è sempre disponibile e non richiede nulla di tutto questo.",
-      warning:
-        "Qualsiasi automazione su LinkedIn viola i suoi Termini di servizio. finds-you-jobs non usa l'automazione per raccogliere dati, venderli o trarne profitto, e la mantiene identica 1 a 1 a ciò che farebbe un essere umano — messaggi inviati a velocità di digitazione umana, limiti giornalieri rispettati e tempi randomizzati. Ma i Termini di servizio di LinkedIn vengono comunque violati, in qualunque modo la si guardi, quindi insistiamo che tu usi il tuo giudizio e ti assuma la piena responsabilità delle conseguenze da parte di LinkedIn. Il tuo account può subire restrizioni e finds-you-jobs non è responsabile di alcuna conseguenza sul tuo account LinkedIn. Usa questa funzione in modo responsabile, controlla i messaggi inviati e disattivala se noti comportamenti insoliti dell'account. Non usare questa funzione non ha alcun impatto sul tuo account LinkedIn né su altri account.",
       ack: "Voglio automatizzare il contatto su LinkedIn per cercare referral, al costo di VIOLARE i Termini di servizio di LinkedIn — cosa che può portare a restrizioni dell'account, fino al ban permanente. Accetto la piena responsabilità.",
       enable: "Attiva Referral Outreach",
       lockedHint:
@@ -776,22 +770,17 @@ const it: DeepPartial<Messages> = {
       howLabel: "Come funziona la ricerca di offerte su LinkedIn",
       howInfo:
         "Una ricerca una tantum tramite la tua sessione LinkedIn con accesso effettuato, eseguita solo quando clicchi Cerca — le scansioni programmate non la toccano mai. In sola lettura verso LinkedIn; i risultati vengono deduplicati rispetto a tutto ciò che è già stato trovato. Condivide la stessa sessione di Referral Outreach.",
-      warning:
-        "Cercare su LinkedIn con l'accesso effettuato significa leggere i suoi annunci tramite automazione, il che viola i Termini di servizio di LinkedIn. finds-you-jobs non rivende né usa impropriamente ciò che legge, e mantiene l'impronta minima: la ricerca parte SOLO quando la clicchi (mai su pianificazione) e preleva un lotto contenuto — 25 offerte per impostazione predefinita — a ritmo umano, così da sembrare navigazione ordinaria e non scraping massivo. Ma i Termini di servizio di LinkedIn vengono comunque violati, in qualunque modo la si guardi, quindi usa il tuo giudizio e assumiti la piena responsabilità. Il tuo account può subire restrizioni e finds-you-jobs non è responsabile di alcuna conseguenza sul tuo account LinkedIn. Disattivala se noti comportamenti insoliti dell'account. Non usare questa funzione non ha alcun impatto sul tuo account LinkedIn.",
       ack: "Voglio cercare su LinkedIn con l'accesso effettuato, al costo di VIOLARE i Termini di servizio di LinkedIn — cosa che può portare a restrizioni dell'account, fino al ban permanente. Accetto la piena responsabilità.",
       enable: "Attiva “Scansiona le offerte LinkedIn (richiede l'accesso a LinkedIn)”",
       connectHint: "Collega la sessione LinkedIn qui sopra per eseguire una ricerca.",
       runNow:
         "Esegui subito una ricerca con i ruoli e le località salvati — i risultati arrivano nel tuo feed Scopri offerte.",
-      searching: "Ricerca in corso…",
       freshBtn: "Nuova ricerca",
       nextBtn: "Pagina successiva",
       nextHint: "Continua l'ultima ricerca da dove si era fermata — i prossimi 25 risultati per ruolo × località.",
       nextInfo:
         "«Pagina successiva» riesegue l'ultima nuova ricerca con esattamente gli stessi ruoli e località all'offset successivo — modificare le preferenze nel frattempo non la cambia (per quello serve una nuova ricerca). È disponibile per 12 ore dopo una nuova ricerca, poi scompare: LinkedIn riordina i risultati di continuo, quindi un offset vecchio punterebbe a una lista spostata. LinkedIn non ha alcun timeout di paginazione — la finestra è una nostra regola di freschezza. Scompare anche quando i risultati di LinkedIn si esauriscono.",
       resultsPerSearch: "Risultati per ricerca",
-      resultsPerSearchInfo:
-        "Quante offerte prelevare per ruolo × località, in pagine da 25. Più alto significa più risultati — ma più richieste lanciate in un'unica raffica sul <strong>tuo</strong> account LinkedIn, il che aumenta il rischio di rate limit e per l'account. Mantienilo contenuto.",
       started: "Ricerca avviata — le nuove corrispondenze appariranno a breve in Scopri offerte.",
       failed: "Ricerca non riuscita.",
       scanning: "Scansione di LinkedIn…",
@@ -861,13 +850,6 @@ const it: DeepPartial<Messages> = {
       errorFallback: "errore",
       resume: "Riprendi l'invio",
       disconnect: "Disconnetti",
-      tier: "Tipo di account",
-      tierCapsLabel: "Limiti per tipo di account",
-      tierInfo:
-        "Il worker LinkedIn applica questi limiti. Nuovo = 15/giorno · 100/settimana. Consolidato = 30/giorno · 200/settimana. Scegli quello che descrive onestamente il tuo account.",
-      tierHint: "Scegli il tipo che corrisponde al tuo account.",
-      tierNew: "Account nuovo (predefinito sicuro)",
-      tierSeasoned: "Account consolidato",
     },
     observability: {
       title: "Osservabilità",
@@ -1006,9 +988,6 @@ const it: DeepPartial<Messages> = {
         "Finestre mobili, non giorni o settimane di calendario — ogni invio si libera 24 ore (limite giornaliero) o 7 giorni (limite settimanale) dopo essere stato effettuato. Limiti prudenti, ben al di sotto di quelli di LinkedIn.",
       automatedQuota:
         "Quota automatica — ultime 24h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> ultimi 7g: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
-      dmTooltip:
-        "I messaggi diretti ai collegamenti di 1º grado non hanno limite e non contano mai nella quota degli inviti",
-      dmCounter: "DM (ultime 24h): <strong>{{dmSent}}</strong> (senza limite)",
       manualModeQuota: "Modalità manuale — tieni tu il conto rispetto ai limiti del tuo LinkedIn",
       dailyLimitReached: "Limite giornaliero raggiunto. Le nuove richieste restano in coda fino a domani.",
       closeToLimit_one: "Vicino al limite giornaliero — {{count}} richiesta rimasta oggi.",
@@ -1055,8 +1034,6 @@ const it: DeepPartial<Messages> = {
       findMore: "Trovane altri 10",
       confirmCompanyNext: "Conferma azienda →",
       close: "Chiudi",
-      sendConfirmBody:
-        "Questo invia vere richieste di collegamento / DM su LinkedIn dal tuo account, una alla volta. finds-you-jobs non può annullarle — per ritirare una richiesta o eliminare un messaggio, fallo tu stesso su <span>linkedin.com</span>.",
       sendingEllipsis: "Invio…",
       sendNow: "Invia ora",
       rowReached: "Contattato",

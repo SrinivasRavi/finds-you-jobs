@@ -780,13 +780,7 @@ const nl: DeepPartial<Messages> = {
     },
     referral: {
       title: "Referral Outreach",
-      intro:
-        "Stuur automatisch berichten naar mensen bij een bedrijf waar je solliciteert — vanaf je eigen LinkedIn-account — om een referral te vragen. Je bevestigt elke batch voordat die wordt verstuurd.",
       howLabel: "Hoe Referral Outreach werkt",
-      howInfo:
-        "Het vindt <em>huidige</em> medewerkers van het bedrijf en stelt voor elk een kort bericht op vanuit een vast sjabloon per rol (collega / hiring manager / recruiter / management) dat je kunt bewerken — of klik op Opnieuw genereren voor een AI-versie op basis van je profiel. Versturen gaat via je eigen LinkedIn-sessie als connectieverzoeken of DM's, langzaam gedoseerd met voorzichtige dag- en weeklimieten om het detectierisico te verlagen. Standaard uit; je kunt het ook alleen voor concepten gebruiken en zelf versturen. Contacten handmatig bijhouden (het tabblad Netwerk) staat altijd aan en heeft dit alles niet nodig.",
-      warning:
-        "Elke vorm van automatisering op LinkedIn is in strijd met de gebruiksvoorwaarden van LinkedIn. finds-you-jobs misbruikt de automatisering niet om data te verzamelen, te verkopen of ermee te verdienen, en houdt de automatisering 1-op-1 identiek aan wat een mens zou doen — berichten versturen op menselijke typsnelheid, met respect voor daglimieten en willekeurige timing. Maar hoe we het ook wenden of keren, de gebruiksvoorwaarden van LinkedIn worden geschonden; we dringen er daarom op aan dat je je eigen oordeel gebruikt en de volledige verantwoordelijkheid neemt voor de gevolgen vanuit LinkedIn. Je account kan beperkingen krijgen, en finds-you-jobs is niet verantwoordelijk voor gevolgen voor je LinkedIn-account. Gebruik deze functie verantwoord, houd je verzonden berichten in de gaten en zet hem uit als je ongebruikelijk accountgedrag opmerkt. Deze functie niet gebruiken heeft geen enkele invloed op je LinkedIn-account of enig ander account.",
       ack: "Ik wil LinkedIn-outreach voor referrals automatiseren, ook al SCHENDT dit de gebruiksvoorwaarden van LinkedIn — wat kan leiden tot accountbeperkingen, tot en met een permanente ban. Ik aanvaard de volledige verantwoordelijkheid.",
       enable: "Referral Outreach inschakelen",
       lockedHint:
@@ -799,22 +793,17 @@ const nl: DeepPartial<Messages> = {
       howLabel: "Hoe LinkedIn-vacaturezoeken werkt",
       howInfo:
         "Een eenmalige zoekopdracht via je eigen ingelogde LinkedIn-sessie, die alleen draait wanneer je op Zoeken klikt — geplande scans raken hem nooit aan. Alleen-lezen richting LinkedIn; resultaten worden ontdubbeld tegen alles wat al gevonden is. Deelt dezelfde sessie met Referral Outreach.",
-      warning:
-        "LinkedIn doorzoeken terwijl je bent ingelogd betekent dat vacatures via automatisering worden uitgelezen, wat in strijd is met de gebruiksvoorwaarden van LinkedIn. finds-you-jobs verkoopt of misbruikt nooit wat het uitleest, en houdt de voetafdruk minimaal: de zoekopdracht draait ALLEEN wanneer jij erop klikt (nooit volgens schema) en haalt een bescheiden batch op — standaard 25 vacatures — op menselijk tempo, zodat het oogt als gewoon browsen in plaats van bulk-scraping. Maar hoe we het ook wenden of keren, de gebruiksvoorwaarden van LinkedIn worden geschonden; gebruik dus je eigen oordeel en neem de volledige verantwoordelijkheid. Je account kan beperkingen krijgen, en finds-you-jobs is niet verantwoordelijk voor gevolgen voor je LinkedIn-account. Zet het uit als je ongebruikelijk accountgedrag opmerkt. Deze functie niet gebruiken heeft geen enkele invloed op je LinkedIn-account.",
       ack: "Ik wil LinkedIn doorzoeken terwijl ik ben ingelogd, ook al SCHENDT dit de gebruiksvoorwaarden van LinkedIn — wat kan leiden tot accountbeperkingen, tot en met een permanente ban. Ik aanvaard de volledige verantwoordelijkheid.",
       enable: "“LinkedIn-vacatures scannen (LinkedIn-login vereist)” inschakelen",
       connectHint: "Verbind hierboven de LinkedIn-sessie om een zoekopdracht uit te voeren.",
       runNow:
         "Voer nu een zoekopdracht uit met je opgeslagen functies & locaties — resultaten verschijnen in je feed in Vacatures ontdekken.",
-      searching: "Zoeken…",
       freshBtn: "Nieuwe zoekopdracht",
       nextBtn: "Volgende pagina",
       nextHint: "Ga verder waar de laatste zoekopdracht stopte — de volgende 25 resultaten per rol × locatie.",
       nextInfo:
         "\"Volgende pagina\" voert de laatste nieuwe zoekopdracht met exact dezelfde rollen en locaties op de volgende offset opnieuw uit — tussentijdse wijzigingen in je voorkeuren veranderen daar niets aan (start daarvoor een nieuwe zoekopdracht). De knop is 12 uur na een nieuwe zoekopdracht beschikbaar en verdwijnt daarna: LinkedIn herschikt resultaten voortdurend, dus een oude offset zou naar een verschoven lijst wijzen. LinkedIn zelf kent geen paginerings-timeout — het venster is onze eigen versheidsregel. De knop verdwijnt ook zodra LinkedIns resultaten op zijn.",
       resultsPerSearch: "Resultaten per zoekopdracht",
-      resultsPerSearchInfo:
-        "Hoeveel vacatures per functie × locatie worden opgehaald, in pagina's van 25. Hoger betekent meer resultaten — maar ook meer verzoeken in één burst op <strong>je eigen</strong> LinkedIn-account, wat het rate-limit-/accountrisico verhoogt. Houd het bescheiden.",
       started: "Zoekopdracht gestart — nieuwe matches verschijnen zo in Vacatures ontdekken.",
       failed: "Zoekopdracht mislukt.",
       scanning: "LinkedIn scannen…",
@@ -884,13 +873,6 @@ const nl: DeepPartial<Messages> = {
       errorFallback: "fout",
       resume: "Outreach hervatten",
       disconnect: "Verbinding verbreken",
-      tier: "Accountniveau",
-      tierCapsLabel: "Limieten per accountniveau",
-      tierInfo:
-        "De LinkedIn-worker handhaaft deze limieten. Nieuw = 15/dag · 100/wk. Doorgewinterd = 30/dag · 200/wk. Kies het niveau dat eerlijk bij je account past.",
-      tierHint: "Kies het niveau dat bij je account past.",
-      tierNew: "Nieuw account (veilige standaard)",
-      tierSeasoned: "Doorgewinterd account",
     },
     observability: {
       title: "Observability",
@@ -1029,9 +1011,6 @@ const nl: DeepPartial<Messages> = {
         "Rollende vensters, geen kalenderdag/-week — elke verzending komt 24 uur (dag) of 7 dagen (week) na het versturen weer vrij. Voorzichtige limieten, ruim onder die van LinkedIn.",
       automatedQuota:
         "Automatisch quotum — laatste 24u: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> laatste 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
-      dmTooltip:
-        "Directe berichten aan 1e-graads connecties zijn onbeperkt en tellen nooit mee voor het uitnodigingsquotum",
-      dmCounter: "DM's (laatste 24u): <strong>{{dmSent}}</strong> (onbeperkt)",
       manualModeQuota: "Handmatige modus — houd je eigen LinkedIn-limieten zelf bij",
       dailyLimitReached: "Daglimiet bereikt. Nieuwe verzoeken wachten in de rij tot morgen.",
       closeToLimit_one: "Bijna bij je daglimiet — vandaag nog {{count}} verzoek over.",
@@ -1078,8 +1057,6 @@ const nl: DeepPartial<Messages> = {
       findMore: "Zoek 10 meer",
       confirmCompanyNext: "Bedrijf bevestigen →",
       close: "Sluiten",
-      sendConfirmBody:
-        "Dit verstuurt echte LinkedIn-connectieverzoeken / DM's vanaf je account, één voor één. finds-you-jobs kan ze niet terughalen — wil je een verzoek intrekken of een bericht verwijderen, doe dat dan zelf op <span>linkedin.com</span>.",
       sendingEllipsis: "Versturen…",
       sendNow: "Nu versturen",
       rowReached: "Bereikt",

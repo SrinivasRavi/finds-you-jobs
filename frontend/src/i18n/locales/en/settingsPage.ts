@@ -36,10 +36,8 @@ const settingsPage = {
     // Community
     communityTitle: "Community",
     communityBody:
-      "Join the Discord to swap job-search tactics, get beta help, and help shape where the app goes next.",
+      "Join the Discord to discuss job-search tactics with other users, get help for the app, and help shape where the app goes next. For instance, if you find a prompt or configuration that works great, share it in the #prompts-and-configs channel. We will incorporate the best community setups into the app.",
     discordButton: "Join our Discord",
-    promptsCallout:
-      "Found a prompt or configuration that works great? Share it in the #prompts-and-configs channel — the best community setups get folded into the app.",
     // About / legal
     aboutTitle: "About",
     licenseLine:
@@ -203,7 +201,6 @@ const settingsPage = {
     connectHint: "Connect the LinkedIn session above to run a search.",
     runNow:
       "Run a search now with your saved roles & locations — results land in your Discover jobs feed.",
-    searching: "Searching…",
     freshBtn: "Fresh search",
     nextBtn: "Next page",
     nextHint: "Continue the last search where it left off — the next 25 results per role × location.",
@@ -281,20 +278,11 @@ const settingsPage = {
     validateFailed: "Validate failed: {{message}}",
     errorFallback: "error",
     resume: "Resume outreach",
+    resumeConfirmTitle: "Resume outreach early?",
+    resumeConfirmBody:
+      "LinkedIn rate-limited this account within the last 24 hours. Resuming early increases the risk of account restriction. We recommend waiting until {{until}}.",
+    resumeConfirmOk: "Resume anyway",
     disconnect: "Disconnect",
-    tier: "Account tier",
-    tierCapsLabel: "Account-tier caps",
-    tierInfo:
-      "The LinkedIn worker enforces these caps — they sit well below the limits LinkedIn is believed to enforce. Invites: New = 8/day · 30/wk, Seasoned = 10/day · 65/wk. DMs: New = 10/day · 50/wk, Seasoned = 25/day · 120/wk. Pick the one that honestly matches your account.",
-    tierHint: "Pick the tier that matches your account.",
-    tierNew: "New account (safe default)",
-    tierSeasoned: "Seasoned account",
-    plan: "LinkedIn plan",
-    planInfo:
-      "Free LinkedIn accounts get roughly 5 personalized invitation notes per month; the worker conservatively allows 3 and then asks you to send note-less (you can DM the referral ask after they accept). Premium accounts have no note limit, so setting Premium lifts that gate. This changes nothing else.",
-    planHint: "Free accounts have a monthly cap on invitation notes.",
-    planFree: "Free",
-    planPremium: "Premium",
   },
   observability: {
     title: "Observability",
@@ -327,7 +315,7 @@ const settingsPage = {
     contactPurgeHint: "Deleted contacts are erased permanently this many days later.",
     expireListingLabel: "Mark a job listing “Older” after",
     expireListingHint:
-      "A job we haven't seen again in a scan for this many days is greyed as an “Older listing” — still on the board, and you can restore it.",
+      "A job that has been on your board this many days is greyed as an “Older listing” — still on the board and restorable. Greyed listings are removed from the feed about a month later; Saved jobs are never auto-removed.",
     trashedJobsLabel: "Erase deleted jobs for good after",
     trashedJobsHint:
       "Deleted jobs are erased permanently (and won't be re-scraped) this many days later.",

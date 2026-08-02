@@ -20,6 +20,7 @@ const jobBoard = {
     anyTime: "Any time",
     last24h: "24h",
     last7d: "7d",
+    last14d: "14d",
     last30d: "30d",
     minSalary: "Min salary",
     any: "Any",
@@ -55,6 +56,8 @@ const jobBoard = {
     applicants_other: "{{count}} applicants",
     scoring: "scoring…",
     olderListing: "Older listing",
+    olderListingTitle:
+      "On your board longer than your feed-aging window (14 days by default — Settings › Privacy & Data). Greyed listings are removed from the feed about a month later; Save the job or use Restore listing to keep it.",
     keywordScoreTitle: "Keywords scored (free, on-device) — grey, not an AI score",
   },
   empty: {
@@ -86,7 +89,8 @@ const jobBoard = {
     toggleCoverLetter: "Cover letter",
     toggleFindReferrals: "Find referrals",
     restoreListing: "Restore listing",
-    restoreListingTitle: "Restore this older listing to the active feed",
+    restoreListingTitle:
+      "Marked \u201cOlder listing\u201d after sitting on your board past the feed-aging window; greyed listings leave the feed about a month later. Restore puts it back to active and restarts that clock \u2014 Saved jobs are never auto-removed.",
     cantWatchSource: "Can't watch this source",
     watchFailedTitle: "Watch failed — check connection and retry. ({{message}})",
     watchOnTitle: "Scanning this company's board on every scan — click to stop",
