@@ -318,6 +318,28 @@ export function invalidateFeed(qc: QueryClient): void {
   qc.invalidateQueries({ queryKey: qk.trash });
 }
 
+/** Invalidate the referral-roster views at once: the find-referrals popup's
+ *  candidate list, the contact kanban, and the Tracker card's Referrals slot. */
+export function invalidateRoster(qc: QueryClient): void {
+  qc.invalidateQueries({ queryKey: qk.referralCandidates });
+  qc.invalidateQueries({ queryKey: qk.contacts });
+  qc.invalidateQueries({ queryKey: qk.applications });
+}
+
+/** Invalidate both contact rosters — the live kanban and the "Deleted Contacts"
+ *  recovery modal (an archive/restore moves a row between them). */
+export function invalidateContactLists(qc: QueryClient): void {
+  qc.invalidateQueries({ queryKey: qk.contacts });
+  qc.invalidateQueries({ queryKey: qk.archivedContacts });
+}
+
+/** Invalidate the Tracker's card list + the detail-modal Activity tab — every
+ *  mutation that writes an Activity event (FR-TR-03/04) needs both. */
+export function invalidateTracker(qc: QueryClient): void {
+  qc.invalidateQueries({ queryKey: qk.applications });
+  qc.invalidateQueries({ queryKey: qk.activity });
+}
+
 export function useSaveJob() {
   const qc = useQueryClient();
   return useMutation({
@@ -589,10 +611,7 @@ export function useMoveApplication() {
     mutationFn: ({ id, stage }: { id: string; stage: Stage }) =>
       Promise.resolve(api.moveApplication(id, stage)),
     // A move writes an Activity event (FR-TR-03) → refresh the detail-modal tab.
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
-    },
+    onSuccess: () => invalidateTracker(qc),
   });
 }
 
@@ -612,10 +631,7 @@ export function useUpdateApplication() {
       Promise.resolve(api.updateApplication(id, patch)),
     // A notes edit / column move writes an Activity event (FR-TR-04) — refresh
     // the detail-modal Activity tab so it appears without a manual reload.
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
-    },
+    onSuccess: () => invalidateTracker(qc),
   });
 }
 
@@ -824,8 +840,7 @@ export function useAttestApply() {
       Promise.resolve(api.attestApplyRun(runId, submitted)),
     onSuccess: (run) => {
       qc.setQueryData([...qk.applyRun, run.id], run);
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
+      invalidateTracker(qc);
     },
   });
 }
@@ -865,14 +880,19 @@ export function useConnectLinkedIn() {
   });
 }
 
+/** Every endpoint that returns the authoritative session lands it the same way:
+ *  write it into the session cache, then refresh the referral quota — the caps
+ *  it counts against ride on that session. */
+function applyLinkedInSession(qc: QueryClient, session: LinkedInSessionState): void {
+  qc.setQueryData(qk.linkedinSession, session);
+  qc.invalidateQueries({ queryKey: qk.referralQuota });
+}
+
 function useLinkedInSessionMutation(fn: () => Promise<LinkedInSessionState> | LinkedInSessionState) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => Promise.resolve(fn()),
-    onSuccess: (session) => {
-      qc.setQueryData(qk.linkedinSession, session);
-      qc.invalidateQueries({ queryKey: qk.referralQuota });
-    },
+    onSuccess: (session) => applyLinkedInSession(qc, session),
   });
 }
 
@@ -916,10 +936,7 @@ export function useSetLinkedInRateLimits() {
       override_value?: number;
       reset_overrides?: boolean;
     }) => Promise.resolve(api.setLinkedInRateLimits(body)),
-    onSuccess: (session) => {
-      qc.setQueryData(qk.linkedinSession, session);
-      qc.invalidateQueries({ queryKey: qk.referralQuota });
-    },
+    onSuccess: (session) => applyLinkedInSession(qc, session),
   });
 }
 
@@ -937,10 +954,7 @@ export function useAddContact() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ContactInput) => Promise.resolve(api.addContact(input)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.archivedContacts });
-    },
+    onSuccess: () => invalidateContactLists(qc),
   });
 }
 
@@ -949,10 +963,7 @@ export function useUpdateContact() {
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Partial<NetContact> & { archived?: boolean } }) =>
       Promise.resolve(api.updateContact(id, patch)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.archivedContacts });
-    },
+    onSuccess: () => invalidateContactLists(qc),
   });
 }
 
@@ -1080,30 +1091,18 @@ export function useSSEInvalidation(qc: QueryClient): void {
       () => qc.invalidateQueries({ queryKey: qk.scanProgress }),
       500,
     );
-    const invalidatePacket = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
-    }, THROTTLE_MS);
+    const invalidatePacket = makeTrailingThrottle(() => invalidateTracker(qc), THROTTLE_MS);
     const invalidateNetworkingLists = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.archivedContacts });
+      invalidateContactLists(qc);
       qc.invalidateQueries({ queryKey: qk.referralQuota });
       qc.invalidateQueries({ queryKey: qk.applications });
     }, THROTTLE_MS);
-    const invalidateReferralRoster = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.referralCandidates });
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.applications });
-    }, THROTTLE_MS);
+    const invalidateReferralRoster = makeTrailingThrottle(() => invalidateRoster(qc), THROTTLE_MS);
     // Per-candidate discover events (roster liveness, restored 2026-07-25):
     // same roster-scoped keys the pre-F-H4 bridge invalidated on `candidate`
     // events, but grouped through a wider trailing window so a "Find 10 more"
     // burst lands as ~2 refetches/second, not one per contact.
-    const invalidateRosterCandidates = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.referralCandidates });
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.applications });
-    }, 500);
+    const invalidateRosterCandidates = makeTrailingThrottle(() => invalidateRoster(qc), 500);
     const invalidateApplications = makeTrailingThrottle(() => {
       qc.invalidateQueries({ queryKey: qk.applications });
     }, THROTTLE_MS);
