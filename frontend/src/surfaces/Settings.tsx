@@ -155,6 +155,14 @@ export function Settings() {
               is deliberately the feature's ONE reveal point (it is never
               advertised elsewhere), so the copy carries the full context. */}
           <ReferralOutreachSection settings={settings} patch={patch} ack={ack} onAck={setAck} />
+
+          {/* LinkedIn self-imposed rate limits — beside the feature whose
+              session it governs (maintainer 2026-08-02: feature configs live in
+              their feature's category; only lifecycle + logs stay under Data).
+              It also caps the Discover-jobs LinkedIn search (pages/hour) — that
+              block links here by name. Renders nothing until a rate-limit
+              profile exists. */}
+          <LinkedInRateLimitsSection />
           </div>
           )}
 
@@ -164,14 +172,8 @@ export function Settings() {
           <ObservabilitySection settings={settings} patch={patch} />
 
           {/* Contact & data lifecycle (FR-SYS-06 / FR-NW-15) — configurable
-              windows for kanban ghosting, purge, and the contact-sync cadence. */}
+              windows for kanban ghosting, purge, and feed aging. */}
           <LifecycleSection settings={settings} patch={patch} />
-
-          {/* LinkedIn self-imposed rate limits (maintainer directive 2026-08-01):
-              its own always-visible card here. Governs both job-search and
-              Referral Outreach caps; the section reads the shared session and
-              renders nothing until a LinkedIn session/profile exists. */}
-          <LinkedInRateLimitsSection />
           </div>
           )}
 

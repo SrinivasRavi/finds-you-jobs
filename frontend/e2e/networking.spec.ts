@@ -105,9 +105,8 @@ test("tracker referrals slot opens the find-referrals popup", async ({
 
   await request.post(`${base}/api/settings`, {
     headers: auth,
-    // The Discover feed filters by the Job-finder preferences (career-ops
-    // filter parity, discovery.md 2026-07-21) — without a matching role alias
-    // the seeded job below never renders and the JD pane can't open.
+    // Aliases/locations keep the seeded job inside the Job-finder preferences
+    // filter (career-ops filter parity, discovery.md 2026-07-21).
     data: {
       voyager_risk_marker_on: true,
       role_aliases: ["platform engineer"],
@@ -133,18 +132,22 @@ test("tracker referrals slot opens the find-referrals popup", async ({
       },
     })
   ).json();
-  await request.post(`${base}/api/applications`, {
-    headers: auth,
-    data: { job_id: job.id, generate_resume: false, generate_cover: false },
-  });
 
   // With networking ON, the Job Board's JD pane regains its per-job
   // Find-referrals toggle (US-JB-03 / US-NW-09, restored 2026-07-17).
+  // Visit /jobs BEFORE creating the application: the board excludes saved
+  // jobs server-side, so once the application below exists this row is gone
+  // from the feed (2026-08-02 — this ordering, not the prefs filter, was why
+  // the row never rendered).
   await page.goto("/jobs");
   await page.getByText("Platform Engineer").first().click();
   await expect(page.getByTestId("jd-referrals-toggle")).toBeVisible({ timeout: 15_000 });
   await page.screenshot({ path: `${DIR}/jd-referrals-toggle.png`, fullPage: true });
 
+  await request.post(`${base}/api/applications`, {
+    headers: auth,
+    data: { job_id: job.id, generate_resume: false, generate_cover: false },
+  });
   await page.goto("/applications");
   await expect(page.getByText("Platform Engineer").first()).toBeVisible({
     timeout: 15_000,
@@ -298,34 +301,45 @@ test("referral rows send one at a time via a per-row confirm", async ({
   await expect(row).toBeVisible();
 });
 
-// Settings surface for the caps work (2026-07-30): the LinkedIn plan selector
-// (conditions the free-only note budget) and the job-search pull capped at 25.
+// Settings surface for the caps work: the membership × risk% rate-limit card
+// and the job-search pull capped at 25.
 // ZERO live LinkedIn: only local settings mutations; Search is never clicked.
 
-test("settings expose the plan selector and the 25-job search cap", async ({
+test("settings expose the rate-limit controls and the 25-job search cap", async ({
   page,
   request,
 }) => {
   const { base, token } = sidecarInfo();
   const auth = { Authorization: `Bearer ${token}` };
 
-  await request.post(`${base}/api/settings`, {
-    headers: auth,
-    data: { voyager_risk_marker_on: true },
-  });
   await request.post(`${base}/api/profile`, {
     headers: auth,
     data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
   });
   await request.post(`${base}/api/dev/linkedin/mark-session-valid`, { headers: auth });
 
+  // With BOTH LinkedIn opt-ins off, the rate-limits card is hidden — caps for
+  // features you haven't enabled are pure noise (maintainer 2026-08-02).
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: false },
+  });
   await page.goto("/settings");
-  // Self-imposed rate limits (2026-08-01): its own always-visible card on the
-  // Privacy & Data category (maintainer directive — it governs both LinkedIn
-  // features' caps, so it lives beside data lifecycle, not inside one feature).
-  // One membership dropdown + risk slider drive all caps; membership replaces
-  // the old New/Seasoned tier + Free/Premium plan selectors.
-  await page.getByTestId("settings-nav-data").click();
+  await page.getByTestId("settings-nav-networking").click();
+  await expect(page.getByTestId("linkedin-membership-select")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/settings-rate-limits-hidden.png`, fullPage: true });
+
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: true },
+  });
+  await page.reload();
+  // Self-imposed rate limits: lives in the Networking category beside the
+  // shared LinkedIn session it scopes to (maintainer 2026-08-02 — feature
+  // configs sit in their feature's category; only lifecycle + logs stay under
+  // Data). One membership dropdown + risk slider drive all caps; membership
+  // replaces the old New/Seasoned tier + Free/Premium plan selectors.
+  await page.getByTestId("settings-nav-networking").click();
   const membership = page.getByTestId("linkedin-membership-select");
   await membership.scrollIntoViewIfNeeded();
   await expect(membership).toBeVisible();

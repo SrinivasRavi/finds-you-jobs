@@ -19,14 +19,17 @@ import {
   useLinkedInSession,
   useResumeLinkedIn,
   useSetLinkedInRateLimits,
+  useSettings,
   useValidateLinkedIn,
 } from "../../api/queries";
 import type { LinkedInCap, LinkedInSessionState, Settings as SettingsT } from "../../api/types";
+import { ConfirmDialog } from "../../shell/ConfirmDialog";
 import { InfoDot } from "../../shell/InfoDot";
 import { ExperimentalHazard, LinkedInRiskLine, MUTED_WARN_BOX, Section, Toggle } from "./shared";
 
 // LinkedIn Job Search breaks ToS by SCRAPING listings (not messaging) — its own
-// justification: one-off + small default batch, so it reads as ordinary browsing.
+// warning copy: user-clicked one-offs, one page of 25, no claims about how
+// LinkedIn classifies the traffic.
 const JOB_SEARCH_WARNING = "settingsPage.linkedinSearch.warning";
 
 type PillVariant = { cls: string; dot: string; label: string };
@@ -86,6 +89,7 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   const validate = useValidateLinkedIn();
   const resume = useResumeLinkedIn();
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+  const [resumeConfirm, setResumeConfirm] = useState(false);
 
   if (!session) return null;
   const status = session.status;
@@ -93,6 +97,12 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   const connecting = status === "connecting" || connect.isPending;
   const connected = status === "valid";
   const open = openOverride ?? !connected; // expanded until connected, then tidy
+  // Resume is the one control that switches a safety mechanism OFF — it clears
+  // the 24 h backoff LinkedIn's own 429/999 put us in. While that pause is
+  // still running, resuming crosses a confirm; once it has lapsed there is
+  // nothing left to warn about, so the click fires straight through.
+  const pausedUntilMs = session.paused_until ? new Date(session.paused_until).getTime() : NaN;
+  const pauseActive = !Number.isNaN(pausedUntilMs) && pausedUntilMs > Date.now();
 
   return (
     <div className="rounded-lg border border-border bg-surface-2 p-3" data-testid="linkedin-session-section">
@@ -207,7 +217,7 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
               {status === "backing_off" && (
                 <button
                   data-testid="linkedin-resume-btn"
-                  onClick={() => resume.mutate()}
+                  onClick={() => (pauseActive ? setResumeConfirm(true) : resume.mutate())}
                   className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink"
                 >
                   {t("settingsPage.session.resume")}
@@ -229,6 +239,20 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
               section (LinkedInRateLimitsSection), since they govern BOTH
               Referral Outreach and job-search caps. */}
         </div>
+      ) : null}
+      {resumeConfirm ? (
+        <ConfirmDialog
+          title={t("settingsPage.session.resumeConfirmTitle")}
+          body={t("settingsPage.session.resumeConfirmBody", {
+            until: fmtDate(session.paused_until),
+          })}
+          confirmLabel={t("settingsPage.session.resumeConfirmOk")}
+          onConfirm={() => {
+            setResumeConfirm(false);
+            resume.mutate();
+          }}
+          onCancel={() => setResumeConfirm(false)}
+        />
       ) : null}
     </div>
   );
@@ -414,7 +438,6 @@ function LinkedInJobSearchBlock() {
   );
 }
 
-// One override input: pre-filled with the effective cap, committed on blur or
 // The selectable values for one cap: every value up to the estimated ceiling,
 // so the user can never pick above the max (the whole point of a dropdown over a
 // free-text box). Fine-grained for small ceilings (every integer ≤ 20), stepped
@@ -465,13 +488,20 @@ function OverrideSelect({
 // LinkedIn self-imposed rate limits (maintainer directive 2026-08-01). One
 // membership dropdown + one risk slider drive every cap; each cap is
 // independently overridable. Changing membership OR risk resets overrides
-// (enforced server-side). Governs BOTH Referral Outreach and job-search caps —
-// so it sits beside the shared session, not inside one feature.
+// (enforced server-side). Lives in the Networking category beside the shared
+// LinkedIn session it scopes to (maintainer 2026-08-02); it also carries the
+// Discover-jobs search throttle (pages/hour), which links here by name.
 export const LinkedInRateLimitsSection = memo(function LinkedInRateLimitsSection() {
   const { t } = useTranslation();
   const { data: session } = useLinkedInSession();
+  const { data: settings } = useSettings();
   const setLimits = useSetLinkedInRateLimits();
   const rl = session?.rate_limits ?? null;
+  // Caps only govern the two LinkedIn opt-ins, so with both off the card is
+  // pure noise (maintainer 2026-08-02) — same "any feature" condition the
+  // sidecar gates the session routes on.
+  const anyLinkedInFeatureOn =
+    Boolean(session?.enabled) || Boolean(settings?.linkedin_search_enabled);
   // Local slider draft for smooth dragging; committed on release. Re-seeds
   // whenever the server value changes (incl. the clamp on an out-of-range value).
   const [riskDraft, setRiskDraft] = useState<number | null>(null);
@@ -481,7 +511,12 @@ export const LinkedInRateLimitsSection = memo(function LinkedInRateLimitsSection
   // Once the server's committed risk changes (incl. a clamp), drop the local
   // drag draft so the slider follows the authoritative value.
   useEffect(() => setRiskDraft(null), [serverRisk]);
-  if (!rl) return null;
+  // Commit only a real change: pointer-up and blur can both fire for one
+  // adjustment, and arrow-key changes commit on blur rather than per keypress.
+  const commitRisk = (value: number) => {
+    if (value !== serverRisk) setLimits.mutate({ risk_pct: value });
+  };
+  if (!rl || !anyLinkedInFeatureOn) return null;
 
   return (
     <Section title={t("settingsPage.rateLimits.title")}>
@@ -540,8 +575,8 @@ export const LinkedInRateLimitsSection = memo(function LinkedInRateLimitsSection
             disabled={busy}
             data-testid="linkedin-risk-slider"
             onChange={(e) => setRiskDraft(Number(e.target.value))}
-            onPointerUp={(e) => setLimits.mutate({ risk_pct: Number((e.target as HTMLInputElement).value) })}
-            onKeyUp={(e) => setLimits.mutate({ risk_pct: Number((e.target as HTMLInputElement).value) })}
+            onPointerUp={(e) => commitRisk(Number((e.target as HTMLInputElement).value))}
+            onBlur={(e) => commitRisk(Number(e.target.value))}
             className="w-full accent-accent disabled:opacity-60"
           />
           <div className="text-[11.5px] text-warn" data-testid="linkedin-risk-warn">
