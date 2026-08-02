@@ -96,7 +96,6 @@ const popups = {
       nth: "{{degree}}th",
     },
     titleConfirmCompany: "Confirm the company",
-    titleSendingMessages: "Sending messages",
     titleFinding: "Finding referrals…",
     titleView: "View referrals",
     findReferrals: "Find referrals",
@@ -107,8 +106,8 @@ const popups = {
     automatedQuota:
       "Automated quota — last 24h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> last 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
     dmTooltip:
-      "Direct messages to 1st-degree connections are uncapped and never count against the invite quota",
-    dmCounter: "DMs (last 24h): <strong>{{dmSent}}</strong> (uncapped)",
+      "Direct messages to 1st-degree connections have their own daily/weekly budget (our policy cap — LinkedIn publishes no DM limit) and never count against the invite quota",
+    dmCounter: "DMs (last 24h): <strong>{{dmSent}}/{{dmLimit}}</strong>",
     manualModeQuota: "Manual mode — track against your own LinkedIn limits",
     dailyLimitReached: "Daily limit reached. New requests queue until tomorrow.",
     closeToLimit_one: "Close to your daily limit — {{count}} request left today.",
@@ -145,9 +144,6 @@ const popups = {
     findingContacts: "Finding contacts at {{company}}…",
     scanningHint:
       "Scanning LinkedIn via your session · typically 10–30 s. If the company name is ambiguous we'll pause and ask you to confirm it.",
-    sendingTitle: "Sending messages…",
-    sendingHint:
-      "Sent one by one at human typing speed to mimic natural behavior. You can close this — sending continues in the background.",
     emptyConnected: "No contacts found at this company yet.",
     emptyManual:
       "No contacts yet — add one by URL from the Networking page, or turn on Referral Outreach in Settings to auto-discover people at this company.",
@@ -158,11 +154,14 @@ const popups = {
     findMore: "Find 10 more",
     confirmCompanyNext: "Confirm company →",
     close: "Close",
-    reachOut: "Reach out ({{count}})",
-    sendConfirmTitle_one: "Send {{count}} outreach message?",
-    sendConfirmTitle_other: "Send {{count}} outreach messages?",
+    rowConnect: "Connect",
+    rowMessage: "Message",
+    sendConfirmTitle: "Send this to {{name}}?",
+    sendConfirmChannelDm: "It goes out as a direct message from your account.",
+    sendConfirmChannelInvite:
+      "It goes out as a connection request with your note from your account.",
     sendConfirmBody:
-      "This sends real LinkedIn connection requests / DMs from your account, one at a time. finds-you-jobs can’t take them back — to withdraw a request or delete a message, do it yourself on <span>linkedin.com</span>.",
+      "This sends a real LinkedIn message from your account. finds-you-jobs can’t take it back — to withdraw a request or delete a message, do it yourself on <span>linkedin.com</span>.",
     sendingEllipsis: "Sending…",
     sendNow: "Send now",
     rowReached: "Reached",

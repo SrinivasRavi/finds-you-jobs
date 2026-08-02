@@ -36,7 +36,37 @@ from .types import (
     SessionStatusRequest,
 )
 
+# The enforced cap tables (NFR-LI-02). Re-exported so the app derives every
+# user-visible cap from the SAME numbers the send path enforces — the app-side
+# duplicate table (`dto._TIER_CAPS`) once drifted to 2-3× the enforced values
+# (posture doc §4 fix 7). Read-only for the host: it displays these, never
+# re-implements or overrides them.
+from .upstream.pacing import (
+    CEILINGS,
+    DEFAULT_MEMBERSHIP,
+    DEFAULT_RISK_PCT,
+    MAX_JOBS_PER_SEARCH,
+    MEMBERSHIPS,
+    OVERRIDABLE,
+    PacingProfile,
+    clamp_risk,
+    plan_for_membership,
+    resolve_membership,
+    resolve_profile,
+)
+
 __all__ = [
+    "CEILINGS",
+    "MAX_JOBS_PER_SEARCH",
+    "DEFAULT_MEMBERSHIP",
+    "DEFAULT_RISK_PCT",
+    "MEMBERSHIPS",
+    "OVERRIDABLE",
+    "PacingProfile",
+    "clamp_risk",
+    "plan_for_membership",
+    "resolve_membership",
+    "resolve_profile",
     "AccountRef",
     "AuthenticationError",
     "BrowserFailure",

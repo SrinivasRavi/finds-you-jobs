@@ -37,6 +37,7 @@ import type {
   EngineVerifyResult,
   Job,
   JobDraft,
+  ContactSyncResult,
   LinkedInSessionState,
   NetContact,
   NetworkingContact,
@@ -135,10 +136,10 @@ const STAGE_TO_COLUMN: Record<Stage, string> = {
 const LIFECYCLE_DEFAULTS = {
   engagement_ghosted_days: 14,
   sent_ghosted_days: 21,
+  expire_listing_days: 14,
   contact_purge_days: 60,
   trashed_jobs_purge_days: 7,
   archived_applications_purge_days: 30,
-  contact_sync_cadence_hours: 12,
 } as const;
 
 function readLifecycle(raw: unknown): Settings["lifecycle"] {
@@ -1003,12 +1004,11 @@ export class RealApi {
       networking_enabled: p.voyager_risk_marker_on,
       networking_ack_at: (ui.networking_ack_at as string | undefined) ?? null,
       // LinkedIn Job Search — its own experimental opt-in (shares the session).
-      linkedin_search_enabled: Boolean(ui.linkedin_search_enabled),
-      linkedin_search_ack_at: (ui.linkedin_search_ack_at as string | undefined) ?? null,
+      // Typed preference columns since 2026-08-02 (the sidecar 403s on them).
+      linkedin_search_enabled: Boolean(p.linkedin_search_enabled),
+      linkedin_search_ack_at: p.linkedin_search_ack_at ?? null,
       // LinkedIn one-shot per-query fetch budget (discovery-expansion #6);
       // persisted so the user's choice sticks. Default 50 (2 pages).
-      linkedin_search_limit:
-        typeof ui.linkedin_search_limit === "number" ? ui.linkedin_search_limit : 50,
       job_prefs: {
         role_aliases: (p.role_aliases ?? []).map(String),
         locations: (p.locations ?? []).map(String),
@@ -1052,6 +1052,12 @@ export class RealApi {
     if (Object.keys(thresholdPatch).length > 0) {
       body.thresholds = { ...(p.thresholds ?? {}), ...thresholdPatch };
     }
+    if (patch.linkedin_search_enabled !== undefined) {
+      body.linkedin_search_enabled = patch.linkedin_search_enabled;
+    }
+    if (patch.linkedin_search_ack_at !== undefined) {
+      body.linkedin_search_ack_at = patch.linkedin_search_ack_at;
+    }
     if (patch.networking_enabled !== undefined) {
       body.voyager_risk_marker_on = patch.networking_enabled;
     }
@@ -1064,18 +1070,6 @@ export class RealApi {
     let uiTouched = false;
     if (patch.networking_ack_at !== undefined) {
       ui.networking_ack_at = patch.networking_ack_at;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_limit !== undefined) {
-      ui.linkedin_search_limit = patch.linkedin_search_limit;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_enabled !== undefined) {
-      ui.linkedin_search_enabled = patch.linkedin_search_enabled;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_ack_at !== undefined) {
-      ui.linkedin_search_ack_at = patch.linkedin_search_ack_at;
       uiTouched = true;
     }
     if (patch.observability !== undefined) {
@@ -1168,12 +1162,15 @@ export class RealApi {
   }
   /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Returns
    *  the enqueued op; results land in the normal feed. 403 (toggle off) / 409
-   *  (not connected) surface as errors. */
-  async linkedinSearch(limit?: number): Promise<{ id: string; kind: string; state: string }> {
+   *  (not connected / no continuable cursor) surface as errors. `mode: "next"`
+   *  continues the last Fresh search's snapshot from its saved offset. */
+  async linkedinSearch(
+    mode: "fresh" | "next" = "fresh",
+  ): Promise<{ id: string; kind: string; state: string }> {
     return (await this.json(
       "POST",
       "/api/linkedin/search",
-      limit !== undefined ? { limit } : {},
+      { mode },
     )) as { id: string; kind: string; state: string };
   }
   async watchCompany(input: {
@@ -1411,13 +1408,13 @@ export class RealApi {
     const d = await this.req<QuotaDTO>("/api/referrals/quota");
     return {
       connected: d.connected,
-      tier: d.tier as ReferralQuota["tier"],
       daily_used: d.daily_used,
       daily_limit: d.daily_limit,
       weekly_used: d.weekly_used,
       weekly_limit: d.weekly_limit,
       dm_daily_sent: d.dm_daily_sent ?? 0,
       dm_weekly_sent: d.dm_weekly_sent ?? 0,
+      dm_daily_limit: d.dm_daily_limit ?? 0,
     };
   }
 
@@ -1455,9 +1452,30 @@ export class RealApi {
     )) as LinkedInSessionDTO);
   }
 
-  async setLinkedInTier(tier: "new" | "seasoned"): Promise<LinkedInSessionState> {
+  /** Refresh contact statuses from LinkedIn (FR-NW-15). `force` is the user
+   *  pressing Sync; without it the sidecar throttles the opportunistic refresh
+   *  that fires when the Networking surface opens. There is no scheduled sync —
+   *  see `docs/internal/linkedin-posture.md` §1. */
+  async syncContacts(force = false): Promise<ContactSyncResult> {
+    const q = force ? "?force=true" : "";
+    const dto = (await this.json("POST", `/api/networking/contact-sync${q}`, {})) as {
+      id?: string | null; state: string;
+    };
+    return { id: dto.id ?? null, state: dto.state as ContactSyncResult["state"] };
+  }
+
+  /** Set the self-imposed LinkedIn rate-limit profile (2026-08-01). Pass the
+   *  basis (`membership_type` and/or `risk_pct`) — which resets every override —
+   *  OR one `override_key`/`override_value` pin, OR `reset_overrides`. */
+  async setLinkedInRateLimits(body: {
+    membership_type?: string;
+    risk_pct?: number;
+    override_key?: string;
+    override_value?: number;
+    reset_overrides?: boolean;
+  }): Promise<LinkedInSessionState> {
     return toLinkedInSession((await this.json(
-      "POST", "/api/linkedin/tier", { account_tier: tier },
+      "POST", "/api/linkedin/rate-limits", body,
     )) as LinkedInSessionDTO);
   }
 
@@ -1474,15 +1492,23 @@ export class RealApi {
 }
 
 function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
+  const c = d.search_cursor ?? null;
+  const rl = d.rate_limits ?? null;
   return {
     enabled: d.enabled,
     status: d.status as LinkedInSessionState["status"],
-    account_tier: d.account_tier as LinkedInSessionState["account_tier"],
     connected_as: d.connected_as ?? "",
     li_at_expires_at: d.li_at_expires_at ?? null,
     last_validated_at: d.last_validated_at ?? null,
     paused_until: d.paused_until ?? null,
     paused_reason: d.paused_reason ?? "",
+    // The DTO shapes match the app types field-for-field — pass through.
+    search_cursor: c
+      ? { expired: c.expired, exhausted: c.exhausted, next_page_available: c.next_page_available }
+      : null,
+    rate_limits: rl
+      ? { ...rl, memberships: [...rl.memberships], caps: rl.caps.map((x) => ({ ...x })) }
+      : null,
   };
 }
 

@@ -25,9 +25,12 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .types import NetworkerError
+
+if TYPE_CHECKING:
+    from sidecar.packages.referral_outreach.upstream.pacing import PacingProfile
 
 
 class VoyagerDriver(Protocol):
@@ -49,17 +52,18 @@ class VoyagerDriver(Protocol):
         page: int = 1, dry_run: bool
     ) -> dict: ...
     def search_jobs(
-        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+        self, keywords: str, location: str = "", *, start: int = 0,
+        dry_run: bool = False
     ) -> dict: ...
     def send_connection(
-        self, public_identifier: str, note: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, note: str, *, dry_run: bool
     ) -> dict: ...
     def send_dm(
-        self, public_identifier: str, message: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, message: str, *, dry_run: bool
     ) -> dict: ...
     def status(self, public_identifier: str, *, dry_run: bool) -> dict: ...
     def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict: ...
-    def quota(self, tier: str | None) -> dict: ...
+    def quota(self) -> dict: ...
     def resume(self) -> dict: ...
     def session_status(self) -> dict: ...
     def login(
@@ -77,7 +81,7 @@ class DirectVoyagerDriver:
 
     Config the host owns and passes in: the saved cookie file (`storage_state`),
     the persistent Chromium profile dir (`user_data_dir`), the pacing-ledger dir
-    (`state_dir`), the account tier, and `headed`. The session-store encryption
+    (`state_dir`), the pacing profile, and `headed`. The session-store encryption
     key is read by `upstream.secure_store` from the `FYJ_SESSION_KEY` env var
     (NFR-SEC-01) — the host sets it in the process env before a browser op.
     `dry_run` on any call forwards to the worker so no browser/network is touched.
@@ -89,14 +93,20 @@ class DirectVoyagerDriver:
         storage_state: str | None = None,
         user_data_dir: str | None = None,
         state_dir: str | None = None,
-        tier: str | None = None,
+        pacing_profile: PacingProfile | None = None,
+        linkedin_plan: str = "free",
         headed: bool = False,
         env: dict[str, str] | None = None,
     ) -> None:
         self.storage_state = storage_state
         self.user_data_dir = user_data_dir
         self.state_dir = state_dir
-        self.tier = tier
+        # The membership × risk% × override basis (2026-08-01) — drives every cap
+        # (the worker computes the numbers from it).
+        self.pacing_profile = pacing_profile
+        # free|premium — conditions the worker's personalized-note budget
+        # (free-only allowance). 'free' is the conservative default.
+        self.linkedin_plan = linkedin_plan
         self.headed = headed
         # Applied to os.environ for the duration of a call (e.g. FYJ_SESSION_KEY,
         # which `upstream.secure_store` reads to seal/open the storage-state).
@@ -149,6 +159,8 @@ class DirectVoyagerDriver:
             url=url,
             limit=limit,
             prefer_domain=prefer_domain,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
@@ -165,6 +177,8 @@ class DirectVoyagerDriver:
             limit=limit,
             page=page,
             company_urn=company_urn,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
@@ -172,13 +186,16 @@ class DirectVoyagerDriver:
         )
 
     def search_jobs(
-        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+        self, keywords: str, location: str = "", *, start: int = 0,
+        dry_run: bool = False
     ) -> dict:
         return self._call(
             self._worker().search_jobs,
             keywords=keywords,
             location=location,
-            limit=limit,
+            start=start,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
@@ -186,13 +203,14 @@ class DirectVoyagerDriver:
         )
 
     def send_connection(
-        self, public_identifier: str, note: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, note: str, *, dry_run: bool
     ) -> dict:
         return self._call(
             self._worker().send_connection,
             public_identifier=public_identifier,
             note=note,
-            tier=tier if tier is not None else self.tier,
+            profile=self.pacing_profile,
+            linkedin_plan=self.linkedin_plan,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
@@ -201,13 +219,13 @@ class DirectVoyagerDriver:
         )
 
     def send_dm(
-        self, public_identifier: str, message: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, message: str, *, dry_run: bool
     ) -> dict:
         return self._call(
             self._worker().send_dm,
             public_identifier=public_identifier,
             message=message,
-            tier=tier if tier is not None else self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
@@ -227,20 +245,23 @@ class DirectVoyagerDriver:
 
     def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict:
         """Read-only contact-status probe (FR-NW-15): degree + last-message
-        direction/timestamp. No caps decrement (a read, not a send)."""
+        direction/timestamp. Charges the profile-view budget — it is a read, but
+        an authenticated one, and reads are what the restriction ladder watches."""
         return self._call(
             self._worker().contact_sync,
             public_identifier=public_identifier,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
             dry_run=dry_run,
         )
 
-    def quota(self, tier: str | None) -> dict:
+    def quota(self) -> dict:
         return self._call(
             self._worker().quota,
-            tier=tier if tier is not None else self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
         )
 
@@ -248,7 +269,8 @@ class DirectVoyagerDriver:
         """Clear the pacing backoff pause (FR-NW-05 manual resume). Local ledger
         only — no browser, no network."""
         return self._call(
-            self._worker().resume, tier=self.tier, state_dir=self.state_dir
+            self._worker().resume, profile=self.pacing_profile,
+            state_dir=self.state_dir
         )
 
     def session_status(self) -> dict:

@@ -222,11 +222,13 @@ export function useDeleteDiscoveryCredential() {
   });
 }
 /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Invalidates
- *  the feed on success so the newly-found rows appear. */
+ *  the feed on success so the newly-found rows appear; the session query (which
+ *  carries the pagination cursor for the Next-page button) repaints via the
+ *  op's `linkedin` SSE events. `mode: "next"` continues the last Fresh search. */
 export function useLinkedinSearch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (limit?: number) => api.linkedinSearch(limit),
+    mutationFn: (mode: "fresh" | "next" = "fresh") => api.linkedinSearch(mode),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.jobs });
       qc.invalidateQueries({ queryKey: qk.board });
@@ -886,10 +888,34 @@ export function useResumeLinkedIn() {
   return useLinkedInSessionMutation(() => api.resumeLinkedIn());
 }
 
-export function useSetLinkedInTier() {
+/** Refresh contact statuses from LinkedIn (FR-NW-15). Pass `true` for the Sync
+ *  button (always runs); `false`/omitted is the opportunistic refresh the
+ *  Networking surface fires on open, which the sidecar throttles. Replaces the
+ *  retired 12 h schedule — no LinkedIn traffic happens without a user present
+ *  (`docs/internal/linkedin-posture.md` §1). */
+export function useSyncContacts() {
+  return useMutation({
+    mutationFn: (force?: boolean) => Promise.resolve(api.syncContacts(Boolean(force))),
+    // No invalidation here: a 202 means the sync hasn't touched a contact yet.
+    // The SSE terminal handler (contact_sync → invalidateNetworkingLists) does
+    // the refetch when the op actually finishes.
+  });
+}
+
+/** Set the self-imposed LinkedIn rate-limit profile (2026-08-01): membership,
+ *  risk%, per-cap override, or reset. Membership/risk changes reset overrides
+ *  server-side; the returned session carries the recomputed caps. Invalidates
+ *  the referral quota so the popup counter reflects the new caps immediately. */
+export function useSetLinkedInRateLimits() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (tier: "new" | "seasoned") => Promise.resolve(api.setLinkedInTier(tier)),
+    mutationFn: (body: {
+      membership_type?: string;
+      risk_pct?: number;
+      override_key?: string;
+      override_value?: number;
+      reset_overrides?: boolean;
+    }) => Promise.resolve(api.setLinkedInRateLimits(body)),
     onSuccess: (session) => {
       qc.setQueryData(qk.linkedinSession, session);
       qc.invalidateQueries({ queryKey: qk.referralQuota });

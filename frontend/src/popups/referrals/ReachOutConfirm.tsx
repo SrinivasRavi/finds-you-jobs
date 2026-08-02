@@ -1,17 +1,23 @@
-// Per-action confirmation before anything sends (US-NW-09 / vision).
-// (Extracted from ReferralsModal.tsx 2026-07-25, F-M6 monolith split — pure
-// move, zero behavior change.) Not memoized: it only mounts while the confirm
-// overlay is open, so there is no tree to shield.
+// Pre-send confirmation for ONE contact (US-NW-09 / vision). Reworked
+// 2026-07-30: the batch "Send {{count}} messages?" confirm went away with the
+// multi-select — each row's Connect/Message button opens this for exactly one
+// person, showing the message that will actually go out (per-contact confirm;
+// posture doc §5.1). Not memoized: it only mounts while the confirm overlay is
+// open, so there is no tree to shield.
 
 import { Trans, useTranslation } from "react-i18next";
 
 export function ReachOutConfirm({
-  count,
+  name,
+  channel,
+  message,
   sending,
   onCancel,
   onSend,
 }: {
-  count: number;
+  name: string;
+  channel: "dm" | "connection_note";
+  message: string;
   sending: boolean;
   onCancel: () => void;
   onSend: () => void;
@@ -19,9 +25,23 @@ export function ReachOutConfirm({
   const { t } = useTranslation();
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-[rgba(0,0,0,0.35)]" data-testid="reach-out-confirm">
-      <div className="w-[380px] rounded-[12px] border border-border bg-surface p-5 shadow-xl">
-        <h3 className="text-[14px] font-semibold text-ink">{t("popups.referrals.sendConfirmTitle", { count })}</h3>
-        <p className="mt-2 text-[12.5px] text-ink-3">
+      <div className="w-[420px] rounded-[12px] border border-border bg-surface p-5 shadow-xl">
+        <h3 className="text-[14px] font-semibold text-ink">
+          {t("popups.referrals.sendConfirmTitle", { name })}
+        </h3>
+        <p className="mt-1 text-[11.5px] text-ink-3">
+          {channel === "dm"
+            ? t("popups.referrals.sendConfirmChannelDm")
+            : t("popups.referrals.sendConfirmChannelInvite")}
+        </p>
+        {/* The exact text that will be sent — confirm what, not just whether. */}
+        <div
+          className="mt-3 max-h-[180px] overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-ink-2"
+          data-testid="reach-out-confirm-message"
+        >
+          {message}
+        </div>
+        <p className="mt-3 text-[12px] text-ink-3">
           <Trans
             i18nKey="popups.referrals.sendConfirmBody"
             components={{ span: <span className="text-ink-2" /> }}

@@ -770,13 +770,7 @@ const fr: DeepPartial<Messages> = {
     },
     referral: {
       title: "Demandes de recommandation",
-      intro:
-        "Contactez automatiquement des personnes de l'entreprise où vous postulez — depuis votre propre compte LinkedIn — pour demander une recommandation. Vous confirmez chaque lot avant envoi.",
       howLabel: "Comment fonctionnent les demandes de recommandation",
-      howInfo:
-        "Le module trouve les employés <em>actuels</em> de l'entreprise et rédige pour chacun un court message à partir d'un modèle fixe par rôle (pair / hiring manager / recruteur / direction) que vous pouvez modifier — ou cliquez sur Régénérer pour une version IA ancrée dans votre profil. L'envoi passe par votre propre session LinkedIn, sous forme d'invitations ou de DM, à un rythme lent avec des plafonds quotidiens/hebdomadaires prudents pour réduire le risque de détection. Désactivé par défaut ; vous pouvez aussi n'utiliser que les brouillons et envoyer vous-même. Le suivi manuel des contacts (l'onglet Réseau) est toujours actif et n'exige rien de tout cela.",
-      warning:
-        "Toute automatisation sur LinkedIn, quelle qu'elle soit, enfreint les conditions d'utilisation de LinkedIn. finds-you-jobs ne détourne pas cette automatisation pour collecter des données, les vendre ou en tirer profit, et la maintient strictement identique à ce qu'un humain ferait — envoi des messages à vitesse de frappe humaine, respect des plafonds quotidiens et horaires aléatoires. Mais les conditions d'utilisation de LinkedIn sont enfreintes quoi qu'il en soit ; nous insistons donc pour que vous fassiez preuve de discernement et assumiez l'entière responsabilité des conséquences du côté de LinkedIn. Votre compte peut subir des restrictions, et finds-you-jobs n'est pas responsable des conséquences pour votre compte LinkedIn. Utilisez cette fonctionnalité de façon responsable, surveillez vos messages envoyés et désactivez-la si vous remarquez un comportement inhabituel de votre compte. Ne pas utiliser cette fonctionnalité n'affecte en rien votre compte LinkedIn ni aucun autre compte.",
       ack: "Je veux automatiser mes prises de contact LinkedIn pour obtenir des recommandations, au prix d'une VIOLATION des conditions d'utilisation de LinkedIn — ce qui peut entraîner des restrictions de compte, jusqu'au bannissement définitif. J'en accepte l'entière responsabilité.",
       enable: "Activer les demandes de recommandation",
       lockedHint:
@@ -789,22 +783,57 @@ const fr: DeepPartial<Messages> = {
       howLabel: "Comment fonctionne la recherche d'offres LinkedIn",
       howInfo:
         "Une recherche ponctuelle via votre propre session LinkedIn connectée, lancée uniquement quand vous cliquez sur Rechercher — les scans planifiés n'y touchent jamais. Lecture seule côté LinkedIn ; les résultats sont dédupliqués contre tout ce qui a déjà été trouvé. Partage la même session que les demandes de recommandation.",
-      warning:
-        "Chercher des offres sur LinkedIn en étant connecté revient à lire ses annonces par automatisation, ce qui enfreint les conditions d'utilisation de LinkedIn. finds-you-jobs ne revend ni ne détourne jamais ce qu'il lit, et garde une empreinte minimale : la recherche ne s'exécute QUE quand vous cliquez (jamais planifiée) et récupère un lot modeste — 25 offres par défaut — à un rythme humain, pour ressembler à une navigation ordinaire plutôt qu'à du scraping massif. Mais les conditions d'utilisation de LinkedIn sont enfreintes quoi qu'il en soit ; faites donc preuve de discernement et assumez l'entière responsabilité. Votre compte peut subir des restrictions, et finds-you-jobs n'est pas responsable des conséquences pour votre compte LinkedIn. Désactivez-la si vous remarquez un comportement inhabituel de votre compte. Ne pas utiliser cette fonctionnalité n'affecte en rien votre compte LinkedIn.",
       ack: "Je veux rechercher sur LinkedIn en étant connecté, au prix d'une VIOLATION des conditions d'utilisation de LinkedIn — ce qui peut entraîner des restrictions de compte, jusqu'au bannissement définitif. J'en accepte l'entière responsabilité.",
       enable: "Activer « Scanner les offres LinkedIn (connexion LinkedIn requise) »",
       connectHint: "Connectez la session LinkedIn ci-dessus pour lancer une recherche.",
       runNow:
         "Lancez une recherche maintenant avec vos rôles et lieux enregistrés — les résultats arrivent dans votre flux d'offres.",
-      searching: "Recherche…",
-      searchBtn: "Rechercher des offres LinkedIn",
+      freshBtn: "Nouvelle recherche",
+      nextBtn: "Page suivante",
+      nextHint: "Reprendre la dernière recherche là où elle s'est arrêtée — les 25 résultats suivants par rôle × lieu.",
+      nextInfo:
+        "« Page suivante » relance la dernière nouvelle recherche avec exactement les mêmes rôles et lieux au prochain offset — modifier les préférences entre-temps n'y change rien (faites une nouvelle recherche pour cela). Le bouton est proposé pendant 12 heures après une nouvelle recherche, puis disparaît : LinkedIn reclasse les résultats en continu, un ancien offset pointerait donc vers une liste décalée. LinkedIn n'a aucun délai d'expiration de pagination — cette fenêtre est notre propre règle de fraîcheur. Il disparaît aussi quand les résultats de LinkedIn sont épuisés.",
       resultsPerSearch: "Résultats par recherche",
-      resultsPerSearchInfo:
-        "Combien d'offres récupérer par rôle × lieu, par pages de 25. Plus haut = plus de résultats — mais plus de requêtes envoyées en une rafale sur <strong>votre propre</strong> compte LinkedIn, ce qui augmente le risque de rate-limit / de compte. Restez modeste.",
-      jobsOption: "{{n}} offres",
       started:
         "Recherche lancée — les nouvelles correspondances apparaîtront bientôt dans vos offres.",
       failed: "La recherche a échoué.",
+      scanning: "Analyse de LinkedIn…",
+      hourlyReached:
+        "Limite horaire de recherche d'offres atteinte — elle se réinitialise dans l'heure, ou augmentez-la sous « Limites de débit LinkedIn auto-imposées ».",
+    },
+    rateLimits: {
+      title: "Limites de débit auto-imposées sur LinkedIn",
+      intro:
+        "À quel point finds-you-jobs se limite face à LinkedIn. Choisissez votre abonnement, puis définissez à quel point vous acceptez de vous rapprocher des limites estimées de LinkedIn.",
+      info:
+        "Ces plafonds sont les NÔTRES — LinkedIn ne publie presque aucune de ses vraies limites, donc chaque plafond ici est une estimation. Votre abonnement fixe les plafonds estimés ; le curseur de risque les ajuste ; et vous pouvez redéfinir n'importe quel plafond. Le code de démarchage applique exactement ces chiffres.",
+      membershipLabel: "Abonnement LinkedIn",
+      membershipHint: "Fixe les plafonds estimés par action à partir desquels nous ajustons.",
+      membership: {
+        free: "Gratuit (Basique)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Appétit pour le risque",
+      riskWarn:
+        "À 100 %, chaque plafond correspond à notre meilleure estimation de la propre limite de LinkedIn pour votre abonnement. LinkedIn ne publie pas ces chiffres, ce sont donc des estimations — les plus fiables pour un compte en règle. Plus bas laisse une plus grande marge de sécurité ; rien ici ne peut garantir que votre compte ne sera pas restreint.",
+      capsLabel: "Limites individuelles",
+      capsInfo:
+        "Chaque limite démarre au plafond de l'abonnement × risque %. Saisissez un nombre pour la fixer. Changer votre abonnement ou le curseur de risque réinitialise chaque limite fixée à la valeur calculée par défaut.",
+      cap: {
+        invites_day: "Demandes de connexion / jour",
+        invites_week: "Demandes de connexion / semaine",
+        dms_day: "Messages directs / jour",
+        dms_week: "Messages directs / semaine",
+        profile_views_day: "Vues de profil / jour",
+        searches_month: "Recherches de personnes / mois",
+        notes_month: "Notes d'invitation / mois",
+        job_search_pages_hour: "Pages de recherche d'offres / heure (25 offres chacune)",
+      },
+      ofCeiling: "Max : ~{{ceiling}}",
+      custom: "personnalisé",
+      resetBtn: "Réinitialiser aux valeurs par défaut",
     },
     session: {
       title: "Session LinkedIn",
@@ -835,13 +864,6 @@ const fr: DeepPartial<Messages> = {
       errorFallback: "erreur",
       resume: "Reprendre les envois",
       disconnect: "Déconnecter",
-      tier: "Ancienneté du compte",
-      tierCapsLabel: "Plafonds par ancienneté de compte",
-      tierInfo:
-        "Le worker LinkedIn applique ces plafonds. Récent = 15/jour · 100/sem. Aguerri = 30/jour · 200/sem. Choisissez celui qui correspond honnêtement à votre compte.",
-      tierHint: "Choisissez le niveau qui correspond à votre compte.",
-      tierNew: "Compte récent (défaut sûr)",
-      tierSeasoned: "Compte aguerri",
     },
     observability: {
       title: "Observabilité",
@@ -873,6 +895,9 @@ const fr: DeepPartial<Messages> = {
       contactPurgeLabel: "Effacer définitivement les contacts supprimés après",
       contactPurgeHint:
         "Les contacts supprimés sont effacés définitivement ce nombre de jours plus tard.",
+      expireListingLabel: "Marquer une offre “Plus ancienne” après",
+      expireListingHint:
+        "Une offre que nous n'avons pas revue lors d'un scan depuis ce nombre de jours est grisée comme “Annonce plus ancienne” — toujours présente sur le tableau, et vous pouvez la restaurer.",
       trashedJobsLabel: "Effacer définitivement les offres supprimées après",
       trashedJobsHint:
         "Les offres supprimées sont effacées définitivement (et ne seront pas re-scrapées) ce nombre de jours plus tard.",
@@ -970,7 +995,6 @@ const fr: DeepPartial<Messages> = {
         nth: "{{degree}}e",
       },
       titleConfirmCompany: "Confirmez l'entreprise",
-      titleSendingMessages: "Envoi des messages",
       titleFinding: "Recherche de recommandations…",
       titleView: "Voir les recommandations",
       findReferrals: "Trouver des recommandations",
@@ -980,9 +1004,6 @@ const fr: DeepPartial<Messages> = {
         "Fenêtres glissantes, pas de jour/semaine calendaire — chaque envoi se libère 24 heures (quotidien) ou 7 jours (hebdomadaire) après son départ. Plafonds prudents, bien en dessous des limites de LinkedIn.",
       automatedQuota:
         "Quota automatisé — dernières 24 h : <strong>{{dailyUsed}}/{{dailyLimit}}</strong> derniers 7 j : <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
-      dmTooltip:
-        "Les messages directs aux relations de 1er niveau sont sans plafond et ne comptent jamais dans le quota d'invitations",
-      dmCounter: "DM (dernières 24 h) : <strong>{{dmSent}}</strong> (sans plafond)",
       manualModeQuota: "Mode manuel — suivez vos propres limites LinkedIn",
       dailyLimitReached:
         "Limite quotidienne atteinte. Les nouvelles demandes sont mises en file jusqu'à demain.",
@@ -1022,9 +1043,6 @@ const fr: DeepPartial<Messages> = {
       findingContacts: "Recherche de contacts chez {{company}}…",
       scanningHint:
         "Scan de LinkedIn via votre session · en général 10–30 s. Si le nom de l'entreprise est ambigu, nous ferons une pause pour vous demander de le confirmer.",
-      sendingTitle: "Envoi des messages…",
-      sendingHint:
-        "Envoyés un par un, à vitesse de frappe humaine, pour imiter un comportement naturel. Vous pouvez fermer — l'envoi continue en arrière-plan.",
       emptyConnected: "Aucun contact trouvé dans cette entreprise pour l'instant.",
       emptyManual:
         "Pas encore de contacts — ajoutez-en un par URL depuis la page Réseau, ou activez les demandes de recommandation dans Réglages pour découvrir automatiquement des personnes de cette entreprise.",
@@ -1035,11 +1053,6 @@ const fr: DeepPartial<Messages> = {
       findMore: "Trouver 10 de plus",
       confirmCompanyNext: "Confirmer l'entreprise →",
       close: "Fermer",
-      reachOut: "Contacter ({{count}})",
-      sendConfirmTitle_one: "Envoyer {{count}} message de prise de contact ?",
-      sendConfirmTitle_other: "Envoyer {{count}} messages de prise de contact ?",
-      sendConfirmBody:
-        "Cela envoie de vraies invitations LinkedIn / de vrais DM depuis votre compte, un par un. finds-you-jobs ne peut pas les rappeler — pour retirer une invitation ou supprimer un message, faites-le vous-même sur <span>linkedin.com</span>.",
       sendingEllipsis: "Envoi…",
       sendNow: "Envoyer maintenant",
       rowReached: "Contacté",

@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import json
 import logging
+import random
+import time
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 
 from .client import PlaywrightLinkedinAPI
 from .company import company_id_from_urn
 from .errors import ProfileInaccessibleError
+from .pacing import ENRICH_PAUSE_RANGE_S
 from .session import AccountSession, goto_page
 from .url_utils import url_to_public_id
 
@@ -132,10 +135,18 @@ def discover_company_contacts(
 
     api = PlaywrightLinkedinAPI(session=session)
     contacts: list[dict] = []
+    fetched = 0
     for url in urls:
         public_id = url_to_public_id(url)
         if not public_id:
             continue
+        # Pace between profile fetches — the enrichment loop used to run
+        # back-to-back at machine speed, which made us strictly MORE aggressive
+        # than the tool we forked on the axis scraping detection actually keys
+        # on (OpenOutreach sleeps 6-10 s per scraped profile; posture doc §2).
+        if fetched:
+            time.sleep(random.uniform(*ENRICH_PAUSE_RANGE_S))
+        fetched += 1
         try:
             parsed, _raw = api.get_profile(public_identifier=public_id)
         except ProfileInaccessibleError:

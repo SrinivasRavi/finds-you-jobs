@@ -39,25 +39,27 @@ function degreeLabel(degree: number | null): string | null {
 export const CandidateRow = memo(function CandidateRow({
   c,
   connected,
-  selectable,
-  checked,
+  sendable,
   draft,
   expanded,
   sending,
   failure,
-  onToggle,
+  onAsk,
   onExpand,
   onDraft,
 }: {
   c: ReferralCandidate;
   connected: boolean;
-  selectable: boolean;
-  checked: boolean;
+  /** May this row's Connect/Message button fire right now (session live, that
+   *  channel's cap not exhausted, no send already in flight for this row)? */
+  sendable: boolean;
   draft: string;
   expanded: boolean;
   sending: boolean;
   failure: string | null;
-  onToggle: (id: string) => void;
+  /** Open the pre-send confirmation for THIS contact (per-contact confirm —
+   *  the multi-select batch went away 2026-07-30; posture doc §5.1). */
+  onAsk: (id: string) => void;
   onExpand: (id: string) => void;
   onDraft: (id: string, v: string) => void;
 }) {
@@ -75,14 +77,6 @@ export const CandidateRow = memo(function CandidateRow({
             <span className="inline-block h-2 w-2 animate-spin rounded-full border border-warn border-t-transparent" />
             {t("popups.referrals.rowSending")}
           </span>
-        ) : selectable ? (
-          <input
-            type="checkbox"
-            data-testid="referrals-row-checkbox"
-            checked={checked}
-            onChange={() => onToggle(c.contact_id)}
-            className="h-4 w-4 cursor-pointer"
-          />
         ) : (
           <span className="h-4 w-4" />
         )}
@@ -123,6 +117,26 @@ export const CandidateRow = memo(function CandidateRow({
             {t("popups.referrals.linkedIn")}
           </a>
         ) : null}
+        {/* Row-wise send: each contact has its own Connect (cold invite+note)
+            or Message (warm 1st-degree DM) button that opens the pre-send
+            confirmation for exactly this person. Replaces the checkbox
+            multi-select + "Reach out (N)" batch (2026-07-30). */}
+        {connected && !c.already_reached && !sending && (
+          <button
+            type="button"
+            data-testid="referrals-row-send"
+            disabled={!sendable}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAsk(c.contact_id);
+            }}
+            className="rounded-md border border-accent bg-accent px-2.5 py-1 text-[11px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {c.channel === "dm"
+              ? t("popups.referrals.rowMessage")
+              : t("popups.referrals.rowConnect")}
+          </button>
+        )}
         {!connected && (
           <button
             className="rounded-md border border-border-2 bg-surface px-2 py-1 text-[11px] text-ink-2 hover:bg-surface-3"

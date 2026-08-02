@@ -10,7 +10,7 @@
 // connect/enable controls live in Settings, which hasn't landed on this repo
 // yet (its own commit); there is no button here to trigger them.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -18,6 +18,7 @@ import {
   useArchivedContacts,
   useContacts,
   useLinkedInSession,
+  useSyncContacts,
   useUpdateContact,
 } from "../api/queries";
 import type { AudienceTag, ConnectionStatus, NetContact } from "../api/types";
@@ -54,6 +55,23 @@ export function Networking() {
   const contactsQ = useContacts();
   const contacts = useMemo(() => contactsQ.data ?? [], [contactsQ.data]);
   const update = useUpdateContact();
+  const sync = useSyncContacts();
+  // Refreshing needs both the master toggle and a live session; without either
+  // the sidecar refuses (403/409), so don't offer the control.
+  const canSync = Boolean(session.data?.enabled && session.data.status === "valid");
+  // Opportunistic refresh when the user opens Networking — the replacement for
+  // the retired 12 h schedule. Fires once per mount and only when usable; the
+  // sidecar throttles it to CONTACT_SYNC_MIN_INTERVAL_MINUTES, so navigating
+  // in and out cannot turn into a request loop. A ref (not state) so a re-render
+  // between the guard and the call cannot double-fire it.
+  const autoSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!canSync || autoSyncedRef.current) return;
+    autoSyncedRef.current = true;
+    sync.mutate(false);
+    // `sync` is a stable mutation object; re-running on it would defeat the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSync]);
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
   const [audienceFilter, setAudienceFilter] = useState<AudienceTag | null>(null);
   const [search, setSearch] = useState("");
@@ -130,6 +148,23 @@ export function Networking() {
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {connState.label}
             </span>
+          )}
+          {/* Sync is the ONLY way LinkedIn contact statuses refresh, alongside
+              the throttled on-open refresh in the effect above. There is no
+              background timer (`docs/internal/linkedin-posture.md` §1). Shown
+              only when the feature is usable, so it never reads as a dead
+              control on an install that never enabled Referral Outreach. */}
+          {canSync && (
+            <button
+              type="button"
+              data-testid="sync-contacts-btn"
+              onClick={() => sync.mutate(true)}
+              disabled={sync.isPending}
+              title={t("networking.sync.title")}
+              className="inline-flex h-[22px] items-center gap-[5px] rounded-full border border-border px-2 text-[11.5px] font-medium text-ink-2 hover:text-ink disabled:opacity-60"
+            >
+              {sync.isPending ? t("networking.sync.busy") : t("networking.sync.label")}
+            </button>
           )}
           {/* Master Resume: shared launcher, one spot left of the Deleted+Add
               cluster — pixel-aligned with the Job Board / Applications tabs. */}

@@ -21,7 +21,12 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlencode
 
-from .errors import AuthenticationError, BrowserUnresponsiveError, ProfileInaccessibleError
+from .errors import (
+    AuthenticationError,
+    BrowserUnresponsiveError,
+    ProfileInaccessibleError,
+    RateLimited,
+)
 from .jobs import parse_job_search_response
 from .url_utils import url_to_public_id
 from .voyager import parse_connection_degree, parse_last_message, parse_linkedin_voyager_response
@@ -152,9 +157,30 @@ class PlaywrightLinkedinAPI:
         h = {**self.headers, **(headers or {})}
         return self._fetch("POST", url, h, body=data)
 
+    @staticmethod
+    def raise_if_throttled(res: _FetchResponse) -> None:
+        """Turn LinkedIn's throttle/block statuses into `RateLimited`.
+
+        Everything non-ok used to become a plain `OSError`, which `_retry_io`
+        catches and RETRIES three times with backoff — so a 429 or a 999 made us
+        re-request straight into an explicit refusal, and the pacer's 24 h
+        backoff was never entered because `RateLimited` was raised nowhere in the
+        codebase. `RateLimited` is a `VoyagerError`, not an `OSError`, so raising
+        it here deliberately escapes the retry loop.
+
+        999 is LinkedIn's own non-standard anti-bot status; 429 is the standard
+        one. 503 is deliberately NOT here: LinkedIn serves transient 503s for
+        ordinary shed load, and mapping one blip to a 24 h full-stop across every
+        meter is the wrong penalty — the plain OSError path's bounded retry is
+        the standard treatment for it.
+        """
+        if res.status in (429, 999):
+            raise RateLimited(f"LinkedIn returned HTTP {res.status} (throttled/blocked)")
+
     def _check_profile_response(self, res: _FetchResponse, public_identifier: str) -> None:
         if res.status == 401:
             raise AuthenticationError("LinkedIn API returned 401 Unauthorized.")
+        self.raise_if_throttled(res)
         if res.status in (403, 404):
             raise ProfileInaccessibleError(f"{public_identifier} (HTTP {res.status})")
         if not res.ok:
@@ -216,6 +242,11 @@ class PlaywrightLinkedinAPI:
         )
         if res.status == 401:
             raise AuthenticationError("Messaging API returned 401 Unauthorized.")
+        # A throttle here must NOT degrade to "no history": contact-sync drives
+        # one of these per probe, so swallowing a 429/999 as a soft miss kept
+        # the batch hammering the messaging endpoint mid-block (and `RateLimited`
+        # escapes `_retry_io`, so it enters backoff instead of being retried).
+        self.raise_if_throttled(res)
         if not res.ok:
             # A read miss (no thread, 404, transient) is not fatal — no history.
             return {"direction": None, "sent_at": None}
@@ -266,6 +297,7 @@ class PlaywrightLinkedinAPI:
         res = self.get(url)
         if res.status == 401:
             raise AuthenticationError("Jobs search API returned 401 Unauthorized.")
+        self.raise_if_throttled(res)
         if not res.ok:
             raise OSError(f"Jobs search API error {res.status}: {res.text()[:500]}")
         return parse_job_search_response(res.json())

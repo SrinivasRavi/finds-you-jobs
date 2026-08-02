@@ -20,6 +20,7 @@ from ..db.models import (
     EngineSettings,
     Job,
     JobScore,
+    LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
     Operation,
@@ -426,6 +427,8 @@ class PreferencesDTO(BaseModel):
     thresholds: dict[str, Any]
     portals_config: dict[str, Any]
     voyager_risk_marker_on: bool
+    linkedin_search_enabled: bool
+    linkedin_search_ack_at: datetime | None
     engine_routing: dict[str, Any]
     ui_state: dict[str, Any]
 
@@ -440,6 +443,8 @@ class PreferencesUpdate(BaseModel):
     thresholds: dict[str, Any] | None = None
     portals_config: dict[str, Any] | None = None
     voyager_risk_marker_on: bool | None = None
+    linkedin_search_enabled: bool | None = None
+    linkedin_search_ack_at: datetime | None = None
     engine_routing: dict[str, Any] | None = None
     ui_state: dict[str, Any] | None = None
 
@@ -698,14 +703,20 @@ class DiscoverReferralsRequest(BaseModel):
 
 
 class ReachOutRequest(BaseModel):
-    """Batch reach-out (US-NW-09). Each contact gets ITS audience/warmth template
-    (fanned out per person, not one string). Per-action confirmation lives in the
-    UI; `dry_run` plans the sends without touching LinkedIn."""
+    """Reach-out (US-NW-09). Each contact gets ITS audience/warmth template
+    (fanned out per person, not one string). The pre-send confirmation gate
+    lives in the UI (per contact since 2026-07-30 — each row's Connect/Message
+    button confirms and sends one person); `dry_run` plans without touching
+    LinkedIn.
+
+    `contacts` is hard-capped: an unbounded list meant one HTTP request could
+    authorise arbitrarily many real sends (posture doc §5.1 — a user-control
+    ceiling, not a compliance claim). The UI sends one contact per confirm."""
 
     job_id: str | None = None
     application_id: str | None = None
     dry_run: bool = False
-    contacts: list[ReachOutContact]
+    contacts: list[ReachOutContact] = Field(min_length=1, max_length=10)
 
 
 class ReachOutResult(BaseModel):
@@ -729,15 +740,58 @@ class QuotaDTO(BaseModel):
     only on the maintainer's live-dogfood path."""
 
     connected: bool
-    tier: str
     daily_used: int
     daily_limit: int
     weekly_used: int
     weekly_limit: int
-    # 1st-degree DMs: tracked + displayed, never capped — they do not decrement
-    # the invite counters above (FR-NW-04 / NFR-LI-02).
+    # 1st-degree DMs: separately budgeted (they never decrement the invite
+    # counters above — FR-NW-04), and since 2026-07-30 they ARE capped: an
+    # unbounded DM channel next to a capped invite channel was a loophole
+    # (posture doc §4). Limits mirror the package's enforced tier table.
     dm_daily_sent: int = 0
     dm_weekly_sent: int = 0
+    dm_daily_limit: int = 0
+
+
+class LinkedInSearchCursorDTO(BaseModel):
+    """Fresh-search pagination state for "Scan LinkedIn jobs" (Fresh search /
+    Next page). `next_page_available` is the one flag the UI gates the
+    Next-page button on; `expired`/`exhausted` drive the route's 409 wording.
+    The TTL is a host freshness policy (result coherence) — LinkedIn's own
+    pagination is stateless and never expires."""
+
+    expired: bool
+    exhausted: bool               # every snapshotted query hit end-of-results
+    next_page_available: bool     # not expired and not exhausted
+
+
+class LinkedInCapDTO(BaseModel):
+    """One self-imposed cap the user can override. `effective` is the enforced
+    number (an override, or ceiling × risk%); `ceiling` is the estimated
+    LinkedIn limit (the 100% reference); `overridden` says whether `effective`
+    is a manual pin. `key` is the `{meter}_{window}` wire id."""
+
+    key: str
+    meter: str
+    window: str
+    label: str
+    effective: int
+    ceiling: int
+    overridden: bool
+
+
+class LinkedInRateLimitsDTO(BaseModel):
+    """The self-imposed LinkedIn rate-limit profile (maintainer directive
+    2026-08-01). Membership picks the estimated ceilings; `risk_pct` (10–100)
+    scales them (100% = sitting at the estimated real limit); each cap is
+    independently overridable. `job_search_hour_*` is the live pages/hour budget
+    the Next-page button gates on."""
+
+    membership_type: str
+    risk_pct: int
+    memberships: list[str]
+    caps: list[LinkedInCapDTO]
+    job_search_hour_remaining: int
 
 
 class LinkedInSessionDTO(BaseModel):
@@ -746,16 +800,20 @@ class LinkedInSessionDTO(BaseModel):
     `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
     `status` is the session validity. The popup send path unlocks only when
     enabled AND status == 'valid'. N4 adds the session-capture metadata the
-    Settings → LinkedIn session UI renders (connected-as, expiry, backoff)."""
+    Settings → LinkedIn session UI renders (connected-as, expiry, backoff);
+    `search_cursor` (2026-08-01) is the job-search pagination state — None
+    until a Fresh search has run; `rate_limits` is the self-imposed
+    membership/risk/override profile."""
 
     enabled: bool
     status: str        # valid | expired | never_set | connecting | backing_off
-    account_tier: str  # new | seasoned
     connected_as: str = ""
     li_at_expires_at: datetime | None = None
     last_validated_at: datetime | None = None
     paused_until: datetime | None = None
     paused_reason: str = ""
+    search_cursor: LinkedInSearchCursorDTO | None = None
+    rate_limits: LinkedInRateLimitsDTO | None = None
 
 
 class LinkedInConnectRequest(BaseModel):
@@ -768,17 +826,26 @@ class LinkedInConnectRequest(BaseModel):
 
 
 class LinkedInSearchRequest(BaseModel):
-    """One-shot logged-in job search (discovery-expansion #6). `limit` is the
-    per-query fetch budget (rows per role-alias × location pair); the route
-    clamps it to a safe range. Omitted → the server default."""
+    """One-shot logged-in job search (discovery-expansion #6). Always one page
+    of 25 per role-alias × location pair (the package invariant). `mode` picks
+    the button: `fresh` runs page 0 from current prefs and resets the pagination
+    cursor; `next` continues the last Fresh search's snapshot (409 when there
+    is none, it expired, or it is exhausted)."""
 
-    limit: int | None = None
+    mode: Literal["fresh", "next"] = "fresh"
 
 
-class LinkedInTierRequest(BaseModel):
-    """Set the account-tier the app passes to the outreach package (US-REF-08)."""
+class LinkedInRateLimitsRequest(BaseModel):
+    """Set the self-imposed rate-limit profile (2026-08-01). Provide the basis
+    (`membership_type` and/or `risk_pct`) — which resets overrides — OR pin one
+    cap via `override_key`/`override_value`, OR `reset_overrides`. The route
+    rejects a request that provides none of these."""
 
-    account_tier: str  # new | seasoned
+    membership_type: str | None = None  # free | premium | sales_navigator | recruiter_lite
+    risk_pct: int | None = None          # 10–100 (clamped)
+    override_key: str | None = None      # "{meter}_{window}", e.g. "invites_week"
+    override_value: int | None = None    # absolute pin, >= 0
+    reset_overrides: bool = False
 
 
 class PromptDTO(BaseModel):
@@ -896,6 +963,18 @@ class OperationDTO(BaseModel):
 class OperationAccepted(BaseModel):
     id: str
     kind: str
+    state: str
+
+
+class ContactSyncAccepted(BaseModel):
+    """Result of a user-initiated contact-status refresh (FR-NW-15).
+
+    `state` is `queued` (a sync started), `already_running` (joined the one in
+    flight), or `throttled` (the opportunistic surface-open refresh declined
+    because the last sync was too recent — the explicit Sync button ignores
+    it). `id` is set only for `queued`."""
+
+    id: str | None = None
     state: str
 
 
@@ -1160,39 +1239,69 @@ def referral_candidate_dto(
     )
 
 
-# Account-tier rolling caps (US-NW-10 illustrative OpenOutreach defaults). NOT a
-# hard contract — the outreach package owns the authoritative caps (§17).
-# Surfaced for the popup's counter only.
-_TIER_CAPS = {"new": (15, 100), "seasoned": (30, 200)}
-
-
-def quota_dto(
-    *, connected: bool, tier: str, daily_used: int, weekly_used: int,
-    dm_daily_sent: int = 0, dm_weekly_sent: int = 0,
-) -> QuotaDTO:
-    daily_limit, weekly_limit = _TIER_CAPS.get(tier, _TIER_CAPS["new"])
+def quota_dto(*, connected: bool, quota: dict) -> QuotaDTO:
+    """`quota` is `Pacer.remaining()` from the ENFORCING ledger
+    (`networker_ops.linkedin_quota_snapshot`) — used-counts and caps from the
+    single source the send path refuses on (maintainer 2026-08-02; the old
+    app-side OutreachLog recount could disagree with enforcement)."""
     return QuotaDTO(
-        connected=connected, tier=tier,
-        daily_used=daily_used, daily_limit=daily_limit,
-        weekly_used=weekly_used, weekly_limit=weekly_limit,
-        dm_daily_sent=dm_daily_sent, dm_weekly_sent=dm_weekly_sent,
+        connected=connected,
+        daily_used=int(quota.get("daily_used") or 0),
+        daily_limit=int(quota.get("daily_cap") or 0),
+        weekly_used=int(quota.get("weekly_used") or 0),
+        weekly_limit=int(quota.get("weekly_cap") or 0),
+        dm_daily_sent=int(quota.get("dm_daily_sent") or 0),
+        dm_weekly_sent=int(quota.get("dm_weekly_sent") or 0),
+        dm_daily_limit=int(quota.get("dm_daily_limit") or 0),
     )
 
 
+def linkedin_search_cursor_dto(
+    cursor: LinkedInSearchCursor | None,
+) -> LinkedInSearchCursorDTO | None:
+    """Cursor row → wire state, None while no Fresh search has ever run. The
+    expired/exhausted derivation lives in the registry (`cursor_state`) so the
+    route's 409 and the op's self-gate can never disagree with this mapper."""
+    if cursor is None or cursor.fresh_at is None or not cursor.queries:
+        return None
+    from ..registry.linkedin_op import cursor_state
+
+    expired, exhausted = cursor_state(cursor.fresh_at, list(cursor.queries))
+    return LinkedInSearchCursorDTO(
+        expired=expired,
+        exhausted=exhausted,
+        next_page_available=not expired and not exhausted,
+    )
+
+
+def rate_limits_dto(snapshot: dict | None) -> LinkedInRateLimitsDTO | None:
+    """`linkedin_caps_snapshot()` output → DTO. The snapshot's keys ARE the DTO
+    fields (pydantic validates the cap entries)."""
+    if snapshot is None:
+        return None
+    return LinkedInRateLimitsDTO(**snapshot)
+
+
 def linkedin_session_dto(
-    session: LinkedInSession | None, *, enabled: bool
+    session: LinkedInSession | None, *, enabled: bool,
+    cursor: LinkedInSearchCursor | None = None,
 ) -> LinkedInSessionDTO:
+    """`rate_limits` is attached by the route after the off-loop ledger read
+    (`routes._linkedin_session_response`) — this mapper touches DB rows only."""
     if session is None:
-        return LinkedInSessionDTO(enabled=enabled, status="never_set", account_tier="new")
+        return LinkedInSessionDTO(
+            enabled=enabled, status="never_set",
+            search_cursor=linkedin_search_cursor_dto(cursor),
+        )
     return LinkedInSessionDTO(
         enabled=enabled,
         status=session.status,
-        account_tier=session.account_tier,
         connected_as=session.connected_as,
         li_at_expires_at=session.li_at_expires_at,
         last_validated_at=session.last_validated_at,
         paused_until=session.paused_until,
         paused_reason=session.paused_reason,
+        search_cursor=linkedin_search_cursor_dto(cursor),
     )
 
 

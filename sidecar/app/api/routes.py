@@ -31,6 +31,7 @@ from .. import documents as docstore
 from ..db import Database
 from ..db.base import now_utc
 from ..events import heartbeat_stream
+from ..lifecycle import CONTACT_SYNC_MIN_INTERVAL_MINUTES
 from ..logging_setup import get_logger
 from ..observability import reconfigure_observability
 from ..observability.config import observability_config
@@ -45,7 +46,7 @@ from ..registry.apply_op import (
 from ..registry.company_anchor import resolution_key
 from ..registry.engine_config import apply_routing
 from ..registry.linkedin_op import LOGIN_CONTROL
-from ..registry.networker_ops import linkedin_storage_path
+from ..registry.networker_ops import linkedin_feature_flags, linkedin_storage_path
 from ..registry.persistence import (
     SCORER_IMPL,
     SCORER_IMPL_DETERMINISTIC,
@@ -722,27 +723,6 @@ def _thread_scan_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
     )
 
 
-def _thread_contact_sync_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
-    """Retime the `contact_sync` schedule from `lifecycle.contact_sync_cadence_hours`
-    (FR-NW-15 / FR-SYS-06). The schedule stays enabled (the entrypoint self-gates on
-    the toggle + session); we only adjust its interval so the user owns the cadence.
-    Clamped to ≥ 1 h so a fat-fingered 0 can't hot-loop the LinkedIn probe."""
-    lifecycle = (ui_state or {}).get("lifecycle")
-    if not isinstance(lifecycle, dict):
-        return
-    hours = lifecycle.get("contact_sync_cadence_hours")
-    if not isinstance(hours, (int, float)) or hours <= 0:
-        return
-    minutes = int(max(1, hours) * 60)
-    sched = next((s for s in repos.schedules.list_all() if s.kind == "contact_sync"), None)
-    if sched is None or sched.interval_minutes == minutes:
-        return
-    repos.schedules.update(
-        sched.id, interval_minutes=minutes,
-        next_due_at=now_utc() + timedelta(minutes=minutes),
-    )
-
-
 @router.post("/api/settings")
 async def update_settings(
     request: Request, payload: dto.PreferencesUpdate
@@ -756,7 +736,6 @@ async def update_settings(
         prefs_thresholds = dict(prefs.thresholds or {})
         if "ui_state" in fields:
             _thread_scan_cadence(repos, ui_state)
-            _thread_contact_sync_cadence(repos, ui_state)
         result = _settings_dto(repos)
     # Switching Scoring to keyword mode scores the whole board right here —
     # ~0.5 ms/job, no LLM — so the change is visible on the next board fetch
@@ -1513,6 +1492,11 @@ async def create_operation(
             status_code=422,
             detail="use POST /api/linkedin/search to run a logged-in LinkedIn job search",
         )
+    if kind == "contact_sync":
+        raise HTTPException(
+            status_code=422,
+            detail="use POST /api/networking/contact-sync to refresh contact statuses",
+        )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
     operation_id = runner.submit(kind, input_snapshot or {})
@@ -1775,6 +1759,48 @@ def _require_networking_enabled(repos: Any) -> None:
         )
 
 
+def _require_any_linkedin_feature(repos: Any) -> None:
+    """Gate for the shared-session lifecycle routes (connect / resume).
+
+    These were ungated (posture doc §4 #8): anything reaching the sidecar could
+    open a real browser at linkedin.com, or clear the 24 h rate-limit backoff,
+    with both features switched off. The session exists only to serve one of the
+    two opt-ins, so at least one must be on."""
+    referral_on, search_on = linkedin_feature_flags(repos)
+    if not (referral_on or search_on):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "No LinkedIn feature is enabled — turn on Referral Outreach or "
+                "LinkedIn job search in Settings first."
+            ),
+        )
+
+
+def _require_job_search_opt_in(repos: Any) -> None:
+    """The logged-in job search has its OWN toggle and its OWN typed ack —
+    first-class preference columns since 2026-08-02 (they used to live in the
+    free-form `ui_state` blob, where a frontend key rename could silently flip
+    a safety gate; posture doc §4 #8 history)."""
+    _, search_on = linkedin_feature_flags(repos)
+    if not search_on:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "LinkedIn job search is disabled — enable it in "
+                "Settings → Discover jobs first."
+            ),
+        )
+    if repos.preferences.get_or_create().linkedin_search_ack_at is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "LinkedIn job search needs its risk acknowledgement — re-enable "
+                "it in Settings → Discover jobs to record it."
+            ),
+        )
+
+
 @router.get("/api/jobs/{job_id}/referrals/candidates")
 async def list_referral_candidates(
     request: Request, job_id: str
@@ -1982,38 +2008,94 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
 
 @router.get("/api/referrals/quota")
 async def referrals_quota(request: Request) -> dto.QuotaDTO:
-    """Rolling outreach quota for the popup counter (US-NW-09/10). App-side view
-    from the OutreachLog send windows + tier caps. The authoritative *live*
-    voyager quota is the maintainer's live-dogfood path (zero traffic here)."""
-    day_ago = now_utc() - timedelta(days=1)
-    week_ago = now_utc() - timedelta(days=7)
+    """Rolling outreach quota for the popup counter (US-NW-09/10).
+
+    Used-counts AND caps both come from the package's enforcing ledger
+    (maintainer 2026-08-02, closing the "divergent ledgers" item): the popup
+    can never show head-room the send path will refuse. `OutreachLog` stays the
+    per-send product history; it is no longer recounted as a quota source.
+    Zero LinkedIn traffic — a local file read, off the event loop."""
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
         prefs = repos.preferences.get_or_create()
-        tier = session.account_tier if session is not None else "new"
+        profile = networker_ops.resolve_pacing_profile(repos, session=session)
         connected = bool(prefs.voyager_risk_marker_on) and (
             session is not None and session.status == "valid"
         )
-        # Count sends across all contacts within each window. Only invites
-        # (connection requests) consume the cap — 1st-degree DMs are tracked
-        # separately and never decrement it (FR-NW-04 acceptance; the DM
-        # counters exist so a sent DM doesn't read as "0 used").
-        daily = weekly = dm_daily = dm_weekly = 0
-        for contact in repos.contacts.list(include_archived=True):
-            for log in repos.outreach_logs.list_for_contact(contact.id):
-                if log.outcome != "sent" or log.sent_at is None:
-                    continue
-                is_dm = log.channel == "dm"
-                if log.sent_at >= week_ago:
-                    dm_weekly += is_dm
-                    weekly += not is_dm
-                if log.sent_at >= day_ago:
-                    dm_daily += is_dm
-                    daily += not is_dm
-    return dto.quota_dto(
-        connected=connected, tier=tier, daily_used=daily, weekly_used=weekly,
-        dm_daily_sent=dm_daily, dm_weekly_sent=dm_weekly,
+    quota = await asyncio.to_thread(networker_ops.linkedin_quota_snapshot, profile)
+    return dto.quota_dto(connected=connected, quota=quota)
+
+
+@router.post("/api/networking/contact-sync", status_code=202)
+async def networking_contact_sync(
+    request: Request, force: bool = False
+) -> dto.ContactSyncAccepted:
+    """Refresh LinkedIn contact statuses for the Networking kanban (US-NW-12 /
+    FR-NW-15) — **user-initiated only**.
+
+    This replaces the old 12 h `contact_sync` schedule, which touched LinkedIn
+    with nobody present (`docs/internal/linkedin-posture.md` §1). Two callers:
+
+    - the explicit **Sync** button, which passes `force=true` and always runs —
+      an on-demand refresh the user asked for, no more LinkedIn traffic than
+      them opening linkedin.com and looking at their invitations themselves;
+    - opening the **Networking** surface, which passes `force=false` and is
+      throttled to `CONTACT_SYNC_MIN_INTERVAL_MINUTES` so navigating back and
+      forth cannot turn into a request loop.
+
+    Already-running syncs are joined rather than duplicated, so a double click
+    or a remount mid-sync does not fan out.
+    """
+    with _db(request).repos() as repos:
+        _require_networking_enabled(repos)
+        session = repos.linkedin_session.get()
+        if session is None or session.status != "valid":
+            raise HTTPException(
+                status_code=409,
+                detail="No valid LinkedIn session — connect in Settings first.",
+            )
+        in_flight = repos.operations.any_in_flight("contact_sync")
+        last = repos.operations.latest_by_kind("contact_sync")
+
+    if in_flight:
+        return dto.ContactSyncAccepted(state="already_running")
+
+    if not force and last is not None:
+        min_gap = timedelta(minutes=CONTACT_SYNC_MIN_INTERVAL_MINUTES)
+        if last.created_at + min_gap > now_utc():
+            # Not an error: the kanban the user is looking at was refreshed
+            # recently enough. The Sync button is right there if they disagree.
+            return dto.ContactSyncAccepted(state="throttled")
+
+    operation_id = _runner(request).submit("contact_sync", {})
+    return dto.ContactSyncAccepted(id=operation_id, state="queued")
+
+
+def _linkedin_session_base(repos: Any) -> tuple[dto.LinkedInSessionDTO, Any]:
+    """The session DTO minus `rate_limits`, plus the resolved pacing profile.
+
+    Built INSIDE the caller's repos context (ORM rows detach on exit). The
+    caller then fills `rate_limits` via
+    `asyncio.to_thread(networker_ops.linkedin_caps_snapshot, profile)` — the
+    snapshot reads the pacing-ledger file, which must not block the event loop
+    (async-first rule)."""
+    session = repos.linkedin_session.get()
+    prefs = repos.preferences.get_or_create()
+    profile = networker_ops.resolve_pacing_profile(repos, session=session)
+    base = dto.linkedin_session_dto(
+        session, enabled=bool(prefs.voyager_risk_marker_on),
+        cursor=repos.linkedin_search_cursor.get(),
     )
+    return base, profile
+
+
+async def _linkedin_session_response(request: Request) -> dto.LinkedInSessionDTO:
+    with _db(request).repos() as repos:
+        base, profile = _linkedin_session_base(repos)
+    base.rate_limits = dto.rate_limits_dto(
+        await asyncio.to_thread(networker_ops.linkedin_caps_snapshot, profile)
+    )
+    return base
 
 
 @router.get("/api/linkedin/session")
@@ -2021,12 +2103,7 @@ async def linkedin_session(request: Request) -> dto.LinkedInSessionDTO:
     """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
     Reads the persisted session (fast — local only); the popup send path
     unlocks only when enabled AND status == 'valid'."""
-    with _db(request).repos() as repos:
-        session = repos.linkedin_session.get()
-        prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(
-            session, enabled=bool(prefs.voyager_risk_marker_on)
-        )
+    return await _linkedin_session_response(request)
 
 
 @router.post("/api/linkedin/connect", status_code=202)
@@ -2036,7 +2113,13 @@ async def linkedin_connect(
     """Start the headed-login session capture (US-SET-06 as-built). Enqueues the
     exclusive `linkedin_login` op — a visible browser opens at LinkedIn's login
     page; the user logs in themselves (the password never touches finds-you-jobs).
-    `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture."""
+    `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture.
+
+    Gated on at least one LinkedIn feature being enabled: this route *opens a
+    real browser at linkedin.com*, and it accepted that request with both
+    opt-ins off until 2026-08-01 (posture doc §4 #8)."""
+    with _db(request).repos() as repos:
+        _require_any_linkedin_feature(repos)
     snap: dict[str, Any] = {}
     if payload is not None and payload.login_url:
         snap["login_url"] = payload.login_url
@@ -2046,13 +2129,11 @@ async def linkedin_connect(
     return dto.OperationAccepted(id=operation_id, kind="linkedin_login", state="queued")
 
 
-# Per-query fetch budget for the one-shot (rows = limit × alias×location pairs,
-# deduped). A budget on the logged-in session (account-safety axis), NOT the
-# ethos volume rule — clamped so a typo can't fire hundreds of pages at the
-# user's own account in one burst.
-LINKEDIN_SEARCH_LIMIT_MIN = 25
-LINKEDIN_SEARCH_LIMIT_MAX = 250
-LINKEDIN_SEARCH_LIMIT_DEFAULT = 50
+# The one-page-of-25 invariant is owned by the package
+# (`pacing.MAX_JOBS_PER_SEARCH`, enforced in `worker.search_jobs`) — the route
+# carries no size knob at all (maintainer directive 2026-08-01: a smaller limit
+# never made the request smaller, it only discarded received rows while implying
+# a lighter footprint).
 
 
 @router.post("/api/linkedin/search", status_code=202)
@@ -2062,22 +2143,58 @@ async def linkedin_search(
     """Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
 
     User-clicked only — never a scheduled scan (scheduled scans must never touch
-    a logged-in session). Gated server-side: Referral Outreach must be enabled
-    AND the session must be connected; otherwise a clear error, not a silent
-    no-op. Results land in the same discovery funnel as every other source."""
+    a logged-in session). Gated server-side on **this feature's own** toggle +
+    typed ack and a connected session; otherwise a clear error, not a silent
+    no-op. (It used to check the *Referral Outreach* toggle instead — the wrong
+    consent, in both directions: enabling referrals alone unlocked searches the
+    user never acknowledged, while a search-only user was refused. Posture doc
+    §4 #8.) Results land in the same discovery funnel as every other source.
+
+    `mode` (2026-08-01): `fresh` runs page 0 from current prefs and resets the
+    pagination cursor; `next` continues the last Fresh search's snapshot from
+    each pair's own offset. Next is refused (409) when no continuable cursor
+    exists — never run, expired past `SEARCH_CURSOR_TTL`, or every pair
+    exhausted. The op re-checks the same precondition (self-gate)."""
+    mode = payload.mode if payload is not None else "fresh"
     with _db(request).repos() as repos:
-        _require_networking_enabled(repos)
+        _require_job_search_opt_in(repos)
         session = repos.linkedin_session.get()
         if session is None or session.status != "valid":
             raise HTTPException(
                 status_code=409,
                 detail="LinkedIn is not connected — connect your session in Settings first.",
             )
-    requested = payload.limit if payload is not None and payload.limit is not None else (
-        LINKEDIN_SEARCH_LIMIT_DEFAULT
-    )
-    limit = max(LINKEDIN_SEARCH_LIMIT_MIN, min(LINKEDIN_SEARCH_LIMIT_MAX, int(requested)))
-    operation_id = _runner(request).submit("linkedin_search", {"limit": limit})
+        profile = networker_ops.resolve_pacing_profile(repos, session=session)
+        if mode == "next":
+            state = dto.linkedin_search_cursor_dto(repos.linkedin_search_cursor.get())
+            if state is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No search to continue — run a Fresh search first.",
+                )
+            if state.expired:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The last Fresh search has expired — run a Fresh search first.",
+                )
+            if state.exhausted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No more results — the last search reached LinkedIn's "
+                           "end of results. Run a Fresh search.",
+                )
+    # Self-imposed pages/hour throttle: refuse when the hourly budget is spent
+    # (both modes — every search fetches a page). The worker enforces this too;
+    # the route surfaces it as a clean 429 rather than a 0-result search. Ledger
+    # file read → off the event loop.
+    snapshot = await asyncio.to_thread(networker_ops.linkedin_caps_snapshot, profile)
+    if snapshot["job_search_hour_remaining"] <= 0:
+        raise HTTPException(
+            status_code=429,
+            detail="LinkedIn job-search hourly limit reached — wait for it to "
+                   "reset, or raise it in Settings › LinkedIn self-imposed rate limits.",
+        )
+    operation_id = _runner(request).submit("linkedin_search", {"mode": mode})
     return dto.OperationAccepted(id=operation_id, kind="linkedin_search", state="queued")
 
 
@@ -2116,12 +2233,13 @@ async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
     except OSError as exc:
         get_logger().warning("linkedin disconnect: could not delete profile dir: %s", exc)
     with _db(request).repos() as repos:
-        session = repos.linkedin_session.update(
+        repos.linkedin_session.update(
             status="never_set", connected_as="", li_at_expires_at=None,
             last_validated_at=None, paused_until=None, paused_reason="",
         )
-        prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+        # A pagination cursor without its session is meaningless — drop it.
+        repos.linkedin_search_cursor.clear()
+    return await _linkedin_session_response(request)
 
 
 @router.post("/api/linkedin/validate")
@@ -2130,13 +2248,12 @@ async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
     LinkedIn** (US-SET-06 Validate). Flips status to valid / expired / never_set
     and stamps `last_validated_at`."""
     with _db(request).repos() as repos:
-        session = repos.linkedin_session.get()
-        tier = session.account_tier if session is not None else "new"
+        profile = networker_ops.resolve_pacing_profile(repos)
     # Off the loop (async-first rule): session_status is local-only, but the
     # first call lazily imports playwright.sync_api — up to ~1 s on a cold
     # packaged build.
     def _local_status() -> dict:
-        driver = networker_ops.DRIVER_FACTORY(tier)
+        driver = networker_ops.DRIVER_FACTORY(profile)
         try:
             return driver.session_status()
         finally:
@@ -2148,22 +2265,25 @@ async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
         fields: dict[str, Any] = {"status": status, "last_validated_at": now_utc()}
         if status != "valid":
             fields["connected_as"] = ""
-        session = repos.linkedin_session.update(**fields)
-        prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+        repos.linkedin_session.update(**fields)
+    return await _linkedin_session_response(request)
 
 
 @router.post("/api/linkedin/resume")
 async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     """Clear the voyager-owned backoff pause (Settings → Networking manual resume,
-    FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates."""
+    FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates.
+
+    Gated: this is the one route that *switches a safety mechanism off* — it
+    clears the 24 h backoff LinkedIn's own throttle signal put us in — and it ran
+    ungated until 2026-08-01 (posture doc §4 #8)."""
     with _db(request).repos() as repos:
-        session = repos.linkedin_session.get()
-        tier = session.account_tier if session is not None else "new"
+        _require_any_linkedin_feature(repos)
+        profile = networker_ops.resolve_pacing_profile(repos)
     # Off the loop (async-first rule): same first-call playwright import cost
     # as validate, plus the pacing-ledger file writes.
     def _resume_and_status() -> dict:
-        driver = networker_ops.DRIVER_FACTORY(tier)
+        driver = networker_ops.DRIVER_FACTORY(profile)
         try:
             driver.resume()
             return driver.session_status()
@@ -2173,26 +2293,70 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     info = await asyncio.to_thread(_resume_and_status)
     status = info.get("status", "never_set")
     with _db(request).repos() as repos:
-        session = repos.linkedin_session.update(
+        repos.linkedin_session.update(
             status=status, paused_until=None, paused_reason="",
             last_validated_at=now_utc(),
         )
-        prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+    return await _linkedin_session_response(request)
 
 
-@router.post("/api/linkedin/tier")
-async def linkedin_set_tier(
-    request: Request, payload: dto.LinkedInTierRequest
+@router.post("/api/linkedin/rate-limits")
+async def linkedin_set_rate_limits(
+    request: Request, payload: dto.LinkedInRateLimitsRequest
 ) -> dto.LinkedInSessionDTO:
-    """Set the account-tier (New / Seasoned) the app passes to voyager (US-REF-08).
-    voyager owns the cap *values*; this is only the user's tier selection."""
-    if payload.account_tier not in ("new", "seasoned"):
-        raise HTTPException(status_code=422, detail="account_tier must be 'new' or 'seasoned'")
+    """Set the self-imposed LinkedIn rate-limit profile (maintainer directive
+    2026-08-01, replacing the New/Seasoned tier + Free/Premium plan selectors).
+
+    The package owns the cap *values*; this stores only the user's choices:
+    - **membership_type** and/or **risk_pct** — the basis. Changing either
+      RESETS every per-meter override to the freshly computed default (the
+      maintainer's "both reset" rule): the ceilings or the scale changed, so any
+      old absolute pin is stale.
+    - **override_key / override_value** — pin one `{meter}_{window}` cap to an
+      absolute number (only when NOT also changing the basis).
+    - **reset_overrides** — drop all pins back to the computed defaults.
+
+    voyager still enforces the numbers (NFR-LI-02); this is the selection only."""
+    from sidecar.packages.referral_outreach import MEMBERSHIPS, OVERRIDABLE, clamp_risk
+
+    override_keys = {f"{m}_{w}" for m, w in OVERRIDABLE}
+    changes_basis = payload.membership_type is not None or payload.risk_pct is not None
     with _db(request).repos() as repos:
-        session = repos.linkedin_session.update(account_tier=payload.account_tier)
-        prefs = repos.preferences.get_or_create()
-        return dto.linkedin_session_dto(session, enabled=bool(prefs.voyager_risk_marker_on))
+        current = repos.linkedin_session.get_or_create()
+        fields: dict[str, Any] = {}
+        if changes_basis or payload.reset_overrides:
+            if payload.membership_type is not None:
+                if payload.membership_type not in MEMBERSHIPS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"membership_type must be one of {sorted(MEMBERSHIPS)}",
+                    )
+                fields["membership_type"] = payload.membership_type
+            if payload.risk_pct is not None:
+                fields["risk_pct"] = clamp_risk(payload.risk_pct)
+            # Both-reset rule: a basis change (or an explicit reset) clears every
+            # override so the caps revert to the new (ceiling × risk%) default.
+            fields["cap_overrides"] = {}
+        elif payload.override_key is not None:
+            if payload.override_key not in override_keys:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"override_key must be one of {sorted(override_keys)}",
+                )
+            if payload.override_value is None or payload.override_value < 0:
+                raise HTTPException(
+                    status_code=422, detail="override_value must be a non-negative integer"
+                )
+            overrides = dict(current.cap_overrides or {})
+            overrides[payload.override_key] = int(payload.override_value)
+            fields["cap_overrides"] = overrides
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="provide membership_type/risk_pct, an override, or reset_overrides",
+            )
+        repos.linkedin_session.update(**fields)
+    return await _linkedin_session_response(request)
 
 
 # -- Dev tools (local testing only) ----------------------------------------
@@ -2207,6 +2371,45 @@ async def linkedin_set_tier(
 def _require_dev_mode() -> None:
     if os.environ.get("FYJ_DEV") != "1":
         raise HTTPException(status_code=404, detail="Not Found")
+
+
+@router.post("/api/dev/linkedin/mark-session-valid")
+async def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
+    """Set `LinkedInSession.status = "valid"` so session-gated UI can be
+    exercised without a real LinkedIn login.
+
+    Some controls (the Networking **Sync** button) only render once a session
+    exists, and a real session needs an interactive human login at LinkedIn's
+    own page — which a test cannot perform and must never attempt. This sets the
+    one status field the UI reads, exactly like the sibling
+    `/api/dev/linkedin/expire-cookie` route sets the opposite condition.
+
+    It writes **no** cookies and **no** storage-state file. That is the honest
+    part: the session is a real row that is genuinely unusable, so any code path
+    that actually reaches LinkedIn fails on auth as it should. Nothing about
+    LinkedIn's behaviour is faked, and no production code branches on this — the
+    row is the same row a real login writes, with the same fields."""
+    _require_dev_mode()
+    with _db(request).repos() as repos:
+        repos.linkedin_session.update(status="valid", connected_as="Dev Session")
+    return {"ok": True, "status": "valid"}
+
+
+@router.post("/api/dev/linkedin/seed-search-cursor")
+async def dev_seed_linkedin_search_cursor(request: Request) -> dict[str, Any]:
+    """Write a live (non-expired, non-exhausted) job-search pagination cursor
+    so the Next-page button can be exercised without a real LinkedIn search —
+    which needs a real logged-in session a test must never use. Same honesty
+    contract as `mark-session-valid`: the row is the same row a real Fresh
+    search writes, and nothing in production branches on this."""
+    _require_dev_mode()
+    with _db(request).repos() as repos:
+        repos.linkedin_search_cursor.update(
+            fresh_at=now_utc(),
+            queries=[{"keyword": "backend engineer", "location": "Remote",
+                      "next_start": 25, "exhausted": False}],
+        )
+    return {"ok": True}
 
 
 @router.post("/api/dev/linkedin/expire-cookie")

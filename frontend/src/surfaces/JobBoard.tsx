@@ -253,6 +253,7 @@ const JobRow = memo(function JobRow({
         {expired ? (
           <span
             data-testid="expired-label"
+            title={t("jobBoard.row.olderListingTitle")}
             className="inline-flex items-center rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[9.5px] font-medium text-ink-3"
           >
             {t("jobBoard.row.olderListing")}
@@ -860,6 +861,7 @@ export function JobBoard() {
             [0, "jobBoard.filters.anyTime"],
             [1, "jobBoard.filters.last24h"],
             [7, "jobBoard.filters.last7d"],
+            [14, "jobBoard.filters.last14d"],
             [30, "jobBoard.filters.last30d"],
           ].map(([v, l]) => (
             <Chip key={v} active={posted === v} onClick={() => setPosted(v as number)}>

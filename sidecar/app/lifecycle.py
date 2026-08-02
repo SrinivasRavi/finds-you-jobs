@@ -22,17 +22,31 @@ from typing import Any
 # existed (trashed jobs = the old TRASH_TTL_DAYS=7) and (b) be sensible bootstraps
 # where none did. All are whole days except the sync cadence (hours).
 LIFECYCLE_DEFAULTS: dict[str, int] = {
+    # NOTE: `contact_sync_cadence_hours` is gone — contact sync is user-initiated
+    # only (no schedule to retime; see CONTACT_SYNC_MIN_INTERVAL_MINUTES below).
     # Contact kanban ghosting (FR-NW-15). Engagement threads go quiet → Ghosted;
     # a separate, longer window covers Sent/Accepted-but-never-replied stalls.
     "engagement_ghosted_days": 14,
     "sent_ghosted_days": 21,
+    # Feed aging (FR-SYS-03): a job that has sat on the board this many days
+    # (from first ingest; a Restore resets the clock via `feed_since`) is greyed
+    # as an "Older listing" — still on the board and restorable; hard-deleted ~30
+    # days after greying unless Saved. NOTE the clock is board-age, NOT
+    # "not re-seen in a scan" — dedupe is first-seen-wins and refreshes nothing.
+    # Was the hard-coded `persistence.EXPIRE_AFTER_DAYS=14`; now user-owned.
+    "expire_listing_days": 14,
     # Permanent purge of soft-deleted (archived) rows.
     "contact_purge_days": 60,           # deleted (archived) contacts
     "trashed_jobs_purge_days": 7,       # trashed jobs (was TRASH_TTL_DAYS)
     "archived_applications_purge_days": 30,  # archived tracker cards (was: never)
-    # Contact-status sync cadence (hours). Also mirrored to the schedule row.
-    "contact_sync_cadence_hours": 12,
 }
+
+# Contact sync is user-initiated only (no scheduled LinkedIn traffic — see
+# `seed.py` and `docs/internal/linkedin-posture.md` §1). Opening the Networking
+# surface may trigger an opportunistic refresh, but no more often than this. The
+# explicit Sync button bypasses it: an on-demand refresh is the user asking, and
+# is no more traffic than them opening linkedin.com themselves.
+CONTACT_SYNC_MIN_INTERVAL_MINUTES = 15
 
 # How recently a MANUAL kanban drag protects a contact from being auto-overridden
 # (manual-wins). Not surfaced in the UI — a fixed guard so auto never immediately

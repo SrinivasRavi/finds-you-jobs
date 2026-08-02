@@ -59,7 +59,16 @@ def _translate_error(exc: Exception) -> ReferralError:
     `upstream.errors` types stay an implementation detail of this file."""
     message = str(exc)
     low = message.lower()
-    if "rate" in low or "429" in low or "too many" in low:
+    # "999" and "throttled" matter: a 999 bot-block message matched none of the
+    # rate-limit tokens, so it fell through to BrowserFailure and never entered
+    # backoff. Keep this list in sync with `upstream.client.raise_if_throttled`.
+    if (
+        "rate" in low
+        or "429" in low
+        or "999" in low
+        or "throttl" in low
+        or "too many" in low
+    ):
         return RateLimited(message)
     if "cap" in low or "limit reached" in low or "connection limit" in low:
         return InviteCapReached(message)
@@ -210,11 +219,11 @@ class VoyagerReferralAutomation:
     def quota(self, account: AccountRef) -> Quota:
         from .upstream import worker
 
-        raw = worker.quota(tier=account.tier, state_dir=self._state_dir)
+        raw = worker.quota(state_dir=self._state_dir)
         return _quota_from_dict(raw.get("quota")) or Quota()
 
     def resume_after_backoff(self, account: AccountRef) -> ResumeResult:
         from .upstream import worker
 
-        raw = worker.resume(tier=account.tier, state_dir=self._state_dir)
+        raw = worker.resume(state_dir=self._state_dir)
         return ResumeResult(ok=bool(raw.get("ok")))

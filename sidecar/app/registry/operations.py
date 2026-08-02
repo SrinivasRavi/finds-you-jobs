@@ -152,8 +152,8 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
     - **Trash TTL** (FR-SYS-04): tombstone + delete Trashed jobs past the window
       (default 7 days).
-    - **Expired aging** (FR-SYS-03): grey active jobs at 14 days, hard-delete
-      Expired ones (no tombstone) at 30 days.
+    - **Expired aging** (FR-SYS-03): grey active jobs at the configured window
+      (default 14 days), hard-delete Expired ones (no tombstone) at 30 days.
     - **Archived-application purge** (FR-SYS-06): permanently remove archived
       tracker cards past the window (default 30 days).
 
@@ -174,7 +174,7 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     settings = settings or dict(LIFECYCLE_DEFAULTS)
 
     tombstoned = evict_stale_trash(ctx.db, ttl_days=settings["trashed_jobs_purge_days"])
-    aged = age_expired_jobs(ctx.db)
+    aged = age_expired_jobs(ctx.db, expire_after_days=settings["expire_listing_days"])
     purged_apps = purge_archived_applications(
         ctx.db, retention_days=settings["archived_applications_purge_days"]
     )

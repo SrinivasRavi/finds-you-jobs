@@ -193,9 +193,6 @@ export const AboutSection = memo(function AboutSection() {
           <LinkButton testid="about-discord-link" icon="share" onClick={() => openExternal(DISCORD_URL)}>
             {t("settingsPage.about.discordButton")}
           </LinkButton>
-          <div className="rounded-lg border border-accent/25 bg-accent-wash px-3 py-2 text-[11.5px] leading-relaxed text-accent-ink">
-            {t("settingsPage.about.promptsCallout")}
-          </div>
         </div>
       </Section>
 

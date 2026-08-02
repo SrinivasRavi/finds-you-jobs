@@ -36,10 +36,8 @@ const settingsPage = {
     // Community
     communityTitle: "Community",
     communityBody:
-      "Join the Discord to swap job-search tactics, get beta help, and help shape where the app goes next.",
+      "Join the Discord to discuss job-search tactics with other users, get help for the app, and help shape where the app goes next. For instance, if you find a prompt or configuration that works great, share it in the #prompts-and-configs channel. We will incorporate the best community setups into the app.",
     discordButton: "Join our Discord",
-    promptsCallout:
-      "Found a prompt or configuration that works great? Share it in the #prompts-and-configs channel — the best community setups get folded into the app.",
     // About / legal
     aboutTitle: "About",
     licenseLine:
@@ -178,12 +176,12 @@ const settingsPage = {
   referral: {
     title: "Referral Outreach",
     intro:
-      "Automatically message people at a company you're applying to — from your own LinkedIn account — to ask for a referral. You confirm every batch before it sends.",
+      "Automatically message people at a company you're applying to — from your own LinkedIn account — to ask for a referral. You review and confirm each message before it sends.",
     howLabel: "How Referral Outreach works",
     howInfo:
-      "It finds <em>current</em> employees at the company and drafts a short message for each from a fixed per-role template (peer / hiring-manager / recruiter / leadership) that you can edit — or hit Regenerate for an AI version grounded in your profile. Sending goes through your own LinkedIn session as connection requests or DMs, paced slowly with conservative daily/weekly caps to reduce detection risk. Off by default; you can also use it drafts-only and send yourself. Tracking contacts by hand (the Networking tab) is always on and needs none of this.",
+      "It finds <em>current</em> employees at the company and drafts a short message for each from a fixed per-role template (peer / hiring-manager / recruiter / leadership) that you can edit — or hit Regenerate for an AI version grounded in your profile. Sending goes through your own LinkedIn session as connection requests or DMs, spaced out between sends, with conservative daily and weekly caps set below the limits LinkedIn is believed to enforce. Off by default; you can also use it drafts-only and send yourself. Tracking contacts by hand (the Networking tab) is always on and needs none of this.",
     warning:
-      "Automation on LinkedIn of any kind violates LinkedIn's terms of service. finds-you-jobs does not misuse the automation to farm data, sell it, or profit from it, and it keeps the automation 1-to-1 identical to what a human would do — sending messages at human typing speed, respecting daily caps, and randomising timing. But LinkedIn's Terms of Service is violated whatever way we slice it, so we insist you use your own judgement and take full responsibility for the consequences from LinkedIn. Your account may face restrictions, and finds-you-jobs is not responsible for any consequences to your LinkedIn account. Please use this feature responsibly, monitor your sent messages, and turn it off if you notice unusual account behaviour. Not using this feature does not impact your LinkedIn account or any other account in any way.",
+      "Automation on LinkedIn of any kind violates LinkedIn's terms of service. What we can tell you honestly: nothing is sent without you selecting the recipients and confirming; requests go out from your own logged-in browser session, on your own machine and IP, with no finds-you-jobs server in the path; we never receive your LinkedIn session, never store your password, and never resell anything we read. Sends are spaced out and capped well below the limits LinkedIn is believed to enforce. What we will NOT claim: that this is undetectable, that it looks identical to you using LinkedIn by hand, or that any cap keeps your account safe — LinkedIn does not publish its real limits and changes them without notice. Their Terms of Service is violated whatever way we slice it, so we insist you use your own judgement and take full responsibility for the consequences from LinkedIn. Your account may face restrictions, and finds-you-jobs is not responsible for any consequences to your LinkedIn account. Please use this feature responsibly, monitor your sent messages, and turn it off if you notice unusual account behaviour. Not using this feature does not impact your LinkedIn account or any other account in any way.",
     ack: "I want to automate LinkedIn outreach seeking referrals, at the cost of BREAKING LinkedIn's Terms of Service — which can lead to account restrictions, up to a permanent ban. I accept full responsibility.",
     enable: "Enable Referral Outreach",
     lockedHint:
@@ -197,20 +195,60 @@ const settingsPage = {
     howInfo:
       "A one-off search through your own logged-in LinkedIn session, run only when you click Search — scheduled scans never touch it. Read-only against LinkedIn; results dedupe against everything already found. Shares the same session as Referral Outreach.",
     warning:
-      "Searching LinkedIn while logged in means reading its job listings through automation, which violates LinkedIn's terms of service. finds-you-jobs never resells or misuses what it reads, and it keeps the footprint minimal: the search runs ONLY when you click it (never on a schedule) and pulls a modest batch — 25 jobs by default — at human pace, so it reads as ordinary browsing rather than bulk scraping. But LinkedIn's Terms of Service is violated whatever way we slice it, so use your own judgement and take full responsibility. Your account may face restrictions, and finds-you-jobs is not responsible for any consequences to your LinkedIn account. Turn it off if you notice unusual account behaviour. Not using this feature does not impact your LinkedIn account in any way.",
+      "Searching LinkedIn while logged in means reading its job listings through automation, which violates LinkedIn's terms of service. finds-you-jobs never resells or misuses what it reads, and it keeps the footprint minimal: the search runs ONLY when you click it (never on a schedule) and pulls a modest batch — 25 jobs by default — one page at a time with a pause between pages, and it never writes to your account. We keep the footprint small on purpose — but we cannot promise how LinkedIn classifies it. Their Terms of Service is violated whatever way we slice it, so use your own judgement and take full responsibility. Your account may face restrictions, and finds-you-jobs is not responsible for any consequences to your LinkedIn account. Turn it off if you notice unusual account behaviour. Not using this feature does not impact your LinkedIn account in any way.",
     ack: "I want to search LinkedIn while logged in, at the cost of BREAKING LinkedIn's Terms of Service — which can lead to account restrictions, up to a permanent ban. I accept full responsibility.",
     enable: "Enable “Scan LinkedIn jobs (LinkedIn login needed)”",
     connectHint: "Connect the LinkedIn session above to run a search.",
     runNow:
       "Run a search now with your saved roles & locations — results land in your Discover jobs feed.",
-    searching: "Searching…",
-    searchBtn: "Search LinkedIn jobs",
+    freshBtn: "Fresh search",
+    nextBtn: "Next page",
+    nextHint: "Continue the last search where it left off — the next 25 results per role × location.",
+    nextInfo:
+      "Next page re-runs the last Fresh search's exact roles & locations at the next offset — editing preferences in between doesn't change it (run a Fresh search for that). It's offered for 12 hours after a Fresh search, then disappears: LinkedIn re-ranks results continuously, so an old offset would point into a shifted list. LinkedIn itself has no pagination timeout — the window is our own freshness rule. It also disappears once LinkedIn's results run out.",
     resultsPerSearch: "Results per search",
+    onePage: "25 jobs (one page)",
     resultsPerSearchInfo:
-      "How many jobs to pull per role × location, in pages of 25. Higher means more results — but more requests fired on <strong>your own</strong> LinkedIn account in one burst, which raises rate-limit / account risk. Keep it modest.",
-    jobsOption: "{{n}} jobs",
+      "Fixed at one page per role × location — the same <strong>25</strong> LinkedIn's own Jobs page asks for. It isn't adjustable on purpose: the request carries that page size whatever number we pick, so a lower setting would only discard results already fetched while looking like a lighter footprint. Enforced in the sending code, not just here.",
     started: "Search started — new matches will appear in Discover jobs shortly.",
     failed: "Search failed.",
+    scanning: "Scanning LinkedIn…",
+    hourlyReached:
+      "Hourly job-search limit reached — it resets within the hour, or raise it under “LinkedIn self-imposed rate limits”.",
+  },
+  rateLimits: {
+    title: "Self-imposed rate limits on LinkedIn",
+    intro:
+      "How hard finds-you-jobs throttles itself against LinkedIn. Pick your membership, then set how close to LinkedIn's estimated limits you're willing to run.",
+    info:
+      "These caps are OUR own — LinkedIn publishes almost none of its real limits, so every ceiling here is an estimate. Your membership sets the estimated ceilings; the risk slider scales them; and you can override any single cap. The outreach code enforces exactly these numbers.",
+    membershipLabel: "LinkedIn membership",
+    membershipHint: "Sets the estimated per-action ceilings we scale from.",
+    membership: {
+      free: "Free (Basic)",
+      premium: "Premium",
+      sales_navigator: "Sales Navigator",
+      recruiter_lite: "Recruiter Lite",
+    },
+    riskLabel: "Risk appetite",
+    riskWarn:
+      "At 100%, each cap sits at our best estimate of LinkedIn's own limit for your membership. LinkedIn doesn't publish these numbers, so they're estimates — most reliable for an account in good standing. Lower leaves more safety margin; nothing here can guarantee your account won't be restricted.",
+    capsLabel: "Individual limits",
+    capsInfo:
+      "Each limit starts at membership ceiling × risk%. Type a number to pin it. Changing your membership or the risk slider resets every pinned limit back to the computed default.",
+    cap: {
+      invites_day: "Connection requests / day",
+      invites_week: "Connection requests / week",
+      dms_day: "Direct messages / day",
+      dms_week: "Direct messages / week",
+      profile_views_day: "Profile views / day",
+      searches_month: "People searches / month",
+      notes_month: "Invitation notes / month",
+      job_search_pages_hour: "Job-search pages / hour (25 jobs each)",
+    },
+    ofCeiling: "Max: ~{{ceiling}}",
+    custom: "custom",
+    resetBtn: "Reset to defaults",
   },
   session: {
     title: "LinkedIn session",
@@ -240,14 +278,11 @@ const settingsPage = {
     validateFailed: "Validate failed: {{message}}",
     errorFallback: "error",
     resume: "Resume outreach",
+    resumeConfirmTitle: "Resume outreach early?",
+    resumeConfirmBody:
+      "LinkedIn rate-limited this account within the last 24 hours. Resuming early increases the risk of account restriction. We recommend waiting until {{until}}.",
+    resumeConfirmOk: "Resume anyway",
     disconnect: "Disconnect",
-    tier: "Account tier",
-    tierCapsLabel: "Account-tier caps",
-    tierInfo:
-      "The LinkedIn worker enforces these caps. New = 15/day · 100/wk. Seasoned = 30/day · 200/wk. Pick the one that honestly matches your account.",
-    tierHint: "Pick the tier that matches your account.",
-    tierNew: "New account (safe default)",
-    tierSeasoned: "Seasoned account",
   },
   observability: {
     title: "Observability",
@@ -278,6 +313,9 @@ const settingsPage = {
       "A connection request never accepted (or accepted but never replied to) this many days.",
     contactPurgeLabel: "Erase deleted contacts for good after",
     contactPurgeHint: "Deleted contacts are erased permanently this many days later.",
+    expireListingLabel: "Mark a job listing “Older” after",
+    expireListingHint:
+      "A job that has been on your board this many days is greyed as an “Older listing” — still on the board and restorable. Greyed listings are removed from the feed about a month later; Saved jobs are never auto-removed.",
     trashedJobsLabel: "Erase deleted jobs for good after",
     trashedJobsHint:
       "Deleted jobs are erased permanently (and won't be re-scraped) this many days later.",

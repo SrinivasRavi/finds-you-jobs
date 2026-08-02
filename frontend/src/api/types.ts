@@ -478,15 +478,49 @@ export interface CompanyConfirmPick {
 /** Rolling outreach quota for the popup counter (US-NW-09/10). */
 export interface ReferralQuota {
   connected: boolean;
-  tier: "new" | "seasoned";
   daily_used: number;
   daily_limit: number;
   weekly_used: number;
   weekly_limit: number;
-  /** 1st-degree DMs: tracked + displayed, never capped (FR-NW-04) — they do
-   *  not decrement the invite counters above. */
+  /** 1st-degree DMs: separately budgeted (FR-NW-04) — they never decrement the
+   *  invite counters above, and since 2026-07-30 they have their own caps. */
   dm_daily_sent: number;
   dm_weekly_sent: number;
+  dm_daily_limit: number;
+}
+
+/** Fresh-search pagination state for "Scan LinkedIn jobs". The Next-page
+ *  button gates on `next_page_available`; the rest explains why. The 12 h TTL
+ *  is a host freshness policy (result coherence) — LinkedIn's own pagination
+ *  is stateless and never expires. */
+export interface LinkedInSearchCursorState {
+  expired: boolean;
+  exhausted: boolean;
+  next_page_available: boolean;
+}
+
+/** One self-imposed cap the user can override. `effective` is the enforced
+ *  number (override, or ceiling × risk%); `ceiling` is the estimated LinkedIn
+ *  limit (100% reference); `overridden` flags a manual pin. */
+export interface LinkedInCap {
+  key: string;
+  meter: string;
+  window: string;
+  label: string;
+  effective: number;
+  ceiling: number;
+  overridden: boolean;
+}
+
+/** The self-imposed LinkedIn rate-limit profile (2026-08-01): membership picks
+ *  the estimated ceilings, `risk_pct` (10–100) scales them (100% = at the
+ *  estimated real limit), each cap independently overridable. */
+export interface LinkedInRateLimitsState {
+  membership_type: string;
+  risk_pct: number;
+  memberships: string[];
+  caps: LinkedInCap[];
+  job_search_hour_remaining: number;
 }
 
 /** LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
@@ -496,12 +530,25 @@ export interface ReferralQuota {
 export interface LinkedInSessionState {
   enabled: boolean;
   status: "valid" | "expired" | "never_set" | "connecting" | "backing_off";
-  account_tier: "new" | "seasoned";
   connected_as: string;
   li_at_expires_at: string | null;
   last_validated_at: string | null;
   paused_until: string | null;
   paused_reason: string;
+  /** null until a Fresh search has ever run. */
+  search_cursor: LinkedInSearchCursorState | null;
+  /** The self-imposed rate-limit profile (membership × risk% × overrides). */
+  rate_limits: LinkedInRateLimitsState | null;
+}
+
+/** Result of a user-initiated contact-status refresh (FR-NW-15).
+ *  `queued` — a sync started. `already_running` — joined the one in flight.
+ *  `throttled` — the opportunistic on-open refresh declined because the last
+ *  sync was too recent; the Sync button ignores the throttle. There is no
+ *  scheduled sync. */
+export interface ContactSyncResult {
+  id: string | null;
+  state: "queued" | "already_running" | "throttled";
 }
 
 /** Manual add-a-contact input (US-NW-02). */
@@ -792,7 +839,6 @@ export interface Settings {
   linkedin_search_ack_at: string | null;
   /** LinkedIn one-shot per-query fetch budget (discovery-expansion #6),
    *  persisted in ui_state. Server clamps to [25, 250]; default 50. */
-  linkedin_search_limit: number;
   /** ISO timestamp of the last time the user checked the Referral Outreach
    *  ToS-risk acknowledgment box and turned the toggle on (audit P2-5) — a
    *  durable record, so re-opening Settings shows *when* the risk was
@@ -827,16 +873,16 @@ export interface Settings {
   };
   /** Configurable entity-lifecycle windows (FR-SYS-06 / FR-NW-15, 2026-07-15).
    *  Every auto-lifecycle timer — contact kanban ghosting, deleted-contact /
-   *  trashed-job / archived-application purge, and the contact-status sync
-   *  cadence — reads its window from here (persisted in `ui_state.lifecycle`).
-   *  Days, except `contact_sync_cadence_hours`. */
+   *  trashed-job / archived-application purge — reads its window from here
+   *  (persisted in `ui_state.lifecycle`). All days. (The contact-sync cadence
+   *  is gone: syncing is user-initiated only — posture doc §1.) */
   lifecycle: {
     engagement_ghosted_days: number;
     sent_ghosted_days: number;
+    expire_listing_days: number;
     contact_purge_days: number;
     trashed_jobs_purge_days: number;
     archived_applications_purge_days: number;
-    contact_sync_cadence_hours: number;
   };
 }
 

@@ -199,7 +199,6 @@ def send(
     contact: Contact,
     driver: VoyagerDriver | None = None,
     *,
-    tier: str | None = None,
     dry_run: bool = False,
 ) -> SendResult:
     """Send `message` to `contact` via the voyager subprocess (US-REF-04 /
@@ -215,10 +214,10 @@ def send(
     drv = driver or DirectVoyagerDriver()
     try:
         if channel.value == "dm":
-            raw = drv.send_dm(contact.public_identifier, message, tier, dry_run=dry_run)
+            raw = drv.send_dm(contact.public_identifier, message, dry_run=dry_run)
         else:
             raw = drv.send_connection(
-                contact.public_identifier, note=message, tier=tier, dry_run=dry_run
+                contact.public_identifier, note=message, dry_run=dry_run
             )
         return _send_result_from_raw(raw, contact, channel, dry_run)
     finally:
@@ -280,12 +279,12 @@ def probe(
         drv.close()
 
 
-def quota(driver: VoyagerDriver | None = None, *, tier: str | None = None) -> dict:
+def quota(driver: VoyagerDriver | None = None) -> dict:
     """The live remaining cap the host displays + gates its UI on (FR-NW-01/04,
     NFR-LI-02). Zero-LLM."""
     drv = driver or DirectVoyagerDriver()
     try:
-        return drv.quota(tier)
+        return drv.quota()
     finally:
         drv.close()
 

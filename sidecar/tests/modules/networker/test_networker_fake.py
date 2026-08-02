@@ -118,7 +118,7 @@ def test_draft_missing_public_identifier_raises():
 def test_send_warm_routes_to_dm():
     drv = FakeVoyagerDriver(dm_result={"ok": True, "sent": True, "quota": {"daily_remaining": 15}})
     contact = Contact(public_identifier="jane", connection_degree=1)
-    result = send("Hi Jane, would you refer me?", contact, driver=drv, tier="new")
+    result = send("Hi Jane, would you refer me?", contact, driver=drv)
     assert result.channel is Channel.DM
     assert result.sent is True
     assert drv.calls[0][0] == "send_dm"
@@ -173,7 +173,7 @@ def test_send_dry_run_is_planned_and_sends_nothing():
     result = send("hi there", contact, driver=drv, dry_run=True)
     assert result.status == "planned"
     assert result.sent is False
-    assert drv.calls[0][4] is True  # dry_run forwarded
+    assert drv.calls[0][3] is True  # dry_run forwarded
 
 
 # ── probe (read-only contact-status sync, FR-NW-15) ───────────────
@@ -206,7 +206,7 @@ def test_probe_requires_public_identifier():
 # ── quota ─────────────────────────────────────────────────────────
 def test_quota_returns_voyager_quota_and_closes():
     drv = FakeVoyagerDriver(quota_result={"ok": True, "quota": {"daily_remaining": 7}})
-    out = quota(driver=drv, tier="new")
+    out = quota(driver=drv)
     assert out["quota"]["daily_remaining"] == 7
-    assert drv.calls[0] == ("quota", "new")
+    assert drv.calls[0] == ("quota",)
     assert drv.closed is True

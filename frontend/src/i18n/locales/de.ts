@@ -224,7 +224,6 @@ const de: DeepPartial<Messages> = {
       toggleCoverLetter: "Anschreiben",
       toggleFindReferrals: "Empfehlungen finden",
       restoreListing: "Anzeige wiederherstellen",
-      restoreListingTitle: "Diese ältere Anzeige in den aktiven Feed zurückholen",
       cantWatchSource: "Diese Quelle kann nicht beobachtet werden",
       watchFailedTitle: "Beobachten fehlgeschlagen — Verbindung prüfen und erneut versuchen. ({{message}})",
       watchOnTitle: "Das Board dieser Firma wird bei jedem Scan gescannt — zum Stoppen klicken",
@@ -763,13 +762,7 @@ const de: DeepPartial<Messages> = {
     },
     referral: {
       title: "Referral Outreach",
-      intro:
-        "Schreibe automatisch Leuten bei einer Firma, bei der du dich bewirbst — von deinem eigenen LinkedIn-Konto aus —, um nach einer Empfehlung zu fragen. Du bestätigst jeden Stapel, bevor er gesendet wird.",
       howLabel: "Wie Referral Outreach funktioniert",
-      howInfo:
-        "Es findet <em>aktuelle</em> Mitarbeiter der Firma und entwirft für jeden eine kurze Nachricht aus einer festen Vorlage pro Rolle (Peer / Hiring Manager / Recruiter / Führungsebene), die du bearbeiten kannst — oder klicke auf „Neu generieren“ für eine KI-Version auf Basis deines Profils. Gesendet wird über deine eigene LinkedIn-Sitzung als Kontaktanfragen oder DMs, langsam getaktet mit konservativen Tages-/Wochenlimits, um das Entdeckungsrisiko zu senken. Standardmäßig aus; du kannst es auch nur für Entwürfe nutzen und selbst senden. Kontakte von Hand zu verfolgen (der Netzwerk-Tab) ist immer möglich und braucht nichts davon.",
-      warning:
-        "Automatisierung auf LinkedIn verstößt in jeder Form gegen die Nutzungsbedingungen von LinkedIn. finds-you-jobs missbraucht die Automatisierung nicht, um Daten abzugreifen, sie zu verkaufen oder daraus Profit zu schlagen, und hält sie 1-zu-1 identisch zu dem, was ein Mensch tun würde — Nachrichten in menschlicher Tippgeschwindigkeit, eingehaltene Tageslimits, zufällig gestreute Zeitabstände. Aber die Nutzungsbedingungen von LinkedIn werden so oder so verletzt, deshalb bestehen wir darauf, dass du dein eigenes Urteil nutzt und die volle Verantwortung für die Konsequenzen seitens LinkedIn übernimmst. Dein Konto kann eingeschränkt werden, und finds-you-jobs ist für keine Folgen für dein LinkedIn-Konto verantwortlich. Bitte nutze diese Funktion verantwortungsvoll, behalte deine gesendeten Nachrichten im Blick und schalte sie ab, wenn dir ungewöhnliches Kontoverhalten auffällt. Diese Funktion nicht zu nutzen hat keinerlei Auswirkungen auf dein LinkedIn-Konto oder irgendein anderes Konto.",
       ack: "Ich möchte LinkedIn-Outreach für Empfehlungen automatisieren — um den Preis eines VERSTOSSES gegen die Nutzungsbedingungen von LinkedIn, der zu Kontoeinschränkungen bis hin zur dauerhaften Sperrung führen kann. Ich übernehme die volle Verantwortung.",
       enable: "Referral Outreach aktivieren",
       lockedHint:
@@ -782,21 +775,56 @@ const de: DeepPartial<Messages> = {
       howLabel: "Wie die LinkedIn-Jobsuche funktioniert",
       howInfo:
         "Eine einmalige Suche über deine eigene angemeldete LinkedIn-Sitzung, die nur läuft, wenn du auf „Suchen“ klickst — geplante Scans berühren sie nie. Nur lesend gegenüber LinkedIn; Ergebnisse werden gegen alles bereits Gefundene dedupliziert. Teilt sich die Sitzung mit Referral Outreach.",
-      warning:
-        "LinkedIn angemeldet zu durchsuchen heißt, seine Jobanzeigen per Automatisierung auszulesen, was gegen die Nutzungsbedingungen von LinkedIn verstößt. finds-you-jobs verkauft oder missbraucht nichts von dem, was es liest, und hält den Fußabdruck minimal: Die Suche läuft NUR, wenn du sie anklickst (nie nach Zeitplan), und zieht eine bescheidene Menge — standardmäßig 25 Jobs — in menschlichem Tempo, sodass sie wie normales Browsen wirkt statt wie Massen-Scraping. Aber die Nutzungsbedingungen von LinkedIn werden so oder so verletzt — nutze also dein eigenes Urteil und übernimm die volle Verantwortung. Dein Konto kann eingeschränkt werden, und finds-you-jobs ist für keine Folgen für dein LinkedIn-Konto verantwortlich. Schalte es ab, wenn dir ungewöhnliches Kontoverhalten auffällt. Diese Funktion nicht zu nutzen hat keinerlei Auswirkungen auf dein LinkedIn-Konto.",
       ack: "Ich möchte LinkedIn angemeldet durchsuchen — um den Preis eines VERSTOSSES gegen die Nutzungsbedingungen von LinkedIn, der zu Kontoeinschränkungen bis hin zur dauerhaften Sperrung führen kann. Ich übernehme die volle Verantwortung.",
       enable: "„LinkedIn-Jobs scannen (LinkedIn-Login nötig)“ aktivieren",
       connectHint: "Verbinde oben die LinkedIn-Sitzung, um eine Suche zu starten.",
       runNow:
         "Starte jetzt eine Suche mit deinen gespeicherten Rollen & Orten — die Ergebnisse landen in deinem „Jobs“-Feed.",
-      searching: "Suche läuft…",
-      searchBtn: "LinkedIn-Jobs suchen",
+      freshBtn: "Neue Suche",
+      nextBtn: "Nächste Seite",
+      nextHint: "Die letzte Suche dort fortsetzen, wo sie aufgehört hat — die nächsten 25 Ergebnisse pro Rolle × Standort.",
+      nextInfo:
+        "„Nächste Seite“ führt die letzte neue Suche mit exakt denselben Rollen & Standorten am nächsten Offset weiter — zwischenzeitliche Änderungen an den Präferenzen ändern daran nichts (dafür eine neue Suche starten). Der Knopf steht 12 Stunden nach einer neuen Suche bereit und verschwindet dann: LinkedIn sortiert die Ergebnisse laufend neu, ein alter Offset zeigte also in eine verschobene Liste. LinkedIn selbst kennt keinen Paginierungs-Timeout — das Fenster ist unsere eigene Frische-Regel. Der Knopf verschwindet auch, wenn LinkedIns Ergebnisse erschöpft sind.",
       resultsPerSearch: "Ergebnisse pro Suche",
-      resultsPerSearchInfo:
-        "Wie viele Jobs pro Rolle × Ort geholt werden, in Seiten à 25. Mehr heißt mehr Ergebnisse — aber auch mehr Anfragen auf <strong>deinem eigenen</strong> LinkedIn-Konto in einem Schwung, was das Rate-Limit- / Kontorisiko erhöht. Bleib moderat.",
-      jobsOption: "{{n}} Jobs",
       started: "Suche gestartet — neue Treffer erscheinen in Kürze unter „Jobs“.",
       failed: "Suche fehlgeschlagen.",
+      scanning: "LinkedIn wird gescannt…",
+      hourlyReached:
+        "Stündliches Jobsuch-Limit erreicht — es wird innerhalb der Stunde zurückgesetzt, oder erhöhe es unter „Selbst auferlegte LinkedIn-Rate-Limits“.",
+    },
+    rateLimits: {
+      title: "Selbst auferlegte Rate-Limits für LinkedIn",
+      intro:
+        "Wie stark sich finds-you-jobs gegenüber LinkedIn selbst drosselt. Wähle deine Mitgliedschaft und lege dann fest, wie nah an LinkedIns geschätzten Limits du laufen möchtest.",
+      info:
+        "Diese Obergrenzen sind UNSERE eigenen — LinkedIn veröffentlicht fast keine seiner echten Limits, jede Obergrenze hier ist also eine Schätzung. Deine Mitgliedschaft legt die geschätzten Obergrenzen fest; der Risiko-Regler skaliert sie; und du kannst jede einzelne Obergrenze überschreiben. Der Outreach-Code setzt genau diese Zahlen durch.",
+      membershipLabel: "LinkedIn-Mitgliedschaft",
+      membershipHint: "Legt die geschätzten Obergrenzen pro Aktion fest, von denen wir skalieren.",
+      membership: {
+        free: "Kostenlos (Basic)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "Risikobereitschaft",
+      riskWarn:
+        "Bei 100 % liegt jedes Limit bei unserer besten Schätzung von LinkedIns eigenem Limit für deine Mitgliedschaft. LinkedIn veröffentlicht diese Zahlen nicht, es sind also Schätzungen — am zuverlässigsten für ein Konto in gutem Stand. Niedriger lässt mehr Sicherheitspuffer; nichts hier kann garantieren, dass dein Konto nicht eingeschränkt wird.",
+      capsLabel: "Einzelne Limits",
+      capsInfo:
+        "Jedes Limit beginnt bei Mitgliedschafts-Obergrenze × Risiko %. Gib eine Zahl ein, um es festzupinnen. Wenn du deine Mitgliedschaft oder den Risiko-Regler änderst, wird jedes festgepinnte Limit auf den berechneten Standardwert zurückgesetzt.",
+      cap: {
+        invites_day: "Kontaktanfragen / Tag",
+        invites_week: "Kontaktanfragen / Woche",
+        dms_day: "Direktnachrichten / Tag",
+        dms_week: "Direktnachrichten / Woche",
+        profile_views_day: "Profilaufrufe / Tag",
+        searches_month: "Personensuchen / Monat",
+        notes_month: "Einladungsnotizen / Monat",
+        job_search_pages_hour: "Jobsuch-Seiten / Stunde (je 25 Jobs)",
+      },
+      ofCeiling: "Max.: ~{{ceiling}}",
+      custom: "benutzerdefiniert",
+      resetBtn: "Auf Standard zurücksetzen",
     },
     session: {
       title: "LinkedIn-Sitzung",
@@ -827,13 +855,6 @@ const de: DeepPartial<Messages> = {
       errorFallback: "Fehler",
       resume: "Outreach fortsetzen",
       disconnect: "Trennen",
-      tier: "Konto-Stufe",
-      tierCapsLabel: "Limits nach Konto-Stufe",
-      tierInfo:
-        "Der LinkedIn-Worker erzwingt diese Limits. Neu = 15/Tag · 100/Woche. Etabliert = 30/Tag · 200/Woche. Wähle ehrlich die Stufe, die zu deinem Konto passt.",
-      tierHint: "Wähle die Stufe, die zu deinem Konto passt.",
-      tierNew: "Neues Konto (sicherer Standard)",
-      tierSeasoned: "Etabliertes Konto",
     },
     observability: {
       title: "Observability",
@@ -960,7 +981,6 @@ const de: DeepPartial<Messages> = {
         nth: "{{degree}}.",
       },
       titleConfirmCompany: "Firma bestätigen",
-      titleSendingMessages: "Nachrichten werden gesendet",
       titleFinding: "Empfehlungen werden gesucht…",
       titleView: "Empfehlungen ansehen",
       findReferrals: "Empfehlungen finden",
@@ -970,9 +990,6 @@ const de: DeepPartial<Messages> = {
         "Rollierende Fenster, kein Kalendertag / keine Kalenderwoche — jeder Versand wird 24 Stunden (täglich) bzw. 7 Tage (wöchentlich) nach dem Senden wieder frei. Konservative Limits, deutlich unter LinkedIns Grenzen.",
       automatedQuota:
         "Automatisiertes Kontingent — letzte 24 h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> letzte 7 Tage: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
-      dmTooltip:
-        "Direktnachrichten an Kontakte 1. Grades sind unbegrenzt und zählen nie gegen das Einladungskontingent",
-      dmCounter: "DMs (letzte 24 h): <strong>{{dmSent}}</strong> (unbegrenzt)",
       manualModeQuota: "Manueller Modus — behalte deine eigenen LinkedIn-Limits im Blick",
       dailyLimitReached: "Tageslimit erreicht. Neue Anfragen warten bis morgen.",
       closeToLimit_one: "Nah am Tageslimit — heute noch {{count}} Anfrage.",
@@ -1009,9 +1026,6 @@ const de: DeepPartial<Messages> = {
       findingContacts: "Kontakte bei {{company}} werden gesucht…",
       scanningHint:
         "LinkedIn wird über deine Sitzung gescannt · typisch 10–30 s. Ist der Firmenname mehrdeutig, pausieren wir und bitten dich, ihn zu bestätigen.",
-      sendingTitle: "Nachrichten werden gesendet…",
-      sendingHint:
-        "Einzeln in menschlicher Tippgeschwindigkeit gesendet, um natürliches Verhalten nachzubilden. Du kannst das schließen — der Versand läuft im Hintergrund weiter.",
       emptyConnected: "Bei dieser Firma wurden noch keine Kontakte gefunden.",
       emptyManual:
         "Noch keine Kontakte — füge einen per URL auf der Netzwerk-Seite hinzu oder schalte Referral Outreach in den Einstellungen ein, um Leute bei dieser Firma automatisch zu finden.",
@@ -1022,11 +1036,6 @@ const de: DeepPartial<Messages> = {
       findMore: "10 weitere finden",
       confirmCompanyNext: "Firma bestätigen →",
       close: "Schließen",
-      reachOut: "Kontaktieren ({{count}})",
-      sendConfirmTitle_one: "{{count}} Outreach-Nachricht senden?",
-      sendConfirmTitle_other: "{{count}} Outreach-Nachrichten senden?",
-      sendConfirmBody:
-        "Das sendet echte LinkedIn-Kontaktanfragen / DMs von deinem Konto, eine nach der anderen. finds-you-jobs kann sie nicht zurücknehmen — um eine Anfrage zurückzuziehen oder eine Nachricht zu löschen, mach das selbst auf <span>linkedin.com</span>.",
       sendingEllipsis: "Wird gesendet…",
       sendNow: "Jetzt senden",
       rowReached: "Kontaktiert",
