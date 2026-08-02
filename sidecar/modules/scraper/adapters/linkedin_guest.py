@@ -32,7 +32,7 @@ from urllib.parse import quote
 
 from ..config import SourceEntry
 from ..htmltext import strip_html
-from ..http import BROWSER_HEADERS, Fetcher, page_pause
+from ..http import BROWSER_HEADERS, Fetcher, paced_pages
 from ..searchquery import build_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
@@ -133,9 +133,9 @@ def search(entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher) -> list[Norma
     errors: list[str] = []
     requests_made = 0
     for q in queries:
-        for page in range(MAX_PAGES):
-            if requests_made:  # jittered pause between guest requests (F-M9)
-                page_pause()
+        # Pages and queries alike hit the same host, so a later query's first
+        # page is still not the run's first request (F-M9).
+        for page in paced_pages(range(MAX_PAGES), already_requested=bool(requests_made)):
             url = (
                 f"{_BASE}?keywords={quote(q.keyword)}"
                 f"&location={quote(q.location)}&start={page * _PAGE_SIZE}"

@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from ..config import SourceEntry
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import first_path_segment
 
 ID = "ashby"
 
@@ -20,11 +21,9 @@ _HOST = "jobs.ashbyhq.com"
 
 
 def _org(url: str) -> str:
-    parts = urlsplit(url)
-    if parts.netloc.lower() != _HOST:
+    if urlsplit(url).netloc.lower() != _HOST:
         return ""
-    segments = [s for s in parts.path.split("/") if s]
-    return segments[0] if segments else ""
+    return first_path_segment(url)
 
 
 def _location(raw: dict) -> str:

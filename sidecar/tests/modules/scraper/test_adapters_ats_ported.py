@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from sidecar.modules.scraper import http
 from sidecar.modules.scraper.adapters import personio, recruitee, smartrecruiters, teamtailor
 from sidecar.modules.scraper.config import SourceEntry
 from sidecar.modules.scraper.types import ScraperError
@@ -114,9 +115,7 @@ def test_smartrecruiters_pagination_stops_on_short_page():
 def test_smartrecruiters_pauses_between_pages_never_before_the_first(monkeypatch):
     """F-M9 — pagination is spaced by the jittered pause, no back-to-back burst."""
     pauses = {"n": 0}
-    monkeypatch.setattr(
-        smartrecruiters, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1)
-    )
+    monkeypatch.setattr(http, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
     full = {"content": [
         {"id": str(i), "name": f"Role {i}",
          "ref": f"https://api.smartrecruiters.com/v1/companies/Acme/postings/{i}",

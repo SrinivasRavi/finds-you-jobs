@@ -16,6 +16,7 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import first_path_segment
 
 ID = "workable"
 
@@ -24,13 +25,10 @@ _RESERVED = {"api", "j"}
 
 
 def _slug(url: str) -> str:
-    parts = urlsplit(url)
-    if parts.netloc.lower() != _HOST:
+    if urlsplit(url).netloc.lower() != _HOST:
         return ""
-    segments = [s for s in parts.path.split("/") if s]
-    if not segments or segments[0] in _RESERVED:
-        return ""
-    return segments[0]
+    slug = first_path_segment(url)
+    return "" if slug in _RESERVED else slug
 
 
 def _location(raw: dict) -> str:

@@ -18,6 +18,7 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import path_segments
 
 ID = "greenhouse"
 
@@ -32,11 +33,10 @@ _HOSTS = {
 
 
 def _slug_and_region(url: str) -> tuple[str, str]:
-    parts = urlsplit(url)
-    host = parts.netloc.lower()
+    host = urlsplit(url).netloc.lower()
     if host not in _HOSTS:
         return "", ""
-    segments = [s for s in parts.path.split("/") if s]
+    segments = path_segments(url)
     if host.startswith("boards-api."):
         # boards-api.greenhouse.io/v1/boards/<slug>/...
         if len(segments) >= 3 and segments[0] == "v1" and segments[1] == "boards":

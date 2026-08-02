@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from sidecar.modules.scraper import adapters
+from sidecar.modules.scraper import adapters, http
 from sidecar.modules.scraper.adapters import arbeitnow, bamboohr, breezy, themuse, workday
 from sidecar.modules.scraper.config import SourceEntry
 from sidecar.modules.scraper.types import ScraperError
@@ -88,7 +88,7 @@ def test_workday_page_cap_bounds_request_budget() -> None:
 def test_workday_pauses_between_pages_never_before_the_first(monkeypatch) -> None:
     """F-M9 — pagination is spaced by the jittered pause, no back-to-back burst."""
     pauses = {"n": 0}
-    monkeypatch.setattr(workday, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
+    monkeypatch.setattr(http, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
     fetcher = routed({"/wday/cxs/acme/AcmeCareers/jobs": _wd_pages(45)})()
     workday.fetch(SourceEntry(url=_WD_URL), fetcher)
     assert fetcher.usage.internal_calls == 3
@@ -191,7 +191,7 @@ def test_themuse_board_keyword_and_fetch() -> None:
 def test_themuse_pauses_between_pages_never_before_the_first(monkeypatch) -> None:
     """F-M9 — pagination is spaced by the jittered pause, no back-to-back burst."""
     pauses = {"n": 0}
-    monkeypatch.setattr(themuse, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
+    monkeypatch.setattr(http, "page_pause", lambda: pauses.__setitem__("n", pauses["n"] + 1))
     page = {
         "page_count": 3,
         "results": [{

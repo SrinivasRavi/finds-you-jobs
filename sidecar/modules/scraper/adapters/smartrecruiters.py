@@ -16,8 +16,9 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from ..config import SourceEntry
-from ..http import Fetcher, page_pause
+from ..http import Fetcher, paced_pages
 from ..types import NormalizedJob, ScraperError
+from .base import first_path_segment
 
 ID = "smartrecruiters"
 
@@ -28,11 +29,9 @@ _MAX_PAGES = 50  # safety cap: 5000 postings @ 100/page
 
 
 def _slug(url: str) -> str:
-    parts = urlsplit(url)
-    if parts.netloc.lower() not in _CAREERS_HOSTS:
+    if urlsplit(url).netloc.lower() not in _CAREERS_HOSTS:
         return ""
-    segments = [s for s in parts.path.split("/") if s]
-    return segments[0] if segments else ""
+    return first_path_segment(url)
 
 
 def _postings_url(slug: str, offset: int) -> str:
@@ -86,9 +85,7 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
         raise ScraperError(ID, f"cannot extract a company slug from {entry.url}")
 
     jobs: list[NormalizedJob] = []
-    for page in range(_MAX_PAGES):
-        if page:  # jittered inter-page pause — no back-to-back bursts (F-M9)
-            page_pause()
+    for page in paced_pages(range(_MAX_PAGES)):
         payload = fetcher.get_json(_postings_url(slug, page * _PAGE_SIZE))
         if not isinstance(payload, dict) or not isinstance(payload.get("content"), list):
             raise ScraperError(ID, f"unexpected payload shape from {slug}: no content[] list")

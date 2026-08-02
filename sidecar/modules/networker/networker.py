@@ -37,6 +37,7 @@ from sidecar.modules._shared.completion_retry import (
     retry_delay_s,
     wait_before_retry,
 )
+from sidecar.modules._shared.dry_run import assemble_dry_run
 from sidecar.modules._shared.job_input import JobInputError
 from sidecar.modules._shared.job_input import resolve_job as _resolve_job
 
@@ -336,9 +337,8 @@ def dry_run_prompt(contact: Contact, job: str, master_md: str = "", guidance: st
     warmth = warmth_for_degree(contact.connection_degree)
     channel = channel_for_warmth(warmth)
     playbook_md = load_playbook(contact.audience)
-    return (
-        "########## SYSTEM (draft skill) ##########\n"
-        + load_skill()
-        + "\n########## USER ##########\n"
-        + build_user_prompt(master_md, jd_md, contact, warmth, channel, playbook_md, guidance)
+    return assemble_dry_run(
+        load_skill(),
+        build_user_prompt(master_md, jd_md, contact, warmth, channel, playbook_md, guidance),
+        "draft skill",
     )
