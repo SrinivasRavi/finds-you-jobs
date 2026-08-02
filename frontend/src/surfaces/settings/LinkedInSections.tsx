@@ -25,7 +25,8 @@ import {
 import type { LinkedInCap, LinkedInSessionState, Settings as SettingsT } from "../../api/types";
 import { ConfirmDialog } from "../../shell/ConfirmDialog";
 import { InfoDot } from "../../shell/InfoDot";
-import { ExperimentalHazard, LinkedInRiskLine, MUTED_WARN_BOX, Section, Toggle } from "./shared";
+import { LinkedInOptIn } from "./LinkedInOptIn";
+import { MUTED_WARN_BOX, Section } from "./shared";
 
 // LinkedIn Job Search breaks ToS by SCRAPING listings (not messaging) — its own
 // warning copy: user-clicked one-offs, one page of 25, no claims about how
@@ -258,9 +259,12 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   );
 });
 
-// The experimental gate around LinkedIn job search — mirrors Referral Outreach
-// (hazard badge + ToS risk line + ack + Enable toggle), with its OWN opt-in but
-// the SAME shared LinkedIn session (connect once, stays until Disconnect).
+// The experimental gate around LinkedIn job search — the SAME consent scaffold
+// as Referral Outreach (hazard badge + ToS risk line + ack + Enable toggle),
+// shared as `LinkedInOptIn` since 2026-08-02 (duplication audit D-F3), with its
+// OWN opt-in but the SAME shared LinkedIn session (connect once, stays until
+// Disconnect). `ack` is local state here on purpose: it resets whenever the
+// Discover pane unmounts, so consent is re-given per visit.
 // Memoized: `settings` is the query-stable object, `patch` a root useCallback.
 export const LinkedInJobSearchSection = memo(function LinkedInJobSearchSection({
   settings,
@@ -275,66 +279,39 @@ export const LinkedInJobSearchSection = memo(function LinkedInJobSearchSection({
   const enabled = settings.linkedin_search_enabled;
   const connected = session?.status === "valid";
   return (
-    <Section title={t("settingsPage.linkedinSearch.title")} titleExtra={<ExperimentalHazard />}>
+    <LinkedInOptIn
+      title={t("settingsPage.linkedinSearch.title")}
+      intro={t("settingsPage.linkedinSearch.intro")}
+      howLabel={t("settingsPage.linkedinSearch.howLabel")}
+      howInfo={t("settingsPage.linkedinSearch.howInfo")}
+      warning={t(JOB_SEARCH_WARNING)}
+      ackLabel={t("settingsPage.linkedinSearch.ack")}
+      ackTestid="linkedin-search-ack"
+      ack={ack}
+      onAck={setAck}
+      enableLabel={t("settingsPage.linkedinSearch.enable")}
+      enabled={enabled}
+      onEnable={(ackAt) =>
+        patch({ linkedin_search_enabled: true, linkedin_search_ack_at: ackAt })
+      }
+      onDisable={() => patch({ linkedin_search_enabled: false })}
+      toggleTestid="linkedin-search-toggle"
+      ackAt={settings.linkedin_search_ack_at}
+      ackAtTestid="linkedin-search-ack-at"
+    >
       <div className="space-y-3">
-        <p className="text-[12.5px] text-ink-2">
-          {t("settingsPage.linkedinSearch.intro")}
-          <InfoDot label={t("settingsPage.linkedinSearch.howLabel")}>
-            {t("settingsPage.linkedinSearch.howInfo")}
-          </InfoDot>
-        </p>
-        <LinkedInRiskLine detail={t(JOB_SEARCH_WARNING)} />
-        <label className="flex items-start gap-2 text-[12px] font-medium text-ink-2">
-          <input
-            type="checkbox"
-            checked={ack || enabled}
-            onChange={(e) => setAck(e.target.checked)}
-            data-testid="linkedin-search-ack"
-            className="mt-0.5"
-          />
-          {t("settingsPage.linkedinSearch.ack")}
-        </label>
-        <div className="flex items-center gap-3">
-          <div className="flex-1 text-[13px] font-medium text-ink">
-            {t("settingsPage.linkedinSearch.enable")}
-          </div>
-          <Toggle
-            on={enabled}
-            onChange={(v) => {
-              if (v && !ack) return;
-              patch(
-                v
-                  ? { linkedin_search_enabled: v, linkedin_search_ack_at: new Date().toISOString() }
-                  : { linkedin_search_enabled: v },
-              );
-              if (!v) setAck(false);
-            }}
-            testid="linkedin-search-toggle"
-          />
-        </div>
-        {settings.linkedin_search_ack_at ? (
-          <div className="text-[11px] text-ink-4" data-testid="linkedin-search-ack-at">
-            {t("settingsPage.acknowledgedOn", {
-              date: new Date(settings.linkedin_search_ack_at).toLocaleDateString(),
-            })}
-          </div>
-        ) : null}
-        {enabled ? (
-          <div className="space-y-3">
-            {/* Same collapsible session as Referral Outreach — connect/disconnect
-                here or there, it's one shared session. */}
-            <LinkedInSessionSection />
-            {connected ? (
-              <LinkedInJobSearchBlock />
-            ) : (
-              <p className="text-[11.5px] text-ink-4">
-                {t("settingsPage.linkedinSearch.connectHint")}
-              </p>
-            )}
-          </div>
-        ) : null}
+        {/* Same collapsible session as Referral Outreach — connect/disconnect
+            here or there, it's one shared session. */}
+        <LinkedInSessionSection />
+        {connected ? (
+          <LinkedInJobSearchBlock />
+        ) : (
+          <p className="text-[11.5px] text-ink-4">
+            {t("settingsPage.linkedinSearch.connectHint")}
+          </p>
+        )}
       </div>
-    </Section>
+    </LinkedInOptIn>
   );
 });
 
