@@ -29,6 +29,7 @@ from .db import Database, resolve_db_url
 from .db.base import now_utc
 from .db.database import resolve_data_dir
 from .db.migrate import upgrade_to_head
+from .db.models import OP_ACTIVE_STATES
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub, register_sse_schemas
 from .logging_setup import get_logger, setup_flight_recorder
 from .observability import ObservabilityHandle, configure_observability
@@ -173,7 +174,7 @@ def create_app(
                     )
                     if run.operation_id:
                         op = repos.operations.get(run.operation_id)
-                        if op is not None and op.state in ("queued", "running"):
+                        if op is not None and op.state in OP_ACTIVE_STATES:
                             repos.operations.mark_cancelled(run.operation_id)
         except Exception:  # noqa: BLE001 — recovery must never block boot
             log.exception("apply-run boot recovery failed")

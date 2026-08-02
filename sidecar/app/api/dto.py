@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..db.models import (
+    OP_ACTIVE_STATES,
     Application,
     Artifact,
     Contact,
@@ -1010,7 +1011,7 @@ def derive_score_status(has_score: bool, op_states: set[str]) -> str:
     score means `Score failed`; else Pending (not yet attempted)."""
     if has_score:
         return "scored"
-    if "queued" in op_states or "running" in op_states:
+    if op_states & OP_ACTIVE_STATES:
         return "pending"
     if "failed" in op_states:
         return "failed"
@@ -1058,7 +1059,7 @@ def derive_packet_state(operation_states: list[str | None]) -> str:
     """
     if not operation_states:
         return "none"
-    if any(state in ("queued", "running") for state in operation_states):
+    if any(state in OP_ACTIVE_STATES for state in operation_states):
         return "generating"
     if any(state == "failed" for state in operation_states):
         return "failed"
@@ -1073,7 +1074,7 @@ def derive_artifact_state(
     approved_at is stamped; ready → otherwise settled."""
     if artifact is None:
         return "none"
-    if operation_state in ("queued", "running"):
+    if operation_state in OP_ACTIVE_STATES:
         return "generating"
     if operation_state == "failed":
         return "failed"
@@ -1329,7 +1330,7 @@ def derive_referrals_state(
     - No batch yet but candidates were discovered for the role → `pending`.
     - Nothing discovered or sent → `none` (frontend `notStarted`).
     """
-    if any(state in ("queued", "running") for state in send_op_states):
+    if any(state in OP_ACTIVE_STATES for state in send_op_states):
         return "sending"
     if discover_in_flight:
         return "finding"

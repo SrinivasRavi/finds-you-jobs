@@ -41,6 +41,17 @@ def _pk() -> Mapped[str]:
 # Orchestration (database-design §2)
 # ---------------------------------------------------------------------------
 
+# The Operation state machine's vocabulary, named once (D-A4). The runner owns
+# the transitions (`queued → running → succeeded|failed|cancelled`, runner.py);
+# these are the *sets* every filter, guard and ledger scan asks about, so a new
+# state lands in one place instead of ~17 pasted literals. Frozen sets: every
+# consumer does membership or SQL `.in_()`, neither of which is order-sensitive.
+# (`events.py`'s `Literal[...]` spells the same five values at the type level —
+# a typing Literal cannot be built from a runtime constant.)
+OP_ACTIVE_STATES: frozenset[str] = frozenset({"queued", "running"})
+OP_TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
+OP_ALL_STATES: frozenset[str] = OP_ACTIVE_STATES | OP_TERMINAL_STATES
+
 
 class Operation(Base):
     """The runner's durable queue row + the cost ledger (architecture §5.3)."""
@@ -340,6 +351,14 @@ class ApplicationDocument(Base):
         UniqueConstraint("application_id", "kind", name="uq_appdoc_kind"),
         Index("ix_appdoc_application", "application_id"),
     )
+
+
+# The statuses an ApplyRun holds while it is still live — its OWN vocabulary,
+# never the Operation one (D-A4): boot recovery, the single-flight guard, and
+# the late-failure/cancel finalizers all ask the same "is this run active?".
+APPLY_RUN_ACTIVE_STATUSES: frozenset[str] = frozenset(
+    {"queued", "waiting_for_packet", "running"}
+)
 
 
 class ApplyRun(Base):

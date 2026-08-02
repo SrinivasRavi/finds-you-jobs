@@ -29,6 +29,7 @@ from sidecar.modules.scraper.types import ScanPrefs
 
 from .. import documents as docstore
 from ..db.base import now_utc
+from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
 from ..db.repos import snapshot_matches
 from ..events import heartbeat_stream
 from ..lifecycle import CONTACT_SYNC_MIN_INTERVAL_MINUTES
@@ -361,7 +362,7 @@ async def scan_progress(request: Request) -> dto.ScanProgressDTO:
             last_scan = repos.operations.latest_succeeded_by_kind("scan")
             new_ids = _scan_new_ids(last_scan)
             score_pending = len(
-                repos.operations.list_by_kind_states("score", {"queued", "running"})
+                repos.operations.list_by_kind_states("score", OP_ACTIVE_STATES)
             )
             # Batch-scoped "done": score ops for THIS scan's new jobs that have
             # reached a terminal state and are not currently re-pending. The
@@ -371,7 +372,7 @@ async def scan_progress(request: Request) -> dto.ScanProgressDTO:
             score_done = 0
             for job_id in new_ids:
                 states = score_states.get(job_id, set())
-                if states & {"queued", "running"}:
+                if states & OP_ACTIVE_STATES:
                     continue
                 if states & {"succeeded", "failed"}:
                     score_done += 1
@@ -811,7 +812,7 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         "send", {"queued", "running", "failed", "succeeded"}
     )
     discover_ops = repos.operations.list_by_kind_states(
-        "discover", {"queued", "running"}
+        "discover", OP_ACTIVE_STATES
     )
     # Batched child rows — one IN query per table.
     # Only head artifacts (not superseded) surface + drive packetState.
@@ -1230,13 +1231,12 @@ async def get_application(request: Request, application_id: str) -> dto.Applicat
         return _application_dto(repos, app)
 
 
-_ALL_OP_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
 _SCORE_LABELS = {"failed": "Score failed", "succeeded": "Scored"}
 
 
 def _ops_for_job(repos: Any, kind: str, job_id: str) -> list[Any]:
     return repos.operations.list_for_snapshot(
-        kind, _ALL_OP_STATES, key="job_id", value=job_id
+        kind, OP_ALL_STATES, key="job_id", value=job_id
     )
 
 
@@ -1835,7 +1835,7 @@ async def discover_referrals(
         # LinkedIn scan. A confirm (URN/URL) always runs — it supersedes the boot.
         if not is_confirm:
             for op in repos.operations.list_for_snapshot(
-                "discover", {"queued", "running"}, key="job_id", value=job_id
+                "discover", OP_ACTIVE_STATES, key="job_id", value=job_id
             ):
                 snap = op.input_snapshot or {}
                 if not (snap.get("company_urn") or snap.get("company_url")):
@@ -1899,7 +1899,7 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
         # role is already queued or running. Skip those; the UI disables the button
         # and shows "Sending…" but this is the authoritative backstop.
         active_sends = repos.operations.list_for_snapshot(
-            "send", {"queued", "running"}, key="job_id", value=payload.job_id
+            "send", OP_ACTIVE_STATES, key="job_id", value=payload.job_id
         )
         inflight = {
             (op.input_snapshot or {}).get("contact_id") for op in active_sends
@@ -2402,7 +2402,7 @@ async def start_apply(
         )
         job = _found(repos.jobs.get(app_row.job_id), "job", app_row.job_id)
         active = repos.apply_runs.latest_for_application(application_id)
-        if active is not None and active.status in ("queued", "waiting_for_packet", "running"):
+        if active is not None and active.status in APPLY_RUN_ACTIVE_STATUSES:
             # Single-flight per card: reopening the companion binds to the
             # active run instead of double-launching a browser (§8.2).
             return dto.apply_run_dto(active)

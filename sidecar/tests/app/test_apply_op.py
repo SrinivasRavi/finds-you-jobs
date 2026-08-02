@@ -23,6 +23,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from sidecar.app.db.models import APPLY_RUN_ACTIVE_STATUSES
 from sidecar.app.main import create_app
 
 TOKEN = "test-token-apply"  # noqa: S105 — test fixture, not a real secret
@@ -94,7 +95,7 @@ def _wait_terminal(client: TestClient, run_id: str, timeout: float = 300.0) -> d
     run: dict = {}
     while time.monotonic() < deadline:
         run = client.get(f"/api/apply-runs/{run_id}", headers=AUTH).json()
-        if run["status"] not in ("queued", "waiting_for_packet", "running"):
+        if run["status"] not in APPLY_RUN_ACTIVE_STATUSES:
             return run
         time.sleep(0.25)
     raise AssertionError(f"run {run_id} never landed: {run}")

@@ -46,6 +46,7 @@ from sidecar.packages.referral_outreach import PacingProfile, plan_for_membershi
 
 from ..db.base import now_utc
 from ..db.database import resolve_data_dir
+from ..db.models import OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
@@ -540,9 +541,6 @@ def _is_rate_limited(result: Any) -> bool:
     return bool(quota.get("paused"))
 
 
-_SEND_ACTIVE = frozenset({"queued", "running"})
-_SEND_ALL = frozenset({"queued", "running", "succeeded", "failed", "cancelled"})
-
 
 def _maybe_move_on_batch_settle(
     repos: Repos,
@@ -568,11 +566,11 @@ def _maybe_move_on_batch_settle(
         siblings = [
             op
             for op in repos.operations.list_for_snapshot(
-                "send", set(_SEND_ALL), key="batch_id", value=batch_id
+                "send", OP_ALL_STATES, key="batch_id", value=batch_id
             )
             if op.id != current_op_id
         ]
-        if any(op.state in _SEND_ACTIVE for op in siblings):
+        if any(op.state in OP_ACTIVE_STATES for op in siblings):
             return  # batch has not settled yet — a sibling is still queued/running
         member_ids |= {op.id for op in siblings}
     sent_in_batch = any(

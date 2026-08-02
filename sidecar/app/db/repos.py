@@ -7,6 +7,7 @@ single session (one short transaction per unit of work — AM4).
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,6 +19,9 @@ from sqlalchemy.orm import Session
 
 from .base import now_utc
 from .models import (
+    APPLY_RUN_ACTIVE_STATUSES,
+    OP_ACTIVE_STATES,
+    OP_TERMINAL_STATES,
     Application,
     ApplicationDocument,
     ApplicationEvent,
@@ -140,12 +144,11 @@ class OperationsRepo:
         ledger retention (US-LOG-01 #2: ~5 pages). Only terminal rows are
         pruned so an in-flight `queued`/`running` op is never dropped mid-flight.
         Returns the number deleted."""
-        terminal = ("succeeded", "failed", "cancelled")
-        keep_ids = select(Operation.id).where(Operation.state.in_(terminal)).order_by(
-            Operation.created_at.desc()
-        ).limit(keep)
+        keep_ids = select(Operation.id).where(
+            Operation.state.in_(OP_TERMINAL_STATES)
+        ).order_by(Operation.created_at.desc()).limit(keep)
         stmt = delete(Operation).where(
-            Operation.state.in_(terminal), Operation.id.not_in(keep_ids)
+            Operation.state.in_(OP_TERMINAL_STATES), Operation.id.not_in(keep_ids)
         )
         result = cast("CursorResult[Any]", self._s.execute(stmt))
         return result.rowcount or 0
@@ -154,10 +157,9 @@ class OperationsRepo:
         """The cost aggregate of the terminal ops `trim_to(keep)` would prune —
         i.e. all-but-the-newest-`keep` terminal rows. Folded into the persistent
         lifetime aggregate *before* pruning so all-time spend survives retention."""
-        terminal = ("succeeded", "failed", "cancelled")
         stmt = (
             select(Operation)
-            .where(Operation.state.in_(terminal))
+            .where(Operation.state.in_(OP_TERMINAL_STATES))
             .order_by(Operation.created_at.desc())
             .offset(keep)
         )
@@ -175,14 +177,14 @@ class OperationsRepo:
             _accumulate_op(agg, op)
         return agg
 
-    def list_by_kind_states(self, kind: str, states: set[str]) -> list[Operation]:
+    def list_by_kind_states(self, kind: str, states: Collection[str]) -> list[Operation]:
         stmt = select(Operation).where(
             Operation.kind == kind, Operation.state.in_(states)
         )
         return list(self._s.scalars(stmt))
 
     def list_for_snapshot(
-        self, kind: str, states: set[str], *, key: str, value: Any
+        self, kind: str, states: Collection[str], *, key: str, value: Any
     ) -> list[Operation]:
         """Ops of `kind` in `states` whose `input_snapshot[key] == value` — the
         "which ops belong to this job / batch / contact?" question every ledger
@@ -230,7 +232,7 @@ class OperationsRepo:
 
     def any_in_flight(self, kind: str) -> bool:
         stmt = select(Operation.id).where(
-            Operation.kind == kind, Operation.state.in_(("queued", "running"))
+            Operation.kind == kind, Operation.state.in_(OP_ACTIVE_STATES)
         )
         return self._s.scalars(stmt).first() is not None
 
@@ -1426,7 +1428,7 @@ class ApplyRunsRepo:
     def list_active(self) -> list[ApplyRun]:
         """Runs a boot-recovery pass must mark interrupted (§9.3)."""
         stmt = select(ApplyRun).where(
-            ApplyRun.status.in_(("queued", "waiting_for_packet", "running"))
+            ApplyRun.status.in_(APPLY_RUN_ACTIVE_STATUSES)
         )
         return list(self._s.scalars(stmt))
 

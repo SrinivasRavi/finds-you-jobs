@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sidecar.app.db import Database
+from sidecar.app.db.models import OP_ALL_STATES
 from sidecar.app.main import create_app
 from sidecar.app.registry import EngineRegistry, OperationContext
 from sidecar.app.registry.operations import (
@@ -279,9 +280,7 @@ def _make_app(tmp_path: Any) -> Any:
 def _score_ops_for(db: Database, job_id: str) -> int:
     """How many `score` operation rows exist for one job (any state)."""
     with db.repos() as repos:
-        ops = repos.operations.list_by_kind_states(
-            "score", {"queued", "running", "succeeded", "failed", "cancelled"}
-        )
+        ops = repos.operations.list_by_kind_states("score", OP_ALL_STATES)
         return sum(
             1
             for op in ops

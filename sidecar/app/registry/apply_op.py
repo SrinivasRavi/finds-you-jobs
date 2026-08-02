@@ -52,6 +52,7 @@ from sidecar.packages.jobapplier.loop import ApplyEngine
 from ..db import Repos
 from ..db.base import now_utc
 from ..db.database import Database, resolve_data_dir
+from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES
 from ..events import make_event
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome
@@ -346,7 +347,7 @@ async def _wait_for_packet(
             pending = False
             if head is not None and head.operation_id:
                 op = repos.operations.get(head.operation_id)
-                pending = op is not None and op.state in ("queued", "running")
+                pending = op is not None and op.state in OP_ACTIVE_STATES
             if not pending:
                 profile = repos.profile.get_current()
                 if profile is None or not profile.resume_markdown:
@@ -463,10 +464,10 @@ async def _review_window(
     return result
 
 
-# Statuses a live run holds before it lands terminal — the only states a
-# late-failure/cancel finalize may overwrite (double-finalize impossible:
-# a row that already landed terminal is left untouched).
-_ACTIVE_RUN_STATUSES = ("queued", "waiting_for_packet", "running")
+# `APPLY_RUN_ACTIVE_STATUSES` (db/models.py) is the set of statuses a live run
+# holds before it lands terminal — the only states a late-failure/cancel
+# finalize below may overwrite (double-finalize impossible: a row that already
+# landed terminal is left untouched).
 
 
 def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
@@ -478,7 +479,7 @@ def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
     status forever."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
-        if run is None or run.status not in _ACTIVE_RUN_STATUSES:
+        if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
         repos.apply_runs.update(
             run_id,
@@ -502,7 +503,7 @@ def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
     entrypoint raced ahead and finalized the run itself)."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
-        if run is None or run.status not in _ACTIVE_RUN_STATUSES:
+        if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
         repos.apply_runs.update(
             run_id,
