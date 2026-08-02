@@ -29,6 +29,7 @@ import contextlib
 import json
 import os
 import random
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -317,9 +318,13 @@ def plan_for_membership(membership: str | None) -> str:
     return "free" if (membership or DEFAULT_MEMBERSHIP).strip().lower() == "free" else "premium"
 
 
-def human_type_delay_ms() -> int:
-    """One randomized per-keystroke delay (mimics human typing)."""
-    return random.randint(HUMAN_TYPE_MIN_DELAY_MS, HUMAN_TYPE_MAX_DELAY_MS)
+def human_type_delay_ms(min_ms: int | None = None, max_ms: int | None = None) -> int:
+    """One randomized per-keystroke delay (mimics human typing). `None` bounds
+    fall back to the module defaults; `session.human_type` passes the per-call
+    overrides its callers give it (the note/DM compose paths type faster)."""
+    lo = HUMAN_TYPE_MIN_DELAY_MS if min_ms is None else min_ms
+    hi = HUMAN_TYPE_MAX_DELAY_MS if max_ms is None else max_ms
+    return random.randint(lo, hi)
 
 
 def send_delay_seconds() -> float:
@@ -509,13 +514,34 @@ class Pacer:
                     merged.paused_reason = self._pause_action[2]
             for meter, window in METER_WINDOWS.items():
                 setattr(merged, meter, _prune(sorted(merged.meter(meter)), now, window))
-            tmp = self._state_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(merged.to_json(), indent=2))
-            os.replace(tmp, self._state_path)
+            self._write_atomic(json.dumps(merged.to_json(), indent=2))
         self.state = merged
         self._pending = []
         self._refunds = []
         self._pause_action = None
+
+    def _write_atomic(self, payload: str) -> None:
+        """Replace the ledger file with `payload` atomically.
+
+        A UNIQUE temp name in the SAME directory (so `os.replace` stays a
+        same-filesystem atomic rename), removed best-effort if anything fails
+        before the rename. The old fixed `pacing_state.json.tmp` name meant two
+        concurrent writers could scribble on one another's half-written file,
+        and a crash mid-write left that stale tmp behind for the next writer to
+        inherit. Modelled on `secure_store.save_state_file`; no fsync, as
+        before — the ledger is harm-reduction state, not a durability contract.
+        """
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.state_dir), prefix=self.STATE_FILENAME, suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(payload)
+            os.replace(tmp_name, self._state_path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+            raise
 
     # --- backoff (NFR-LI-03) ---
     def is_paused(self, now: float | None = None) -> bool:

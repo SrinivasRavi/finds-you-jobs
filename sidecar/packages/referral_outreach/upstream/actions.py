@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .client import PlaywrightLinkedinAPI
+from .client import PlaywrightLinkedinAPI, resolve_degree
 from .errors import AuthenticationError, ReachedConnectionLimit, SkipProfile
 from .session import AccountSession, goto_page, human_type
 
@@ -353,9 +353,7 @@ def get_connection_status(session: AccountSession, public_identifier: str) -> st
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
     fresh, _raw = api.get_profile(public_identifier=public_identifier)
-    degree = (fresh or {}).get("connection_degree")
-    if degree is None:
-        degree = api.get_connection_degree(public_identifier)
+    degree = resolve_degree(api, fresh, public_identifier, best_effort=False)
     if degree == 1:
         return STATUS_CONNECTED
 
@@ -380,9 +378,7 @@ def get_contact_sync_state(session: AccountSession, public_identifier: str) -> d
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
     parsed, _raw = api.get_profile(public_identifier=public_identifier)
-    degree = (parsed or {}).get("connection_degree")
-    if degree is None:
-        degree = api.get_connection_degree(public_identifier)
+    degree = resolve_degree(api, parsed, public_identifier, best_effort=False)
     target_urn = (parsed or {}).get("urn")
 
     direction: str | None = None
@@ -630,8 +626,9 @@ def _send_message_api(api: PlaywrightLinkedinAPI, conversation_urn: str,
     headers = {**api.headers, "accept": "application/json",
                "content-type": "text/plain;charset=UTF-8"}
     res = api.post(url, headers=headers, data=json.dumps(payload))
-    if res.status == 401:
-        raise AuthenticationError("Messaging API 401 (send_message)")
+    # Same order as every other site: 401 (dead session) before anything else —
+    # this path carries no throttle check of its own.
+    api._raise_if_unauthorized(res, "Messaging API 401 (send_message)")
     if not res.ok:
         raise OSError(f"Messaging API {res.status}: {res.text()[:500]}")
     return res.json()

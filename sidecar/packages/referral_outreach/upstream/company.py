@@ -27,6 +27,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 from .client import PlaywrightLinkedinAPI
+from .voyager import text_of, vector_image_url
 
 logger = logging.getLogger("voyager_py.company")
 
@@ -101,15 +102,6 @@ def _first(d: dict, *keys: str):
     return None
 
 
-def _text(value) -> str:
-    """A Voyager text node may be a bare str or `{"text": "..."}`. → str."""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        return str(value.get("text") or "")
-    return ""
-
-
 def _vanity_from_nav(*candidates: str | None) -> str:
     """Pull the `/company/<vanity>` slug out of a navigation/action URL."""
     for c in candidates:
@@ -139,7 +131,7 @@ def _hit_from_typeahead_element(el: dict) -> dict | None:
             if "Company" in key and isinstance(info, dict):
                 cid = info.get("id")
                 urn = info.get("entityUrn") or (f"urn:li:company:{cid}" if cid else "")
-                name = _text(_first(info, "name") or "")
+                name = text_of(_first(info, "name") or "")
                 if not (urn or name):
                     continue
                 return {
@@ -148,18 +140,18 @@ def _hit_from_typeahead_element(el: dict) -> dict | None:
                     "name": name,
                     "vanity": info.get("companyPublicIdentifier")
                     or _vanity_from_nav(info.get("navigationUrl")),
-                    "industry": _text(_first(info, "industry") or ""),
+                    "industry": text_of(_first(info, "industry") or ""),
                 }
 
     # Shape B: dash element with a target/entity urn + title + subtext.
     urn = _first(el, "targetUrn", "entityUrn", "objectUrn") or ""
-    name = _text(_first(el, "title", "text", "name"))
+    name = text_of(_first(el, "title", "text", "name"))
     if not (urn or name):
         return None
     nav = el.get("navigationUrl")
     action = el.get("actionTarget")
     vanity = _vanity_from_nav(
-        nav if isinstance(nav, str) else _text(nav),
+        nav if isinstance(nav, str) else text_of(nav),
         action if isinstance(action, str) else None,
     )
     return {
@@ -167,7 +159,7 @@ def _hit_from_typeahead_element(el: dict) -> dict | None:
         "company_id": company_id_from_urn(urn if isinstance(urn, str) else ""),
         "name": name,
         "vanity": vanity,
-        "industry": _text(el.get("subtext")),
+        "industry": text_of(el.get("subtext")),
     }
 
 
@@ -253,18 +245,14 @@ def vanity_from_company_url(url: str | None) -> str:
 
 
 def _vector_image_url(vector: dict | None, target: int = 200) -> str:
-    """A Voyager `vectorImage` (rootUrl + artifacts) → a displayable URL, "" if none.
-    Picks the artifact nearest `target` px. Mirrors voyager.py's helper (kept local
-    to avoid importing a private symbol across modules)."""
-    if not isinstance(vector, dict):
-        return ""
-    root = vector.get("rootUrl")
-    artifacts = vector.get("artifacts") or []
-    if not root or not isinstance(artifacts, list) or not artifacts:
-        return ""
-    chosen = min(artifacts, key=lambda a: abs((a or {}).get("width", 0) - target))
-    seg = (chosen or {}).get("fileIdentifyingUrlPathSegment", "")
-    return f"{root}{seg}" if seg else ""
+    """`voyager.vector_image_url` with a "" miss instead of None.
+
+    The company hit dicts use "" as their absent-value sentinel on the wire (the
+    host reads `logo_url` as a string, and `parse_company_entity` fills empty
+    fields by truthiness), so the None the shared helper returns is adapted here
+    rather than leaking into the hit shape. Company logos also default to a
+    smaller artifact (200 px) than profile pictures."""
+    return vector_image_url(vector, target) or ""
 
 
 def _logo_url(el: dict) -> str:
@@ -307,19 +295,19 @@ def _company_entity_from_element(el: dict) -> dict | None:
         return None
     urn = _first(el, "entityUrn", "objectUrn", "*company", "trackingUrn") or ""
     urn = urn if isinstance(urn, str) else ""
-    name = _text(_first(el, "name", "localizedName") or "")
+    name = text_of(_first(el, "name", "localizedName") or "")
     if not (company_id_from_urn(urn) or name):
         return None
     industry = ""
     industries = el.get("companyIndustries") or el.get("industries")
     if isinstance(industries, list) and industries:
         first = industries[0]
-        industry = _text(first.get("localizedName") if isinstance(first, dict) else first)
+        industry = text_of(first.get("localizedName") if isinstance(first, dict) else first)
     return {
         "urn": urn,
         "company_id": company_id_from_urn(urn),
         "name": name,
-        "vanity": el.get("universalName") or _vanity_from_nav(_text(el.get("url"))),
+        "vanity": el.get("universalName") or _vanity_from_nav(text_of(el.get("url"))),
         "industry": industry,
         "logo_url": _logo_url(el),
         "website": parse_company_website(el),
@@ -354,7 +342,7 @@ def _company_name_from_payload(node) -> str:
     """
     if isinstance(node, dict):
         if _looks_like_company_entity(node):
-            name = _text(_first(node, "name", "localizedName") or "")
+            name = text_of(_first(node, "name", "localizedName") or "")
             if name:
                 return name
         for key, value in node.items():
@@ -381,7 +369,7 @@ def _industry_from_payload(node) -> str:
             container = node.get(key)
             if isinstance(container, list) and container:
                 first = container[0]
-                text = _text(first.get("localizedName") if isinstance(first, dict) else first)
+                text = text_of(first.get("localizedName") if isinstance(first, dict) else first)
                 if text:
                     return text
         for value in node.values():

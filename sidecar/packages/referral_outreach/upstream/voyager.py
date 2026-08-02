@@ -108,27 +108,65 @@ def _resolve_star_field(entity: dict, urn_map: Dict[str, dict], field_name: str)
     return urn_map.get(value)
 
 
-def _vector_image_url(vector_img: Optional[dict], target_width: int = 400) -> Optional[str]:
-    """Resolve a Voyager vectorImage to a displayable URL.
+# ======================
+# Shared parser helpers (PUBLIC — the parser trio's common vocabulary)
+# ======================
+#
+# `company.py` and `jobs.py` each carried their own copy of these two, one of
+# them explicitly "kept local to avoid importing a private symbol across
+# modules" — so the copies drifted (defensive isinstance guards on one side
+# only, a `.strip()` on another). They live here, public, because voyager.py is
+# the pure parser this trio is built around. Still GPL-subtree-internal: nothing
+# outside `upstream/` may import them.
+
+
+def vector_image_url(vector_img: Optional[dict], target_width: int = 400) -> Optional[str]:
+    """Resolve a Voyager vectorImage to a displayable URL, ``None`` when it has
+    no usable artifact.
 
     Picks the artifact with width closest to ``target_width`` (artifacts are
-    typically 100/200/400/800 px) and joins it to ``rootUrl``.
+    typically 100/200/400/800 px) and joins it to ``rootUrl``. Every shape guard
+    degrades to ``None`` — a malformed image node is a missing picture, never a
+    crash in the middle of a profile parse. (Callers that want "" for the miss
+    wrap this; see `company._vector_image_url`.)
     """
-    if not vector_img:
+    if not isinstance(vector_img, dict):
         return None
     root = vector_img.get("rootUrl")
     artifacts = vector_img.get("artifacts") or []
-    if not root or not artifacts:
+    if not root or not isinstance(artifacts, list) or not artifacts:
         return None
-    chosen = min(artifacts, key=lambda a: abs(a.get("width", 0) - target_width))
-    seg = chosen.get("fileIdentifyingUrlPathSegment", "")
+    chosen = min(artifacts, key=lambda a: abs((a or {}).get("width", 0) - target_width))
+    seg = (chosen or {}).get("fileIdentifyingUrlPathSegment", "")
     return root + seg if seg else None
+
+
+def text_of(value: Any, *, strip: bool = False) -> str:
+    """A Voyager text node → a plain string ("" when there is none).
+
+    A node is either a bare ``str`` or a TextViewModel-ish ``{"text": …}``.
+    ``strip=True`` trims surrounding whitespace — the jobs-search cards arrive
+    with non-breaking spaces around the title, and a whitespace-only title must
+    read as absent.
+    """
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, dict):
+        text = str(value.get("text") or "")
+    else:
+        text = ""
+    return text.strip() if strip else text
+
+
+# ======================
+# Private helpers (continued)
+# ======================
 
 
 def _company_logo_url(company: Optional[dict]) -> Optional[str]:
     if not company:
         return None
-    return _vector_image_url((company.get("logo") or {}).get("vectorImage"))
+    return vector_image_url((company.get("logo") or {}).get("vectorImage"))
 
 
 def _date_from_raw(raw: Optional[dict]) -> Optional[Date]:
@@ -435,7 +473,7 @@ def parse_linkedin_voyager_response(
     supported_raw = profile_entity.get("supportedLocales") or []
     supported_locales = [loc.get("language") for loc in supported_raw if loc.get("language")]
 
-    profile_picture_url = _vector_image_url(
+    profile_picture_url = vector_image_url(
         ((profile_entity.get("profilePicture") or {}).get("displayImageReference") or {}).get(
             "vectorImage"
         )
