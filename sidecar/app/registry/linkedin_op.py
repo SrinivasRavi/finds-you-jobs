@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sidecar.modules.networker.types import NetworkerError
 from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
@@ -31,11 +31,8 @@ from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
 from ..db.base import now_utc
 from ..events import make_event
 from . import networker_ops
-from .networker_ops import linkedin_feature_flags, linkedin_storage_path, resolve_pacing_profile
+from .networker_ops import linkedin_feature_flags, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # 60-day never-accepted auto-archive window (US-NW-11 / FR-NW-13).
 STALE_CONTACT_DAYS = 60
@@ -423,8 +420,3 @@ def linkedin_entrypoints() -> dict[str, Any]:
         "linkedin_search": linkedin_search_entrypoint,
         "archive_stale_contacts": archive_stale_contacts_entrypoint,
     }
-
-
-def storage_path_for_disconnect() -> Path:
-    """Exposed for the disconnect route (delete the saved session file)."""
-    return linkedin_storage_path()

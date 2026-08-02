@@ -49,7 +49,7 @@ from ..db.database import resolve_data_dir
 from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
-from .operations import OperationContext, OperationOutcome
+from .operations import OperationContext, OperationOutcome, llm_outcome
 
 if TYPE_CHECKING:
     from ..db import Repos
@@ -108,10 +108,13 @@ def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:
     from ..security import SESSION_KEY_ENV, get_session_key
 
     plan = plan_for_membership(profile.membership if profile is not None else None)
-    data = linkedin_data_dir()
     return DirectVoyagerDriver(
-        storage_state=str(data / "storage_state.json"),
-        user_data_dir=str(data / "profile"),
+        # Through the helpers above, never re-typed here: the secret-at-rest
+        # paths get exactly ONE spelling, so the enforcing driver and every
+        # reader (disconnect, session status) can never point at different
+        # files ("disconnected but still logged in" — D-A11).
+        storage_state=str(linkedin_storage_path()),
+        user_data_dir=str(linkedin_profile_dir()),
         state_dir=str(linkedin_state_dir()),
         pacing_profile=profile,
         linkedin_plan=plan,
@@ -506,15 +509,19 @@ def draft_entrypoint(ctx: OperationContext) -> OperationOutcome:
         skill_md=get_override("networker_draft"),
         cancelled=ctx.cancelled,
     )
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "contact_id": contact_id, "job_id": job_id,
             "message": result.message, "channel": result.channel.value,
             "warmth": result.warmth.value, "audience": result.audience.value,
             "char_count": result.char_count, "notes": list(result.notes),
         },
-        usage=asdict(result.usage),
-        engine=ctx.engine.name,
+        usage=result.usage,
+        resolved=ctx.engine,
+        # PRESERVED, not aligned (D-A2): draft reads the model straight off the
+        # `Usage` dataclass where score/tailor/cover read it out of the usage
+        # dict. Same answer for a `Usage` that has a `model` field — kept
+        # verbatim pending the maintainer's call on which precedence wins.
         model=result.usage.model or ctx.engine.model,
     )
 
