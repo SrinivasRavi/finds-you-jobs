@@ -88,6 +88,7 @@ const popups = {
       hm: "HM",
       recruiter: "Recruiter",
       leadership: "Leadership",
+      other: "Other",
     },
     degree: {
       first: "1st",
@@ -178,6 +179,7 @@ const popups = {
   applier: {
     title: "Applying — {{role}} · {{company}}",
     phase: {
+      notStarted: "Not started",
       queued: "Queued",
       waitingForPacket: "Waiting for résumé",
       readyForHuman: "Ready for review",

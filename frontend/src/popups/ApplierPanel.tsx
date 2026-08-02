@@ -16,9 +16,10 @@ import { eventBus, type SSEEvent } from "../api/events";
 import { useApplyRun, useAttestApply, useCancelApply, useStartApply } from "../api/queries";
 import type { ApplyRun, ApplyRunStatus } from "../api/types";
 import i18n from "../i18n";
+import { applyRunDisplay, type ApplyTone } from "../shell/applyRunDisplay";
 import { Modal } from "../shell/Modal";
 
-type Tone = "info" | "ok" | "warn" | "bad";
+type Tone = ApplyTone;
 
 type FeedItem = { id: string; text: string; tone: Tone };
 
@@ -36,36 +37,23 @@ const DOT_CLS: Record<Tone, string> = {
 };
 
 /** The §8.2 high-level phase pill, mapped from status (+ the free-text phase
- *  while running). Spinner shows only while the run is genuinely live. */
+ *  while running). Spinner shows only while the run is genuinely live.
+ *
+ *  Tone/liveness/label come from the shared status table (duplication audit
+ *  D-F14) — this used to be a private switch whose `default` branch painted an
+ *  unrecognised status GREEN "Completed", the opposite of the tracker card's
+ *  conservative fallback for the same enum. `running` is the one status the
+ *  panel refines further, from the run's own free-text phase. */
 function phaseInfo(status: ApplyRunStatus, phase: string): { label: string; tone: Tone; live: boolean } {
-  switch (status) {
-    case "queued":
-      return { label: i18n.t("popups.applier.phase.queued"), tone: "info", live: true };
-    case "waiting_for_packet":
-      return { label: i18n.t("popups.applier.phase.waitingForPacket"), tone: "info", live: true };
-    case "ready_for_human":
-      return { label: i18n.t("popups.applier.phase.readyForHuman"), tone: "warn", live: false };
-    case "blocked":
-      return { label: i18n.t("popups.applier.phase.blocked"), tone: "bad", live: false };
-    case "timed_out":
-      return { label: i18n.t("popups.applier.phase.timedOut"), tone: "bad", live: false };
-    case "interrupted":
-      return { label: i18n.t("popups.applier.phase.interrupted"), tone: "bad", live: false };
-    case "failed":
-      return { label: i18n.t("popups.applier.phase.failed"), tone: "bad", live: false };
-    case "submitted":
-      return { label: i18n.t("popups.applier.phase.submitted"), tone: "ok", live: false };
-    case "running": {
-      const p = phase.toLowerCase();
-      if (p.includes("open")) return { label: i18n.t("popups.applier.phase.openingJob"), tone: "info", live: true };
-      if (p.includes("find") || p.includes("form")) return { label: i18n.t("popups.applier.phase.findingForm"), tone: "info", live: true };
-      if (p.includes("fill")) return { label: i18n.t("popups.applier.phase.filling"), tone: "info", live: true };
-      if (p.includes("verif")) return { label: i18n.t("popups.applier.phase.verifying"), tone: "info", live: true };
-      return { label: i18n.t("popups.applier.phase.working"), tone: "info", live: true };
-    }
-    default:
-      return { label: i18n.t("popups.applier.phase.completed"), tone: "ok", live: false };
+  const d = applyRunDisplay(status);
+  if (status === "running") {
+    const p = phase.toLowerCase();
+    if (p.includes("open")) return { label: i18n.t("popups.applier.phase.openingJob"), tone: d.tone, live: d.live };
+    if (p.includes("find") || p.includes("form")) return { label: i18n.t("popups.applier.phase.findingForm"), tone: d.tone, live: d.live };
+    if (p.includes("fill")) return { label: i18n.t("popups.applier.phase.filling"), tone: d.tone, live: d.live };
+    if (p.includes("verif")) return { label: i18n.t("popups.applier.phase.verifying"), tone: d.tone, live: d.live };
   }
+  return { label: i18n.t(d.phaseKey), tone: d.tone, live: d.live };
 }
 
 const NON_SUCCESS_TERMINALS: ApplyRunStatus[] = ["blocked", "timed_out", "interrupted", "failed"];

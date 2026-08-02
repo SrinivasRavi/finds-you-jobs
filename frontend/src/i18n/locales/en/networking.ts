@@ -4,6 +4,7 @@ const networking = {
     connected: "LinkedIn connected",
     connecting: "Connecting…",
     backingOff: "Backing off",
+    expired: "Session expired",
     connect: "Connect LinkedIn",
     title: "Read-only — connect/enable LinkedIn from Settings",
   },

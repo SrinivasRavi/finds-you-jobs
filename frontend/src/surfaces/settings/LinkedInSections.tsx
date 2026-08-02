@@ -22,9 +22,15 @@ import {
   useSettings,
   useValidateLinkedIn,
 } from "../../api/queries";
-import type { LinkedInCap, LinkedInSessionState, Settings as SettingsT } from "../../api/types";
+import type { LinkedInCap, Settings as SettingsT } from "../../api/types";
 import { ConfirmDialog } from "../../shell/ConfirmDialog";
+import { formatWhen } from "../../shell/datetime";
 import { InfoDot } from "../../shell/InfoDot";
+import {
+  type LinkedInPillState,
+  type LinkedInPillTone,
+  linkedInStatusPill,
+} from "../linkedInStatus";
 import { LinkedInOptIn } from "./LinkedInOptIn";
 import { MUTED_WARN_BOX, Section } from "./shared";
 
@@ -33,49 +39,27 @@ import { MUTED_WARN_BOX, Section } from "./shared";
 // LinkedIn classifies the traffic.
 const JOB_SEARCH_WARNING = "settingsPage.linkedinSearch.warning";
 
-type PillVariant = { cls: string; dot: string; label: string };
-
-// `label` is an i18n key — t()'d where the pill renders.
-function statusPill(status: LinkedInSessionState["status"]): PillVariant {
-  switch (status) {
-    case "valid":
-      return {
-        cls: "bg-good-wash border-good-2 text-good",
-        dot: "#1F9D55",
-        label: "settingsPage.session.statusConnected",
-      };
-    case "connecting":
-      return {
-        cls: "bg-warn-wash border-warn-2 text-warn",
-        dot: "#C5A24A",
-        label: "settingsPage.session.statusConnecting",
-      };
-    case "backing_off":
-      return {
-        cls: "bg-bad-wash border-bad-2 text-bad",
-        dot: "#B23A3A",
-        label: "settingsPage.session.statusBackingOff",
-      };
-    case "expired":
-      return {
-        cls: "bg-bad-wash border-bad-2 text-bad",
-        dot: "#B23A3A",
-        label: "settingsPage.session.statusExpired",
-      };
-    default:
-      return {
-        cls: "bg-bad-wash border-bad-2 text-bad",
-        dot: "#B23A3A",
-        label: "settingsPage.session.statusDisconnected",
-      };
-  }
-}
-
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
-}
+// Chrome + copy for the Settings session chip. Which state a status *means*
+// comes from the shared table (duplication audit D-F8) — the Networking header
+// renders its own 22px chip from the same decision.
+const PILL_CLS: Record<LinkedInPillTone, string> = {
+  good: "bg-good-wash border-good-2 text-good",
+  warn: "bg-warn-wash border-warn-2 text-warn",
+  bad: "bg-bad-wash border-bad-2 text-bad",
+};
+const PILL_DOT: Record<LinkedInPillTone, string> = {
+  good: "#1F9D55",
+  warn: "#C5A24A",
+  bad: "#B23A3A",
+};
+// i18n keys — t()'d where the pill renders.
+const PILL_LABEL: Record<LinkedInPillState, string> = {
+  connected: "settingsPage.session.statusConnected",
+  connecting: "settingsPage.session.statusConnecting",
+  backingOff: "settingsPage.session.statusBackingOff",
+  expired: "settingsPage.session.statusExpired",
+  disconnected: "settingsPage.session.statusDisconnected",
+};
 
 // Collapsible + SHARED (2026-07-23): one LinkedIn session drives both Referral
 // Outreach and LinkedIn Job Search. Rendered in both places; because both read
@@ -94,7 +78,7 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
 
   if (!session) return null;
   const status = session.status;
-  const pill = statusPill(status);
+  const pill = linkedInStatusPill(status);
   const connecting = status === "connecting" || connect.isPending;
   const connected = status === "valid";
   const open = openOverride ?? !connected; // expanded until connected, then tidy
@@ -122,11 +106,11 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
           data-testid="linkedin-status-pill"
           className={
             "ml-auto inline-flex h-[20px] items-center gap-[5px] rounded-full border px-2 text-[11px] font-medium " +
-            pill.cls
+            PILL_CLS[pill.tone]
           }
         >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: pill.dot }} />
-          {t(pill.label)}
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: PILL_DOT[pill.tone] }} />
+          {t(PILL_LABEL[pill.state])}
         </span>
       </button>
       {open ? (
@@ -146,9 +130,9 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
                 {session.connected_as || "—"}
               </dd>
               <dt>{t("settingsPage.session.expires")}</dt>
-              <dd>{fmtDate(session.li_at_expires_at)}</dd>
+              <dd>{formatWhen(session.li_at_expires_at)}</dd>
               <dt>{t("settingsPage.session.lastValidated")}</dt>
-              <dd>{fmtDate(session.last_validated_at)}</dd>
+              <dd>{formatWhen(session.last_validated_at)}</dd>
             </dl>
 
             {status === "backing_off" && (
@@ -245,7 +229,7 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
         <ConfirmDialog
           title={t("settingsPage.session.resumeConfirmTitle")}
           body={t("settingsPage.session.resumeConfirmBody", {
-            until: fmtDate(session.paused_until),
+            until: formatWhen(session.paused_until),
           })}
           confirmLabel={t("settingsPage.session.resumeConfirmOk")}
           onConfirm={() => {

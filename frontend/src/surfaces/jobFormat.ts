@@ -1,5 +1,6 @@
-// Shared formatting helpers ported from jobs.html (score tiers, initials,
-// source-adapter pill colors, time-ago).
+// Shared formatting helpers ported from jobs.html (score tiers, source-adapter
+// pill colors, time-ago). The initials rule moved to shell/Avatar.tsx with the
+// avatar markup it exists to fill (duplication audit D-F7).
 
 import type { Job, WorkStyle } from "../api/types";
 import i18n from "../i18n";
@@ -22,13 +23,19 @@ export function scoreTier(score: number): { text: string; ring: string; wash: st
   return { text: "text-bad", ring: "#dc2626", wash: "bg-bad-wash" };
 }
 
-export function initials(company: string): string {
-  return company
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase();
+/** Whole days elapsed from `iso` until now (duplication audit D-F11 — the
+ *  hand-rolled copies of this arithmetic disagreed on floor vs round, so the
+ *  same age could read "3d" on one surface and "4d" on another).
+ *
+ *  `mode` stays explicit at every call site because each existing choice is
+ *  load-bearing: "floor" counts completed days (days-in-column / days-in-status),
+ *  "round" snaps to the nearest day (relative time-ago copy), and "exact" keeps
+ *  the fraction for comparisons that feed a filter rather than a label.
+ *  Returns NaN for an unparseable timestamp — callers guard. */
+export function daysBetween(iso: string, mode: "floor" | "round" | "exact" = "floor"): number {
+  const days = (Date.now() - new Date(iso).getTime()) / 86_400_000;
+  if (mode === "exact") return days;
+  return mode === "round" ? Math.round(days) : Math.floor(days);
 }
 
 /** Source-adapter pill classes (jobs.html sourceCls map). */
@@ -51,9 +58,8 @@ export function sourceClasses(adapter: string): string {
 
 export function timeAgo(iso: string): string {
   if (!iso) return "";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const days = Math.round((Date.now() - then) / 86_400_000);
+  const days = daysBetween(iso, "round");
+  if (Number.isNaN(days)) return "";
   if (days <= 0) return "today";
   if (days === 1) return "1d ago";
   if (days < 30) return `${days}d ago`;

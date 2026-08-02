@@ -6,25 +6,10 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { AudienceTag, ReferralCandidate } from "../../api/types";
+import type { ReferralCandidate } from "../../api/types";
 import i18n from "../../i18n";
-import { initials } from "./shared";
-
-// i18n key map — translated with t(...) at render.
-const TAG_LABEL: Record<AudienceTag, string> = {
-  peer: "popups.referrals.tag.peer",
-  hm: "popups.referrals.tag.hm",
-  recruiter: "popups.referrals.tag.recruiter",
-  leadership: "popups.referrals.tag.leadership",
-  other: "popups.referrals.tag.peer",
-};
-const TAG_CLASS: Record<AudienceTag, string> = {
-  peer: "border-border-2 bg-surface text-ink-2",
-  hm: "border-accent bg-accent-wash text-accent-ink",
-  recruiter: "border-pink bg-pink-wash text-pink",
-  leadership: "border-purple bg-purple-wash text-purple",
-  other: "border-border-2 bg-surface text-ink-2",
-};
+import { audienceTag } from "../../shell/audienceTag";
+import { Avatar } from "../../shell/Avatar";
 
 /** Ordinal degree label, or null when the degree is genuinely unknown (so the
  *  badge is hidden rather than rendering "NULLTH deg"). */
@@ -65,6 +50,7 @@ export const CandidateRow = memo(function CandidateRow({
 }) {
   const { t } = useTranslation();
   const degLabel = degreeLabel(c.degree);
+  const tag = audienceTag(c.audience_tag);
   return (
     <div className="border-b border-border" data-testid="referrals-row">
       <div className="flex items-center gap-3 px-5 py-3">
@@ -80,9 +66,7 @@ export const CandidateRow = memo(function CandidateRow({
         ) : (
           <span className="h-4 w-4" />
         )}
-        <span className="inline-grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-3 font-mono text-[11px] font-semibold text-ink-2">
-          {initials(c.name)}
-        </span>
+        <Avatar name={c.name} shape="full" tone="raised" />
         <button className="min-w-0 flex-1 text-left" onClick={() => onExpand(c.contact_id)}>
           <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
             <span className="truncate">{c.name}</span>
@@ -91,8 +75,8 @@ export const CandidateRow = memo(function CandidateRow({
                 {t("popups.referrals.degreeBadge", { degree: degLabel })}
               </span>
             ) : null}
-            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] ${TAG_CLASS[c.audience_tag] ?? TAG_CLASS.other}`} data-testid="referrals-row-tag">
-              {t(TAG_LABEL[c.audience_tag] ?? TAG_LABEL.other)}
+            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] ${tag.cls}`} data-testid="referrals-row-tag">
+              {t(tag.shortLabelKey)}
             </span>
           </div>
           <div className="truncate text-[11.5px] text-ink-3">{c.role} · {c.company}</div>

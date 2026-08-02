@@ -15,6 +15,7 @@
 
 import { useTranslation } from "react-i18next";
 
+import { formatWhen } from "../../shell/datetime";
 import { InfoDot } from "../../shell/InfoDot";
 import { ExperimentalHazard, LinkedInRiskLine, Section, Toggle } from "./shared";
 
@@ -104,7 +105,7 @@ export function LinkedInOptIn({
         {ackAt ? (
           <div className="text-[11px] text-ink-4" data-testid={ackAtTestid}>
             {t("settingsPage.acknowledgedOn", {
-              date: new Date(ackAt).toLocaleDateString(),
+              date: formatWhen(ackAt, "date"),
             })}
           </div>
         ) : null}

@@ -17,6 +17,7 @@ import {
   useRetryOperation,
 } from "../api/queries";
 import type { CostTotals, LedgerEntry, OperationKind, OperationState, Span } from "../api/types";
+import { formatWhen } from "../shell/datetime";
 
 const STATE_CLS: Record<OperationState, string> = {
   succeeded: "bg-good-wash text-good",
@@ -63,12 +64,6 @@ const PAGE_SIZE = 50; // US-LOG-01 #2 — client pagination; retention keeps ~5 
 
 function num(v: unknown): number | null {
   return typeof v === "number" ? v : null;
-}
-
-function fmtTime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
 }
 
 // ─── left panel: cost dashboard ──────────────────────────────────────────────
@@ -501,7 +496,7 @@ export function Analytics() {
                           className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-ink-3"
                           data-testid="log-started"
                         >
-                          {fmtTime(e.started_at ?? e.created_at)}
+                          {formatWhen(e.started_at ?? e.created_at, "timestamp")}
                         </td>
                         <td className="px-3 py-2 text-ink-2">{e.model ?? "—"}</td>
                         <td className="px-3 py-2 text-right font-mono text-ink-2">
