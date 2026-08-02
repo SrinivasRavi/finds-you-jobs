@@ -88,20 +88,19 @@ class FakeVoyagerDriver:
         return self._discover
 
     def search_jobs(
-        self, keywords, location="", *, limit: int = 50, start: int = 0,
-        dry_run: bool = False,
+        self, keywords, location="", *, start: int = 0, dry_run: bool = False,
     ) -> dict:
-        self.calls.append(("search_jobs", keywords, location, limit, start, dry_run))
+        self.calls.append(("search_jobs", keywords, location, start, dry_run))
         self._maybe_raise("search_jobs")
         return self._search_jobs
 
-    def send_connection(self, public_identifier, note, tier, *, dry_run) -> dict:
-        self.calls.append(("send_connection", public_identifier, note, tier, dry_run))
+    def send_connection(self, public_identifier, note, *, dry_run) -> dict:
+        self.calls.append(("send_connection", public_identifier, note, dry_run))
         self._maybe_raise("send_connection")
         return self._connection
 
-    def send_dm(self, public_identifier, message, tier, *, dry_run) -> dict:
-        self.calls.append(("send_dm", public_identifier, message, tier, dry_run))
+    def send_dm(self, public_identifier, message, *, dry_run) -> dict:
+        self.calls.append(("send_dm", public_identifier, message, dry_run))
         self._maybe_raise("send_dm")
         return self._dm
 
@@ -115,8 +114,8 @@ class FakeVoyagerDriver:
         self._maybe_raise("contact_sync")
         return self._contact_sync
 
-    def quota(self, tier) -> dict:
-        self.calls.append(("quota", tier))
+    def quota(self) -> dict:
+        self.calls.append(("quota",))
         self._maybe_raise("quota")
         return self._quota
 

@@ -41,12 +41,6 @@ HUMAN_TYPE_MAX_DELAY_MS = 200
 SEND_DELAY_MIN_S = 30.0
 SEND_DELAY_MAX_S = 90.0
 
-# --- pause between consecutive pages of a read the user is waiting on ---
-# Short on purpose: the send jitter band (30-90 s) is right for irreversible
-# outbound actions and absurd for paging a job search. The point is that pages
-# are not issued at machine speed, not that the user waits minutes.
-PAGE_PAUSE_RANGE_S = (0.8, 2.2)
-
 # --- pause between consecutive profile fetches inside discovery enrichment ---
 # Matches the tool we forked: OpenOutreach sleeps uniform(6, 10) s per scraped
 # profile (`linkedin/db/leads.py` @ a7a9101). Bulk profile reads are the axis
@@ -70,9 +64,6 @@ WEEK_SECONDS = 7 * 24 * 60 * 60
 # conservative than a calendar month (it never hands back allowance early), and
 # it needs no timezone handling in a ledger that stores bare epoch seconds.
 MONTH_SECONDS = 31 * 24 * 60 * 60
-# Free-plan personalized invitation notes are commonly reported as ~5/month.
-# Rolling 30 days, same reasoning as above.
-NOTE_WINDOW_SECONDS = 30 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -102,10 +93,12 @@ class Budget:
 
 @dataclass(frozen=True)
 class Tier:
-    """A user-selectable account tier: one budget per metered LinkedIn action.
+    """The effective cap set the `Pacer` enforces: one budget per metered
+    LinkedIn action, computed by `resolve_profile` (membership × risk% ×
+    overrides) — never hand-built by the host.
 
-    Every number here is OUR enforced soft cap, set at 50–70% of the *estimated*
-    LinkedIn ceiling. LinkedIn publishes none of those ceilings (only the 30,000
+    Every number is OUR enforced soft cap against an *estimated* LinkedIn
+    ceiling. LinkedIn publishes almost none of those ceilings (only the 30,000
     connection cap, the restriction ladder, and the CUL reset date), so the
     estimates are corroborated vendor observation with no primary confirmation
     and LinkedIn changes them without notice. See
@@ -125,68 +118,19 @@ class Tier:
     # Self-imposed logged-in job-search ceiling, pages/hour (25 jobs/page). NOT a
     # LinkedIn limit — job search is CUL-exempt (help `a564226`); this is purely
     # our own throttle so one sitting can't fan a role list into a large
-    # authenticated burst. Defaults to no limit for legacy `TIERS` (which predate
-    # it); the membership ceilings below set it.
+    # authenticated burst.
     job_search_pages: Budget = field(default_factory=Budget)
 
-    # Back-compat accessors: the app-side DTO and the typed facade still speak
-    # "daily/weekly" for invites, the only meter that existed before.
-    @property
-    def daily(self) -> int:
-        return self.invites.day or 0
-
-    @property
-    def weekly(self) -> int:
-        return self.invites.week or 0
-
-
-# Global across jobs (FR-NW-04 / US-REF-08). `new` is the default for a fresh
-# account; `recovering` is entered automatically after repeat restrictions.
-#
-# Derivation (estimated LinkedIn ceiling → ours):
-#   invites/wk    ~50 new · ~100 established  → 30 (×0.60) · 65 (×0.65) · 15
-#   invites/day   15–25 safe band, LOW end    →  8 ·  10 ·  3   (weekly stays binding)
-#   dms           NO corroborated limit       → policy cap, ours alone, not a %
-#   profile views 80 (disputed low) – 500     → 25 (×0.31) · 50 (×0.625) · 10
-#   searches (CUL) ~250–350 / month           → 150 (×0.60). Job search is EXEMPT.
-#   notes (free)  ~5 / month                  →  3 (×0.60)
-TIERS: dict[str, Tier] = {
-    "new": Tier(
-        "new",
-        invites=Budget(day=8, week=30),
-        dms=Budget(day=10, week=50),
-        profile_views=Budget(day=25),
-        searches=Budget(month=150),
-        notes=Budget(month=3),
-    ),
-    "seasoned": Tier(
-        "seasoned",
-        invites=Budget(day=10, week=65),
-        dms=Budget(day=25, week=120),
-        profile_views=Budget(day=50),
-        searches=Budget(month=150),
-        notes=Budget(month=3),
-    ),
-    "recovering": Tier(
-        "recovering",
-        invites=Budget(day=3, week=15),
-        dms=Budget(day=5, week=20),
-        profile_views=Budget(day=10),
-        searches=Budget(month=150),
-        notes=Budget(month=3),
-    ),
-}
-DEFAULT_TIER = "new"
 
 # Which ledger each metered action writes to, and the widest window that ledger
 # is pruned to. Pruning used to be a flat one week for everything, which would
-# have silently destroyed the 30-day note ledger and the monthly CUL ledger.
+# have silently destroyed the 31-day note ledger and the monthly CUL ledger.
 METER_WINDOWS: dict[str, int] = {
     "invites": WEEK_SECONDS,
     "dms": WEEK_SECONDS,
     "profile_views": WEEK_SECONDS,  # budgeted daily; a week retained for reporting
     "searches": MONTH_SECONDS,
-    "notes": NOTE_WINDOW_SECONDS,
+    "notes": MONTH_SECONDS,
     "job_search_pages": DAY_SECONDS,  # budgeted hourly; a day retained for reporting
 }
 
@@ -197,13 +141,7 @@ BUDGET_WINDOWS: tuple[tuple[str, int], ...] = (
     ("week", WEEK_SECONDS),
     ("month", MONTH_SECONDS),
 )
-
-
-def resolve_tier(name: str | None) -> Tier:
-    key = (name or DEFAULT_TIER).strip().lower()
-    if key not in TIERS:
-        raise ValueError(f"unknown tier {name!r}; choose one of {sorted(TIERS)}")
-    return TIERS[key]
+BUDGET_WINDOW_NAMES: tuple[str, ...] = tuple(name for name, _ in BUDGET_WINDOWS)
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +159,8 @@ def resolve_tier(name: str | None) -> Tier:
 # **Every ceiling below is our estimate; LinkedIn publishes almost none of them**
 # (only the 30 000 connection cap, the CUL reset date, and the restriction
 # ladder). The Free column is calibrated so `ceiling × DEFAULT_RISK_PCT`
-# reproduces the old `TIERS["new"]` caps EXACTLY, so switching to this system
+# reproduces the retired New-tier caps (8/30 invites · 10/50 DMs · 25 views ·
+# 150 searches · 3 notes) EXACTLY, so switching to this system
 # changes nothing until the user moves the slider. The non-Free columns are
 # coarser — LinkedIn's plan-tier limits are even less documented — and are
 # deliberately conservative. Nothing here is a promise about account safety; it
@@ -333,7 +272,7 @@ def _apply_override(
     "never above the estimated max" guarantee holds whatever a client sends). A
     window with no override keeps its scaled value."""
     changed: dict[str, int] = {}
-    for window in ("hour", "day", "week", "month"):
+    for window in BUDGET_WINDOW_NAMES:
         key = f"{meter}_{window}"
         cap = getattr(ceiling, window)
         if key in overrides and getattr(budget, window) is not None:
@@ -370,19 +309,12 @@ def resolve_profile(profile: PacingProfile | None) -> Tier:
     )
 
 
-def default_overrides(membership: str | None, risk_pct: int | None) -> dict[str, int]:
-    """The computed (ceiling × risk%) value for every overridable (meter,
-    window) — i.e. what the per-meter override boxes reset TO when the
-    membership or the risk slider changes. The host writes exactly this back so
-    a stored override always shows the current basis's default until edited."""
-    risk = clamp_risk(risk_pct)
-    base = resolve_membership(membership)
-    out: dict[str, int] = {}
-    for meter, window in OVERRIDABLE:
-        scaled = getattr(getattr(base, meter).scaled(risk), window)
-        if scaled is not None:
-            out[f"{meter}_{window}"] = scaled
-    return out
+def plan_for_membership(membership: str | None) -> str:
+    """free|premium for the notes-budget path: the ~5/month personalized-note
+    allowance exists only on free accounts, so any paid membership lifts the
+    gate. The ONE place this mapping lives — the driver factory, the send
+    entrypoint, and the rate-limits route all derive from here."""
+    return "free" if (membership or DEFAULT_MEMBERSHIP).strip().lower() == "free" else "premium"
 
 
 def human_type_delay_ms() -> int:
@@ -558,6 +490,8 @@ class Pacer:
         `os.replace` — a concurrent save (send vs contact-sync vs job search run
         in different runner groups) can neither tear the file nor lose the other
         side's charges. In-memory `self.state` becomes the merged view."""
+        if not self._pending and not self._refunds and self._pause_action is None:
+            return  # nothing recorded — skip the lock + rewrite cycle entirely
         self.state_dir.mkdir(parents=True, exist_ok=True)
         now = time.time() if now is None else now
         with _ledger_lock(self.state_dir / self.LOCK_FILENAME):
@@ -604,7 +538,9 @@ class Pacer:
         self._pause_action = ("resume",)
 
     # --- caps (FR-NW-04 / NFR-LI-02) ---
-    def _paused_reason(self) -> str:
+    def paused_reason(self) -> str:
+        """The human-readable backoff line callers surface when refusing during
+        a pause (worker read/send paths). Meaningful only while `is_paused()`."""
         return (
             f"voyager paused until {self.state.paused_until:.0f} "
             f"({self.state.paused_reason or 'rate-limit backoff'})"
@@ -622,9 +558,6 @@ class Pacer:
             cap = getattr(budget, window_name)
             if cap is None:
                 continue
-            # `notes` budgets on `month` but is retained on a 30-day window.
-            if meter == "notes" and window_name == "month":
-                window_s = NOTE_WINDOW_SECONDS
             used = _count_within(stamps, window_s, now)
             out[f"{window_name}_cap"] = cap
             out[f"{window_name}_used"] = used
@@ -641,9 +574,9 @@ class Pacer:
         """
         now = time.time() if now is None else now
         if self.is_paused(now):
-            return False, self._paused_reason()
+            return False, self.paused_reason()
         u = self.usage(meter, now)
-        for window_name in ("hour", "day", "week", "month"):
+        for window_name in BUDGET_WINDOW_NAMES:
             if u.get(f"{window_name}_remaining") == 0:
                 cap = u[f"{window_name}_cap"]
                 return False, (
@@ -698,7 +631,7 @@ class Pacer:
         now = time.time() if now is None else now
         u = self.usage(meter, now)
         needed = max(
-            (u[f"{w}_remaining"] for w in ("day", "week", "month")
+            (u[f"{w}_remaining"] for w in BUDGET_WINDOW_NAMES
              if f"{w}_remaining" in u),
             default=0,
         )
@@ -730,8 +663,8 @@ class Pacer:
             # existing quota view.
             "dm_daily_sent": _count_within(self.state.dms, DAY_SECONDS, now),
             "dm_weekly_sent": _count_within(self.state.dms, WEEK_SECONDS, now),
+            "dm_daily_limit": self.tier.dms.day or 0,
             "invites_available": min(daily_remaining, weekly_remaining),
-            "meters": {m: self.usage(m, now) for m in METER_WINDOWS},
             "paused": self.is_paused(now),
             "paused_until": self.state.paused_until,
             "paused_reason": self.state.paused_reason,
@@ -758,11 +691,8 @@ class Pacer:
     def can_search_jobs(self, now: float | None = None) -> tuple[bool, str]:
         """The self-imposed pages/hour throttle on logged-in job search. This is
         OURS, not LinkedIn's — job search is CUL-exempt (help `a564226`) — so it
-        does NOT charge the `searches` (People-search CUL) meter. It only paces
-        the authenticated page fetches so one sitting can't fan a role list into
-        a large burst. A membership with no hourly ceiling → always allowed."""
-        if getattr(self.tier.job_search_pages, "hour", None) is None:
-            return True, ""
+        does NOT charge the `searches` (People-search CUL) meter. An uncapped
+        meter always passes `check()`."""
         return self.check("job_search_pages", now)
 
     def record_invite(self, now: float | None = None) -> None:
@@ -782,9 +712,8 @@ class Pacer:
 
     def record_search_page(self, now: float | None = None) -> None:
         """Charge one logged-in job-search page fetch against the pages/hour
-        throttle. No-op when the membership has no hourly ceiling."""
-        if getattr(self.tier.job_search_pages, "hour", None) is not None:
-            self.record("job_search_pages", now)
+        throttle."""
+        self.record("job_search_pages", now)
 
     # --- inter-send spacing (NFR-LI-01) ---
     def last_send_at(self) -> float:

@@ -19,7 +19,7 @@ from sidecar.packages.referral_outreach.upstream.errors import (
     RateLimited,
     ReachedConnectionLimit,
 )
-from sidecar.packages.referral_outreach.upstream.pacing import Pacer, resolve_tier
+from sidecar.packages.referral_outreach.upstream.pacing import Pacer, resolve_profile
 
 
 class _FakeSession:
@@ -42,11 +42,11 @@ def fake_browser(monkeypatch):
 
 
 def _invites_used(state_dir) -> int:
-    return Pacer(resolve_tier("new"), state_dir=state_dir).remaining()["daily_used"]
+    return Pacer(resolve_profile(None), state_dir=state_dir).remaining()["daily_used"]
 
 
 def _notes_used(state_dir) -> int:
-    p = Pacer(resolve_tier("new"), state_dir=state_dir)
+    p = Pacer(resolve_profile(None), state_dir=state_dir)
     return p.usage("notes")["month_used"]
 
 
@@ -61,7 +61,7 @@ def test_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monkeypa
 
     monkeypatch.setattr(actions, "send_connection_request", _boom)
     with pytest.raises(RuntimeError):
-        worker.send_connection("someone", tier="new", state_dir=str(tmp_path))
+        worker.send_connection("someone", state_dir=str(tmp_path))
     assert _invites_used(tmp_path) == 1
 
 
@@ -72,17 +72,17 @@ def test_weekly_limit_dialog_refunds_the_attempt(tmp_path, fake_browser, no_jitt
         raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
 
     monkeypatch.setattr(actions, "send_connection_request", _blocked)
-    out = worker.send_connection("someone", tier="new", state_dir=str(tmp_path))
+    out = worker.send_connection("someone", state_dir=str(tmp_path))
     assert out["error"] == "rate_limited"
     assert _invites_used(tmp_path) == 0
-    assert Pacer(resolve_tier("new"), state_dir=tmp_path).is_paused()
+    assert Pacer(resolve_profile(None), state_dir=tmp_path).is_paused()
 
 
 def test_successful_send_is_charged_once(tmp_path, fake_browser, no_jitter, monkeypatch):
     monkeypatch.setattr(
         actions, "send_connection_request", lambda s, p, note="": ("pending", "")
     )
-    out = worker.send_connection("someone", tier="new", state_dir=str(tmp_path))
+    out = worker.send_connection("someone", state_dir=str(tmp_path))
     assert out["ok"] and out["sent"]
     assert _invites_used(tmp_path) == 1
 
@@ -98,12 +98,12 @@ def test_free_plan_charges_the_note_and_gates_at_the_cap(
     )
     for i in range(3):  # notes cap: 3 / rolling 30 d
         out = worker.send_connection(
-            f"p{i}", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+            f"p{i}", note="hi", state_dir=str(tmp_path), linkedin_plan="free"
         )
         assert out["ok"], out
     assert _notes_used(tmp_path) == 3
     refused = worker.send_connection(
-        "p4", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+        "p4", note="hi", state_dir=str(tmp_path), linkedin_plan="free"
     )
     assert refused["error"] == "cap_or_backoff"
     assert "note" in refused["reason"]
@@ -117,7 +117,7 @@ def test_premium_plan_never_gates_on_notes(tmp_path, fake_browser, no_jitter, mo
     )
     for i in range(5):
         out = worker.send_connection(
-            f"p{i}", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="premium"
+            f"p{i}", note="hi", state_dir=str(tmp_path), linkedin_plan="premium"
         )
         assert out["ok"], out
     assert _notes_used(tmp_path) == 0  # premium: not charged at all
@@ -135,13 +135,13 @@ def test_upsell_degrade_saturates_the_note_allowance(
         lambda s, p, note="": ("pending", "noteless_upsell"),
     )
     out = worker.send_connection(
-        "p1", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+        "p1", note="hi", state_dir=str(tmp_path), linkedin_plan="free"
     )
     assert out["ok"] and out["note_outcome"] == "noteless_upsell"
-    p = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    p = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert p.usage("notes")["month_remaining"] == 0
     refused = worker.send_connection(
-        "p2", note="hi", tier="new", state_dir=str(tmp_path), linkedin_plan="free"
+        "p2", note="hi", state_dir=str(tmp_path), linkedin_plan="free"
     )
     assert refused["error"] == "cap_or_backoff"
 
@@ -151,9 +151,9 @@ def test_upsell_degrade_saturates_the_note_allowance(
 
 def test_dm_proven_no_send_is_refunded(tmp_path, fake_browser, no_jitter, monkeypatch):
     monkeypatch.setattr(actions, "send_dm", lambda s, p, m: False)
-    out = worker.send_dm("someone", "hello", tier="new", state_dir=str(tmp_path))
+    out = worker.send_dm("someone", "hello", state_dir=str(tmp_path))
     assert out["ok"] is False and out["sent"] is False
-    assert Pacer(resolve_tier("new"), state_dir=tmp_path).remaining()["dm_daily_sent"] == 0
+    assert Pacer(resolve_profile(None), state_dir=tmp_path).remaining()["dm_daily_sent"] == 0
 
 
 def test_dm_rate_limit_refunds_and_backs_off(tmp_path, fake_browser, no_jitter, monkeypatch):
@@ -161,9 +161,9 @@ def test_dm_rate_limit_refunds_and_backs_off(tmp_path, fake_browser, no_jitter, 
         raise RateLimited("LinkedIn returned HTTP 429 (throttled/blocked)")
 
     monkeypatch.setattr(actions, "send_dm", _throttled)
-    out = worker.send_dm("someone", "hello", tier="new", state_dir=str(tmp_path))
+    out = worker.send_dm("someone", "hello", state_dir=str(tmp_path))
     assert out["error"] == "rate_limited"
-    p = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    p = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert p.remaining()["dm_daily_sent"] == 0
     assert p.is_paused()
 
@@ -174,23 +174,23 @@ def test_dm_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monke
 
     monkeypatch.setattr(actions, "send_dm", _boom)
     with pytest.raises(RuntimeError):
-        worker.send_dm("someone", "hello", tier="new", state_dir=str(tmp_path))
-    assert Pacer(resolve_tier("new"), state_dir=tmp_path).remaining()["dm_daily_sent"] == 1
+        worker.send_dm("someone", "hello", state_dir=str(tmp_path))
+    assert Pacer(resolve_profile(None), state_dir=tmp_path).remaining()["dm_daily_sent"] == 1
 
 
 # ── job search: the package-owned 25 ceiling ─────────────────────────────────
 
 
-def test_search_jobs_limit_clamps_to_one_page(tmp_path):
+def test_search_jobs_is_always_one_page_of_25(tmp_path):
     out = worker.search_jobs(
-        "python", limit=250, tier="new", state_dir=str(tmp_path), dry_run=True
+        "python", state_dir=str(tmp_path), dry_run=True
     )
-    assert "≤25" in out["plan"]
+    assert "one page of 25" in out["plan"]
 
 
 def test_search_jobs_dry_run_reports_offset(tmp_path):
     out = worker.search_jobs(
-        "python", start=50, tier="new", state_dir=str(tmp_path), dry_run=True
+        "python", start=50, state_dir=str(tmp_path), dry_run=True
     )
     assert "offset 50" in out["plan"]
 
@@ -235,7 +235,7 @@ def test_search_jobs_start_offsets_the_single_page(tmp_path, monkeypatch):
     monkeypatch.setattr(client_mod, "PlaywrightLinkedinAPI", _fake_search_api(calls))
 
     out = worker.search_jobs(
-        "python", limit=250, start=25, tier="new", state_dir=str(tmp_path)
+        "python", start=25, state_dir=str(tmp_path)
     )
     assert calls == [(25, 25)]  # one request: offset verbatim, count fixed
     assert out["start"] == 25
@@ -254,7 +254,7 @@ def test_search_jobs_reports_end_of_results(tmp_path, monkeypatch):
     monkeypatch.setattr(client_mod, "PlaywrightLinkedinAPI", _fake_search_api(calls))
 
     out = worker.search_jobs(
-        "python", limit=25, start=50, tier="new", state_dir=str(tmp_path)
+        "python", start=50, state_dir=str(tmp_path)
     )
     assert calls == [(50, 25)]
     assert out["count"] == 10  # 60 total — only 10 left at offset 50

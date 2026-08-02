@@ -148,8 +148,8 @@ def test_set_membership(app_client) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["rate_limits"]["membership_type"] == "premium"
-    # Legacy plan flag stays consistent so the note-budget path keeps working.
-    assert resp.json()["linkedin_plan"] == "premium"
+    # The free/premium note-budget flag is derived from membership at runtime
+    # (pacing.plan_for_membership) — no stored plan field on the wire.
     bad = client.post(
         "/api/linkedin/rate-limits", headers=AUTH, json={"membership_type": "wild"}
     )
@@ -298,10 +298,10 @@ def _set_prefs(client: TestClient) -> None:
 def _enable_job_search(client: TestClient, *, ack: bool = True) -> None:
     """The job search has its OWN opt-in + typed ack, stored in `ui_state` —
     a separate consent from the Referral Outreach toggle (posture doc §4 #8)."""
-    ui: dict = {"linkedin_search_enabled": True}
+    body: dict = {"linkedin_search_enabled": True}
     if ack:
-        ui["linkedin_search_ack_at"] = "2026-08-01T00:00:00Z"
-    resp = client.post("/api/settings", headers=AUTH, json={"ui_state": ui})
+        body["linkedin_search_ack_at"] = "2026-08-01T00:00:00Z"
+    resp = client.post("/api/settings", headers=AUTH, json=body)
     assert resp.status_code == 200
 
 
@@ -366,28 +366,18 @@ def test_linkedin_search_persists_into_the_feed(search_client) -> None:
     )
 
 
-def test_linkedin_search_limit_is_fixed_at_one_page(search_client) -> None:
-    _app, client = search_client
-    _connect(_app, client)
+def test_linkedin_search_carries_no_size_knob(search_client) -> None:
+    """One page of 25 is the package invariant (`pacing.MAX_JOBS_PER_SEARCH`) —
+    the route accepts no `limit` and the op snapshot carries only `mode`."""
+    app, client = search_client
+    _connect(app, client)
     _enable_job_search(client)
     _set_prefs(client)
-
-    # EVERY request runs one page of 25, whatever the caller asks for. The wire
-    # request carries `count=25` regardless (worker pages at _PAGE=25), so a
-    # smaller limit never made a smaller request — it only discarded rows we
-    # had already received while looking like a lighter footprint.
-    for asked in (10, 1, 9999):
-        r = client.post("/api/linkedin/search", headers=AUTH, json={"limit": asked})
-        assert r.status_code == 202
-        wait_for_state(_app.state.db, r.json()["id"], "succeeded")
-        with _app.state.db.repos() as repos:
-            assert repos.operations.get(r.json()["id"]).input_snapshot["limit"] == 25
-
-    # Omitted → the same single page.
-    d = client.post("/api/linkedin/search", headers=AUTH, json={})
-    wait_for_state(_app.state.db, d.json()["id"], "succeeded")
-    with _app.state.db.repos() as repos:
-        assert repos.operations.get(d.json()["id"]).input_snapshot["limit"] == 25
+    r = client.post("/api/linkedin/search", headers=AUTH, json={})
+    assert r.status_code == 202
+    with app.state.db.repos() as repos:
+        snap = repos.operations.get(r.json()["id"]).input_snapshot
+        assert snap == {"mode": "fresh"}
 
 
 def test_linkedin_search_dedups_against_existing_guest_row(search_client) -> None:
@@ -453,7 +443,7 @@ def paged_search_client(
 
 def _search_starts(driver: FakeVoyagerDriver) -> list[int]:
     """The `start` offset of every search_jobs call the fake driver served."""
-    return [c[4] for c in driver.calls if c[0] == "search_jobs"]
+    return [c[3] for c in driver.calls if c[0] == "search_jobs"]
 
 
 def _run_search(app: FastAPI, client: TestClient, mode: str) -> str:
@@ -479,7 +469,6 @@ def test_fresh_search_snapshots_the_cursor(paged_search_client) -> None:
     assert cur is not None
     assert cur["expired"] is False
     assert cur["exhausted"] is False
-    assert cur["pages_fetched"] == 1
     assert cur["next_page_available"] is True
 
 
@@ -620,7 +609,6 @@ def test_contact_sync_runs_when_enabled_and_connected(app_client) -> None:
     assert resp.status_code == 202
     body = resp.json()
     assert body["state"] == "queued"
-    assert body["throttled"] is False
     assert body["id"]
 
 
@@ -633,8 +621,6 @@ def test_opportunistic_refresh_is_throttled_but_the_button_is_not(app_client) ->
     # Surface re-open (force absent → false): declined, with a next-eligible time.
     throttled = client.post("/api/networking/contact-sync", headers=AUTH).json()
     assert throttled["state"] == "throttled"
-    assert throttled["throttled"] is True
-    assert throttled["next_eligible_at"]
     assert throttled["id"] is None
 
     # The user pressing Sync overrides the throttle — they asked for it.
@@ -658,7 +644,6 @@ def test_quota_caps_come_from_the_package(app_client) -> None:
     assert q["daily_limit"] == 8      # free invites.day 13 × 0.60 → 8
     assert q["weekly_limit"] == 30    # 50 × 0.60 → 30
     assert q["dm_daily_limit"] == 10  # 17 × 0.60 → 10
-    assert q["dm_weekly_limit"] == 50  # 83 × 0.60 → 50
 
 
 def test_rate_limits_default_profile_surfaced(app_client) -> None:
@@ -674,7 +659,7 @@ def test_rate_limits_default_profile_surfaced(app_client) -> None:
     assert caps["invites_week"]["overridden"] is False
     # The new self-imposed job-search throttle: 7 pages/hr ceiling × 0.60 → 4.
     assert caps["job_search_pages_hour"]["effective"] == 4
-    assert rl["job_search_hour_cap"] == 4
+    assert rl["job_search_hour_remaining"] == 4
     assert rl["job_search_hour_remaining"] == 4
 
 

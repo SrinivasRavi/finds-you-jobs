@@ -16,60 +16,46 @@ browser, no network — plan only)."""
 from __future__ import annotations
 
 import logging
-import random
-import time
 from pathlib import Path
 
 from .errors import RateLimited, ReachedConnectionLimit, VoyagerError
 from .url_utils import url_to_public_id
 from .pacing import (
     MAX_JOBS_PER_SEARCH,
-    PAGE_PAUSE_RANGE_S,
     Pacer,
     PacingProfile,
     resolve_profile,
-    resolve_tier,
 )
 
 logger = logging.getLogger("voyager_py.worker")
 
 
-def _pacer(
-    tier_name: str | None,
-    state_dir: str | None,
-    *,
-    profile: PacingProfile | None = None,
-) -> Pacer:
-    """Build the enforcing Pacer. `profile` (membership × risk% × overrides) is
-    the app-facing basis (2026-08-01) and wins when present; the legacy `tier`
-    name is the fallback for callers that predate it (tests, and any host not yet
-    passing a profile). Either way the effective caps are computed HERE, in the
-    package (NFR-LI-02)."""
+def _pacer(profile: PacingProfile | None, state_dir: str | None) -> Pacer:
+    """Build the enforcing Pacer from the profile (membership × risk% ×
+    overrides). None → the conservative defaults (free × 60%). The effective
+    caps are computed HERE, in the package (NFR-LI-02)."""
     sd = Path(state_dir) if state_dir else None
-    tier = resolve_profile(profile) if profile is not None else resolve_tier(tier_name)
-    return Pacer(tier, state_dir=sd)
+    return Pacer(resolve_profile(profile), state_dir=sd)
 
 
 def quota(
-    tier: str | None = None,
     state_dir: str | None = None,
     *,
     profile: PacingProfile | None = None,
 ) -> dict:
     """Report the live remaining quota + backoff state (FR-NW-01/04). No browser."""
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     return {"op": "quota", "ok": True, "quota": pacer.remaining()}
 
 
 def resume(
-    tier: str | None = None,
     state_dir: str | None = None,
     *,
     profile: PacingProfile | None = None,
 ) -> dict:
     """Clear the voyager-owned backoff pause (Settings → Networking manual resume,
     FR-NW-05 / NFR-LI-03). No browser, no network — just resets the ledger flag."""
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     pacer.resume()
     pacer.save()
     return {"op": "resume", "ok": True, "quota": pacer.remaining()}
@@ -125,7 +111,6 @@ def resolve_company(
     url: str | None = None,
     limit: int = 5,
     prefer_domain: str | None = None,
-    tier: str | None = None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     storage_state: str | None = None,
@@ -156,14 +141,14 @@ def resolve_company(
     # refuse during backoff, and charge the CUL search budget for the keyword
     # typeahead (company search is CUL-counted). A pasted URL is a direct
     # single-entity fetch, not a search — backoff-gated but not CUL-charged.
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     charge_search = not (url and url.strip())
     if charge_search:
         allowed, reason = pacer.can_search()
     else:
         # URL path: only the backoff gate applies — a direct fetch spends no
         # search budget, but must still stop when LinkedIn said stop.
-        allowed, reason = (False, pacer._paused_reason()) if pacer.is_paused() else (True, "")
+        allowed, reason = (False, pacer.paused_reason()) if pacer.is_paused() else (True, "")
     if not allowed:
         return {"op": "resolve-company", "ok": False, "keywords": keywords,
                 "url": url, "error": "cap_or_backoff", "reason": reason,
@@ -197,7 +182,6 @@ def discover(
     limit: int = 10,
     page: int = 1,
     *,
-    tier: str | None = None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     company_urn: str | None = None,
@@ -233,7 +217,7 @@ def discover(
     # One discover() costs 1 CUL-counted People search plus up to ~2 profile
     # views per candidate (the profile fetch, plus a degree fallback), so both
     # budgets are checked up front and charged for what the run actually did.
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     allowed, reason = pacer.can_search()
     if not allowed:
         return {"op": "discover", "ok": False, "company": company, "count": 0,
@@ -281,10 +265,8 @@ def discover(
 def search_jobs(
     keywords: str,
     location: str = "",
-    limit: int = 50,
     *,
     start: int = 0,
-    tier: str | None = None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     storage_state: str | None = None,
@@ -292,37 +274,27 @@ def search_jobs(
     headed: bool = False,
     dry_run: bool = False,
 ) -> dict:
-    """Logged-in LinkedIn job search (read-only) → up to `limit` normalized-ish
-    plain job dicts from offset `start`. NEW for finds-you-jobs — the one-shot
-    job-discovery entry point; never a background scan source.
+    """Logged-in LinkedIn job search (read-only) → ONE page of
+    `MAX_JOBS_PER_SEARCH` (25, LinkedIn's own page size) plain job dicts from
+    offset `start`. NEW for finds-you-jobs — the one-shot job-discovery entry
+    point; never a background scan source.
+
+    One page per call is the invariant (maintainer directive 2026-07-30): no
+    host request can turn one click into a multi-hundred-row authenticated
+    crawl. `start` (host-owned Fresh-search/Next-page cursor, 2026-08-01)
+    offsets that single page — LinkedIn's pagination is stateless, so any
+    offset is one independent request of the same size.
 
     **Deliberately charges no CUL search budget.** Job search on the Jobs page is
     exempt from LinkedIn's Commercial Use Limit (help `a564226`), and it is the
     product's highest-volume read — metering it against the People-search budget
-    would throttle the primary use case for zero real risk. It IS backoff-gated
-    and paced: it used to be neither, making one click the largest unpaced
-    authenticated burst in the codebase (~120 requests across 12 launches).
-
-    Paginates in pages of 25 (LinkedIn's page size) until `limit` or exhaustion.
-    `limit` is clamped to `MAX_JOBS_PER_SEARCH` (25 — one page) HERE, inside the
-    package, so no host request can turn one click into a multi-hundred-row
-    authenticated crawl (maintainer directive 2026-07-30). `start` (host-owned
-    Fresh-search/Next-page cursor, 2026-08-01) offsets that single page —
-    LinkedIn's pagination is stateless, so any offset is one independent request
-    of the same size and the invariant stays one page per call.
-    A page failure keeps what earlier pages returned (rank-don't-gate).
-
-    **Self-imposed pages/hour throttle (2026-08-01).** Each page request is
-    charged against `job_search_pages` (an hourly meter driven by the
-    membership × risk% profile). This is OURS, not LinkedIn's — job search is
-    CUL-exempt, so it does NOT touch the People-search CUL budget — but it stops
-    a role list from fanning into a large authenticated burst in one sitting.
-    When the hourly budget is spent the call refuses (no backoff: this is our
-    ceiling, not a LinkedIn signal).
+    would throttle the primary use case for zero real risk. It IS backoff-gated,
+    and each page request is charged against the self-imposed `job_search_pages`
+    pages/hour meter (ours, not LinkedIn's); a spent hourly budget refuses
+    BEFORE any LinkedIn traffic, and is not a backoff — the next hour frees it.
 
     Returns `exhausted`: LinkedIn's result list ends at (or before) the page
-    after this one — a partial or empty page, or `start + 25 >= total`."""
-    limit = max(1, min(limit, MAX_JOBS_PER_SEARCH))
+    after this one — a partial page, or `start + 25 >= total`."""
     start = max(0, int(start))
     if not keywords:
         raise VoyagerError("search_jobs requires keywords")
@@ -331,22 +303,19 @@ def search_jobs(
             "op": "search-jobs", "ok": True, "dry_run": True,
             "keywords": keywords, "location": location, "start": start,
             "plan": f"would run logged-in LinkedIn job search for {keywords!r}"
-                    f"{f' in {location!r}' if location else ''}, page through "
-                    f"≤{limit} results from offset {start}",
+                    f"{f' in {location!r}' if location else ''}, one page of "
+                    f"{MAX_JOBS_PER_SEARCH} from offset {start}",
             "jobs": [], "total": 0, "exhausted": False,
         }
     # Backoff gates reads too: when LinkedIn has already told us to stop, the
     # loudest read path in the app must not keep going.
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     if pacer.is_paused():
-        _, reason = pacer.check("profile_views")
         return {"op": "search-jobs", "ok": False, "keywords": keywords,
                 "location": location, "start": start, "count": 0, "total": 0,
-                "jobs": [], "error": "cap_or_backoff", "reason": reason,
+                "jobs": [], "error": "cap_or_backoff",
+                "reason": pacer.paused_reason(),
                 "exhausted": False, "quota": pacer.remaining()}
-    # Self-imposed pages/hour ceiling — refuse BEFORE issuing the request so a
-    # spent budget costs no LinkedIn traffic. Not a backoff (our ceiling, not
-    # LinkedIn's), so a later hour naturally frees it.
     allowed, reason = pacer.can_search_jobs()
     if not allowed:
         return {"op": "search-jobs", "ok": False, "keywords": keywords,
@@ -357,79 +326,45 @@ def search_jobs(
     from .client import PlaywrightLinkedinAPI
     from .session import AccountSession
 
-    _PAGE = 25
     session = AccountSession(
         storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
     )
-    jobs: list[dict] = []
-    total = 0
-    last_offset, last_batch_len = start, 0
-    dirty = False  # a charge or a backoff pause is pending → save in finally
     try:
         session.ensure_browser()
         client = PlaywrightLinkedinAPI(session)
-        seen: set[str] = set()
-        for offset in range(start, start + max(limit, 1), _PAGE):
-            if offset != start:
-                # A second page needs its own hourly allowance (defensive — the
-                # 25-row clamp means one page today, but the throttle must hold if
-                # that ever changes).
-                allowed, _ = pacer.can_search_jobs()
-                if not allowed:
-                    break
-                # Pace between pages. Reusing the send jitter band would be far
-                # too slow for a read the user is waiting on, so this is a short
-                # human-scale pause — the point is that consecutive pages are not
-                # issued at machine speed.
-                time.sleep(random.uniform(*PAGE_PAUSE_RANGE_S))
-            # Charge on ATTEMPT, before issuing the request — a page that reaches
-            # LinkedIn but then 429s or fails to parse still consumed a request,
-            # so it must count (same safe-direction rule as the send ops, which
-            # charge before the browser action). Over-counting a request that
-            # never left is the safe error; under-counting is not.
-            pacer.record_search_page()
-            dirty = True
-            page = client.search_jobs(keywords, location, start=offset, count=_PAGE)
-            total = page.get("total", total) or total
-            batch = page.get("jobs", [])
-            last_offset, last_batch_len = offset, len(batch)
-            if not batch:
-                break
-            for job in batch:
-                jid = job.get("id")
-                if jid and jid not in seen:
-                    seen.add(jid)
-                    jobs.append(job)
-            if len(jobs) >= limit:
-                jobs = jobs[:limit]
-                break
+        # Charge on ATTEMPT, before issuing the request — a page that reaches
+        # LinkedIn but then 429s or fails to parse still consumed a request
+        # (same safe-direction rule as the send ops).
+        pacer.record_search_page()
+        page = client.search_jobs(
+            keywords, location, start=start, count=MAX_JOBS_PER_SEARCH
+        )
+        total = int(page.get("total", 0) or 0)
+        jobs = list(page.get("jobs", []))
         # A short page is LinkedIn's own end-of-results signal; a known total
         # that the next offset would meet or pass says the same thing.
-        exhausted = last_batch_len < _PAGE or (
-            0 < total <= last_offset + _PAGE
+        exhausted = len(jobs) < MAX_JOBS_PER_SEARCH or (
+            0 < total <= start + MAX_JOBS_PER_SEARCH
         )
         return {"op": "search-jobs", "ok": True, "keywords": keywords,
                 "location": location, "start": start, "count": len(jobs),
                 "total": total, "jobs": jobs, "exhausted": exhausted,
-                "next_start": last_offset + _PAGE}
+                "next_start": start + MAX_JOBS_PER_SEARCH}
     except RateLimited as e:
         # LinkedIn told us to stop on the loudest authenticated read path. Enter
         # backoff exactly like `discover` — search_jobs used to let RateLimited
-        # propagate uncaught, so a 429 mid-search entered NO backoff and later
-        # pairs (and every later Fresh/Next search) kept hammering the throttled
-        # endpoint. Keep whatever earlier pages returned (rank-don't-gate).
+        # propagate uncaught, so a 429 entered NO backoff and every later
+        # Fresh/Next search kept hammering the throttled endpoint.
         deadline = pacer.pause_for_backoff(str(e))
-        dirty = True
         return {"op": "search-jobs", "ok": False, "keywords": keywords,
-                "location": location, "start": start, "count": len(jobs),
-                "total": total, "jobs": jobs, "error": "rate_limited",
+                "location": location, "start": start, "count": 0, "total": 0,
+                "jobs": [], "error": "rate_limited",
                 "reason": str(e), "paused_until": deadline, "exhausted": False,
                 "quota": pacer.remaining()}
     finally:
-        if dirty:
-            # Persist the page charge(s) and/or the backoff pause to the shared
-            # ledger — runs even when the except above returns.
-            pacer.save()
+        # Persist the page charge and/or the backoff pause to the shared ledger
+        # (no-op if neither happened — save() early-returns).
+        pacer.save()
         session.close()
 
 
@@ -447,7 +382,6 @@ def send_connection(
     public_identifier: str,
     *,
     note: str = "",
-    tier: str | None = None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     linkedin_plan: str = "free",
@@ -471,7 +405,7 @@ def send_connection(
     if not public_identifier:
         raise VoyagerError("send-connection requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     charge_note = bool(note) and linkedin_plan != "premium"
     allowed, reason = pacer.can_send_invite()
     if allowed and charge_note:
@@ -479,8 +413,8 @@ def send_connection(
         if not allowed:
             reason = (
                 f"{note_reason} — the free-plan personalized-note allowance is out; "
-                "send note-less (ask via DM after they accept) or set your plan to "
-                "Premium in Settings if this account has one"
+                "send note-less (ask via DM after they accept) or set your LinkedIn "
+                "membership in Settings if this account has a paid plan"
             )
 
     if dry_run:
@@ -570,7 +504,6 @@ def send_dm(
     public_identifier: str,
     message: str,
     *,
-    tier: str | None = None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     storage_state: str | None = None,
@@ -587,7 +520,7 @@ def send_dm(
     public_identifier = _normalize_public_id(public_identifier)
     if not message:
         raise VoyagerError("send-dm requires a message")
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     allowed, reason = pacer.can_send_dm()
 
     if dry_run:
@@ -652,7 +585,6 @@ def send_dm(
 def contact_sync(
     public_identifier: str,
     *,
-    tier: str | None = None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     storage_state: str | None = None,
@@ -683,7 +615,7 @@ def contact_sync(
             "degree": None, "is_first_degree": False,
             "last_message_direction": None, "last_message_at": None,
         }
-    pacer = _pacer(tier, state_dir, profile=profile)
+    pacer = _pacer(profile, state_dir)
     allowed, reason = pacer.can_view_profile()
     if not allowed:
         return {"op": "contact-sync", "ok": False,

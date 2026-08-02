@@ -4,8 +4,8 @@ Commands (each supports --dry-run — no LLM, no browser, no network):
   discover  --company NAME [--limit N]
   draft     --profile ID --job (TEXT|FILE|URL) [--master FILE] [--title ...]
             [--company ...] [--degree N] [--audience ...] [--guidance ...]
-  send      --profile ID --message TEXT --degree N [--tier ...]
-  quota     [--tier ...]
+  send      --profile ID --message TEXT --degree N
+  quota
 
 `draft --dry-run` prints the assembled prompt (playbook + grounding), no LLM.
 `discover/send --dry-run` forwards --dry-run to the voyager worker (plan
@@ -74,11 +74,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--profile", required=True)
     s.add_argument("--message", required=True)
     s.add_argument("--degree", type=int, default=None, help="connection degree (1=warm→DM)")
-    s.add_argument("--tier", choices=["new", "seasoned"], default=None)
     s.add_argument("--dry-run", action="store_true")
 
-    q = sub.add_parser("quota", help="report live remaining caps from voyager")
-    q.add_argument("--tier", choices=["new", "seasoned"], default=None)
+    sub.add_parser("quota", help="report live remaining caps from voyager")
 
     args = ap.parse_args(argv)
 
@@ -108,12 +106,12 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "send":
             contact = Contact(public_identifier=args.profile, connection_degree=args.degree)
-            result = send(args.message, contact, tier=args.tier, dry_run=args.dry_run)
+            result = send(args.message, contact, dry_run=args.dry_run)
             _print_json(dataclasses.asdict(result))
             return 0 if (result.sent or args.dry_run) else 1
 
         if args.command == "quota":
-            _print_json(quota(tier=args.tier))
+            _print_json(quota())
             return 0
     except NetworkerError as e:
         print(f"networker failed: {e}", file=sys.stderr)

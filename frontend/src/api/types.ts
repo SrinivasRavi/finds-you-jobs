@@ -478,7 +478,6 @@ export interface CompanyConfirmPick {
 /** Rolling outreach quota for the popup counter (US-NW-09/10). */
 export interface ReferralQuota {
   connected: boolean;
-  tier: "new" | "seasoned";
   daily_used: number;
   daily_limit: number;
   weekly_used: number;
@@ -488,7 +487,6 @@ export interface ReferralQuota {
   dm_daily_sent: number;
   dm_weekly_sent: number;
   dm_daily_limit: number;
-  dm_weekly_limit: number;
 }
 
 /** Fresh-search pagination state for "Scan LinkedIn jobs". The Next-page
@@ -496,11 +494,8 @@ export interface ReferralQuota {
  *  is a host freshness policy (result coherence) — LinkedIn's own pagination
  *  is stateless and never expires. */
 export interface LinkedInSearchCursorState {
-  fresh_at: string;
-  expires_at: string;
   expired: boolean;
   exhausted: boolean;
-  pages_fetched: number;
   next_page_available: boolean;
 }
 
@@ -525,8 +520,6 @@ export interface LinkedInRateLimitsState {
   risk_pct: number;
   memberships: string[];
   caps: LinkedInCap[];
-  job_search_hour_cap: number;
-  job_search_hour_used: number;
   job_search_hour_remaining: number;
 }
 
@@ -537,10 +530,6 @@ export interface LinkedInRateLimitsState {
 export interface LinkedInSessionState {
   enabled: boolean;
   status: "valid" | "expired" | "never_set" | "connecting" | "backing_off";
-  /** Legacy; superseded by rate_limits.membership_type. */
-  account_tier: "new" | "seasoned";
-  /** Legacy; derived from membership now (free vs paid). */
-  linkedin_plan: "free" | "premium";
   connected_as: string;
   li_at_expires_at: string | null;
   last_validated_at: string | null;
@@ -555,13 +544,11 @@ export interface LinkedInSessionState {
 /** Result of a user-initiated contact-status refresh (FR-NW-15).
  *  `queued` — a sync started. `already_running` — joined the one in flight.
  *  `throttled` — the opportunistic on-open refresh declined because the last
- *  sync was too recent; `nextEligibleAt` says when it would run, and the Sync
- *  button ignores it. There is no scheduled sync. */
+ *  sync was too recent; the Sync button ignores the throttle. There is no
+ *  scheduled sync. */
 export interface ContactSyncResult {
   id: string | null;
   state: "queued" | "already_running" | "throttled";
-  throttled: boolean;
-  nextEligibleAt: string | null;
 }
 
 /** Manual add-a-contact input (US-NW-02). */
@@ -852,7 +839,6 @@ export interface Settings {
   linkedin_search_ack_at: string | null;
   /** LinkedIn one-shot per-query fetch budget (discovery-expansion #6),
    *  persisted in ui_state. Server clamps to [25, 250]; default 50. */
-  linkedin_search_limit: number;
   /** ISO timestamp of the last time the user checked the Referral Outreach
    *  ToS-risk acknowledgment box and turned the toggle on (audit P2-5) — a
    *  durable record, so re-opening Settings shows *when* the risk was

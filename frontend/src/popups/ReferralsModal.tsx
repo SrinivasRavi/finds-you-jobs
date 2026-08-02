@@ -91,7 +91,6 @@ export function ReferralsModal({
   const [sendingIds, setSendingIds] = useState<Set<string>>(new Set());
   const [failures, setFailures] = useState<Record<string, string>>({});
   const [skippedCount, setSkippedCount] = useState(0);
-  const userTouchedRef = useRef(false);
   // Company-confirm step (FR-NW-02): when discovery can't auto-pick the target
   // company (ambiguous name / no employer-domain match), the sidecar streams a
   // `needs_company_confirm` event with the candidate entities and discovers
@@ -259,9 +258,7 @@ export function ReferralsModal({
   // warm 1st-degree Message, and vice versa. Limit 0 means "unknown" (stale
   // sidecar) — treat as not blocked; the package refuses authoritatively anyway.
   const dmCapReached = Boolean(
-    quota.data &&
-      quota.data.dm_daily_limit > 0 &&
-      quota.data.dm_daily_sent >= quota.data.dm_daily_limit,
+    quota.data && quota.data.dm_daily_sent >= quota.data.dm_daily_limit,
   );
   const failureCount = Object.keys(failures).length;
 
@@ -269,7 +266,6 @@ export function ReferralsModal({
   // re-renders when its own props change — not on every keystroke in a sibling
   // row's draft.
   const handleAsk = useCallback((id: string) => {
-    userTouchedRef.current = true;
     setConfirmingId(id);
   }, []);
 

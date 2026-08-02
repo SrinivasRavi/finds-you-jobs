@@ -1004,12 +1004,11 @@ export class RealApi {
       networking_enabled: p.voyager_risk_marker_on,
       networking_ack_at: (ui.networking_ack_at as string | undefined) ?? null,
       // LinkedIn Job Search — its own experimental opt-in (shares the session).
-      linkedin_search_enabled: Boolean(ui.linkedin_search_enabled),
-      linkedin_search_ack_at: (ui.linkedin_search_ack_at as string | undefined) ?? null,
+      // Typed preference columns since 2026-08-02 (the sidecar 403s on them).
+      linkedin_search_enabled: Boolean(p.linkedin_search_enabled),
+      linkedin_search_ack_at: p.linkedin_search_ack_at ?? null,
       // LinkedIn one-shot per-query fetch budget (discovery-expansion #6);
       // persisted so the user's choice sticks. Default 50 (2 pages).
-      linkedin_search_limit:
-        typeof ui.linkedin_search_limit === "number" ? ui.linkedin_search_limit : 50,
       job_prefs: {
         role_aliases: (p.role_aliases ?? []).map(String),
         locations: (p.locations ?? []).map(String),
@@ -1053,6 +1052,12 @@ export class RealApi {
     if (Object.keys(thresholdPatch).length > 0) {
       body.thresholds = { ...(p.thresholds ?? {}), ...thresholdPatch };
     }
+    if (patch.linkedin_search_enabled !== undefined) {
+      body.linkedin_search_enabled = patch.linkedin_search_enabled;
+    }
+    if (patch.linkedin_search_ack_at !== undefined) {
+      body.linkedin_search_ack_at = patch.linkedin_search_ack_at;
+    }
     if (patch.networking_enabled !== undefined) {
       body.voyager_risk_marker_on = patch.networking_enabled;
     }
@@ -1065,18 +1070,6 @@ export class RealApi {
     let uiTouched = false;
     if (patch.networking_ack_at !== undefined) {
       ui.networking_ack_at = patch.networking_ack_at;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_limit !== undefined) {
-      ui.linkedin_search_limit = patch.linkedin_search_limit;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_enabled !== undefined) {
-      ui.linkedin_search_enabled = patch.linkedin_search_enabled;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_ack_at !== undefined) {
-      ui.linkedin_search_ack_at = patch.linkedin_search_ack_at;
       uiTouched = true;
     }
     if (patch.observability !== undefined) {
@@ -1173,12 +1166,11 @@ export class RealApi {
    *  continues the last Fresh search's snapshot from its saved offset. */
   async linkedinSearch(
     mode: "fresh" | "next" = "fresh",
-    limit?: number,
   ): Promise<{ id: string; kind: string; state: string }> {
     return (await this.json(
       "POST",
       "/api/linkedin/search",
-      limit !== undefined ? { mode, limit } : { mode },
+      { mode },
     )) as { id: string; kind: string; state: string };
   }
   async watchCompany(input: {
@@ -1416,7 +1408,6 @@ export class RealApi {
     const d = await this.req<QuotaDTO>("/api/referrals/quota");
     return {
       connected: d.connected,
-      tier: d.tier as ReferralQuota["tier"],
       daily_used: d.daily_used,
       daily_limit: d.daily_limit,
       weekly_used: d.weekly_used,
@@ -1424,7 +1415,6 @@ export class RealApi {
       dm_daily_sent: d.dm_daily_sent ?? 0,
       dm_weekly_sent: d.dm_weekly_sent ?? 0,
       dm_daily_limit: d.dm_daily_limit ?? 0,
-      dm_weekly_limit: d.dm_weekly_limit ?? 0,
     };
   }
 
@@ -1469,14 +1459,9 @@ export class RealApi {
   async syncContacts(force = false): Promise<ContactSyncResult> {
     const q = force ? "?force=true" : "";
     const dto = (await this.json("POST", `/api/networking/contact-sync${q}`, {})) as {
-      id?: string | null; state: string; throttled?: boolean; next_eligible_at?: string | null;
+      id?: string | null; state: string;
     };
-    return {
-      id: dto.id ?? null,
-      state: dto.state as ContactSyncResult["state"],
-      throttled: Boolean(dto.throttled),
-      nextEligibleAt: dto.next_eligible_at ?? null,
-    };
+    return { id: dto.id ?? null, state: dto.state as ContactSyncResult["state"] };
   }
 
   /** Set the self-imposed LinkedIn rate-limit profile (2026-08-01). Pass the
@@ -1512,41 +1497,17 @@ function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
   return {
     enabled: d.enabled,
     status: d.status as LinkedInSessionState["status"],
-    account_tier: d.account_tier as LinkedInSessionState["account_tier"],
-    linkedin_plan: (d.linkedin_plan ?? "free") as LinkedInSessionState["linkedin_plan"],
     connected_as: d.connected_as ?? "",
     li_at_expires_at: d.li_at_expires_at ?? null,
     last_validated_at: d.last_validated_at ?? null,
     paused_until: d.paused_until ?? null,
     paused_reason: d.paused_reason ?? "",
+    // The DTO shapes match the app types field-for-field — pass through.
     search_cursor: c
-      ? {
-          fresh_at: c.fresh_at,
-          expires_at: c.expires_at,
-          expired: c.expired,
-          exhausted: c.exhausted,
-          pages_fetched: c.pages_fetched,
-          next_page_available: c.next_page_available,
-        }
+      ? { expired: c.expired, exhausted: c.exhausted, next_page_available: c.next_page_available }
       : null,
     rate_limits: rl
-      ? {
-          membership_type: rl.membership_type,
-          risk_pct: rl.risk_pct,
-          memberships: [...rl.memberships],
-          caps: rl.caps.map((x) => ({
-            key: x.key,
-            meter: x.meter,
-            window: x.window,
-            label: x.label,
-            effective: x.effective,
-            ceiling: x.ceiling,
-            overridden: x.overridden,
-          })),
-          job_search_hour_cap: rl.job_search_hour_cap,
-          job_search_hour_used: rl.job_search_hour_used,
-          job_search_hour_remaining: rl.job_search_hour_remaining,
-        }
+      ? { ...rl, memberships: [...rl.memberships], caps: rl.caps.map((x) => ({ ...x })) }
       : null,
   };
 }

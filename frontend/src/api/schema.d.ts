@@ -952,9 +952,13 @@ export interface paths {
         };
         /**
          * Referrals Quota
-         * @description Rolling outreach quota for the popup counter (US-NW-09/10). App-side view
-         *     from the OutreachLog send windows + tier caps. The authoritative *live*
-         *     voyager quota is the maintainer's live-dogfood path (zero traffic here).
+         * @description Rolling outreach quota for the popup counter (US-NW-09/10).
+         *
+         *     Used-counts AND caps both come from the package's enforcing ledger
+         *     (maintainer 2026-08-02, closing the "divergent ledgers" item): the popup
+         *     can never show head-room the send path will refuse. `OutreachLog` stays the
+         *     per-send product history; it is no longer recounted as a quota source.
+         *     Zero LinkedIn traffic — a local file read, off the event loop.
          */
         get: operations["referrals_quota_api_referrals_quota_get"];
         put?: never;
@@ -1192,8 +1196,7 @@ export interface paths {
          *     - **membership_type** and/or **risk_pct** — the basis. Changing either
          *       RESETS every per-meter override to the freshly computed default (the
          *       maintainer's "both reset" rule): the ceilings or the scale changed, so any
-         *       old absolute pin is stale. `linkedin_plan` is kept in sync (free vs paid)
-         *       so the note-budget path keeps working.
+         *       old absolute pin is stale.
          *     - **override_key / override_value** — pin one `{meter}_{window}` cap to an
          *       absolute number (only when NOT also changing the basis).
          *     - **reset_overrides** — drop all pins back to the computed defaults.
@@ -2241,26 +2244,14 @@ export interface components {
          *
          *     `state` is `queued` (a sync started), `already_running` (joined the one in
          *     flight), or `throttled` (the opportunistic surface-open refresh declined
-         *     because the last sync was too recent — `next_eligible_at` says when it would
-         *     run, and the explicit Sync button ignores it). `id` is set only for `queued`.
+         *     because the last sync was too recent — the explicit Sync button ignores
+         *     it). `id` is set only for `queued`.
          */
         ContactSyncAccepted: {
             /** Id */
             id?: string | null;
-            /**
-             * Kind
-             * @default contact_sync
-             */
-            kind: string;
             /** State */
             state: string;
-            /**
-             * Throttled
-             * @default false
-             */
-            throttled: boolean;
-            /** Next Eligible At */
-            next_eligible_at?: string | null;
         };
         /**
          * ContactUpdate
@@ -2713,10 +2704,6 @@ export interface components {
             memberships: string[];
             /** Caps */
             caps: components["schemas"]["LinkedInCapDTO"][];
-            /** Job Search Hour Cap */
-            job_search_hour_cap: number;
-            /** Job Search Hour Used */
-            job_search_hour_used: number;
             /** Job Search Hour Remaining */
             job_search_hour_remaining: number;
         };
@@ -2746,42 +2733,27 @@ export interface components {
          * LinkedInSearchCursorDTO
          * @description Fresh-search pagination state for "Scan LinkedIn jobs" (Fresh search /
          *     Next page). `next_page_available` is the one flag the UI gates the
-         *     Next-page button on; the rest explains why it is what it is. The TTL is a
-         *     host freshness policy (result coherence) — LinkedIn's own pagination is
-         *     stateless and never expires.
+         *     Next-page button on; `expired`/`exhausted` drive the route's 409 wording.
+         *     The TTL is a host freshness policy (result coherence) — LinkedIn's own
+         *     pagination is stateless and never expires.
          */
         LinkedInSearchCursorDTO: {
-            /**
-             * Fresh At
-             * Format: date-time
-             */
-            fresh_at: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
             /** Expired */
             expired: boolean;
             /** Exhausted */
             exhausted: boolean;
-            /** Pages Fetched */
-            pages_fetched: number;
             /** Next Page Available */
             next_page_available: boolean;
         };
         /**
          * LinkedInSearchRequest
-         * @description One-shot logged-in job search (discovery-expansion #6). `limit` is the
-         *     per-query fetch budget (rows per role-alias × location pair); the route
-         *     clamps it to a safe range. Omitted → the server default. `mode` picks the
-         *     button: `fresh` runs page 0 from current prefs and resets the pagination
+         * @description One-shot logged-in job search (discovery-expansion #6). Always one page
+         *     of 25 per role-alias × location pair (the package invariant). `mode` picks
+         *     the button: `fresh` runs page 0 from current prefs and resets the pagination
          *     cursor; `next` continues the last Fresh search's snapshot (409 when there
          *     is none, it expired, or it is exhausted).
          */
         LinkedInSearchRequest: {
-            /** Limit */
-            limit?: number | null;
             /**
              * Mode
              * @default fresh
@@ -2806,13 +2778,6 @@ export interface components {
             enabled: boolean;
             /** Status */
             status: string;
-            /** Account Tier */
-            account_tier: string;
-            /**
-             * Linkedin Plan
-             * @default free
-             */
-            linkedin_plan: string;
             /**
              * Connected As
              * @default
@@ -2957,6 +2922,10 @@ export interface components {
             };
             /** Voyager Risk Marker On */
             voyager_risk_marker_on: boolean;
+            /** Linkedin Search Enabled */
+            linkedin_search_enabled: boolean;
+            /** Linkedin Search Ack At */
+            linkedin_search_ack_at: string | null;
             /** Engine Routing */
             engine_routing: {
                 [key: string]: unknown;
@@ -2996,6 +2965,10 @@ export interface components {
             } | null;
             /** Voyager Risk Marker On */
             voyager_risk_marker_on?: boolean | null;
+            /** Linkedin Search Enabled */
+            linkedin_search_enabled?: boolean | null;
+            /** Linkedin Search Ack At */
+            linkedin_search_ack_at?: string | null;
             /** Engine Routing */
             engine_routing?: {
                 [key: string]: unknown;
@@ -3082,8 +3055,6 @@ export interface components {
         QuotaDTO: {
             /** Connected */
             connected: boolean;
-            /** Tier */
-            tier: string;
             /** Daily Used */
             daily_used: number;
             /** Daily Limit */
@@ -3107,11 +3078,6 @@ export interface components {
              * @default 0
              */
             dm_daily_limit: number;
-            /**
-             * Dm Weekly Limit
-             * @default 0
-             */
-            dm_weekly_limit: number;
         };
         /** ReachOutContact */
         ReachOutContact: {

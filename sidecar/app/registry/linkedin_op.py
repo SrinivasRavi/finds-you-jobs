@@ -26,11 +26,12 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sidecar.modules.networker.types import NetworkerError
+from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
 
 from ..db.base import now_utc
 from ..events import make_event
 from . import networker_ops
-from .networker_ops import _resolve_profile, linkedin_feature_flags, linkedin_storage_path
+from .networker_ops import linkedin_feature_flags, linkedin_storage_path, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
 
 if TYPE_CHECKING:
@@ -47,6 +48,19 @@ LOGIN_TIMEOUT_S = 300
 # points into a different list) to one job-hunting session (maintainer,
 # 2026-08-01). After it lapses, only a Fresh search makes sense.
 SEARCH_CURSOR_TTL = timedelta(hours=12)
+
+
+def cursor_state(
+    fresh_at: datetime | None, entries: list[dict], now: datetime | None = None
+) -> tuple[bool, bool]:
+    """`(expired, exhausted)` for a Fresh-search cursor. The single derivation
+    of the continuable predicate — the DTO mapper and the op self-gate both call
+    this, so the route's 409 and the op's refusal can never disagree. An absent
+    cursor (no fresh_at / no entries) is the caller's "None" case, not ours."""
+    now = now or datetime.now(UTC)
+    expired = fresh_at is None or now - fresh_at > SEARCH_CURSOR_TTL
+    exhausted = bool(entries) and all(bool(e.get("exhausted")) for e in entries)
+    return expired, exhausted
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +155,7 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
         )
 
     with ctx.db.repos() as repos:
-        profile = _resolve_profile(repos)
+        profile = resolve_pacing_profile(repos)
         repos.linkedin_session.update(status="connecting", paused_until=None, paused_reason="")
     _publish_linkedin(ctx, "connecting")
 
@@ -240,7 +254,6 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from .persistence import persist_scan, resolve_scan_prefs
 
     snap = ctx.input_snapshot
-    limit = int(snap.get("limit", 50))
     mode = str(snap.get("mode", "fresh"))
     dry_run = bool(snap.get("dry_run", False))
 
@@ -252,7 +265,7 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 "LinkedIn is not connected — connect your session in "
                 "Settings → Referral Outreach before running a LinkedIn search",
             )
-        profile = _resolve_profile(repos)
+        profile = resolve_pacing_profile(repos)
         prefs = resolve_scan_prefs(snap, repos=repos) or ScanPrefs(
             title_allow=[str(a) for a in (repos.preferences.get_or_create().role_aliases or [])],
             location_allow=[
@@ -269,12 +282,13 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
             raise NetworkerError(
                 "voyager", "No search to continue — run a Fresh search first"
             )
-        if now - cursor_fresh_at > SEARCH_CURSOR_TTL:
+        expired, exhausted = cursor_state(cursor_fresh_at, cursor_entries, now)
+        if expired:
             raise NetworkerError(
                 "voyager",
                 "The last Fresh search has expired — run a Fresh search first",
             )
-        if all(e.get("exhausted") for e in cursor_entries):
+        if exhausted:
             raise NetworkerError(
                 "voyager",
                 "No more results — the last search reached LinkedIn's end of "
@@ -307,7 +321,7 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
             try:
                 result = driver.search_jobs(
                     str(entry["keyword"]), str(entry["location"]),
-                    limit=limit, start=start, dry_run=dry_run,
+                    start=start, dry_run=dry_run,
                 )
             except NetworkerError as exc:
                 report.errors.append(f"{entry['keyword']!r}@{entry['location']!r}: {exc}")
@@ -317,8 +331,16 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
             if result.get("ok") and not dry_run:
                 # Advance this pair's cursor only on a real, successful page.
                 # A backoff refusal (ok=False) leaves it untouched to retry.
-                entry["next_start"] = int(result.get("next_start", start + 25))
-                entry["exhausted"] = bool(result.get("exhausted", len(raws) < 25))
+                entry["next_start"] = int(result.get("next_start", start + MAX_JOBS_PER_SEARCH))
+                entry["exhausted"] = bool(result.get("exhausted", len(raws) < MAX_JOBS_PER_SEARCH))
+            elif not result.get("ok"):
+                # The worker refuses via ok=False dicts (backoff, hourly budget),
+                # not exceptions — without this the refusal reason vanished and a
+                # paused search completed "successfully" with 0 jobs.
+                report.errors.append(
+                    f"{entry['keyword']!r}@{entry['location']!r}: "
+                    f"{result.get('reason') or result.get('error') or 'refused'}"
+                )
             for raw in raws:
                 report.fetched += 1
                 job = NormalizedJob(

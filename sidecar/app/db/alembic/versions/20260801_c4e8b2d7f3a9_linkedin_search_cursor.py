@@ -6,7 +6,7 @@ snapshot within a 12 h freshness window (host policy — LinkedIn's own
 pagination is stateless and never expires; the TTL is for result coherence).
 
 Revision ID: c4e8b2d7f3a9
-Revises: a9c4e7f2b8d1
+Revises: f1a2b3c4d5e6
 Create Date: 2026-08-01
 
 """
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'c4e8b2d7f3a9'
-down_revision: str | None = 'a9c4e7f2b8d1'
+down_revision: str | None = 'f1a2b3c4d5e6'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

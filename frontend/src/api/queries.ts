@@ -894,14 +894,11 @@ export function useResumeLinkedIn() {
  *  retired 12 h schedule — no LinkedIn traffic happens without a user present
  *  (`docs/internal/linkedin-posture.md` §1). */
 export function useSyncContacts() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (force?: boolean) => Promise.resolve(api.syncContacts(Boolean(force))),
-    onSuccess: (result) => {
-      // A throttled call did no work, so there is nothing to refetch.
-      if (result.state === "throttled") return;
-      qc.invalidateQueries({ queryKey: qk.contacts });
-    },
+    // No invalidation here: a 202 means the sync hasn't touched a contact yet.
+    // The SSE terminal handler (contact_sync → invalidateNetworkingLists) does
+    // the refetch when the op actually finishes.
   });
 }
 

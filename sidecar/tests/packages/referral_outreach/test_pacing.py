@@ -11,32 +11,28 @@ from sidecar.packages.referral_outreach.upstream.pacing import (
     DAY_SECONDS,
     DEFAULT_RISK_PCT,
     HOUR_SECONDS,
-    TIERS,
     WEEK_SECONDS,
+    Budget,
     Pacer,
     PacingProfile,
-    default_overrides,
+    Tier,
+    plan_for_membership,
     resolve_profile,
-    resolve_tier,
     send_delay_seconds,
 )
 
 
-def test_tier_resolution_defaults_to_new():
-    assert resolve_tier(None).name == "new"
-    assert resolve_tier("SEASONED").name == "seasoned"
-    # 50-70% of the ESTIMATED LinkedIn ceiling (posture doc §4). These were
-    # 15/100 and 30/200 — i.e. `seasoned` weekly sat at ~200% of the ~100/wk
-    # soft cap, so the app was a foot-gun rather than a guard.
-    assert TIERS["new"].daily == 8 and TIERS["new"].weekly == 30
-    assert TIERS["seasoned"].daily == 10 and TIERS["seasoned"].weekly == 65
-    assert resolve_tier("recovering").name == "recovering"
-    assert TIERS["recovering"].daily == 3 and TIERS["recovering"].weekly == 15
+def test_default_profile_is_the_conservative_baseline():
+    # 50-70% of the ESTIMATED LinkedIn ceiling (posture doc §4): the no-choice
+    # default (free × 60%) pins the old New-tier caps — 8/day · 30/wk invites.
+    t = resolve_profile(None)
+    assert t.name == "free"
+    assert (t.invites.day, t.invites.week) == (8, 30)
 
 
-def test_unknown_tier_raises():
+def test_unknown_membership_raises():
     with pytest.raises(ValueError):
-        resolve_tier("platinum")
+        resolve_profile(PacingProfile(membership="platinum"))
 
 
 # --- membership × risk% × override (maintainer directive 2026-08-01) ---------
@@ -91,11 +87,14 @@ def test_premium_lifts_the_paid_ceilings():
     assert (prem.searches.month or 0) > (free.searches.month or 0)
 
 
-def test_default_overrides_matches_the_scaled_caps():
-    """`default_overrides` (what the UI resets pins TO) equals the scaled caps."""
-    d = default_overrides("free", 60)
-    assert d["invites_week"] == 30
-    assert d["job_search_pages_hour"] == 4
+def test_plan_for_membership_free_vs_paid():
+    """The notes budget binds only on free accounts: every paid membership maps
+    to 'premium' (lifts the gate); None falls back to the free default (which
+    keeps the gate on — the conservative direction)."""
+    assert plan_for_membership("free") == "free"
+    assert plan_for_membership(None) == "free"
+    for paid in ("premium", "sales_navigator", "recruiter_lite"):
+        assert plan_for_membership(paid) == "premium"
 
 
 def test_job_search_pages_meter_is_hourly():
@@ -109,8 +108,8 @@ def test_job_search_pages_meter_is_hourly():
     assert p.can_search_jobs(now=now + HOUR_SECONDS + 1)[0]
 
 
-def _pacer(tmp_path, tier="new"):
-    return Pacer(resolve_tier(tier), state_dir=tmp_path)
+def _pacer(tmp_path, tier: Tier | None = None):
+    return Pacer(tier or resolve_profile(None), state_dir=tmp_path)
 
 
 def test_daily_cap_blocks_after_limit(tmp_path):
@@ -140,7 +139,11 @@ def test_daily_window_rolls_off(tmp_path):
 
 
 def test_weekly_cap_independent_of_daily(tmp_path):
-    pacer = _pacer(tmp_path, tier="seasoned")  # 10/day, 65/wk
+    pacer = _pacer(tmp_path, tier=Tier(
+        "test", invites=Budget(day=10, week=65), dms=Budget(day=25, week=120),
+        profile_views=Budget(day=50), searches=Budget(month=150),
+        notes=Budget(month=3),
+    ))  # 10/day, 65/wk
     now = 2_000_000.0
     # 65 invites all OUTSIDE the daily window (>24 h ago) but INSIDE the week:
     # daily has room, weekly is exhausted, so the weekly cap is what blocks.
@@ -268,7 +271,7 @@ def test_spacing_survives_a_reload_so_batched_ops_cannot_bypass_it(tmp_path):
     first.record_invite(now=now)
     first.save(now=now)
 
-    second = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    second = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert second.last_send_at() == pytest.approx(now)
     assert second.seconds_until_next_send(now=now) > 0.0
 
@@ -357,7 +360,7 @@ def test_per_meter_pruning_preserves_the_long_windows(tmp_path):
     pacer.record_invite(now=ten_days_ago)
     pacer.save(now=now)
 
-    reloaded = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    reloaded = Pacer(resolve_profile(None), state_dir=tmp_path)
     # Notes (30 d) and searches (31 d) survive; the invite (7 d) is pruned.
     assert len(reloaded.state.notes) == 1
     assert len(reloaded.state.searches) == 1
@@ -371,7 +374,7 @@ def test_ledger_from_before_the_new_meters_still_loads(tmp_path):
     (tmp_path / Pacer.STATE_FILENAME).write_text(
         _json.dumps({"invites": [1.0, 2.0], "dms": [3.0], "paused_until": 0.0})
     )
-    pacer = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    pacer = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert pacer.state.invites == [1.0, 2.0]
     assert pacer.state.dms == [3.0]
     assert pacer.state.profile_views == [] and pacer.state.searches == []
@@ -392,7 +395,7 @@ def test_concurrent_saves_merge_instead_of_clobbering(tmp_path):
     b.record_profile_view(now=now)
     b.save(now=now)  # used to write B's stale view and erase A's invite
 
-    merged = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    merged = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert len(merged.state.invites) == 1
     assert len(merged.state.profile_views) == 1
 
@@ -416,7 +419,7 @@ def test_refund_gives_back_only_this_pacers_pending_charges(tmp_path):
     b.record_invite(now=now)
     assert b.refund("invites") == 1
     b.save(now=now)
-    merged = Pacer(resolve_tier("new"), state_dir=tmp_path)
+    merged = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert len(merged.state.invites) == 1  # A's charge survived the refund
 
 
@@ -431,7 +434,7 @@ def test_pause_merges_by_max_and_resume_clears(tmp_path):
     b = _pacer(tmp_path)
     b.resume()
     b.save(now=now)
-    assert not Pacer(resolve_tier("new"), state_dir=tmp_path).is_paused(now=now)
+    assert not Pacer(resolve_profile(None), state_dir=tmp_path).is_paused(now=now)
 
 
 def test_saturate_marks_a_meter_observed_exhausted(tmp_path):

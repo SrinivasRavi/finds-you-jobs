@@ -219,11 +219,11 @@ class VoyagerReferralAutomation:
     def quota(self, account: AccountRef) -> Quota:
         from .upstream import worker
 
-        raw = worker.quota(tier=account.tier, state_dir=self._state_dir)
+        raw = worker.quota(state_dir=self._state_dir)
         return _quota_from_dict(raw.get("quota")) or Quota()
 
     def resume_after_backoff(self, account: AccountRef) -> ResumeResult:
         from .upstream import worker
 
-        raw = worker.resume(tier=account.tier, state_dir=self._state_dir)
+        raw = worker.resume(state_dir=self._state_dir)
         return ResumeResult(ok=bool(raw.get("ok")))

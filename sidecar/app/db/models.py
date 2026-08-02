@@ -422,6 +422,16 @@ class UserPreferences(Base):
     voyager_risk_marker_on: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    # LinkedIn job-search opt-in + its typed-ack timestamp — first-class columns
+    # (maintainer 2026-08-02): the sidecar 403s on these, so they can't live in
+    # the free-form `ui_state` blob where a frontend key rename would silently
+    # flip a safety gate.
+    linkedin_search_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    linkedin_search_ack_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
     engine_routing: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     ui_state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -628,14 +638,10 @@ class LinkedInSession(Base):
     # while a headed `login` op is in flight; `backing_off` after the Referral
     # Outreach package reports a rate-limit pause (FR-NW-05) — cleared by resume.
     status: Mapped[str] = mapped_column(String, nullable=False, default="never_set")
-    account_tier: Mapped[str] = mapped_column(String, nullable=False, default="new")  # new|seasoned
-    # free|premium — conditions the outreach package's personalized-note budget
-    # (the ~5/month allowance exists only on free accounts; posture doc §4 #10).
-    # 'free' is the conservative default; a Premium holder lifts it in Settings.
-    # SUPERSEDED 2026-08-01 by `membership_type` as the user-facing selector, but
-    # kept because the note-budget path still keys on free-vs-paid; the driver
-    # derives it from membership ("free" → free, anything else → premium).
-    linkedin_plan: Mapped[str] = mapped_column(String, nullable=False, default="free")
+    # RETIRED 2026-08-02 (pre-dates the membership × risk% basis below; the
+    # New/Seasoned selector is gone). Kept only because the column shipped
+    # before this branch; nothing reads or writes it. Drop in a future migration.
+    account_tier: Mapped[str] = mapped_column(String, nullable=False, default="new")
     # Self-imposed rate-limit basis (maintainer directive 2026-08-01, replacing
     # the New/Seasoned tier — that gradation now lives in `risk_pct`).
     # `membership_type` ∈ free | premium | sales_navigator | recruiter_lite picks

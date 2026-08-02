@@ -24,7 +24,6 @@ class AccountRef:
     """Identifies the single local LinkedIn account (P1 is single-user)."""
 
     storage_state_path: str
-    tier: str = "new"  # new | seasoned
 
 
 @dataclass(frozen=True)

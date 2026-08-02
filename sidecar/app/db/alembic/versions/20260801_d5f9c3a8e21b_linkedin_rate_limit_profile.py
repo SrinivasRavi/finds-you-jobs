@@ -6,9 +6,10 @@ picks a LinkedIn **membership type** (the estimated-ceiling basis), a **risk_pct
 (10–100, scales the ceilings), and optional per-meter **cap_overrides** (absolute
 pins). The outreach package computes the effective caps from these.
 
-`membership_type` seeds from the existing `linkedin_plan` so a Premium user stays
-Premium across the upgrade; `account_tier` / `linkedin_plan` columns are retained
-(the note-budget path still keys on free-vs-paid) but are no longer user-selected.
+The free/premium plan the note-budget path keys on is derived from
+`membership_type` at runtime (`pacing.plan_for_membership`) — no stored plan
+column. `account_tier` is retained only because it pre-dates this branch;
+nothing reads it.
 
 Revision ID: d5f9c3a8e21b
 Revises: c4e8b2d7f3a9
@@ -40,12 +41,6 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column('cap_overrides', sa.JSON(), nullable=False, server_default='{}')
         )
-    # Carry an existing user's plan choice forward as their membership: free/
-    # premium are valid membership keys, so a Premium holder stays Premium.
-    op.execute(
-        "UPDATE linkedin_sessions SET membership_type = linkedin_plan "
-        "WHERE linkedin_plan IN ('free', 'premium')"
-    )
 
 
 def downgrade() -> None:

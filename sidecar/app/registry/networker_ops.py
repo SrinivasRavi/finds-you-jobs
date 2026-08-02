@@ -28,6 +28,7 @@ maintainer dogfoods the live send path). The LLM engine for `draft` comes from
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -41,7 +42,7 @@ from sidecar.modules.networker import resolve as net_resolve
 from sidecar.modules.networker import send as net_send
 from sidecar.modules.networker.driver import DirectVoyagerDriver, VoyagerDriver
 from sidecar.modules.networker.types import Audience, NetworkerError, Warmth
-from sidecar.packages.referral_outreach import PacingProfile
+from sidecar.packages.referral_outreach import PacingProfile, plan_for_membership
 
 from ..db.base import now_utc
 from ..db.database import resolve_data_dir
@@ -53,6 +54,7 @@ from .operations import OperationContext, OperationOutcome
 if TYPE_CHECKING:
     from ..db import Repos
     from ..db.models import Contact as ContactRow
+    from ..db.models import LinkedInSession
 
 # ---------------------------------------------------------------------------
 # Driver factory seam (tests override this; production builds the real one).
@@ -73,6 +75,13 @@ def linkedin_data_dir() -> Path:
 def linkedin_storage_path() -> Path:
     """The Playwright storage-state file the headed-login flow writes (N4)."""
     return linkedin_data_dir() / "storage_state.json"
+
+
+def linkedin_state_dir() -> Path:
+    """The voyager pacing-ledger dir — ONE derivation, shared by the enforcing
+    driver and the display snapshot so they can never point at different
+    ledgers."""
+    return linkedin_data_dir() / "state"
 
 
 def linkedin_profile_dir() -> Path:
@@ -98,15 +107,20 @@ def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:
     branches on free-vs-paid) keeps working: any paid membership → 'premium'."""
     from ..security import SESSION_KEY_ENV, get_session_key
 
-    membership = profile.membership if profile is not None else "free"
-    plan = "free" if membership == "free" else "premium"
+    plan = plan_for_membership(profile.membership if profile is not None else None)
     data = linkedin_data_dir()
     return DirectVoyagerDriver(
         storage_state=str(data / "storage_state.json"),
         user_data_dir=str(data / "profile"),
-        state_dir=str(data / "state"),
+        state_dir=str(linkedin_state_dir()),
         pacing_profile=profile,
         linkedin_plan=plan,
+        # TEMPORARY inspection lever (maintainer 2026-08-02): FYJ_LINKEDIN_HEADED=1
+        # runs EVERY LinkedIn operation in a visible browser window so each
+        # request can be watched live (our voyager calls ride the page's own
+        # fetch — open DevTools → Network in the window to see them verbatim).
+        # Default stays headless; remove the env var to go back.
+        headed=os.environ.get("FYJ_LINKEDIN_HEADED") == "1",
         env={SESSION_KEY_ENV: get_session_key(resolve_data_dir())},
     )
 
@@ -114,11 +128,15 @@ def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:
 DRIVER_FACTORY: DriverFactory = _default_driver_factory
 
 
-def _resolve_profile(repos: Repos) -> PacingProfile:
+def resolve_pacing_profile(
+    repos: Repos, session: LinkedInSession | None = None
+) -> PacingProfile:
     """The user's pacing choices (membership, risk%, overrides) → the profile the
     package derives caps from. Defaults (free · 60% · no overrides) when no
-    session row exists yet — the same conservative baseline as before."""
-    session = repos.linkedin_session.get()
+    session row exists yet. Pass `session` when the caller already holds the row
+    to skip the re-read."""
+    if session is None:
+        session = repos.linkedin_session.get()
     if session is None:
         return PacingProfile()
     return PacingProfile(
@@ -142,12 +160,16 @@ CAP_LABELS: dict[str, str] = {
 }
 
 
-def linkedin_caps_snapshot(repos: Repos) -> dict:
-    """The effective self-imposed caps for the current profile, for the Settings
-    UI and Next-page gating. The NUMBERS come from the package
-    (`resolve_profile`, `resolve_membership`) — the host never computes them — and
-    the live hourly job-search usage is read from the same ledger the worker
-    charges, so the display and the enforcement can never disagree (NFR-LI-02)."""
+def linkedin_caps_snapshot(profile: PacingProfile) -> dict:
+    """The effective self-imposed caps for `profile`, for the Settings UI and
+    Next-page gating. The NUMBERS come from the package (`resolve_profile`,
+    `resolve_membership`) — the host never computes them — and the live hourly
+    job-search usage is read from the same ledger the worker charges, so the
+    display and the enforcement can never disagree (NFR-LI-02).
+
+    DB-free on purpose: it reads the pacing-ledger FILE, so async routes call it
+    through `asyncio.to_thread` (async-first rule) after resolving the profile
+    inside their repos context."""
     from sidecar.packages.referral_outreach import (
         MEMBERSHIPS,
         OVERRIDABLE,
@@ -156,7 +178,6 @@ def linkedin_caps_snapshot(repos: Repos) -> dict:
     )
     from sidecar.packages.referral_outreach.upstream.pacing import Pacer
 
-    profile = _resolve_profile(repos)
     effective = resolve_profile(profile)            # ceiling × risk% + overrides
     ceilings = resolve_membership(profile.membership)  # the 100% estimates
     overrides = profile.overrides or {}
@@ -172,17 +193,28 @@ def linkedin_caps_snapshot(repos: Repos) -> dict:
             "effective": int(eff), "ceiling": int(ceil), "overridden": key in overrides,
         })
     # Live hourly job-search budget — read from the enforcing ledger, not recomputed.
-    pacer = Pacer(effective, state_dir=linkedin_data_dir() / "state")
+    pacer = Pacer(effective, state_dir=linkedin_state_dir())
     js = pacer.usage("job_search_pages")
     return {
         "membership_type": profile.membership,
         "risk_pct": profile.risk_pct,
         "memberships": list(MEMBERSHIPS),
         "caps": caps,
-        "job_search_hour_cap": int(js.get("hour_cap") or 0),
-        "job_search_hour_used": int(js.get("hour_used") or 0),
         "job_search_hour_remaining": int(js.get("hour_remaining") or 0),
     }
+
+
+def linkedin_quota_snapshot(profile: PacingProfile) -> dict:
+    """The referral-quota payload (used + caps per window) read from the SAME
+    pacing ledger the send path enforces — the popup's numbers and the refusals
+    can never disagree (the old app-side OutreachLog recount drifted: it saw
+    only confirmed sends, while enforcement charges attempts and refunds proven
+    no-sends). DB-free; async routes call it via `asyncio.to_thread` (ledger
+    file read)."""
+    from sidecar.packages.referral_outreach import resolve_profile
+    from sidecar.packages.referral_outreach.upstream.pacing import Pacer
+
+    return Pacer(resolve_profile(profile), state_dir=linkedin_state_dir()).remaining()
 
 
 def linkedin_feature_flags(repos: Repos) -> tuple[bool, bool]:
@@ -191,8 +223,7 @@ def linkedin_feature_flags(repos: Repos) -> tuple[bool, bool]:
     either one alone justifies holding a session. Lives here (not in the API
     layer) so registry ops can self-gate on it without importing routes."""
     prefs = repos.preferences.get_or_create()
-    ui = prefs.ui_state or {}
-    return bool(prefs.voyager_risk_marker_on), bool(ui.get("linkedin_search_enabled"))
+    return bool(prefs.voyager_risk_marker_on), bool(prefs.linkedin_search_enabled)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +373,7 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         raise RuntimeError("discover operation requires a database context")
 
     with ctx.db.repos() as repos:
-        profile = _resolve_profile(repos)
+        profile = resolve_pacing_profile(repos)
         job = repos.jobs.get(job_id) if job_id else None
         job_text = job.description if job is not None else ""
         canonical_url = job.canonical_url if job is not None else ""
@@ -563,18 +594,13 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         if row is None:
             raise LookupError(f"contact {contact_id!r} not found")
         net_contact = _net_contact_from_row(row)
-        profile = _resolve_profile(repos)
-        plan = "free" if profile.membership == "free" else "premium"
+        profile = resolve_pacing_profile(repos)
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
     driver = DRIVER_FACTORY(profile)
-    # The factory seam stays single-argument (every test fake is `lambda tier:
-    # drv`); the plan rides as a driver attribute the Direct driver forwards to
-    # the worker and fakes simply ignore.
-    setattr(driver, "linkedin_plan", plan)  # noqa: B010 — VoyagerDriver protocol has no plan attr
 
     try:
-        result = net_send(message, net_contact, driver=driver, tier=None, dry_run=dry_run)
+        result = net_send(message, net_contact, driver=driver, dry_run=dry_run)
     except NetworkerError as exc:
         # A hard voyager failure (stale selector, subprocess crash, unparseable
         # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,
