@@ -353,10 +353,17 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
   // At least one REAL terminal row under the injected ones.
   await request.post(`${base}/api/operations/cleanup_trash`, { headers: auth, data: {} });
   // Worst-case rows injected deterministically (the apply-stop test's pattern):
-  // an unbroken 300-char verbatim error token, a long subject with a long DM
-  // detail + linked profile, and an over-long model id — everything that used
-  // to force the table wide. The layout must WRAP all of it.
-  const longToken = "https://example.com/very-long-unbroken-error-token/" + "x".repeat(250);
+  // an unbroken 650-char verbatim error token on a failed scan that ALSO
+  // carries a 12-source list, a long subject with a long DM detail + linked
+  // profile, a multi-query linkedin_search, and an over-long model id —
+  // everything that used to force the table wide or balloon a collapsed row.
+  // The layout must WRAP all of it, clamp the error preview, and keep every
+  // bulk payload (source list, query list, message) expanded-only.
+  const longToken = "https://example.com/very-long-unbroken-error-token/" + "x".repeat(600);
+  const sourceNames = [
+    "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee",
+    "personio", "breezy", "jazzhr", "teamtailor", "bamboohr", "jobvite",
+  ];
   await page.route("**/api/operations?*", async (route) => {
     if (route.request().method() !== "GET") return route.continue();
     const now = new Date().toISOString();
@@ -383,9 +390,32 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
         id: "e2e-wide-error",
         kind: "scan",
         state: "failed",
-        subject: null,
+        subject: {
+          label: "",
+          href: null,
+          context: sourceNames.join(", "),
+          detail: null,
+          count: 37,
+        },
         usage: null,
         error: longToken,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+      {
+        id: "e2e-wide-search",
+        kind: "linkedin_search",
+        state: "succeeded",
+        subject: {
+          label: "python developer remote, senior backend engineer, staff platform engineer",
+          href: null,
+          context: "fresh",
+          detail: null,
+          count: 5,
+        },
+        usage: null,
+        error: null,
         created_at: now,
         started_at: now,
         result_ref: null,
@@ -414,6 +444,39 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
     // Expand via the Started cell — the subject link swallows clicks (external).
     await wideRow.getByTestId("log-started").click();
     await expect(page.getByTestId("log-detail")).toContainText("would love a referral");
+
+    // The failed scan's COLLAPSED row: counts only ("37 new jobs" · "12
+    // sources"), never the source list, and the error is a CLAMPED preview —
+    // the row stays a sane height instead of dumping a full stack.
+    const errRow = page.getByTestId("log-row").filter({ hasText: "37 new jobs" }).first();
+    await expect(errRow).toBeVisible();
+    await expect(errRow.getByTestId("log-context")).toHaveText("12 sources");
+    await expect(errRow).not.toContainText("greenhouse");
+    const clamp = await errRow
+      .getByTestId("log-error")
+      .evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }));
+    expect(clamp.scroll).toBeGreaterThan(clamp.client); // clamp is doing work
+    expect(clamp.client).toBeLessThanOrEqual(40); // ≤ 2 mono text lines
+    const errBox = await errRow.boundingBox();
+    expect(errBox!.height).toBeLessThanOrEqual(110); // whole collapsed row stays short
+
+    // The linkedin_search COLLAPSED row: mode + query count, never the queries.
+    const searchRow = page.getByTestId("log-row").filter({ hasText: "5 new jobs" }).first();
+    await expect(searchRow.getByTestId("log-context")).toHaveText(
+      "Fresh search · 3 search queries",
+    );
+    await expect(searchRow).not.toContainText("python developer");
+
+    // EXPANDED, the bulk payloads appear as labeled blocks: the full source
+    // list and the FULL verbatim error text.
+    await errRow.getByTestId("log-started").click();
+    await expect(page.getByTestId("log-sources")).toContainText("greenhouse");
+    await expect(page.getByTestId("log-sources")).toContainText("jobvite");
+    await expect(page.getByTestId("log-error-full")).toContainText(longToken);
+    // The query list too, on the linkedin_search row.
+    await searchRow.getByTestId("log-started").click();
+    await expect(page.getByTestId("log-sources")).toContainText("python developer remote");
+
     // The container never scrolls sideways — with the expanded row open too.
     const overflow = await page
       .getByTestId("ledger-scroll")

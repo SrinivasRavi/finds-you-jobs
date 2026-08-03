@@ -5,7 +5,7 @@
 // timestamp, per-agent filter chips, and a friendly "App restarted while
 // generating — retry?" affordance over the boot-recovery note (US-LOG-01).
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -16,7 +16,14 @@ import {
   useOperationSpans,
   useRetryOperation,
 } from "../api/queries";
-import type { CostTotals, LedgerEntry, OperationKind, OperationState, Span } from "../api/types";
+import type {
+  CostTotals,
+  LedgerEntry,
+  LedgerSubject,
+  OperationKind,
+  OperationState,
+  Span,
+} from "../api/types";
 import { formatWhen } from "../shell/datetime";
 
 const STATE_CLS: Record<OperationState, string> = {
@@ -267,9 +274,12 @@ function StopButton({ entry }: { entry: LedgerEntry }) {
 }
 
 /** The error cell: the boot-recovery note gets friendly copy; other failures
- *  show the verbatim error (de-emphasized once retried). The Retry button
- *  itself lives in the State cell (RetryButton). Long verbatim errors WRAP
- *  (break-words) — the ledger must never scroll sideways (2026-08-03). */
+ *  show a CLAMPED 1-2 line preview (de-emphasized once retried) — the full
+ *  verbatim text lives ONLY in the expanded row (ExpandedBlocks), so a failed
+ *  scan's Chrome-flags stack can never balloon the collapsed row (maintainer
+ *  spec 2026-08-04). The Retry button itself lives in the State cell
+ *  (RetryButton). Everything still WRAPS (break-words) — the ledger must never
+ *  scroll sideways (2026-08-03). */
 function ErrorCell({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
   if (!entry.error) {
@@ -277,7 +287,10 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
     // ("Succeeded" — the op ran fine) but the row must say nothing went out.
     if (entry.refusal) {
       return (
-        <div className="mt-0.5 break-words font-mono text-[11px] text-warn" data-testid="log-refused">
+        <div
+          className="mt-0.5 line-clamp-2 break-words font-mono text-[11px] text-warn"
+          data-testid="log-refused"
+        >
           {t("analytics.ledger.refused", { reason: entry.refusal })}
         </div>
       );
@@ -294,7 +307,8 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
   return (
     <div
       className={
-        "mt-0.5 break-words font-mono text-[11px] " + (entry.retried_as ? "text-ink-4" : "text-bad")
+        "mt-0.5 line-clamp-2 break-words font-mono text-[11px] " +
+        (entry.retried_as ? "text-ink-4" : "text-bad")
       }
       data-testid="log-error"
     >
@@ -314,56 +328,182 @@ const COUNT_KEYS: Partial<Record<OperationKind, string>> = {
   cleanup_trash: "analytics.subject.itemsCleaned",
 };
 
-/** The Operation cell: the kind tag, then WHAT the op acted on — the subject
- *  label (hyperlinked when the backend resolved an external URL — the
- *  referrals-UI external-link pattern), the count phrase, the context line.
- *  All entity text is verbatim backend data; everything wraps (no sideways
- *  scroll). The full message/detail text lives in the EXPANDED row. */
+/** Split a backend comma-joined list (scan's per-source names, a linkedin
+ *  search's query list) back into items for counting/blocks. Pure UI reshaping
+ *  of verbatim backend data — nothing is fabricated. */
+function splitList(value: string | null | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/** scan: the source list rides in `context`. */
+function sourceList(s: LedgerSubject | null): string[] {
+  return splitList(s?.context);
+}
+
+/** linkedin_search: the query list rides in `label`. */
+function queryList(s: LedgerSubject | null): string[] {
+  return splitList(s?.label);
+}
+
+/** The COLLAPSED Operation cell — ONE fixed anatomy for EVERY ledger kind
+ *  (maintainer spec 2026-08-04): the kind tag, ONE bold subject label (the
+ *  entity, single-line truncated, hyperlinked when the backend resolved an
+ *  external URL), an optional short count, and ONE muted single-line context
+ *  (truncated) — nothing else, never more than ~2 text lines. Bulk payloads
+ *  (source lists, search queries, messages, transition summaries) render ONLY
+ *  in the expanded row (ExpandedBlocks); collapsed rows show counts instead.
+ *  All entity text is verbatim backend data. */
 function SubjectCell({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
   const s = entry.subject;
   const countKey = COUNT_KEYS[entry.kind];
   // Singleton-entity kinds carry no backend subject; name the entity here.
+  // `linkedin_search` has no entity — its `label` is the bulk query list,
+  // which belongs to the expanded row only.
   const label =
-    s?.label || (entry.kind === "extract" ? t("analytics.subject.masterResume") : "");
-  // `linkedin_search` context is the mode enum ("fresh"/"next") — map it to
-  // copy; any unknown value renders verbatim rather than vanishing.
-  const context =
-    entry.kind === "linkedin_search" && s?.context
+    entry.kind === "linkedin_search"
+      ? ""
+      : s?.label || (entry.kind === "extract" ? t("analytics.subject.masterResume") : "");
+  let context: string | null;
+  if (entry.kind === "scan") {
+    // Count the sources — the list itself is an expanded-row block.
+    const n = sourceList(s).length;
+    context = n > 0 ? t("analytics.subject.sources", { count: n }) : null;
+  } else if (entry.kind === "linkedin_search") {
+    // `context` is the mode enum ("fresh"/"next") — map it to copy; any
+    // unknown value renders verbatim rather than vanishing.
+    const mode = s?.context
       ? t(`analytics.subject.searchMode.${s.context}`, { defaultValue: s.context })
-      : (s?.context ?? null);
+      : null;
+    const n = queryList(s).length;
+    const queries = n > 0 ? t("analytics.subject.queries", { count: n }) : null;
+    context = [mode, queries].filter(Boolean).join(" · ") || null;
+  } else {
+    context = s?.context ?? null;
+  }
   return (
     <>
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="font-mono text-[11px] text-ink-3">{entry.kind}</span>
+      <div className="flex min-w-0 items-baseline gap-x-2">
+        <span className="shrink-0 font-mono text-[11px] text-ink-3">{entry.kind}</span>
+        {label ? (
+          s?.href ? (
+            <a
+              href={s.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              data-testid="log-subject"
+              title={label}
+              className="min-w-0 truncate font-medium text-ink underline-offset-2 hover:text-accent hover:underline"
+            >
+              {label}
+            </a>
+          ) : (
+            <span
+              className="min-w-0 truncate font-medium text-ink"
+              data-testid="log-subject"
+              title={label}
+            >
+              {label}
+            </span>
+          )
+        ) : null}
         {s?.count != null && countKey ? (
-          <span className="text-[11px] text-ink-3" data-testid="log-count">
+          // min-w-0 + truncate (not shrink-0): at the 900px window floor a
+          // long count must ellipsize inside the fixed Operation column, never
+          // bleed under the State pill.
+          <span className="min-w-0 truncate text-[11px] text-ink-3" data-testid="log-count">
             {t(countKey, { count: s.count })}
           </span>
         ) : null}
       </div>
-      {label ? (
-        s?.href ? (
-          <a
-            href={s.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            data-testid="log-subject"
-            className="break-words text-ink underline-offset-2 hover:text-accent hover:underline"
-          >
-            {label}
-          </a>
-        ) : (
-          <div className="break-words text-ink" data-testid="log-subject">
-            {label}
-          </div>
-        )
-      ) : null}
       {context ? (
-        <div className="break-words text-[11px] text-ink-3" data-testid="log-context">
+        <div className="truncate text-[11px] text-ink-3" data-testid="log-context">
           {context}
         </div>
+      ) : null}
+    </>
+  );
+}
+
+/** One labeled block in the EXPANDED row — same visual language as the span
+ *  records below it. */
+function ExpandedBlock({
+  heading,
+  children,
+}: {
+  heading: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="px-3 pt-3">
+      <div className="mb-1 text-[11px] font-medium text-ink-4">{heading}</div>
+      {children}
+    </div>
+  );
+}
+
+/** Every bulk payload a collapsed row summarizes, in full (maintainer spec
+ *  2026-08-04): the scan source list / linkedin_search query list as chip
+ *  blocks, the long detail text (the DM/note sent, a contact_sync transition
+ *  summary), and the FULL verbatim error a failed row only previews. */
+function ExpandedBlocks({ entry }: { entry: LedgerEntry }) {
+  const { t } = useTranslation();
+  const list =
+    entry.kind === "scan"
+      ? sourceList(entry.subject)
+      : entry.kind === "linkedin_search"
+        ? queryList(entry.subject)
+        : [];
+  const showError =
+    Boolean(entry.error) && !entry.error!.includes(RESTART_NOTE_MARKER);
+  return (
+    <>
+      {list.length > 0 ? (
+        <ExpandedBlock
+          heading={
+            entry.kind === "scan"
+              ? t("analytics.ledger.sourcesHeading")
+              : t("analytics.ledger.queriesHeading")
+          }
+        >
+          <div
+            className="flex flex-wrap gap-1.5 rounded-lg border border-border bg-surface-2 p-3"
+            data-testid="log-sources"
+          >
+            {list.map((item) => (
+              <span
+                key={item}
+                className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] text-ink-3"
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+        </ExpandedBlock>
+      ) : null}
+      {entry.subject?.detail ? (
+        <ExpandedBlock heading={t("analytics.ledger.detailHeading")}>
+          <div
+            className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 text-[12px] text-ink-2"
+            data-testid="log-detail"
+          >
+            {entry.subject.detail}
+          </div>
+        </ExpandedBlock>
+      ) : null}
+      {showError ? (
+        <ExpandedBlock heading={t("analytics.ledger.errorHeading")}>
+          <div
+            className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 font-mono text-[11px] text-bad"
+            data-testid="log-error-full"
+          >
+            {entry.error}
+          </div>
+        </ExpandedBlock>
       ) : null}
     </>
   );
@@ -597,19 +737,7 @@ export function Analytics() {
                         <tr className="border-b border-border/60 bg-surface-2/40">
                           <td />
                           <td colSpan={5}>
-                            {e.subject?.detail ? (
-                              <div className="px-3 pt-3">
-                                <div className="mb-1 text-[11px] font-medium text-ink-4">
-                                  {t("analytics.ledger.detailHeading")}
-                                </div>
-                                <div
-                                  className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 text-[12px] text-ink-2"
-                                  data-testid="log-detail"
-                                >
-                                  {e.subject.detail}
-                                </div>
-                              </div>
-                            ) : null}
+                            <ExpandedBlocks entry={e} />
                             <SpanDetail operationId={e.id} />
                           </td>
                         </tr>

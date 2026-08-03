@@ -56,6 +56,9 @@ const analytics = {
     seconds: "{{value}}s",
     costUnknown: "cost unknown for this model",
     detailHeading: "Detail",
+    sourcesHeading: "Sources",
+    queriesHeading: "Search queries",
+    errorHeading: "Error",
   },
   // Per-kind chrome around the row's subject (the entity names/counts
   // themselves come verbatim from the backend, never from here).
@@ -71,6 +74,10 @@ const analytics = {
     contactsArchived_other: "{{count}} contacts archived",
     itemsCleaned_one: "{{count}} item cleaned up",
     itemsCleaned_other: "{{count}} items cleaned up",
+    sources_one: "{{count}} source",
+    sources_other: "{{count}} sources",
+    queries_one: "{{count}} search query",
+    queries_other: "{{count}} search queries",
     searchMode: {
       fresh: "Fresh search",
       next: "Next page",
