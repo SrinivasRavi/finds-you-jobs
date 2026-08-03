@@ -1525,11 +1525,156 @@ async def cancel_operation(request: Request, operation_id: str) -> dto.Operation
     return dto.OperationAccepted(id=operation_id, kind=kind, state=state)
 
 
+# The ledger's per-row human subjects (US-LOG-01 legibility, maintainer
+# directive 2026-08-03): WHICH entity each operation acted on, resolved from
+# the row's own snapshot/result refs with one IN query per table per page
+# (the `_application_dtos` batch-loader pattern — never per-row queries). A row
+# whose refs don't resolve (historical snapshots, deleted entities) gets no
+# subject and renders as before — nothing is fabricated. Every field is
+# verbatim entity data; the frontend adds count nouns / mode names via i18n.
+
+_JOB_SUBJECT_KINDS = frozenset({"score", "tailor", "cover"})
+_CONTACT_SUBJECT_KINDS = frozenset({"draft", "send"})
+
+
+def _job_subject(job: Any | None) -> dto.OperationSubjectDTO | None:
+    if job is None:
+        return None
+    return dto.OperationSubjectDTO(
+        label=job.title, context=job.company or None, href=job.canonical_url or None
+    )
+
+
+def _int_or_none(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _operation_subject(
+    op: Any, *, jobs: dict[str, Any], contacts: dict[str, Any], applications: dict[str, Any]
+) -> dto.OperationSubjectDTO | None:
+    snap = op.input_snapshot or {}
+    ref = op.result_ref or {}
+    kind = op.kind
+
+    if kind in _JOB_SUBJECT_KINDS:
+        return _job_subject(jobs.get(str(snap.get("job_id") or "")))
+    if kind == "apply":
+        app = applications.get(str(snap.get("application_id") or ""))
+        return _job_subject(jobs.get(app.job_id) if app is not None else None)
+    if kind in _CONTACT_SUBJECT_KINDS:
+        contact = contacts.get(str(snap.get("contact_id") or ""))
+        if contact is None:
+            return None
+        job = jobs.get(str(snap.get("job_id") or ""))
+        context = None
+        if job is not None:
+            context = f"{job.title} · {job.company}" if job.company else job.title
+        # `send` carries the outgoing text in its snapshot; `draft` returns the
+        # drafted preview in result_ref — either goes to the EXPANDED row only.
+        detail = str(snap.get("message") or "") if kind == "send" else str(ref.get("message") or "")
+        slug = networker_ops._public_id_from_url(contact.linkedin_url)
+        return dto.OperationSubjectDTO(
+            label=contact.name or slug,
+            href=f"https://www.linkedin.com/in/{slug}" if slug else None,
+            context=context,
+            detail=detail or None,
+        )
+    if kind == "discover":
+        label = str(
+            ref.get("company_name") or snap.get("company_name") or snap.get("company") or ""
+        )
+        count = _int_or_none(ref.get("count"))
+        if not label and count is None:
+            return None
+        return dto.OperationSubjectDTO(label=label, count=count)
+    if kind == "linkedin_search":
+        queries = ref.get("queries")
+        label = ", ".join(str(q) for q in queries) if isinstance(queries, list) else ""
+        mode = str((ref.get("search_cursor") or {}).get("mode") or snap.get("mode") or "")
+        count = _int_or_none((ref.get("scan") or {}).get("persisted"))
+        if not label and not mode and count is None:
+            return None
+        return dto.OperationSubjectDTO(label=label, context=mode or None, count=count)
+    if kind == "scan":
+        count = _int_or_none((ref.get("scan") or {}).get("persisted"))
+        if count is None:
+            return None
+        sources = ref.get("per_source") or {}
+        return dto.OperationSubjectDTO(context=", ".join(sorted(sources)) or None, count=count)
+    if kind == "contact_sync":
+        count = _int_or_none(ref.get("synced"))
+        if count is None:
+            return None
+        transitions = ref.get("transitions") or {}
+        detail = ", ".join(
+            f"{key.replace('->', ' → ')} ×{value}" for key, value in sorted(transitions.items())
+        )
+        return dto.OperationSubjectDTO(count=count, detail=detail or None)
+    if kind == "archive_stale_contacts":
+        count = _int_or_none(ref.get("archived_count"))
+        return dto.OperationSubjectDTO(count=count) if count is not None else None
+    if kind == "cleanup_trash":
+        if not ref:
+            return None
+        count = sum(
+            _int_or_none(ref.get(key)) or 0
+            for key in (
+                "tombstoned_count",
+                "expired_count",
+                "expired_deleted_count",
+                "purged_applications_count",
+            )
+        )
+        return dto.OperationSubjectDTO(count=count)
+    if kind == "linkedin_login":
+        connected_as = str(ref.get("connected_as") or "")
+        return dto.OperationSubjectDTO(label=connected_as) if connected_as else None
+    if kind == "watch_company":
+        label = str(snap.get("company") or snap.get("url") or "")
+        if not label:
+            return None
+        return dto.OperationSubjectDTO(label=label, href=str(snap.get("url") or "") or None)
+    return None
+
+
+def _ledger_subjects(repos: Any, ops: list[Any]) -> dict[str, dto.OperationSubjectDTO]:
+    """Batched subject pass over a page of ledger rows: gather every ref first,
+    then ONE IN query per table (applications → jobs, contacts)."""
+    job_ids: set[str] = set()
+    contact_ids: set[str] = set()
+    application_ids: set[str] = set()
+    for op in ops:
+        snap = op.input_snapshot or {}
+        if (op.kind in _JOB_SUBJECT_KINDS or op.kind in _CONTACT_SUBJECT_KINDS) and snap.get(
+            "job_id"
+        ):
+            job_ids.add(str(snap["job_id"]))
+        if op.kind in _CONTACT_SUBJECT_KINDS and snap.get("contact_id"):
+            contact_ids.add(str(snap["contact_id"]))
+        if op.kind == "apply" and snap.get("application_id"):
+            application_ids.add(str(snap["application_id"]))
+    applications = repos.applications.get_many(sorted(application_ids))
+    job_ids.update(app.job_id for app in applications.values())
+    jobs = repos.jobs.get_many(sorted(job_ids))
+    contacts = repos.contacts.get_many(sorted(contact_ids))
+    subjects: dict[str, dto.OperationSubjectDTO] = {}
+    for op in ops:
+        subject = _operation_subject(
+            op, jobs=jobs, contacts=contacts, applications=applications
+        )
+        if subject is not None:
+            subjects[op.id] = subject
+    return subjects
+
+
 @router.get("/api/operations")
 async def list_operations(request: Request, limit: int = 100) -> list[dto.OperationDTO]:
-    """Recent operations — the ledger the Logs/Analytics surfaces read (§10)."""
+    """Recent operations — the ledger the Logs/Analytics surfaces read (§10),
+    each row carrying its batched-resolved human subject (US-LOG-01)."""
     with _db(request).repos() as repos:
-        return [dto.operation_dto(op) for op in repos.operations.list_recent(limit)]
+        ops = repos.operations.list_recent(limit)
+        subjects = _ledger_subjects(repos, ops)
+        return [dto.operation_dto(op, subjects.get(op.id)) for op in ops]
 
 
 @router.get("/api/cost/totals")
@@ -1548,7 +1693,7 @@ async def cost_totals(request: Request) -> dto.CostTotalsDTO:
 async def get_operation(request: Request, operation_id: str) -> dto.OperationDTO:
     with _db(request).repos() as repos:
         op = _found(repos.operations.get(operation_id), "operation", operation_id)
-        return dto.operation_dto(op)
+        return dto.operation_dto(op, _ledger_subjects(repos, [op]).get(op.id))
 
 
 # -- applications: networking tab -------------------------------------------

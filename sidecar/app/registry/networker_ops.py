@@ -471,7 +471,11 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     if resolve_usage.get("internal_calls"):
         usage["internal_calls"] = usage.get("internal_calls", 0) + resolve_usage["internal_calls"]
     return OperationOutcome(
+        # `company_name` is the RESOLVED entity name (vs `company`, the raw
+        # search string) — the ledger row's subject says which entity was
+        # actually discovered against (US-LOG-01 legibility, 2026-08-03).
         result_ref={"company": company, "job_id": job_id, "company_urn": company_urn,
+                    "company_name": resolved_name,
                     "contact_ids": contact_ids, "count": len(contact_ids)},
         usage=usage,
     )
