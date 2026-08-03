@@ -303,7 +303,7 @@ test("the ledger Stop control never renders on an apply-kind row (queued or runn
         id: "e2e-apply-queued",
         kind: "apply",
         state: "queued",
-        context: "e2e-apply-no-stop",
+        subject: { label: "e2e-apply-no-stop" },
         usage: null,
         error: null,
         created_at: now,
@@ -314,7 +314,7 @@ test("the ledger Stop control never renders on an apply-kind row (queued or runn
         id: "e2e-cleanup-queued",
         kind: "cleanup_trash",
         state: "queued",
-        context: "e2e-cleanup-has-stop",
+        subject: { label: "e2e-cleanup-has-stop" },
         usage: null,
         error: null,
         created_at: now,
@@ -342,6 +342,85 @@ test("the ledger Stop control never renders on an apply-kind row (queued or runn
   // …but the queued apply row offers none.
   await expect(applyRow.getByTestId("log-stop")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/ledger-apply-no-stop.png`, fullPage: true });
+});
+
+test("the ledger fits the window — no horizontal scroll, even with worst-case rows", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  // At least one REAL terminal row under the injected ones.
+  await request.post(`${base}/api/operations/cleanup_trash`, { headers: auth, data: {} });
+  // Worst-case rows injected deterministically (the apply-stop test's pattern):
+  // an unbroken 300-char verbatim error token, a long subject with a long DM
+  // detail + linked profile, and an over-long model id — everything that used
+  // to force the table wide. The layout must WRAP all of it.
+  const longToken = "https://example.com/very-long-unbroken-error-token/" + "x".repeat(250);
+  await page.route("**/api/operations?*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const now = new Date().toISOString();
+    const injected = [
+      {
+        id: "e2e-wide-send",
+        kind: "send",
+        state: "succeeded",
+        subject: {
+          label: "Extraordinarily Hyphenated-Name Of A Very Long Contact",
+          href: "https://www.linkedin.com/in/e2e-fit-probe",
+          context: "Principal Distributed Systems Engineer, Payments Infrastructure · Acme Corp",
+          detail: "Hi — I came across the Staff Engineer opening at Acme and " +
+            "would love a referral. ".repeat(8),
+          count: null,
+        },
+        usage: { model: "claude-sonnet-4-5-20250929-extremely-long-model-id", latency_ms: 12345 },
+        error: null,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+      {
+        id: "e2e-wide-error",
+        kind: "scan",
+        state: "failed",
+        subject: null,
+        usage: null,
+        error: longToken,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+    ];
+    const response = await route.fetch();
+    const body = (await response.json()) as unknown[];
+    await route.fulfill({ response, json: [...injected, ...body] });
+  });
+
+  // The app's default window is 1200×800 (tauri.conf.json); its floor is 900.
+  // The no-sideways-scroll claim must hold at both.
+  for (const width of [1200, 900]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/analytics");
+    await expect(page.getByTestId("agent-filters")).toBeVisible({ timeout: 15_000 });
+    const wideRow = page.getByTestId("log-row").filter({ hasText: "Hyphenated-Name" }).first();
+    await expect(wideRow).toBeVisible();
+    // The linked subject (the referrals external-link pattern) renders…
+    await expect(wideRow.getByTestId("log-subject")).toHaveAttribute(
+      "href",
+      "https://www.linkedin.com/in/e2e-fit-probe",
+    );
+    // …and the full DM text lives in the EXPANDED detail, not the row.
+    await expect(wideRow).not.toContainText("would love a referral");
+    // Expand via the Started cell — the subject link swallows clicks (external).
+    await wideRow.getByTestId("log-started").click();
+    await expect(page.getByTestId("log-detail")).toContainText("would love a referral");
+    // The container never scrolls sideways — with the expanded row open too.
+    const overflow = await page
+      .getByTestId("ledger-scroll")
+      .evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: `${DIR}/analytics-ledger-fit-${width}.png`, fullPage: true });
+  }
 });
 
 test("discovery sources: all on by default, opt-out persists across reload", async ({ page }) => {

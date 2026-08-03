@@ -60,6 +60,7 @@ import type {
   Stage,
   TombstoneResult,
   LedgerEntry,
+  LedgerSubject,
   Operation,
   OnboardingPrefsInput,
   OperationKind,
@@ -387,9 +388,7 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
     error: d.error ?? null,
     created_at: d.created_at,
     started_at: d.started_at ?? null,
-    subject: d.kind,
-    // `context` is added by the backend but not yet in the codegen'd schema type.
-    context: (d as { context?: string | null }).context ?? null,
+    subject: toSubject(d.subject),
     // Old→new retry link, stamped into the failed row's result_ref JSON.
     retried_as: ((d.result_ref as { retried_as?: string } | null)?.retried_as ?? null) as
       | string
@@ -399,6 +398,19 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
     // Without this the ledger row read as a plain "Succeeded" while nothing
     // went out (live 2026-08-02 — the free-plan notes allowance).
     refusal: refusalOf(d.result_ref),
+  };
+}
+
+/** The row's backend-computed subject — WHICH entity the op acted on
+ *  (US-LOG-01 legibility). Null whenever the backend resolved nothing. */
+function toSubject(s: OperationDTO["subject"]): LedgerSubject | null {
+  if (!s) return null;
+  return {
+    label: s.label ?? "",
+    href: s.href ?? null,
+    context: s.context ?? null,
+    detail: s.detail ?? null,
+    count: typeof s.count === "number" ? s.count : null,
   };
 }
 

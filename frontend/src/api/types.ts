@@ -677,6 +677,9 @@ export type OperationKind =
   | "draft"
   | "send"
   | "linkedin_login"
+  // Logged-in LinkedIn job search (discovery-expansion #6) — ledger'd like
+  // every kind, so the Analytics groups/subjects must know it.
+  | "linkedin_search"
   | "archive_stale_contacts"
   | "contact_sync"
   // Watch-company attempts (2026-07-22): synchronous API action recorded into
@@ -906,6 +909,18 @@ export interface Operation {
 
 // ─── Operations ledger (Logs/Analytics reads this — §10) ────────────────────
 
+/** What an operation acted ON (backend-computed, US-LOG-01 legibility):
+ *  verbatim entity data — a contact's name, a job title, the note text —
+ *  never localized. The frontend adds count nouns / mode names via i18n.
+ *  Mirrors OperationSubjectDTO. */
+export interface LedgerSubject {
+  label: string; // primary line ("Jane Doe", "Backend Engineer") — may be ""
+  href: string | null; // external link (LinkedIn profile / posting URL)
+  context: string | null; // secondary line (the role a send was for; search mode)
+  detail: string | null; // long text for the EXPANDED row (the DM/note sent)
+  count: number | null; // entities touched (contacts found, jobs persisted…)
+}
+
 export interface LedgerEntry {
   id: string;
   kind: OperationKind;
@@ -919,8 +934,9 @@ export interface LedgerEntry {
   error: string | null;
   created_at: string;
   started_at: string | null; // when the op went running (US-LOG-01 timestamp)
-  subject: string; // human label ("Score · Backend @ Glean")
-  context: string | null; // "<company> · <role> · #app" — what the op was for
+  /** Absent on rows whose snapshot/result refs don't resolve (historical rows,
+   *  deleted entities) — the row then renders kind-only, nothing fabricated. */
+  subject: LedgerSubject | null;
   /** Set on a failed row that was re-run (US-LOG-01 Retry): the new op's id.
    *  The row renders as "Retried" instead of a permanently nagging FAILED. */
   retried_as?: string | null;

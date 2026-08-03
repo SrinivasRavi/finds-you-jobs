@@ -581,11 +581,9 @@ const zh: DeepPartial<Messages> = {
     ledger: {
       show: "显示",
       operation: "操作",
-      kind: "类型",
       state: "状态",
       started: "开始时间",
       model: "模型",
-      latency: "延迟",
       cost: "成本",
       retried: "已重试",
       retry: "重试",

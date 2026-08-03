@@ -609,11 +609,9 @@ const nl: DeepPartial<Messages> = {
     ledger: {
       show: "Toon",
       operation: "Operatie",
-      kind: "Soort",
       state: "Status",
       started: "Gestart",
       model: "Model",
-      latency: "Latentie",
       cost: "Kosten",
       retried: "opnieuw geprobeerd",
       retry: "Opnieuw",
