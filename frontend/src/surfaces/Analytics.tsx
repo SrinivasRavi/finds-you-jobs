@@ -44,7 +44,7 @@ const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
   {
     key: "networking",
     label: "analytics.groups.networking",
-    kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search", "archive_stale_contacts"],
+    kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search"],
   },
   { key: "apply", label: "analytics.groups.apply", kinds: ["apply", "extract", "prep"] },
   { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
