@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import pytest
 
-from sidecar.app.registry.company_anchor import employer_domain, resolution_key
+from sidecar.app.registry.company_anchor import (
+    employer_domain,
+    registrable_domain,
+    resolution_key,
+)
 
 
 @pytest.mark.parametrize(
@@ -25,8 +29,9 @@ from sidecar.app.registry.company_anchor import employer_domain, resolution_key
         ("https://www.linkedin.com/jobs/view/42", "linkedin", "Acme", "name:acme"),
         ("https://www.foundit.in/job/9", "foundit", "Acme", "name:acme"),
         ("https://in.indeed.com/viewjob?jk=abc", "indeed", "Acme", "name:acme"),
-        # Multi-label board entry the naive registrable_domain can't name.
+        # Multi-label board entries (two-level ccTLD suffixes) stay blocked.
         ("https://www.glassdoor.co.in/job-listing/x", "glassdoor", "Acme", "name:acme"),
+        ("https://www.seek.com.au/job/7", "seek", "Acme", "name:acme"),
         # Tenant-subdomain ATS providers: registrable domain is the provider's.
         ("https://acme.wd5.myworkdayjobs.com/en-US/ext/job/1", "workday", "Acme", "name:acme"),
         ("https://acme.bamboohr.com/careers/7", "bamboohr", "Acme", "name:acme"),
@@ -55,3 +60,22 @@ def test_board_domain_as_infix_is_not_blocked() -> None:
     # Suffix match is label-anchored: a lookalike employer host that merely
     # contains a board name is still an employer domain.
     assert employer_domain("https://naukri.com.example.com/careers/1") == "example.com"
+
+
+def test_two_level_ccTLD_employer_gets_its_own_domain_key() -> None:
+    # The naive last-two-label parse collapsed every `.co.in` employer to the
+    # shared key `domain:co.in` — the same poison class as the board keys.
+    url = "https://careers.tataelxsi.co.in/jobs/1"
+    assert employer_domain(url) == "tataelxsi.co.in"
+    assert resolution_key(url, "rss", "Tata Elxsi") == "domain:tataelxsi.co.in"
+
+
+def test_registrable_domain_two_level_suffixes() -> None:
+    assert registrable_domain("careers.tataelxsi.co.in") == "tataelxsi.co.in"
+    assert registrable_domain("https://www.glassdoor.co.in/x") == "glassdoor.co.in"
+    assert registrable_domain("jobs.example.co.uk") == "example.co.uk"
+    # Outside the inline set the last-two-label guess is unchanged.
+    assert registrable_domain("www.abnormal.ai") == "abnormal.ai"
+    assert registrable_domain("bjak.my") == "bjak.my"
+    # A bare suffix host stays itself (nothing better to say).
+    assert registrable_domain("co.in") == "co.in"

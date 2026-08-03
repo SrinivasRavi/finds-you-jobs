@@ -63,15 +63,38 @@ def company_id_from_urn(urn: str | None) -> str:
     return tail if tail.isdigit() else ""
 
 
+# Common two-level public suffixes (co.in, co.uk, com.au, …): the registrable
+# domain under one of these is the last THREE labels, not two. Small inline set
+# on purpose (no PSL dep). This copy MUST stay correct, not merely preferential:
+# `domains_match` feeds each hit's `domain_match` flag, and the host silently
+# auto-picks a company on it — with the old last-two-label parse every `.co.in`
+# employer collapsed to `co.in`, so ANY `.co.in`-website candidate matched ANY
+# `.co.in` employer domain (a wrong silent pick, not just a wrong ranking).
+# Same set as the host's company_anchor._TWO_LEVEL_PUBLIC_SUFFIXES — each side
+# keeps its own copy across the MIT/GPL boundary, never an import.
+_TWO_LEVEL_PUBLIC_SUFFIXES = frozenset({
+    "co.in", "net.in", "org.in", "gov.in", "ac.in",
+    "co.uk", "org.uk", "ac.uk", "gov.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au",
+    "co.nz", "org.nz", "com.br", "com.mx", "com.sg", "com.my",
+    "com.hk", "com.tw", "co.jp", "or.jp", "ne.jp", "co.kr",
+    "co.za", "org.za", "com.ar", "com.tr", "com.cn", "com.vn",
+    "com.ph", "com.id", "co.id", "co.th", "com.pk", "com.eg",
+    "com.ng", "co.ke", "com.sa", "com.ae",
+})
+
+
 def registrable_domain(url_or_host: str | None) -> str:
     """Best-effort registrable domain from a URL or bare host, lowercased.
 
     `https://www.Abnormal.ai/careers` → `abnormal.ai`; `careers.airbnb.com` →
-    `airbnb.com`. Not a full public-suffix parse (we carry no PSL dep) — it takes
-    the last two labels, which is right for the vast majority of employer domains
-    and simply over/under-matches conservatively on multi-part TLDs (e.g.
-    `bjak.my` stays `bjak.my`, `foo.co.uk` collapses to `co.uk`). A wrong guess
-    only costs a user-confirm, never a wrong pick."""
+    `airbnb.com`; `careers.tataelxsi.co.in` → `tataelxsi.co.in` (two-level
+    public suffixes in `_TWO_LEVEL_PUBLIC_SUFFIXES` take three labels). Not a
+    full public-suffix parse (we carry no PSL dep) — outside that set it takes
+    the last two labels, which is right for the vast majority of employer
+    domains and simply over/under-matches conservatively on unlisted multi-part
+    TLDs (e.g. `bjak.my` stays `bjak.my`). A wrong guess only costs a
+    user-confirm, never a wrong pick."""
     if not url_or_host:
         return ""
     raw = url_or_host.strip().lower()
@@ -84,6 +107,8 @@ def registrable_domain(url_or_host: str | None) -> str:
     labels = [x for x in host.split(".") if x]
     if len(labels) <= 2:
         return ".".join(labels)
+    if ".".join(labels[-2:]) in _TWO_LEVEL_PUBLIC_SUFFIXES:
+        return ".".join(labels[-3:])
     return ".".join(labels[-2:])
 
 

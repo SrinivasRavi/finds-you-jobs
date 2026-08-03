@@ -8,7 +8,10 @@ silently reused for EVERY job from that board (live 2026-08-02:
 have flipped the poison the other way). The code now refuses to derive an
 employer domain from these hosts; this purge deletes the poisoned rows so
 affected jobs re-resolve under their per-employer `<adapter>:<slug>` /
-`name:…` keys. Data-only; downgrade is a no-op (nothing to restore).
+`name:…` keys. Also purges keys minted from the naive last-two-label domain
+parse under two-level public suffixes (`domain:co.in`, `domain:com.au`, …):
+every employer on such a ccTLD site shared one key — the same poison class.
+Data-only; downgrade is a no-op (nothing to restore).
 
 Revision ID: f8b3c6d9e4a2
 Revises: e7a1d4c9b2f8
@@ -45,14 +48,33 @@ _JOB_BOARD_DOMAINS = (
     "jobspresso.co", "workingnomads.com", "himalayas.app",
 )
 
+# Inlined copy of `_TWO_LEVEL_PUBLIC_SUFFIXES` from
+# `sidecar/app/registry/company_anchor.py` as of this revision (same
+# no-app-imports rule as above). `registrable_domain` used to collapse
+# `careers.tataelxsi.co.in` to `co.in`, so a shared `domain:co.in` row could
+# exist for every `.co.in` employer — per-suffix poison, purged here.
+_TWO_LEVEL_PUBLIC_SUFFIXES = (
+    "co.in", "net.in", "org.in", "gov.in", "ac.in",
+    "co.uk", "org.uk", "ac.uk", "gov.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au",
+    "co.nz", "org.nz", "com.br", "com.mx", "com.sg", "com.my",
+    "com.hk", "com.tw", "co.jp", "or.jp", "ne.jp", "co.kr",
+    "co.za", "org.za", "com.ar", "com.tr", "com.cn", "com.vn",
+    "com.ph", "com.id", "co.id", "co.th", "com.pk", "com.eg",
+    "com.ng", "co.ke", "com.sa", "com.ae",
+)
+
 
 def upgrade() -> None:
     conn = op.get_bind()
+    poisoned = [
+        f"domain:{d}" for d in (*_JOB_BOARD_DOMAINS, *_TWO_LEVEL_PUBLIC_SUFFIXES)
+    ]
     conn.execute(
         sa.text(
             "DELETE FROM company_resolutions WHERE resolution_key IN :keys"
         ).bindparams(sa.bindparam("keys", expanding=True)),
-        {"keys": [f"domain:{d}" for d in _JOB_BOARD_DOMAINS]},
+        {"keys": poisoned},
     )
 
 

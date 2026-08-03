@@ -121,7 +121,9 @@ def test_apify_identity_backfill_restamps_by_board_host(tmp_path: Path) -> None:
 def test_job_board_resolution_keys_are_purged(tmp_path: Path) -> None:
     """f8b3c6d9e4a2 (data-only): resolutions cached under a shared job-board
     domain key (the poison — e.g. `domain:naukri.com` → Coupang reused for
-    every naukri job) are deleted; per-employer domain keys survive."""
+    every naukri job) or a bare two-level-suffix key (`domain:co.in`, minted
+    by the old last-two-label parse for every `.co.in` employer) are deleted;
+    per-employer domain keys — including three-label ccTLD ones — survive."""
     from alembic import command
     from sqlalchemy import text
 
@@ -134,7 +136,12 @@ def test_job_board_resolution_keys_are_purged(tmp_path: Path) -> None:
     engine = create_engine(url)
     with engine.begin() as conn:
         for i, (key, name) in enumerate(
-            [("domain:naukri.com", "Coupang"), ("domain:abnormal.ai", "Abnormal Security")]
+            [
+                ("domain:naukri.com", "Coupang"),
+                ("domain:co.in", "Some Indian Employer"),
+                ("domain:abnormal.ai", "Abnormal Security"),
+                ("domain:tataelxsi.co.in", "Tata Elxsi"),
+            ]
         ):
             conn.execute(
                 text(
@@ -154,4 +161,4 @@ def test_job_board_resolution_keys_are_purged(tmp_path: Path) -> None:
                 text("SELECT resolution_key FROM company_resolutions")
             ).fetchall()
         }
-    assert keys == {"domain:abnormal.ai"}
+    assert keys == {"domain:abnormal.ai", "domain:tataelxsi.co.in"}

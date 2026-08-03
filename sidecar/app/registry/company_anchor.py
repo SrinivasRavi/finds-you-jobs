@@ -64,19 +64,43 @@ _JOB_BOARD_DOMAINS = frozenset({
 
 def _is_job_board_host(host: str) -> bool:
     # Label-boundary suffix match — a strict superset of `registrable_domain(host)
-    # in _JOB_BOARD_DOMAINS` that also covers multi-label entries the naive
-    # last-two-label registrable_domain cannot name (glassdoor.co.in → "co.in").
+    # in _JOB_BOARD_DOMAINS` that keeps multi-label entries (glassdoor.co.in,
+    # seek.com.au) blocked even for public suffixes outside the inline
+    # `_TWO_LEVEL_PUBLIC_SUFFIXES` set.
     return any(host == d or host.endswith("." + d) for d in _JOB_BOARD_DOMAINS)
+
+
+# Common two-level public suffixes (co.in, co.uk, com.au, …): the registrable
+# domain under one of these is the last THREE labels, not two. A small inline
+# set on purpose — no PSL dependency (the module stays dependency-free). An
+# unlisted multi-part TLD still collapses to its suffix, which only ever costs
+# a user-confirm; the listed ones stop the shared-key poison (`domain:co.in`
+# minted for every Indian employer on a `.co.in` site — same class as the
+# 2026-08-02 naukri.com bug).
+_TWO_LEVEL_PUBLIC_SUFFIXES = frozenset({
+    "co.in", "net.in", "org.in", "gov.in", "ac.in",
+    "co.uk", "org.uk", "ac.uk", "gov.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au",
+    "co.nz", "org.nz", "com.br", "com.mx", "com.sg", "com.my",
+    "com.hk", "com.tw", "co.jp", "or.jp", "ne.jp", "co.kr",
+    "co.za", "org.za", "com.ar", "com.tr", "com.cn", "com.vn",
+    "com.ph", "com.id", "co.id", "co.th", "com.pk", "com.eg",
+    "com.ng", "co.ke", "com.sa", "com.ae",
+})
 
 
 def registrable_domain(url_or_host: str | None) -> str:
     """Best-effort registrable domain from a URL or bare host, lowercased.
 
-    `https://www.Abnormal.ai/careers` → `abnormal.ai`. Not a full public-suffix
-    parse (no PSL dep) — takes the last two labels, right for the vast majority of
-    employer domains; a wrong guess only ever costs a user-confirm, never a wrong
-    pick. (Clean-room; mirrors voyager_py.company.registrable_domain by behaviour,
-    not by import — MIT/GPL boundary.)"""
+    `https://www.Abnormal.ai/careers` → `abnormal.ai`;
+    `careers.tataelxsi.co.in` → `tataelxsi.co.in` (two-level public suffixes in
+    `_TWO_LEVEL_PUBLIC_SUFFIXES` take three labels). Not a full public-suffix
+    parse (no PSL dep) — outside that set it takes the last two labels, right
+    for the vast majority of employer domains; a wrong guess only ever costs a
+    user-confirm, never a wrong pick. (Clean-room; mirrors
+    voyager_py.company.registrable_domain by behaviour — including the same
+    inline suffix set, each side its own copy — not by import, MIT/GPL
+    boundary.)"""
     if not url_or_host:
         return ""
     raw = url_or_host.strip().lower()
@@ -89,6 +113,8 @@ def registrable_domain(url_or_host: str | None) -> str:
     labels = [x for x in host.split(".") if x]
     if len(labels) <= 2:
         return ".".join(labels)
+    if ".".join(labels[-2:]) in _TWO_LEVEL_PUBLIC_SUFFIXES:
+        return ".".join(labels[-3:])
     return ".".join(labels[-2:])
 
 
