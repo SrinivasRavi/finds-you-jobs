@@ -170,13 +170,21 @@ class ProbeResult:
     connection degree (1 ⇒ connected/accepted) plus the 1:1 thread's last-message
     direction (`them` = they replied last; `me` = our message is last; `""` = no
     readable history) and its timestamp (epoch seconds). Explicit-empty-allowed —
-    a read miss leaves the message fields empty/None (no transition this tick)."""
+    a read miss leaves the message fields empty/None (no transition this tick).
+
+    `ok`/`error`/`reason` carry the per-contact outcome from the batched sweep
+    (`probe_batch`): `error` ∈ "" (probed fine) | probe_failed (403/404/parse —
+    skip this contact) | cap_or_backoff | rate_limited | auth_error (the sweep
+    stopped here). The verbatim worker reason rides in `reason`."""
 
     public_identifier: str
     degree: int | None = None
     is_first_degree: bool = False
     last_message_direction: str = ""  # them | me | "" (none)
     last_message_at: float | None = None
+    ok: bool = True
+    error: str = ""
+    reason: str = ""
     usage: Usage = field(default_factory=Usage)
 
 

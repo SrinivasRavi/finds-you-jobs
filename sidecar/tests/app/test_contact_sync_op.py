@@ -214,14 +214,91 @@ def test_stale_manual_move_is_synced(db: Database) -> None:
     assert _status(db, cid) == "accepted"
 
 
-def test_probe_failure_does_not_kill_sweep(db: Database) -> None:
+def test_batch_failure_does_not_kill_tick(db: Database) -> None:
     cid = _make_contact(db, status="sent", sent_at=now_utc())
-    drv = FakeVoyagerDriver(raise_on="contact_sync",
-                            error=NetworkerError("voyager", "subprocess crashed"))
+    drv = FakeVoyagerDriver(raise_on="contact_sync_states",
+                            error=NetworkerError("voyager", "driver crashed"))
     cs.DRIVER_FACTORY = lambda tier: drv
     out = cs.contact_sync_entrypoint(_ctx(db))
     assert _status(db, cid) == "sent"  # unchanged, no crash
     assert _nn(out.result_ref)["synced"] == 0
+
+
+def test_per_contact_probe_failure_does_not_kill_sweep(db: Database) -> None:
+    """A 403/404-class miss on one contact skips THAT contact only — the rest
+    of the one-session sweep still probes and transitions (error isolation)."""
+    now = now_utc()
+    broken = _make_contact(db, status="sent", sent_at=now, slug="gone-404",
+                           last_touched_at=now - timedelta(days=3))
+    fine = _make_contact(db, status="sent", sent_at=now, slug="jane-doe",
+                         last_touched_at=now - timedelta(days=2))
+    drv = FakeVoyagerDriver(contact_sync_batch_results={
+        "gone-404": _probe(ok=False, error="probe_failed",
+                           reason="profile inaccessible (404)"),
+        "jane-doe": _probe(degree=1, is_first_degree=True,
+                           last_message_direction="me"),
+    })
+    cs.DRIVER_FACTORY = lambda tier: drv
+    out = cs.contact_sync_entrypoint(_ctx(db))
+    assert _status(db, broken) == "sent"  # skipped, unchanged
+    assert _status(db, fine) == "accepted"  # the sweep went on
+    assert _nn(out.result_ref)["synced"] == 1
+
+
+# --- one-session batch sweep ----------------------------------------------
+
+
+def test_sweep_makes_one_batch_call_for_n_contacts(db: Database) -> None:
+    """The whole sweep is ONE driver call (one browser session) — never one
+    launch/quit cycle per contact (2026-08-04 live observation: 5 contacts =
+    5 Chromium cycles, ~106 s)."""
+    now = now_utc()
+    cids = [
+        _make_contact(db, status="sent", sent_at=now, slug=f"person-{i}",
+                      last_touched_at=now - timedelta(days=9 - i))
+        for i in range(3)
+    ]
+    drv = _inject(_probe(degree=1, is_first_degree=True, last_message_direction="me"))
+    out = cs.contact_sync_entrypoint(_ctx(db))
+    batch_calls = [c for c in drv.calls if c[0] == "contact_sync_states"]
+    single_calls = [c for c in drv.calls if c[0] == "contact_sync"]
+    assert len(batch_calls) == 1  # exactly ONE session for N contacts
+    assert single_calls == []
+    assert len(batch_calls[0][1]) == 3  # all three pids rode the one call
+    for cid in cids:
+        assert _status(db, cid) == "accepted"
+    assert _nn(out.result_ref)["synced"] == 3
+
+
+def test_rate_limited_mid_sweep_stops_remaining_probes(db: Database) -> None:
+    """The first RateLimited stops the batch (§0.4): the rate-limited contact is
+    rotated without a transition, and every contact after it is left untouched
+    (not probed, not rotated) — first in line for the next tick."""
+    now = now_utc()
+    first = _make_contact(db, status="sent", sent_at=now, slug="alpha",
+                          last_touched_at=now - timedelta(days=3))
+    throttled = _make_contact(db, status="sent", sent_at=now, slug="bravo",
+                              last_touched_at=now - timedelta(days=2))
+    untouched = _make_contact(db, status="sent", sent_at=now, slug="charlie",
+                              last_touched_at=now - timedelta(days=1))
+    drv = FakeVoyagerDriver(contact_sync_batch_results={
+        "alpha": _probe(degree=1, is_first_degree=True, last_message_direction="me"),
+        "bravo": _probe(ok=False, error="rate_limited",
+                        reason="LinkedIn returned HTTP 429"),
+        "charlie": _probe(degree=1, is_first_degree=True, last_message_direction="me"),
+    })
+    cs.DRIVER_FACTORY = lambda tier: drv
+    out = cs.contact_sync_entrypoint(_ctx(db))
+    assert _status(db, first) == "accepted"
+    assert _status(db, throttled) == "sent"  # rotated, never transitioned
+    assert _status(db, untouched) == "sent"  # never reached
+    with db.repos() as repos:
+        # The throttled row rotated (cursor advances past it) …
+        assert _nn(repos.contacts.get(throttled)).last_touched_at > now - timedelta(days=1)
+        # … while the tail behind the stop was left completely untouched.
+        assert _nn(repos.contacts.get(untouched)).last_touched_at == now - timedelta(days=1)
+    assert _nn(out.result_ref)["synced"] == 1
+    assert _nn(out.result_ref)["stopped"] == "rate_limited"
 
 
 # --- pure decision function ------------------------------------------------

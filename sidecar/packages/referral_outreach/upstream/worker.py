@@ -9,9 +9,10 @@
 # READS as well as sends: discover/contact-sync/search-jobs are metered and
 # refused during backoff (2026-07-30 — before that they built no Pacer at all).
 """The bounded operations: discover, send-connection, send-dm, status, quota,
-contact-sync, login, and search-jobs (the read-only logged-in job search —
-finds-you-jobs discovery-expansion #6). Every operation supports dry_run (no
-browser, no network — plan only)."""
+contact-sync (single + the one-session `contact_sync_states` batch), login, and
+search-jobs (the read-only logged-in job search — finds-you-jobs
+discovery-expansion #6). Every operation supports dry_run (no browser, no
+network — plan only)."""
 
 from __future__ import annotations
 
@@ -19,9 +20,10 @@ import contextlib
 import logging
 from pathlib import Path
 
-from .errors import RateLimited, ReachedConnectionLimit, VoyagerError
+from .errors import AuthenticationError, RateLimited, ReachedConnectionLimit, VoyagerError
 from .url_utils import url_to_public_id
 from .pacing import (
+    ENRICH_PAUSE_RANGE_S,
     MAX_JOBS_PER_SEARCH,
     Pacer,
     PacingProfile,
@@ -670,6 +672,124 @@ def contact_sync(
                     "degree": None, "is_first_degree": False,
                     "last_message_direction": None, "last_message_at": None,
                     "quota": pacer.remaining()}
+
+
+def contact_sync_states(
+    public_identifiers: list[str],
+    *,
+    profile: PacingProfile | None = None,
+    state_dir: str | None = None,
+    storage_state: str | None = None,
+    user_data_dir: str | None = None,
+    headed: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Batched read-only contact-status probes (FR-NW-15) in ONE browser session.
+
+    The host's sync sweep used to dispatch one `contact_sync` op per tracked
+    contact, and every browser op builds its own `_paced_session` — so a
+    5-contact sweep launched and quit a full Chromium five times (~2 min of
+    pure browser churn for seconds of reads). This op opens the session ONCE
+    and probes each contact inside it, preserving the single op's per-contact
+    semantics exactly:
+
+      - each probe charges the profile-view budget on ATTEMPT and is refused
+        once the budget/backoff gate says stop (a refusal ends the sweep — every
+        later probe would refuse identically);
+      - probes are paced inside the session with the same 6-10 s inter-read
+        jitter the discovery enrichment loop uses (OpenOutreach's own
+        per-profile pause), on top of the per-action page jitter;
+      - a 403/404/parse failure skips THAT contact (`error: "probe_failed"`)
+        and the sweep continues;
+      - the first RateLimited enters backoff and STOPS the remaining sweep
+        (§0.4: the first 429 stops the batch — the old per-op loop kept
+        launching browsers into a throttle);
+      - an AuthenticationError stops the sweep and surfaces (`error:
+        "auth_error"`) — a dead session cannot be fixed by probing harder.
+
+    Each entry in `results` is exactly the single `contact_sync` envelope for
+    that contact, in input order; a stopped sweep simply has fewer entries.
+    The `finally` inside `_paced_session` persists every charge and any backoff
+    pause, then closes the one browser."""
+    pids = [_normalize_public_id(p) for p in public_identifiers if p]
+    if not pids:
+        raise VoyagerError("contact-sync-states requires public_identifiers")
+    if dry_run:
+        return {
+            "op": "contact-sync-batch", "ok": True, "dry_run": True,
+            "count": len(pids),
+            "plan": f"would probe {len(pids)} contact(s) read-only in ONE browser "
+                    "session (degree + last-message direction/timestamp; no send)",
+            "results": [],
+        }
+    pacer = _pacer(profile, state_dir)
+
+    def _blocked(pid: str, error: str, reason: str, **extra: object) -> dict:
+        return {"op": "contact-sync", "ok": False, "public_identifier": pid,
+                "error": error, "reason": reason,
+                "degree": None, "is_first_degree": False,
+                "last_message_direction": None, "last_message_at": None,
+                "quota": pacer.remaining(), **extra}
+
+    # Gate up front: when the very first probe would be refused (backoff / spent
+    # read budget) no browser launches at all — zero LinkedIn traffic, exactly
+    # like the single op refusing before its session.
+    allowed, reason = pacer.can_view_profile()
+    if not allowed:
+        return {"op": "contact-sync-batch", "ok": False, "count": 1,
+                "error": "cap_or_backoff", "reason": reason,
+                "results": [_blocked(pids[0], "cap_or_backoff", reason)],
+                "quota": pacer.remaining()}
+
+    from .actions import get_contact_sync_state
+    from .session import random_sleep
+
+    results: list[dict] = []
+    batch_error = ""
+    batch_reason = ""
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed) as session:
+        for probed, pid in enumerate(pids):
+            allowed, reason = pacer.can_view_profile()
+            if not allowed:
+                # The read budget ran out mid-batch — every later probe would
+                # refuse identically, so stop here (the rest stays queued).
+                results.append(_blocked(pid, "cap_or_backoff", reason))
+                batch_error, batch_reason = "cap_or_backoff", reason
+                break
+            if probed:
+                # Per-contact read pacing (NFR-LI-01): the browser-per-contact
+                # loop this replaces was naturally spaced by its launch/quit
+                # churn; inside one session the pause must be explicit.
+                random_sleep(*ENRICH_PAUSE_RANGE_S)
+            # Charge on ATTEMPT, same as the single op — a probe that reached
+            # LinkedIn but failed still consumed an authenticated read.
+            pacer.record_profile_view()
+            try:
+                state = get_contact_sync_state(session, pid)
+            except RateLimited as e:
+                deadline = pacer.pause_for_backoff(str(e))
+                results.append(_blocked(pid, "rate_limited", str(e),
+                                        paused_until=deadline))
+                batch_error, batch_reason = "rate_limited", str(e)
+                break
+            except AuthenticationError as e:
+                results.append(_blocked(pid, "auth_error", str(e)))
+                batch_error, batch_reason = "auth_error", str(e)
+                break
+            except VoyagerError as e:
+                # 403/404/parse miss — THIS contact is skipped (the host logs
+                # and rotates it, exactly as it did when the single op raised);
+                # the sweep goes on.
+                results.append(_blocked(pid, "probe_failed", str(e)))
+                continue
+            results.append({"op": "contact-sync", "ok": True,
+                            "public_identifier": pid, **state,
+                            "quota": pacer.remaining()})
+    return {"op": "contact-sync-batch", "ok": not batch_error,
+            "count": len(results), "results": results,
+            **({"error": batch_error, "reason": batch_reason} if batch_error else {}),
+            "quota": pacer.remaining()}
 
 
 def status(
