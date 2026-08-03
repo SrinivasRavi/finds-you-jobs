@@ -924,6 +924,11 @@ export interface LedgerEntry {
   /** Set on a failed row that was re-run (US-LOG-01 Retry): the new op's id.
    *  The row renders as "Retried" instead of a permanently nagging FAILED. */
   retried_as?: string | null;
+  /** Set when a send op succeeded but our own caps/backoff refused the send
+   *  before touching LinkedIn (result_ref error `cap_or_backoff`): the verbatim
+   *  refusal reason. The op genuinely succeeded — this is an outcome marker,
+   *  not an error. */
+  refusal?: string | null;
 }
 
 /** Result envelope for the Dev-tab fault-injection actions (US-DEV-01). */

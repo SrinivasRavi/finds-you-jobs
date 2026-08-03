@@ -271,7 +271,18 @@ function StopButton({ entry }: { entry: LedgerEntry }) {
  *  itself lives in the State cell (RetryButton). */
 function ErrorCell({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
-  if (!entry.error) return null;
+  if (!entry.error) {
+    // A succeeded send our own caps refused in-band: the state pill is honest
+    // ("Succeeded" — the op ran fine) but the row must say nothing went out.
+    if (entry.refusal) {
+      return (
+        <div className="mt-0.5 font-mono text-[11px] text-warn" data-testid="log-refused">
+          {t("analytics.ledger.refused", { reason: entry.refusal })}
+        </div>
+      );
+    }
+    return null;
+  }
   if (entry.error.includes(RESTART_NOTE_MARKER)) {
     return (
       <div className="mt-0.5 flex items-center gap-2 text-[11.5px]" data-testid="log-restart">
