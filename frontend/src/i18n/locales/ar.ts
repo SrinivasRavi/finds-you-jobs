@@ -615,11 +615,9 @@ const ar = {
     ledger: {
       show: "عرض",
       operation: "العملية",
-      kind: "النوع",
       state: "الحالة",
       started: "البدء",
       model: "النموذج",
-      latency: "زمن الاستجابة",
       cost: "التكلفة",
       retried: "أُعيدت المحاولة",
       retry: "أعد المحاولة",

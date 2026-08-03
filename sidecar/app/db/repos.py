@@ -662,6 +662,14 @@ class ApplicationsRepo:
     def get(self, application_id: str) -> Application | None:
         return self._s.get(Application, application_id)
 
+    def get_many(self, application_ids: list[str]) -> dict[str, Application]:
+        """id → Application for a batch — one IN query for the ledger's apply
+        subject pass (US-LOG-01 legibility), same shape as JobsRepo.get_many."""
+        if not application_ids:
+            return {}
+        stmt = select(Application).where(Application.id.in_(application_ids))
+        return {app.id: app for app in self._s.scalars(stmt)}
+
     def list(self, *, include_archived: bool = False) -> list[Application]:
         stmt = select(Application)
         if not include_archived:
@@ -1026,6 +1034,14 @@ class ContactsRepo:
 
     def get(self, contact_id: str) -> Contact | None:
         return self._s.get(Contact, contact_id)
+
+    def get_many(self, contact_ids: list[str]) -> dict[str, Contact]:
+        """id → Contact for a batch — one IN query for the ledger's send/draft
+        subject pass (US-LOG-01 legibility), same shape as JobsRepo.get_many."""
+        if not contact_ids:
+            return {}
+        stmt = select(Contact).where(Contact.id.in_(contact_ids))
+        return {contact.id: contact for contact in self._s.scalars(stmt)}
 
     def get_by_url(self, linkedin_url: str) -> Contact | None:
         stmt = select(Contact).where(Contact.linkedin_url == linkedin_url)

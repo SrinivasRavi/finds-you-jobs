@@ -42,11 +42,9 @@ const analytics = {
   ledger: {
     show: "Show",
     operation: "Operation",
-    kind: "Kind",
     state: "State",
     started: "Started",
     model: "Model",
-    latency: "Latency",
     cost: "Cost",
     retried: "retried",
     retry: "Retry",
@@ -57,6 +55,26 @@ const analytics = {
     refused: "Refused — {{reason}}",
     seconds: "{{value}}s",
     costUnknown: "cost unknown for this model",
+    detailHeading: "Detail",
+  },
+  // Per-kind chrome around the row's subject (the entity names/counts
+  // themselves come verbatim from the backend, never from here).
+  subject: {
+    masterResume: "Master resume",
+    contactsFound_one: "{{count}} contact found",
+    contactsFound_other: "{{count}} contacts found",
+    newJobs_one: "{{count}} new job",
+    newJobs_other: "{{count}} new jobs",
+    contactsChecked_one: "{{count}} contact checked",
+    contactsChecked_other: "{{count}} contacts checked",
+    contactsArchived_one: "{{count}} contact archived",
+    contactsArchived_other: "{{count}} contacts archived",
+    itemsCleaned_one: "{{count}} item cleaned up",
+    itemsCleaned_other: "{{count}} items cleaned up",
+    searchMode: {
+      fresh: "Fresh search",
+      next: "Next page",
+    },
   },
   pager: {
     empty: "No operations",

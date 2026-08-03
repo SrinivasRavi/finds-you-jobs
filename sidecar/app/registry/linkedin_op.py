@@ -380,6 +380,13 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
         "mode": mode,
         "exhausted": all(e.get("exhausted") for e in entries),
     }
+    # WHICH query pairs this search ran — the ledger row's subject (US-LOG-01
+    # legibility, 2026-08-03). Display strings only; the cursor row above stays
+    # the single continuation record.
+    result_ref["queries"] = [
+        " · ".join(str(part) for part in (e.get("keyword"), e.get("location")) if part)
+        for e in entries
+    ]
     _publish_linkedin(ctx, "search_done", found=result_ref["scan"]["persisted"])
     return OperationOutcome(
         result_ref=result_ref,

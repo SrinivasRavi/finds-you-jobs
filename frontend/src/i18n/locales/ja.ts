@@ -581,11 +581,9 @@ const ja: DeepPartial<Messages> = {
     ledger: {
       show: "表示",
       operation: "オペレーション",
-      kind: "種類",
       state: "状態",
       started: "開始",
       model: "モデル",
-      latency: "レイテンシ",
       cost: "コスト",
       retried: "再試行済み",
       retry: "再試行",

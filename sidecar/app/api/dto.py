@@ -944,6 +944,22 @@ class EngineSettingUpsert(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class OperationSubjectDTO(BaseModel):
+    """What one ledger row acted ON — its human subject (US-LOG-01 legibility,
+    maintainer directive 2026-08-03). Every field is verbatim entity data
+    (a contact's name, "title · company", the note text) — never localized
+    here; the frontend adds its own chrome (count nouns, mode names) via i18n.
+    Computed batched in the ledger route from the row's snapshot/result refs;
+    absent whenever those refs don't resolve (historical rows, deleted
+    entities) — the row then renders as before, nothing is fabricated."""
+
+    label: str = ""  # primary line ("Jane Doe", "Backend Engineer") — may be ""
+    href: str | None = None  # external link (LinkedIn profile / posting URL)
+    context: str | None = None  # secondary line (the role a send was for; search mode)
+    detail: str | None = None  # long text for the EXPANDED row (the DM/note sent)
+    count: int | None = None  # entities touched (contacts found, jobs persisted…)
+
+
 class OperationDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -959,6 +975,8 @@ class OperationDTO(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    # Not a DB column — filled by the ledger route's batched subject pass.
+    subject: OperationSubjectDTO | None = None
 
 
 class OperationAccepted(BaseModel):
@@ -1370,8 +1388,10 @@ def engine_setting_dto(row: EngineSettings) -> EngineSettingDTO:
     )
 
 
-def operation_dto(op: Operation) -> OperationDTO:
-    return OperationDTO.model_validate(op)
+def operation_dto(op: Operation, subject: OperationSubjectDTO | None = None) -> OperationDTO:
+    out = OperationDTO.model_validate(op)
+    out.subject = subject
+    return out
 
 
 def cost_totals_dto(totals: dict[str, Any]) -> CostTotalsDTO:

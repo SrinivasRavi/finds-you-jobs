@@ -619,11 +619,9 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     ledger: {
       show: "Показать",
       operation: "Операция",
-      kind: "Тип",
       state: "Состояние",
       started: "Начало",
       model: "Модель",
-      latency: "Задержка",
       cost: "Стоимость",
       retried: "повтор",
       retry: "Повторить",

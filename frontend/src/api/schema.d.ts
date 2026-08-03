@@ -719,7 +719,8 @@ export interface paths {
         };
         /**
          * List Operations
-         * @description Recent operations — the ledger the Logs/Analytics surfaces read (§10).
+         * @description Recent operations — the ledger the Logs/Analytics surfaces read (§10),
+         *     each row carrying its batched-resolved human subject (US-LOG-01).
          */
         get: operations["list_operations_api_operations_get"];
         put?: never;
@@ -2870,6 +2871,32 @@ export interface components {
             started_at: string | null;
             /** Finished At */
             finished_at: string | null;
+            subject?: components["schemas"]["OperationSubjectDTO"] | null;
+        };
+        /**
+         * OperationSubjectDTO
+         * @description What one ledger row acted ON — its human subject (US-LOG-01 legibility,
+         *     maintainer directive 2026-08-03). Every field is verbatim entity data
+         *     (a contact's name, "title · company", the note text) — never localized
+         *     here; the frontend adds its own chrome (count nouns, mode names) via i18n.
+         *     Computed batched in the ledger route from the row's snapshot/result refs;
+         *     absent whenever those refs don't resolve (historical rows, deleted
+         *     entities) — the row then renders as before, nothing is fabricated.
+         */
+        OperationSubjectDTO: {
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Href */
+            href?: string | null;
+            /** Context */
+            context?: string | null;
+            /** Detail */
+            detail?: string | null;
+            /** Count */
+            count?: number | null;
         };
         /**
          * PacketRequest

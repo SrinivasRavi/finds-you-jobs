@@ -44,7 +44,7 @@ const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
   {
     key: "networking",
     label: "analytics.groups.networking",
-    kinds: ["discover", "draft", "send", "linkedin_login", "archive_stale_contacts"],
+    kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search"],
   },
   { key: "apply", label: "analytics.groups.apply", kinds: ["apply", "extract", "prep"] },
   { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
@@ -268,7 +268,8 @@ function StopButton({ entry }: { entry: LedgerEntry }) {
 
 /** The error cell: the boot-recovery note gets friendly copy; other failures
  *  show the verbatim error (de-emphasized once retried). The Retry button
- *  itself lives in the State cell (RetryButton). */
+ *  itself lives in the State cell (RetryButton). Long verbatim errors WRAP
+ *  (break-words) — the ledger must never scroll sideways (2026-08-03). */
 function ErrorCell({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
   if (!entry.error) {
@@ -276,7 +277,7 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
     // ("Succeeded" — the op ran fine) but the row must say nothing went out.
     if (entry.refusal) {
       return (
-        <div className="mt-0.5 font-mono text-[11px] text-warn" data-testid="log-refused">
+        <div className="mt-0.5 break-words font-mono text-[11px] text-warn" data-testid="log-refused">
           {t("analytics.ledger.refused", { reason: entry.refusal })}
         </div>
       );
@@ -293,12 +294,78 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
   return (
     <div
       className={
-        "mt-0.5 font-mono text-[11px] " + (entry.retried_as ? "text-ink-4" : "text-bad")
+        "mt-0.5 break-words font-mono text-[11px] " + (entry.retried_as ? "text-ink-4" : "text-bad")
       }
       data-testid="log-error"
     >
       {entry.error}
     </div>
+  );
+}
+
+// The per-kind noun for a subject's `count` (US-LOG-01 legibility): the number
+// itself is backend data; the noun is UI chrome and stays in the locale files.
+const COUNT_KEYS: Partial<Record<OperationKind, string>> = {
+  discover: "analytics.subject.contactsFound",
+  scan: "analytics.subject.newJobs",
+  linkedin_search: "analytics.subject.newJobs",
+  contact_sync: "analytics.subject.contactsChecked",
+  archive_stale_contacts: "analytics.subject.contactsArchived",
+  cleanup_trash: "analytics.subject.itemsCleaned",
+};
+
+/** The Operation cell: the kind tag, then WHAT the op acted on — the subject
+ *  label (hyperlinked when the backend resolved an external URL — the
+ *  referrals-UI external-link pattern), the count phrase, the context line.
+ *  All entity text is verbatim backend data; everything wraps (no sideways
+ *  scroll). The full message/detail text lives in the EXPANDED row. */
+function SubjectCell({ entry }: { entry: LedgerEntry }) {
+  const { t } = useTranslation();
+  const s = entry.subject;
+  const countKey = COUNT_KEYS[entry.kind];
+  // Singleton-entity kinds carry no backend subject; name the entity here.
+  const label =
+    s?.label || (entry.kind === "extract" ? t("analytics.subject.masterResume") : "");
+  // `linkedin_search` context is the mode enum ("fresh"/"next") — map it to
+  // copy; any unknown value renders verbatim rather than vanishing.
+  const context =
+    entry.kind === "linkedin_search" && s?.context
+      ? t(`analytics.subject.searchMode.${s.context}`, { defaultValue: s.context })
+      : (s?.context ?? null);
+  return (
+    <>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-mono text-[11px] text-ink-3">{entry.kind}</span>
+        {s?.count != null && countKey ? (
+          <span className="text-[11px] text-ink-3" data-testid="log-count">
+            {t(countKey, { count: s.count })}
+          </span>
+        ) : null}
+      </div>
+      {label ? (
+        s?.href ? (
+          <a
+            href={s.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="log-subject"
+            className="break-words text-ink underline-offset-2 hover:text-accent hover:underline"
+          >
+            {label}
+          </a>
+        ) : (
+          <div className="break-words text-ink" data-testid="log-subject">
+            {label}
+          </div>
+        )
+      ) : null}
+      {context ? (
+        <div className="break-words text-[11px] text-ink-3" data-testid="log-context">
+          {context}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -446,18 +513,23 @@ export function Analytics() {
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-surface">
-            <table className="w-full border-collapse text-[12.5px]">
+          {/* table-fixed + wrapping cells: the ledger must FIT the window —
+              no horizontal scrolling at the app's default widths (maintainer
+              directive 2026-08-03). Every bounded column has an explicit
+              width; the Operation column absorbs the rest and wraps. */}
+          <div
+            className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-surface"
+            data-testid="ledger-scroll"
+          >
+            <table className="w-full table-fixed border-collapse text-[12.5px]">
               <thead>
                 <tr className="border-b border-border text-left text-ink-3">
-                  <th className="w-6 px-3 py-2" />
+                  <th className="w-7 px-2 py-2" />
                   <th className="px-3 py-2 font-medium">{t("analytics.ledger.operation")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.kind")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.state")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.started")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.model")}</th>
-                  <th className="px-3 py-2 text-right font-medium">{t("analytics.ledger.latency")}</th>
-                  <th className="px-3 py-2 text-right font-medium">{t("analytics.ledger.cost")}</th>
+                  <th className="w-[96px] px-3 py-2 font-medium">{t("analytics.ledger.state")}</th>
+                  <th className="w-[104px] px-3 py-2 font-medium">{t("analytics.ledger.started")}</th>
+                  <th className="w-[116px] px-3 py-2 font-medium">{t("analytics.ledger.model")}</th>
+                  <th className="w-[88px] px-3 py-2 text-right font-medium">{t("analytics.ledger.cost")}</th>
                 </tr>
               </thead>
               <tbody data-testid="logs-table">
@@ -470,20 +542,12 @@ export function Analytics() {
                         data-testid="log-row"
                         onClick={() => setExpandedId(open ? null : e.id)}
                       >
-                        <td className="px-3 py-2 font-mono text-[10px] text-ink-4">
+                        <td className="px-2 py-2 font-mono text-[10px] text-ink-4">
                           {open ? "▾" : "▸"}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="text-ink">{e.subject}</div>
-                          {e.context ? (
-                            <div className="text-[11px] text-ink-3" data-testid="log-context">
-                              {e.context}
-                            </div>
-                          ) : null}
+                          <SubjectCell entry={e} />
                           <ErrorCell entry={e} />
-                        </td>
-                        <td className="px-3 py-2 font-mono text-[11px] text-ink-3">
-                          {e.kind}
                         </td>
                         <td className="px-3 py-2">
                           {e.state === "failed" && e.retried_as ? (
@@ -504,28 +568,48 @@ export function Analytics() {
                           <StopButton entry={e} />
                         </td>
                         <td
-                          className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-ink-3"
+                          className="px-3 py-2 font-mono text-[11px] text-ink-3"
                           data-testid="log-started"
                         >
                           {formatWhen(e.started_at ?? e.created_at, "timestamp")}
                         </td>
-                        <td className="px-3 py-2 text-ink-2">{e.model ?? "—"}</td>
-                        <td className="px-3 py-2 text-right font-mono text-ink-2">
-                          {e.latency_ms
-                            ? t("analytics.ledger.seconds", { value: (e.latency_ms / 1000).toFixed(1) })
-                            : "—"}
+                        <td
+                          className="truncate px-3 py-2 text-ink-2"
+                          title={e.model ?? undefined}
+                        >
+                          {e.model ?? "—"}
                         </td>
                         <td
                           className="px-3 py-2 text-right font-mono text-ink-2"
                           title={e.usd == null ? t("analytics.ledger.costUnknown") : undefined}
                         >
-                          {e.usd != null ? `$${e.usd.toFixed(2)}` : "—"}
+                          <div>{e.usd != null ? `$${e.usd.toFixed(2)}` : "—"}</div>
+                          {e.latency_ms ? (
+                            <div className="text-[10.5px] text-ink-4">
+                              {t("analytics.ledger.seconds", {
+                                value: (e.latency_ms / 1000).toFixed(1),
+                              })}
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                       {open ? (
                         <tr className="border-b border-border/60 bg-surface-2/40">
                           <td />
-                          <td colSpan={7}>
+                          <td colSpan={5}>
+                            {e.subject?.detail ? (
+                              <div className="px-3 pt-3">
+                                <div className="mb-1 text-[11px] font-medium text-ink-4">
+                                  {t("analytics.ledger.detailHeading")}
+                                </div>
+                                <div
+                                  className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 text-[12px] text-ink-2"
+                                  data-testid="log-detail"
+                                >
+                                  {e.subject.detail}
+                                </div>
+                              </div>
+                            ) : null}
                             <SpanDetail operationId={e.id} />
                           </td>
                         </tr>
