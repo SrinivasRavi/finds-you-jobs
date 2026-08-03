@@ -22,6 +22,7 @@ import uuid
 from urllib.parse import quote
 
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .client import PlaywrightLinkedinAPI, resolve_degree
 from .errors import AuthenticationError, ReachedConnectionLimit, SkipProfile
@@ -269,6 +270,30 @@ def _raise_on_error_toast(page) -> None:
         raise SkipProfile(error.first.inner_text().strip())
 
 
+# Overlay-hardened click (2026-08-02 live timeout: LinkedIn's SDUI shell keeps a
+# full-bleed <div id="interop-outlet" data-testid="interop-shadowdom"> overlay
+# above the top card that intercepted pointer events over the "More" button for
+# the whole 30s default timeout). One normal, bounded click; on THAT
+# interception signature — and only that — one force=True retry. force skips
+# only the hit-target check the overlay is failing; the target itself was
+# already located and visible. Any other failure re-raises unchanged.
+_CLICK_TIMEOUT_MS = 10_000
+_INTERCEPT_SIGNATURES = ("intercepts pointer events", "interop-outlet")
+
+
+def _is_pointer_intercepted(message: str) -> bool:
+    return any(sig in message for sig in _INTERCEPT_SIGNATURES)
+
+
+def _click_through_overlay(locator, *, timeout_ms: int = _CLICK_TIMEOUT_MS) -> None:
+    try:
+        locator.click(timeout=timeout_ms)
+    except PlaywrightTimeoutError as e:
+        if not _is_pointer_intercepted(str(e)):
+            raise
+        locator.click(timeout=timeout_ms, force=True)
+
+
 def _open_more_and_click_connect(page, scope, wait_ms: int) -> bool:
     """Open the "More"/overflow menu (if needed) and click its Connect item.
     The dropdown renders as a portal outside the top card, so it is searched
@@ -278,7 +303,7 @@ def _open_more_and_click_connect(page, scope, wait_ms: int) -> bool:
         more = scope.locator(CONNECT_SELECTORS["more_button"])
         if more.count() == 0:
             return False
-        more.first.click()
+        _click_through_overlay(more.first)
         try:
             page.locator(CONNECT_SELECTORS["connect_option"]).first.wait_for(
                 state="visible", timeout=wait_ms
@@ -288,7 +313,7 @@ def _open_more_and_click_connect(page, scope, wait_ms: int) -> bool:
         connect_option = page.locator(CONNECT_SELECTORS["connect_option"])
     if connect_option.count() == 0:
         return False
-    connect_option.first.click()
+    _click_through_overlay(connect_option.first)
     return True
 
 
@@ -497,6 +522,63 @@ def _click_with_note(session: AccountSession, note: str) -> str:
     return note_outcome
 
 
+# The SDUI Connect affordance can be a real <a href="/preload/custom-invite/…">
+# anchor (see the 2026-07-13 CONNECT_SELECTORS annotations); clicking it in
+# headed mode opened blank popup tab(s) (live 2026-08-02) instead of composing
+# in place. Adopt a popup that hosts the invite compose; close anything blank
+# or irrelevant so a run never leaks tabs.
+_POPUP_SETTLE_MS = 2_500
+_INVITE_COMPOSE_PROBES = (
+    CONNECT_SELECTORS["note_textarea"],
+    CONNECT_SELECTORS["add_note"],
+    CONNECT_SELECTORS["send_now"],
+    CONNECT_SELECTORS["send_invitation"],
+)
+
+
+def _hosts_invite_compose(popup, *, settle_ms: int = _POPUP_SETTLE_MS) -> bool:
+    """True when the popup navigated somewhere real AND shows any invite-compose
+    control. The settle wait is bounded; a popup still on about:blank after it
+    is judged irrelevant."""
+    try:
+        popup.wait_for_load_state("domcontentloaded", timeout=settle_ms)
+    except (PlaywrightError, TimeoutError):
+        pass
+    try:
+        if popup.is_closed() or popup.url in ("", "about:blank"):
+            return False
+        return any(popup.locator(sel).count() > 0 for sel in _INVITE_COMPOSE_PROBES)
+    except PlaywrightError:
+        return False
+
+
+def _adopt_or_close_popups(main_page, popups, *, settle_ms: int = _POPUP_SETTLE_MS):
+    """The page the invite flow should continue on: the first popup hosting the
+    invite compose (adopted), else `main_page`. Every non-adopted popup is
+    closed. Only a popup that actually opened pays the bounded settle wait —
+    the no-popup path is a plain list check."""
+    if not popups:
+        # Popup creation races the click's return — one short pump before
+        # concluding none opened (still ~nothing next to the human-pace waits).
+        try:
+            main_page.wait_for_timeout(300)
+        except PlaywrightError:
+            pass
+        if not popups:
+            return main_page
+    adopted = None
+    for popup in popups:
+        if adopted is None and _hosts_invite_compose(popup, settle_ms=settle_ms):
+            adopted = popup
+            logger.info("invite compose opened in a popup tab — continuing there")
+            continue
+        try:
+            popup.close()
+        except PlaywrightError:
+            pass
+    return adopted if adopted is not None else main_page
+
+
 def _verify_invite_sent(session: AccountSession, *, timeout_ms: int = 6000) -> bool:
     """Confirm the invite ACTUALLY went out after the Send click. Returns True on a
     positive signal — the "Invitation sent" confirmation toast, or a Pending
@@ -545,27 +627,58 @@ def send_connection_request(
     session.ensure_browser()
     _goto_profile(session, public_identifier)
     session.wait()
-    probe = find_and_click_connect(
-        session.page, capture=lambda: capture_failure(session, "connect-no-affordance")
-    )
-    logger.debug("connect affordance via %s for %s", probe, public_identifier)
-    note_outcome = ""
-    if note:
-        note_outcome = _click_with_note(session, note)
-    else:
-        _click_without_note(session)
-    if session.page.locator(CONNECT_SELECTORS["weekly_limit"]).count() > 0:
-        raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
-    # Confirm it actually went out before we report success. An unconfirmed send
-    # is a typed failure (with a debug capture), never a silent false "sent".
-    if not _verify_invite_sent(session):
-        debug = capture_failure(session, "invite-unconfirmed")
-        raise SkipProfile(
-            "connection request could not be confirmed sent — no 'Invitation sent' "
-            "toast and no Pending state after the Send click (the click may have "
-            f"landed on a control that didn't submit the invite); debug capture: {debug}"
+    # Watch for popup tabs across the Connect click (the SDUI custom-invite
+    # anchor can spawn them — see _adopt_or_close_popups). The listener stays
+    # registered for the whole flow; adoption retargets session.page so the
+    # note/send/verify steps below drive whichever surface hosts the compose.
+    main_page = session.page
+    popups: list = []
+    on_popup = popups.append
+    main_page.on("popup", on_popup)
+    adopted_page = None
+    try:
+        probe = find_and_click_connect(
+            session.page, capture=lambda: capture_failure(session, "connect-no-affordance")
         )
-    return STATUS_PENDING, note_outcome
+        logger.debug("connect affordance via %s for %s", probe, public_identifier)
+        session.page = _adopt_or_close_popups(main_page, popups)
+        if session.page is not main_page:
+            adopted_page = session.page
+        note_outcome = ""
+        if note:
+            note_outcome = _click_with_note(session, note)
+        else:
+            _click_without_note(session)
+        if session.page.locator(CONNECT_SELECTORS["weekly_limit"]).count() > 0:
+            raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
+        # Confirm it actually went out before we report success. An unconfirmed send
+        # is a typed failure (with a debug capture), never a silent false "sent".
+        confirmed = _verify_invite_sent(session)
+        if not confirmed and session.page is not main_page:
+            # The adopted compose popup may close itself on send — re-check on
+            # the profile page before calling a real send a miss (a false miss
+            # here refunds a charge for an invite that DID go out).
+            session.page = main_page
+            confirmed = _verify_invite_sent(session)
+        if not confirmed:
+            debug = capture_failure(session, "invite-unconfirmed")
+            raise SkipProfile(
+                "connection request could not be confirmed sent — no 'Invitation sent' "
+                "toast and no Pending state after the Send click (the click may have "
+                f"landed on a control that didn't submit the invite); debug capture: {debug}"
+            )
+        return STATUS_PENDING, note_outcome
+    finally:
+        try:
+            main_page.remove_listener("popup", on_popup)
+        except (PlaywrightError, KeyError):
+            pass
+        session.page = main_page
+        if adopted_page is not None:
+            try:
+                adopted_page.close()
+            except PlaywrightError:
+                pass
 
 
 # ── DM send (warm referral-ask path) ──────────────────────────────
