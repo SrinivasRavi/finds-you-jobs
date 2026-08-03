@@ -394,7 +394,20 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
     retried_as: ((d.result_ref as { retried_as?: string } | null)?.retried_as ?? null) as
       | string
       | null,
+    // Cap/backoff refusal marker: the send op succeeded, but our own caps
+    // refused the send in-band (result_ref carries error + verbatim reason).
+    // Without this the ledger row read as a plain "Succeeded" while nothing
+    // went out (live 2026-08-02 — the free-plan notes allowance).
+    refusal: refusalOf(d.result_ref),
   };
+}
+
+/** The in-band send refusal from a result_ref, or null. Exported for its unit
+ *  test. */
+export function refusalOf(ref: OperationDTO["result_ref"]): string | null {
+  const r = ref as { error?: string; reason?: string } | null;
+  if (r?.error !== "cap_or_backoff") return null;
+  return r.reason || r.error;
 }
 
 // ─── the client ──────────────────────────────────────────────────────────────

@@ -640,7 +640,11 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         raise
 
     outcome_str = "sent" if result.sent else ("pending" if dry_run else "failed")
-    outcome_detail = result.error or result.reason or ""
+    # Reason first: `error` is a terse code (`cap_or_backoff`), `reason` the
+    # explanation ("…the free-plan personalized-note allowance is out…"). The
+    # old error-first order rendered the code in the referrals modal and the
+    # OutreachLog while the actionable reason was dropped (live 2026-08-02).
+    outcome_detail = result.reason or result.error or ""
     now = now_utc()
     with ctx.db.repos() as repos:
         log = repos.outreach_logs.create(

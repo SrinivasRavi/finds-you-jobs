@@ -138,6 +138,35 @@ _LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled", "--no-first-run
 _IGNORE_DEFAULT_ARGS = ["--enable-automation"]
 
 
+def _is_sandbox_launch_error(message: str) -> bool:
+    # Conservative: Chromium's sandbox-launch failures name the sandbox ("No
+    # usable sandbox!", "--no-sandbox") or the missing kernel facility ("Failed
+    # to move to new namespace…"). Anything else is not a sandbox problem and
+    # must not silently drop the sandbox.
+    msg = message.lower()
+    return "sandbox" in msg or "namespace" in msg
+
+
+def _sandboxed_launch(launch: Callable[[bool], object]):
+    """Launch with the Chromium sandbox ON (2026-08-02 headed dogfood: Playwright
+    disables it by default — the "--no-sandbox" banner — leaving LinkedIn's
+    pages rendering outside Chromium's exploit containment). Desktop macOS and
+    Windows always support the sandbox; the single warned retry with it off
+    exists only for Linux setups without unprivileged user namespaces, where
+    the sandboxed launch fails outright."""
+    try:
+        return launch(True)
+    except Exception as e:  # noqa: BLE001 — non-sandbox failures re-raise below
+        if not _is_sandbox_launch_error(str(e)):
+            raise
+        logger.warning(
+            "Chromium sandbox unavailable (%s) — retrying with "
+            "chromium_sandbox=False; expected only on Linux without "
+            "unprivileged user namespaces", e
+        )
+        return launch(False)
+
+
 def _launch_persistent(playwright, user_data_dir: str, *, headless: bool):
     kwargs = {
         "headless": headless,
@@ -145,12 +174,18 @@ def _launch_persistent(playwright, user_data_dir: str, *, headless: bool):
         "ignore_default_args": _IGNORE_DEFAULT_ARGS,
     }
     try:
-        return playwright.chromium.launch_persistent_context(
-            user_data_dir, channel="chrome", **kwargs
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch_persistent_context(
+                user_data_dir, channel="chrome", chromium_sandbox=sandbox, **kwargs
+            )
         )
     except Exception as e:  # noqa: BLE001 — no installed Chrome → bundled build
         logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return playwright.chromium.launch_persistent_context(user_data_dir, **kwargs)
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch_persistent_context(
+                user_data_dir, chromium_sandbox=sandbox, **kwargs
+            )
+        )
 
 
 def _launch_browser(playwright, *, headless: bool):
@@ -160,10 +195,16 @@ def _launch_browser(playwright, *, headless: bool):
         "ignore_default_args": _IGNORE_DEFAULT_ARGS,
     }
     try:
-        return playwright.chromium.launch(channel="chrome", **kwargs)
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch(
+                channel="chrome", chromium_sandbox=sandbox, **kwargs
+            )
+        )
     except Exception as e:  # noqa: BLE001
         logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return playwright.chromium.launch(**kwargs)
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch(chromium_sandbox=sandbox, **kwargs)
+        )
 
 
 def dismiss_comply_gate(page, timeout_ms: int = 5000) -> bool:

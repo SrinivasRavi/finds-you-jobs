@@ -460,6 +460,35 @@ def test_send_failure_records_verbatim_reason_no_flip(wired: Wired) -> None:
         assert "weekly invitation limit" in logs[0].outcome_detail  # verbatim (NFR-SIDE-04)
 
 
+def test_send_cap_refusal_surfaces_reason_not_code(wired: Wired) -> None:
+    """A cap/backoff refusal carries BOTH the `cap_or_backoff` code and an
+    explanatory reason — the log and result_ref must surface the reason, not
+    collapse to the code (live 2026-08-02: the modal showed only
+    "Not sent — cap_or_backoff" for an exhausted free-plan notes allowance)."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+    reason = (
+        "personalized-note budget exhausted — the free-plan personalized-note "
+        "allowance is out; send note-less"
+    )
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        connection_result={"op": "send-connection", "ok": False, "sent": False,
+                           "error": "cap_or_backoff", "reason": reason},
+    )
+    out = ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi"}))
+    assert out.result_ref is not None
+    # The ledger's refusal marker reads these two fields (frontend refusalOf).
+    assert out.result_ref["error"] == "cap_or_backoff"
+    assert out.result_ref["reason"] == reason
+    with wired.db.repos() as repos:
+        logs = repos.outreach_logs.list_for_contact(cid)
+        assert logs[0].outcome == "failed"
+        assert "allowance is out" in logs[0].outcome_detail  # the reason, verbatim
+        assert logs[0].outcome_detail != "cap_or_backoff"  # never just the code
+
+
 def test_send_raised_error_still_writes_outreach_log(wired: Wired) -> None:
     # Regression for the live-dogfood "6 failed sends, outreach_logs empty" bug:
     # a HARD voyager failure (stale selector → SkipProfile) raises NetworkerError,

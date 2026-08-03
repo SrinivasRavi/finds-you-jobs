@@ -38,6 +38,19 @@ def test_registrable_domain_and_match():
     assert domains_match("", "atob.com") is False
 
 
+def test_registrable_domain_two_level_suffixes_never_cross_match():
+    # `domain_match` drives the host's SILENT auto-pick, so this parse must be
+    # correct, not merely preferential: with the old last-two-label guess every
+    # `.co.in` site collapsed to `co.in` and ANY `.co.in`-website candidate
+    # matched ANY `.co.in` employer domain — a wrong silent pick.
+    assert registrable_domain("careers.tataelxsi.co.in") == "tataelxsi.co.in"
+    assert registrable_domain("https://www.example.co.uk/about") == "example.co.uk"
+    assert domains_match("careers.tataelxsi.co.in", "www.tataelxsi.co.in") is True
+    assert domains_match("careers.tataelxsi.co.in", "www.othercorp.co.in") is False
+    # Unlisted multi-part TLDs keep the conservative two-label guess.
+    assert registrable_domain("bjak.my") == "bjak.my"
+
+
 def _typeahead_shape_a() -> dict:
     """Classic hitsV2 with hitInfo → TypeaheadCompany."""
     return {

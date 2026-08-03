@@ -54,6 +54,7 @@ const analytics = {
     stop: "Stop",
     stopping: "Stopping…",
     restarted: "App restarted while generating.",
+    refused: "Refused — {{reason}}",
     seconds: "{{value}}s",
     costUnknown: "cost unknown for this model",
   },

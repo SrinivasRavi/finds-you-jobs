@@ -116,3 +116,49 @@ def test_apify_identity_backfill_restamps_by_board_host(tmp_path: Path) -> None:
         }
     for curl, _adapter, expected in rows:
         assert stored[curl] == expected, curl
+
+
+def test_job_board_resolution_keys_are_purged(tmp_path: Path) -> None:
+    """f8b3c6d9e4a2 (data-only): resolutions cached under a shared job-board
+    domain key (the poison — e.g. `domain:naukri.com` → Coupang reused for
+    every naukri job) or a bare two-level-suffix key (`domain:co.in`, minted
+    by the old last-two-label parse for every `.co.in` employer) are deleted;
+    per-employer domain keys — including three-label ccTLD ones — survive."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'db.sqlite'}"
+    # Stop just before the purge, seed a poisoned and a legit row, then run it.
+    command.upgrade(make_alembic_config(url), "e7a1d4c9b2f8")
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        for i, (key, name) in enumerate(
+            [
+                ("domain:naukri.com", "Coupang"),
+                ("domain:co.in", "Some Indian Employer"),
+                ("domain:abnormal.ai", "Abnormal Security"),
+                ("domain:tataelxsi.co.in", "Tata Elxsi"),
+            ]
+        ):
+            conn.execute(
+                text(
+                    "INSERT INTO company_resolutions (id, resolution_key,"
+                    " company_name, company_urn, company_vanity, industry,"
+                    " source, resolved_at) VALUES (:id, :key, :name, '', '',"
+                    " '', 'user', '2026-08-01T00:00:00')"
+                ),
+                {"id": f"res-{i}", "key": key, "name": name},
+            )
+
+    upgrade_to_head(url)
+    with engine.connect() as conn:
+        keys = {
+            r[0]
+            for r in conn.execute(
+                text("SELECT resolution_key FROM company_resolutions")
+            ).fetchall()
+        }
+    assert keys == {"domain:abnormal.ai", "domain:tataelxsi.co.in"}

@@ -3,9 +3,12 @@ its LinkedIn company entity (FR-NW-02).
 
 Two outputs, both from the posting URL the scraper already stored:
 - `employer_domain` — the employer's own website domain, when the URL host is the
-  employer's site rather than an ATS host (common on Greenhouse embeds, e.g.
-  `abnormal.ai/careers/…`, `careers.airbnb.com/…`). This is the strongest anchor:
-  a website match against a LinkedIn company entity ⇒ silent auto-pick.
+  employer's site rather than an ATS host or a multi-employer job board (common
+  on Greenhouse embeds, e.g. `abnormal.ai/careers/…`, `careers.airbnb.com/…`).
+  This is the strongest anchor: a website match against a LinkedIn company
+  entity ⇒ silent auto-pick. Job-board and board-provider domains never count
+  as employer domains — a shared `domain:naukri.com` key would let one
+  employer's confirm silently poison every company resolved from that board.
 - `resolution_key` — the stable cache key for a resolved company, so every job of
   the same employer reuses one typeahead + one user choice (no re-prompting).
 
@@ -32,15 +35,72 @@ _ATS_HOSTS = frozenset({
     "news.ycombinator.com",
 })
 
+# Multi-employer job boards / aggregators / tenant-subdomain ATS providers,
+# matched at the registrable-domain level (any subdomain). Their domain is the
+# *board's*, never the employer's — without this, a scraped board job mints a
+# shared `domain:<board>` cache key and the first employer resolved under it is
+# silently reused for every other employer on that board (live data bug
+# 2026-08-02: `domain:naukri.com` → Coupang, reapplied to a Virtusa job).
+# `news.ycombinator.com` stays exact-host in `_ATS_HOSTS` above — registrable
+# `ycombinator.com` is also YC's own employer site.
+_JOB_BOARD_DOMAINS = frozenset({
+    # Boards/aggregators our own adapters scrape (sidecar/modules/scraper/adapters/).
+    "naukri.com", "linkedin.com", "seek.com", "seek.com.au",
+    "arbeitnow.com", "themuse.com",
+    "remoteok.com", "remoteok.io", "remotive.com", "remotive.io",
+    # Tenant-subdomain / tenant-path ATS providers: the registrable domain is the
+    # provider's (`acme.bamboohr.com`, `acme.wd5.myworkdayjobs.com`, …).
+    "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com",
+    "smartrecruiters.com", "myworkdayjobs.com", "bamboohr.com", "breezy.hr",
+    "personio.de", "personio.com", "recruitee.com", "teamtailor.com",
+    # Boards a pasted or imported job URL plausibly carries.
+    "indeed.com", "foundit.in", "monsterindia.com", "monster.com",
+    "glassdoor.com", "glassdoor.co.in", "wellfound.com", "instahyre.com",
+    "cutshort.io", "hirist.tech", "hirist.com", "timesjobs.com", "shine.com",
+    "simplyhired.com", "ziprecruiter.com", "dice.com", "weworkremotely.com",
+    "jobspresso.co", "workingnomads.com", "himalayas.app",
+})
+
+
+def _is_job_board_host(host: str) -> bool:
+    # Label-boundary suffix match — a strict superset of `registrable_domain(host)
+    # in _JOB_BOARD_DOMAINS` that keeps multi-label entries (glassdoor.co.in,
+    # seek.com.au) blocked even for public suffixes outside the inline
+    # `_TWO_LEVEL_PUBLIC_SUFFIXES` set.
+    return any(host == d or host.endswith("." + d) for d in _JOB_BOARD_DOMAINS)
+
+
+# Common two-level public suffixes (co.in, co.uk, com.au, …): the registrable
+# domain under one of these is the last THREE labels, not two. A small inline
+# set on purpose — no PSL dependency (the module stays dependency-free). An
+# unlisted multi-part TLD still collapses to its suffix, which only ever costs
+# a user-confirm; the listed ones stop the shared-key poison (`domain:co.in`
+# minted for every Indian employer on a `.co.in` site — same class as the
+# 2026-08-02 naukri.com bug).
+_TWO_LEVEL_PUBLIC_SUFFIXES = frozenset({
+    "co.in", "net.in", "org.in", "gov.in", "ac.in",
+    "co.uk", "org.uk", "ac.uk", "gov.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au",
+    "co.nz", "org.nz", "com.br", "com.mx", "com.sg", "com.my",
+    "com.hk", "com.tw", "co.jp", "or.jp", "ne.jp", "co.kr",
+    "co.za", "org.za", "com.ar", "com.tr", "com.cn", "com.vn",
+    "com.ph", "com.id", "co.id", "co.th", "com.pk", "com.eg",
+    "com.ng", "co.ke", "com.sa", "com.ae",
+})
+
 
 def registrable_domain(url_or_host: str | None) -> str:
     """Best-effort registrable domain from a URL or bare host, lowercased.
 
-    `https://www.Abnormal.ai/careers` → `abnormal.ai`. Not a full public-suffix
-    parse (no PSL dep) — takes the last two labels, right for the vast majority of
-    employer domains; a wrong guess only ever costs a user-confirm, never a wrong
-    pick. (Clean-room; mirrors voyager_py.company.registrable_domain by behaviour,
-    not by import — MIT/GPL boundary.)"""
+    `https://www.Abnormal.ai/careers` → `abnormal.ai`;
+    `careers.tataelxsi.co.in` → `tataelxsi.co.in` (two-level public suffixes in
+    `_TWO_LEVEL_PUBLIC_SUFFIXES` take three labels). Not a full public-suffix
+    parse (no PSL dep) — outside that set it takes the last two labels, right
+    for the vast majority of employer domains; a wrong guess only ever costs a
+    user-confirm, never a wrong pick. (Clean-room; mirrors
+    voyager_py.company.registrable_domain by behaviour — including the same
+    inline suffix set, each side its own copy — not by import, MIT/GPL
+    boundary.)"""
     if not url_or_host:
         return ""
     raw = url_or_host.strip().lower()
@@ -53,6 +113,8 @@ def registrable_domain(url_or_host: str | None) -> str:
     labels = [x for x in host.split(".") if x]
     if len(labels) <= 2:
         return ".".join(labels)
+    if ".".join(labels[-2:]) in _TWO_LEVEL_PUBLIC_SUFFIXES:
+        return ".".join(labels[-3:])
     return ".".join(labels[-2:])
 
 
@@ -67,9 +129,10 @@ def _host(canonical_url: str) -> str:
 
 def employer_domain(canonical_url: str) -> str:
     """The employer's own website domain, or "" when the URL host is an ATS/board
-    provider (no employer domain available from the URL)."""
+    provider or a multi-employer job board (no employer domain available from
+    the URL — resolution falls to the ATS slug / company name)."""
     host = _host(canonical_url)
-    if not host or host in _ATS_HOSTS:
+    if not host or host in _ATS_HOSTS or _is_job_board_host(host):
         return ""
     return registrable_domain(host)
 
