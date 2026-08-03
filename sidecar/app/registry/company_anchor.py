@@ -3,9 +3,12 @@ its LinkedIn company entity (FR-NW-02).
 
 Two outputs, both from the posting URL the scraper already stored:
 - `employer_domain` — the employer's own website domain, when the URL host is the
-  employer's site rather than an ATS host (common on Greenhouse embeds, e.g.
-  `abnormal.ai/careers/…`, `careers.airbnb.com/…`). This is the strongest anchor:
-  a website match against a LinkedIn company entity ⇒ silent auto-pick.
+  employer's site rather than an ATS host or a multi-employer job board (common
+  on Greenhouse embeds, e.g. `abnormal.ai/careers/…`, `careers.airbnb.com/…`).
+  This is the strongest anchor: a website match against a LinkedIn company
+  entity ⇒ silent auto-pick. Job-board and board-provider domains never count
+  as employer domains — a shared `domain:naukri.com` key would let one
+  employer's confirm silently poison every company resolved from that board.
 - `resolution_key` — the stable cache key for a resolved company, so every job of
   the same employer reuses one typeahead + one user choice (no re-prompting).
 
@@ -31,6 +34,39 @@ _ATS_HOSTS = frozenset({
     "remoteok.com", "remoteok.io", "remotive.com", "remotive.io",
     "news.ycombinator.com",
 })
+
+# Multi-employer job boards / aggregators / tenant-subdomain ATS providers,
+# matched at the registrable-domain level (any subdomain). Their domain is the
+# *board's*, never the employer's — without this, a scraped board job mints a
+# shared `domain:<board>` cache key and the first employer resolved under it is
+# silently reused for every other employer on that board (live data bug
+# 2026-08-02: `domain:naukri.com` → Coupang, reapplied to a Virtusa job).
+# `news.ycombinator.com` stays exact-host in `_ATS_HOSTS` above — registrable
+# `ycombinator.com` is also YC's own employer site.
+_JOB_BOARD_DOMAINS = frozenset({
+    # Boards/aggregators our own adapters scrape (sidecar/modules/scraper/adapters/).
+    "naukri.com", "linkedin.com", "seek.com", "seek.com.au",
+    "arbeitnow.com", "themuse.com",
+    "remoteok.com", "remoteok.io", "remotive.com", "remotive.io",
+    # Tenant-subdomain / tenant-path ATS providers: the registrable domain is the
+    # provider's (`acme.bamboohr.com`, `acme.wd5.myworkdayjobs.com`, …).
+    "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com",
+    "smartrecruiters.com", "myworkdayjobs.com", "bamboohr.com", "breezy.hr",
+    "personio.de", "personio.com", "recruitee.com", "teamtailor.com",
+    # Boards a pasted or imported job URL plausibly carries.
+    "indeed.com", "foundit.in", "monsterindia.com", "monster.com",
+    "glassdoor.com", "glassdoor.co.in", "wellfound.com", "instahyre.com",
+    "cutshort.io", "hirist.tech", "hirist.com", "timesjobs.com", "shine.com",
+    "simplyhired.com", "ziprecruiter.com", "dice.com", "weworkremotely.com",
+    "jobspresso.co", "workingnomads.com", "himalayas.app",
+})
+
+
+def _is_job_board_host(host: str) -> bool:
+    # Label-boundary suffix match — a strict superset of `registrable_domain(host)
+    # in _JOB_BOARD_DOMAINS` that also covers multi-label entries the naive
+    # last-two-label registrable_domain cannot name (glassdoor.co.in → "co.in").
+    return any(host == d or host.endswith("." + d) for d in _JOB_BOARD_DOMAINS)
 
 
 def registrable_domain(url_or_host: str | None) -> str:
@@ -67,9 +103,10 @@ def _host(canonical_url: str) -> str:
 
 def employer_domain(canonical_url: str) -> str:
     """The employer's own website domain, or "" when the URL host is an ATS/board
-    provider (no employer domain available from the URL)."""
+    provider or a multi-employer job board (no employer domain available from
+    the URL — resolution falls to the ATS slug / company name)."""
     host = _host(canonical_url)
-    if not host or host in _ATS_HOSTS:
+    if not host or host in _ATS_HOSTS or _is_job_board_host(host):
         return ""
     return registrable_domain(host)
 
