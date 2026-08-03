@@ -25,6 +25,7 @@ class FakeVoyagerDriver:
         status_result: dict | None = None,
         search_jobs_result: dict | None = None,
         contact_sync_result: dict | None = None,
+        contact_sync_batch_results: dict[str, dict] | None = None,
         quota_result: dict | None = None,
         login_result: dict | None = None,
         session_status_result: dict | None = None,
@@ -52,6 +53,9 @@ class FakeVoyagerDriver:
             "op": "contact-sync", "ok": True, "degree": None, "is_first_degree": False,
             "last_message_direction": None, "last_message_at": None,
         }
+        # pid → per-contact envelope for the batched sweep; a pid absent from
+        # the map falls back to `contact_sync_result` (same dict for everyone).
+        self._contact_sync_batch = contact_sync_batch_results or {}
         self._quota = quota_result or {"op": "quota", "ok": True, "quota": {"daily_remaining": 15}}
         self._login = login_result or {
             "op": "login", "ok": True, "connected": True, "connected_as": "Test User",
@@ -113,6 +117,24 @@ class FakeVoyagerDriver:
         self.calls.append(("contact_sync", public_identifier, dry_run))
         self._maybe_raise("contact_sync")
         return self._contact_sync
+
+    def contact_sync_states(self, public_identifiers, *, dry_run) -> dict:
+        """Mirrors the worker's batch contract: one envelope per pid in input
+        order, stopping after the first rate-limit/cap/auth result (the worker
+        ends the sweep there — later pids get no entry)."""
+        self.calls.append(("contact_sync_states", tuple(public_identifiers), dry_run))
+        self._maybe_raise("contact_sync_states")
+        results = []
+        for pid in public_identifiers:
+            entry = dict(self._contact_sync_batch.get(pid, self._contact_sync))
+            entry.setdefault("public_identifier", pid)
+            results.append(entry)
+            if entry.get("error") in ("rate_limited", "cap_or_backoff", "auth_error"):
+                break
+        return {
+            "op": "contact-sync-batch", "ok": True,
+            "count": len(results), "results": results,
+        }
 
     def quota(self) -> dict:
         self.calls.append(("quota",))

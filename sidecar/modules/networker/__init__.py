@@ -7,7 +7,16 @@ used is retired (`docs/internal/referral-outreach.md` §2). The one LLM
 operation is `draft`.
 """
 
-from .networker import discover, draft, dry_run_prompt, probe, quota, resolve, send
+from .networker import (
+    discover,
+    draft,
+    dry_run_prompt,
+    probe,
+    probe_batch,
+    quota,
+    resolve,
+    send,
+)
 from .types import (
     Audience,
     Channel,
@@ -29,6 +38,7 @@ __all__ = [
     "draft",
     "send",
     "probe",
+    "probe_batch",
     "quota",
     "dry_run_prompt",
     "Audience",

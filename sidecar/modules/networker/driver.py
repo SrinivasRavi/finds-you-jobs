@@ -63,6 +63,9 @@ class VoyagerDriver(Protocol):
     ) -> dict: ...
     def status(self, public_identifier: str, *, dry_run: bool) -> dict: ...
     def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict: ...
+    def contact_sync_states(
+        self, public_identifiers: list[str], *, dry_run: bool
+    ) -> dict: ...
     def quota(self) -> dict: ...
     def resume(self) -> dict: ...
     def session_status(self) -> dict: ...
@@ -250,6 +253,24 @@ class DirectVoyagerDriver:
         return self._call(
             self._worker().contact_sync,
             public_identifier=public_identifier,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
+            storage_state=self.storage_state,
+            user_data_dir=self.user_data_dir,
+            headed=self.headed,
+            dry_run=dry_run,
+        )
+
+    def contact_sync_states(
+        self, public_identifiers: list[str], *, dry_run: bool
+    ) -> dict:
+        """Batched read-only contact-status probes in ONE browser session (the
+        sync sweep — one `contact_sync` op per contact launched and quit a full
+        Chromium per contact). Same per-probe charges/pacing as `contact_sync`,
+        enforced inside the worker."""
+        return self._call(
+            self._worker().contact_sync_states,
+            public_identifiers=public_identifiers,
             profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,

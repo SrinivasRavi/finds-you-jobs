@@ -321,6 +321,51 @@ def probe(
         drv.close()
 
 
+def probe_batch(
+    contacts: list[Contact],
+    driver: VoyagerDriver | None = None,
+    *,
+    dry_run: bool = False,
+) -> list[ProbeResult]:
+    """Probe many contacts' live LinkedIn state in ONE browser session (US-NW-12
+    / FR-NW-15). Zero-LLM, READ-ONLY — one `contact-sync-states` driver call
+    instead of a browser launch/quit cycle per contact.
+
+    Returns one ProbeResult per PROBED contact, in input order. The worker stops
+    the sweep on the first rate-limit/cap refusal or auth failure, so the list
+    may be shorter than `contacts` — the stop reason rides on the last result
+    (`ok=False`, `error`, verbatim `reason`); untouched contacts get no result.
+    A hard driver failure raises NetworkerError, exactly like `probe`."""
+    for contact in contacts:
+        if not contact.public_identifier:
+            raise NetworkerError("probe", "contact.public_identifier is required")
+    if not contacts:
+        return []
+    drv = driver or DirectVoyagerDriver()
+    try:
+        raw = drv.contact_sync_states(
+            [c.public_identifier for c in contacts], dry_run=dry_run
+        )
+        results: list[ProbeResult] = []
+        entries = raw.get("results") or []
+        for contact, entry in zip(contacts, entries, strict=False):
+            degree = entry.get("degree")
+            results.append(ProbeResult(
+                public_identifier=contact.public_identifier,
+                degree=degree,
+                is_first_degree=bool(entry.get("is_first_degree", degree == 1)),
+                last_message_direction=entry.get("last_message_direction") or "",
+                last_message_at=entry.get("last_message_at"),
+                ok=bool(entry.get("ok", False)),
+                error=str(entry.get("error") or ""),
+                reason=str(entry.get("reason") or ""),
+                usage=Usage(internal_calls=1),
+            ))
+        return results
+    finally:
+        drv.close()
+
+
 def quota(driver: VoyagerDriver | None = None) -> dict:
     """The live remaining cap the host displays + gates its UI on (FR-NW-01/04,
     NFR-LI-02). Zero-LLM."""

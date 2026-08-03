@@ -4,7 +4,9 @@ A periodic, gentle, READ-ONLY sweep that reconciles each tracked contact's kanba
 column with its real LinkedIn state, so the Networking board self-advances instead
 of relying only on send-time flips + manual drags. Runs on the `contact_sync`
 schedule (default every 12 h), batched small (≤ `BATCH_LIMIT`/run) to keep the
-user's own account safe.
+user's own account safe. The whole sweep shares ONE browser session
+(`probe_batch` → the worker's `contact_sync_states`) — per-contact pacing,
+charges, and error isolation are enforced inside the worker.
 
 **The transitions** (probe = the voyager `contact-sync` read: degree + the 1:1
 thread's last-message direction/timestamp):
@@ -37,8 +39,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sidecar.modules.networker import ProbeResult
-from sidecar.modules.networker import probe as net_probe
+from sidecar.modules.networker import ProbeResult, probe_batch
 from sidecar.modules.networker.types import NetworkerError
 
 from ..db.base import now_utc
@@ -188,6 +189,13 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
     probed = 0
     frozen = 0
     internal_calls = 0
+    stopped = ""
+
+    # Partition the batch: manual-frozen rows rotate without a probe; the rest
+    # are probed together in ONE browser session (2026-08-04 — the old loop
+    # drove one driver op per contact, and every op builds its own paced
+    # session, so a 5-contact sweep launched and quit a full Chromium 5 times).
+    eligible: list[tuple[str, Any, str, datetime | None, datetime | None]] = []
     for contact_id in contact_ids:
         with ctx.db.repos() as repos:
             contact = repos.contacts.get(contact_id)
@@ -199,18 +207,49 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 repos.contacts.update(contact_id, last_touched_at=now)
                 frozen += 1
                 continue
-            net_contact = _net_contact_from_row(contact)
-            current = contact.connection_status
-            sent_at = contact.sent_at
-            accepted_at = contact.accepted_at
+            eligible.append((
+                contact_id, _net_contact_from_row(contact),
+                contact.connection_status, contact.sent_at, contact.accepted_at,
+            ))
 
+    probes: list[ProbeResult] = []
+    if eligible:
         driver = DRIVER_FACTORY(profile)
         try:
-            probe = net_probe(net_contact, driver=driver)
+            probes = probe_batch([e[1] for e in eligible], driver=driver)
         except NetworkerError as exc:
-            # A hard probe failure (subprocess crash / unparseable JSON) must not
-            # kill the sweep — log verbatim, rotate the row, move on (gentle).
-            log.warning("contact_sync: probe failed for %s: %s", contact_id, exc)
+            # A hard batch failure (driver crash / unparseable envelope) must not
+            # kill the tick — log verbatim, rotate the whole batch, report zero
+            # (exactly what the per-contact loop did when every probe raised).
+            log.warning("contact_sync: batch probe failed: %s", exc)
+            with ctx.db.repos() as repos:
+                for contact_id, *_rest in eligible:
+                    repos.contacts.update(contact_id, last_touched_at=now)
+            probes = []
+
+    # The worker stops the sweep on the first rate-limit/cap/auth refusal
+    # (§0.4: the first 429 stops the batch), so `probes` may be shorter than
+    # `eligible` — the untouched tail stays first in line for the next tick.
+    for (contact_id, _net_contact, current, sent_at, accepted_at), probe in zip(
+        eligible, probes, strict=False
+    ):
+        if probe.error in ("rate_limited", "cap_or_backoff", "auth_error"):
+            # The sweep stopped here. Rotate this row and surface the reason —
+            # no transition is decided on an empty refused probe.
+            log.warning(
+                "contact_sync: sweep stopped at %s: %s (%s)",
+                contact_id, probe.error, probe.reason,
+            )
+            with ctx.db.repos() as repos:
+                repos.contacts.update(contact_id, last_touched_at=now)
+            stopped = probe.error
+            break
+        if probe.error:
+            # A hard probe failure (403/404/parse) must not kill the sweep —
+            # log verbatim, rotate the row, move on (gentle).
+            log.warning(
+                "contact_sync: probe failed for %s: %s", contact_id, probe.reason
+            )
             with ctx.db.repos() as repos:
                 repos.contacts.update(contact_id, last_touched_at=now)
             continue
@@ -255,6 +294,9 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
         result_ref={
             "synced": probed, "frozen": frozen, "batch": len(contact_ids),
             "transitions": transitions,
+            # Present only when the worker cut the sweep short (rate_limited /
+            # cap_or_backoff / auth_error) — surfaced, never swallowed.
+            **({"stopped": stopped} if stopped else {}),
         },
         usage={"internal_calls": internal_calls},
     )
