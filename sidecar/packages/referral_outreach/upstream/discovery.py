@@ -20,6 +20,7 @@ from .client import PlaywrightLinkedinAPI, resolve_degree
 from .company import company_id_from_urn
 from .errors import ProfileInaccessibleError
 from .pacing import ENRICH_PAUSE_RANGE_S
+from .scroll_dynamics import read_results
 from .session import AccountSession, goto_page, random_sleep
 from .url_utils import url_to_public_id
 
@@ -126,6 +127,11 @@ def discover_company_contacts(
             error_message="Pagination failed",
         )
 
+    # Walk the results the way a person does BEFORE reading the cards off them:
+    # LinkedIn lazy-loads result cards, so extracting straight after the
+    # navigation can silently see a short list. It is also the only wheel
+    # traffic this flow produces.
+    read_results(session.page)
     urls = _extract_in_urls(session.page)
     logger.info(
         "discovery: %d /in/ candidates for %r (urn=%s)", len(urls), company, company_urn

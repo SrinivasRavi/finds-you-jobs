@@ -26,6 +26,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .client import PlaywrightLinkedinAPI, resolve_degree
 from .errors import AuthenticationError, ReachedConnectionLimit, SkipProfile
+from .scroll_dynamics import read_profile
 from .session import AccountSession, goto_page, human_type
 
 logger = logging.getLogger("voyager_py.actions")
@@ -370,6 +371,11 @@ def _goto_profile(session: AccountSession, public_identifier: str) -> None:
             error_message="Failed to navigate to the target profile",
         )
     _reload_past_404_shell(session, public_identifier)
+    # Read the page the way a person does before acting on it. This is the only
+    # place the LinkedIn path emits wheel events at all — the one input channel
+    # that was null in 100% of detected agent sessions — and it is also what
+    # makes LinkedIn's lazy-loaded profile sections render before we read them.
+    read_profile(session.page)
 
 
 # ── connection status ─────────────────────────────────────────────
