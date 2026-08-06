@@ -149,18 +149,35 @@ def digraph_class(prev: str | None, cur: str) -> str:
 
 
 # --- the persona -----------------------------------------------------------
+def target_rollover_ratio(wpm: float) -> float:
+    """The measured rollover ratio at a given speed.
+
+    Corpus points: 7% @25 WPM, 24% @50, 39% @80, 52% @95 — near-linear in WPM
+    (r with WPM is +0.73), so a line through them is the honest fit. Never 0:
+    only 2 of 51 subjects in one corpus produced none, which makes a ratio of
+    exactly 0.000 a one-dimensional discriminator over ~70 keystrokes.
+    """
+    return min(0.70, max(0.02, 0.0064 * wpm - 0.09))
+
+
 @dataclass(frozen=True)
 class TypingPersona:
     """One typist. `wpm` scales the interval; everything else follows from it.
 
-    `rollover_ratio` is consumed by the rollover model (item 1.2) and lives here
-    so a persona is one object, not two.
+    `rollover_ratio` is the fraction of transitions on which the next key goes
+    down before the previous one comes up. `None` derives it from `wpm`; set it
+    explicitly to pin a persona.
     """
 
     wpm: float = POPULATION_WPM_MEAN
     iki_sigma: float = IKI_SIGMA
     hold_sigma: float = HOLD_SIGMA
-    rollover_ratio: float = 0.25
+    rollover_ratio: float | None = None
+
+    @property
+    def rollover(self) -> float:
+        return (target_rollover_ratio(self.wpm) if self.rollover_ratio is None
+                else self.rollover_ratio)
 
     @property
     def iki_mu(self) -> float:
@@ -202,8 +219,7 @@ def persona_for_legacy_bounds(min_ms: int | None, max_ms: int | None) -> TypingP
         # it to a WPM, floored at a human speed rather than trusted verbatim.
         mid_ms = max((lo + hi) / 2.0, 1.0)
         wpm = min(max(12000.0 / mid_ms, 25.0), 95.0)
-    rollover = min(0.70, max(0.05, 0.25 + 0.0073 * (wpm - 50.0) * 2))
-    return TypingPersona(wpm=wpm, rollover_ratio=rollover)
+    return TypingPersona(wpm=wpm)
 
 
 # --- samplers --------------------------------------------------------------
@@ -253,6 +269,54 @@ def needs_shift(ch: str) -> bool:
     return ch.isupper() or ch in _SHIFT_PAIRS
 
 
+# --- rollover ---------------------------------------------------------------
+# Rollover is not a separate effect bolted on: it is what happens when the
+# press-to-press interval is SHORTER than the previous key's hold, which the
+# two independent distributions already produce on their own. Sampling them
+# per keystroke therefore yields overlaps whose magnitude needs no tuning
+# (measured on our own sampler: median 37 ms, mean 43, p90 84 against corpus
+# targets of 39 / 59 / 95). What DOES need a knob is the RATE, because the raw
+# emergent rate runs a few points above the corpus: 0.31 at 50 WPM against a
+# measured 0.24. So an emergent overlap is accepted with probability
+# `target / emergent`, where `emergent` is estimated once per persona.
+MAX_OVERLAP_MS = 250.0
+_EMERGENT_SAMPLES = 6000
+_emergent_cache: dict[tuple[float, float, float], float] = {}
+
+
+def emergent_rollover_ratio(persona: TypingPersona) -> float:
+    """P(interval < previous hold) for this persona, by cached Monte Carlo.
+
+    Analytic evaluation is possible for the bare log-normals but wrong once the
+    digraph factors, the punctuation penalty and the floor are applied — those
+    move it by ~8 points — so this measures the sampler we actually ship.
+    """
+    key = (persona.wpm, persona.iki_sigma, persona.hold_sigma)
+    hit = _emergent_cache.get(key)
+    if hit is not None:
+        return hit
+    rng = random.Random(0x5011)  # fixed: an estimate must not wobble per call
+    letters = "the quick brown fox jumps over a lazy dog "
+    overlaps = 0
+    prev = letters[0]
+    for i in range(1, _EMERGENT_SAMPLES):
+        cur = letters[i % len(letters)]
+        if sample_interval_ms(prev, cur, persona, rng) < sample_hold_ms(prev, persona, rng):
+            overlaps += 1
+        prev = cur
+    ratio = overlaps / (_EMERGENT_SAMPLES - 1)
+    _emergent_cache[key] = ratio
+    return ratio
+
+
+def rollover_acceptance(persona: TypingPersona) -> float:
+    """How often an emergent overlap is allowed to stand, to hit the target."""
+    emergent = emergent_rollover_ratio(persona)
+    if emergent <= 0:
+        return 1.0
+    return min(1.0, persona.rollover / emergent)
+
+
 @dataclass(frozen=True)
 class Keystroke:
     """One planned keypress. All times are milliseconds.
@@ -265,7 +329,12 @@ class Keystroke:
     key's `hold_ms` the two presses genuinely overlap, which is exactly what
     keystroke rollover is.
 
-    `hold_ms` is this key's own down→up dwell.
+    `hold_ms` is this key's own down→up dwell. `may_roll_over` says this press
+    is allowed to land before the PREVIOUS key is released.
+
+    `key` is what the driver should hand the keyboard; `dispatchable` is False
+    for characters with no key definition, which the driver types one at a time
+    through the locator instead.
     """
 
     char: str
@@ -273,6 +342,29 @@ class Keystroke:
     hold_ms: float
     shift: bool = False
     shift_hold_ms: float = 0.0
+    may_roll_over: bool = False
+    dispatchable: bool = True
+
+    @property
+    def key(self) -> str:
+        return _KEY_ALIASES.get(self.char, self.char)
+
+
+# Characters that map to a named key rather than to themselves. `locator.type`
+# does the same thing, so behaviour on these is unchanged.
+_KEY_ALIASES = {"\n": "Enter", "\r": "Enter", "\t": "Tab"}
+
+
+def is_key_dispatchable(ch: str) -> bool:
+    """True when the browser keyboard has a key definition for `ch`.
+
+    Printable ASCII (plus newline/tab) is exactly the covered set. Anything else
+    — accents, CJK, emoji — has no key and must go through the locator, one
+    character at a time. `Input.insertText` and setting `.value` are never an
+    option: both emit `input` with no key events at all, a documented tell found
+    in 3 of 7 commercial agents.
+    """
+    return ch in _KEY_ALIASES or (ch.isascii() and ch.isprintable())
 
 
 def plan(
@@ -282,18 +374,109 @@ def plan(
 ) -> list[Keystroke]:
     """Turn a message into a per-keystroke schedule. Pure; no sleeping."""
     rng = rng or random
+    accept = rollover_acceptance(persona)
     out: list[Keystroke] = []
     prev: str | None = None
+    prev_hold = 0.0
     for ch in text:
         shift = needs_shift(ch)
+        iki = 0.0 if prev is None else sample_interval_ms(prev, ch, persona, rng)
+        hold = sample_hold_ms(ch, persona, rng)
+        # An overlap is available whenever this press is due before the previous
+        # release. Whether it is taken is the persona's rollover rate.
+        overlaps = prev is not None and iki < prev_hold
         out.append(
             Keystroke(
                 char=ch,
-                iki_ms=0.0 if prev is None else sample_interval_ms(prev, ch, persona, rng),
-                hold_ms=sample_hold_ms(ch, persona, rng),
+                iki_ms=iki,
+                hold_ms=hold,
                 shift=shift,
                 shift_hold_ms=sample_shift_hold_ms(rng) if shift else 0.0,
+                may_roll_over=overlaps and rng.random() < accept,
+                dispatchable=is_key_dispatchable(ch),
             )
         )
         prev = ch
+        prev_hold = hold
     return out
+
+
+# --- scheduling -------------------------------------------------------------
+# A slow CDP round-trip must never be able to invert two presses, so
+# non-overlapping keystrokes keep a small guaranteed separation.
+MIN_PRESS_SEPARATION_MS = 8.0
+# Shift's release trails the letter it modifies by this share of its remaining
+# hold; the rest of the hold was spent leading into the letter.
+_SHIFT_TRAIL = 0.7
+_SHIFT_LEAD = 0.3
+
+
+@dataclass(frozen=True)
+class KeyEvent:
+    """One thing the driver does, at `t_ms` on the message's own timeline.
+
+    `action` is `down` / `up` (key-level dispatch) or `type` (the per-character
+    locator fallback for characters with no key definition).
+    """
+
+    t_ms: float
+    action: str
+    key: str
+
+
+def schedule(keystrokes: list[Keystroke]) -> list[KeyEvent]:
+    """Lay a keystroke plan onto one time-ordered event stream.
+
+    This is where rollover physically happens: when a keystroke is marked
+    `may_roll_over`, its key-down is NOT pushed past the previous key-up, so the
+    stream reads `down:x → down:y → up:x → up:y`. Overlap is capped at
+    `MAX_OVERLAP_MS`.
+
+    Shift is held continuously across a RUN of consecutive shifted characters —
+    a person typing "ABC" or "!?" does not tap Shift three times — and its
+    press spans the letters it modifies.
+    """
+    events: list[tuple[float, int, str, str]] = []
+    seq = 0
+    t_down_prev: float | None = None
+    t_up_prev = 0.0
+    shift_open = False
+    shift_hold_ms = 0.0
+
+    for i, ks in enumerate(keystrokes):
+        if t_down_prev is None:
+            t_down = 0.0
+        else:
+            t_down = t_down_prev + ks.iki_ms
+            floor = (t_up_prev - MAX_OVERLAP_MS if ks.may_roll_over
+                     else t_up_prev + MIN_PRESS_SEPARATION_MS)
+            t_down = max(t_down, floor)
+        t_up = t_down + ks.hold_ms
+
+        if ks.shift and not shift_open:
+            shift_hold_ms = ks.shift_hold_ms
+            lead = min(shift_hold_ms * _SHIFT_LEAD, max(shift_hold_ms - ks.hold_ms, 0.0))
+            events.append((max(t_down - lead, 0.0), seq, "down", "Shift"))
+            seq += 1
+            shift_open = True
+
+        if ks.dispatchable:
+            events.append((t_down, seq, "down", ks.key))
+            seq += 1
+            events.append((t_up, seq, "up", ks.key))
+            seq += 1
+        else:
+            events.append((t_down, seq, "type", ks.char))
+            seq += 1
+
+        run_continues = i + 1 < len(keystrokes) and keystrokes[i + 1].shift
+        if shift_open and not run_continues:
+            trail = max(shift_hold_ms - ks.hold_ms, 0.0) * _SHIFT_TRAIL
+            events.append((t_up + trail, seq, "up", "Shift"))
+            seq += 1
+            shift_open = False
+
+        t_down_prev, t_up_prev = t_down, t_up
+
+    events.sort(key=lambda e: (e[0], e[1]))
+    return [KeyEvent(t, action, key) for t, _s, action, key in events]

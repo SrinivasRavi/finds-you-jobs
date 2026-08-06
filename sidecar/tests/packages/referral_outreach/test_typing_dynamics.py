@@ -23,6 +23,7 @@ import statistics
 import pytest
 
 from sidecar.packages.referral_outreach.upstream import session
+from sidecar.packages.referral_outreach.upstream import typing_dynamics as td
 from sidecar.packages.referral_outreach.upstream.typing_dynamics import (
     DEFAULT_PERSONA,
     MIN_INTERVAL_MS,
@@ -284,10 +285,98 @@ def test_driver_never_inverts_two_presses():
     log = loc.keyboard.log
     downs = [t for k, key, t in log if k == "down" and key != "Shift"]
     assert downs == sorted(downs)
-    # ...and the previous key is always released before the next is pressed
-    # (rollover is item 1.2 and is deliberately absent here).
-    _holds, ikis = _holds_and_ikis(log)
-    assert min(ikis) >= 8.0
+
+
+# --- rollover (item 1.2) ----------------------------------------------------
+def _rollover_stats(log):
+    """Fraction of transitions where the next key goes down before the previous
+    key comes up, and the overlap magnitudes, read off the driver's own log."""
+    letters = [(i, key, t) for i, (k, key, t) in enumerate(log)
+               if k == "down" and key != "Shift"]
+    overlaps, rolled = [], 0
+    for n, (i, key, _t) in enumerate(letters[:-1]):
+        up_t = next(tt for k, kk, tt in log[i + 1:] if k == "up" and kk == key)
+        next_t = letters[n + 1][2]
+        if next_t < up_t:
+            rolled += 1
+            overlaps.append(up_t - next_t)
+    return rolled / max(len(letters) - 1, 1), overlaps
+
+
+def test_rollover_ratio_is_never_zero_and_lands_in_the_measured_band():
+    loc, _ = _drive(SAMPLE * 6, min_delay=50, max_delay=200)   # the 50 WPM persona
+    ratio, overlaps = _rollover_stats(loc.keyboard.log)
+    assert ratio > 0.0, "strict down->up->down is a one-dimensional discriminator"
+    assert 0.15 <= ratio <= 0.35, ratio        # corpus target 24% at 50 WPM
+    assert overlaps
+
+
+def test_rollover_overlap_magnitudes_match_the_corpus():
+    loc, _ = _drive(SAMPLE * 10, min_delay=50, max_delay=200)
+    _ratio, overlaps = _rollover_stats(loc.keyboard.log)
+    overlaps.sort()
+    median = statistics.median(overlaps)
+    p90 = overlaps[int(len(overlaps) * 0.9)]
+    assert 20 <= median <= 60, median          # target 39 ms
+    assert 55 <= p90 <= 140, p90               # target 95 ms
+    assert max(overlaps) <= td.MAX_OVERLAP_MS
+
+
+def test_rollover_scales_with_typing_speed():
+    slow = _rollover_stats(_drive(SAMPLE * 8, persona=TypingPersona(wpm=25))[0].keyboard.log)[0]
+    fast = _rollover_stats(_drive(SAMPLE * 8, persona=TypingPersona(wpm=95))[0].keyboard.log)[0]
+    assert slow < fast
+    assert 0.02 <= slow <= 0.16, slow          # corpus 7% at 25 WPM
+    assert 0.40 <= fast <= 0.68, fast          # corpus 52% at 95+ WPM
+
+
+def test_rollover_ratio_is_configurable_and_zero_is_reachable_only_explicitly():
+    off = _rollover_stats(
+        _drive(SAMPLE * 4, persona=TypingPersona(wpm=50, rollover_ratio=0.0))[0].keyboard.log)[0]
+    assert off == 0.0
+    high = _rollover_stats(
+        _drive(SAMPLE * 4, persona=TypingPersona(wpm=50, rollover_ratio=0.6))[0].keyboard.log)[0]
+    assert high > 0.25
+
+
+def test_rolled_over_stream_reads_down_down_up_up():
+    """The literal CDP-reachable ordering the digest names: down:x, down:y,
+    up:x, up:y — not the strict down:x, up:x, down:y, up:y we used to emit."""
+    loc, _ = _drive(SAMPLE * 4, min_delay=50, max_delay=200)
+    log = [(k, key) for k, key, _t in loc.keyboard.log if key != "Shift"]
+    found = any(
+        log[i][0] == "down" and log[i + 1][0] == "down"
+        and log[i + 2] == ("up", log[i][1]) and log[i + 3] == ("up", log[i + 1][1])
+        for i in range(len(log) - 3)
+    )
+    assert found
+
+
+def test_shift_is_held_once_across_a_run_of_shifted_characters():
+    loc, _ = _drive("aBCDe")
+    keys = [(k, key) for k, key, _t in loc.keyboard.log]
+    assert keys.count(("down", "Shift")) == 1
+    assert keys.count(("up", "Shift")) == 1
+    down_i = keys.index(("down", "Shift"))
+    up_i = keys.index(("up", "Shift"))
+    for letter in "BCD":
+        assert down_i < keys.index(("down", letter)) < up_i
+
+
+def test_schedule_is_time_ordered_and_balances_every_press():
+    ks = plan(SAMPLE * 3, DEFAULT_PERSONA, _rng())
+    evs = td.schedule(ks)
+    assert [e.t_ms for e in evs] == sorted(e.t_ms for e in evs)
+    downs = [e.key for e in evs if e.action == "down"]
+    ups = [e.key for e in evs if e.action == "up"]
+    assert sorted(downs) == sorted(ups)
+
+
+def test_key_dispatchability_classification():
+    assert td.is_key_dispatchable("a") and td.is_key_dispatchable("!")
+    assert td.is_key_dispatchable("\n")           # maps to Enter, as locator.type does
+    assert not td.is_key_dispatchable("é")
+    assert not td.is_key_dispatchable("✓")
 
 
 def test_shift_is_held_across_the_letter_it_modifies():
