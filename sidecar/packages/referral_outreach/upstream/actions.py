@@ -26,6 +26,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .client import PlaywrightLinkedinAPI, resolve_degree
 from .errors import AuthenticationError, ReachedConnectionLimit, SkipProfile
+from .mouse_dynamics import human_click
 from .scroll_dynamics import read_profile
 from .session import AccountSession, goto_page, human_type
 
@@ -288,7 +289,8 @@ def _is_pointer_intercepted(message: str) -> bool:
 
 def _click_through_overlay(locator, *, timeout_ms: int = _CLICK_TIMEOUT_MS) -> None:
     try:
-        locator.click(timeout=timeout_ms)
+        human_click(locator, timeout_ms=timeout_ms,
+                    fallback=lambda: locator.click(timeout=timeout_ms))
     except PlaywrightTimeoutError as e:
         if not _is_pointer_intercepted(str(e)):
             raise
@@ -435,8 +437,8 @@ def get_contact_sync_state(session: AccountSession, public_identifier: str) -> d
 # ── send connection request (no note — fastest & safest, upstream default) ──
 def _click_without_note(session: AccountSession) -> None:
     session.wait()
-    send_btn = session.page.locator(CONNECT_SELECTORS["send_now"])
-    send_btn.first.click(force=True)
+    send_btn = session.page.locator(CONNECT_SELECTORS["send_now"]).first
+    human_click(send_btn, fallback=lambda: send_btn.click(force=True))
     session.wait()
 
 
@@ -450,7 +452,8 @@ def _fill_note_and_send(session: AccountSession, note: str, *, timeout_ms: int) 
         return False
     human_type(note_box, note, 10, 50)
     session.wait()
-    session.page.locator(CONNECT_SELECTORS["send_invitation"]).first.click(force=True)
+    send = session.page.locator(CONNECT_SELECTORS["send_invitation"]).first
+    human_click(send, fallback=lambda: send.click(force=True))
     session.wait()
     return True
 
@@ -716,7 +719,8 @@ def _send_dm_via_ui(session: AccountSession, target_urn: str, message: str) -> b
         )
         session.wait(1, 2)
         human_type(_find_chain(session.page, "compose_input").first, message, 10, 50)
-        _find_chain(session.page, "compose_send").first.click(delay=200)
+        send = _find_chain(session.page, "compose_send").first
+        human_click(send, fallback=lambda: send.click(delay=200))
         session.wait(0.5, 1)
         return True
     except (PlaywrightError, TimeoutError) as e:
