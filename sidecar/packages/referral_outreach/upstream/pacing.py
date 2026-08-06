@@ -39,9 +39,27 @@ from pathlib import Path
 # inter-key distribution, and the one draw it produced was applied to every
 # keypress in a message.
 
-# --- inter-send jitter (US-REF-04 / NFR-LI-01: 30–90 s, jittered) ---
+# --- inter-send jitter (US-REF-04 / NFR-LI-01) ---
+# The 30 s floor is the account-safety guarantee and is unchanged. What changed
+# is the SHAPE above it. `uniform(30, 90)` has a near-constant hazard: given
+# that 60 s have passed, the next send is due almost immediately — the opposite
+# of a person, whose gaps have a DECREASING hazard (the longer the pause has
+# already run, the longer it is likely to run). This matters because LinkedIn's
+# own published detector is an LSTM over (request-path token, inter-request Δt)
+# sequences whose first production use case was detecting logged-in profile
+# scraping, and whose stated signal is that "the scraper's activity is more
+# homogenous, while the normal member's activity is more heterogeneous."
+#
+# Human page-dwell is Weibull with shape k < 1 on 98.5% of pages (median 0.65
+# -0.80) and scale ≤ 70 s on 80% (Liu/White/Dumais SIGIR'10, 205,873 URLs), so
+# the gap is drawn as floor + Weibull(k, λ). Every gap is therefore ≥ the old
+# minimum and the mean is LONGER than the old uniform (≈85 s vs 60 s) — this is
+# strictly more conservative, never faster. The cap only exists so a batch
+# cannot stall indefinitely on the tail.
 SEND_DELAY_MIN_S = 30.0
-SEND_DELAY_MAX_S = 90.0
+SEND_DELAY_WEIBULL_SHAPE = 0.72     # k < 1 → decreasing hazard
+SEND_DELAY_WEIBULL_SCALE_S = 45.0   # λ, inside the measured ≤ 70 s band
+SEND_DELAY_CAP_S = 900.0
 
 # --- pause between consecutive profile fetches inside discovery enrichment ---
 # Matches the tool we forked: OpenOutreach sleeps uniform(6, 10) s per scraped
@@ -320,8 +338,13 @@ def plan_for_membership(membership: str | None) -> str:
 
 
 def send_delay_seconds() -> float:
-    """One jittered inter-send pause. Callers sleep this between sends."""
-    return random.uniform(SEND_DELAY_MIN_S, SEND_DELAY_MAX_S)
+    """One inter-send pause: the 30 s floor plus a heavy-tailed Weibull draw.
+
+    Shape rather than range is the point — see the constants above. Never below
+    the floor, and on average longer than the uniform draw it replaces.
+    """
+    drawn = random.weibullvariate(SEND_DELAY_WEIBULL_SCALE_S, SEND_DELAY_WEIBULL_SHAPE)
+    return min(SEND_DELAY_MIN_S + drawn, SEND_DELAY_CAP_S)
 
 
 @dataclass

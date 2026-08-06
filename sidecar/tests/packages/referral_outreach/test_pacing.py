@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import statistics
+
 import pytest
 
 from sidecar.packages.referral_outreach.upstream.pacing import (
@@ -218,10 +220,47 @@ def test_save_prunes_entries_older_than_a_week(tmp_path):
     assert len(pacer.state.invites) == 1
 
 
-def test_send_delay_is_within_jitter_band():
-    for _ in range(50):
-        d = send_delay_seconds()
-        assert 30.0 <= d <= 90.0
+# --- inter-send delay SHAPE (not just range) --------------------------------
+# `uniform(30, 90)` has a near-constant hazard, which is the opposite of a
+# person and the exact homogeneity LinkedIn's published LSTM over
+# (request-path, inter-request Δt) is built to spot. These assert the
+# distribution, because a range check passes for the defect being fixed.
+
+
+def test_send_delay_never_goes_below_the_safety_floor():
+    assert min(send_delay_seconds() for _ in range(5000)) >= 30.0
+
+
+def test_send_delay_is_right_skewed_with_a_heavy_tail():
+    xs = [send_delay_seconds() for _ in range(20000)]
+    median = statistics.median(xs)
+    mean = statistics.fmean(xs)
+    assert mean > median * 1.25, (median, mean)      # uniform would be equal
+    assert 45 <= median <= 75, median
+    assert 70 <= mean <= 110, mean
+    # A uniform(30, 90) draw can never exceed 90; a human pause routinely does.
+    assert sum(1 for x in xs if x > 90) / len(xs) > 0.15
+    assert max(xs) <= 900.0                          # capped so a batch cannot stall
+
+
+def test_send_delay_hazard_decreases_which_uniform_can_never_do():
+    """Given the pause has already run 60 s, how much longer does it have left?
+    For a uniform draw that residual SHRINKS with elapsed time; for a human —
+    and for Weibull with k < 1 — it grows."""
+    xs = [send_delay_seconds() for _ in range(40000)]
+
+    def residual(elapsed):
+        rest = [x - elapsed for x in xs if x > elapsed]
+        return statistics.fmean(rest)
+
+    assert residual(90) > residual(45) > residual(30)
+
+
+def test_send_delay_is_not_a_uniform_band():
+    xs = [send_delay_seconds() for _ in range(20000)]
+    lower = sum(1 for x in xs if 30 <= x < 60) / len(xs)
+    upper = sum(1 for x in xs if 60 <= x < 90) / len(xs)
+    assert lower > upper * 1.6, (lower, upper)       # uniform would be equal
 
 
 # --- inter-send spacing (NFR-LI-01) -----------------------------------------
@@ -240,17 +279,18 @@ def test_wait_is_required_immediately_after_a_send(tmp_path):
     pacer = _pacer(tmp_path)
     now = 1_000_000.0
     pacer.record_invite(now=now)
-    wait = pacer.seconds_until_next_send(now=now)
-    # Jitter band is 30-90 s, so straight after a send the wait is within it.
-    assert 30.0 <= wait <= 90.0
+    # The 30 s floor is the guarantee; the ceiling is now the 900 s cap, not
+    # 90 s — the gap is floor + Weibull, so ~19% of draws exceed the old band.
+    for _ in range(200):
+        assert 30.0 <= pacer.seconds_until_next_send(now=now) <= 900.0
 
 
-def test_wait_decays_and_reaches_zero_past_the_band(tmp_path):
+def test_wait_decays_and_reaches_zero_past_the_cap(tmp_path):
     pacer = _pacer(tmp_path)
     now = 1_000_000.0
     pacer.record_invite(now=now)
     # Past the widest possible gap, no wait remains however the jitter falls.
-    assert pacer.seconds_until_next_send(now=now + 91.0) == 0.0
+    assert pacer.seconds_until_next_send(now=now + 900.0) == 0.0
 
 
 def test_dms_and_invites_share_one_send_clock(tmp_path):
