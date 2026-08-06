@@ -53,7 +53,7 @@ else carried verbatim with its GPL-era headers retained.
 | `url_utils.py` | `linkedin/url_utils.py` | Verbatim — public-id ↔ URL helpers. |
 | `client.py` | `linkedin/api/client.py` | Forked; `tenacity` retry → hand-rolled `_retry_io` (no added dep). **finds-you-jobs addition:** `search_jobs()` — logged-in job search via the `voyagerJobsDashJobCards` REST endpoint; endpoint/params/decoration DERIVED by observing LinkedIn's own web client (no third-party code copied). |
 | `jobs.py` | *new (GPL)* | finds-you-jobs-authored (OpenOutreach has no job-search feature) — parses the normalized `voyagerJobsDashJobCards` response into plain job dicts. GPL-3.0-only because it builds on the GPL fetch-in-page client. Discovery-expansion #6. |
-| `session.py` | `linkedin/browser/{session,login,nav}.py` | Adapted: Django dropped (cookies from a storage-state file); `playwright_stealth`/`termcolor` optional/dropped. |
+| `session.py` | `linkedin/browser/{session,login,nav}.py` | Adapted: Django dropped (cookies from a storage-state file); `playwright_stealth`/`termcolor` optional/dropped. **finds-you-jobs addition:** headless UA hardening — strips the `HeadlessChrome` marker so the UA string matches the client hints (which already report Google Chrome), removing a measured bot-detector tell. |
 | `actions.py` | `linkedin/actions/{connect,status,send_dm,message}.py` + `linkedin/api/messaging/{send,utils}.py` | Selector chains + no-note connect flow verbatim; `ProfileState` enum → plain strings; DB dump dropped. |
 | `discovery.py` | `linkedin/actions/search.py` + `linkedin/browser/nav.py` | Adapted: plain contact dicts (no Django), degree-first sort. |
 | `errors.py` | `linkedin/exceptions.py` | Forked + `RateLimited`/`ReachedConnectionLimit` added. |

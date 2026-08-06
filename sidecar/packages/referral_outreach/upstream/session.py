@@ -167,12 +167,16 @@ def _sandboxed_launch(launch: Callable[[bool], object]):
         return launch(False)
 
 
-def _launch_persistent(playwright, user_data_dir: str, *, headless: bool):
+def _launch_persistent(
+    playwright, user_data_dir: str, *, headless: bool, user_agent: str | None = None
+):
     kwargs = {
         "headless": headless,
         "args": _LAUNCH_ARGS,
         "ignore_default_args": _IGNORE_DEFAULT_ARGS,
     }
+    if user_agent:
+        kwargs["user_agent"] = user_agent
     try:
         return _sandboxed_launch(
             lambda sandbox: playwright.chromium.launch_persistent_context(
@@ -205,6 +209,56 @@ def _launch_browser(playwright, *, headless: bool):
         return _sandboxed_launch(
             lambda sandbox: playwright.chromium.launch(chromium_sandbox=sandbox, **kwargs)
         )
+
+
+# UA hardening (2026-08-06 — finds-you-jobs fork; measured against public bot
+# detectors). Real headless Chrome leaks `HeadlessChrome` in the UA *string* while
+# its client hints already report Google Chrome; fingerprinters read that mismatch
+# as a headless tell (CreepJS scored 67% headless on it, 0% once the string is
+# realigned). We hand Playwright a de-marked UA and let it rebuild coherent client
+# hints from it. Headed Chrome is already clean, so this only runs headless. It
+# does NOT make the session "not headless" — window-chrome dimensions still differ
+# (`outerHeight == innerHeight`); closing that is a separate, deliberate decision.
+_HEADLESS_UA_CACHE: dict[str, str | None] = {}
+
+
+def _dechrome_headless_marker(user_agent: str) -> str | None:
+    """`user_agent` with the `HeadlessChrome` token replaced by `Chrome`, or None
+    when the token is absent (nothing to fix)."""
+    if "HeadlessChrome" not in user_agent:
+        return None
+    return user_agent.replace("HeadlessChrome", "Chrome")
+
+
+def _headless_chrome_ua(playwright) -> str | None:
+    """The installed Chrome's headless UA with the headless marker stripped, or
+    None when it can't be determined (probe failure, or a build whose UA already
+    reads `Chrome`). Cached per process — the UA is a property of the binary,
+    identical across launches. Probes with a throwaway headless launch and reads
+    only `navigator.userAgent` (which, unlike `navigator.userAgentData`, needs no
+    secure context). Best-effort: any failure leaves the UA untouched."""
+    if "ua" in _HEADLESS_UA_CACHE:
+        return _HEADLESS_UA_CACHE["ua"]
+    result: str | None = None
+    try:
+        browser = _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch(
+                channel="chrome",
+                headless=True,
+                chromium_sandbox=sandbox,
+                args=_LAUNCH_ARGS,
+                ignore_default_args=_IGNORE_DEFAULT_ARGS,
+            )
+        )
+        try:
+            raw = browser.new_page().evaluate("() => navigator.userAgent")
+        finally:
+            browser.close()
+        result = _dechrome_headless_marker(raw)
+    except Exception as e:  # noqa: BLE001 — UA hardening is best-effort, never fatal
+        logger.debug("headless UA probe failed, leaving UA unchanged: %s", e)
+    _HEADLESS_UA_CACHE["ua"] = result
+    return result
 
 
 def dismiss_comply_gate(page, timeout_ms: int = 5000) -> bool:
@@ -282,8 +336,9 @@ class AccountSession:
         first_run = not self.user_data_dir.exists() or not any(self.user_data_dir.iterdir())
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
         self.playwright = sync_playwright().start()
+        ua = _headless_chrome_ua(self.playwright) if not self.headed else None
         self.context = _launch_persistent(
-            self.playwright, str(self.user_data_dir), headless=not self.headed
+            self.playwright, str(self.user_data_dir), headless=not self.headed, user_agent=ua
         )
         self.browser = None  # persistent context owns its own browser
         self.context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
@@ -317,7 +372,10 @@ class AccountSession:
         storage_state = self._load_storage_state()
         self.playwright = sync_playwright().start()
         self.browser = _launch_browser(self.playwright, headless=not self.headed)
-        self.context = self.browser.new_context(storage_state=storage_state)
+        ua = _headless_chrome_ua(self.playwright) if not self.headed else None
+        self.context = self.browser.new_context(
+            storage_state=storage_state, **({"user_agent": ua} if ua else {})
+        )
         self.context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
         self.context.set_default_navigation_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
         _maybe_apply_stealth(self.context)

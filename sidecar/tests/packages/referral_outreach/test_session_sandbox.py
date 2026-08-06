@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from sidecar.packages.referral_outreach.upstream.session import (
+    _dechrome_headless_marker,
     _launch_browser,
     _launch_persistent,
     _sandboxed_launch,
@@ -101,3 +102,37 @@ def test_launch_persistent_passes_chromium_sandbox_true(tmp_path) -> None:
     assert _launch_persistent(pw, profile_dir, headless=True) == "browser"
     assert chromium.launches[0]["user_data_dir"] == profile_dir
     assert chromium.launches[0]["chromium_sandbox"] is True
+
+
+# --- headless UA hardening (strip the HeadlessChrome marker) ---
+
+_HEADLESS_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) HeadlessChrome/150.0.0.0 Safari/537.36"
+)
+
+
+def test_dechrome_headless_marker_strips_the_marker() -> None:
+    fixed = _dechrome_headless_marker(_HEADLESS_UA)
+    assert fixed is not None
+    assert "HeadlessChrome" not in fixed
+    assert "Chrome/150.0.0.0 Safari/537.36" in fixed
+
+
+def test_dechrome_headless_marker_noop_on_a_clean_ua() -> None:
+    # A UA that already reads Chrome has nothing to fix → None (no override).
+    assert _dechrome_headless_marker(_HEADLESS_UA.replace("HeadlessChrome", "Chrome")) is None
+
+
+def test_launch_persistent_sets_user_agent_when_given(tmp_path) -> None:
+    chromium = RecordingChromium()
+    pw = SimpleNamespace(chromium=chromium)
+    _launch_persistent(pw, str(tmp_path / "p"), headless=True, user_agent="UA/1.0")
+    assert chromium.launches[0]["user_agent"] == "UA/1.0"
+
+
+def test_launch_persistent_omits_user_agent_when_none(tmp_path) -> None:
+    chromium = RecordingChromium()
+    pw = SimpleNamespace(chromium=chromium)
+    _launch_persistent(pw, str(tmp_path / "p"), headless=True, user_agent=None)
+    assert "user_agent" not in chromium.launches[0]
