@@ -18,6 +18,7 @@ torn down after each run (NFR-MEM-02)."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import random
 import time
@@ -387,14 +388,123 @@ def goto_page(session: AccountSession, action, expected_url_pattern: str,
         raise RuntimeError(f"{error_message} → expected '{expected_url_pattern}' | got '{current}'")
 
 
-def human_type(locator, text: str, min_delay: int | None = None, max_delay: int | None = None):
-    """Type with randomized per-keystroke delay (upstream nav.human_type).
+# Presses are scheduled against a monotonic clock rather than by sleeping the
+# sampled duration outright, because every `keyboard.down`/`up` is an awaited
+# CDP round-trip. Measured on the real path: ~57 ms of transport per keystroke,
+# which sleeping naively would ADD to every sampled interval and push the whole
+# distribution well off its target. A minimum separation is still enforced so a
+# slow round-trip can never invert the order of two presses.
+_MIN_PRESS_SEPARATION_MS = 8.0
 
-    The delay itself comes from `pacing.human_type_delay_ms` — the same jitter
-    this used to re-implement inline while that helper sat callerless."""
-    from .pacing import human_type_delay_ms
 
-    locator.type(text, delay=human_type_delay_ms(min_delay, max_delay))
+class _Schedule:
+    """A press timeline in milliseconds, played out against a real clock."""
+
+    def __init__(self, clock, sleep):
+        self._clock = clock
+        self._sleep = sleep
+        self.now_ms = 0.0
+        self._origin = clock()
+
+    def elapsed_ms(self) -> float:
+        return (self._clock() - self._origin) * 1000.0
+
+    def wait_until(self, target_ms: float) -> None:
+        self.now_ms = max(self.now_ms, target_ms)
+        remaining = target_ms - self.elapsed_ms()
+        if remaining > 0:
+            self._sleep(remaining / 1000.0)
+
+
+def _press_keystroke(keyboard, ks, sched, *, fallback) -> float:
+    """One planned keystroke, dispatched at key level so dwell is real.
+
+    Returns the timeline position (ms) at which the key went DOWN — the anchor
+    the next keystroke's press-to-press interval is measured from.
+
+    Shift, when needed, goes down BEFORE the letter and comes up AFTER it — it
+    spans the keypress it modifies, which is what a person's hand does and what
+    `keyboard.type()` can never produce (it presses capitals with no Shift event
+    at all, so `event.shiftKey` is false on a capital letter).
+    """
+    shift_down = False
+    down_at = sched.now_ms
+    try:
+        if ks.shift:
+            # A slice of the Shift hold is spent before the letter goes down.
+            lead = min(ks.shift_hold_ms * 0.3, max(ks.shift_hold_ms - ks.hold_ms, 0.0))
+            keyboard.down("Shift")
+            shift_down = True
+            down_at += lead
+            sched.wait_until(down_at)
+        keyboard.down(ks.char)
+    except Exception:  # noqa: BLE001 — no key definition for this character
+        if shift_down:
+            with contextlib.suppress(Exception):
+                keyboard.up("Shift")
+        sched.wait_until(down_at + ks.hold_ms)
+        fallback(ks.char)
+        return down_at
+    sched.wait_until(down_at + ks.hold_ms)
+    keyboard.up(ks.char)
+    if shift_down:
+        sched.wait_until(down_at + ks.hold_ms
+                         + max(ks.shift_hold_ms - ks.hold_ms, 0.0) * 0.7)
+        keyboard.up("Shift")
+    return down_at
+
+
+def human_type(
+    locator,
+    text: str,
+    min_delay: int | None = None,
+    max_delay: int | None = None,
+    *,
+    persona=None,
+    rng=None,
+    sleep=time.sleep,
+    clock=time.monotonic,
+):
+    """Type `text` with a real per-keystroke keystroke-dynamics model.
+
+    Replaces the previous `locator.type(text, delay=<one draw>)`, whose `delay`
+    parameter applies the SAME pause between every keypress — one interval drawn
+    per message, then typed metronomically, so inter-key variance inside a
+    message was exactly zero and dwell was a flat ~93 ms. Both are
+    zero-training discriminators over a ~70-keystroke message
+    (`docs/internal/embedded-browser.md` §15.3 / §17.2).
+
+    Now: the target is focused through the locator and the keyboard is driven
+    key by key, with the interval and the hold sampled independently per
+    keystroke from the measured distributions in `typing_dynamics`. Characters
+    with no key definition (non-ASCII) fall back to `locator.type(ch)` for that
+    one character — still per-keystroke interval, flat dwell. `Input.insertText`
+    and setting `.value` are never used: both emit `input` with no key events at
+    all, a documented tell.
+
+    `min_delay`/`max_delay` are kept for the existing call sites and re-read as
+    a SPEED PERSONA (see `typing_dynamics.persona_for_legacy_bounds`) — the old
+    10-50 ms pair meant "type fast", not "draw uniformly from 10-50 ms", which
+    would be 240-1200 WPM.
+    """
+    from .typing_dynamics import persona_for_legacy_bounds, plan
+
+    persona = persona or persona_for_legacy_bounds(min_delay, max_delay)
+    locator.focus()
+    keyboard = locator.page.keyboard
+    sched = _Schedule(clock, sleep)
+    prev_down_at: float | None = None
+    prev_hold_ms = 0.0
+    for ks in plan(text, persona, rng):
+        if prev_down_at is not None:
+            # Press-to-press. The previous key is already released by this point
+            # (rollover is item 1.2), so the press can never land before that
+            # release plus a minimum separation.
+            sched.wait_until(max(prev_down_at + ks.iki_ms,
+                                 prev_down_at + prev_hold_ms + _MIN_PRESS_SEPARATION_MS))
+        prev_down_at = _press_keystroke(keyboard, ks, sched,
+                                        fallback=lambda ch: locator.type(ch))
+        prev_hold_ms = ks.hold_ms
 
 
 def raise_if_unresponsive(fired: bool, label: str, deadline_s: float) -> None:

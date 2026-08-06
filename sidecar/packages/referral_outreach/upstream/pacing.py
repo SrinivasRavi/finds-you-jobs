@@ -34,9 +34,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# --- human-paced composition (upstream conf.py HUMAN_TYPE_*_DELAY_MS) ---
-HUMAN_TYPE_MIN_DELAY_MS = 50
-HUMAN_TYPE_MAX_DELAY_MS = 200
+# Keystroke timing (upstream conf.py HUMAN_TYPE_*_DELAY_MS) now lives in
+# `typing_dynamics.py`: a single uniform millisecond band cannot express an
+# inter-key distribution, and the one draw it produced was applied to every
+# keypress in a message.
 
 # --- inter-send jitter (US-REF-04 / NFR-LI-01: 30–90 s, jittered) ---
 SEND_DELAY_MIN_S = 30.0
@@ -316,15 +317,6 @@ def plan_for_membership(membership: str | None) -> str:
     gate. The ONE place this mapping lives — the driver factory, the send
     entrypoint, and the rate-limits route all derive from here."""
     return "free" if (membership or DEFAULT_MEMBERSHIP).strip().lower() == "free" else "premium"
-
-
-def human_type_delay_ms(min_ms: int | None = None, max_ms: int | None = None) -> int:
-    """One randomized per-keystroke delay (mimics human typing). `None` bounds
-    fall back to the module defaults; `session.human_type` passes the per-call
-    overrides its callers give it (the note/DM compose paths type faster)."""
-    lo = HUMAN_TYPE_MIN_DELAY_MS if min_ms is None else min_ms
-    hi = HUMAN_TYPE_MAX_DELAY_MS if max_ms is None else max_ms
-    return random.randint(lo, hi)
 
 
 def send_delay_seconds() -> float:
