@@ -72,7 +72,21 @@ export function BrowserSurface() {
           setError(msg.message);
         }
       },
-      onState: setState,
+      onState: (next: ScreencastState) => {
+        setState(next);
+        // The instant the socket is live, hand the surface our real display
+        // geometry (this webview's own window.screen) so it lays the page out at
+        // the true monitor size, before the first navigation. Re-sent on every
+        // reconnect, since a fresh socket faces a fresh surface.
+        if (next === "live") {
+          client.sendViewport({
+            width: screen.width,
+            height: screen.height,
+            dpr: window.devicePixelRatio,
+            colorDepth: screen.colorDepth,
+          });
+        }
+      },
     });
     clientRef.current = client;
     client.connect();

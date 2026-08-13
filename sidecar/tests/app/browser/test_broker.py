@@ -33,7 +33,12 @@ from sidecar.app.browser import launch as launch_module
 from sidecar.app.browser.broker import SurfaceSession
 
 FRAME_BYTES = b"\xff\xd8\xff\xe0-not-really-a-jpeg"
-STOCK_KWARGS = {"headless": True, "channel": "chrome", "chromium_sandbox": True}
+# A de-headlessed Chrome UA, standing in for the throwaway-launch resolution so
+# no test spends a real Chrome. The guardrails nail this onto the launch flag.
+FAKE_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
 
 
 def _frame_params(session_id: int, *, data: bytes = FRAME_BYTES) -> dict[str, Any]:
@@ -161,8 +166,9 @@ async def broker(tmp_path: Path, fake: FakeBrowser) -> AsyncIterator[BrowserBrok
     instance = BrowserBroker(
         tmp_path / "data",
         asyncio.get_running_loop(),
-        launch_kwargs=dict(STOCK_KWARGS),
         opener=fake.opener,
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=0.3,
     )
     try:
         yield instance
@@ -173,7 +179,12 @@ async def broker(tmp_path: Path, fake: FakeBrowser) -> AsyncIterator[BrowserBrok
 async def test_nothing_launches_until_a_surface_is_asked_for(
     tmp_path: Path, fake: FakeBrowser
 ) -> None:
-    broker = BrowserBroker(tmp_path / "data", asyncio.get_running_loop(), opener=fake.opener)
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=fake.opener,
+        user_agent_resolver=lambda: FAKE_UA,
+    )
     assert fake.opened == []
     assert broker.live_slugs == frozenset()
 
@@ -203,11 +214,19 @@ async def test_screencast_starts_once_with_the_expected_params(
     ]
 
 
-async def test_launch_kwargs_reach_the_launcher_unchanged(
+async def test_the_launcher_gets_the_guardrailed_kwargs(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
     await broker.surface("pane-a").wait_ready()
-    assert fake.opened[0][1] == STOCK_KWARGS
+    kwargs = fake.opened[0][1]
+    assert kwargs["headless"] is True
+    assert kwargs["channel"] == "chrome"
+    assert kwargs["chromium_sandbox"] is True
+    # The automation switches are dropped, the de-headlessed UA is a launch flag,
+    # and the blink flag that clears navigator.webdriver rides along.
+    assert "--enable-automation" in kwargs["ignore_default_args"]
+    assert f"--user-agent={FAKE_UA}" in kwargs["args"]
+    assert "--disable-blink-features=AutomationControlled" in kwargs["args"]
 
 
 async def test_delivered_frame_is_acked_only_after_the_viewer_flushes(
@@ -286,6 +305,8 @@ async def test_navigate_and_evaluate_run_on_the_surface_thread(
     surface = broker.surface("pane-a")
     await surface.wait_ready()
 
+    # Geometry first: it releases the navigation, which fails closed without it.
+    await asyncio.wrap_future(surface.set_geometry(1280, 800, 2.0))
     navigated = surface.navigate("https://example.test/page")
     evaluated = surface.evaluate("1 + 1")
     assert await asyncio.wrap_future(navigated) == "https://example.test/page"
@@ -309,6 +330,68 @@ async def test_resize_moves_the_frame_ceiling_and_clamps_it(
     ]
 
 
+async def test_set_geometry_overrides_the_device_metrics(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    await asyncio.wrap_future(surface.set_geometry(1512, 982, 2.0))
+    assert fake.cdp.methods("Emulation.setDeviceMetricsOverride") == [
+        {
+            "width": 1512,
+            "height": 982,
+            "deviceScaleFactor": 2.0,
+            "screenWidth": 1512,
+            "screenHeight": 982,
+            "mobile": False,
+        }
+    ]
+
+
+async def test_the_first_navigation_fails_closed_without_geometry(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """No geometry, no navigation: the page must never lay out at a generic size.
+    The fixture's short `geometry_timeout` is what bounds this wait."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    with pytest.raises(BrowserLaunchError, match="display geometry"):
+        await asyncio.wrap_future(surface.navigate("https://example.test/"))
+    assert fake.page.calls == []  # goto never ran
+
+
+async def test_the_user_agent_is_resolved_once_and_shared(tmp_path: Path) -> None:
+    """One throwaway launch per process: the first surface resolves the UA, every
+    later surface reuses the cached string on its own launch flag."""
+    calls = 0
+
+    def resolver() -> str:
+        nonlocal calls
+        calls += 1
+        return FAKE_UA
+
+    fakes = {slug: FakeBrowser() for slug in ("pane-a", "pane-b")}
+
+    def opener(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
+        return fakes[profile_dir.parent.name].opener(profile_dir, launch_kwargs)
+
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=opener,
+        user_agent_resolver=resolver,
+    )
+    for slug in fakes:
+        await broker.surface(slug).wait_ready()
+
+    assert calls == 1
+    for f in fakes.values():
+        assert f"--user-agent={FAKE_UA}" in f.opened[0][1]["args"]
+    broker.shutdown()
+
+
 async def test_broker_never_enables_the_runtime_domain(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
@@ -318,6 +401,7 @@ async def test_broker_never_enables_the_runtime_domain(
     await surface.wait_ready()
     surface.set_viewer(Viewer())
     fake.emit(51)
+    await asyncio.wrap_future(surface.set_geometry(1280, 800, 2.0))
     await asyncio.wrap_future(surface.navigate("https://example.test/"))
     await asyncio.wrap_future(surface.resize(800, 600))
     surface.shutdown()
@@ -359,7 +443,12 @@ async def test_broker_shutdown_closes_every_surface(tmp_path: Path) -> None:
     def opener(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
         return fakes[profile_dir.parent.name].opener(profile_dir, launch_kwargs)
 
-    broker = BrowserBroker(tmp_path / "data", asyncio.get_running_loop(), opener=opener)
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=opener,
+        user_agent_resolver=lambda: FAKE_UA,
+    )
     for slug in fakes:
         await broker.surface(slug).wait_ready()
     assert broker.live_slugs == frozenset(fakes)
@@ -375,7 +464,12 @@ async def test_launch_failure_reaches_the_caller(tmp_path: Path) -> None:
     def boom(_profile_dir: Path, _launch_kwargs: dict[str, Any]) -> SurfaceSession:
         raise RuntimeError("Chromium is not installed")
 
-    broker = BrowserBroker(tmp_path / "data", asyncio.get_running_loop(), opener=boom)
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=boom,
+        user_agent_resolver=lambda: FAKE_UA,
+    )
     surface = broker.surface("pane-a")
     with pytest.raises(BrowserLaunchError, match="Chromium is not installed"):
         await surface.wait_ready()

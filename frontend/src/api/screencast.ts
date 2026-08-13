@@ -27,9 +27,20 @@ export type ScreencastControl =
   | { type: "status"; url?: string; state?: string; surface?: string }
   | { type: "error"; message: string };
 
-/** Commands the surface sends back. Both are last-write-wins statements of
+/** The frontend's real display geometry, read from `window.screen`. Sent once
+ *  the socket opens so the surface lays its page out at the true monitor size
+ *  instead of a generic default. */
+export interface ViewportMetrics {
+  width: number;
+  height: number;
+  dpr: number;
+  colorDepth: number;
+}
+
+/** Commands the surface sends back. Each is a last-write-wins statement of
  *  intent, which is what lets a queued one be replaced rather than stacked. */
 type ScreencastCommand =
+  | { type: "viewport"; width: number; height: number; dpr: number; colorDepth: number }
   | { type: "navigate"; url: string }
   | { type: "resize"; width: number; height: number };
 
@@ -78,6 +89,10 @@ export class ScreencastClient {
     const ws = this.socket;
     this.socket = null;
     ws?.close();
+  }
+
+  sendViewport(metrics: ViewportMetrics): void {
+    this.send({ type: "viewport", ...metrics });
   }
 
   sendNavigate(url: string): void {

@@ -38,6 +38,7 @@ class FakeSurface:
         self.acks: list[int] = []
         self.navigations: list[str] = []
         self.resizes: list[tuple[int, int]] = []
+        self.geometries: list[tuple[int, int, float]] = []
 
     async def wait_ready(self) -> None:
         if self.launch_error is not None:
@@ -63,6 +64,9 @@ class FakeSurface:
 
     def resize(self, width: int, height: int) -> None:
         self.resizes.append((width, height))
+
+    def set_geometry(self, width: int, height: int, dpr: float) -> None:
+        self.geometries.append((width, height, dpr))
 
 
 class FakeBroker:
@@ -181,6 +185,21 @@ def test_client_control_messages_reach_the_surface(
         # Still live after the malformed and the unknown message.
         ws.send_text(json.dumps({"type": "navigate", "url": "https://second.test/"}))
         assert _eventually(lambda: len(surface.navigations) == 2)
+
+
+def test_viewport_control_message_sets_the_display_geometry(
+    client: TestClient, broker: FakeBroker
+) -> None:
+    with client.websocket_connect(_url(surface="pane-a")) as ws:
+        ws.receive_text()  # status
+        ws.receive_bytes()  # the one frame
+        ws.send_text(
+            json.dumps(
+                {"type": "viewport", "width": 1512, "height": 982, "dpr": 2.0, "colorDepth": 30}
+            )
+        )
+        surface = broker.surfaces["pane-a"]
+        assert _eventually(lambda: surface.geometries == [(1512, 982, 2.0)])
 
 
 def test_default_surface_when_the_client_names_none(

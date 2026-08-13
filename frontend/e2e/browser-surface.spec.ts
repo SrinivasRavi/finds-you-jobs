@@ -36,6 +36,27 @@ const PAGES = [
   { name: "wikipedia", url: "https://www.wikipedia.org", host: "wikipedia.org" },
 ] as const;
 
+// A coarse, quantized signature of what the screencast canvas is actually
+// painting. The canvas is drawn from same-origin JPEG blobs, so getImageData
+// is readable (not tainted). Two different pages produce different signatures;
+// quantizing the samples keeps a blinking cursor from perturbing it.
+const CANVAS_SIG = `(() => {
+  const c = document.querySelector('[data-testid="screencast-canvas"]');
+  if (!c || !c.width || !c.height) return "blank";
+  const ctx = c.getContext("2d");
+  const cols = 16, rows = 16;
+  let sig = "";
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const x = Math.floor((i + 0.5) * c.width / cols);
+      const y = Math.floor((j + 0.5) * c.height / rows);
+      const d = ctx.getImageData(x, y, 1, 1).data;
+      sig += (d[0] >> 5).toString(8) + (d[1] >> 5).toString(8) + (d[2] >> 5).toString(8);
+    }
+  }
+  return sig;
+})()`;
+
 test("screencast: a live stream that paints frames for every navigation", async ({
   page,
   request,
@@ -55,21 +76,29 @@ test("screencast: a live stream that paints frames for every navigation", async 
   const frameCount = page.getByTestId("frame-count");
   const pageUrl = page.getByTestId("screencast-page-url");
   for (const { name, url, host } of PAGES) {
-    // Snapshot the frame count at click time, before this navigation paints,
-    // so a static page whose compositor goes idle after its first render still
-    // proves a repaint. Sampling after the commit misses that render.
+    // The signature the canvas paints before this navigation. After we navigate
+    // away, the old page stops producing frames, so the canvas can only settle
+    // on the new page — which is why waiting for the signature to leave this
+    // value proves the canvas actually caught up, not a stale old-page frame.
+    const beforeSig = await page.evaluate(CANVAS_SIG);
     const before = Number(await frameCount.textContent());
     await page.getByTestId("browser-url").fill(url);
     await page.getByTestId("browser-go").click();
-    // The load-bearing check: screencast-page-url is driven ONLY by the
-    // sidecar's committed page.url, so a stale paint shows the wrong host and
-    // fails here even while frames keep climbing.
+    // Load-bearing: screencast-page-url is driven ONLY by the sidecar's
+    // committed page.url, so a stale paint shows the wrong host and fails here.
     await expect(pageUrl).toContainText(host, { timeout: 20_000 });
-    // And the new page produced at least one paint of its own since the click,
-    // which a stale paint of the old host can't satisfy alongside the URL match.
+    // Frames flowed since the click (the transport is live).
     await expect(async () => {
       expect(Number(await frameCount.textContent())).toBeGreaterThan(before);
     }).toPass({ timeout: 20_000 });
+    // And the canvas has actually left the previous page. This waits out the
+    // screencast latency, so the screenshot below is a trustworthy artifact
+    // rather than a race against the pipeline.
+    await expect
+      .poll(async () => page.evaluate(CANVAS_SIG), { timeout: 20_000, intervals: [200, 300, 500] })
+      .not.toBe(beforeSig);
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(CANVAS_SIG)).not.toBe(beforeSig);
     await expect(page.getByTestId("screencast-error")).toHaveCount(0);
     await page.screenshot({ path: `${DIR}/${name}.png`, fullPage: true });
   }

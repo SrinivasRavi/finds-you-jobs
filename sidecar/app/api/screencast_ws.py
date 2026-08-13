@@ -2,8 +2,9 @@
 
 Binary messages are one JPEG screencast frame each. Text messages are JSON
 control in both directions: the server sends `status` and `error`, the client
-sends `navigate` and `resize`. Which surface a socket attaches to is a
-`?surface=` slug the client passes, never a name this file knows
+sends `viewport` (once, on open, carrying its real display geometry), `navigate`
+and `resize`. Which surface a socket attaches to is a `?surface=` slug the client
+passes, never a name this file knows
 (`docs/internal/plugin-architecture.md` section 8.1 rule 5).
 
 Auth is checked here rather than in the middleware, and both halves of that are
@@ -139,7 +140,19 @@ async def _apply_command(
     frame; a timeout or a dead surface is reported as an `error` and never
     crashes the reader."""
     kind = command.get("type")
-    if kind == "navigate":
+    if kind == "viewport":
+        # The frontend's own `window.screen` (its webview reports the real
+        # monitor; a Playwright-driven browser reports its emulated one), applied
+        # as the surface's display geometry. Sent the instant the socket opens, so
+        # it lands before the first navigation, which fails closed without it.
+        width, height, dpr = command.get("width"), command.get("height"), command.get("dpr")
+        if (
+            isinstance(width, int)
+            and isinstance(height, int)
+            and isinstance(dpr, (int, float))
+        ):
+            surface.set_geometry(width, height, dpr)
+    elif kind == "navigate":
         url = command.get("url")
         if isinstance(url, str) and url:
             try:

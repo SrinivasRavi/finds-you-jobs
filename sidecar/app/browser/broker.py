@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from ..logging_setup import get_logger
-from .launch import open_persistent_context, stock_launch_kwargs
+from .launch import minimal_launch_kwargs, open_persistent_context, resolve_user_agent
 
 # Screencast wire settings. JPEG at 60 keeps a full-page frame in the tens of
 # kilobytes, which a loopback websocket ships without thinking about it.
@@ -59,6 +59,12 @@ THREAD_TICK_MS = 8
 LAUNCH_TIMEOUT_SECONDS = 60.0
 # How long `shutdown` waits for a surface thread to finish its teardown.
 SHUTDOWN_TIMEOUT_SECONDS = 5.0
+# How long the first navigation waits for the frontend's display geometry before
+# it fails closed. A conforming viewer sends geometry the instant its websocket
+# opens, long before it can drive a navigation, so this only ever elapses when
+# geometry never arrives — and then we error rather than lay a page out at a
+# generic size that would betray the surface (Our Finding on real display).
+GEOMETRY_TIMEOUT_SECONDS = 10.0
 
 # A slug names a surface AND a directory under the data dir, so it stays a
 # single safe path segment.
@@ -132,20 +138,28 @@ class BrowserSurface:
         slug: str,
         profile_dir: Path,
         loop: asyncio.AbstractEventLoop | None,
-        launch_kwargs: dict[str, Any],
+        launch_kwargs: Callable[[], dict[str, Any]],
         *,
         opener: Opener = open_session,
+        geometry_timeout: float = GEOMETRY_TIMEOUT_SECONDS,
     ) -> None:
         self.slug = slug
         self._profile_dir = Path(profile_dir)
         self._loop = loop
-        self._launch_kwargs = dict(launch_kwargs)
+        # A callable, not a dict: building the kwargs can spend a throwaway Chrome
+        # launch (de-headlessing the UA), which must run on the surface thread,
+        # never the serving loop. It is invoked once, inside `_run`.
+        self._launch_kwargs = launch_kwargs
         self._opener = opener
+        self._geometry_timeout = geometry_timeout
         self._log = get_logger()
         self._thread: threading.Thread | None = None
         self._stopping = threading.Event()
         # Set from the surface thread, awaited on the serving loop.
         self._ready = asyncio.Event()
+        # Set on the surface thread once the frontend's display geometry has been
+        # applied; the first navigation waits on it, fail-closed.
+        self._geometry_ready = threading.Event()
         self._error: BaseException | None = None
         self._acks: queue.SimpleQueue[int] = queue.SimpleQueue()
         self._commands: queue.SimpleQueue[
@@ -198,8 +212,14 @@ class BrowserSurface:
     def _run(self) -> None:
         session: SurfaceSession | None = None
         try:
-            session = self._opener(self._profile_dir, dict(self._launch_kwargs))
+            # Compute the launch kwargs here, on the surface thread: it may spend a
+            # throwaway Chrome launch to de-headless the UA (`resolve_user_agent`).
+            session = self._opener(self._profile_dir, self._launch_kwargs())
             session.cdp.on("Page.screencastFrame", self._on_frame)
+            # The continuous screencast (everyNthFrame:1) is also the surface's
+            # requestAnimationFrame cadence source: Chrome services rAF while it is
+            # capturing. It must never be paused while a surface is live, or the
+            # page's animation loop stalls with it.
             session.cdp.send("Page.startScreencast", self._screencast_params())
         except Exception as exc:  # noqa: BLE001 — reported through `wait_ready`
             self._error = exc
@@ -334,13 +354,50 @@ class BrowserSurface:
     def navigate(self, url: str) -> Future[Any]:
         """Point the surface at `url` and hand back the committed, post-redirect
         main-frame URL through the future. The URL is a runtime argument; core
-        holds no destination of its own."""
+        holds no destination of its own.
+
+        Fail-closed on display geometry: the first navigation waits until the
+        frontend's real screen metrics have been applied, and errors rather than
+        lay the page out at a generic 1280x720 that would betray the surface. The
+        wait resolves instantly once geometry is set (a latch), so only the first
+        navigation ever blocks on it, and only the surface thread does — geometry
+        is applied by an earlier queued command, so it is already set by the time
+        this drains in order.
+        """
 
         def _go(session: SurfaceSession) -> str:
+            if not self._geometry_ready.wait(self._geometry_timeout):
+                raise BrowserLaunchError(
+                    f"browser surface {self.slug!r} was asked to navigate before "
+                    "the frontend sent its display geometry"
+                )
             session.page.goto(url, wait_until="domcontentloaded")
             return session.page.url
 
         return self._submit(_go)
+
+    def set_geometry(self, width: int, height: int, dpr: float) -> Future[Any]:
+        """Lay the page out at the frontend's real display, read from its own
+        `window.screen` and sent over the control channel. Overrides the device
+        metrics so the page believes it is that size, then releases the first
+        navigation. Sent BEFORE the first navigate by a conforming viewer, so it
+        drains ahead of it and the navigation never waits."""
+
+        def _apply(session: SurfaceSession) -> None:
+            session.cdp.send(
+                "Emulation.setDeviceMetricsOverride",
+                {
+                    "width": width,
+                    "height": height,
+                    "deviceScaleFactor": dpr,
+                    "screenWidth": width,
+                    "screenHeight": height,
+                    "mobile": False,
+                },
+            )
+            self._geometry_ready.set()
+
+        return self._submit(_apply)
 
     def resize(self, width: int, height: int) -> Future[Any]:
         """Move the screencast's frame ceiling to fit the viewer's pane.
@@ -405,17 +462,31 @@ class BrowserBroker:
         data_dir: Path | str,
         loop: asyncio.AbstractEventLoop | None = None,
         *,
-        launch_kwargs: dict[str, Any] | None = None,
         opener: Opener = open_session,
+        user_agent_resolver: Callable[[], str] = resolve_user_agent,
+        geometry_timeout: float = GEOMETRY_TIMEOUT_SECONDS,
     ) -> None:
         self._root = Path(data_dir) / "browser"
         self._loop = loop
-        self._launch_kwargs = (
-            dict(launch_kwargs) if launch_kwargs is not None else stock_launch_kwargs()
-        )
         self._opener = opener
+        self._user_agent_resolver = user_agent_resolver
+        self._geometry_timeout = geometry_timeout
+        # The de-headlessed UA, resolved once (a throwaway launch) and reused by
+        # every later surface. Guarded because two surfaces can launch at once.
+        self._user_agent: str | None = None
+        self._ua_lock = threading.Lock()
         self._surfaces: dict[str, BrowserSurface] = {}
         self._lock = threading.Lock()
+
+    def _guardrailed_launch_kwargs(self) -> dict[str, Any]:
+        """The launch config for a real surface. Called on a surface thread: the
+        first call spends one throwaway Chrome launch to read and de-headless the
+        UA, then caches it so later surfaces reuse the string for free."""
+        with self._ua_lock:
+            if self._user_agent is None:
+                self._user_agent = self._user_agent_resolver()
+            user_agent = self._user_agent
+        return minimal_launch_kwargs(user_agent)
 
     def profile_dir(self, slug: str) -> Path:
         """Where a slug's persistent Chrome profile lives. Rejects anything that
@@ -433,7 +504,12 @@ class BrowserBroker:
             if existing is not None:
                 return existing
             surface = BrowserSurface(
-                slug, profile_dir, self._loop, self._launch_kwargs, opener=self._opener
+                slug,
+                profile_dir,
+                self._loop,
+                self._guardrailed_launch_kwargs,
+                opener=self._opener,
+                geometry_timeout=self._geometry_timeout,
             )
             self._surfaces[slug] = surface
         surface.start()

@@ -11,7 +11,8 @@ Public surface:
   lifespan, torn down with it.
 - `BrowserSurface` / `Viewer` / `Frame` — one surface, its single websocket
   consumer, and one decoded frame.
-- `stock_launch_kwargs` — the whole launch configuration, deliberately stock.
+- `stock_launch_kwargs` / `minimal_launch_kwargs` — the stock baseline launch
+  config, and the guardrailed one every real surface actually launches with.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from .broker import (
     SurfaceSession,
     Viewer,
 )
-from .launch import stock_launch_kwargs
+from .launch import minimal_launch_kwargs, stock_launch_kwargs
 
 __all__ = [
     "BrowserBroker",
@@ -33,5 +34,6 @@ __all__ = [
     "Frame",
     "SurfaceSession",
     "Viewer",
+    "minimal_launch_kwargs",
     "stock_launch_kwargs",
 ]
