@@ -64,6 +64,13 @@ class BearerAuthMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            # `websocket` and `lifespan` scopes pass straight through, by
+            # design: a `Request` view over them is meaningless, and a browser's
+            # websocket handshake can't set an Authorization header anyway. So
+            # every websocket route checks the token itself, from `?token=`, and
+            # closes 1008 before `accept()` when it's missing or wrong
+            # (`api/screencast_ws.py`) — same loopback-only reasoning as the SSE
+            # query-token path above (NFR-SEC-03).
             await self.app(scope, receive, send)
             return
         # Request(scope) is a cheap view over the scope (no body access) — it

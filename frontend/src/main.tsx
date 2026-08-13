@@ -6,6 +6,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import { useMasterProfileExists, useSSEInvalidation } from "./api/queries";
 import { Analytics } from "./surfaces/Analytics";
+import { BrowserSurface } from "./surfaces/BrowserSurface";
 import { Dev } from "./surfaces/Dev";
 import { JobBoard } from "./surfaces/JobBoard";
 import { Networking } from "./surfaces/Networking";
@@ -113,6 +114,7 @@ const router = createBrowserRouter([
       { path: "applications", element: <Tracker />, errorElement: <SurfaceError /> },
       { path: "networking", element: <Networking />, errorElement: <SurfaceError /> },
       { path: "dev", element: <Dev />, errorElement: <SurfaceError /> },
+      { path: "browser", element: <BrowserSurface />, errorElement: <SurfaceError /> },
       { path: "analytics", element: <Analytics />, errorElement: <SurfaceError /> },
       { path: "logs", element: <Navigate to="/analytics" replace /> },
       { path: "settings", element: <Settings />, errorElement: <SurfaceError /> },

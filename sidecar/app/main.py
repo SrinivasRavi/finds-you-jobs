@@ -24,7 +24,9 @@ from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
 from .api.routes import router
+from .api.screencast_ws import router as screencast_router
 from .auth import BearerAuthMiddleware
+from .browser import BrowserBroker
 from .db import Database, resolve_db_url
 from .db.base import now_utc
 from .db.database import resolve_data_dir
@@ -222,12 +224,20 @@ def create_app(
             target=_boot_keyword_floor, name="keyword-floor", daemon=True
         ).start()
 
+        # Browser surfaces (`app/browser`). Constructed here, but NOTHING
+        # launches: the first `surface(slug)` call is what spends a Chrome
+        # process, so a boot that never opens a surface never pays for one.
+        # It holds the serving loop so its surface threads can marshal frames
+        # back onto it (the EventHub cross-thread pattern).
+        browser = BrowserBroker(resolved_data_dir, asyncio.get_running_loop())
+
         app.state.db = db
         app.state.hub = hub
         app.state.engines = engines
         app.state.runner = runner
         app.state.observability = observability
         app.state.data_dir = resolved_data_dir
+        app.state.browser = browser
 
         scheduler: Scheduler | None = None
         scheduler_task: asyncio.Task[None] | None = None
@@ -274,6 +284,9 @@ def create_app(
                         pass
             # Drain in-flight operations, then release the DB engine (§4.4 step 3).
             runner.shutdown(drain_timeout=SHUTDOWN_DRAIN_SECONDS)
+            # Close every browser surface before the DB goes: each one is a real
+            # Chrome process that would otherwise outlive the sidecar.
+            browser.shutdown()
             db.dispose()
             log.info("sidecar app stopped")
 
@@ -308,6 +321,7 @@ def create_app(
     app.include_router(engines_router)
     app.include_router(discovery_router)
     app.include_router(ingest_router)
+    app.include_router(screencast_router)
 
     # Schema-emission glue only (F-M2/F-L3): /api/events streams the SSEEnvelope
     # union, which FastAPI can't infer from a StreamingResponse — inject those
