@@ -34,7 +34,8 @@ class FakeSurface:
     def __init__(self, slug: str, launch_error: Exception | None = None) -> None:
         self.slug = slug
         self.launch_error = launch_error
-        self.viewers: list[Viewer | None] = []
+        self.viewers: list[Viewer] = []
+        self.detaches: list[Viewer] = []
         self.acks: list[int] = []
         self.navigations: list[str] = []
         self.resizes: list[tuple[int, int]] = []
@@ -44,17 +45,19 @@ class FakeSurface:
         if self.launch_error is not None:
             raise self.launch_error
 
-    def set_viewer(self, viewer: Viewer | None) -> None:
+    def set_viewer(self, viewer: Viewer) -> None:
         self.viewers.append(viewer)
-        if viewer is not None:
-            # `set_viewer` runs on the serving loop, exactly where the real
-            # broker's `_offer` puts a frame, so this hand-off is faithful.
-            viewer.queue.put_nowait(FRAME)
+        # `set_viewer` runs on the serving loop, exactly where the real broker's
+        # `_offer` puts a frame, so this hand-off is faithful.
+        viewer.queue.put_nowait(FRAME)
+
+    def detach(self, viewer: Viewer) -> None:
+        self.detaches.append(viewer)
 
     def ack(self, session_id: int) -> None:
         self.acks.append(session_id)
 
-    def navigate(self, url: str) -> "concurrent.futures.Future[str]":
+    def navigate(self, url: str) -> concurrent.futures.Future[str]:
         # The real surface hands back a future that resolves to the committed
         # URL; complete one at once so the route can await and echo it.
         self.navigations.append(url)
@@ -159,8 +162,8 @@ def test_correct_token_streams_status_then_frames(
     surface = broker.surfaces["pane-a"]
     # Acked exactly once, and only after the send flushed.
     assert _eventually(lambda: surface.acks == [7])
-    # Attached on entry, detached on exit.
-    assert _eventually(lambda: [v is not None for v in surface.viewers] == [True, False])
+    # Attached on entry, and the very viewer it installed detached on exit.
+    assert _eventually(lambda: len(surface.viewers) == 1 and surface.detaches == surface.viewers)
 
 
 def test_client_control_messages_reach_the_surface(

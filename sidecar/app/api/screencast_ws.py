@@ -85,7 +85,9 @@ async def screencast(websocket: WebSocket) -> None:
         # client disconnect stops the reader.
         await asyncio.wait({frames, control}, return_when=asyncio.FIRST_COMPLETED)
     finally:
-        surface.set_viewer(None)
+        # Detach by identity: if another socket has since taken this surface
+        # over, this close must not clear its viewer out from under it.
+        surface.detach(viewer)
         for task in (frames, control):
             task.cancel()
         # `wait` here, never `gather(return_exceptions=True)`: gather would

@@ -145,6 +145,16 @@ class FakeBrowser:
         self.page.pending.put(_frame_params(session_id, data=data))
 
 
+class CrashingPage(FakePage):
+    """A page whose run-loop park raises, standing in for a Chrome that died
+    under a live surface: the surface thread's loop exits and the surface has to
+    be marked dead. Startup still succeeds, so `wait_ready` returns — the whole
+    point of the zombie the broker has to evict."""
+
+    def wait_for_timeout(self, _ms: float) -> None:
+        raise RuntimeError("Chrome crashed under a live surface")
+
+
 async def _until(predicate: Callable[[], bool], within: float = 3.0) -> bool:
     """Poll `predicate` while yielding to the loop, so the surface thread's
     `call_soon_threadsafe` callbacks get their turn to run."""
@@ -295,7 +305,7 @@ async def test_detaching_a_viewer_acks_what_it_never_sent(
 
     fake.emit(41)
     assert await _until(viewer.queue.full)
-    surface.set_viewer(None)
+    surface.detach(viewer)
     assert await _until(lambda: fake.cdp.acked == [41])
 
 
@@ -480,3 +490,87 @@ async def test_a_slug_can_never_escape_its_profile_directory(broker: BrowserBrok
     for bad in ("../escape", "pane/a", "", "Pane", "a" * 65):
         with pytest.raises(ValueError, match="invalid browser surface name"):
             broker.surface(bad)
+
+
+async def test_a_dead_surface_is_evicted_and_relaunched(tmp_path: Path) -> None:
+    """A surface whose thread crashes is a corpse: `surface(slug)` must not hand
+    it back with its ready flag still set. It evicts the dead one and launches a
+    fresh Chrome in its place, so a reconnect recovers without an app restart."""
+    crashed = FakeBrowser()
+    crashed.page = CrashingPage(crashed.cdp)
+    healthy = FakeBrowser()
+    launches = iter((crashed, healthy))
+
+    def opener(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
+        return next(launches).opener(profile_dir, launch_kwargs)
+
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=opener,
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=0.3,
+    )
+    try:
+        dead = broker.surface("pane-a")
+        # Startup succeeded, so wait_ready returns; the crash is in the run loop.
+        await dead.wait_ready()
+        assert await _until(lambda: dead.is_dead)
+
+        fresh = broker.surface("pane-a")
+        assert fresh is not dead  # evicted, not handed back
+        await fresh.wait_ready()
+        assert not fresh.is_dead
+
+        # The relaunched surface is genuinely live: a frame flows end to end.
+        viewer = Viewer()
+        fresh.set_viewer(viewer)
+        healthy.emit(71)
+        assert await _until(lambda: not viewer.queue.empty())
+        assert viewer.queue.get_nowait().session_id == 71
+    finally:
+        broker.shutdown()
+
+
+async def test_a_stale_detach_never_mutes_the_viewer_that_took_over(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """Two sockets on one slug. The second attach takes the surface over; when
+    the first later closes, its detach is checked by identity and does nothing,
+    so it can't mute the second — and every frame is acked exactly once across
+    the swap."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    first = Viewer()
+    surface.set_viewer(first)
+    fake.emit(61)
+    assert await _until(first.queue.full)  # frame 61 sits in the first viewer
+
+    # A second socket attaches on the same slug. It takes over, and the first
+    # viewer's in-flight frame is acked exactly once as it is dropped.
+    second = Viewer()
+    surface.set_viewer(second)
+    assert await _until(lambda: fake.cdp.acked == [61])
+    assert first.queue.empty()
+
+    # New frames now go to the current viewer, the second one.
+    fake.emit(62)
+    assert await _until(second.queue.full)
+    assert first.queue.empty()
+
+    # The first socket now closes and detaches by identity. Because the second
+    # viewer took over, this stale detach clears nothing: the second stays
+    # current and its in-flight frame is left untouched, never re-acked.
+    surface.detach(first)
+    assert second.queue.get_nowait().session_id == 62
+    surface.ack(62)
+
+    # The second viewer still receives after the stale detach.
+    fake.emit(63)
+    assert await _until(second.queue.full)
+    assert second.queue.get_nowait().session_id == 63
+    surface.ack(63)
+
+    # Exactly once each, in order: the stale detach added no duplicate ack.
+    assert await _until(lambda: fake.cdp.acked == [61, 62, 63])

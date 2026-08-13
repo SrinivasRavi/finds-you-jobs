@@ -155,6 +155,10 @@ class BrowserSurface:
         self._log = get_logger()
         self._thread: threading.Thread | None = None
         self._stopping = threading.Event()
+        # Set from the surface thread the instant its run loop exits, whether
+        # cleanly or on a crash. The broker reads it (via `is_dead`) to tell a
+        # corpse from a live surface and relaunch in place of one that died.
+        self._dead = threading.Event()
         # Set from the surface thread, awaited on the serving loop.
         self._ready = asyncio.Event()
         # Set on the surface thread once the frontend's display geometry has been
@@ -207,6 +211,16 @@ class BrowserSurface:
                 "browser surface %r did not stop within %.1fs", self.slug, timeout
             )
 
+    @property
+    def is_dead(self) -> bool:
+        """True once the surface thread has exited on its own — a crashed Chrome,
+        a dead page — rather than through `shutdown`. The broker evicts and
+        relaunches a dead surface instead of handing back a corpse whose command
+        drainer and screencast are gone; an intentional shutdown (`_stopping`
+        set) is not dead in this sense, so `shutdown` never triggers a relaunch.
+        """
+        return self._dead.is_set() and not self._stopping.is_set()
+
     # -- the surface thread ------------------------------------------------
 
     def _run(self) -> None:
@@ -240,6 +254,10 @@ class BrowserSurface:
             self._log.exception("browser surface %r stopped", self.slug)
         finally:
             self._teardown(session)
+            # The run loop is over, cleanly or crashed. Mark it so the broker
+            # can tell this surface apart from a live one and relaunch a fresh
+            # Chrome for the slug instead of handing back this corpse.
+            self._dead.set()
 
     def _screencast_params(self) -> dict[str, Any]:
         return {
@@ -332,19 +350,35 @@ class BrowserSurface:
         frame, whether that frame shipped or was dropped."""
         self._acks.put(session_id)
 
-    def set_viewer(self, viewer: Viewer | None) -> None:
-        """Attach or detach the single viewer. Called on the serving loop.
-
-        Detaching drains whatever the outgoing viewer never sent and acks it, so
-        a socket that dies mid-frame can't leave the screencast waiting forever
-        on an ack nobody is left to send.
+    def set_viewer(self, viewer: Viewer) -> None:
+        """Attach the single viewer, on the serving loop. A new attach takes the
+        surface over from whatever viewer was current; the outgoing one is
+        drained and acked so a frame it never sent can't leave the screencast
+        waiting forever on an ack nobody is left to send.
         """
         previous, self._viewer = self._viewer, viewer
-        if previous is None or previous is viewer:
+        if previous is not None and previous is not viewer:
+            self._drain_and_ack(previous)
+
+    def detach(self, viewer: Viewer) -> None:
+        """Detach `viewer`, on the serving loop, but only if it is still the
+        current one. A viewer a newer attach already replaced detaches nothing
+        here, so one socket closing can never mute the client that took the
+        surface over. The outgoing viewer is drained and acked, the same
+        fail-safe the takeover in `set_viewer` uses.
+        """
+        if self._viewer is not viewer:
             return
+        self._viewer = None
+        self._drain_and_ack(viewer)
+
+    def _drain_and_ack(self, viewer: Viewer) -> None:
+        """Ack every frame still sitting in the outgoing viewer's queue, so a
+        socket that dies mid-frame never leaves the screencast stalled on an ack
+        nobody is left to send."""
         while True:
             try:
-                frame = previous.queue.get_nowait()
+                frame = viewer.queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
             self.ack(frame.session_id)
@@ -496,13 +530,19 @@ class BrowserBroker:
         return self._root / slug / "profile"
 
     def surface(self, slug: str) -> BrowserSurface:
-        """The surface for `slug`, launching it on first ask. The caller awaits
-        `wait_ready()` to find out whether the launch succeeded."""
+        """The surface for `slug`, launching it on first ask. A surface whose
+        thread has died (a crashed Chrome) is a corpse: it is evicted and a
+        fresh one launched in its place, so a reconnect recovers without an app
+        restart. The caller awaits `wait_ready()` to find out whether the launch
+        succeeded."""
         profile_dir = self.profile_dir(slug)
         with self._lock:
             existing = self._surfaces.get(slug)
-            if existing is not None:
+            if existing is not None and not existing.is_dead:
                 return existing
+            # No surface yet, or a dead one to replace. Its thread has already
+            # torn its own Chrome down, so there is nothing to join here; drop it
+            # and launch fresh. Chrome still comes up lazily, on this call.
             surface = BrowserSurface(
                 slug,
                 profile_dir,
