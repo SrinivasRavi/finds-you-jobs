@@ -104,28 +104,60 @@ def build_surface_provider(
 
 
 def linkedin_data_dir() -> Path:
-    """`<app-data>/linkedin/` — home of the saved session + the pacing ledger.
-    Never the repo (the storage-state file is a secret-at-rest, section NFR-SEC-01)."""
+    """`<app-data>/linkedin/` — home of the pacing ledger (the persistent browser
+    profile moved to the broker's per-slug dir in Phase 5, see
+    `linkedin_profile_dir`). Never the repo (secret-at-rest, NFR-SEC-01)."""
     return resolve_data_dir() / "linkedin"
 
 
+def linkedin_broker_profile_dir() -> Path:
+    """The core browser broker's PER-SLUG persistent profile dir for the referral
+    surface — `<data>/browser/<slug>/profile`.
+
+    Phase-5 reconciliation (2026-08): the one-time headed login and every later
+    referral op now share ONE Chromium profile with the broker's headless surface
+    for this slug, so a session captured by the login is the session a broker
+    surface (launched on the same slug) reads back. Two invariants hold it
+    together, both deliberate:
+      - The slug is the package's runtime value (`referral_surface_slug()`), owned
+        inside the GPL package — no broker-slug vendor literal is added to core.
+      - The `<data>/browser/<slug>/profile` layout is the broker's OWN derivation
+        (`BrowserBroker.profile_dir`), reused here so the login-write dir and the
+        surface-read dir can never drift. The throwaway broker launches nothing
+        (construction only computes the path)."""
+    from sidecar.app.browser import BrowserBroker
+    from sidecar.packages.referral_outreach import referral_surface_slug
+
+    return BrowserBroker(resolve_data_dir()).profile_dir(referral_surface_slug())
+
+
+def linkedin_profile_dir() -> Path:
+    """`<app-data>/browser/<slug>/profile/` — the PERSISTENT Chromium user-data-dir
+    the one-time headed login writes into and a headless broker surface reads back
+    (Phase 5). Cookies live here across sessions; the user can reopen this profile
+    and log out to end the app's session. Secret-at-rest like the JSON.
+
+    **Maintainer-only live path.** The real login runs a VISIBLE Chrome the
+    maintainer signs into by hand (2FA, most-trusted fingerprint); it writes the
+    session here. Automated tests never touch it — they inject a fake driver, or
+    drive `capture_login` against a LOCAL fixture into a temp profile dir."""
+    return linkedin_broker_profile_dir()
+
+
 def linkedin_storage_path() -> Path:
-    """The Playwright storage-state file the headed-login flow writes (N4)."""
-    return linkedin_data_dir() / "storage_state.json"
+    """The Playwright storage-state file (sealed cookies) the headed-login flow
+    writes — alongside the broker's per-slug profile, matching
+    `BrowserSurface.storage_state_path` so the login export and a broker surface's
+    own `persist_profile` snapshot are the same file (Phase 5)."""
+    return linkedin_profile_dir().parent / "storage_state.json"
 
 
 def linkedin_state_dir() -> Path:
     """The voyager pacing-ledger dir — ONE derivation, shared by the enforcing
     driver and the display snapshot so they can never point at different
-    ledgers."""
+    ledgers. Stays under `<data>/linkedin/` (it is a ledger, not a browser
+    profile, so it is not part of the Phase-5 profile reconciliation)."""
     return linkedin_data_dir() / "state"
-
-
-def linkedin_profile_dir() -> Path:
-    """`<app-data>/linkedin/profile/` — the PERSISTENT Chromium user-data-dir.
-    Cookies live here across sessions; the user can reopen this profile and log
-    out to end the app's session (2026-07-09). Secret-at-rest like the JSON."""
-    return linkedin_data_dir() / "profile"
 
 
 def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:

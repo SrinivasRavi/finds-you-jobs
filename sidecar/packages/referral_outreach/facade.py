@@ -30,4 +30,28 @@ def worker_module():
     return worker
 
 
-__all__ = ["Pacer", "PacingProfile", "VoyagerError", "worker_module"]
+def referral_surface_slug() -> str:
+    """The runtime slug that names the referral browser surface AND its per-slug
+    profile dir under the core broker's data root (`session.SURFACE_SLUG`, the
+    single source of truth, owned inside the GPL package so core never spells the
+    vendor). Exposed behind this F-P10 facade so the host can point the one-time
+    login's persistent profile at the broker's `<data>/browser/<slug>/profile` —
+    the Phase-5 profile reconciliation, which lets a session captured by the
+    headed login be read back by a headless broker surface on the same slug.
+
+    The import is function-local (it pulls `upstream.session`, hence Playwright)
+    so reading the slug never loads the browser chain at facade-import time. It is
+    resolved only when a driver is being built for a real op, which is about to
+    touch a browser anyway."""
+    from .upstream.session import SURFACE_SLUG
+
+    return SURFACE_SLUG
+
+
+__all__ = [
+    "Pacer",
+    "PacingProfile",
+    "VoyagerError",
+    "referral_surface_slug",
+    "worker_module",
+]

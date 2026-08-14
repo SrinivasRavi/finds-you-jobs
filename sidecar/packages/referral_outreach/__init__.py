@@ -10,6 +10,7 @@ combination; the `upstream/` files retain their GPL notices.
 from __future__ import annotations
 
 from .client import EventSink, ReferralAutomation
+from .facade import referral_surface_slug
 from .fake import FakeReferralAutomation
 from .types import (
     AccountRef,
@@ -92,4 +93,5 @@ __all__ = [
     "SessionExpired",
     "SessionStatus",
     "SessionStatusRequest",
+    "referral_surface_slug",
 ]

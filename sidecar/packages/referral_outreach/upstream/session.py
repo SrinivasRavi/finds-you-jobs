@@ -20,6 +20,13 @@
 #     default for the standalone/CLI path; the broker path never launches or
 #     tears down a browser here. See `provenance.md` and
 #     `docs/internal/plugin-architecture.md`.
+#   - Broker surface session seeding (finds-you-jobs, 2026-08, Phase 5): on the
+#     first lane bind, `run_browser` seeds the broker surface's context from the
+#     saved storage-state (`_seed_surface_session`) when it carries no `li_at`,
+#     because the vendor-agnostic broker launches the shared profile without
+#     `--use-mock-keychain` and so cannot decrypt cookies the one-time login
+#     wrote under Playwright's default OSCrypt key. The broker-backed twin of
+#     `_start_persistent`'s first-run migration. See `provenance.md`.
 """Standalone LinkedIn browser session: launch Chromium, load saved cookies,
 navigate at a human pace. Chromium is fetched on first use, never bundled, and
 torn down after each run (NFR-MEM-02)."""
@@ -293,6 +300,9 @@ class AccountSession:
         self._surface_provider = surface_provider
         self._surface_slug = surface_slug
         self._surface: Any = None
+        # One-shot latch: seed the broker surface's context from the saved
+        # storage-state on the FIRST lane bind (see `_seed_surface_session`).
+        self._surface_seeded = False
         self.page = None
         self.context = None
         self.browser = None
@@ -413,9 +423,43 @@ class AccountSession:
         def _on_surface(surface_session: Any) -> T:
             self.page = surface_session.page
             self.context = surface_session.context
+            self._seed_surface_session()
             return action()
 
         return surface.run_on_lane(_on_surface).result()
+
+    def _seed_surface_session(self) -> None:
+        """On the FIRST lane bind, seed the broker surface's context with the
+        saved LinkedIn cookies when it carries none yet — the broker-backed twin
+        of `_start_persistent`'s first-run migration. Runs on the surface thread
+        (inside the lane), the only thread that may touch this context.
+
+        Why it is needed: the core browser broker is vendor-agnostic and launches
+        the persistent profile under its OWN guardrailed identity, which drops
+        `--use-mock-keychain`. Cookies the one-time headed login wrote under
+        Playwright's default (mock-keychain) OSCrypt key are therefore
+        undecryptable to the surface, so `context.cookies()` comes back empty even
+        though the profile dir is shared (measured, 2026-08 Phase 5). The sealed
+        storage-state JSON holds the DECRYPTED cookie values, so seeding the
+        context from it restores the session with no dependency on the profile's
+        on-disk cookie encryption. Sealing (FYJ_SESSION_KEY) is read through the
+        same `_load_storage_state` the self-launch path uses.
+
+        Idempotent and non-destructive: it runs once per session and never
+        clobbers a context that already carries `li_at` (a matched-posture profile
+        that decrypted fine)."""
+        if self._surface_seeded:
+            return
+        self._surface_seeded = True
+        if self.context is None or not self.storage_state_path:
+            return
+        if any(c.get("name") == _AUTH_COOKIE_NAME for c in self.context.cookies()):
+            return
+        state = self._load_storage_state()
+        cookies = (state or {}).get("cookies")
+        if cookies:
+            self.context.add_cookies(cookies)
+            logger.info("seeded broker surface session from saved storage-state")
 
     def wait(self, min_delay: float = MIN_DELAY, max_delay: float = MAX_DELAY) -> None:
         random_sleep(min_delay, max_delay)

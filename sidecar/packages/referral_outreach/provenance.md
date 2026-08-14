@@ -96,7 +96,58 @@ default; the host does not yet install the provider seam in production, so a liv
 send still self-launches. Enabling broker mode also needs the login session
 reconciled with the broker's per-slug profile dir (`<data>/browser/<slug>/profile`
 vs today's `<data>/linkedin/profile`), which cannot be validated without a real
-account. See `docs/internal/plugin-architecture.md`.
+account. See `docs/internal/plugin-architecture.md`. (Resolved for the
+fixture-provable part in Phase 5, below.)
+
+### Broker profile reconciliation (2026-08, Referral Outreach Phase 5)
+
+**Files:** `upstream/session.py` (GPL-3.0-only; header retained, with a Phase-5
+fork-change bullet added). The rest of the change is core-side (AGPL): the host's
+`registry/networker_ops.py` now points the login's persistent profile + sealed
+storage-state at the broker's per-slug dir (`linkedin_profile_dir` /
+`linkedin_storage_path` derive `<data>/browser/<slug>/{profile,storage_state.json}`
+through the broker's OWN `profile_dir` convention, slug from
+`referral_surface_slug()`), and the facade exposes that package-owned slug.
+
+**What changed and why.** The Phase-3 boundary above flagged that broker mode
+needs the one-time login's session to land where a broker surface reads it. It
+now does:
+
+- The headed one-time login (`capture_login`, unchanged) is pointed at the
+  broker's per-slug profile dir, so the session it writes and the profile a
+  broker surface launches on are the same directory.
+- New `AccountSession._seed_surface_session` (called from `run_browser` on the
+  first lane bind): when the broker surface's context carries no `li_at`, it
+  seeds it from the saved storage-state — the broker-backed twin of
+  `_start_persistent`'s first-run migration. This is required because the
+  vendor-agnostic broker launches the shared profile WITHOUT
+  `--use-mock-keychain` (part of its guardrailed identity), so cookies the login
+  wrote under Playwright's default OSCrypt key are undecryptable from the
+  profile's on-disk jar (measured). The sealed storage-state carries the
+  decrypted cookie values, so the seed restores the session independent of the
+  profile's cookie encryption. Sealing (FYJ_SESSION_KEY) is read through the same
+  `_load_storage_state` the self-launch path uses; the seed is idempotent and
+  never clobbers a context that already carries `li_at`.
+
+**Load-bearing verification (no account, no network).**
+`tests/test_broker_profile_reconciliation.py`: `capture_login` writes into a
+temp broker profile dir against a LOCAL fixture that drops a persistent `li_at`,
+asserts the storage-state is SEALED (FYJ_SESSION_KEY; no plaintext at rest), then
+a real headless broker surface on the same slug — driven by a broker-backed
+`AccountSession` — reads `li_at` back off its own context via the seed. A second
+test encodes the SingletonLock reality (real Chrome refuses a concurrent open on
+the held profile; the open succeeds once it closes), so "the one-time login
+window must be closed before the headless surface opens" is a test, not a hope.
+
+**Not done in this change (the clean boundary).** The self-launch path is still
+the default (the provider seam is not installed in production), so today the same
+retargeted profile dir is used by a self-launched login/discover/send. The live
+one-time login itself is the maintainer's step (real credentials, 2FA); only the
+plumbing is fixture-proven here. Real Chrome enforces the profile ProcessSingleton
+that guards against a login window and a headless surface running on the profile
+at once; the higher-level openers' bundled-Chromium fallback does not, but the
+intended flow is sequential (log in once, close, then headless forever), so the
+two never overlap. See `docs/internal/plugin-architecture.md`.
 
 ## Upstream
 
