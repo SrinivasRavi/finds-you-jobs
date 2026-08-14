@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Phase-9 acceptance fixture: a whole connect-with-note profile in ONE page,
+     so the flow can be driven Connect → note composer → send without touching
+     linkedin.com. Two known-good shapes composed:
+       - the Connect affordance is the SDUI top-card shape from
+         connect_top_card.html (matches CONNECT_SELECTORS["invite_to_connect"]);
+       - clicking it reveals the classic invite dialog verbatim from
+         invite_classic_modal.html — "Add a note" reveals the <textarea>, and the
+         note-carrying "Send invitation" is INERT: it copies the composed note
+         into window.__sent and posts NOWHERE.
+     The whole DOM matches actions.CONNECT_SELECTORS. Zero network. -->
+<html>
+  <head><meta charset="utf-8" /><title>Dana Reyes</title></head>
+  <body>
+    <main>
+      <section componentkey="com.linkedin.sdui.profile.card.TopCard">
+        <h1>Dana Reyes</h1>
+        <div class="pvs-profile-actions">
+          <button aria-label="Invite Dana Reyes to connect"
+            onclick="document.getElementById('invite').style.display='block'; this.style.display='none';">
+            <span>Connect</span></button>
+        </div>
+      </section>
+      <div id="invite" role="dialog" aria-label="Add a note to your invitation" style="display:none">
+        <button aria-label="Add a note"
+          onclick="document.getElementById('nb').style.display='block';">Add a note</button>
+        <textarea id="nb" name="message" style="display:none"
+          aria-label="Message" placeholder="Ex: We know each other from…"></textarea>
+        <button aria-label="Send now">Send now</button>
+        <button aria-label="Send invitation"
+          onclick="window.__sent = document.getElementById('nb').value;">Send</button>
+      </div>
+    </main>
+  </body>
+</html>
