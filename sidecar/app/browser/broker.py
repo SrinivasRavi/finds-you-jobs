@@ -70,6 +70,11 @@ GEOMETRY_TIMEOUT_SECONDS = 10.0
 # single safe path segment.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
+# A fixed, non-vendor name for the driver's private isolated world (section 8.1
+# rule 5). The page's own scripts share the DOM with a named isolated world but
+# not its JS globals, so a read the driver runs there stays invisible to them.
+_ISOLATED_WORLD_NAME = "fyj_driver"
+
 
 class BrowserLaunchError(RuntimeError):
     """The surface never reached a live page: no Chrome, a locked profile, a
@@ -220,6 +225,13 @@ class BrowserSurface:
         set) is not dead in this sense, so `shutdown` never triggers a relaunch.
         """
         return self._dead.is_set() and not self._stopping.is_set()
+
+    @property
+    def storage_state_path(self) -> Path:
+        """Where `persist_profile` seals its storage-state snapshot: alongside
+        the slug's persistent profile, under the surface directory the broker
+        owns."""
+        return self._profile_dir.parent / "storage_state.json"
 
     # -- the surface thread ------------------------------------------------
 
@@ -453,6 +465,94 @@ class BrowserSurface:
         future. Playwright's own evaluate path, so we never hand-roll a
         `Runtime` CDP call of our own."""
         return self._submit(lambda s: s.page.evaluate(expression))
+
+    def run_on_lane(self, action: Callable[[SurfaceSession], Any]) -> Future[Any]:
+        """The public name for the surface's single serialized operation lane:
+        queue `action` for the surface thread and hand back its future. This is
+        the integration hook an external driver submits its own callables onto,
+        so "one account, one lane" stays a structural guarantee (section 5.4).
+        Internal callers keep using `_submit`; it is the same machinery."""
+        return self._submit(action)
+
+    def screenshot(self) -> Future[bytes]:
+        """Capture the surface as image bytes for the exception agent, over CDP
+        on the surface thread. `Page.captureScreenshot` hands back base64, which
+        we decode here so the serving loop never spends time on it — the same
+        discipline the screencast path keeps (`_on_frame`)."""
+
+        def _shot(session: SurfaceSession) -> bytes:
+            result = session.cdp.send("Page.captureScreenshot", {})
+            return base64.b64decode(result["data"])
+
+        return self._submit(_shot)
+
+    def persist_profile(self) -> Future[None]:
+        """Seal an explicit storage-state snapshot of the live session to the
+        surface directory the broker owns.
+
+        The surface runs on `launch_persistent_context`, so cookies already land
+        in the profile dir on context close with no help from here. This is the
+        extra, explicit checkpoint: `context.storage_state(path=...)` pulls the
+        live cookie jar and origin storage and writes a snapshot mid-session,
+        rather than waiting for teardown. A thin wrapper over that, not a second
+        persistence mechanism."""
+        path = self.storage_state_path
+
+        def _seal(session: SurfaceSession) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            session.context.storage_state(path=str(path))
+
+        return self._submit(_seal)
+
+    def visibility(self) -> Future[dict[str, Any]]:
+        """Read the surface's own `document.visibilityState` and
+        `document.hasFocus()` through Playwright's main-world evaluate
+        (`evaluate`'s path), returned as `{"visibilityState": ..., "hasFocus":
+        ...}`. The presence gate reads this to know whether the surface is
+        foreground."""
+        return self._submit(
+            lambda s: s.page.evaluate(
+                "() => ({ visibilityState: document.visibilityState, "
+                "hasFocus: document.hasFocus() })"
+            )
+        )
+
+    def evaluate_isolated(self, expression: str) -> Future[Any]:
+        """Evaluate `expression` in a private ISOLATED world and return its
+        value. The page's own scripts share no JS globals with this world, so a
+        read the driver runs here leaves nothing the page can observe — the
+        reason to keep it off the main world.
+
+        Runs over CDP on the surface thread: `Page.getFrameTree` for the main
+        frame, `Page.createIsolatedWorld` for a fresh context in it, then
+        `Runtime.evaluate` pinned to that context by id. It authors no
+        Runtime-domain enable; those three sends are the whole of it (section
+        12.3, Our Finding 4).
+
+        A fresh isolated world is created per call rather than cached. Discarding
+        a cached context after a navigation commits a new document would need
+        Runtime-domain events, which stay off, so a stale context id would raise
+        instead. The two extra round-trips are cheap at the driver's read
+        cadence, so per-call creation is the simpler correct choice."""
+
+        def _eval(session: SurfaceSession) -> Any:
+            tree = session.cdp.send("Page.getFrameTree")
+            frame_id = tree["frameTree"]["frame"]["id"]
+            world = session.cdp.send(
+                "Page.createIsolatedWorld",
+                {"frameId": frame_id, "worldName": _ISOLATED_WORLD_NAME},
+            )
+            result = session.cdp.send(
+                "Runtime.evaluate",
+                {
+                    "expression": expression,
+                    "contextId": world["executionContextId"],
+                    "returnByValue": True,
+                },
+            )
+            return result["result"]["value"]
+
+        return self._submit(_eval)
 
     def _submit(self, action: Callable[[SurfaceSession], Any]) -> Future[Any]:
         """Queue work for the surface thread. Returns immediately with a future

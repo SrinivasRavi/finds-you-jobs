@@ -39,6 +39,24 @@ FAKE_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 )
+# What the fake CDP hands the new driver primitives back: a PNG-magic-prefixed
+# capture and a fixed isolated-world context id.
+SHOT_BYTES = b"\x89PNG\r\n\x1a\n-fake-capture"
+ISOLATED_CONTEXT_ID = 4242
+
+
+def _cdp_reply(method: str, params: dict[str, Any]) -> dict[str, Any]:
+    """The replies the new driver primitives read back off CDP. Every other send
+    the surface makes ignores its return, so those stay an empty dict."""
+    if method == "Page.captureScreenshot":
+        return {"data": base64.b64encode(SHOT_BYTES).decode("ascii")}
+    if method == "Page.getFrameTree":
+        return {"frameTree": {"frame": {"id": "main-frame"}}}
+    if method == "Page.createIsolatedWorld":
+        return {"executionContextId": ISOLATED_CONTEXT_ID}
+    if method == "Runtime.evaluate":
+        return {"result": {"value": f"isolated:{params.get('expression')}"}}
+    return {}
 
 
 def _frame_params(session_id: int, *, data: bytes = FRAME_BYTES) -> dict[str, Any]:
@@ -63,7 +81,7 @@ class FakeCdp:
     def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
             self.sends.append((method, dict(params or {})))
-        return {}
+        return _cdp_reply(method, params or {})
 
     def detach(self) -> None:
         self.detached += 1
@@ -111,9 +129,16 @@ class FakePage:
 class FakeContext:
     def __init__(self) -> None:
         self.closed = 0
+        self.saved: list[str] = []
 
     def close(self) -> None:
         self.closed += 1
+
+    def storage_state(self, *, path: str) -> dict[str, Any]:
+        """The persistent context's explicit-flush hook `persist_profile` calls;
+        records where a snapshot was sealed."""
+        self.saved.append(path)
+        return {}
 
 
 class FakePlaywright:
@@ -322,6 +347,87 @@ async def test_navigate_and_evaluate_run_on_the_surface_thread(
     assert await asyncio.wrap_future(navigated) == "https://example.test/page"
     assert await asyncio.wrap_future(evaluated) == "evaluated:1 + 1"
     assert fake.page.calls == [("goto", "https://example.test/page"), ("evaluate", "1 + 1")]
+
+
+async def test_run_on_lane_runs_an_arbitrary_callable_on_the_surface_thread(
+    broker: BrowserBroker,
+) -> None:
+    """The public lane hook: a driver's own callable runs on the surface thread
+    and its result comes back through the future. Same machinery as `_submit`,
+    so it fails fast once the surface is shut down."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    assert await asyncio.wrap_future(surface.run_on_lane(lambda s: 6 * 7)) == 42
+
+    surface.shutdown()
+    with pytest.raises(BrowserLaunchError):
+        surface.run_on_lane(lambda s: 1).result(timeout=1)
+
+
+async def test_screenshot_returns_decoded_image_bytes(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    shot = await asyncio.wrap_future(surface.screenshot())
+    assert shot == SHOT_BYTES
+    assert fake.cdp.methods("Page.captureScreenshot") == [{}]
+
+
+async def test_persist_profile_seals_a_storage_state_snapshot(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    await asyncio.wrap_future(surface.persist_profile())
+    assert fake.context.saved == [str(surface.storage_state_path)]
+    assert surface.storage_state_path.parent.is_dir()
+
+
+async def test_visibility_reads_state_through_the_main_world_evaluate(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    result = await asyncio.wrap_future(surface.visibility())
+    method, expression = fake.page.calls[-1]
+    assert method == "evaluate"
+    assert "document.visibilityState" in expression
+    assert "document.hasFocus()" in expression
+    assert result == f"evaluated:{expression}"
+
+
+async def test_evaluate_isolated_uses_a_fresh_world_and_enables_no_runtime(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """The proven three-send sequence, in order: frame tree, a fresh isolated
+    world under a fixed non-vendor name, then an evaluate pinned to that world's
+    context id — and never a `Runtime` enable."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    assert await asyncio.wrap_future(surface.evaluate_isolated("1 + 1")) == "isolated:1 + 1"
+
+    driver_sends = [
+        method
+        for method, _ in fake.cdp.sends
+        if method in {"Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate"}
+    ]
+    assert driver_sends == [
+        "Page.getFrameTree",
+        "Page.createIsolatedWorld",
+        "Runtime.evaluate",
+    ]
+    created = fake.cdp.methods("Page.createIsolatedWorld")[0]
+    assert created["worldName"] == "fyj_driver"
+    evaluated = fake.cdp.methods("Runtime.evaluate")[0]
+    assert evaluated["contextId"] == ISOLATED_CONTEXT_ID
+    assert evaluated["returnByValue"] is True
+    assert "Runtime.enable" not in {method for method, _ in fake.cdp.sends}
 
 
 async def test_resize_moves_the_frame_ceiling_and_clamps_it(
@@ -574,3 +680,63 @@ async def test_a_stale_detach_never_mutes_the_viewer_that_took_over(
 
     # Exactly once each, in order: the stale detach added no duplicate ack.
     assert await _until(lambda: fake.cdp.acked == [61, 62, 63])
+
+
+async def test_real_surface_driving_primitives_over_cdp(tmp_path: Path) -> None:
+    """The driving primitives against a REAL Chrome, on a `data:` page — no
+    network. Proves screenshot, run_on_lane, visibility, and an isolated-world
+    read that the page's own main world can't see. Skips when the browser binary
+    is absent, the pattern the referral real-Chrome tests use."""
+    pytest.importorskip("playwright.sync_api")
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=5.0,
+    )
+    surface = broker.surface("pane-a")
+    try:
+        try:
+            await surface.wait_ready(timeout_seconds=60)
+        except BrowserLaunchError as exc:  # pragma: no cover — CI without Chrome
+            pytest.skip(f"real Chrome unavailable: {exc}")
+
+        await asyncio.wrap_future(surface.set_geometry(1280, 800, 1.0))
+        await asyncio.wrap_future(
+            surface.navigate("data:text/html,<html><body><h1>hi</h1></body></html>")
+        )
+
+        # run_on_lane: a caller's own callable executes on the surface thread.
+        lane_result = await asyncio.wrap_future(
+            surface.run_on_lane(lambda s: s.page.evaluate("() => 7 * 7"))
+        )
+        assert lane_result == 49
+
+        # screenshot: real, non-empty image bytes (PNG magic).
+        shot = await asyncio.wrap_future(surface.screenshot())
+        assert len(shot) > 0
+        assert shot[:8] == b"\x89PNG\r\n\x1a\n"
+
+        # visibility: a live headless surface reports itself visible.
+        vis = await asyncio.wrap_future(surface.visibility())
+        assert vis["visibilityState"] == "visible"
+        assert isinstance(vis["hasFocus"], bool)
+
+        # evaluate_isolated computes in its own world ...
+        assert await asyncio.wrap_future(surface.evaluate_isolated("1 + 1")) == 2
+
+        # ... and is genuinely isolated: a main-world global is invisible to it.
+        await asyncio.wrap_future(surface.evaluate("window.__fyj_probe = 123"))
+        assert await asyncio.wrap_future(surface.evaluate("window.__fyj_probe")) == 123
+        assert (
+            await asyncio.wrap_future(
+                surface.evaluate_isolated("typeof window.__fyj_probe")
+            )
+            == "undefined"
+        )
+
+        # persist_profile: an explicit storage-state snapshot lands on disk.
+        await asyncio.wrap_future(surface.persist_profile())
+        assert surface.storage_state_path.is_file()
+    finally:
+        broker.shutdown()
