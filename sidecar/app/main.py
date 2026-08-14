@@ -239,6 +239,18 @@ def create_app(
         app.state.data_dir = resolved_data_dir
         app.state.browser = browser
 
+        # Referral Outreach runs on the browser broker's serialized lane, and
+        # its presence gate reads the broker's live surface. Wiring both here
+        # activates the broker-backed path; unset, the referral ops self-launch
+        # (the pre-broker behaviour). The slugs are the referral package's own
+        # runtime values, so nothing vendor-named enters this core module.
+        from .registry import networker_ops
+
+        networker_ops.SURFACE_PROVIDER = networker_ops.build_surface_provider(
+            browser, asyncio.get_running_loop()
+        )
+        networker_ops.PRESENCE_SURFACE = networker_ops.build_presence_surface(browser)
+
         scheduler: Scheduler | None = None
         scheduler_task: asyncio.Task[None] | None = None
         if enable_scheduler:
