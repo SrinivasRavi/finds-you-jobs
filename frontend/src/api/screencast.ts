@@ -54,6 +54,11 @@ const RECONNECT_BACKOFF_MS = 1000;
 
 export class ScreencastClient {
   private handlers: ScreencastHandlers;
+  // Which broker surface this socket attaches to (`?surface=` slug). Omitted →
+  // the sidecar's generic `default` surface, which is the dev `/browser` route's
+  // behavior. A vendor slug (e.g. LinkedIn's) is supplied by the caller — this
+  // transport stays vendor-agnostic (`plugin-architecture.md` section 8.1 rule 5).
+  private readonly surface?: string;
   private socket: WebSocket | null = null;
   // Single-flight guard: connect() awaits the sidecar handshake before
   // assigning `socket`, so a React StrictMode double-mount (or a reconnect
@@ -66,8 +71,9 @@ export class ScreencastClient {
   // navigate/resize replaces the stale one instead of queueing behind it.
   private queued = new Map<ScreencastCommand["type"], ScreencastCommand>();
 
-  constructor(handlers: ScreencastHandlers) {
+  constructor(handlers: ScreencastHandlers, surface?: string) {
     this.handlers = handlers;
+    this.surface = surface;
   }
 
   connect(): void {
@@ -143,7 +149,10 @@ export class ScreencastClient {
     const info = await getSidecarInfo();
     // close() can land while the handshake is in flight (StrictMode unmount).
     if (this.closed) return;
-    const url = `ws://127.0.0.1:${info.port}/api/browser/screencast?token=${encodeURIComponent(info.token)}`;
+    const surfaceParam = this.surface
+      ? `&surface=${encodeURIComponent(this.surface)}`
+      : "";
+    const url = `ws://127.0.0.1:${info.port}/api/browser/screencast?token=${encodeURIComponent(info.token)}${surfaceParam}`;
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     this.socket = ws;

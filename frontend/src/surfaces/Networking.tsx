@@ -18,19 +18,29 @@ import {
   useArchivedContacts,
   useContacts,
   useLinkedInSession,
+  useReachOut,
   useSyncContacts,
   useUpdateContact,
 } from "../api/queries";
 import type { AudienceTag, ConnectionStatus, NetContact } from "../api/types";
+import { ReachOutConfirm } from "../popups/referrals/ReachOutConfirm";
 import { audienceTag } from "../shell/audienceTag";
 import { Avatar } from "../shell/Avatar";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
+import { Icon } from "../shell/icons";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 import { RecoveryListModal } from "../shell/RecoveryListModal";
+import { BrowserSurface } from "./BrowserSurface";
 import { daysBetween } from "./jobFormat";
 import { type LinkedInPillState, type LinkedInPillTone, linkedInStatusPill } from "./linkedInStatus";
+
+// The broker surface slug the Browser tab attaches to. Owned by the add-on side
+// (this surface is LinkedIn's), never spelled inside the shared BrowserSurface /
+// screencast components, which stay vendor-agnostic — the tab is the add-on's,
+// the surface is core's (`docs/internal/linkedin-addon.md` section 12.2).
+const LINKEDIN_SURFACE_SLUG = "linkedin";
 
 // label/empty hold i18n keys — wrapped with t(...) at render.
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
@@ -65,6 +75,13 @@ function daysSince(iso: string | null): number | null {
 export function Networking() {
   const { t } = useTranslation();
   const session = useLinkedInSession();
+  // Referral Outreach master toggle. The contact kanban is always reachable (it
+  // carries no account risk), but the add-on's Browser tab and the paste-a-URL
+  // reach-out both open a real LinkedIn session, so they surface only once the
+  // user has opted in (FR-SET-03 / vision ethos).
+  const enabled = Boolean(session.data?.enabled);
+  const [view, setView] = useState<"contacts" | "browser">("contacts");
+  const [reachOpen, setReachOpen] = useState(false);
   const contactsQ = useContacts();
   const contacts = useMemo(() => contactsQ.data ?? [], [contactsQ.data]);
   const update = useUpdateContact();
@@ -144,6 +161,41 @@ export function Networking() {
 
   return (
     <>
+      {/* Contacts / Browser tab bar — only when Referral Outreach is on; a
+          single-tab bar would be noise for the always-on kanban otherwise. */}
+      {enabled && (
+        <div
+          className="flex items-center gap-1 border-b border-border bg-surface px-5"
+          role="tablist"
+          data-testid="networking-tabs"
+        >
+          {(["contacts", "browser"] as const).map((tb) => (
+            <button
+              key={tb}
+              type="button"
+              role="tab"
+              aria-selected={view === tb}
+              data-testid={`networking-tab-${tb}`}
+              onClick={() => setView(tb)}
+              className={
+                "border-b-2 px-3 py-2 text-[12.5px] " +
+                (view === tb
+                  ? "border-accent font-medium text-ink"
+                  : "border-transparent text-ink-3 hover:text-ink")
+              }
+            >
+              {t(`networking.tabs.${tb}`)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {enabled && view === "browser" ? (
+        // The core browser surface, pointed at the add-on's LinkedIn slug. The
+        // shared component never names the vendor — the slug is passed in here.
+        <BrowserSurface surface={LINKEDIN_SURFACE_SLUG} />
+      ) : (
+        <>
       <header className="flex min-h-[48px] items-center gap-3 border-b border-border bg-surface px-5">
         <h1 className="text-[14px] font-semibold text-ink">{t("nav.networking")}</h1>
         <div className="ml-auto flex items-center gap-3">
@@ -172,6 +224,19 @@ export function Networking() {
               className="inline-flex h-[22px] items-center gap-[5px] rounded-full border border-border px-2 text-[11.5px] font-medium text-ink-2 hover:text-ink disabled:opacity-60"
             >
               {sync.isPending ? t("networking.sync.busy") : t("networking.sync.label")}
+            </button>
+          )}
+          {/* Paste-a-URL reach-out (opt-in only): files the contact on the
+              kanban, then opens the per-action confirm composer. */}
+          {enabled && (
+            <button
+              type="button"
+              data-testid="reach-out-by-url-button"
+              onClick={() => setReachOpen(true)}
+              className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
+            >
+              <Icon name="share" size={14} strokeWidth={2} />
+              {t("networking.reachByUrl.open")}
             </button>
           )}
           {/* Master Resume: shared launcher, one spot left of the Deleted+Add
@@ -307,6 +372,9 @@ export function Networking() {
       {addOpen && <AddContactModal onClose={() => setAddOpen(false)} />}
       {deletedOpen && <DeletedContactsModal onClose={() => setDeletedOpen(false)} />}
       {active && <ContactDetailModal contact={active} onClose={() => setActive(null)} />}
+      {reachOpen && <ReachOutByUrlModal onClose={() => setReachOpen(false)} />}
+        </>
+      )}
     </>
   );
 }
@@ -486,6 +554,88 @@ function AddContactModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// Paste-a-URL reach-out (the maintainer-approved, kanban-free entry point). The
+// contact is filed on the kanban FIRST — there is no send path that doesn't
+// start from a contact — then the existing per-action confirm composer opens
+// over the compose form. Reuses the one send path (`useReachOut`); it never
+// builds a parallel one.
+function ReachOutByUrlModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
+  const add = useAddContact();
+  const reachOut = useReachOut();
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+  const [message, setMessage] = useState("");
+  // The freshly-filed contact; set once "Continue" adds it, which flips the
+  // modal from compose to the per-action confirm overlay.
+  const [contact, setContact] = useState<NetContact | null>(null);
+
+  async function compose() {
+    if (!url.trim() || add.isPending) return;
+    const created = await add.mutateAsync({
+      linkedin_url: url.trim(),
+      name: name.trim(),
+      connection_status: "sent",
+    });
+    setContact(created);
+  }
+
+  async function send() {
+    if (!contact || reachOut.isPending) return;
+    // Job-free reach-out to the new contact (US-NW-09). The confirm above is the
+    // irreversible-action gate; the master toggle already gated this entry.
+    await reachOut.mutateAsync({ contacts: [{ contact_id: contact.id, message }] });
+    onClose();
+  }
+
+  return (
+    <Modal title={t("networking.reachByUrl.title")} onClose={onClose} width={520}>
+      <form
+        data-testid="reach-out-by-url-form"
+        onSubmit={(e) => { e.preventDefault(); void compose(); }}
+        className="flex flex-col gap-3 px-5 py-5"
+      >
+        <p className="text-[12.5px] text-ink-3">{t("networking.reachByUrl.blurb")}</p>
+        <Field label={t("networking.reachByUrl.urlLabel")}>
+          <input data-testid="reach-out-by-url-input" type="url" required value={url} onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://www.linkedin.com/in/sarah-tan"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
+        </Field>
+        <Field label={t("networking.reachByUrl.nameLabel")}>
+          <input data-testid="reach-out-by-url-name" value={name} onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
+        </Field>
+        <Field label={t("networking.reachByUrl.messageLabel")}>
+          <textarea data-testid="reach-out-by-url-message" value={message} onChange={(e) => setMessage(e.target.value)} rows={4}
+            placeholder={t("networking.reachByUrl.messagePlaceholder")}
+            className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] leading-relaxed text-ink focus:border-accent focus:outline-none" />
+        </Field>
+        <div className="mt-1 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="h-[30px] rounded-md border border-border bg-surface px-3 text-[12.5px] text-ink-2 hover:bg-surface-2">
+            {t("networking.reachByUrl.cancel")}
+          </button>
+          <button type="submit" data-testid="reach-out-by-url-submit" disabled={add.isPending}
+            className="h-[30px] rounded-md border border-accent bg-accent px-3 text-[12.5px] font-medium text-white hover:bg-accent-ink disabled:opacity-60">
+            {t("networking.reachByUrl.submit")}
+          </button>
+        </div>
+      </form>
+      {/* Per-action confirm — the exact note that will be sent (US-NW-09 /
+          posture doc section 5.1). A new contact is a cold invite + note. */}
+      {contact && (
+        <ReachOutConfirm
+          name={contact.name || url.trim()}
+          channel="connection_note"
+          message={message}
+          sending={reachOut.isPending}
+          onCancel={() => setContact(null)}
+          onSend={() => void send()}
+        />
+      )}
     </Modal>
   );
 }

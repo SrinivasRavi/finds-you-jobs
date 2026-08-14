@@ -1,9 +1,11 @@
 // Browser surface (browser broker, commit 1) — paints the sidecar's headless
 // Chrome into a canvas over the screencast WebSocket, with a URL bar to drive
-// it. Dev-facing for now: hidden from the left rail, reachable at /browser,
-// plain strings rather than i18n keys until it becomes a user surface.
+// it. Vendor-agnostic and parameterized: `surface` names which broker surface to
+// attach to (omitted → the dev `/browser` route's generic `default`; a vendor
+// slug is passed by the add-on that mounts it, e.g. the Networking Browser tab).
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   ScreencastClient,
@@ -13,7 +15,8 @@ import {
 
 const DEFAULT_URL = "https://example.com";
 
-export function BrowserSurface() {
+export function BrowserSurface({ surface }: { surface?: string }) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const clientRef = useRef<ScreencastClient | null>(null);
@@ -87,7 +90,7 @@ export function BrowserSurface() {
           });
         }
       },
-    });
+    }, surface);
     clientRef.current = client;
     client.connect();
     return () => {
@@ -95,7 +98,7 @@ export function BrowserSurface() {
       client.close();
       clientRef.current = null;
     };
-  }, []);
+  }, [surface]);
 
   useEffect(() => {
     // Keep the remote viewport the size of the box we paint it into. Queued
@@ -114,7 +117,7 @@ export function BrowserSurface() {
   return (
     <>
       <header className="flex min-h-[48px] items-center gap-3 border-b border-border bg-surface px-5">
-        <h1 className="text-[14px] font-semibold text-ink">Browser</h1>
+        <h1 className="text-[14px] font-semibold text-ink">{t("browser.title")}</h1>
         <form
           className="flex flex-1 items-center gap-2"
           onSubmit={(e) => {
@@ -126,7 +129,7 @@ export function BrowserSurface() {
             data-testid="browser-url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com"
+            placeholder={t("browser.urlPlaceholder")}
             className="w-full max-w-xl rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink focus:border-accent focus:outline-none"
           />
           <button
@@ -134,12 +137,14 @@ export function BrowserSurface() {
             data-testid="browser-go"
             className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
           >
-            Go
+            {t("browser.go")}
           </button>
         </form>
         <span className="text-[12px] text-ink-3">
+          {/* `state` stays the raw enum ("live" / "connecting"): tests and the
+              broker's own vocabulary assert on it, so it is not translated. */}
           <span data-testid="screencast-status">{state}</span> ·{" "}
-          <span data-testid="frame-count">{frames}</span> frames
+          <span data-testid="frame-count">{frames}</span> {t("browser.framesLabel")}
         </span>
       </header>
       <main className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-4">
@@ -159,7 +164,7 @@ export function BrowserSurface() {
           />
         </div>
         <p className="truncate text-[12px] text-ink-3" data-testid="screencast-page-url">
-          {pageUrl || "no page yet"}
+          {pageUrl || t("browser.noPage")}
         </p>
       </main>
     </>

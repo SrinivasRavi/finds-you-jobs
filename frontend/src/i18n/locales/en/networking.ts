@@ -9,6 +9,27 @@ const networking = {
     title: "Read-only — connect/enable LinkedIn from Settings",
   },
   addByUrl: "Add a contact by URL",
+  // The Contacts / Browser tab bar — shown only when Referral Outreach is on.
+  // The Browser tab mounts the core browser surface pointed at LinkedIn.
+  tabs: {
+    contacts: "Contacts",
+    browser: "Browser",
+  },
+  // Paste-a-URL reach-out: add the person to the kanban, then confirm the note
+  // before it's sent (per-action confirm). Distinct from "Add a contact by URL",
+  // which only files the contact.
+  reachByUrl: {
+    open: "Reach out by URL",
+    title: "Reach out by URL",
+    blurb:
+      "Paste a LinkedIn profile URL to add the person to your kanban, then review and confirm the note before anything is sent.",
+    urlLabel: "LinkedIn profile URL",
+    nameLabel: "Name",
+    messageLabel: "Your note",
+    messagePlaceholder: "Hi, I came across your profile and would love to connect about roles on your team.",
+    cancel: "Cancel",
+    submit: "Continue",
+  },
   sync: {
     label: "Sync",
     busy: "Syncing…",
