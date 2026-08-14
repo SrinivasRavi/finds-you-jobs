@@ -12,11 +12,26 @@ top-level re-export. Importing this facade for the pacing types (the caps/quota
 display path) or to build the driver never pulls the browser worker chain in;
 the worker is imported only when an op actually runs, exactly as the prior
 direct `from .upstream import worker` did.
+
+The typed worker errors (`AuthenticationError` … `CapExceeded`) are re-exported
+here too, so the app-side exception router classifies them through this seam
+rather than reaching into `upstream.errors` directly (the F-P10 one-way rule the
+`test_upstream_import_boundary` guard enforces). They're plain exception classes
+with no browser dependency, so re-exporting them adds no import cost.
 """
 
 from __future__ import annotations
 
-from .upstream.errors import VoyagerError
+from .upstream.errors import (
+    AuthenticationError,
+    BrowserUnresponsiveError,
+    CapExceeded,
+    ProfileInaccessibleError,
+    RateLimited,
+    ReachedConnectionLimit,
+    SkipProfile,
+    VoyagerError,
+)
 from .upstream.pacing import Pacer, PacingProfile
 
 
@@ -49,8 +64,15 @@ def referral_surface_slug() -> str:
 
 
 __all__ = [
+    "AuthenticationError",
+    "BrowserUnresponsiveError",
+    "CapExceeded",
     "Pacer",
     "PacingProfile",
+    "ProfileInaccessibleError",
+    "RateLimited",
+    "ReachedConnectionLimit",
+    "SkipProfile",
     "VoyagerError",
     "referral_surface_slug",
     "worker_module",

@@ -52,6 +52,7 @@ from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome, llm_outcome
+from .presence_gate import PresenceAbsent, read_surface_presence
 
 if TYPE_CHECKING:
     from ..db import Repos
@@ -101,6 +102,59 @@ def build_surface_provider(
         return surface
 
     return _provider
+
+
+# ---------------------------------------------------------------------------
+# Presence-gate seam (Phase 7 — invariant 3 / Our Claim 9).
+# ---------------------------------------------------------------------------
+
+# A `() -> live referral surface | None` PEEK over the core browser broker's own
+# viewer tracking. When it hands back a live streamed surface, the send/discover
+# paths refuse unless the run was user-initiated AND a screencast viewer is
+# attached AND the surface reports itself visible (`read_surface_presence`). None
+# (the default) means no streamed surface is configured for this install — the
+# self-launch/headed dogfood path, where the visible OS window is itself the
+# presence signal (Our Claim 9's "a visible surface" clause), so the gate steps
+# aside. The host installs `build_presence_surface(broker)` when the streamed op
+# path is activated (alongside `SURFACE_PROVIDER`); tests inject a fake surface.
+PresenceSurfaceProvider = Callable[[], Any]
+PRESENCE_SURFACE: PresenceSurfaceProvider | None = None
+
+
+def build_presence_surface(broker: Any) -> PresenceSurfaceProvider:
+    """A `() -> live referral surface | None` peek for the presence gate, built
+    over the core broker. Reads the broker's EXISTING surface for the referral
+    slug WITHOUT launching one (`live_surface`), so consulting presence can never
+    spend a Chrome process. The slug is the package's runtime value, owned inside
+    the GPL package — core never spells the vendor."""
+    from sidecar.packages.referral_outreach import referral_surface_slug
+
+    def _peek() -> Any:
+        return broker.live_surface(referral_surface_slug())
+
+    return _peek
+
+
+def _require_presence(ctx: OperationContext) -> None:
+    """Refuse a logged-in LinkedIn run unless the user is present (invariant 3).
+
+    On the streamed-surface path, present means all three hold: the run was
+    user-initiated, a screencast viewer is attached, and the surface is visible.
+    When no streamed surface is configured (`PRESENCE_SURFACE` unset) or none is
+    live, this is the self-launch/headed path, where the visible browser window
+    is the presence and the gate steps aside. Raises `PresenceAbsent` (surfaced
+    verbatim on the op row) when the streamed surface is there but the user is
+    not — provably closed by `read_surface_presence`."""
+    provider = PRESENCE_SURFACE
+    if provider is None:
+        return
+    surface = provider()
+    if surface is None:
+        return
+    user_initiated = bool(ctx.input_snapshot.get("user_initiated"))
+    verdict = read_surface_presence(surface, user_initiated=user_initiated)
+    if not verdict.present:
+        raise PresenceAbsent(verdict.reason)
 
 
 def linkedin_data_dir() -> Path:
@@ -447,6 +501,9 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     company_url = snap.get("company_url")  # a pasted LinkedIn company URL (authoritative)
     if ctx.db is None:
         raise RuntimeError("discover operation requires a database context")
+    # Presence gate (invariant 3): no LinkedIn read starts unless the user is
+    # present. Refuses before the first typeahead touches the network.
+    _require_presence(ctx)
 
     with ctx.db.repos() as repos:
         profile = resolve_pacing_profile(repos)
@@ -671,6 +728,9 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     dry_run = bool(snap.get("dry_run", False))
     if ctx.db is None:
         raise RuntimeError("send operation requires a database context")
+    # Presence gate (invariant 3): no send touches LinkedIn unless the user is
+    # present. Refuses before the driver is built or the wire is touched.
+    _require_presence(ctx)
 
     with ctx.db.repos() as repos:
         row = repos.contacts.get(contact_id)

@@ -1988,6 +1988,9 @@ async def discover_referrals(
     snapshot: dict[str, Any] = {
         "company": company, "job_id": job_id, "limit": max(1, payload.limit),
         "page": max(1, payload.page),
+        # The explicit user-initiated marker the presence gate reads (invariant
+        # 3): this discover was triggered by a human clicking, never a timer.
+        "user_initiated": True,
     }
     if payload.company_urn:
         snapshot["company_urn"] = payload.company_urn
@@ -2067,6 +2070,9 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
                 "batch_id": batch_id,
                 "message": c.message,
                 "dry_run": payload.dry_run,
+                # The user clicked "Send now": the marker the presence gate reads
+                # (invariant 3), so a background caller can never start a send.
+                "user_initiated": True,
             })
         )
     return dto.ReachOutResult(enqueued=enqueued, skipped_contact_ids=skipped)

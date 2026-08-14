@@ -384,6 +384,15 @@ class BrowserSurface:
         self._viewer = None
         self._drain_and_ack(viewer)
 
+    @property
+    def has_viewer(self) -> bool:
+        """Whether a screencast viewer (one websocket) is attached right now.
+
+        The broker's own tracking of the live consumer, set by `set_viewer` and
+        cleared by `detach` — a signal a page cannot fake. The presence gate
+        reads it to know the user is watching this surface (Our Claim 9)."""
+        return self._viewer is not None
+
     def _drain_and_ack(self, viewer: Viewer) -> None:
         """Ack every frame still sitting in the outgoing viewer's queue, so a
         socket that dies mid-frame never leaves the screencast stalled on an ack
@@ -654,6 +663,19 @@ class BrowserBroker:
             self._surfaces[slug] = surface
         surface.start()
         return surface
+
+    def live_surface(self, slug: str) -> BrowserSurface | None:
+        """The surface for `slug` if one is already live, else None — a PEEK that
+        never launches. Unlike `surface`, this spends no Chrome process: a caller
+        that only wants to READ an existing surface's state (the presence gate
+        reading viewer-attachment and visibility) uses this so consulting it can
+        never spin up a browser. A surface whose thread has died is treated as
+        absent."""
+        with self._lock:
+            existing = self._surfaces.get(slug)
+        if existing is None or existing.is_dead:
+            return None
+        return existing
 
     @property
     def live_slugs(self) -> frozenset[str]:
