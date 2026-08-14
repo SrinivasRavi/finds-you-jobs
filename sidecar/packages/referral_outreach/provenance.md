@@ -21,7 +21,7 @@ AGPL-3.0-only facade (`client.py`, `types.py`, `fake.py`, this package's
 The prior MIT-era repository isolated this GPL code behind a subprocess
 (`python -m voyager_py <command>`, one JSON object over stdout) because an MIT
 host may not link GPL code. finds-you-jobs is AGPL, so the firewall is
-unnecessary and **retired** (`docs/internal/referral-outreach.md` §2): the
+unnecessary and **retired** (`docs/internal/referral-outreach.md` section 2): the
 facade imports and calls `upstream/` directly, in-process.
 
 Consequences, all deliberate:
@@ -37,6 +37,66 @@ The upstream GPLv3 test suite (prior repo `voyager_py/tests/`) is carried under
 `sidecar.packages.referral_outreach.upstream.*`; the retired subprocess CLI tests
 (`test_cli_dry_run.py` and the `contact-sync` CLI cases) are dropped, everything
 else carried verbatim with its GPL-era headers retained.
+
+## Fork edits after the initial carry
+
+Changes to `upstream/*.py` made after the original carry. Each keeps the file's
+GPLv3 header and per-file provenance line; this section is the running record.
+
+### Broker-backed session mode (2026-08, Referral Outreach Phase 3)
+
+**Files:** `upstream/session.py`, `upstream/worker.py` (both GPL-3.0-only; headers
+retained, with a fork-change bullet added in each file).
+
+**What changed and why.** Before this change every browser operation launched,
+drove, and tore down its OWN Chromium (`AccountSession._start_persistent` /
+`_launch_browser` calling `launch_persistent_context`). finds-you-jobs now hosts
+a core, vendor-agnostic browser broker (`sidecar/app/browser`) that keeps one
+persistent real-Chrome surface per slug and exposes a single serialized operation
+lane (`BrowserSurface.run_on_lane`), streamed to the app. Phase 3 routes the
+verbatim referral actions onto that shared surface instead of a private browser,
+so the referral flow drives the same surface the user sees rather than an
+invisible one.
+
+- `AccountSession.__init__` gained an optional `surface_provider` (a
+  `(slug) -> ready surface` callable) and `surface_slug` (default `SURFACE_SLUG =
+  "linkedin"`, owned here so core never names the vendor). When a provider is
+  set, the session is "broker-backed": it launches no browser.
+- New `AccountSession.run_browser(action)`: broker-backed, it submits `action`
+  to the surface's lane via `run_on_lane` and binds the surface's own
+  `page`/`context` onto the session just before the action runs, so the
+  unchanged page-driving code operates on the surface page; the returned
+  `concurrent.futures.Future` is `.result()`-ed, which blocks the calling worker
+  thread (never the serving loop) and re-raises the action's own exception. With
+  no provider it runs the action inline after the existing self-launch, so the
+  standalone/CLI path is byte-for-byte unchanged.
+- `ensure_browser` short-circuits in broker mode (the surface is always live,
+  the page is bound inside the lane); `close` leaves the broker-owned surface
+  intact and only drops the session's references (the surface is persistent and
+  is what the app streams).
+- `worker.py`: `_paced_session` and every browser-touching op
+  (`resolve_company`, `discover`, `search_jobs`, `send_connection`, `send_dm`,
+  `contact_sync`, `contact_sync_states`, `status`) gained a `surface_provider`
+  passthrough and now run their single page-driving call through
+  `session.run_browser(...)`. The op STRUCTURE is unchanged: the cap gates,
+  charge-on-attempt / refund bookkeeping, and `RateLimited`/`ReachedConnectionLimit`
+  to-envelope translation all stay on the worker thread exactly as before (a
+  `RateLimited` raised inside the lane surfaces through `.result()` and is caught
+  by the same `except`).
+
+**Load-bearing verification (no account, no network).**
+`tests/test_broker_lane_connect_note.py` stands up a real broker surface, points
+it at the local `invite_classic_modal.html` fixture, and drives
+`actions._click_with_note` through a broker-backed session's `run_browser`; it
+asserts the note textarea holds the exact composed message. This proves the
+verbatim GPL actions run correctly on the broker lane with zero linkedin.com.
+
+**Not done in this change (the clean boundary).** The self-launch path stays the
+default; the host does not yet install the provider seam in production, so a live
+send still self-launches. Enabling broker mode also needs the login session
+reconciled with the broker's per-slug profile dir (`<data>/browser/<slug>/profile`
+vs today's `<data>/linkedin/profile`), which cannot be validated without a real
+account. See `docs/internal/plugin-architecture.md`.
 
 ## Upstream
 

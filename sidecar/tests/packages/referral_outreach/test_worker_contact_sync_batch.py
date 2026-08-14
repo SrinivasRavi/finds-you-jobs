@@ -37,6 +37,11 @@ class _CountingSession:
     def __init__(self, **kwargs):
         type(self).built += 1
 
+    def run_browser(self, action):
+        # The per-probe action-on-the-lane bridge — run the (monkeypatched)
+        # probe inline, as the self-launch path does with no broker surface.
+        return action()
+
     def close(self) -> None:
         type(self).closed += 1
 
@@ -93,7 +98,7 @@ def test_batch_opens_one_session_for_n_contacts(
 def test_rate_limited_backs_off_and_stops_the_sweep(
     tmp_path, one_browser, sleeps, monkeypatch
 ):
-    """The first 429 stops the batch (§0.4): backoff is entered + persisted, the
+    """The first 429 stops the batch (section 0.4): backoff is entered + persisted, the
     remaining contacts are never probed, and the attempted read stays charged
     (charge-on-attempt — it reached LinkedIn)."""
     probed: list[str] = []

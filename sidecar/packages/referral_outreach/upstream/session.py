@@ -11,7 +11,15 @@
 #   - The FREEMIUM promotional-action and auto-newsletter hooks that upstream
 #     ran on session start are intentionally NOT forked (they send from the
 #     user's account under remote control — incompatible with finds-you-jobs's
-#     no-telemetry / no-middleman vision). See README.md § "What we did NOT take".
+#     no-telemetry / no-middleman vision). See README.md section "What we did NOT take".
+#   - Broker-backed session mode (finds-you-jobs, 2026-08): instead of launching
+#     its OWN Chromium, an AccountSession can be given a `surface_provider` that
+#     hands back the core browser broker's persistent surface, and it runs the
+#     verbatim page-driving actions on that surface's single serialized lane
+#     (`run_browser`). Self-launch (`start`/`_start_persistent`) stays the
+#     default for the standalone/CLI path; the broker path never launches or
+#     tears down a browser here. See `provenance.md` and
+#     `docs/internal/plugin-architecture.md`.
 """Standalone LinkedIn browser session: launch Chromium, load saved cookies,
 navigate at a human pace. Chromium is fetched on first use, never bundled, and
 torn down after each run (NFR-MEM-02)."""
@@ -24,6 +32,7 @@ import random
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, TypeVar
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -36,6 +45,16 @@ logger = logging.getLogger("voyager_py.session")
 LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/"
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 _AUTH_COOKIE_NAME = "li_at"
+
+# The core browser broker's surface this session drives when it runs
+# broker-backed (the Phase-3 integration): one safe path segment naming both the
+# surface and its per-slug profile dir under the broker's data root. The value
+# lives HERE, inside the GPL package, so core never names a vendor
+# (`docs/internal/plugin-architecture.md` section 8.1 rule 5) — core hands in
+# only a provider callable and is handed this slug back as a runtime argument.
+SURFACE_SLUG = "linkedin"
+
+T = TypeVar("T")
 
 # Page-load jitter between actions (upstream conf.MIN_DELAY / MAX_DELAY).
 MIN_DELAY = 5
@@ -255,6 +274,8 @@ class AccountSession:
         storage_state_path: str | Path | None = None,
         headed: bool = False,
         user_data_dir: str | Path | None = None,
+        surface_provider: Callable[[str], Any] | None = None,
+        surface_slug: str = SURFACE_SLUG,
     ) -> None:
         self.storage_state_path = Path(storage_state_path) if storage_state_path else None
         self.headed = headed
@@ -263,6 +284,15 @@ class AccountSession:
         # user can reopen + log out of to end the app's session). The JSON
         # storage-state is still exported for the no-browser validate path.
         self.user_data_dir = Path(user_data_dir) if user_data_dir else None
+        # Broker-backed mode: when set, `surface_provider(surface_slug)` returns
+        # the core broker's ready `BrowserSurface` (duck-typed: it only needs
+        # `run_on_lane`). The session then never launches or owns a browser —
+        # `run_browser` runs each action on the surface's serialized lane, where
+        # `page`/`context` are the surface's own and Playwright is greenlet-bound
+        # to the surface thread. None → the legacy self-launch path is used.
+        self._surface_provider = surface_provider
+        self._surface_slug = surface_slug
+        self._surface: Any = None
         self.page = None
         self.context = None
         self.browser = None
@@ -333,8 +363,59 @@ class AccountSession:
         logger.info("voyager session ready")
 
     def ensure_browser(self) -> None:
+        if self.broker_backed:
+            # Broker-backed: the surface is persistent and always live, and
+            # `run_browser` binds `page` before any action runs — there is
+            # nothing to launch here. (Actions call this on the surface thread,
+            # inside a lane, where `page` is already the surface's own.)
+            return
         if not self.page or self.page.is_closed():
             self.start()
+
+    @property
+    def broker_backed(self) -> bool:
+        """True when this session drives the core broker's surface on its lane
+        rather than launching its own Chromium."""
+        return self._surface_provider is not None
+
+    def _acquire_surface(self) -> Any:
+        """The broker surface for this session's slug, fetched (and cached) once.
+        The provider returns a READY surface — the host resolves the surface and
+        awaits its launch OFF the serving loop before handing it back."""
+        if self._surface is None:
+            assert self._surface_provider is not None
+            self._surface = self._surface_provider(self._surface_slug)
+        return self._surface
+
+    def run_browser(self, action: Callable[[], T]) -> T:
+        """Run one page-driving `action()` where the browser actually lives.
+
+        Broker-backed: `action` is submitted to the surface's single serialized
+        lane (`run_on_lane`) and runs on the surface thread — the only thread
+        that may touch this Chrome's Playwright objects. Just before it runs, the
+        surface's own `page`/`context` are bound onto this session, so the
+        verbatim GPL actions (which drive `session.page`) operate on the surface
+        page unchanged. The future is awaited with `.result()`, which blocks THIS
+        worker thread (never the serving loop) and re-raises the action's own
+        exception (e.g. a `RateLimited`) so the worker's cap/backoff handling is
+        unchanged. "One account, one lane" stays a structural guarantee: the lane
+        serialises every action against this surface (section 5.4).
+
+        Legacy self-launch: ensure the browser is up, then run `action()` inline
+        on this thread, exactly as before.
+        """
+        if not self.broker_backed:
+            self.ensure_browser()
+            return action()
+
+        surface = self._acquire_surface()
+
+        def _on_surface(surface_session: Any) -> T:
+            self.page = surface_session.page
+            self.context = surface_session.context
+            return action()
+
+        return surface.run_on_lane(_on_surface).result()
 
     def wait(self, min_delay: float = MIN_DELAY, max_delay: float = MAX_DELAY) -> None:
         random_sleep(min_delay, max_delay)
@@ -354,6 +435,15 @@ class AccountSession:
             save_state_file(self.storage_state_path, self.context.storage_state())
 
     def close(self) -> None:
+        if self.broker_backed:
+            # The surface is owned by the core broker and is persistent (it lives
+            # across many sessions and is what the app streams to the user). Never
+            # tear it down here — just drop our references to its page/context,
+            # which belong to the surface thread.
+            self.page = self.context = None
+            self._surface = None
+            logger.info("voyager session detached from broker surface")
+            return
         for closer in (
             lambda: self.context and self.context.close(),
             lambda: self.browser and self.browser.close(),
@@ -427,7 +517,7 @@ def human_type(
     per message, then typed metronomically, so inter-key variance inside a
     message was exactly zero and dwell was a flat ~93 ms. Both are
     zero-training discriminators over a ~70-keystroke message
-    (`docs/internal/embedded-browser.md` §15.3 / §17.2).
+    (`docs/internal/embedded-browser.md` section 15.3 / section 17.2).
 
     Now: the target is focused through the locator, `typing_dynamics` samples an
     interval and a hold per keystroke and lays them on one event timeline

@@ -1,7 +1,7 @@
 # voyager_py/tests/test_worker_charges.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
 """Charge-on-attempt, refunds, and the plan-aware notes budget in the worker
-send paths (posture doc §4 fixes 4 + 10, §6).
+send paths (posture doc section 4 fixes 4 + 10, section 6).
 
 The ledger must drift in the SAFE direction: an unproven send stays charged
 (it may have reached LinkedIn), while a PROVEN no-send — LinkedIn's weekly-cap
@@ -25,6 +25,12 @@ from sidecar.packages.referral_outreach.upstream.pacing import Pacer, resolve_pr
 class _FakeSession:
     def __init__(self, **kwargs):  # noqa: D401 — mirrors AccountSession's ctor
         pass
+
+    def run_browser(self, action):
+        # The action-on-the-lane bridge (broker-backed) / inline self-launch:
+        # the fake just runs the (monkeypatched) action inline, like the legacy
+        # self-launch path does when no broker surface is provided.
+        return action()
 
     def close(self) -> None:
         pass
@@ -201,6 +207,9 @@ class _FakeSearchSession:
 
     def ensure_browser(self) -> None:
         pass
+
+    def run_browser(self, action):
+        return action()
 
     def close(self) -> None:
         pass

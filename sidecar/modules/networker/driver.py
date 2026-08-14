@@ -9,7 +9,7 @@ This replaces the prior repository's `SubprocessVoyagerDriver`, which spawned
 `python -m voyager_py <command>` and parsed JSON over stdout to keep GPL code
 off an MIT host. finds-you-jobs is AGPL-3.0-only, so GPLv3 + AGPLv3 combine
 directly and the subprocess firewall is retired
-(`docs/internal/referral-outreach.md` §2). The `upstream.worker` functions
+(`docs/internal/referral-outreach.md` section 2). The `upstream.worker` functions
 already return the exact dict envelopes this protocol expects, so this driver is
 a thin faithful adapter — it translates a worker `VoyagerError` into the
 module's typed `NetworkerError`, exactly as the subprocess driver did.
@@ -88,6 +88,13 @@ class DirectVoyagerDriver:
     key is read by `upstream.secure_store` from the `FYJ_SESSION_KEY` env var
     (NFR-SEC-01) — the host sets it in the process env before a browser op.
     `dry_run` on any call forwards to the worker so no browser/network is touched.
+
+    `surface_provider` (optional) hooks the worker to the core browser broker:
+    when set, every page-driving action runs on the broker's single serialized
+    surface lane rather than launching this driver's own Chromium (the `page`
+    is the broker surface's own). It is a `(slug) -> ready surface` callable; the
+    slug is a runtime argument owned inside the GPL package, so this core module
+    never names the vendor. None keeps the self-launch path.
     """
 
     def __init__(
@@ -100,6 +107,7 @@ class DirectVoyagerDriver:
         linkedin_plan: str = "free",
         headed: bool = False,
         env: dict[str, str] | None = None,
+        surface_provider: Callable[[str], Any] | None = None,
     ) -> None:
         self.storage_state = storage_state
         self.user_data_dir = user_data_dir
@@ -114,6 +122,12 @@ class DirectVoyagerDriver:
         # Applied to os.environ for the duration of a call (e.g. FYJ_SESSION_KEY,
         # which `upstream.secure_store` reads to seal/open the storage-state).
         self.env = env
+        # The host's hook to the core browser broker: given the referral surface
+        # slug (a runtime argument owned inside the GPL package, never named
+        # here), return that surface's ready handle. When set, the worker runs
+        # every page-driving action on the broker's serialized lane instead of
+        # launching its own Chromium; None keeps the self-launch path.
+        self.surface_provider = surface_provider
         self.invocations = 0
 
     def _worker(self):  # type: ignore[no-untyped-def]
@@ -169,6 +183,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -187,6 +202,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -204,6 +220,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -220,6 +237,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -235,6 +253,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -245,6 +264,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -260,6 +280,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -278,6 +299,7 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -316,7 +338,7 @@ class DirectVoyagerDriver:
 
         `cancel_check` is accepted for protocol symmetry; a blocking in-process
         headed login is bounded by `timeout_s` rather than an interrupting poll
-        (a token-based cancel is a follow-on — see `referral-outreach.md` §3.2).
+        (a token-based cancel is a follow-on — see `referral-outreach.md` section 3.2).
         """
         if not self.storage_state:
             raise NetworkerError(

@@ -16,9 +16,9 @@ runner as three bounded ops (US-REF-01/03/04, FR-REF-*):
   Seeking Referral on the first real send (US-NW-09 batch-settle guard).
 
 **Direct in-process.** This is `app/` importing `modules/` (the allowed one-way
-direction, §5.2). The GPLv3 OpenOutreach-derived worker is reached through the
+direction, section 5.2). The GPLv3 OpenOutreach-derived worker is reached through the
 silo's `DirectVoyagerDriver`, which calls it in-process — the subprocess firewall
-the prior MIT-era repository used is retired (AGPL host; §2).
+the prior MIT-era repository used is retired (AGPL host; section 2).
 
 **Test seam.** The voyager driver is built through `DRIVER_FACTORY` so tests
 inject a fake driver (zero live LinkedIn traffic — the wire stays cold; the
@@ -28,6 +28,7 @@ maintainer dogfoods the live send path). The LLM engine for `draft` comes from
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Callable
 from dataclasses import asdict
@@ -66,10 +67,45 @@ if TYPE_CHECKING:
 # override this seam with a fake that ignores the arg.
 DriverFactory = Callable[["PacingProfile | None"], VoyagerDriver]
 
+# Broker seam (Phase-3 referral integration). A `(slug) -> ready surface`
+# callable over the core browser broker; the slug is a runtime argument owned
+# inside the GPL package, so this module never names the vendor. When set (by the
+# host — see `build_surface_provider`), the real driver runs every referral page
+# action on the broker's single serialized surface lane instead of launching its
+# own Chromium. None (the default) keeps the self-launch path — the only path the
+# automated tests exercise, since they inject a fake driver through
+# `DRIVER_FACTORY` and never reach this seam.
+SurfaceProvider = Callable[[str], Any]
+SURFACE_PROVIDER: SurfaceProvider | None = None
+
+
+def build_surface_provider(
+    broker: Any, loop: asyncio.AbstractEventLoop
+) -> SurfaceProvider:
+    """A `(slug) -> ready surface` provider over the core browser broker, built by
+    the host (which holds the broker and the serving loop) and safe to invoke
+    from an operation WORKER THREAD.
+
+    The bridge that makes a synchronous worker op able to drive an async-launched
+    surface: `broker.surface(slug)` starts the surface's own thread synchronously,
+    but waiting for it to come up (`wait_ready`) awaits a loop-bound event, so we
+    marshal that await onto the serving loop with `run_coroutine_threadsafe` and
+    block only THIS worker thread on the returned `concurrent.futures.Future` —
+    never the serving loop (async-first). Actions then run on the surface's lane,
+    whose `run_on_lane` hands back a `concurrent.futures.Future` the sync worker
+    likewise `.result()`s. The serving loop is never blocked at any point."""
+
+    def _provider(slug: str) -> Any:
+        surface = broker.surface(slug)
+        asyncio.run_coroutine_threadsafe(surface.wait_ready(), loop).result()
+        return surface
+
+    return _provider
+
 
 def linkedin_data_dir() -> Path:
     """`<app-data>/linkedin/` — home of the saved session + the pacing ledger.
-    Never the repo (the storage-state file is a secret-at-rest, §NFR-SEC-01)."""
+    Never the repo (the storage-state file is a secret-at-rest, section NFR-SEC-01)."""
     return resolve_data_dir() / "linkedin"
 
 
@@ -126,6 +162,10 @@ def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:
         # Default stays headless; remove the env var to go back.
         headed=os.environ.get("FYJ_LINKEDIN_HEADED") == "1",
         env={SESSION_KEY_ENV: get_session_key(resolve_data_dir())},
+        # When the host has installed the broker seam, the driver runs every
+        # page action on the broker's shared surface lane; otherwise (the
+        # default) it self-launches its own Chromium exactly as before.
+        surface_provider=SURFACE_PROVIDER,
     )
 
 

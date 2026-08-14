@@ -4,10 +4,18 @@
 # NEW code for the finds-you-jobs fork (GPL subtree). The operation layer: it ties
 # the pacing/caps ledger (pacing.py) to the live browser actions (session.py,
 # actions.py, discovery.py) and returns plain dicts the CLI serialises to JSON.
-# Caps + backoff are ENFORCED here, inside the subprocess (ROADMAP §66,
+# Caps + backoff are ENFORCED here, inside the subprocess (ROADMAP section 66,
 # NFR-LI-01/02/03) — the MIT host never re-implements them. Enforcement covers
 # READS as well as sends: discover/contact-sync/search-jobs are metered and
 # refused during backoff (2026-07-30 — before that they built no Pacer at all).
+#
+# Broker-backed page work (finds-you-jobs, 2026-08): when a `surface_provider`
+# is passed, the op STRUCTURE is unchanged — same cap gates, charge/refund, and
+# `RateLimited`→envelope translation on this (worker) thread — but the page-
+# driving action runs on the core broker's serialized surface lane via
+# `session.run_browser(...)`, so nothing here launches its own Chromium. Without
+# a provider (the standalone/CLI path) the session self-launches exactly as
+# before. See `provenance.md` and `docs/internal/plugin-architecture.md`.
 """The bounded operations: discover, send-connection, send-dm, status, quota,
 contact-sync (single + the one-session `contact_sync_states` batch), login, and
 search-jobs (the read-only logged-in job search — finds-you-jobs
@@ -18,7 +26,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from .errors import AuthenticationError, RateLimited, ReachedConnectionLimit, VoyagerError
 from .url_utils import url_to_public_id
@@ -31,6 +41,12 @@ from .pacing import (
 )
 
 logger = logging.getLogger("voyager_py.worker")
+
+# The host's hook to the core browser broker: given the referral surface slug
+# (owned by `session.SURFACE_SLUG`), return that surface's ready handle. Core
+# supplies the callable; it never names the vendor slug (the slug is the runtime
+# argument). None → the session self-launches its own Chromium (standalone/CLI).
+SurfaceProvider = Callable[[str], Any]
 
 
 def _pacer(profile: PacingProfile | None, state_dir: str | None) -> Pacer:
@@ -48,6 +64,7 @@ def _paced_session(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
 ):
     """The scaffold EVERY browser-touching operation shares: build the session,
     and on the way out ALWAYS persist the pacing ledger and then close the
@@ -75,7 +92,8 @@ def _paced_session(
     from .session import AccountSession
 
     session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
+        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir,
+        surface_provider=surface_provider,
     )
     try:
         yield session
@@ -163,6 +181,7 @@ def resolve_company(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Resolve a company → LinkedIn company entities (URN + meta).
@@ -184,7 +203,7 @@ def resolve_company(
                     + (f", domain-anchor on {prefer_domain!r}" if prefer_domain else ""),
             "companies": [],
         }
-    # The last read path that built no Pacer at all (posture doc §4 fix 2):
+    # The last read path that built no Pacer at all (posture doc section 4 fix 2):
     # refuse during backoff, and charge the CUL search budget for the keyword
     # typeahead (company search is CUL-counted). A pasted URL is a direct
     # single-entity fetch, not a search — backoff-gated but not CUL-charged.
@@ -204,12 +223,15 @@ def resolve_company(
     from .company import resolve_company as _resolve
 
     with _paced_session(pacer, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
         try:
             if charge_search:
                 pacer.record_search()
-            companies = _resolve(
-                session, keywords, url=url, limit=limit, prefer_domain=prefer_domain
+            companies = session.run_browser(
+                lambda: _resolve(
+                    session, keywords, url=url, limit=limit, prefer_domain=prefer_domain
+                )
             )
             return {"op": "resolve-company", "ok": True, "keywords": keywords, "url": url,
                     "prefer_domain": prefer_domain, "count": len(companies),
@@ -232,6 +254,7 @@ def discover(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Discover ≤ `limit` current employees of `company` (US-REF-01).
@@ -276,7 +299,8 @@ def discover(
     from .discovery import discover_company_contacts
 
     with _paced_session(pacer, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
         try:
             pacer.record_search()
             # Reserve, don't just gate: a boolean check with 1 view remaining would
@@ -285,8 +309,10 @@ def discover(
             remaining_views = pacer.usage("profile_views").get("day_remaining")
             if remaining_views is not None:
                 limit = max(1, min(limit, int(remaining_views)))
-            contacts = discover_company_contacts(
-                session, company, limit=limit, page=page, company_urn=company_urn
+            contacts = session.run_browser(
+                lambda: discover_company_contacts(
+                    session, company, limit=limit, page=page, company_urn=company_urn
+                )
             )
             # Charge one profile view per candidate we actually enriched. Filtered-out
             # candidates still cost a request upstream, so this under-counts slightly;
@@ -311,6 +337,7 @@ def search_jobs(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Logged-in LinkedIn job search (read-only) → ONE page of
@@ -368,17 +395,24 @@ def search_jobs(
     # backoff pause to the shared ledger (a no-op if neither happened — save()
     # early-returns) and closes the browser.
     with _paced_session(pacer, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
         try:
-            session.ensure_browser()
-            client = PlaywrightLinkedinAPI(session)
             # Charge on ATTEMPT, before issuing the request — a page that reaches
             # LinkedIn but then 429s or fails to parse still consumed a request
             # (same safe-direction rule as the send ops).
             pacer.record_search_page()
-            page = client.search_jobs(
-                keywords, location, start=start, count=MAX_JOBS_PER_SEARCH
-            )
+
+            def _fetch() -> dict:
+                # In-page fetch: builds the client and issues the one search on
+                # the browser lane (the client rides the surface page's own fetch).
+                session.ensure_browser()
+                client = PlaywrightLinkedinAPI(session)
+                return client.search_jobs(
+                    keywords, location, start=start, count=MAX_JOBS_PER_SEARCH
+                )
+
+            page = session.run_browser(_fetch)
             total = int(page.get("total", 0) or 0)
             jobs = list(page.get("jobs", []))
             # A short page is LinkedIn's own end-of-results signal; a known total
@@ -423,6 +457,7 @@ def send_connection(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Send a cold connection request (with the drafted `note` when given —
@@ -474,7 +509,7 @@ def send_connection(
     # is what keeps a batch from going out at machine pace.
     waited_s = pacer.wait_before_send()
 
-    # Charge on ATTEMPT, before the browser launches (posture doc §4 fix 4): a
+    # Charge on ATTEMPT, before the browser launches (posture doc section 4 fix 4): a
     # send that reached LinkedIn but died in post-send verification must not go
     # uncounted, or the ledger drifts low in the unsafe direction. Proven
     # no-sends below refund the charge.
@@ -490,10 +525,11 @@ def send_connection(
     # drift is the one we refuse). save() is idempotent — the paths below that
     # return already ran it.
     with _paced_session(pacer, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
         try:
-            status, note_outcome = send_connection_request(
-                session, public_identifier, note=note
+            status, note_outcome = session.run_browser(
+                lambda: send_connection_request(session, public_identifier, note=note)
             )
         except ReachedConnectionLimit as e:
             # LinkedIn's weekly-cap dialog appeared INSTEAD of the invite going
@@ -521,7 +557,7 @@ def send_connection(
             "op": "send-connection", "ok": True, "sent": True,
             "public_identifier": public_identifier, "status": status,
             # Surfaced (not just logged) so a dropped note is visible to the
-            # host: the referral ask rides in the note (posture doc §6).
+            # host: the referral ask rides in the note (posture doc section 6).
             "note_outcome": note_outcome,
             # What we ACTUALLY slept before this send. Was `delay_hint_s` — a
             # re-jittered number nothing consumed, which made the pacing look
@@ -539,6 +575,7 @@ def send_dm(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Send a warm 1st-degree referral-ask DM (US-REF-10). DMs have their own
@@ -573,7 +610,7 @@ def send_dm(
     # (NFR-LI-01).
     waited_s = pacer.wait_before_send()
 
-    # Charge on ATTEMPT (posture doc §4 fix 4); a proven no-send refunds below.
+    # Charge on ATTEMPT (posture doc section 4 fix 4); a proven no-send refunds below.
     pacer.record_dm()
     pacer.save()
 
@@ -583,9 +620,12 @@ def send_dm(
     # drift is the one we refuse) — `_paced_session`'s finally still saves;
     # save() is idempotent on the paths below that already ran it.
     with _paced_session(pacer, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
         try:
-            sent = _send_dm(session, public_identifier, message)
+            sent = session.run_browser(
+                lambda: _send_dm(session, public_identifier, message)
+            )
             if not sent:
                 # actions.send_dm returned a definite "did not send" (no thread /
                 # no compose) — a proven no-send, so the attempt charge goes back.
@@ -616,6 +656,7 @@ def contact_sync(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Read-only contact-status probe (FR-NW-15): connection degree + the 1:1
@@ -654,10 +695,13 @@ def contact_sync(
     from .actions import get_contact_sync_state
 
     with _paced_session(pacer, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
         try:
             pacer.record_profile_view()
-            state = get_contact_sync_state(session, public_identifier)
+            state = session.run_browser(
+                lambda: get_contact_sync_state(session, public_identifier)
+            )
             return {"op": "contact-sync", "ok": True,
                     "public_identifier": public_identifier, **state,
                     "quota": pacer.remaining()}
@@ -682,6 +726,7 @@ def contact_sync_states(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Batched read-only contact-status probes (FR-NW-15) in ONE browser session.
@@ -702,7 +747,7 @@ def contact_sync_states(
       - a 403/404/parse failure skips THAT contact (`error: "probe_failed"`)
         and the sweep continues;
       - the first RateLimited enters backoff and STOPS the remaining sweep
-        (§0.4: the first 429 stops the batch — the old per-op loop kept
+        (section 0.4: the first 429 stops the batch — the old per-op loop kept
         launching browsers into a throttle);
       - an AuthenticationError stops the sweep and surfaces (`error:
         "auth_error"`) — a dead session cannot be fixed by probing harder.
@@ -748,7 +793,8 @@ def contact_sync_states(
     batch_error = ""
     batch_reason = ""
     with _paced_session(pacer, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
         for probed, pid in enumerate(pids):
             allowed, reason = pacer.can_view_profile()
             if not allowed:
@@ -766,7 +812,9 @@ def contact_sync_states(
             # LinkedIn but failed still consumed an authenticated read.
             pacer.record_profile_view()
             try:
-                state = get_contact_sync_state(session, pid)
+                state = session.run_browser(
+                    lambda pid=pid: get_contact_sync_state(session, pid)
+                )
             except RateLimited as e:
                 deadline = pacer.pause_for_backoff(str(e))
                 results.append(_blocked(pid, "rate_limited", str(e),
@@ -798,6 +846,7 @@ def status(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Report a contact's connection status: connected / pending / qualified."""
@@ -816,7 +865,10 @@ def status(
     # by the host's own already-metered flows), so the scaffold only owns the
     # browser teardown here.
     with _paced_session(None, storage_state=storage_state,
-                        user_data_dir=user_data_dir, headed=headed) as session:
-        state = get_connection_status(session, public_identifier)
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        state = session.run_browser(
+            lambda: get_connection_status(session, public_identifier)
+        )
         return {"op": "status", "ok": True,
                 "public_identifier": public_identifier, "status": state}
