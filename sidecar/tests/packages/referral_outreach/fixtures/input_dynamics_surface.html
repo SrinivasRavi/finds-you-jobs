@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- Local surface fixture for the input-dynamics broker-lane integration test.
+     Holds a note textarea (for the human_type char-for-char + trusted-input
+     proof) and a tall scrollable body (for the scroll_dynamics wheel-event
+     proof). No network, no vendor, no framework: plain instrumentation only.
+     It records every keydown's isTrusted and counts wheel events, both read
+     back over the surface lane with page.evaluate. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>input dynamics surface</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      #note { width: 480px; height: 120px; }
+      #filler { height: 6000px; background: linear-gradient(#fff, #ccc); }
+    </style>
+  </head>
+  <body>
+    <textarea id="note" aria-label="Message"
+      placeholder="Type the referral ask here"></textarea>
+    <div id="filler">a tall scrollable body, so a reading-scroll has somewhere to go</div>
+    <script>
+      window.__wheelCount = 0;
+      window.__keydownCount = 0;
+      window.__untrustedKeydowns = 0;
+      window.addEventListener(
+        "wheel",
+        function () { window.__wheelCount += 1; },
+        { passive: true }
+      );
+      window.addEventListener(
+        "keydown",
+        function (event) {
+          window.__keydownCount += 1;
+          if (!event.isTrusted) { window.__untrustedKeydowns += 1; }
+        },
+        true
+      );
+    </script>
+  </body>
+</html>
