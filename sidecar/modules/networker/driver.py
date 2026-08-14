@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from .types import NetworkerError
 
 if TYPE_CHECKING:
-    from sidecar.packages.referral_outreach.upstream.pacing import PacingProfile
+    from sidecar.packages.referral_outreach.facade import PacingProfile
 
 
 class VoyagerDriver(Protocol):
@@ -117,16 +117,18 @@ class DirectVoyagerDriver:
         self.invocations = 0
 
     def _worker(self):  # type: ignore[no-untyped-def]
-        # Imported lazily so a caller that only builds the driver never imports
-        # the GPL browser core (and its playwright dep) until an op runs.
-        from sidecar.packages.referral_outreach.upstream import worker
+        # Through the F-P10 facade so this core module never imports `upstream.*`
+        # directly. Still lazy (the accessor imports the worker on first use), so
+        # a caller that only builds the driver never pulls the GPL browser core
+        # (and its playwright dep) in until an op runs.
+        from sidecar.packages.referral_outreach.facade import worker_module
 
-        return worker
+        return worker_module()
 
     def _call(self, fn: Callable[..., dict], /, **kwargs: Any) -> dict:
         """Run a worker op with `self.env` applied to the process env, translating
         a worker `VoyagerError` into the module's typed `NetworkerError`."""
-        from sidecar.packages.referral_outreach.upstream.errors import VoyagerError
+        from sidecar.packages.referral_outreach.facade import VoyagerError
 
         self.invocations += 1
         prior: dict[str, str | None] = {}

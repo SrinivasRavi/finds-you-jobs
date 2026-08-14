@@ -180,7 +180,7 @@ def linkedin_caps_snapshot(profile: PacingProfile) -> dict:
         resolve_membership,
         resolve_profile,
     )
-    from sidecar.packages.referral_outreach.upstream.pacing import Pacer
+    from sidecar.packages.referral_outreach.facade import Pacer
 
     effective = resolve_profile(profile)            # ceiling × risk% + overrides
     ceilings = resolve_membership(profile.membership)  # the 100% estimates
@@ -216,7 +216,7 @@ def linkedin_quota_snapshot(profile: PacingProfile) -> dict:
     no-sends). DB-free; async routes call it via `asyncio.to_thread` (ledger
     file read)."""
     from sidecar.packages.referral_outreach import resolve_profile
-    from sidecar.packages.referral_outreach.upstream.pacing import Pacer
+    from sidecar.packages.referral_outreach.facade import Pacer
 
     return Pacer(resolve_profile(profile), state_dir=linkedin_state_dir()).remaining()
 
