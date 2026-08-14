@@ -1,6 +1,6 @@
-// Analytics (§12 / FR-SET-07 + US-LOG-01) — the merged cost-and-usage + logs
+// Analytics (section 12 / FR-SET-07 + US-LOG-01) — the merged cost-and-usage + logs
 // surface. Left 25%: aggregate cost tiles + per-kind spend from the operations
-// ledger (the cost source of truth, architecture §10). Right 75%: the operations
+// ledger (the cost source of truth, architecture section 10). Right 75%: the operations
 // ledger table with a per-operation span drill-down (US-SYS-05 / A6), a Started
 // timestamp, per-agent filter chips, and a friendly "App restarted while
 // generating — retry?" affordance over the boot-recovery note (US-LOG-01).
@@ -244,7 +244,7 @@ const CANCELLABLE_RUNNING_KINDS: OperationKind[] = ["score", "tailor", "cover"];
 
 // `apply` cancellation is never a generic ledger Stop — even a queued apply is
 // cancelled through its own apply-run flow (the ApplierPanel's dedicated Cancel,
-// applier.md §8.2), which lands the run honestly. A generic "Stop" here would be
+// applier-as-built.md section 8.2), which lands the run honestly. A generic "Stop" here would be
 // a semantically odd second affordance, so the ledger never renders one for it.
 const STOP_EXCLUDED_KINDS: OperationKind[] = ["apply"];
 

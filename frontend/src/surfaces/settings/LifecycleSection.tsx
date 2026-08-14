@@ -136,7 +136,7 @@ export const LifecycleSection = memo(function LifecycleSection({
         />
         {/* The contact-sync cadence control is gone with the schedule itself:
             syncing is user-initiated only (the Sync button / on-open refresh —
-            docs/internal/linkedin-posture.md §1). */}
+            docs/internal/linkedin-addon.md section 5). */}
       </div>
     </Section>
   );

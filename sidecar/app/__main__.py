@@ -6,7 +6,7 @@ handshake the shell reads:
     PORT=<n>
     TOKEN=<uuid>
 
-as two flushed stdout lines (architecture §4.4 step 1). Then serves the FastAPI
+as two flushed stdout lines (architecture section 4.4 step 1). Then serves the FastAPI
 app until `/shutdown`, the orphan watchdog, or a signal ends it.
 """
 
@@ -79,7 +79,7 @@ def main() -> int:
         # /shutdown must actually end the process even while an SSE client is
         # attached: uvicorn's default graceful shutdown waits forever for open
         # connections, and the app always holds the /api/events stream open.
-        # 5 s stays inside the shell's 10 s drain window (§4.4 step 3), so the
+        # 5 s stays inside the shell's 10 s drain window (section 4.4 step 3), so the
         # sidecar exits on its own before the AM3 force-kill has to fire.
         timeout_graceful_shutdown=5,
     )

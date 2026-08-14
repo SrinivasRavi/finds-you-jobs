@@ -1,4 +1,4 @@
-"""Bearer-token auth for the loopback API (architecture §4.2).
+"""Bearer-token auth for the loopback API (architecture section 4.2).
 
 Every request carries `Authorization: Bearer <token>` except `/healthz` (open,
 so the shell's health poll needs no secret). The SSE stream additionally accepts

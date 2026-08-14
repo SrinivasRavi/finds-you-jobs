@@ -1,5 +1,5 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Page-state classifier (docs/internal/applier.md §5.1).
+"""Page-state classifier (docs/internal/archived/applier-as-built.md section 5.1).
 
 Pure logic over an ``Observation``: no browser, no network, no model call —
 so it is exhaustively unit-testable. It must not declare an application form
@@ -25,7 +25,7 @@ _APPLY_CONTROL = re.compile(
 )
 # Application-SPECIFIC vocabulary only. Generic contact fields (name, email,
 # phone) deliberately do NOT count — a newsletter/talent-community signup has
-# those too (§5.1); what distinguishes an application form is resume/CV,
+# those too (section 5.1); what distinguishes an application form is resume/CV,
 # authorization, salary, screening-question language, or a file upload.
 _FORM_FIELD_HINTS = re.compile(
     r"\b(resume|cv|cover letter|linkedin( profile)?|work authorization|"
@@ -94,7 +94,7 @@ def classify(obs: Observation) -> frozenset[PageState]:
     )
     # An application form needs application-shaped evidence: several inputs AND
     # (application field vocabulary OR a resume upload) AND not a
-    # newsletter-only surface (§5.1).
+    # newsletter-only surface (section 5.1).
     application_vocab = bool(_FORM_FIELD_HINTS.search(labels_blob) or file_upload)
     newsletter_only = bool(
         _NEWSLETTER_HINTS.search(text)
@@ -137,7 +137,7 @@ def classify(obs: Observation) -> frozenset[PageState]:
 
 
 def _is_external(current_url: str, href: str) -> bool:
-    """True when ``href`` leaves the current host (a hosted-ATS hop, §5.2)."""
+    """True when ``href`` leaves the current host (a hosted-ATS hop, section 5.2)."""
     from urllib.parse import urlparse
 
     if not href or href.startswith(("#", "javascript:", "mailto:")):

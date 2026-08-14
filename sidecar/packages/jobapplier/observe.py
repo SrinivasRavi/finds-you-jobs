@@ -1,5 +1,6 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Typed observation seam over the Skyvern-derived core (docs/internal/applier.md §4.1).
+"""Typed observation seam over the Skyvern-derived core
+(docs/internal/archived/applier-as-built.md section 4.1).
 
 One ``observe(page)`` call produces one immutable ``Observation``: a viewport
 screenshot, a compact interactive-element tree rendered to HTML, and a flat list
@@ -9,7 +10,7 @@ current observation only.
 Element ids are per-observation and go stale the instant the next ``observe``
 runs (or the page navigates/rerenders). An action must reference an id from the
 CURRENT observation; the executor rejects stale references rather than guessing
-(§4.1). ``unique_id`` is the underlying Skyvern per-scan DOM id the executor
+(section 4.1). ``unique_id`` is the underlying Skyvern per-scan DOM id the executor
 resolves against; ``element_id`` is the opaque handle the model sees.
 
 Observation is frame-aware: the tree is walked across the main frame and its
@@ -56,7 +57,7 @@ class ObservedElement:
 
 @dataclass(frozen=True)
 class Observation:
-    """An immutable snapshot of the page for one model turn (§4.1)."""
+    """An immutable snapshot of the page for one model turn (section 4.1)."""
 
     url: str
     title: str

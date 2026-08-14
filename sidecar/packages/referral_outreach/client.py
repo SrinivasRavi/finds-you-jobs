@@ -1,9 +1,9 @@
-"""The `ReferralAutomation` facade contract (`docs/internal/referral-outreach.md` §3.1).
+"""The `ReferralAutomation` facade contract (`docs/internal/referral-outreach.md` section 3.1).
 
 finds-you-jobs-owned (AGPL-3.0-only). This is the narrow, typed, in-process
 surface the app's Networker module calls. The concrete browser-driving
 implementation over the GPLv3 `upstream/` OpenOutreach core lands with the
-direct-outreach commits (`docs/internal/roadmap.md` §7.2 #10–11); this
+direct-outreach commits (`docs/internal/roadmap.md` section 7.2 #10–11); this
 provenance commit ships the contract, the typed values, and a deterministic
 fake so callers and tests can be written against a stable seam.
 """

@@ -12,7 +12,7 @@ action, so a per-URL fetch is exactly right here:
 - Otherwise fetch the page directly and pull a best-effort title + text body from
   the HTML (generic careers pages, Workable job links, anything else).
 
-20 s fetch timeout, no auto-retry (US-JB-07, user-stories §17b): the caller passes
+20 s fetch timeout, no auto-retry (US-JB-07, user-stories section 17b): the caller passes
 `timeout_s`; a fetch failure raises `ScraperError` verbatim and the user can then
 fill the fields in by hand. The result is *not* persisted — the app owns that.
 """

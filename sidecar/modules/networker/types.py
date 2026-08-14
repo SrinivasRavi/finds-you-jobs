@@ -1,4 +1,4 @@
-"""Networker module types — plain dataclasses, pre-architecture (ROADMAP §4).
+"""Networker module types — plain dataclasses, pre-architecture (ROADMAP section 4).
 
 Framework-free on purpose (no pydantic/ORM): the module is a silo; the G4
 architecture pass owns the final type system and these graduate into it. The
@@ -53,9 +53,9 @@ DM_CHAR_LIMIT = 1200
 
 @dataclass
 class Usage:
-    """Aggregate cost record for one bounded operation (ROADMAP §4).
+    """Aggregate cost record for one bounded operation (ROADMAP section 4).
 
-    Recorded always; NOT enforced as a budget pre-beta (ROADMAP §4). `discover`
+    Recorded always; NOT enforced as a budget pre-beta (ROADMAP section 4). `discover`
     and `send` are zero-LLM (they delegate to the voyager subprocess: `usd`/
     tokens stay None, `internal_calls` counts subprocess invocations). `draft`
     is the one LLM operation and carries real token/usd figures.

@@ -1,6 +1,6 @@
 # finds-you-jobs — AGPL-3.0-only.
 """The apply loop against real headless Chromium and local file:// fixtures
-(applier.md §11 browser integration tests) — a scripted FakeApplyEngine, no
+(applier-as-built.md section 11 browser integration tests) — a scripted FakeApplyEngine, no
 model, ZERO network. Covers the JD→form navigation hop, grounded filling with
 per-action read-back, the refusal paths (password fill, private-IP navigate,
 prompt-injected metadata URL), hard walls, stale ids, cancellation, budget
@@ -128,7 +128,7 @@ async def test_happy_path_jd_to_form_to_ready_for_human(tmp_path: Path) -> None:
     assert types[0] is ApplyEventType.PHASE_CHANGED
     assert ApplyEventType.READY_FOR_HUMAN in types
     assert types[-1] is ApplyEventType.COMPLETED
-    # Nothing ever claimed submission (§8.4).
+    # Nothing ever claimed submission (section 8.4).
     assert "submitted" not in result.summary.lower()
 
 
@@ -149,7 +149,7 @@ async def test_password_fill_refused_and_reported(tmp_path: Path) -> None:
 async def test_prompt_injected_metadata_navigate_is_refused(tmp_path: Path) -> None:
     # The jd.html fixture carries an injection line telling the agent to visit
     # the cloud metadata endpoint. Simulate a model that obeys: the EXECUTOR
-    # must refuse (§4.3) — with allow_local off, like production.
+    # must refuse (section 4.3) — with allow_local off, like production.
     script: list[FakeStep] = [
         _action("navigate", url="http://169.254.169.254/latest/meta-data"),
         _action("report_blocked", kind="error", detail="cannot navigate"),

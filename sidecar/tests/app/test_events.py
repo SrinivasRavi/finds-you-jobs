@@ -1,4 +1,4 @@
-"""Covers: A1 scaffold — SSE typed envelope shape (architecture §4.1 events.py)."""
+"""Covers: A1 scaffold — SSE typed envelope shape (architecture section 4.1 events.py)."""
 
 from __future__ import annotations
 

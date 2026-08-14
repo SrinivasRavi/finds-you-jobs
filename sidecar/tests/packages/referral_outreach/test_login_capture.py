@@ -4,7 +4,7 @@
 linkedin.com. A tiny localhost server serves a page that sets a `li_at` cookie
 (the same signal a real LinkedIn login drops); `capture_login` must detect it and
 persist a Playwright storage-state. Real Chromium, headless, zero LinkedIn
-traffic. Live login is a maintainer-only, tiny-volume action (README § Live use).
+traffic. Live login is a maintainer-only, tiny-volume action (README section Live use).
 """
 
 from __future__ import annotations

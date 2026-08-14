@@ -43,7 +43,7 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
   failed: "failed",
 };
 
-// The Apply slot maps the latest Apply Run's status (applier.md §8.2) onto the
+// The Apply slot maps the latest Apply Run's status (applier-as-built.md section 8.2) onto the
 // shared PacketSlotTag state keys: none→"Apply" (grey), waiting_for_packet/
 // running→"Applying…" (grey+spinner), ready_for_human→"Review & submit"
 // (yellow), submitted→"Submitted" (green check), and the honest non-success
@@ -202,7 +202,7 @@ export const Card = memo(function Card({
         <button onClick={() => onSlot(app, "refs")} data-testid="card-referrals-slot">
           <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state] ?? "none"} />
         </button>
-        {/* Apply slot (applier.md §8.1/§8.2) — starts a run (or reopens the
+        {/* Apply slot (applier-as-built.md section 8.1/section 8.2) — starts a run (or reopens the
             bound one) and opens the companion panel. A card already past
             application (Applied/Interviewing/Offer/Rejected) with no run can't
             start one — you don't apply to a job you've already applied to

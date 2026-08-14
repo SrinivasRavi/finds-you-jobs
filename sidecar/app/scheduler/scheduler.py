@@ -1,4 +1,4 @@
-"""Scheduler tick (architecture §5.5, NFR-LONG-01).
+"""Scheduler tick (architecture section 5.5, NFR-LONG-01).
 
 `tick_once` is the pure-ish unit of work (sync, testable): find due schedules,
 skip any whose last operation is still pending (double-enqueue guard), enqueue

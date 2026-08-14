@@ -2,7 +2,7 @@
 // 2026-07-30: the batch "Send {{count}} messages?" confirm went away with the
 // multi-select — each row's Connect/Message button opens this for exactly one
 // person, showing the message that will actually go out (per-contact confirm;
-// posture doc §5.1). Not memoized: it only mounts while the confirm overlay is
+// posture doc section 5.1). Not memoized: it only mounts while the confirm overlay is
 // open, so there is no tree to shield.
 
 import { Trans, useTranslation } from "react-i18next";

@@ -1,4 +1,4 @@
-"""Covers: core storage — operations repo round-trips (database-design §9)."""
+"""Covers: core storage — operations repo round-trips (database-design section 9)."""
 
 from __future__ import annotations
 

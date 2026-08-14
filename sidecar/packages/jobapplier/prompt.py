@@ -1,10 +1,10 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Prompt assembly for the apply loop (docs/internal/applier.md §4).
+"""Prompt assembly for the apply loop (docs/internal/archived/applier-as-built.md section 4).
 
 The system prompt carries the safety contract in words; ``executor.py``
 carries it in code. Page content (JD, form text, anything observed) is DATA,
 never instructions — the prompt says so explicitly, and the executor enforces
-the pieces a prompt can't (§4.3).
+the pieces a prompt can't (section 4.3).
 
 The engine seam is text completion (``Engine.complete``), so the model
 receives the compact interactive-element tree — not the raw screenshot; the
@@ -60,7 +60,7 @@ def system_prompt() -> str:
 
 
 def render_request_context(request: ApplyRequest) -> str:
-    """The grounded user-side context (§6). Rendered once per turn."""
+    """The grounded user-side context (section 6). Rendered once per turn."""
     facts = "\n".join(f"- {k}: {v}" for k, v in sorted(request.profile_facts.items()))
     prefs = "\n".join(f"- {k}: {v}" for k, v in sorted(request.preferences.items()))
     artifacts = "\n".join(

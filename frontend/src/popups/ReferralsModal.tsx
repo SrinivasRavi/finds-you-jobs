@@ -7,7 +7,7 @@
 // Reworked 2026-07-30: the checkbox multi-select + "Reach out (N)" batch became
 // a per-row Connect (cold invite+note) / Message (warm DM) button — each opens
 // a pre-send confirmation showing THAT person's message, and sends exactly one
-// contact (per-contact confirm; posture doc §5.1). Rows show Sending/Reached
+// contact (per-contact confirm; posture doc section 5.1). Rows show Sending/Reached
 // badges in place, so there is no full-screen "sending" phase any more.
 // With the LinkedIn master toggle ON + a valid session, sends go through the
 // networker module (the voyager quota/caps + backoff are surfaced here). With
@@ -608,7 +608,7 @@ export function ReferralsModal({
       </div>
 
       {/* Pre-send confirmation for the one contact whose button was clicked
-          (per-contact confirm — US-NW-09 / vision / posture doc §5.1). */}
+          (per-contact confirm — US-NW-09 / vision / posture doc section 5.1). */}
       {confirmingId && (() => {
         const c = candidates.find((x) => x.contact_id === confirmingId);
         if (!c) return null;

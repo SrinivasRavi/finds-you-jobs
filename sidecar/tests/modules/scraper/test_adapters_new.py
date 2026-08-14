@@ -3,7 +3,7 @@ approved plan) — Workday CxS (POST + bounded pagination), BambooHR, Breezy,
 Arbeitnow, The Muse. Fixture payloads only; zero live network (FakeFetcher).
 
 Anchors: US-JB-01 (scored daily feed breadth), FR-SYS-01 (canonical URLs),
-the §4 request-budget discipline (Usage counts every paginated call).
+the section 4 request-budget discipline (Usage counts every paginated call).
 """
 
 from __future__ import annotations

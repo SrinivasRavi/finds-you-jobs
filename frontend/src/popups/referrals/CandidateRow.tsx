@@ -43,7 +43,7 @@ export const CandidateRow = memo(function CandidateRow({
   sending: boolean;
   failure: string | null;
   /** Open the pre-send confirmation for THIS contact (per-contact confirm —
-   *  the multi-select batch went away 2026-07-30; posture doc §5.1). */
+   *  the multi-select batch went away 2026-07-30; posture doc section 5.1). */
   onAsk: (id: string) => void;
   onExpand: (id: string) => void;
   onDraft: (id: string, v: string) => void;

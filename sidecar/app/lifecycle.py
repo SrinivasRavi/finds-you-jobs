@@ -42,7 +42,7 @@ LIFECYCLE_DEFAULTS: dict[str, int] = {
 }
 
 # Contact sync is user-initiated only (no scheduled LinkedIn traffic — see
-# `seed.py` and `docs/internal/linkedin-posture.md` §1). Opening the Networking
+# `seed.py` and `docs/internal/linkedin-addon.md` section 5). Opening the Networking
 # surface may trigger an opportunistic refresh, but no more often than this. The
 # explicit Sync button bypasses it: an on-demand refresh is the user asking, and
 # is no more traffic than them opening linkedin.com themselves.

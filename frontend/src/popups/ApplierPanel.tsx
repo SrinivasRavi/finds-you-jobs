@@ -1,12 +1,12 @@
-// Applier companion panel (applier.md §8.2-§8.4) — the surface the app shows
+// Applier companion panel (applier-as-built.md section 8.2-section 8.4) — the surface the app shows
 // *during and after* an Apply Run. The real work happens in a separate headed
 // Chromium tab; this panel narrates it, holds the evidence, and carries the P1
 // handoff. Modeled on ReferralsModal's Modal + eventBus subscription pattern.
 //
 // It must work whether it was open the whole time OR reopened after the fact
-// (§9.2): the live event feed is SEEDED from the run snapshot's fields/blockers,
+// (section 9.2): the live event feed is SEEDED from the run snapshot's fields/blockers,
 // then APPENDED to from `apply` SSE events for this run_id. Closing the panel
-// never cancels the run (§8.2) — it just closes.
+// never cancels the run (section 8.2) — it just closes.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -36,7 +36,7 @@ const DOT_CLS: Record<Tone, string> = {
   bad: "bg-bad",
 };
 
-/** The §8.2 high-level phase pill, mapped from status (+ the free-text phase
+/** The section 8.2 high-level phase pill, mapped from status (+ the free-text phase
  *  while running). Spinner shows only while the run is genuinely live.
  *
  *  Tone/liveness/label come from the shared status table (duplication audit
@@ -59,7 +59,7 @@ function phaseInfo(status: ApplyRunStatus, phase: string): { label: string; tone
 const NON_SUCCESS_TERMINALS: ApplyRunStatus[] = ["blocked", "timed_out", "interrupted", "failed"];
 
 /** Seed the feed from the run snapshot — every prior field outcome + blocker,
- *  so a reopened panel is never blank (§9.2). */
+ *  so a reopened panel is never blank (section 9.2). */
 function seedFeed(run: ApplyRun): FeedItem[] {
   const items: FeedItem[] = [];
   run.fields.forEach((f, i) => {
@@ -174,7 +174,7 @@ export function ApplierPanel({
   role: string;
   company: string;
   /** Retry / Reopen-and-refill starts a fresh run — the parent rebinds the
-   *  panel to it (§8.3). */
+   *  panel to it (section 8.3). */
   onRebind: (newRunId: string) => void;
   onClose: () => void;
 }) {
@@ -345,7 +345,7 @@ export function ApplierPanel({
           ) : null}
         </div>
 
-        {/* Submitted banner (§8.4 — confirmation detected or user-attested) */}
+        {/* Submitted banner (section 8.4 — confirmation detected or user-attested) */}
         {status === "submitted" ? (
           <div className="border-b border-border bg-good-wash px-5 py-2.5 text-[12.5px] font-medium text-good">
             {t("popups.applier.submittedBanner")}
@@ -405,7 +405,7 @@ export function ApplierPanel({
           </div>
         </div>
 
-        {/* Handoff strip (§8.4) — form ready for the human to submit */}
+        {/* Handoff strip (section 8.4) — form ready for the human to submit */}
         {status === "ready_for_human" ? (
           <div
             className="border-t border-border bg-warn-wash px-5 py-3"
@@ -446,7 +446,7 @@ export function ApplierPanel({
           </div>
         ) : null}
 
-        {/* Non-success terminal (§8.3) — honest summary + blockers + Retry */}
+        {/* Non-success terminal (section 8.3) — honest summary + blockers + Retry */}
         {isRetryable ? (
           <div className="border-t border-border bg-bad-wash px-5 py-3">
             <div className="text-[13px] font-semibold text-bad">
@@ -487,7 +487,7 @@ export function ApplierPanel({
           </div>
         ) : null}
 
-        {/* Footer — Cancel while live; Close never cancels the run (§8.2) */}
+        {/* Footer — Cancel while live; Close never cancels the run (section 8.2) */}
         <div className="flex items-center justify-end gap-2 border-t border-border bg-surface-2 px-5 py-3">
           {canCancel ? (
             <button

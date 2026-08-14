@@ -1,4 +1,4 @@
-// Client switch — architecture §4.3 / ROADMAP A2–A4.
+// Client switch — architecture section 4.3 / ROADMAP A2–A4.
 //
 // No mocks/ directory exists yet in this rebuild (that lands with its own
 // commit) — the app always talks to the real sidecar-backed client

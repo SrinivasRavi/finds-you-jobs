@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Healthz
-         * @description Liveness probe. Open (no token) — the shell polls this (§4.4 step 2).
+         * @description Liveness probe. Open (no token) — the shell polls this (section 4.4 step 2).
          */
         get: operations["healthz_healthz_get"];
         put?: never;
@@ -159,7 +159,7 @@ export interface paths {
         /**
          * Preview Job
          * @description Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
-         *     fields — best-effort, not persisted. 20 s fetch, no auto-retry (§17b). The
+         *     fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
          *     blocking probe runs off the event loop.
          *
          *     Two DB short-circuits before the network probe: a **tombstoned** URL fails
@@ -549,7 +549,7 @@ export interface paths {
          * Update Application
          * @description Move/annotate/archive a card. Column moves, notes edits, and
          *     archive/unarchive each write an `ApplicationEvent` (only on real change —
-         *     a no-op PATCH records nothing). `intent` is the §5.1 exclusive value:
+         *     a no-op PATCH records nothing). `intent` is the section 5.1 exclusive value:
          *     setting it replaces the previous one wholesale.
          */
         patch: operations["update_application_api_applications__application_id__patch"];
@@ -587,7 +587,7 @@ export interface paths {
         };
         /**
          * List Schedules
-         * @description The recurring-enqueue rules (scan / score_new). Seeded disabled (§7 seed).
+         * @description The recurring-enqueue rules (scan / score_new). Seeded disabled (section 7 seed).
          */
         get: operations["list_schedules_api_schedules_get"];
         put?: never;
@@ -652,7 +652,7 @@ export interface paths {
         put?: never;
         /**
          * Create Operation
-         * @description Enqueue an operation; return its id immediately (architecture §4.2).
+         * @description Enqueue an operation; return its id immediately (architecture section 4.2).
          */
         post: operations["create_operation_api_operations__kind__post"];
         delete?: never;
@@ -719,7 +719,7 @@ export interface paths {
         };
         /**
          * List Operations
-         * @description Recent operations — the ledger the Logs/Analytics surfaces read (§10),
+         * @description Recent operations — the ledger the Logs/Analytics surfaces read (section 10),
          *     each row carrying its batched-resolved human subject (US-LOG-01).
          */
         get: operations["list_operations_api_operations_get"];
@@ -985,7 +985,7 @@ export interface paths {
          *     FR-NW-15) — **user-initiated only**.
          *
          *     This replaces the old 12 h `contact_sync` schedule, which touched LinkedIn
-         *     with nobody present (`docs/internal/linkedin-posture.md` §1). Two callers:
+         *     with nobody present (`docs/internal/linkedin-addon.md` section 5). Two callers:
          *
          *     - the explicit **Sync** button, which passes `force=true` and always runs —
          *       an on-demand refresh the user asked for, no more LinkedIn traffic than
@@ -1044,7 +1044,7 @@ export interface paths {
          *
          *     Gated on at least one LinkedIn feature being enabled: this route *opens a
          *     real browser at linkedin.com*, and it accepted that request with both
-         *     opt-ins off until 2026-08-01 (posture doc §4 #8).
+         *     opt-ins off until 2026-08-01 (posture doc section 4 #8).
          */
         post: operations["linkedin_connect_api_linkedin_connect_post"];
         delete?: never;
@@ -1072,7 +1072,7 @@ export interface paths {
          *     no-op. (It used to check the *Referral Outreach* toggle instead — the wrong
          *     consent, in both directions: enabling referrals alone unlocked searches the
          *     user never acknowledged, while a search-only user was refused. Posture doc
-         *     §4 #8.) Results land in the same discovery funnel as every other source.
+         *     section 4 #8.) Results land in the same discovery funnel as every other source.
          *
          *     `mode` (2026-08-01): `fresh` runs page 0 from current prefs and resets the
          *     pagination cursor; `next` continues the last Fresh search's snapshot from
@@ -1170,7 +1170,7 @@ export interface paths {
          *
          *     Gated: this is the one route that *switches a safety mechanism off* — it
          *     clears the 24 h backoff LinkedIn's own throttle signal put us in — and it ran
-         *     ungated until 2026-08-01 (posture doc §4 #8).
+         *     ungated until 2026-08-01 (posture doc section 4 #8).
          */
         post: operations["linkedin_resume_api_linkedin_resume_post"];
         delete?: never;
@@ -1308,8 +1308,8 @@ export interface paths {
         /**
          * Start Apply
          * @description Create the durable ApplyRun and enqueue the `apply` op immediately —
-         *     no pre-Apply confirmation modal (§8.1); the click IS the action. Clicking
-         *     Apply also settles the exclusive intent to `apply` (roadmap §5.1).
+         *     no pre-Apply confirmation modal (section 8.1); the click IS the action. Clicking
+         *     Apply also settles the exclusive intent to `apply` (roadmap section 5.1).
          */
         post: operations["start_apply_api_applications__application_id__apply_post"];
         delete?: never;
@@ -1345,7 +1345,7 @@ export interface paths {
         /**
          * Get Apply Run
          * @description The run snapshot — a reopened companion fetches this instead of
-         *     depending on having seen every prior SSE event (§9.2).
+         *     depending on having seen every prior SSE event (section 9.2).
          */
         get: operations["get_apply_run_api_apply_runs__run_id__get"];
         put?: never;
@@ -1388,7 +1388,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel Apply Run
-         * @description Cooperative cancel (§8.2). The loop notices between steps and lands the
+         * @description Cooperative cancel (section 8.2). The loop notices between steps and lands the
          *     run as `interrupted`; an already-terminal run is returned unchanged.
          */
         post: operations["cancel_apply_run_api_apply_runs__run_id__cancel_post"];
@@ -1409,7 +1409,7 @@ export interface paths {
         put?: never;
         /**
          * Attest Apply Run
-         * @description The human's word after the P1 handoff (§8.4): 'I submitted' records a
+         * @description The human's word after the P1 handoff (section 8.4): 'I submitted' records a
          *     user-attested submission and advances the card to Applied; 'didn't submit'
          *     leaves the card in its pre-submission column with the honest run result.
          */
@@ -1523,7 +1523,7 @@ export interface paths {
         put?: never;
         /**
          * Install Browser
-         * @description Download Playwright's Chromium (never bundled — §4.5). Coarse progress is
+         * @description Download Playwright's Chromium (never bundled — section 4.5). Coarse progress is
          *     published on the SSE stream as `browser_install` events. Idempotent: a second
          *     call while one is running returns `already_running`.
          */
@@ -1933,7 +1933,7 @@ export interface components {
         /**
          * ApplyAttestRequest
          * @description POST /api/apply-runs/{id}/attest — the human says what happened after
-         *     reviewing the P1 handoff (§8.4). `submitted=True` records a user-attested
+         *     reviewing the P1 handoff (section 8.4). `submitted=True` records a user-attested
          *     submission and moves the card to Applied; False leaves the card where it
          *     is with the honest run result.
          */
@@ -1943,7 +1943,7 @@ export interface components {
         };
         /**
          * ApplyRunDTO
-         * @description One durable Applier attempt (`docs/internal/applier.md` §9.1) for the
+         * @description One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1) for the
          *     companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
          *     never raw form values); `screenshots` counts the evidence PNGs served by
          *     `GET /api/apply-runs/{id}/screenshots/{index}`.
@@ -2000,9 +2000,9 @@ export interface components {
         };
         /**
          * ApplyStartRequest
-         * @description POST /api/applications/{id}/apply — no pre-confirm modal (§8.1); the
+         * @description POST /api/applications/{id}/apply — no pre-confirm modal (section 8.1); the
          *     click IS the action. `retry_of_run_id` links a Retry / Reopen-and-refill
-         *     to the immutable prior run (§8.3). The `dev` knobs pass through to the op
+         *     to the immutable prior run (section 8.3). The `dev` knobs pass through to the op
          *     and are honored only when the sidecar runs with FYJ_APPLY_DEV=1.
          */
         ApplyStartRequest: {
@@ -3122,7 +3122,7 @@ export interface components {
          *     LinkedIn.
          *
          *     `contacts` is hard-capped: an unbounded list meant one HTTP request could
-         *     authorise arbitrarily many real sends (posture doc §5.1 — a user-control
+         *     authorise arbitrarily many real sends (posture doc section 5.1 — a user-control
          *     ceiling, not a compliance claim). The UI sends one contact per confirm.
          */
         ReachOutRequest: {

@@ -161,7 +161,7 @@ Block B match-with-CV: per-requirement table citing exact master lines ("cite ex
 lines from CV when matching" is an upstream ALWAYS rule) + gap classification
 (hard blocker vs nice-to-have, adjacent-experience check), Block C's level detection
 (JD level vs candidate's natural level), the 1–5 global score + its interpretation
-bands (rescaled ×20 to 0–100 per the ROADMAP §4 Scorer contract), direct/actionable
+bands (rescaled ×20 to 0–100 per the ROADMAP section 4 Scorer contract), direct/actionable
 no-fluff register.
 
 Cut as definite bloat, with reasons:

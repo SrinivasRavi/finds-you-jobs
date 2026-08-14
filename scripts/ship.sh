@@ -42,7 +42,7 @@ RELEASE=0
 
 # In release mode, pin the from-source install scripts + README download link to
 # this tag BEFORE publishing main, so the released source carries the right pin
-# (RELEASING.md §2). The pipeline only ever creates the "-beta" tag, so that's
+# (RELEASING.md section 2). The pipeline only ever creates the "-beta" tag, so that's
 # what we pin to. Committed here because it's a purely derived, mechanical bump.
 if [ "$RELEASE" -eq 1 ]; then
   echo "ship: pinning from-source installs + README to ${TAG}"

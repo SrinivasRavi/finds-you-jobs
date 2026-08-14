@@ -78,7 +78,7 @@ export function Tracker() {
   // REMOVED: applyId (ApplyModal — no Applier surface on this sidecar yet).
   // referralsAppId restored 2026-07-16 (the find-referrals popup).
   const [referralsAppId, setReferralsAppId] = useState<string | null>(null);
-  // The Applier companion panel, bound to one Apply Run (applier.md §8.2).
+  // The Applier companion panel, bound to one Apply Run (applier-as-built.md section 8.2).
   const [applierPanel, setApplierPanel] = useState<{ appId: string; runId: string } | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
   // Pending drag INTO a frozen column (Applied+), held for the confirm dialog
@@ -130,7 +130,7 @@ export function Tracker() {
     setDragId(null);
   }
 
-  // Apply slot (applier.md §8.1): a card with no run starts one (the click IS
+  // Apply slot (applier-as-built.md section 8.1): a card with no run starts one (the click IS
   // the action — no pre-Apply confirm) and binds the companion to the returned
   // run; a card that already has a run just reopens the companion to it (its
   // snapshot drives the panel, incl. the Retry / Review & submit states).
@@ -493,8 +493,8 @@ export function Tracker() {
           Job Board's Add-by-URL, for a job applied to outside the app. */}
       {showAddApp ? <AddApplicationModal onClose={() => setShowAddApp(false)} /> : null}
 
-      {/* Applier companion panel (applier.md §8.2) — off the Apply slot. Bound
-          to one Apply Run; Retry rebinds it to the fresh run (§8.3). Closing it
+      {/* Applier companion panel (applier-as-built.md section 8.2) — off the Apply slot. Bound
+          to one Apply Run; Retry rebinds it to the fresh run (section 8.3). Closing it
           never cancels the run. */}
       {applierPanel
         ? (() => {

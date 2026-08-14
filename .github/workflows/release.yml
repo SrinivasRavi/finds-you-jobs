@@ -3,18 +3,18 @@ name: Release (beta, unsigned)
 # Push to the `release` branch → native builds on every OS → one GitHub
 # Release tagged `v<version>-beta`, marked pre-release, with every installer
 # attached. "Merge and forget": nothing here needs a manual re-run once the
-# push lands (docs/internal/distribution.md §7).
+# push lands (docs/internal/distribution.md section 7).
 #
 # Why it looks the way it does:
 # - Native runners per OS/arch, never cross-compiled: PyInstaller cannot
 #   cross-compile the sidecar at all, and macOS universal2 is a gamble this
-#   dependency set doesn't support (distribution.md §1).
+#   dependency set doesn't support (distribution.md section 1).
 # - `-beta` lives in the tag and the *filenames only*. The embedded bundle
 #   version stays strictly numeric ("0.5.1") because WiX/MSI rejects
 #   non-numeric pre-release suffixes outright — that was a real build
-#   failure, not a hypothetical (distribution.md §2a).
+#   failure, not a hypothetical (distribution.md section 2a).
 # - Everything is unsigned for now, deliberately: ship unsigned before ship
-#   late (distribution.md §1). Signing env vars slot into the build step
+#   late (distribution.md section 1). Signing env vars slot into the build step
 #   later without changing this workflow's shape.
 # - fail-fast off + release publishes whatever legs succeeded: one broken
 #   leg (Linux is the least-proven) must not block the download button for
@@ -103,7 +103,7 @@ jobs:
         # time. With bundle.createUpdaterArtifacts:true the build FAILS if the
         # key is absent — deliberately: better a loud failure than a release
         # whose updates no client can verify. Set the two secrets (see
-        # distribution.md §9) before pushing to `release`. Empty password is
+        # distribution.md section 9) before pushing to `release`. Empty password is
         # fine if the key was generated without one.
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

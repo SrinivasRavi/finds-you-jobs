@@ -1,4 +1,4 @@
-"""Covers: core storage — the first Alembic migration (database-design.md §7 slice).
+"""Covers: core storage — the first Alembic migration (database-design.md section 7 slice).
 
 The real migration applies to a tmp SQLite and creates exactly the core-storage
 table list; downgrade tears it back to baseline.
@@ -12,8 +12,8 @@ from sqlalchemy import create_engine, inspect
 
 from sidecar.app.db.migrate import downgrade_to_base, upgrade_to_head
 
-# Every table the migration chain creates (`docs/internal/roadmap.md` §7.2
-# #3–#8); the rest of the database-design §7 set lands with its feature commits.
+# Every table the migration chain creates (`docs/internal/roadmap.md` section 7.2
+# #3–#8); the rest of the database-design section 7 set lands with its feature commits.
 _EXPECTED = {
     "operations",
     "user_preferences",

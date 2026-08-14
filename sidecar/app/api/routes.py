@@ -1,6 +1,6 @@
-"""HTTP surface (architecture §4.2).
+"""HTTP surface (architecture section 4.2).
 
-Core-storage scope (`docs/internal/roadmap.md` §7.2 #3): the lifecycle routes
+Core-storage scope (`docs/internal/roadmap.md` section 7.2 #3): the lifecycle routes
 (/healthz open, /shutdown bearer-guarded), the SSE `/api/events` stream fed by
 the runner through the hub, and the operations API — enqueue, read, list,
 retry, and the all-time cost totals. Pydantic DTOs (dto.py) are the only wire
@@ -107,7 +107,7 @@ def _found[T](row: T | None, label: str, ident: object) -> T:
 
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
-    """Liveness probe. Open (no token) — the shell polls this (§4.4 step 2)."""
+    """Liveness probe. Open (no token) — the shell polls this (section 4.4 step 2)."""
     return {"status": "ok"}
 
 
@@ -398,7 +398,7 @@ _TOMBSTONE_409_DETAIL = (
 @router.post("/api/jobs/preview")
 async def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.JobPreviewDTO:
     """Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
-    fields — best-effort, not persisted. 20 s fetch, no auto-retry (§17b). The
+    fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
     blocking probe runs off the event loop.
 
     Two DB short-circuits before the network probe: a **tombstoned** URL fails
@@ -1322,7 +1322,7 @@ async def update_application(
 ) -> dto.ApplicationDTO:
     """Move/annotate/archive a card. Column moves, notes edits, and
     archive/unarchive each write an `ApplicationEvent` (only on real change —
-    a no-op PATCH records nothing). `intent` is the §5.1 exclusive value:
+    a no-op PATCH records nothing). `intent` is the section 5.1 exclusive value:
     setting it replaces the previous one wholesale."""
     fields = payload.model_dump(exclude_none=True)
     archived_flag = fields.pop("archived", None)
@@ -1365,7 +1365,7 @@ async def delete_application(request: Request, application_id: str) -> None:
 
 @router.get("/api/schedules")
 async def list_schedules(request: Request) -> list[dto.ScheduleDTO]:
-    """The recurring-enqueue rules (scan / score_new). Seeded disabled (§7 seed)."""
+    """The recurring-enqueue rules (scan / score_new). Seeded disabled (section 7 seed)."""
     with _db(request).repos() as repos:
         return [dto.schedule_dto(s) for s in repos.schedules.list_all()]
 
@@ -1379,7 +1379,7 @@ async def update_schedule(
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
         sched = _found(repos.schedules.get(schedule_id), "schedule", schedule_id)
-        # Flip on → run promptly (the seeded next_due is far-future, §7 seed).
+        # Flip on → run promptly (the seeded next_due is far-future, section 7 seed).
         if fields.get("enabled") is True and not sched.enabled:
             fields["next_due_at"] = now_utc()
         updated = repos.schedules.update(schedule_id, **fields)
@@ -1422,7 +1422,7 @@ async def create_operation(
     kind: str,
     input_snapshot: Annotated[dict[str, Any] | None, Body()] = None,
 ) -> dto.OperationAccepted:
-    """Enqueue an operation; return its id immediately (architecture §4.2)."""
+    """Enqueue an operation; return its id immediately (architecture section 4.2)."""
     runner = _runner(request)
     # A few kinds are interactive/side-effectful and must go through their own
     # dedicated route (which does the P1-consent + resource setup), never the
@@ -1669,7 +1669,7 @@ def _ledger_subjects(repos: Any, ops: list[Any]) -> dict[str, dto.OperationSubje
 
 @router.get("/api/operations")
 async def list_operations(request: Request, limit: int = 100) -> list[dto.OperationDTO]:
-    """Recent operations — the ledger the Logs/Analytics surfaces read (§10),
+    """Recent operations — the ledger the Logs/Analytics surfaces read (section 10),
     each row carrying its batched-resolved human subject (US-LOG-01)."""
     with _db(request).repos() as repos:
         ops = repos.operations.list_recent(limit)
@@ -1840,7 +1840,7 @@ def _require_networking_enabled(repos: Any) -> None:
 def _require_any_linkedin_feature(repos: Any) -> None:
     """Gate for the shared-session lifecycle routes (connect / resume).
 
-    These were ungated (posture doc §4 #8): anything reaching the sidecar could
+    These were ungated (posture doc section 4 #8): anything reaching the sidecar could
     open a real browser at linkedin.com, or clear the 24 h rate-limit backoff,
     with both features switched off. The session exists only to serve one of the
     two opt-ins, so at least one must be on."""
@@ -1859,7 +1859,7 @@ def _require_job_search_opt_in(repos: Any) -> None:
     """The logged-in job search has its OWN toggle and its OWN typed ack —
     first-class preference columns since 2026-08-02 (they used to live in the
     free-form `ui_state` blob, where a frontend key rename could silently flip
-    a safety gate; posture doc §4 #8 history)."""
+    a safety gate; posture doc section 4 #8 history)."""
     _, search_on = linkedin_feature_flags(repos)
     if not search_on:
         raise HTTPException(
@@ -2100,7 +2100,7 @@ async def networking_contact_sync(
     FR-NW-15) — **user-initiated only**.
 
     This replaces the old 12 h `contact_sync` schedule, which touched LinkedIn
-    with nobody present (`docs/internal/linkedin-posture.md` §1). Two callers:
+    with nobody present (`docs/internal/linkedin-addon.md` section 5). Two callers:
 
     - the explicit **Sync** button, which passes `force=true` and always runs —
       an on-demand refresh the user asked for, no more LinkedIn traffic than
@@ -2183,7 +2183,7 @@ async def linkedin_connect(
 
     Gated on at least one LinkedIn feature being enabled: this route *opens a
     real browser at linkedin.com*, and it accepted that request with both
-    opt-ins off until 2026-08-01 (posture doc §4 #8)."""
+    opt-ins off until 2026-08-01 (posture doc section 4 #8)."""
     with _db(request).repos() as repos:
         _require_any_linkedin_feature(repos)
     snap: dict[str, Any] = {}
@@ -2214,7 +2214,7 @@ async def linkedin_search(
     no-op. (It used to check the *Referral Outreach* toggle instead — the wrong
     consent, in both directions: enabling referrals alone unlocked searches the
     user never acknowledged, while a search-only user was refused. Posture doc
-    §4 #8.) Results land in the same discovery funnel as every other source.
+    section 4 #8.) Results land in the same discovery funnel as every other source.
 
     `mode` (2026-08-01): `fresh` runs page 0 from current prefs and resets the
     pagination cursor; `next` continues the last Fresh search's snapshot from
@@ -2329,7 +2329,7 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
 
     Gated: this is the one route that *switches a safety mechanism off* — it
     clears the 24 h backoff LinkedIn's own throttle signal put us in — and it ran
-    ungated until 2026-08-01 (posture doc §4 #8)."""
+    ungated until 2026-08-01 (posture doc section 4 #8)."""
     with _db(request).repos() as repos:
         _require_any_linkedin_feature(repos)
         profile = networker_ops.resolve_pacing_profile(repos)
@@ -2522,7 +2522,7 @@ async def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Applier (docs/internal/applier.md §8) — direct apply runs off the Tracker
+# Applier (docs/internal/archived/applier-as-built.md section 8) — direct apply runs off the Tracker
 # ---------------------------------------------------------------------------
 
 
@@ -2533,8 +2533,8 @@ async def start_apply(
     payload: dto.ApplyStartRequest | None = None,
 ) -> dto.ApplyRunDTO:
     """Create the durable ApplyRun and enqueue the `apply` op immediately —
-    no pre-Apply confirmation modal (§8.1); the click IS the action. Clicking
-    Apply also settles the exclusive intent to `apply` (roadmap §5.1)."""
+    no pre-Apply confirmation modal (section 8.1); the click IS the action. Clicking
+    Apply also settles the exclusive intent to `apply` (roadmap section 5.1)."""
     payload = payload or dto.ApplyStartRequest()
     runner = _runner(request)
     db = _db(request)
@@ -2549,7 +2549,7 @@ async def start_apply(
         active = repos.apply_runs.latest_for_application(application_id)
         if active is not None and active.status in APPLY_RUN_ACTIVE_STATUSES:
             # Single-flight per card: reopening the companion binds to the
-            # active run instead of double-launching a browser (§8.2).
+            # active run instead of double-launching a browser (section 8.2).
             return dto.apply_run_dto(active)
         needs_intent = app_row.intent != "apply"
         job_url = job.canonical_url
@@ -2560,7 +2560,7 @@ async def start_apply(
     if payload.dev:
         snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
 
-    # Write phase — settle the exclusive intent (roadmap §5.1) and create the
+    # Write phase — settle the exclusive intent (roadmap section 5.1) and create the
     # durable run BEFORE enqueueing the op, in its own committed txn (no
     # pending write is held across runner.submit — the 2026-07-17 locked-DB
     # discipline). The worker can dispatch within milliseconds of submit, and
@@ -2611,7 +2611,7 @@ async def list_apply_runs(
 @router.get("/api/apply-runs/{run_id}")
 async def get_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
     """The run snapshot — a reopened companion fetches this instead of
-    depending on having seen every prior SSE event (§9.2)."""
+    depending on having seen every prior SSE event (section 9.2)."""
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
         return dto.apply_run_dto(run)
@@ -2637,7 +2637,7 @@ async def get_apply_run_screenshot(
 
 @router.post("/api/apply-runs/{run_id}/cancel")
 async def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
-    """Cooperative cancel (§8.2). The loop notices between steps and lands the
+    """Cooperative cancel (section 8.2). The loop notices between steps and lands the
     run as `interrupted`; an already-terminal run is returned unchanged."""
     from ..registry.apply_op import APPLY_CONTROL
 
@@ -2666,7 +2666,7 @@ async def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
 async def attest_apply_run(
     request: Request, run_id: str, payload: dto.ApplyAttestRequest
 ) -> dto.ApplyRunDTO:
-    """The human's word after the P1 handoff (§8.4): 'I submitted' records a
+    """The human's word after the P1 handoff (section 8.4): 'I submitted' records a
     user-attested submission and advances the card to Applied; 'didn't submit'
     leaves the card in its pre-submission column with the honest run result."""
     with _db(request).repos() as repos:
@@ -2798,7 +2798,7 @@ async def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
 
 @router.post("/api/system/install-browser", status_code=202)
 async def install_browser(request: Request) -> dto.BrowserInstallResult:
-    """Download Playwright's Chromium (never bundled — §4.5). Coarse progress is
+    """Download Playwright's Chromium (never bundled — section 4.5). Coarse progress is
     published on the SSE stream as `browser_install` events. Idempotent: a second
     call while one is running returns `already_running`."""
     from .browser import start_install

@@ -1,6 +1,6 @@
 // TanStack Query hooks over the (sidecar-backed) client + SSE invalidation.
 // Server state lives in Query; the SSE bus invalidates the relevant keys so
-// feed deltas / operation progress flow into the UI (architecture §6:
+// feed deltas / operation progress flow into the UI (architecture section 6:
 // "TanStack Query, invalidated by SSE events").
 //
 // Job Board / Dev status page / main.tsx guard hooks, plus the applications/
@@ -283,7 +283,7 @@ export function useDiscoveryAnalytics() {
     queryFn: () => api.getDiscoveryAnalytics(),
   });
 }
-/** The operations ledger — the Analytics table + cost source of truth (§10). */
+/** The operations ledger — the Analytics table + cost source of truth (section 10). */
 export function useLedger() {
   return useQuery({ queryKey: qk.ledger, queryFn: () => api.listLedger() });
 }
@@ -759,9 +759,9 @@ export function useRemoveDocument() {
   });
 }
 
-// ─── Apply Runs (the agentic Applier — applier.md §8/§9) ─────────────────────
+// ─── Apply Runs (the agentic Applier — applier-as-built.md section 8/section 9) ─────────────────────
 
-/** All Apply Runs for one application (§8.3 — the immutable attempt history). */
+/** All Apply Runs for one application (section 8.3 — the immutable attempt history). */
 export function useApplyRuns(applicationId: string | null) {
   return useQuery({
     queryKey: [...qk.applyRuns, applicationId],
@@ -772,7 +772,7 @@ export function useApplyRuns(applicationId: string | null) {
 
 /** One Apply Run's live snapshot for the companion panel. Poll-light: the run
  *  is refetched only when an `apply` SSE event for THIS run_id lands, or a
- *  terminal apply operation fires — never on a timer (§9.2). Seeds/keeps the
+ *  terminal apply operation fires — never on a timer (section 9.2). Seeds/keeps the
  *  panel honest whether it was open the whole time or reopened after the fact. */
 export function useApplyRun(runId: string | null) {
   const qc = useQueryClient();
@@ -803,8 +803,8 @@ export function useApplyRun(runId: string | null) {
   return query;
 }
 
-/** Start an Apply Run (§8.1) — no pre-confirm; the click IS the action.
- *  `retryOfRunId` starts a fresh run linked to the prior one (§8.3). Seeds the
+/** Start an Apply Run (section 8.1) — no pre-confirm; the click IS the action.
+ *  `retryOfRunId` starts a fresh run linked to the prior one (section 8.3). Seeds the
  *  new run into the cache so the companion binds instantly. */
 export function useStartApply() {
   const qc = useQueryClient();
@@ -819,7 +819,7 @@ export function useStartApply() {
   });
 }
 
-/** Cooperative cancel (§8.2) — lands the run as `interrupted`. */
+/** Cooperative cancel (section 8.2) — lands the run as `interrupted`. */
 export function useCancelApply() {
   const qc = useQueryClient();
   return useMutation({
@@ -831,7 +831,7 @@ export function useCancelApply() {
   });
 }
 
-/** The human's post-handoff attestation (§8.4). A `true` advances the card to
+/** The human's post-handoff attestation (section 8.4). A `true` advances the card to
  *  Applied — refresh applications + the Activity tab. */
 export function useAttestApply() {
   const qc = useQueryClient();
@@ -912,7 +912,7 @@ export function useResumeLinkedIn() {
  *  button (always runs); `false`/omitted is the opportunistic refresh the
  *  Networking surface fires on open, which the sidecar throttles. Replaces the
  *  retired 12 h schedule — no LinkedIn traffic happens without a user present
- *  (`docs/internal/linkedin-posture.md` §1). */
+ *  (`docs/internal/linkedin-addon.md` section 5). */
 export function useSyncContacts() {
   return useMutation({
     mutationFn: (force?: boolean) => Promise.resolve(api.syncContacts(Boolean(force))),
@@ -1147,7 +1147,7 @@ export function useSSEInvalidation(qc: QueryClient): void {
         }
         // A terminal apply op settles the run and the card's Apply slot
         // (applyRunStatus) + writes an Activity event — refresh all three so the
-        // Tracker/companion repaint without a manual reload (applier.md §8.4).
+        // Tracker/companion repaint without a manual reload (applier-as-built.md section 8.4).
         // One event per run — no throttle needed.
         if (p.kind === "apply" && terminal) {
           qc.invalidateQueries({ queryKey: qk.applications });
@@ -1156,7 +1156,7 @@ export function useSSEInvalidation(qc: QueryClient): void {
           qc.invalidateQueries({ queryKey: qk.activity });
         }
       }
-      // Applier live-updates (applier.md §9.2): only phase-affecting events
+      // Applier live-updates (applier-as-built.md section 9.2): only phase-affecting events
       // change the card's Apply slot — the bound run's snapshot is re-read by
       // the companion's own scoped useApplyRun subscription, so the blanket
       // applyRun invalidation that doubled it up is gone (F-H4).

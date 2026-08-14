@@ -414,7 +414,7 @@ function JobDetail({
         </button>
         {/* Per-job automation toggles (US-JB-03). Referrals only when the
             networking master toggle is on (US-NW-09 / FR-SET-03); the
-            "Application form answers" toggle stays retired (applier.md §2). */}
+            "Application form answers" toggle stays retired (applier-as-built.md section 2). */}
         <div className="ml-2 flex items-center gap-1.5" data-testid="jd-automation-toggles">
           {(["resume", "cl", ...(networkingEnabled ? (["refs"] as const) : [])] as const).map(
             (slot) => {

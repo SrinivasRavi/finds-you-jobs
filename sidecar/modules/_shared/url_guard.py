@@ -3,7 +3,7 @@ refusal logic, shared by `scraper/http.py` and `_shared/job_input.py` (they
 deliberately mirrored each other until the 2026-07-25 dedup; this module is
 that mirror collapsed). The browser-navigate layer refuses the same class of
 target through its own guard, jobapplier's UrlPolicy (packages/jobapplier/
-executor.py §4.3); the two deliberately differ (this one resolves, that one
+executor.py section 4.3); the two deliberately differ (this one resolves, that one
 reads literal IPs) and are NOT kept aligned by hand — the shared case table in
 `tests/modules/shared/test_url_guard_corpus.py` runs against both and pins the
 divergence (duplication audit D-M10).

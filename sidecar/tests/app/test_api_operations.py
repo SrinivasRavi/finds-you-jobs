@@ -1,4 +1,4 @@
-"""Covers: core storage — the operations HTTP surface (architecture §4.2/§5.3).
+"""Covers: core storage — the operations HTTP surface (architecture section 4.2/section 5.3).
 
 Full-app TestClient (lifespan runs the real migration + runner against a tmp
 data dir) with fake operation entrypoints — no mocks of the surface under test.

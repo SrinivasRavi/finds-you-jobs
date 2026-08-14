@@ -1,20 +1,20 @@
 """User-editable LLM prompts — file-based overrides in the app-data dir.
 
 Every module's "skill" markdown (the system prompt) is exposed in Settings,
-editable, and persisted across sessions (architecture §11). The module seam is
-a `skill_md` / `system_prompt` parameter on each bounded op (§5): when the app
+editable, and persisted across sessions (architecture section 11). The module seam is
+a `skill_md` / `system_prompt` parameter on each bounded op (section 5): when the app
 passes an override, it replaces the module's on-disk default; absent, behavior
 is exactly as before.
 
-**The app layer owns storage** (§4.0/§5 — modules never read app storage). An
+**The app layer owns storage** (section 4.0/section 5 — modules never read app storage). An
 override is a plain file at `<data_dir>/prompts/<kind>.md`; Reset deletes it. No
 DB migration. Each kind's *default* text is the module's own `load_skill()` (or
 the profiler's `SYSTEM_PROMPT`), so the wire's `default_md` and Reset both reflect
 whatever the shipped skill file currently says.
 
 The prior repository also registers `prep` (retired in this rebuild —
-`docs/internal/applier.md` §2) and `networker_draft` (returns with the Referral
-Outreach commits).
+`docs/internal/archived/applier-as-built.md` section 2) and `networker_draft` (returns with
+the Referral Outreach commits).
 """
 
 from __future__ import annotations

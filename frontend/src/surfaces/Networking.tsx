@@ -159,7 +159,7 @@ export function Networking() {
           )}
           {/* Sync is the ONLY way LinkedIn contact statuses refresh, alongside
               the throttled on-open refresh in the effect above. There is no
-              background timer (`docs/internal/linkedin-posture.md` §1). Shown
+              background timer (`docs/internal/linkedin-addon.md` section 5). Shown
               only when the feature is usable, so it never reads as a dead
               control on an install that never enabled Referral Outreach. */}
           {canSync && (

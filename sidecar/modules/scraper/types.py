@@ -1,4 +1,4 @@
-"""Scraper module types — plain dataclasses, pre-architecture (ROADMAP §4).
+"""Scraper module types — plain dataclasses, pre-architecture (ROADMAP section 4).
 
 No pydantic yet: the module is a silo; the G4 architecture pass decides the
 final type system and these graduate into it.
@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class Usage:
-    """Aggregate cost record for one bounded operation (ROADMAP §4).
+    """Aggregate cost record for one bounded operation (ROADMAP section 4).
 
     The Scraper is zero-LLM by contract: `internal_calls` counts HTTP
     requests; `tokens_*`/`usd`/`model` stay None — the cost dashboard reads
@@ -28,7 +28,7 @@ class Usage:
 
 @dataclass
 class NormalizedJob:
-    """One normalized posting — the §4 contract row (as built).
+    """One normalized posting — the section 4 contract row (as built).
 
     Required: `title`, `canonical_url` (the dedup key, FR-SYS-01). Everything
     else is explicit-empty-allowed (no `?` glyphs — module convention).
@@ -136,7 +136,7 @@ class ScanPrefs:
 
 @dataclass
 class SourceReport:
-    """Per-source diagnostics for one scan (ROADMAP §4: `{usage, errors[]}`).
+    """Per-source diagnostics for one scan (ROADMAP section 4: `{usage, errors[]}`).
 
     `fetched`/`kept` make filter/dedup attrition visible per source;
     errors carry verbatim messages — never swallowed (vision non-negotiable).

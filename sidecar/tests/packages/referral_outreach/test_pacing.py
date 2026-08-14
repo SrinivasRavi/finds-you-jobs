@@ -25,7 +25,7 @@ from sidecar.packages.referral_outreach.upstream.pacing import (
 
 
 def test_default_profile_is_the_conservative_baseline():
-    # 50-70% of the ESTIMATED LinkedIn ceiling (posture doc §4): the no-choice
+    # 50-70% of the ESTIMATED LinkedIn ceiling (posture doc section 4): the no-choice
     # default (free × 60%) pins the old New-tier caps — 8/day · 30/wk invites.
     t = resolve_profile(None)
     assert t.name == "free"
@@ -266,7 +266,7 @@ def test_send_delay_is_not_a_uniform_band():
 # --- inter-send spacing (NFR-LI-01) -----------------------------------------
 # Regression cover for the defect where the 30-90 s jitter was only ever
 # *reported* as `delay_hint_s` and nothing slept on it, so a batch drained the
-# daily cap at machine pace. See `docs/internal/linkedin-posture.md` §1.
+# daily cap at machine pace. See `docs/internal/linkedin-addon.md` section 5.
 
 
 def test_first_send_of_account_life_never_waits(tmp_path):
@@ -336,7 +336,7 @@ def test_wait_before_send_does_not_sleep_when_no_gap_is_owed(tmp_path):
 # --- reads are metered and backoff-gated (2026-07-30) -----------------------
 # Before this, only sends built a Pacer. After a rate-limit signal the app kept
 # running People searches, profile enrichment and contact-sync probes — the
-# reads the restriction ladder actually watches. See posture doc §1.
+# reads the restriction ladder actually watches. See posture doc section 1.
 
 
 def test_backoff_blocks_reads_not_just_sends(tmp_path):
@@ -423,7 +423,7 @@ def test_ledger_from_before_the_new_meters_still_loads(tmp_path):
 # ── concurrency: merge-on-save, refunds, observed exhaustion ─────────────────
 # Reads are metered now, and send / discover / contact-sync / job-search run in
 # SEPARATE runner concurrency groups — so two Pacers can hold the ledger at
-# once. save() must merge, not overwrite (posture doc §4 fix 6).
+# once. save() must merge, not overwrite (posture doc section 4 fix 6).
 
 
 def test_concurrent_saves_merge_instead_of_clobbering(tmp_path):

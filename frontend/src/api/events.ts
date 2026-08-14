@@ -1,4 +1,4 @@
-// SSE event bus — one EventSource for the whole app (architecture §4.1).
+// SSE event bus — one EventSource for the whole app (architecture section 4.1).
 //
 // Streams typed `{type, payload}` envelopes from /api/events (token rides as a
 // query param — SSE can't set headers; acceptable on the loopback-only surface).

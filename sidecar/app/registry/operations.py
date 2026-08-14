@@ -1,4 +1,4 @@
-"""Operation registry: `kind → entrypoint` (architecture §5.4).
+"""Operation registry: `kind → entrypoint` (architecture section 5.4).
 
 An entrypoint is the thin app-side wrapper over one `sidecar.modules.*` bounded
 operation. It receives an `OperationContext` (the durable input snapshot + a
@@ -8,7 +8,7 @@ usage + engine/model for the ledger). The runner never knows what a kind *does*
 
 **Core-storage boundary.** This commit ships the contract and an empty default
 registry: real kinds (scan/score/tailor/cover/…) register here as their module
-commits land (`docs/internal/roadmap.md` §7.2 #5+). The core tests exercise the
+commits land (`docs/internal/roadmap.md` section 7.2 #5+). The core tests exercise the
 runner with fake entrypoints only.
 """
 
@@ -639,7 +639,7 @@ CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover
 
 def default_operation_registry() -> OperationRegistry:
     """The app's real `kind → entrypoint` table. Grows as module commits land
-    (architecture §5.4)."""
+    (architecture section 5.4)."""
     # Imported here (not at module top) so the operations module stays free of
     # the networking package's playwright import cost unless a networking kind is
     # actually wired.

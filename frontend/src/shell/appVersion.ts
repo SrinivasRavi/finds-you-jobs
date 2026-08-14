@@ -5,7 +5,7 @@
 //
 // Both sources are strictly numeric ("0.5.4"): the embedded bundle version must
 // stay numeric because WiX/MSI rejects non-numeric pre-release suffixes
-// (distribution.md §2a). Every pre-1.0 build is distributed as a "-beta"
+// (distribution.md section 2a). Every pre-1.0 build is distributed as a "-beta"
 // (the suffix lives only in the release tag + installer filenames), so we append
 // it here for display. Flip RELEASE_CHANNEL_SUFFIX to "" when the first stable
 // (1.0) release is cut.

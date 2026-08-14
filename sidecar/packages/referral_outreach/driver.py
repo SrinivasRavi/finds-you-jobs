@@ -2,7 +2,7 @@
 
 finds-you-jobs-owned (AGPL-3.0-only). This module holds the seam's documented
 translation from an upstream error onto the facade's typed errors (`types.py`;
-`docs/internal/referral-outreach.md` §3.1). The second concrete
+`docs/internal/referral-outreach.md` section 3.1). The second concrete
 `ReferralAutomation` that used to live here is gone (duplication audit D-M2): it
 had zero callers and had already rotted away from the worker signatures the
 app's real driver (`sidecar/modules/networker/driver.py`) keeps current.

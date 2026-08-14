@@ -7,7 +7,7 @@ the on-disk filename, so re-uploading identical bytes writes nothing new and the
 DB `documents` row (see `db/models.Document`) dedups on the same hash. Single
 blob, referenced by any number of `application_documents` links.
 
-**The app layer owns storage** (architecture §4.0 — the DB indexes, the disk
+**The app layer owns storage** (architecture section 4.0 — the DB indexes, the disk
 holds bytes). Blobs live at `<data_dir>/documents/<sha256>`. These helpers are
 synchronous and CPU/IO-bound (hashing + file write); call sites on the event
 loop wrap them in `asyncio.to_thread` (async-first directive).

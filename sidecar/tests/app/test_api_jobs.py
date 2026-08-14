@@ -69,7 +69,7 @@ def test_schedules_seeded_disabled(app_client: tuple[FastAPI, TestClient]) -> No
     assert kinds["archive_stale_contacts"]["enabled"]
     # US-NW-12 / FR-NW-15: contact_sync is deliberately NOT a schedule any more.
     # It is the only housekeeping op that talks to LinkedIn, and a timer meant it
-    # did so with nobody present (`docs/internal/linkedin-posture.md` §1,
+    # did so with nobody present (`docs/internal/linkedin-addon.md` section 5,
     # maintainer directive 2026-07-30). It is user-initiated only now, via
     # POST /api/networking/contact-sync.
     assert "contact_sync" not in kinds

@@ -1,13 +1,13 @@
 """Covers: US-SET-12 / FR-SET-11 — user-editable LLM prompts.
 
-The maintainer pulled user-configurable prompts into P1 (architecture §11,
+The maintainer pulled user-configurable prompts into P1 (architecture section 11,
 2026-07-13). Exercises the whole seam:
 
 - the file-based override store (get/set/reset round-trip in the app-data dir);
 - the operation entrypoints passing the override through to the module (a
   capturing fake engine proves the *system prompt* the module runs is the
   override when set, and the shipped default after reset — the skill_md /
-  system_prompt seam, §5);
+  system_prompt seam, section 5);
 - the HTTP surface (list / set / reset, unknown-kind 404, empty-markdown 422).
 
 No live LLM or network — the engine is a capturing fake.

@@ -6,7 +6,7 @@ Both used to become a plain `OSError`, which `_retry_io` catches and retries
 three times — so we re-requested straight into an explicit refusal, and
 `RateLimited` was raised nowhere in the codebase, leaving the 24 h backoff
 (NFR-LI-03) unreachable. 999 is LinkedIn's own non-standard anti-bot status.
-See `docs/internal/linkedin-posture.md` §1.
+See `docs/internal/linkedin-addon.md` section 5.
 """
 
 from __future__ import annotations

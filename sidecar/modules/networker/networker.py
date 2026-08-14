@@ -1,4 +1,4 @@
-"""The Networker black box: discover / draft / send (ROADMAP §66).
+"""The Networker black box: discover / draft / send (ROADMAP section 66).
 
 - `discover(company, job) → contacts[]` — zero-LLM; delegates to the voyager
   subprocess (driver), then tags each contact by audience + warmth.
@@ -11,7 +11,7 @@
 **Two seams, mirroring the other silos:** the voyager subprocess sits behind the
 `VoyagerDriver` protocol (production = `DirectVoyagerDriver`; test = a fake),
 and the LLM sits behind the `Engine` protocol. Teardown of the driver happens in
-`finally` (NFR-MEM-02 / §4). Storage stance (§4): the module owns no persistent
+`finally` (NFR-MEM-02 / section 4). Storage stance (section 4): the module owns no persistent
 storage; `draft` uses a per-operation scratch dir deleted on return.
 
 **Design note — deterministic audience tagging (flagged).** FR-REF-01 says "the
@@ -126,7 +126,7 @@ def resolve(
 
 def discover(
     company: str,
-    job: str = "",  # part of the §66 contract; reserved for JD-aware tagging (module note)
+    job: str = "",  # part of the section 66 contract; reserved for JD-aware tagging (module note)
     driver: VoyagerDriver | None = None,
     limit: int = 10,
     dry_run: bool = False,
@@ -139,7 +139,7 @@ def discover(
     by the host) scopes the People search by the `currentCompany` facet — the
     current-employees-only correctness fix. `page` fetches the next batch for
     "find 10 more" (voyager paginates the results page). `job` is accepted per the
-    §66 contract and reserved for future JD-aware relevance (module note)."""
+    section 66 contract and reserved for future JD-aware relevance (module note)."""
     if not company:
         raise NetworkerError("discover", "company is required")
     drv = driver or DirectVoyagerDriver()
@@ -172,7 +172,7 @@ def draft(
     it, surfacing any refusal in `notes`).
 
     `skill_md`, when provided, replaces the on-disk draft skill file as the
-    system prompt (the app's user-editable-prompt override, §5). None → the
+    system prompt (the app's user-editable-prompt override, section 5). None → the
     default. The bound audience playbook is unaffected — it stays appended to the
     user prompt.
 

@@ -1,5 +1,5 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""The constrained tool vocabulary (docs/internal/applier.md §4.2).
+"""The constrained tool vocabulary (docs/internal/archived/applier-as-built.md section 4.2).
 
 These are the ONLY things the model can ask for. There is deliberately no
 ``submit`` here — it must not exist in the P1 schema so that no prompt

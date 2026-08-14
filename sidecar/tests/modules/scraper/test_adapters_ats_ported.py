@@ -4,7 +4,7 @@ Personio, against canned real-shaped payloads (no live network).
 Covers:
   US-JB-10 — source-adapter attribution on every row
   Track M3 spec — per-source adapters over public JSON/RSS/XML APIs
-  architecture §7 decision (2026-07-13) — the four providers moved from "Later"
+  architecture section 7 decision (2026-07-13) — the four providers moved from "Later"
   to built, ported from career-ops (MIT).
 """
 

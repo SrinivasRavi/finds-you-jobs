@@ -75,7 +75,7 @@ def test_interval_percentiles_sit_in_the_measured_band():
     # Empirical p5 is 68 ms. No two-parameter log-normal (or log-logistic — both
     # were checked against the digest's full percentile list) reproduces a low
     # tail that thin without a point mass at a hard floor, and a point mass is
-    # itself a tell ("too smooth" is its own signature, §17.3). We take the
+    # itself a tell ("too smooth" is its own signature, section 17.3). We take the
     # slightly fatter low tail and keep the floor soft.
     assert 40 <= p5 <= 110, p5
     assert 90 <= p25 <= 150, p25      # target 115

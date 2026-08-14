@@ -1,11 +1,11 @@
 """The CoverLetterer black box: cover(master, job, ...) → CoverResult.
 
-One bounded operation at the interface (ROADMAP §4). Internals (engine, step
+One bounded operation at the interface (ROADMAP section 4). Internals (engine, step
 count, interim artifacts) are free to change without touching callers.
 Independent of any tailored resume — the letter stands on the master alone
 (FR-CL-01).
 
-Storage stance (ROADMAP §4): the module owns no persistent storage. Interim
+Storage stance (ROADMAP section 4): the module owns no persistent storage. Interim
 artifacts, if any step needs them, live in a per-operation scratch directory
 that is deleted when the operation returns (pass keep_scratch=True to debug).
 The final artifact is returned as a value; the caller (CLI now, app later)
@@ -50,7 +50,7 @@ def cover(
     path, or a URL).
 
     `skill_md`, when provided, replaces the on-disk skill file as the system
-    prompt (the app's user-editable-prompt override, §5). None → the default.
+    prompt (the app's user-editable-prompt override, section 5). None → the default.
     `cancelled`, when provided, is polled at the retry checkpoints (loop top,
     mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7)."""
     engine = engine or ClaudeCliEngine()

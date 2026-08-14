@@ -76,7 +76,7 @@ def test_no_note_field_degrades_to_noteless_send(browser):
     try:
         outcome = _click_with_note(session, "This note has nowhere to go.")  # type: ignore[arg-type]
         # The degrade is now REPORTED, not just logged — the worker refunds the
-        # note charge off this value (posture doc §6).
+        # note charge off this value (posture doc section 6).
         assert outcome in ("noteless_missing", "noteless_upsell")
         assert session.page.evaluate("window.__noteless === true")
         # Nothing was typed anywhere — the invite still went out, note-less.

@@ -93,7 +93,7 @@ const isCliProvider = (id: string) => id in CLI_PROVIDERS;
 
 // The LLM-backed operation kinds that need a routed engine — mirrors the
 // backend's LLM_KINDS (sidecar/app/registry/engine_config.py). The prior
-// repository's `prep` is retired (applier.md §2); `draft`/`apply` route here.
+// repository's `prep` is retired (applier-as-built.md section 2); `draft`/`apply` route here.
 const LLM_KINDS = ["score", "tailor", "cover", "extract", "draft", "apply"] as const;
 
 const DRAFT_KEY = "fyj-onboarding-draft-v1";

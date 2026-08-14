@@ -1,8 +1,9 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""The apply agent loop (docs/internal/applier.md §4/§5): observe → decide →
-execute → verify → repeat, under a hard time budget and a no-progress budget.
+"""The apply agent loop (docs/internal/archived/applier-as-built.md section 4/section 5):
+observe → decide → execute → verify → repeat, under a hard time budget and a
+no-progress budget.
 
-Terminal honesty (§8.4): P1 success is ``ready_for_human`` — the browser
+Terminal honesty (section 8.4): P1 success is ``ready_for_human`` — the browser
 stays open (the caller owns its lifetime), the human reviews and submits.
 The loop cannot submit: there is no submit tool in the vocabulary, and the
 executor would reject one anyway.
@@ -76,7 +77,7 @@ async def run_apply(
     policy: UrlPolicy | None = None,
 ) -> ApplyResult:
     """Run one apply attempt on an already-open page. The caller owns the
-    browser context (and keeps it open on ``ready_for_human``, §8.4)."""
+    browser context (and keeps it open on ``ready_for_human``, section 8.4)."""
     runner = _Run(page, request, engine, on_event, control, policy or UrlPolicy())
     return await runner.run()
 
@@ -224,7 +225,7 @@ class _Run:
             return await self._run_inner()
         except PlaywrightError as exc:
             # The human closed the browser, or the page died mid-action. Not a
-            # success, not a lie — an interruption (§8.3).
+            # success, not a lie — an interruption (section 8.3).
             self._emit(ApplyEvent(ApplyEventType.INTERRUPTED, {"reason": str(exc)}))
             self._set_phase(ApplyPhase.INTERRUPTED)
             return self._result(
@@ -309,7 +310,7 @@ class _Run:
             if action.tool == "finish":
                 reason = str(action.args["reason"])
                 if not self._form_seen:
-                    # finish without goal evidence is not a success (§4.2).
+                    # finish without goal evidence is not a success (section 4.2).
                     return self._blocked(
                         "no_form",
                         f"agent finished without reaching a form: {reason}",
@@ -349,7 +350,7 @@ class _Run:
                     )
                 )
                 failure_streak = 0
-                continue  # keep filling the rest (§6)
+                continue  # keep filling the rest (section 6)
 
             label = ""
             if "element_id" in action.args:

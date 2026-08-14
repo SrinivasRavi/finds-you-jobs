@@ -3,7 +3,7 @@ plan) — the `search(entry, prefs, fetcher)` seam, bounded query construction,
 the browser-header policy, and the LinkedIn-guest adapter. Fixture HTML only;
 zero live network.
 
-Anchors: US-JB-01 (feed breadth via search boards), the §4 fetch-budget
+Anchors: US-JB-01 (feed breadth via search boards), the section 4 fetch-budget
 discipline (queries × pages bounded, every call counted in Usage).
 """
 

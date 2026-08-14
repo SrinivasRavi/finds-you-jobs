@@ -1,4 +1,4 @@
-"""Per-kind concurrency policy (architecture §5.3) — table-driven + tunable.
+"""Per-kind concurrency policy (architecture section 5.3) — table-driven + tunable.
 
 Defaults: LLM kinds (`score`/`tailor`/`cover`/`draft`) share a user-tunable
 pool (thresholds.llm_concurrency, default 4, 0 = unlimited); `scan` and the
@@ -38,7 +38,7 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         # Trash-TTL eviction (FR-SYS-04): zero-LLM, DB-only, single-flight.
         "cleanup_trash": "cleanup_trash",
         # One apply run at a time — but NOT exclusive: the agentic apply op
-        # WAITS for a still-generating tailored resume (applier.md §8.1), so
+        # WAITS for a still-generating tailored resume (applier-as-built.md section 8.1), so
         # the `tailor` op must be able to run beside it. Making apply
         # exclusive dead-locked that wait until the packet timeout
         # (2026-07-17 dogfood: "Waiting for résumé" for 15 minutes).

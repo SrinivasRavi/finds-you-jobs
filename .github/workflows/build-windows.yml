@@ -1,11 +1,11 @@
 name: Build Windows installer (unsigned)
 
 # Manual for now, deliberately — no signing secrets exist yet
-# (docs/internal/distribution.md §5), so this produces an honest unsigned
+# (docs/internal/distribution.md section 5), so this produces an honest unsigned
 # NSIS/MSI installer. Windows is built on a native windows-latest runner, not
 # cross-compiled: PyInstaller cannot cross-compile the sidecar at all (it must
 # run on the target OS), and native builds are the reliability baseline this
-# whole packaging effort is built around (distribution.md §1).
+# whole packaging effort is built around (distribution.md section 1).
 on:
   workflow_dispatch:
 

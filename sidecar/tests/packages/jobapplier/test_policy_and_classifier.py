@@ -1,5 +1,5 @@
 # finds-you-jobs — AGPL-3.0-only.
-"""URL policy (§4.3) and page-state classifier (§5.1) — pure logic."""
+"""URL policy (section 4.3) and page-state classifier (section 5.1) — pure logic."""
 
 from datetime import UTC, datetime
 
@@ -32,7 +32,7 @@ def test_policy_allows_public_http(url: str) -> None:
         "file:///etc/passwd",
         "javascript:alert(1)",
         "ftp://example.com/x",
-        "http://127.0.0.1:8843/api",  # the sidecar itself (§4.3)
+        "http://127.0.0.1:8843/api",  # the sidecar itself (section 4.3)
         "http://localhost/admin",
         "http://10.0.0.5/internal",
         "http://192.168.1.1/router",
@@ -101,7 +101,7 @@ def test_application_form_detected() -> None:
 
 
 def test_newsletter_form_is_not_an_application_form() -> None:
-    # §5.1: three generic fields + newsletter vocabulary is not an
+    # section 5.1: three generic fields + newsletter vocabulary is not an
     # application form.
     obs = _obs(
         [

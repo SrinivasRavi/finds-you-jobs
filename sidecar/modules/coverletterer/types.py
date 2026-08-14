@@ -1,4 +1,4 @@
-"""CoverLetterer module types — plain dataclasses, pre-architecture (ROADMAP §4).
+"""CoverLetterer module types — plain dataclasses, pre-architecture (ROADMAP section 4).
 
 No pydantic yet: the module is a silo; the G4 architecture pass decides the
 final type system and these graduate into it.
@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Usage:
-    """Aggregate cost record for one bounded operation (ROADMAP §4).
+    """Aggregate cost record for one bounded operation (ROADMAP section 4).
 
     Recorded always; NOT enforced as a budget pre-beta (maintainer decision,
-    docs/ROADMAP.md §4 — enforcement is a pre-beta work item).
+    docs/ROADMAP.md section 4 — enforcement is a pre-beta work item).
     """
 
     internal_calls: int = 0

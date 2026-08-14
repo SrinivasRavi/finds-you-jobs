@@ -1,4 +1,4 @@
-"""Pydantic DTOs — the HTTP boundary (architecture §4.2, §5.2 one-way rule).
+"""Pydantic DTOs — the HTTP boundary (architecture section 4.2, section 5.2 one-way rule).
 
 DTO ↔ ORM conversion happens *here* and only here: models/dataclasses never
 cross into the wire types, and Pydantic never leaks into `modules/`. These
@@ -202,7 +202,7 @@ class ScheduleRunResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Applications (database-design §4)
+# Applications (database-design section 4)
 # ---------------------------------------------------------------------------
 
 
@@ -248,7 +248,7 @@ class ApplicationDTO(BaseModel):
     job: JobDTO | None = None
     column: str
     priority: str
-    # Exclusive pre-submission intent (`docs/internal/roadmap.md` §5.1):
+    # Exclusive pre-submission intent (`docs/internal/roadmap.md` section 5.1):
     # `none | referral | apply` — one authoritative value.
     intent: str = "none"
     notes_markdown: str
@@ -273,8 +273,8 @@ class ApplicationDTO(BaseModel):
     # `pending` | `sending` | `reachedOut` | `failed`. See derive_referrals_state.
     referrals_state: str = Field(default="none", serialization_alias="referralsState")
     referrals_count: int = Field(default=0, serialization_alias="referralsCount")
-    # Latest Applier run for the card's Apply slot (`docs/internal/applier.md`
-    # §8.2/§9.1): none | waiting_for_packet | running | ready_for_human |
+    # Latest Applier run for the card's Apply slot (`docs/internal/archived/applier-as-built.md`
+    # section 8.2/section 9.1): none | waiting_for_packet | running | ready_for_human |
     # blocked | timed_out | interrupted | failed | submitted.
     apply_run_status: str = Field(default="none", serialization_alias="applyRunStatus")
     apply_run_id: str | None = Field(default=None, serialization_alias="applyRunId")
@@ -287,8 +287,8 @@ class ApplicationDTO(BaseModel):
 
 
 class ApplyRunDTO(BaseModel):
-    """One durable Applier attempt (`docs/internal/applier.md` §9.1) for the
-    companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
+    """One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1)
+    for the companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
     never raw form values); `screenshots` counts the evidence PNGs served by
     `GET /api/apply-runs/{id}/screenshots/{index}`."""
 
@@ -315,9 +315,9 @@ class ApplyRunDTO(BaseModel):
 
 
 class ApplyStartRequest(BaseModel):
-    """POST /api/applications/{id}/apply — no pre-confirm modal (§8.1); the
+    """POST /api/applications/{id}/apply — no pre-confirm modal (section 8.1); the
     click IS the action. `retry_of_run_id` links a Retry / Reopen-and-refill
-    to the immutable prior run (§8.3). The `dev` knobs pass through to the op
+    to the immutable prior run (section 8.3). The `dev` knobs pass through to the op
     and are honored only when the sidecar runs with FYJ_APPLY_DEV=1."""
 
     retry_of_run_id: str | None = None
@@ -326,7 +326,7 @@ class ApplyStartRequest(BaseModel):
 
 class ApplyAttestRequest(BaseModel):
     """POST /api/apply-runs/{id}/attest — the human says what happened after
-    reviewing the P1 handoff (§8.4). `submitted=True` records a user-attested
+    reviewing the P1 handoff (section 8.4). `submitted=True` records a user-attested
     submission and moves the card to Applied; False leaves the card where it
     is with the honest run result."""
 
@@ -350,7 +350,7 @@ class ApplicationCreate(BaseModel):
 class ApplicationUpdate(BaseModel):
     column: str | None = None
     priority: str | None = None
-    # Exclusive intent (`docs/internal/roadmap.md` §5.1): setting one value
+    # Exclusive intent (`docs/internal/roadmap.md` section 5.1): setting one value
     # replaces the other — the column IS the single authoritative store.
     intent: Literal["none", "referral", "apply"] | None = None
     notes_markdown: str | None = None
@@ -390,7 +390,7 @@ class ActivityEntryDTO(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Profile (database-design §3)
+# Profile (database-design section 3)
 # ---------------------------------------------------------------------------
 
 
@@ -567,7 +567,7 @@ class SettingsDTO(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Networking (database-design §5)
+# Networking (database-design section 5)
 # ---------------------------------------------------------------------------
 
 
@@ -711,7 +711,7 @@ class ReachOutRequest(BaseModel):
     LinkedIn.
 
     `contacts` is hard-capped: an unbounded list meant one HTTP request could
-    authorise arbitrarily many real sends (posture doc §5.1 — a user-control
+    authorise arbitrarily many real sends (posture doc section 5.1 — a user-control
     ceiling, not a compliance claim). The UI sends one contact per confirm."""
 
     job_id: str | None = None
@@ -748,7 +748,7 @@ class QuotaDTO(BaseModel):
     # 1st-degree DMs: separately budgeted (they never decrement the invite
     # counters above — FR-NW-04), and since 2026-07-30 they ARE capped: an
     # unbounded DM channel next to a capped invite channel was a loophole
-    # (posture doc §4). Limits mirror the package's enforced tier table.
+    # (posture doc section 4). Limits mirror the package's enforced tier table.
     dm_daily_sent: int = 0
     dm_weekly_sent: int = 0
     dm_daily_limit: int = 0
@@ -940,7 +940,7 @@ class EngineSettingUpsert(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Operations (architecture §5.3 — the ledger surface)
+# Operations (architecture section 5.3 — the ledger surface)
 # ---------------------------------------------------------------------------
 
 
@@ -1070,7 +1070,7 @@ def job_dto(
 
 
 def derive_packet_state(operation_states: list[str | None]) -> str:
-    """The card's packetState from its artifacts' operation states (database-design §4).
+    """The card's packetState from its artifacts' operation states (database-design section 4).
 
     none → no artifacts yet; generating → any op still queued/running;
     failed → an op failed and none is generating; ready → everything settled.
@@ -1196,7 +1196,7 @@ def apply_run_dto(run: Any) -> ApplyRunDTO:
 
 
 def template_draft(name: str, company: str, audience_tag: str, warmth: str) -> str:
-    """A deterministic per-audience/warmth referral draft (US-NW-09 §9 8-template
+    """A deterministic per-audience/warmth referral draft (US-NW-09 section 9 8-template
     model). Zero-LLM — shown instantly in the popup, editable, and replaceable by
     a grounded LLM rewrite via the `draft` op. Mirrors the prototype copy."""
     first = (name.split(" ")[0] if name else "there")

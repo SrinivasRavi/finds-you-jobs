@@ -147,7 +147,7 @@ def discover_company_contacts(
         # Pace between profile fetches — the enrichment loop used to run
         # back-to-back at machine speed, which made us strictly MORE aggressive
         # than the tool we forked on the axis scraping detection actually keys
-        # on (OpenOutreach sleeps 6-10 s per scraped profile; posture doc §2).
+        # on (OpenOutreach sleeps 6-10 s per scraped profile; posture doc section 2).
         if fetched:
             random_sleep(*ENRICH_PAUSE_RANGE_S)
         fetched += 1

@@ -96,7 +96,7 @@ function OnboardingRoute() {
   return <Onboarding />;
 }
 
-// Explicit React Router config (the pinned choice — architecture §6). Routes are
+// Explicit React Router config (the pinned choice — architecture section 6). Routes are
 // internal navigation only; this is a desktop app, no URL-bar-driven flows.
 // Every route carries the SurfaceError boundary (2026-07-24, customer-reported
 // crash): a child-route error renders the panel INSIDE the Layout — the rail

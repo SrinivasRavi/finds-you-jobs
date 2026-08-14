@@ -3,7 +3,7 @@ playbook/warmth/guidance blocks (user).
 
 The draft skill is the system prompt; the per-run inputs arrive as clearly
 delimited blocks. Everything is in-context — the operation has no tools and no
-file access (ROADMAP §4).
+file access (ROADMAP section 4).
 """
 
 from __future__ import annotations

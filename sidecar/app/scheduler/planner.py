@@ -3,7 +3,7 @@
 `plan_score_new` expands the `score_new` schedule into one `score` operation per
 unscored `(job, current master version)` pair — the runner's LLM concurrency
 policy (≤ 2 in flight) still bounds how many run at once. It is idempotent:
-already-scored jobs (cache hit — architecture §8) and jobs with a `score`
+already-scored jobs (cache hit — architecture section 8) and jobs with a `score`
 operation still queued/running are skipped, so a second tick never
 double-enqueues. An optional per-tick batch cap is read from
 `UserPreferences.thresholds["score_new_batch"]` (0 = uncapped).

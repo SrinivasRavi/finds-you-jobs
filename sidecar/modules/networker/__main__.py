@@ -1,4 +1,4 @@
-"""Networker CLI — the silo dogfood entry point (ROADMAP §4 CLI convention).
+"""Networker CLI — the silo dogfood entry point (ROADMAP section 4 CLI convention).
 
 Commands (each supports --dry-run — no LLM, no browser, no network):
   discover  --company NAME [--limit N]

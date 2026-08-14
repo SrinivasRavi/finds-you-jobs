@@ -3,7 +3,7 @@
 finds-you-jobs-owned facade (AGPL-3.0-only) over a trimmed, GPLv3
 OpenOutreach-derived browser core under `upstream/`. Called DIRECTLY in-process
 (no subprocess firewall — retired in this AGPL rebuild; see `provenance.md` and
-`docs/internal/referral-outreach.md` §2). GPLv3 + AGPLv3 are compatible for this
+`docs/internal/referral-outreach.md` section 2). GPLv3 + AGPLv3 are compatible for this
 combination; the `upstream/` files retain their GPL notices.
 """
 
@@ -39,7 +39,7 @@ from .types import (
 # The enforced cap tables (NFR-LI-02). Re-exported so the app derives every
 # user-visible cap from the SAME numbers the send path enforces — the app-side
 # duplicate table (`dto._TIER_CAPS`) once drifted to 2-3× the enforced values
-# (posture doc §4 fix 7). Read-only for the host: it displays these, never
+# (posture doc section 4 fix 7). Read-only for the host: it displays these, never
 # re-implements or overrides them.
 from .upstream.pacing import (
     CEILINGS,

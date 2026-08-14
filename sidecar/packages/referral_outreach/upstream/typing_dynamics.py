@@ -11,7 +11,7 @@ hand it to Playwright's `locator.type(text, delay=…)`, which applies the same
 pause between every keypress — inter-key variance within a message was exactly
 zero, and key-hold dwell was a flat ~93 ms. Both are one-dimensional
 discriminators over a ~70-keystroke message. See `docs/internal/embedded-
-browser.md` §15.3/§17.2 and the parameter targets in
+browser.md` section 15.3/section 17.2 and the parameter targets in
 `docs/internal/evidence/2026-08-06-focus-tab-probe/research-digest.md`.
 
 The model, and where each number comes from (all in the digest's "Typing" table,

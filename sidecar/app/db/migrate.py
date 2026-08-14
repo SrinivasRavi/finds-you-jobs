@@ -1,4 +1,4 @@
-"""Programmatic Alembic driver (architecture §5.3 boot; database-design §7).
+"""Programmatic Alembic driver (architecture section 5.3 boot; database-design section 7).
 
 Boot and tests both call `upgrade_to_head(url)` so the *real* migration is what
 creates the schema — never a `create_all` shortcut that would drift from the

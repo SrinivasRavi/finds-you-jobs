@@ -1,6 +1,6 @@
 // Covers: the Applier UI against the live sidecar (roadmap commit-15 gate) —
 // the tracker card's Apply slot reflects the run lifecycle, the companion
-// panel binds to a run (snapshot path, §9.2), shows the honest handoff strip
+// panel binds to a run (snapshot path, section 9.2), shows the honest handoff strip
 // at ready_for_human, and "I submitted" attests + moves the card to Applied.
 //
 // ZERO model calls / ZERO external traffic: the run is started via the API
@@ -61,7 +61,7 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
     })
   ).json();
 
-  // Start the run via the API with the dev scripted engine (§ test seam) —
+  // Start the run via the API with the dev scripted engine (section test seam) —
   // the UI's own Apply button uses the same route without dev knobs.
   const run = await (
     await request.post(`${base}/api/applications/${application.id}/apply`, {
@@ -97,7 +97,7 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
   await expect(slot).toBeVisible();
   await page.screenshot({ path: `${DIR}/card-ready-for-review.png`, fullPage: true });
 
-  // Open the companion — it binds to the existing run via snapshot (§9.2).
+  // Open the companion — it binds to the existing run via snapshot (section 9.2).
   await slot.click();
   const panel = page.getByTestId("applier-panel");
   await expect(panel).toBeVisible();
@@ -105,7 +105,7 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
   await expect(page.getByTestId("applier-cost-line")).toBeVisible();
   await page.screenshot({ path: `${DIR}/panel-ready-for-human.png`, fullPage: true });
 
-  // Attest: "I submitted" → the card advances to Applied (§8.4).
+  // Attest: "I submitted" → the card advances to Applied (section 8.4).
   await page.getByTestId("applier-attest-submitted-btn").click();
   await expect(async () => {
     const card = await (

@@ -8,7 +8,7 @@ Two bounded ops beyond the N3 discover/draft/send core:
   2FA), detects the `li_at` auth cookie, and persists the Playwright
   storage-state under the app-data dir. **The password never passes through
   finds-you-jobs** — the human logs in themselves. Long-running + user-interactive,
-  cancellable via `LOGIN_CONTROL` (mirrors the Applier's takeover latch, §A5b).
+  cancellable via `LOGIN_CONTROL` (mirrors the Applier's takeover latch, section A5b).
   Streams typed `linkedin` SSE events for the connect UI + pill.
 
 - `archive_stale_contacts` — the US-NW-11 / FR-NW-13 scheduler tick: auto-archive
@@ -16,7 +16,7 @@ Two bounded ops beyond the N3 discover/draft/send core:
   zero-network, non-destructive (the same restorable Archive as a manual one).
 
 **License firewall.** `voyager_py` is reached ONLY through the silo's subprocess
-driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; §2).
+driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; section 2).
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
     login_url = snap.get("login_url")  # None in production; a fixture for the maintainer
     timeout_s = float(snap.get("timeout_s", LOGIN_TIMEOUT_S))
 
-    # Self-gate, like `contact_sync` (posture doc §4 #8): the route gates too,
+    # Self-gate, like `contact_sync` (posture doc section 4 #8): the route gates too,
     # but this op *launches a real browser at linkedin.com*, so it re-checks its
     # own precondition rather than trusting whoever enqueued it. Both opt-ins
     # off → clean no-op, zero LinkedIn traffic.

@@ -1,8 +1,8 @@
-"""Storage layer (architecture §5, database-design.md).
+"""Storage layer (architecture section 5, database-design.md).
 
 SQLAlchemy 2.0 models + Alembic migrations + the `Repos` interface. Business
 code (routes, runner, scheduler) goes through `Repos`, never a raw session.
-The one-way rule (architecture §5.2) still holds: this lives in `app/`, imports
+The one-way rule (architecture section 5.2) still holds: this lives in `app/`, imports
 `modules/` freely, and `modules/` never imports back.
 """
 

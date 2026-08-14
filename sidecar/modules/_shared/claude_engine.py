@@ -1,4 +1,4 @@
-"""Shared Claude-subscription engine (ROADMAP §5 M1 playbook step 4).
+"""Shared Claude-subscription engine (ROADMAP section 5 M1 playbook step 4).
 
 One reusable way for every module (Tailorer, CoverLetterer, Scorer, parity
 runners, ...) to call Claude on the maintainer's Max subscription: the

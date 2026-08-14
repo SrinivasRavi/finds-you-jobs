@@ -1,8 +1,8 @@
-"""FastAPI app factory (architecture §4.1 `app/api`).
+"""FastAPI app factory (architecture section 4.1 `app/api`).
 
 Wires the scaffold (bearer auth, loopback CORS, flight-recorder log, orphan
 watchdog, lifecycle routes) plus the core-storage slice
-(`docs/internal/roadmap.md` §7.2 #3): the SQLite storage + migrations, the SSE
+(`docs/internal/roadmap.md` section 7.2 #3): the SQLite storage + migrations, the SSE
 event hub, and the Operation Runner. The runner comes up in the lifespan and
 drains on shutdown. Engine routing and the scheduler land with their feature
 commits in this same lifespan.
@@ -46,7 +46,7 @@ from .security import migrate_plaintext_session
 from .seed import seed_defaults
 from .watchdog import watch_parent
 
-# §4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
+# section 4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
 SHUTDOWN_DRAIN_SECONDS = 10.0
 
 # The webview loads from tauri://localhost (macOS/Linux) or
@@ -55,8 +55,8 @@ SHUTDOWN_DRAIN_SECONDS = 10.0
 # origin, but the regex itself never actually matched it (only http(s)://
 # loopback) — every real fetch from a packaged build failed CORS silently,
 # invisible until now because no packaged build had ever been run+tested
-# (docs/internal/distribution.md §2/§7). Loopback-only by design otherwise
-# (§4.2) — this only widens it to the exact schemes Tauri itself uses.
+# (docs/internal/distribution.md section 2/section 7). Loopback-only by design otherwise
+# (section 4.2) — this only widens it to the exact schemes Tauri itself uses.
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
@@ -107,7 +107,7 @@ def create_app(
         log = get_logger()
         log.info("sidecar app starting (original_ppid=%s)", original_ppid)
 
-        # Storage: migrate to head, then open the engine (architecture §5.3 boot).
+        # Storage: migrate to head, then open the engine (architecture section 5.3 boot).
         db_url = resolve_db_url(data_dir)
         upgrade_to_head(db_url)
         # Alembic's fileConfig (inside upgrade_to_head) disables existing loggers,
@@ -141,7 +141,7 @@ def create_app(
             engines, routing, engine_rows=engine_rows, data_dir=resolved_data_dir
         )
 
-        # Observability (architecture §10): wire Logfire → local `logfire.sqlite`
+        # Observability (architecture section 10): wire Logfire → local `logfire.sqlite`
         # under the data dir. `send_to_logfire=False` is the hard invariant (no
         # network by default, NFR-OBS-01); OTLP export only when the user opted
         # in via Settings. Failure-tolerant: observability must never block boot,
@@ -159,8 +159,8 @@ def create_app(
         except Exception:  # noqa: BLE001 — observability must never block boot
             log.exception("observability configuration failed; continuing without spans")
 
-        # Applier boot recovery (`docs/internal/applier.md` §9.3): an active
-        # browser context cannot be silently restored after a restart. Mark
+        # Applier boot recovery (`docs/internal/archived/applier-as-built.md` section 9.3): an
+        # active browser context cannot be silently restored after a restart. Mark
         # orphaned active runs interrupted and cancel their pending ops BEFORE
         # runner boot recovery, so a queued `apply` never relaunches a browser
         # nobody asked for.
@@ -282,7 +282,7 @@ def create_app(
                         await task
                     except asyncio.CancelledError:
                         pass
-            # Drain in-flight operations, then release the DB engine (§4.4 step 3).
+            # Drain in-flight operations, then release the DB engine (section 4.4 step 3).
             runner.shutdown(drain_timeout=SHUTDOWN_DRAIN_SECONDS)
             # Close every browser surface before the DB goes: each one is a real
             # Chrome process that would otherwise outlive the sidecar.

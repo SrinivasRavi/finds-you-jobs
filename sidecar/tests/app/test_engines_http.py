@@ -1,4 +1,4 @@
-"""Covers: direct-API BYOK engines + verify (ROADMAP §7 items 3/9, FR-SET-06).
+"""Covers: direct-API BYOK engines + verify (ROADMAP section 7 items 3/9, FR-SET-06).
 
 The HTTP layer is faked (no network): a scripted `FakeTransport` returns canned
 `HttpResponse`s and records every request, so we assert both the request shape

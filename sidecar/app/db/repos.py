@@ -1,4 +1,4 @@
-"""Typed repositories per aggregate (architecture §5, database-design §9).
+"""Typed repositories per aggregate (architecture section 5, database-design section 9).
 
 Routes and the runner go through `Repos`, never a raw session. Each sub-repo is
 a thin, typed surface over one aggregate; the `Repos` container binds them to a
@@ -1228,7 +1228,7 @@ class ContactJobAssocsRepo:
 
 
 class OutreachLogsRepo:
-    """Per-message audit (database-design §5)."""
+    """Per-message audit (database-design section 5)."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1318,7 +1318,7 @@ class SequencesRepo:
 
 
 class LinkedInSessionRepo:
-    """Single-row LinkedIn session state (database-design §5)."""
+    """Single-row LinkedIn session state (database-design section 5)."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1374,7 +1374,7 @@ class LinkedInSearchCursorRepo:
 
 
 class ApplyRunsRepo:
-    """Durable Applier attempts (`docs/internal/applier.md` §9.1). Runs are
+    """Durable Applier attempts (`docs/internal/archived/applier-as-built.md` section 9.1). Runs are
     append-only evidence: `update` mutates only the LIVE run's progress
     columns; a retry creates a new row via `create(retry_of_run_id=...)`."""
 
@@ -1442,7 +1442,7 @@ class ApplyRunsRepo:
         return latest
 
     def list_active(self) -> list[ApplyRun]:
-        """Runs a boot-recovery pass must mark interrupted (§9.3)."""
+        """Runs a boot-recovery pass must mark interrupted (section 9.3)."""
         stmt = select(ApplyRun).where(
             ApplyRun.status.in_(APPLY_RUN_ACTIVE_STATUSES)
         )

@@ -257,8 +257,8 @@ function toApplication(d: ApplicationDTO, job: Job): Application {
     posting_closed: false,
     referrals_state: (d.referralsState as Application["referrals_state"]) ?? "none",
     referrals_count: d.referralsCount ?? 0,
-    // Latest Apply Run lifecycle (applier.md §8.2) — drives the card's Apply slot
-    // + reopening the companion to the bound run's snapshot (§9.2).
+    // Latest Apply Run lifecycle (applier-as-built.md section 8.2) — drives the card's Apply slot
+    // + reopening the companion to the bound run's snapshot (section 9.2).
     apply_run_status: (d.applyRunStatus as Application["apply_run_status"]) ?? "none",
     apply_run_id: d.applyRunId ?? null,
     archived: d.archived_at != null,
@@ -275,7 +275,7 @@ function appFromDto(d: ApplicationDTO): Application {
   return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
 }
 
-// The run's usage dict is a redacted ledger snapshot (applier.md §9.1) — read
+// The run's usage dict is a redacted ledger snapshot (applier-as-built.md section 9.1) — read
 // the applier field names, falling back to the shared Usage names so an early
 // sidecar shape still surfaces a cost line. `cost_usd` stays null when unknown.
 function toApplyUsage(u: Record<string, unknown>): ApplyUsage {
@@ -856,10 +856,10 @@ export class RealApi {
     return (d.packetState as PacketState) ?? "none";
   }
 
-  // ── apply runs (the agentic Applier — applier.md §8/§9) ───────────────────
-  // Starting Apply IS the action (§8.1): no pre-confirm modal, the run is
+  // ── apply runs (the agentic Applier — applier-as-built.md section 8/section 9) ───────────────────
+  // Starting Apply IS the action (section 8.1): no pre-confirm modal, the run is
   // created and the op enqueued immediately. `retryOfRunId` links a Retry /
-  // Reopen-and-refill to the immutable prior run (§8.3).
+  // Reopen-and-refill to the immutable prior run (section 8.3).
   async startApply(applicationId: string, retryOfRunId?: string): Promise<ApplyRun> {
     const body = retryOfRunId ? { retry_of_run_id: retryOfRunId } : {};
     const d = (await this.json(
@@ -874,17 +874,17 @@ export class RealApi {
   }
 
   /** The run snapshot — a reopened companion reads this instead of depending on
-   *  having seen every prior SSE event (§9.2). */
+   *  having seen every prior SSE event (section 9.2). */
   async getApplyRun(runId: string): Promise<ApplyRun> {
     return toApplyRun(await this.req<ApplyRunDTO>(`/api/apply-runs/${runId}`));
   }
 
-  /** Cooperative cancel (§8.2) — the loop lands the run as `interrupted`. */
+  /** Cooperative cancel (section 8.2) — the loop lands the run as `interrupted`. */
   async cancelApplyRun(runId: string): Promise<ApplyRun> {
     return toApplyRun((await this.json("POST", `/api/apply-runs/${runId}/cancel`, {})) as ApplyRunDTO);
   }
 
-  /** The human's word after the P1 handoff (§8.4): `true` records a user-attested
+  /** The human's word after the P1 handoff (section 8.4): `true` records a user-attested
    *  submission and advances the card to Applied; `false` leaves it in place. */
   async attestApplyRun(runId: string, submitted: boolean): Promise<ApplyRun> {
     return toApplyRun(
@@ -1468,7 +1468,7 @@ export class RealApi {
   /** Refresh contact statuses from LinkedIn (FR-NW-15). `force` is the user
    *  pressing Sync; without it the sidecar throttles the opportunistic refresh
    *  that fires when the Networking surface opens. There is no scheduled sync —
-   *  see `docs/internal/linkedin-posture.md` §1. */
+   *  see `docs/internal/linkedin-addon.md` section 5. */
   async syncContacts(force = false): Promise<ContactSyncResult> {
     const q = force ? "?force=true" : "";
     const dto = (await this.json("POST", `/api/networking/contact-sync${q}`, {})) as {

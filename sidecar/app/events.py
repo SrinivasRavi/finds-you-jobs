@@ -1,4 +1,4 @@
-"""SSE hub (architecture §4.1 `events.py`).
+"""SSE hub (architecture section 4.1 `events.py`).
 
 One stream, typed envelopes `{type, payload}`. A1 shipped the heartbeat-only
 stub; A3 grows it into the real operation-state / scheduler-result hub via
@@ -237,7 +237,7 @@ async def heartbeat_stream(
 def operation_event(
     operation_id: str, kind: str, state: str, **extra: Any
 ) -> dict[str, Any]:
-    """Typed envelope for an operation state change (architecture §5.3)."""
+    """Typed envelope for an operation state change (architecture section 5.3)."""
     payload: dict[str, Any] = {"id": operation_id, "kind": kind, "state": state}
     payload.update(extra)
     return make_event("operation", payload)
@@ -265,7 +265,7 @@ def _deliver_drop_oldest(queue: asyncio.Queue[dict[str, Any]], event: dict[str, 
 
 
 class EventHub:
-    """Thread-safe SSE fan-out (architecture §5.3 "publishes to the SSE hub").
+    """Thread-safe SSE fan-out (architecture section 5.3 "publishes to the SSE hub").
 
     The runner's worker threads and the scheduler's coroutine both call
     `publish`. Delivery into each subscriber's `asyncio.Queue` is marshalled

@@ -1,12 +1,12 @@
 """SQLAlchemy 2.0 models — the core-storage slice of the first-migration schema
-(database-design §7, carried per `docs/internal/roadmap.md` §7.2 #3).
+(database-design section 7, carried per `docs/internal/roadmap.md` section 7.2 #3).
 
 This commit carries orchestration only: `operations` (the runner's durable
 queue + cost ledger) and `user_preferences` (whose `ui_state["cost_totals"]`
 aggregate keeps all-time spend intact across ledger retention). The remaining
-§7 tables (jobs, applications, profile, artifacts, …) land with their feature
+section 7 tables (jobs, applications, profile, artifacts, …) land with their feature
 commits as follow-up migrations. Enum-valued columns are plain TEXT (string
-enums — "new kinds need no migration", §2); JSON columns use SQLAlchemy's
+enums — "new kinds need no migration", section 2); JSON columns use SQLAlchemy's
 cross-dialect JSON type.
 """
 
@@ -38,7 +38,7 @@ def _pk() -> Mapped[str]:
 
 
 # ---------------------------------------------------------------------------
-# Orchestration (database-design §2)
+# Orchestration (database-design section 2)
 # ---------------------------------------------------------------------------
 
 # The Operation state machine's vocabulary, named once (D-A4). The runner owns
@@ -54,7 +54,7 @@ OP_ALL_STATES: frozenset[str] = OP_ACTIVE_STATES | OP_TERMINAL_STATES
 
 
 class Operation(Base):
-    """The runner's durable queue row + the cost ledger (architecture §5.3)."""
+    """The runner's durable queue row + the cost ledger (architecture section 5.3)."""
 
     __tablename__ = "operations"
 
@@ -79,7 +79,7 @@ class Operation(Base):
 
 
 class Schedule(Base):
-    """A recurring operation (database-design §2)."""
+    """A recurring operation (database-design section 2)."""
 
     __tablename__ = "schedules"
 
@@ -94,7 +94,7 @@ class Schedule(Base):
 
 
 # ---------------------------------------------------------------------------
-# Jobs (database-design §3)
+# Jobs (database-design section 3)
 # ---------------------------------------------------------------------------
 
 
@@ -158,7 +158,7 @@ class Tombstone(Base):
 
 
 # ---------------------------------------------------------------------------
-# Profile (database-design §3)
+# Profile (database-design section 3)
 # ---------------------------------------------------------------------------
 
 
@@ -183,7 +183,7 @@ class MasterProfile(Base):
     )
 
 
-# Join tables per the no-graph-DB decision (§4): entity↔entity links live in SQL.
+# Join tables per the no-graph-DB decision (section 4): entity↔entity links live in SQL.
 experience_skills = Table(
     "experience_skills",
     Base.metadata,
@@ -216,18 +216,18 @@ class ProfileEntity(Base):
 
 
 # ---------------------------------------------------------------------------
-# Applications (database-design §4)
+# Applications (database-design section 4)
 # ---------------------------------------------------------------------------
 
 
 class Application(Base):
-    """A pipeline card (database-design §4). `packetState` is *not* stored here —
+    """A pipeline card (database-design section 4). `packetState` is *not* stored here —
     it's derived from this app's Artifact rows + their operations' states.
 
     The prior repository also stored `apply_state` (latest Applier run summary)
     and `form_prep` (the Save-time answer cache) here; both are retired in this
-    rebuild (`docs/internal/applier.md` §2) — the durable ApplyRun model arrives
-    with the applier commits instead."""
+    rebuild (`docs/internal/archived/applier-as-built.md` section 2) — the durable ApplyRun
+    model arrives with the applier commits instead."""
 
     __tablename__ = "applications"
 
@@ -240,7 +240,7 @@ class Application(Base):
     # `manual` = logged by the user via "Add a job application" for a job they
     # already applied to outside the app. Drives the Tracker source filter.
     origin: Mapped[str] = mapped_column(String, nullable=False, default="discovered")
-    # Exclusive pre-submission intent (`docs/internal/roadmap.md` §5.1):
+    # Exclusive pre-submission intent (`docs/internal/roadmap.md` section 5.1):
     # `none | referral | apply` — one authoritative value, so two competing
     # background paths can never present conflicting calls to action.
     intent: Mapped[str] = mapped_column(String, nullable=False, default="none")
@@ -259,7 +259,7 @@ class Application(Base):
 
 
 class Artifact(Base):
-    """One generated document (tailored resume | cover letter) — database-design §4.
+    """One generated document (tailored resume | cover letter) — database-design section 4.
     Resume + cover letter are two separate operations → two rows (AM5)."""
 
     __tablename__ = "artifacts"
@@ -292,7 +292,7 @@ class ApplicationEvent(Base):
     source for the actions the operations ledger never sees: a column move
     (`detail={"from","to"}`), a notes edit (`kind="notes"`), and archive /
     unarchive. Composed with the ledger in `GET …/activity`. Kinds are plain
-    TEXT string-enums (§2). No other kinds are written."""
+    TEXT string-enums (section 2). No other kinds are written."""
 
     __tablename__ = "application_events"
 
@@ -362,13 +362,13 @@ APPLY_RUN_ACTIVE_STATUSES: frozenset[str] = frozenset(
 
 
 class ApplyRun(Base):
-    """One durable Applier attempt (`docs/internal/applier.md` §9.1) — the
+    """One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1) — the
     first-class replacement for the prior repository's `applications.apply_state`
     overload. A retry/reopen NEVER mutates an old run: it creates a fresh row
     linked by `retry_of_run_id`, and the old run stays immutable evidence
-    (§8.3). P1 terminal statuses come from the jobapplier package — there is
+    (section 8.3). P1 terminal statuses come from the jobapplier package — there is
     no `submitted` written by the agent; Applied requires confirmation
-    evidence or explicit user attestation (§8.4), recorded by the API layer."""
+    evidence or explicit user attestation (section 8.4), recorded by the API layer."""
 
     __tablename__ = "apply_runs"
 
@@ -387,7 +387,7 @@ class ApplyRun(Base):
     resume_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
     cover_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    # Redacted JSON evidence (labels/kinds/paths — never raw form values §9.1):
+    # Redacted JSON evidence (labels/kinds/paths — never raw form values section 9.1):
     # blockers [{kind, detail, field_label}], fields [{label, action, ok, note}],
     # screenshots [paths], usage {calls, tokens_in, tokens_out, cost_usd}.
     blockers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
@@ -395,7 +395,7 @@ class ApplyRun(Base):
     screenshots: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     usage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     steps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # submitted-evidence trail (§8.4): none | confirmation_detected | user_attested
+    # submitted-evidence trail (section 8.4): none | confirmation_detected | user_attested
     submit_evidence: Mapped[str] = mapped_column(String, nullable=False, default="none")
     started_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
     deadline_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
@@ -405,12 +405,12 @@ class ApplyRun(Base):
 
 
 # ---------------------------------------------------------------------------
-# Settings (database-design §4/§6)
+# Settings (database-design section 4/section 6)
 # ---------------------------------------------------------------------------
 
 
 class EngineSettings(Base):
-    """One row per configured LLM engine (architecture §9 registry)."""
+    """One row per configured LLM engine (architecture section 9 registry)."""
 
     __tablename__ = "engine_settings"
 
@@ -425,7 +425,7 @@ class EngineSettings(Base):
 
 
 class UserPreferences(Base):
-    """Filters + constraints; single row in P1 (database-design §4)."""
+    """Filters + constraints; single row in P1 (database-design section 4)."""
 
     __tablename__ = "user_preferences"
 
@@ -456,7 +456,7 @@ class UserPreferences(Base):
 
 
 # ---------------------------------------------------------------------------
-# Networking (database-design §5)
+# Networking (database-design section 5)
 # ---------------------------------------------------------------------------
 
 
@@ -466,7 +466,7 @@ class Contact(Base):
     Person-level, not job-level: the same person is reused across every role at
     their company (US-REF-04 "one connection per contact, ever"). `linkedin_url`
     is the identity key (same person + new URL = new row in P1 — database-design
-    §8 Q4). `audience_tag`/`warmth` are auto-assigned at discovery (US-REF-02/10);
+    section 8 Q4). `audience_tag`/`warmth` are auto-assigned at discovery (US-REF-02/10);
     `connection_status` is the kanban column (US-NW-07)."""
 
     __tablename__ = "contacts"
@@ -542,7 +542,7 @@ class ContactJobAssoc(Base):
     )
     job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
     audience_tag: Mapped[str] = mapped_column(String, nullable=False, default="other")
-    # pending / accepted / replied / converted / ignored (database-design §5).
+    # pending / accepted / replied / converted / ignored (database-design section 5).
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     # The user's current find-referrals selection for this role (FR-NW-01). Set at
     # reach-out time; persisted so a `pending` popup restores the selection on
@@ -588,7 +588,7 @@ class SequenceStep(Base):
     )
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     title: Mapped[str] = mapped_column(String, nullable=False, default="")
-    # linkedin_connect / linkedin_dm / email (email = manual-send-only P1, §17a).
+    # linkedin_connect / linkedin_dm / email (email = manual-send-only P1, section 17a).
     channel: Mapped[str] = mapped_column(String, nullable=False, default="linkedin_dm")
     body_template: Mapped[str] = mapped_column(Text, nullable=False, default="")
     delay_days_from_previous: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -601,11 +601,11 @@ class SequenceStep(Base):
 
 
 class OutreachLog(Base):
-    """Per-message audit (database-design §5). One row per send attempt.
+    """Per-message audit (database-design section 5). One row per send attempt.
 
     `outcome_detail` carries the verbatim underlying error on failure
     (NFR-SIDE-04, never swallowed). Cap/quota accounting is NOT stored here — the
-    Referral Outreach package owns the caps; the app queries live quota (§17c)."""
+    Referral Outreach package owns the caps; the app queries live quota (section 17c)."""
 
     __tablename__ = "outreach_logs"
 
@@ -643,9 +643,9 @@ class OutreachLog(Base):
 
 
 class LinkedInSession(Base):
-    """Single-row LinkedIn session state (database-design §5).
+    """Single-row LinkedIn session state (database-design section 5).
 
-    `cookies_encrypted` is a secret-at-rest BLOB (NFR-SEC-01 / §6) — never
+    `cookies_encrypted` is a secret-at-rest BLOB (NFR-SEC-01 / section 6) — never
     plaintext. `status` gates the popup's send path (US-NW-09): a `valid` session
     unlocks live discover/send; anything else is drafts-only / manual-web."""
 

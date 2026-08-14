@@ -1,20 +1,20 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Action executor (docs/internal/applier.md §4.2/§4.3/§5.3).
+"""Action executor (docs/internal/archived/applier-as-built.md section 4.2/section 4.3/section 5.3).
 
 The executor is the enforcement layer: it re-checks everything the prompt
 promises, so a prompt-injected or confused model still cannot step outside
 the contract. Independently of what the model asks for:
 
 - an action must reference an element id from the CURRENT observation —
-  stale ids raise ``StaleElementError`` instead of guessing (§4.1);
+  stale ids raise ``StaleElementError`` instead of guessing (section 4.1);
 - ``navigate`` obeys a scheme/host policy — private/loopback redirect targets
-  are rejected (§4.3);
+  are rejected (section 4.3);
 - only user-approved artifacts can be uploaded, chosen by artifact_id — the
-  model never sees or supplies a filesystem path (§5.3);
+  model never sees or supplies a filesystem path (section 5.3);
 - password/TOTP inputs cannot be filled — the product holds no site
-  credentials (§4.3);
+  credentials (section 4.3);
 - every mutating action is verified by read-back where the control supports
-  it, and the outcome is reported honestly (§4.2).
+  it, and the outcome is reported honestly (section 4.2).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class ExecOutcome:
 
 
 class UrlPolicy:
-    """Scheme/host policy for navigate + redirect checks (§4.3).
+    """Scheme/host policy for navigate + redirect checks (section 4.3).
 
     Literal IPs only, on purpose: Playwright resolves inside the browser, so a
     resolve-then-navigate check here would be a second lookup proving nothing.
@@ -93,7 +93,7 @@ class Executor:
 
     def bind_observation(self, obs: Observation) -> None:
         """The loop calls this after every observe; ids from any earlier
-        observation are dead from this moment (§4.1)."""
+        observation are dead from this moment (section 4.1)."""
         self._observation = obs
 
     async def execute(self, action: Action) -> ExecOutcome:
@@ -131,7 +131,7 @@ class Executor:
         per observation, so the first hit is THE element — this deliberately
         does not trust ``frame_index`` positions, because the observation
         numbers only the frames it walked (filtered), not ``page.frames``
-        order. Not found anywhere → the observation is stale (§4.1)."""
+        order. Not found anywhere → the observation is stale (section 4.1)."""
         selector = f'[{SKYVERN_ID_ATTR}="{element.unique_id}"]'
         main = self._page.locator(selector).first
         if await main.count():

@@ -1,5 +1,5 @@
 # finds-you-jobs — AGPL-3.0-only.
-"""Tool-vocabulary strictness (applier.md §4.2): parse_action accepts exactly
+"""Tool-vocabulary strictness (applier-as-built.md section 4.2): parse_action accepts exactly
 the schema and nothing else — and the schema contains no submit."""
 
 import pytest
@@ -10,7 +10,7 @@ from sidecar.packages.jobapplier.types import DisallowedActionError
 
 def test_no_submit_tool_exists() -> None:
     # The P1 safety line: a prompt mistake cannot expose a submit capability
-    # because the vocabulary itself has no such tool (§4.2).
+    # because the vocabulary itself has no such tool (section 4.2).
     assert "submit" not in TOOLS
     with pytest.raises(DisallowedActionError, match="unknown tool"):
         parse_action('{"tool": "submit"}')

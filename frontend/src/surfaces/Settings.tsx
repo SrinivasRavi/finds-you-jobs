@@ -1,4 +1,4 @@
-// Settings (US-SET / §13) — Automation-on-Save, LLM providers + per-operation
+// Settings (US-SET / section 13) — Automation-on-Save, LLM providers + per-operation
 // engine routing, the LinkedIn networking risk toggle w/ warning copy + ack,
 // observability, appearance (theme). Ports settings*.html (product sections
 // only — the prototype's purple "internal UI testing" mockups are not product).

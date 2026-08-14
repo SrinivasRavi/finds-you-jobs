@@ -349,7 +349,7 @@ def test_application_dto_embeds_its_job(
 
 
 # ---------------------------------------------------------------------------
-# Exclusive intent (docs/internal/roadmap.md §5.1) — none | referral | apply
+# Exclusive intent (docs/internal/roadmap.md section 5.1) — none | referral | apply
 # ---------------------------------------------------------------------------
 
 
@@ -384,7 +384,7 @@ def test_intent_defaults_to_none_and_round_trips(
 def test_intent_is_exclusive_setting_one_replaces_the_other(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
-    """§5.1: choosing `referral` clears `apply` and vice versa — the single
+    """section 5.1: choosing `referral` clears `apply` and vice versa — the single
     stored value IS the exclusivity guarantee; the API always exposes exactly
     one authoritative intent."""
     app, client = app_client

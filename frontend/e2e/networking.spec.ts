@@ -167,7 +167,7 @@ test("tracker referrals slot opens the find-referrals popup", async ({
   await page.screenshot({ path: `${DIR}/referrals-popup-start.png`, fullPage: true });
 });
 
-// FR-NW-15 / posture §1: contact_sync is user-initiated only — the 12 h
+// FR-NW-15 / posture section 1: contact_sync is user-initiated only — the 12 h
 // schedule that touched LinkedIn with nobody present is gone. Two things to
 // verify visually: the Sync control is ABSENT until the feature is actually
 // usable (toggle on AND a live session), and PRESENT once it is.
@@ -219,7 +219,7 @@ test("Sync is gated on a live session and never runs on a timer", async ({
   await page.screenshot({ path: `${DIR}/sync-present-with-session.png`, fullPage: true });
 });
 
-// US-NW-09 as-reworked 2026-07-30 (posture doc §5.1): the checkbox multi-select
+// US-NW-09 as-reworked 2026-07-30 (posture doc section 5.1): the checkbox multi-select
 // + "Reach out (N)" batch became a per-row Connect/Message button, each opening
 // a pre-send confirmation for exactly one contact that shows the message text.
 //

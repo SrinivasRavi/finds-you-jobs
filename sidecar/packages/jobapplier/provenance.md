@@ -34,7 +34,7 @@ stable per-scan ids, plus the Python side that injects it, walks child frames,
 assembles/hashes/trims the tree, and renders it as compact HTML for a model
 prompt. That is what roadmap commit 12 carries — observation only. The agent
 loop, actions, and any fill/submit capability are finds-you-jobs-owned and land
-in later commits (`docs/internal/applier.md` §4).
+in later commits (`docs/internal/archived/applier-as-built.md` section 4).
 
 | Upstream file | Carried as | Mode |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ stripping the 8-line provenance header, `LICENSE` verbatim by diff):
 
 ## Deliberately NOT taken
 
-Per the vision and `docs/internal/roadmap.md` §3: no Skyvern Cloud/API/
+Per the vision and `docs/internal/roadmap.md` section 3: no Skyvern Cloud/API/
 dashboard, workflow builder, multi-tenant accounts, database/queue/
 orchestrator, proxy networks, anti-bot/CAPTCHA-solving services, stealth
 integrations, telemetry/analytics, billing, credential injection, or the

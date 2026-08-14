@@ -5,7 +5,7 @@
 Synthetic typeahead / company-detail fixtures (no captured LinkedIn payloads).
 We assert the two shapes we handle, the id/domain helpers, and the
 domain-anchor match — the logic the app's silent-auto-pick vs user-confirm
-decision rides on (docs/referral-outreach-discovery-design.md §2)."""
+decision rides on (docs/referral-outreach-discovery-design.md section 2)."""
 
 from __future__ import annotations
 

@@ -6,9 +6,9 @@ new) over a trimmed, Skyvern-derived browser *observation* core under
 ``upstream/`` (also AGPL-3.0 — see ``provenance.md``).
 
 The app talks to this package ONLY through the typed contract in ``types.py``
-(`docs/internal/applier.md` §3.1): ``run_apply(page, ApplyRequest, engine,
+(`docs/internal/archived/applier-as-built.md` section 3.1): ``run_apply(page, ApplyRequest, engine,
 sink, control) -> ApplyResult``. The tool vocabulary has no ``submit`` — the
-P1 terminal success is ``ready_for_human`` and a human clicks Submit (§8.4).
+P1 terminal success is ``ready_for_human`` and a human clicks Submit (section 8.4).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Covers: A3 SSE event hub (architecture §5.3 — runner/scheduler → SSE)."""
+"""Covers: A3 SSE event hub (architecture section 5.3 — runner/scheduler → SSE)."""
 
 from __future__ import annotations
 

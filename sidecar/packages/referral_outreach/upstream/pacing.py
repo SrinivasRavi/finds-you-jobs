@@ -8,7 +8,7 @@
 #   - browser/session.py: random_sleep() jitter between actions.
 # The rolling-window ledger, tiered caps, and 24 h backoff flag are our own —
 # they make caps + pacing OWNED AND ENFORCED inside this subprocess, which is
-# the finds-you-jobs contract (ROADMAP §66, NFR-LI-01/02/03, FR-NW-04/05). The
+# the finds-you-jobs contract (ROADMAP section 66, NFR-LI-01/02/03, FR-NW-04/05). The
 # host queries the remaining quota and never re-implements or overrides it.
 """Account-safety pacing: tiered rolling caps, jittered send delays, backoff.
 
@@ -20,7 +20,7 @@ All limits here are voyager_py-owned. They are set at 50-70% of the *estimated*
 LinkedIn ceiling — estimated because LinkedIn publishes almost none of them.
 They are not a promise LinkedIn honours, and not a safety guarantee; they are
 harm reduction against someone else's undocumented limit. Derivation and sources:
-`docs/internal/linkedin-posture.md` §4.
+`docs/internal/linkedin-addon.md` section 6.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ SEND_DELAY_CAP_S = 900.0
 # Matches the tool we forked: OpenOutreach sleeps uniform(6, 10) s per scraped
 # profile (`linkedin/db/leads.py` @ a7a9101). Bulk profile reads are the axis
 # scraping detection actually keys on, and until this constant existed we were
-# strictly MORE aggressive there than upstream (posture doc §2).
+# strictly MORE aggressive there than upstream (posture doc section 2).
 ENRICH_PAUSE_RANGE_S = (6.0, 10.0)
 
 # The package-owned ceiling on one logged-in job search (one page of LinkedIn's
@@ -122,7 +122,7 @@ class Tier:
     connection cap, the restriction ladder, and the CUL reset date), so the
     estimates are corroborated vendor observation with no primary confirmation
     and LinkedIn changes them without notice. See
-    `docs/internal/linkedin-posture.md` §4 for the derivation table and
+    `docs/internal/linkedin-addon.md` section 6 for the derivation table and
     `linkedin-limits-audit-2026-07-29.md` for the source audit.
 
     Nothing here is a promise about account safety. It is harm reduction against
@@ -185,7 +185,7 @@ BUDGET_WINDOW_NAMES: tuple[str, ...] = tuple(name for name, _ in BUDGET_WINDOWS)
 # coarser — LinkedIn's plan-tier limits are even less documented — and are
 # deliberately conservative. Nothing here is a promise about account safety; it
 # is harm reduction against someone else's undocumented limit. Derivation and
-# sources: `docs/internal/linkedin-posture.md` §4 and
+# sources: `docs/internal/linkedin-addon.md` section 6 and
 # `linkedin-limits-audit-2026-07-29.md`.
 #
 #   meter          Free (100%)         basis

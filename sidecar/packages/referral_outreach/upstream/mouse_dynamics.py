@@ -8,7 +8,7 @@
 Two defects this closes, both first-party measured:
 
 1. **Teleport.** Raw CDP clicks emit ZERO `mousemove` before the press
-   (`embedded-browser.md` §15.3: "teleport — moves before click: 0"). In the
+   (`embedded-browser.md` section 15.3: "teleport — moves before click: 0"). In the
    2026 agent-detection work `teleport_click_ratio` is one of the two features
    that reach 100% agent recall, so a click with no approach is the single
    most-cited mouse tell. Generating a trail took moves-before from 0 to 25 in
@@ -21,7 +21,7 @@ Two defects this closes, both first-party measured:
    through a raw CDP session.
 
 Trajectory parameters come from the research digest's Mouse table. What is
-deliberately NOT done, per §17.3:
+deliberately NOT done, per section 17.3:
 
 * no clean 10 Hz tremor sinusoid — the per-sample noise is low-amplitude and
   broadband;

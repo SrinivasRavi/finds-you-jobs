@@ -1,6 +1,6 @@
 """First-use Chromium download (A0.6 / A5b).
 
-Playwright's Chromium is **not** bundled (architecture §4.5); the Applier's
+Playwright's Chromium is **not** bundled (architecture section 4.5); the Applier's
 typed `ApplyError` ("Chromium is not installed…") surfaces in the UI as a
 friendly state with a Download action. This runs `playwright install chromium`
 as a child subprocess and publishes coarse progress onto the SSE hub — never an

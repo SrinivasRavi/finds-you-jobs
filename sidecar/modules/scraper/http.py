@@ -1,7 +1,7 @@
 """HTTP fetcher — stdlib-only, mirroring `_shared/job_input.py`'s precedent.
 
 One `Fetcher` instance per source: it counts requests into the source's
-`Usage` (§4 usage record — the Scraper's "cost" is HTTP calls, not tokens).
+`Usage` (section 4 usage record — the Scraper's "cost" is HTTP calls, not tokens).
 Tests inject a `FakeFetcher` with the same surface; adapters never touch
 urllib directly.
 """

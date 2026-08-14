@@ -1,4 +1,5 @@
-"""Covers: the Applier app integration (docs/internal/applier.md §8/§9).
+"""Covers: the Applier app integration
+(docs/internal/archived/applier-as-built.md section 8/section 9).
 
   US-level behavior — Apply off the Tracker card creates a durable ApplyRun
   immediately (no pre-confirm modal), the op drives the jobapplier agent

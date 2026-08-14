@@ -1,4 +1,4 @@
-"""Direct-API BYOK engines behind the `Engine` seam (ROADMAP §7 item 9, §A0.3).
+"""Direct-API BYOK engines behind the `Engine` seam (ROADMAP section 7 item 9, section A0.3).
 
 Two implementations cover the whole P1 provider menu (US-OB-04 / US-SET-07):
 

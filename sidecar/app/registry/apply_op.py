@@ -1,13 +1,13 @@
-"""The Applier operation (docs/internal/applier.md §8) — one direct `apply`
+"""The Applier operation (docs/internal/archived/applier-as-built.md section 8) — one direct `apply`
 op from the Tracker, driving the jobapplier package's agent loop.
 
-Lifecycle (§8.1): the route creates the durable ApplyRun immediately; this
+Lifecycle (section 8.1): the route creates the durable ApplyRun immediately; this
 entrypoint waits for the packet (a still-generating tailored resume) if
 needed, freezes the exact artifact used, renders it to PDF, opens the
 browser, and hands off to `jobapplier.run_apply`. The loop cannot submit —
-its tool vocabulary has no submit tool (§4.2).
+its tool vocabulary has no submit tool (section 4.2).
 
-P1 handoff (§8.4): on `ready_for_human` the HEADED browser stays open for a
+P1 handoff (section 8.4): on `ready_for_human` the HEADED browser stays open for a
 bounded review window while we watch for a confirmation page. A detected
 confirmation records `submitted` with `submit_evidence=confirmation_detected`
 and moves the card to Applied; otherwise the run stays `ready_for_human` and
@@ -207,7 +207,7 @@ async def _apply_async(
     # finalizers are guarded to ACTIVE rows, so a row `_finalize` already
     # landed is never re-written.
     try:
-        # -- wait for the packet, freeze the exact artifacts (§8.1) ----------
+        # -- wait for the packet, freeze the exact artifacts (section 8.1) ----------
         resume_md, resume_label, resume_artifact_id = await _wait_for_packet(
             ctx, application_id, run_id, control
         )
@@ -329,7 +329,7 @@ async def _wait_for_packet(
     ctx: OperationContext, application_id: str, run_id: str, control: ApplyControl
 ) -> tuple[str, str, str | None]:
     """Resolve the resume to use, waiting for an in-flight tailored artifact
-    (§8.1). Returns (markdown, honesty label, artifact_id | None)."""
+    (section 8.1). Returns (markdown, honesty label, artifact_id | None)."""
     db = ctx.db
     assert db is not None
     waited = 0.0
@@ -387,7 +387,7 @@ async def _wait_for_packet(
 
 
 def _persist_event(ctx: OperationContext, run_id: str, event: ApplyEvent) -> None:
-    """Fold progress into the durable run row (state-first, then SSE §9.2)."""
+    """Fold progress into the durable run row (state-first, then SSE section 9.2)."""
     db = ctx.db
     assert db is not None
     fields: dict[str, Any] = {}
@@ -416,7 +416,7 @@ async def _review_window(
     review_wait_s: float,
     control: ApplyControl,
 ) -> ApplyResult:
-    """§8.4: after ready_for_human, hold the browser open and watch for a
+    """section 8.4: after ready_for_human, hold the browser open and watch for a
     machine-detectable confirmation while the human reviews and submits."""
     if result.status is not ApplyStatus.READY_FOR_HUMAN or review_wait_s <= 0:
         return result
@@ -515,7 +515,7 @@ def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
 
 
 def advance_card_to_applied(repos: Repos, application_id: str, *, by: str) -> None:
-    """Move a pre-submission card to Applied and record the move (§8.4).
+    """Move a pre-submission card to Applied and record the move (section 8.4).
 
     The ONE implementation of the transition (D-A7): the applier's own
     confirmation detection (`by="applier"`) and the human's attestation

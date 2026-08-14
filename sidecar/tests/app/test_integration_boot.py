@@ -1,4 +1,4 @@
-"""Covers: skeleton — the real sidecar process, end to end (architecture §4.4).
+"""Covers: skeleton — the real sidecar process, end to end (architecture section 4.4).
 
 Boots `python -m sidecar.app` as a subprocess (exactly as the shell does),
 parses the PORT/TOKEN handshake off stdout, then hits the live loopback server:

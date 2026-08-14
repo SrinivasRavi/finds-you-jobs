@@ -1,7 +1,7 @@
 """Operation-entrypoint persistence helpers.
 
 The wrappers call the modules; this file makes them persist their results into
-the DB the app owns (architecture §5.3/§5.6, database-design §3–§4):
+the DB the app owns (architecture section 5.3/section 5.6, database-design section 3–section 4):
 
 - scan → `Job` rows, canonical-URL dedup (first-seen wins) + `Tombstone`
   suppression + a per-source report into `result_ref`;

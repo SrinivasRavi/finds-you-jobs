@@ -1,4 +1,4 @@
-"""First-run seeding (ROADMAP A4, architecture §7).
+"""First-run seeding (ROADMAP A4, architecture section 7).
 
 On a fresh DB: seed `UserPreferences.portals_config` from the shipped verified
 source registry (`scraper/registry/portals-all.toml`) so the user has an
@@ -8,7 +8,7 @@ out-of-box source set they can trim, and create the recurring `scan` /
 The schedules are seeded **disabled** on purpose: an unattended full-registry
 scan (315 boards) followed by scoring every discovered job would spend real LLM
 budget with no user in the loop, and budget *enforcement* is a G7 item (usage is
-recorded, never enforced — ROADMAP §4). Onboarding/Settings flips them on with
+recorded, never enforced — ROADMAP section 4). Onboarding/Settings flips them on with
 the user's chosen cadence + batch cap. Idempotent — safe to call every boot.
 """
 
@@ -86,7 +86,7 @@ def seed_defaults(db: Database) -> None:
         # with nobody present — an unattended background daemon against LinkedIn,
         # which is the single hardest thing to defend and the one fact that broke
         # the "every LinkedIn action is user-initiated" claim
-        # (`docs/internal/linkedin-posture.md` §1, maintainer directive
+        # (`docs/internal/linkedin-addon.md` section 5, maintainer directive
         # 2026-07-30). Refreshing is now something the user asks for: an explicit
         # Sync button, plus an opportunistic refresh when they open the Networking
         # surface (throttled — see CONTACT_SYNC_MIN_INTERVAL_MINUTES).

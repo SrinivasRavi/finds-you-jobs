@@ -1,4 +1,4 @@
-"""Declarative base + timestamp plumbing (database-design §2)."""
+"""Declarative base + timestamp plumbing (database-design section 2)."""
 
 from __future__ import annotations
 

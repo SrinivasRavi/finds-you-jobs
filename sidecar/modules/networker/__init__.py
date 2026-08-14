@@ -3,7 +3,7 @@
 finds-you-jobs-owned (AGPL). Drives the GPLv3 OpenOutreach-derived worker
 (`sidecar.packages.referral_outreach.upstream`) DIRECTLY in-process through the
 `DirectVoyagerDriver` — the subprocess firewall the prior MIT-era repository
-used is retired (`docs/internal/referral-outreach.md` §2). The one LLM
+used is retired (`docs/internal/referral-outreach.md` section 2). The one LLM
 operation is `draft`.
 """
 

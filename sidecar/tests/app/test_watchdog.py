@@ -1,4 +1,4 @@
-"""Covers: A1 scaffold — orphan watchdog decision + loop (architecture §4.4 step 4).
+"""Covers: A1 scaffold — orphan watchdog decision + loop (architecture section 4.4 step 4).
 
 The decision is a pure function; the loop is driven with an injected `get_ppid`
 so no real reparenting is needed.

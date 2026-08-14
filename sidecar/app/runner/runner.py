@@ -1,4 +1,4 @@
-"""The Operation Runner (architecture §5.3).
+"""The Operation Runner (architecture section 5.3).
 
 Durable queue → thread-pool workers → persisted state transitions
 (`queued → running → succeeded|failed|cancelled`) → the cost ledger → typed SSE
@@ -119,7 +119,7 @@ class OperationRunner:
     def shutdown(self, *, drain_timeout: float | None = None) -> None:
         """Stop accepting dispatches; wait for in-flight workers to drain.
 
-        `drain_timeout` mirrors the §4.4 10 s shutdown window; None waits fully.
+        `drain_timeout` mirrors the section 4.4 10 s shutdown window; None waits fully.
         The Tauri shell force-kills after its own window, so overshooting here is
         capped upstream — this just gives in-flight operations a clean chance.
         """

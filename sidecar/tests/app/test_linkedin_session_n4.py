@@ -297,7 +297,7 @@ def _set_prefs(client: TestClient) -> None:
 
 def _enable_job_search(client: TestClient, *, ack: bool = True) -> None:
     """The job search has its OWN opt-in + typed ack, stored in `ui_state` —
-    a separate consent from the Referral Outreach toggle (posture doc §4 #8)."""
+    a separate consent from the Referral Outreach toggle (posture doc section 4 #8)."""
     body: dict = {"linkedin_search_enabled": True}
     if ack:
         body["linkedin_search_ack_at"] = "2026-08-01T00:00:00Z"
@@ -571,7 +571,7 @@ def test_disconnect_clears_the_search_cursor(paged_search_client) -> None:
 # contact_sync used to be a 12 h schedule that touched LinkedIn with nobody
 # present. It is now user-initiated only: an explicit Sync button (force=true)
 # plus a throttled opportunistic refresh when the Networking surface opens.
-# See `docs/internal/linkedin-posture.md` §1.
+# See `docs/internal/linkedin-addon.md` section 5.
 
 
 def test_contact_sync_is_not_a_seeded_schedule(app_client) -> None:
@@ -631,7 +631,7 @@ def test_opportunistic_refresh_is_throttled_but_the_button_is_not(app_client) ->
     assert forced["id"]
 
 
-# --- caps + self-imposed rate-limit profile (posture doc §4 fixes 7 + 10;
+# --- caps + self-imposed rate-limit profile (posture doc section 4 fixes 7 + 10;
 #     membership × risk% × override, maintainer directive 2026-08-01) ----------
 
 
@@ -740,7 +740,7 @@ def test_rate_limits_route_rejects_bad_values(app_client) -> None:
 
 def test_reach_out_contact_list_is_capped(app_client) -> None:
     """An unbounded contact list meant one request could authorise arbitrarily
-    many real sends (posture doc §5.1). The UI sends one per confirm; the DTO
+    many real sends (posture doc section 5.1). The UI sends one per confirm; the DTO
     hard-caps at 10."""
     _app, client = app_client
     contacts = [{"contact_id": f"c{i}", "message": "hi"} for i in range(11)]
@@ -751,7 +751,7 @@ def test_reach_out_contact_list_is_capped(app_client) -> None:
     assert r.status_code == 422
 
 
-# --- gate holes (posture doc §4 #8, closed 2026-08-01) ---------------------
+# --- gate holes (posture doc section 4 #8, closed 2026-08-01) ---------------------
 # connect/resume ran with NO gate at all: anything reaching the sidecar could
 # open a real browser at linkedin.com, or clear the 24 h rate-limit backoff,
 # with both LinkedIn features switched off.

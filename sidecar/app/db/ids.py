@@ -1,4 +1,4 @@
-"""UUIDv7 generation — time-sortable primary keys (database-design §2/§3).
+"""UUIDv7 generation — time-sortable primary keys (database-design section 2/section 3).
 
 Python 3.13 has no `uuid.uuid7`; this is a minimal RFC 9562 implementation:
 48-bit Unix-ms timestamp in the high bits (so PKs sort by creation time), the

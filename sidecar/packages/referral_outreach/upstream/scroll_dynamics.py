@@ -8,7 +8,7 @@
 Why. Of 1,025 detected agent sessions of Claude driving Chrome via Playwright,
 **wheel events were null in all 1,025** — the single feature that was empty in
 100% of them ("What Does It Take to Detect an AI Agent?", arXiv:2607.26935; see
-`docs/internal/embedded-browser.md` §17). It is also functionally required:
+`docs/internal/embedded-browser.md` section 17). It is also functionally required:
 LinkedIn lazy-loads profile and results content, so a page we never scroll may
 be read incomplete.
 
@@ -21,7 +21,7 @@ numbers in `docs/internal/evidence/2026-08-06-focus-tab-probe/`, `run4.py` /
   the scroll itself: **11 `scroll` events over 166 ms** in a clean ease-in-out.
 * A **CDP** `Input.dispatchMouseEvent {type: mouseWheel, deltaY: 120}` produces
   ONE `wheel` and ONE `scroll` — an **instant jump, no cascade at all**. This
-  contradicts `embedded-browser.md` §17.3's "let Chromium own the physics"; on
+  contradicts `embedded-browser.md` section 17.3's "let Chromium own the physics"; on
   macOS Chromium does not animate a CDP wheel, so the cascade has to be
   generated. A 16-step ramp at display cadence does produce 16 scroll events
   over ~750 ms, so the channel is reachable — just not for free.
@@ -57,7 +57,7 @@ DEFAULT_NOTCH_PX = 100.0
 # The measured shape of one real notch's scroll cascade: element scrollTop went
 # 0.5, 2.5, 6, 10.5, 16, 22, 28, 33, 36.5, 39, 40 over 166.4 ms. These are the
 # per-step increments of that curve, normalised. Bootstrapped from the
-# measurement rather than re-derived from a bezier on purpose: §17.3's rule is
+# measurement rather than re-derived from a bezier on purpose: section 17.3's rule is
 # that a generator whose moments are *too* clean is its own signature.
 NOTCH_PROFILE = (0.5, 2.0, 3.5, 4.5, 5.5, 6.0, 6.0, 5.0, 3.5, 2.5, 1.0)
 _PROFILE_SUM = sum(NOTCH_PROFILE)

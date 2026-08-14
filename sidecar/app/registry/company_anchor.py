@@ -13,7 +13,7 @@ Two outputs, both from the posting URL the scraper already stored:
   the same employer reuses one typeahead + one user choice (no re-prompting).
 
 MIT (own code). Deliberately does NOT import the scraper adapters (framework-free
-silos, §5.2) nor `voyager_py` (GPL, NFR-LIC-01) — the URL parsing is a small,
+silos, section 5.2) nor `voyager_py` (GPL, NFR-LIC-01) — the URL parsing is a small,
 independent clean-room reimplementation.
 """
 

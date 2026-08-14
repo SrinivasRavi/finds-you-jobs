@@ -1,4 +1,4 @@
-"""SQLite engine wiring (architecture §6/§11, AM4; database-design §1).
+"""SQLite engine wiring (architecture section 6/section 11, AM4; database-design section 1).
 
 WAL + `busy_timeout=5000` + `foreign_keys=ON` on every connection; single
 writer through the app. The DB file lives in the platform app-data directory,
@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .repos import Repos
 
 # Deliberately distinct from the prior repository's app-data namespace so a
-# fresh install never touches the MIT-era database (roadmap §6 risk table). A
+# fresh install never touches the MIT-era database (roadmap section 6 risk table). A
 # maintainer decision before the first packaged release may still rename it;
 # an explicit one-way importer is the only sanctioned migration path.
 _APP_DIR_NAME = "finds-you-jobs"

@@ -30,7 +30,7 @@ or the LinkedIn session is not `valid` — the schedule can stay enabled; the ti
 just does nothing (zero LinkedIn traffic) until the user opts in + connects.
 
 **License firewall.** Reaches `voyager_py` only through the silo's subprocess
-driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; §2).
+driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; section 2).
 """
 
 from __future__ import annotations
@@ -228,7 +228,7 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             probes = []
 
     # The worker stops the sweep on the first rate-limit/cap/auth refusal
-    # (§0.4: the first 429 stops the batch), so `probes` may be shorter than
+    # (section 0.4: the first 429 stops the batch), so `probes` may be shorter than
     # `eligible` — the untouched tail stays first in line for the next tick.
     for (contact_id, _net_contact, current, sent_at, accepted_at), probe in zip(
         eligible, probes, strict=False

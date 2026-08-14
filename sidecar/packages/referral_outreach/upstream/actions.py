@@ -475,7 +475,7 @@ def _click_with_note(session: AccountSession, note: str) -> str:
     both layouts as local fixtures — see tests/test_connect_note_flow.py.
 
     Returns what actually happened to the note, so the caller can meter and
-    report it instead of the degrade staying a log-only event (posture doc §6):
+    report it instead of the degrade staying a log-only event (posture doc section 6):
       "with_note"        — the note was typed and sent
       "noteless_upsell"  — free-plan note allowance exhausted (Premium upsell);
                            sent note-less, and the caller should mark the
@@ -624,7 +624,7 @@ def send_connection_request(
     `(new_status, note_outcome)` — `note_outcome` is `_click_with_note`'s result
     ("with_note" / "noteless_upsell" / "noteless_missing"), or "" when no note
     was requested, so the caller can meter the free-note allowance and surface a
-    degrade instead of it staying a log-only event (posture doc §6).
+    degrade instead of it staying a log-only event (posture doc section 6).
 
     Raises ReachedConnectionLimit if LinkedIn's weekly-cap UI appears (the host
     maps that to voyager-owned backoff), and a typed SkipProfile (naming the

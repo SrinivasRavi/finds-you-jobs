@@ -271,7 +271,7 @@ def test_sweep_makes_one_batch_call_for_n_contacts(db: Database) -> None:
 
 
 def test_rate_limited_mid_sweep_stops_remaining_probes(db: Database) -> None:
-    """The first RateLimited stops the batch (§0.4): the rate-limited contact is
+    """The first RateLimited stops the batch (section 0.4): the rate-limited contact is
     rotated without a transition, and every contact after it is left untouched
     (not probed, not rotated) — first in line for the next tick."""
     now = now_utc()

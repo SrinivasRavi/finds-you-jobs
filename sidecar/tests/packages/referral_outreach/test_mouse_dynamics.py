@@ -7,7 +7,7 @@ Two things are asserted here that a "does it run" test would miss:
 
   - the SHAPE of the trajectory (movement time and peak velocity on the
     digest's reference reach, an early velocity peak, a bowed path, several
-    submovements, a Fitts fit that is deliberately NOT perfect) — §17.3 is
+    submovements, a Fitts fit that is deliberately NOT perfect) — section 17.3 is
     explicit that a generator whose moments are too clean is its own signature;
   - the values a real page observes, against REAL Chromium: moves before the
     click (0 was the measured baseline) and `pressure === 0.5` on pointerdown
