@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Apply — with a honeypot</title></head>
+<body>
+  <h1>Apply for Staff Engineer</h1>
+  <form id="application" action="#" method="post">
+    <label for="name">Full name</label>
+    <input id="name" name="name" type="text" required />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required />
+
+    <label for="linkedin">LinkedIn profile URL</label>
+    <input id="linkedin" name="linkedin" type="text" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <!-- Breezy-style honeypot. Under file:// the hiding CSS is gone, so it
+         renders visible; the decider must skip it by pattern, not visibility. -->
+    <input id="hp_7f2b" name="hp_7f2b" type="text" autocomplete="hp-4f3c9a" tabindex="-1" />
+
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>

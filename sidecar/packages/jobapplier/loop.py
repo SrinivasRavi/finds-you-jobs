@@ -24,7 +24,7 @@ from typing import Any, Protocol
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 
-from .actions import parse_action
+from .actions import Action, parse_action
 from .classifier import classify
 from .executor import Executor, UrlPolicy
 from .observe import Observation, observe
@@ -56,6 +56,15 @@ class ApplyEngine(Protocol):
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Any]: ...
 
 
+class DeciderEngine(Protocol):
+    """A deterministic decider seam. It returns the next ``Action`` straight from
+    the structured observation — no text round-trip, no model spend. The loop
+    prefers this when the engine offers it; the code rung of the ladder
+    (Option 11) plugs in here."""
+
+    def decide(self, obs: Observation, request: ApplyRequest) -> Action: ...
+
+
 _NO_PROGRESS_OBSERVATIONS = 3  # materially identical observations in a row
 _MAX_CONSECUTIVE_FAILURES = 4  # failed/disallowed actions in a row
 _REDUNDANT_ACTIONS = 3  # verified re-fills of an already-settled field in a row
@@ -71,7 +80,7 @@ _FIELD_TOOLS = {"fill", "select", "check", "upload_artifact"}
 async def run_apply(
     page: Page,
     request: ApplyRequest,
-    engine: ApplyEngine,
+    engine: ApplyEngine | DeciderEngine,
     on_event: ApplyEventSink,
     control: ApplyControl,
     *,
@@ -88,7 +97,7 @@ class _Run:
         self,
         page: Page,
         request: ApplyRequest,
-        engine: ApplyEngine,
+        engine: ApplyEngine | DeciderEngine,
         on_event: ApplyEventSink,
         control: ApplyControl,
         policy: UrlPolicy,
@@ -160,8 +169,17 @@ class _Run:
         except PlaywrightError:  # evidence must never kill the run
             logger.warning("screenshot %s failed", tag, exc_info=True)
 
-    def _decide(self, obs: Observation) -> str:
-        reply, usage = self._engine.complete(
+    def _decide(self, obs: Observation) -> Action:
+        """One decision. A deterministic decider (the code rung) is preferred
+        when the engine offers a ``decide`` seam — it returns an Action with no
+        model spend; otherwise the model's text completion is parsed strictly.
+        Either way this runs in a worker thread so the event loop keeps
+        breathing (a ``DisallowedActionError`` propagates to the loop's handler)."""
+        decide = getattr(self._engine, "decide", None)
+        if decide is not None:
+            self._usage_calls += 1
+            return decide(obs, self._request)
+        reply, usage = self._engine.complete(  # type: ignore[union-attr]
             system_prompt(),
             render_turn(self._request, obs, self._history, self._remaining()),
         )
@@ -176,7 +194,7 @@ class _Run:
         if cost is not None:
             self._cost_usd += float(cost)
             self._cost_known = True
-        return reply
+        return parse_action(reply)
 
     def _usage(self) -> Usage:
         return Usage(
@@ -297,11 +315,9 @@ class _Run:
                     obs,
                 )
 
-            reply = await asyncio.to_thread(self._decide, obs)
             self._steps += 1
-
             try:
-                action = parse_action(reply)
+                action = await asyncio.to_thread(self._decide, obs)
             except DisallowedActionError as exc:
                 failure_streak += 1
                 self._history.append(f"(rejected) {exc}")
