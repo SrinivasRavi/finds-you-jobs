@@ -13,14 +13,18 @@ import {
   type ScreencastState,
 } from "../api/screencast";
 
-const DEFAULT_URL = "https://example.com";
-
 export function BrowserSurface({ surface }: { surface?: string }) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const clientRef = useRef<ScreencastClient | null>(null);
-  const [url, setUrl] = useState(DEFAULT_URL);
+  // The URL bar starts empty (the surface opens on about:blank) and then tracks
+  // the live page, so it shows where the surface actually is — not a fixed seed.
+  const [url, setUrl] = useState("");
+  // True while the user is editing the bar, so a page navigation mid-typing does
+  // not clobber their text. A submit clears it, letting the resolved URL (after
+  // any redirect) settle back into the bar.
+  const editingRef = useRef(false);
   const [state, setState] = useState<ScreencastState>("connecting");
   const [frames, setFrames] = useState(0);
   const [pageUrl, setPageUrl] = useState("");
@@ -101,6 +105,12 @@ export function BrowserSurface({ surface }: { surface?: string }) {
   }, [surface]);
 
   useEffect(() => {
+    // Reflect the live page URL in the bar, unless the user is mid-edit (their
+    // typing wins until they submit or leave the field).
+    if (pageUrl && !editingRef.current) setUrl(pageUrl);
+  }, [pageUrl]);
+
+  useEffect(() => {
     // Keep the remote viewport the size of the box we paint it into. Queued
     // client-side until the socket opens, so the first observation still lands.
     const el = viewportRef.current;
@@ -122,6 +132,7 @@ export function BrowserSurface({ surface }: { surface?: string }) {
           className="flex flex-1 items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
+            editingRef.current = false;  // let the resolved URL settle back in
             clientRef.current?.sendNavigate(url);
           }}
         >
@@ -129,6 +140,8 @@ export function BrowserSurface({ surface }: { surface?: string }) {
             data-testid="browser-url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            onFocus={() => { editingRef.current = true; }}
+            onBlur={() => { editingRef.current = false; }}
             placeholder={t("browser.urlPlaceholder")}
             className="w-full max-w-xl rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink focus:border-accent focus:outline-none"
           />
