@@ -249,7 +249,6 @@ def create_app(
         networker_ops.SURFACE_PROVIDER = networker_ops.build_surface_provider(
             browser, asyncio.get_running_loop()
         )
-        networker_ops.PRESENCE_SURFACE = networker_ops.build_presence_surface(browser)
 
         scheduler: Scheduler | None = None
         scheduler_task: asyncio.Task[None] | None = None

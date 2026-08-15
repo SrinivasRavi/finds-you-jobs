@@ -52,7 +52,7 @@ from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome, llm_outcome
-from .presence_gate import PresenceAbsent, read_surface_presence
+from .presence_gate import PresenceAbsent, decide_presence
 
 if TYPE_CHECKING:
     from ..db import Repos
@@ -105,54 +105,23 @@ def build_surface_provider(
 
 
 # ---------------------------------------------------------------------------
-# Presence-gate seam (Phase 7 — invariant 3 / Our Claim 9).
+# Presence gate (invariant 3 / Our Claim 9, as revised 2026-08-14).
 # ---------------------------------------------------------------------------
-
-# A `() -> live referral surface | None` PEEK over the core browser broker's own
-# viewer tracking. When it hands back a live streamed surface, the send/discover
-# paths refuse unless the run was user-initiated AND a screencast viewer is
-# attached AND the surface reports itself visible (`read_surface_presence`). None
-# (the default) means no streamed surface is configured for this install — the
-# self-launch/headed dogfood path, where the visible OS window is itself the
-# presence signal (Our Claim 9's "a visible surface" clause), so the gate steps
-# aside. The host installs `build_presence_surface(broker)` when the streamed op
-# path is activated (alongside `SURFACE_PROVIDER`); tests inject a fake surface.
-PresenceSurfaceProvider = Callable[[], Any]
-PRESENCE_SURFACE: PresenceSurfaceProvider | None = None
-
-
-def build_presence_surface(broker: Any) -> PresenceSurfaceProvider:
-    """A `() -> live referral surface | None` peek for the presence gate, built
-    over the core broker. Reads the broker's EXISTING surface for the referral
-    slug WITHOUT launching one (`live_surface`), so consulting presence can never
-    spend a Chrome process. The slug is the package's runtime value, owned inside
-    the GPL package — core never spells the vendor."""
-    from sidecar.packages.referral_outreach import referral_surface_slug
-
-    def _peek() -> Any:
-        return broker.live_surface(referral_surface_slug())
-
-    return _peek
 
 
 def _require_presence(ctx: OperationContext) -> None:
-    """Refuse a logged-in LinkedIn run unless the user is present (invariant 3).
+    """Refuse a logged-in LinkedIn run unless the user asked for it (invariant 3).
 
-    On the streamed-surface path, present means all three hold: the run was
-    user-initiated, a screencast viewer is attached, and the surface is visible.
-    When no streamed surface is configured (`PRESENCE_SURFACE` unset) or none is
-    live, this is the self-launch/headed path, where the visible browser window
-    is the presence and the gate steps aside. Raises `PresenceAbsent` (surfaced
-    verbatim on the op row) when the streamed surface is there but the user is
-    not — provably closed by `read_surface_presence`."""
-    provider = PRESENCE_SURFACE
-    if provider is None:
-        return
-    surface = provider()
-    if surface is None:
-        return
-    user_initiated = bool(ctx.input_snapshot.get("user_initiated"))
-    verdict = read_surface_presence(surface, user_initiated=user_initiated)
+    Presence IS the user's explicit click: gated runs must carry the
+    `user_initiated` snapshot marker that only a click path sets, so a background
+    timer or scheduler can never start one. The first live version also demanded
+    an attached screencast viewer and a visible surface; the maintainer killed
+    both signals on 2026-08-14 (they gate on attention, not presence — see
+    `presence_gate.py`). Raises `PresenceAbsent`, surfaced verbatim on the op
+    row."""
+    verdict = decide_presence(
+        user_initiated=bool(ctx.input_snapshot.get("user_initiated"))
+    )
     if not verdict.present:
         raise PresenceAbsent(verdict.reason)
 
