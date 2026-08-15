@@ -323,7 +323,10 @@ def test_wait_before_send_sleeps_the_computed_gap(tmp_path):
     slept: list[float] = []
     waited = pacer.wait_before_send(now=now, sleep=slept.append)
     assert slept and slept[0] == waited
-    assert 30.0 <= waited <= 90.0
+    # The 30 s floor is the guarantee; the ceiling is the 900 s cap (the Weibull
+    # reshape) — this assert kept the retired uniform(30, 90) band and flaked on
+    # ~3 in 10 draws.
+    assert 30.0 <= waited <= 900.0
 
 
 def test_wait_before_send_does_not_sleep_when_no_gap_is_owed(tmp_path):
