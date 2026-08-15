@@ -8,6 +8,19 @@
 #     BrowserUnresponsiveError), reraise on exhaustion.
 #   - Django-side imports dropped; the profile parser + url helpers are the
 #     local forked modules.
+#   - Voyager origin assertion (finds-you-jobs, 2026-08-14): `_fetch` asserts a
+#     linkedin.com page origin (`session.ensure_linkedin_origin()`) before the
+#     in-page fetch — a broker-backed surface can sit on `about:blank` (or
+#     wherever the host's Browser tab last went), where the fetch can only fail.
+#   - Live csrf-token derivation (finds-you-jobs, 2026-08-15): the csrf header
+#     is re-read from the CURRENT cookie jar at fetch time (`_live_csrf_header`
+#     in `_fetch`, then `document.cookie` inside `_FETCH_JS` as the last word)
+#     instead of trusting the construction-time snapshot alone. On a cold broker
+#     surface after a clean Chrome exit the jar carries no JSESSIONID (session
+#     cookies are purged), so the snapshot is empty; the origin assertion's feed
+#     navigation then mints a fresh one, and the fetch sent the new cookie with
+#     the stale header — voyager's csrf check answers HTTP 403 (the 2026-08-14
+#     cold-boot send failure). See `provenance.md`.
 """Voyager API client that runs fetch() inside the authenticated browser page,
 inheriting all browser-injected headers exactly like a real XHR."""
 
@@ -96,6 +109,15 @@ class PlaywrightLinkedinAPI:
         }
 
     _FETCH_JS = """([method, url, headers, body, timeoutMs]) => {
+        // Live csrf derivation (finds-you-jobs fork, 2026-08-15): the header
+        // must equal the JSESSIONID cookie THIS fetch will carry, and any
+        // Python-side value can predate a navigation that re-minted the cookie,
+        // so it is read from document.cookie in the same JS turn as the fetch.
+        // LinkedIn keeps JSESSIONID JS-readable (not HttpOnly) precisely so its
+        // own client can do this. No cookie on the page → keep the passed
+        // header (fixture pages, off-jar fallback).
+        const m = document.cookie.match(/(?:^|;\\s*)JSESSIONID=("?)([^";]*)\\1/);
+        if (m && m[2]) headers["csrf-token"] = m[2];
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         const init = {method, headers, credentials: "include",
@@ -140,7 +162,34 @@ class PlaywrightLinkedinAPI:
             )
         return result
 
+    def _live_csrf_header(self) -> dict:
+        """The csrf-token from the CURRENT cookie jar, or `{}` when it has no
+        JSESSIONID (an off-jar fixture page, or a jar read that failed) so the
+        constructed snapshot stays in effect as the fallback.
+
+        Why per-fetch and not per-client: the snapshot in `__init__` is taken
+        BEFORE `_fetch`'s origin assertion may navigate, and that navigation can
+        mint or rotate JSESSIONID (measured 2026-08-14: a cold broker surface
+        after a clean Chrome exit carries no JSESSIONID at all — session cookies
+        are purged — and the feed load mints a fresh one). A fetch that sends
+        the new cookie with the old header fails voyager's csrf check as HTTP
+        403, which the profile paths misreport as ProfileInaccessibleError."""
+        try:
+            cookies = {c["name"]: c["value"] for c in self.context.cookies()}
+        except Exception:  # noqa: BLE001 — fall back to the constructed snapshot
+            return {}
+        jsessionid = cookies.get("JSESSIONID", "").strip('"')
+        return {"csrf-token": jsessionid} if jsessionid else {}
+
     def _fetch(self, method: str, url: str, headers: dict, body: str | None = None):
+        # The in-page fetch inherits the PAGE's origin: off linkedin.com it can
+        # only fail (`TypeError: Failed to fetch`), so land the page there first
+        # (free when already on-origin; see `AccountSession.ensure_linkedin_origin`).
+        self.session.ensure_linkedin_origin()
+        # AFTER the possible navigation above: refresh the csrf header from the
+        # live jar (`_FETCH_JS` re-derives it from document.cookie as the last
+        # word, closing the remaining in-flight window).
+        headers = {**headers, **self._live_csrf_header()}
         raw = self._run_with_watchdog(
             f"{method} {url}",
             lambda: self.page.evaluate(self._FETCH_JS, [method, url, headers, body, self.timeout_ms]),

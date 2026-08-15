@@ -27,6 +27,14 @@
 #     `--use-mock-keychain` and so cannot decrypt cookies the one-time login
 #     wrote under Playwright's default OSCrypt key. The broker-backed twin of
 #     `_start_persistent`'s first-run migration. See `provenance.md`.
+#   - Voyager origin assertion (finds-you-jobs, 2026-08-14): every voyager call
+#     is an in-page `fetch` against the page's own origin, an invariant the
+#     self-launch path establishes by ending `start()` on the feed. A broker
+#     surface starts at `about:blank`, and the host's Browser tab can drive it
+#     anywhere between runs, so the voyager client re-asserts a linkedin.com
+#     origin before each fetch (`ensure_linkedin_origin`, called from
+#     `client._fetch`), navigating to the feed only when the page sits
+#     elsewhere. DOM-driving actions are untouched. See `provenance.md`.
 """Standalone LinkedIn browser session: launch Chromium, load saved cookies,
 navigate at a human pace. Chromium is fetched on first use, never bundled, and
 torn down after each run (NFR-MEM-02)."""
@@ -460,6 +468,23 @@ class AccountSession:
         if cookies:
             self.context.add_cookies(cookies)
             logger.info("seeded broker surface session from saved storage-state")
+
+    def ensure_linkedin_origin(self) -> None:
+        """Land the page on a linkedin.com origin before an in-page voyager
+        `fetch` runs (called by the voyager client's `_fetch`, the one choke
+        point every voyager call funnels through). The self-launch path holds
+        this invariant implicitly — `start()` ends on the feed — but a broker
+        surface starts at `about:blank`, and the host's Browser tab lets the
+        user drive it anywhere between runs, so the client re-asserts it per
+        fetch. On-origin the check is free; off-origin it spends the one feed
+        load a self-launch session start always spent. DOM-driving actions
+        (connect, note, DM) never come through here — they navigate themselves —
+        so fixture-paged flows stay wire-cold."""
+        if self.page is None:
+            return
+        if (self.page.url or "").startswith("https://www.linkedin.com"):
+            return
+        _goto_feed(self.page)
 
     def wait(self, min_delay: float = MIN_DELAY, max_delay: float = MAX_DELAY) -> None:
         random_sleep(min_delay, max_delay)

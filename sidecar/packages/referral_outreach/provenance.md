@@ -129,6 +129,44 @@ now does:
   `_load_storage_state` the self-launch path uses; the seed is idempotent and
   never clobbers a context that already carries `li_at`.
 
+### Voyager origin assertion (2026-08-14, first live run)
+
+**Files:** `upstream/session.py` and `upstream/client.py` (both GPL-3.0-only;
+headers retained, fork-change bullets added).
+
+**What changed and why.** Every voyager call is an in-page `fetch` against the
+page's own origin. The self-launch path establishes that origin implicitly:
+`start()`/`_start_persistent` end on `_goto_feed`, so the page always sits on
+linkedin.com before any action runs. The broker path had no equivalent — a
+broker surface starts at `about:blank`, and the host's Browser tab lets the
+user drive it anywhere between runs — so the first live `contact_sync` failed
+instantly with `Page.evaluate: TypeError: Failed to fetch` (2026-08-14; the
+send path masked the gap because its first action is a profile `goto`). The
+guard sits at the one choke point every voyager call funnels through:
+`client._fetch` calls the new `AccountSession.ensure_linkedin_origin()`, which
+navigates to the feed only when the page sits off `https://www.linkedin.com`.
+On-origin fetches add nothing; an off-origin fetch spends the one feed load a
+self-launch session start always spent. DOM-driving actions (connect, note,
+DM) never pass through `_fetch` and navigate themselves, so fixture-paged flows
+stay wire-cold — the first placement of this guard (on every lane bind) broke
+exactly that and was moved here.
+
+### Popup-handler fix (2026-08-14, first live run)
+
+**Files:** `upstream/actions.py` (GPL-3.0-only; header retained).
+
+**What changed and why.** `send_connection_request` registered its popup
+watcher as `main_page.on("popup", popups.append)`. Playwright's sync wrapper
+(`wrap_handler`) setattr's an impl handle on the handler it is given, and a
+bound builtin like `list.append` carries no `__dict__`, so the first live
+invite failed at registration with `AttributeError: 'builtin_function_or_method'
+object has no attribute '_pw_impl_instance_'` — before any Connect click (the
+attempt charge stayed on the ledger by design; an unproven send is never
+refunded). The composed connect-note fixture flow enters below this function,
+so no wire-cold test had ever run this line against a real `Page.on`. The
+handler is now a plain function closing over the list; `remove_listener` keeps
+working since it is the same function object.
+
 **Load-bearing verification (no account, no network).**
 `tests/test_broker_profile_reconciliation.py`: `capture_login` writes into a
 temp broker profile dir against a LOCAL fixture that drops a persistent `li_at`,
@@ -148,6 +186,43 @@ that guards against a login window and a headless surface running on the profile
 at once; the higher-level openers' bundled-Chromium fallback does not, but the
 intended flow is sequential (log in once, close, then headless forever), so the
 two never overlap. See `docs/internal/plugin-architecture.md`.
+
+### Live csrf-token derivation (2026-08-15, cold-boot 403)
+
+**Files:** `upstream/client.py` (GPL-3.0-only; header retained, fork-change
+bullet added).
+
+**What changed and why.** `PlaywrightLinkedinAPI.__init__` snapshots the
+`csrf-token` header from the context's JSESSIONID cookie once, at construction,
+and `_fetch`'s origin assertion (above) can navigate AFTER that snapshot. The
+first gated send after the 2026-08-14T23:47:59 boot failed with
+`ProfileInaccessibleError: srinivas-ravi (HTTP 403)` at exactly that seam,
+evidenced wire-cold from the broker profile's cookie DB plus launch probes on
+profile copies (`docs/internal/evidence/2026-08-15-voyager-403-spike/`):
+Chrome purges session cookies on the launch after a clean exit, so the cold
+surface's jar had li_at but no JSESSIONID, the construction snapshot was empty,
+the feed navigation minted a fresh JSESSIONID mid-op (DB row created 23:48:08
+IST, inside the 23:48:06→23:48:24 op), and the fetch sent the new cookie with
+the empty header — voyager's csrf check answers 403. The earlier cold boots
+succeeded because their predecessors exited uncleanly and crash-restore kept
+the JSESSIONID, so snapshot and jar matched. The fix derives the header from
+the live jar at fetch time, in two layers at the `_fetch` choke point:
+`_live_csrf_header` re-reads `context.cookies()` after the origin assertion,
+and `_FETCH_JS` re-derives it from `document.cookie` in the same JS turn as the
+fetch (LinkedIn keeps JSESSIONID JS-readable for exactly this pattern — its own
+client does the same), which also covers a rotation racing the fetch. Pages
+without a JSESSIONID cookie keep the passed header, so fixture-paged flows are
+unchanged. The construction snapshot stays as the documented fallback.
+
+**Load-bearing verification (no account, no network).**
+`tests/test_voyager_csrf_freshness.py` drives the real client + a broker-backed
+`AccountSession` through Playwright route interception of the linkedin.com
+URLs (fulfilled locally, everything else aborted — zero packets leave): a
+fixture feed mints/rotates JSESSIONID via Set-Cookie and the fixture voyager
+endpoint answers 403 unless the csrf header equals the minted cookie, the same
+contract the live 403 exposed. The cold empty-jar boot, the stale-snapshot
+boot, and the warm second action all must send the minted value; a control
+fetch proves the fixture really rejects a stale header.
 
 ## Upstream
 

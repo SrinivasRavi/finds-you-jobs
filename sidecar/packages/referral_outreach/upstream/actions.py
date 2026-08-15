@@ -642,7 +642,14 @@ def send_connection_request(
     # note/send/verify steps below drive whichever surface hosts the compose.
     main_page = session.page
     popups: list = []
-    on_popup = popups.append
+
+    def on_popup(popup) -> None:
+        # A PLAIN function on purpose, never `popups.append` itself: Playwright's
+        # sync wrapper setattr's an impl handle on the handler it's given, and a
+        # bound builtin carries no `__dict__` (the first live invite failed
+        # exactly there, 2026-08-14).
+        popups.append(popup)
+
     main_page.on("popup", on_popup)
     adopted_page = None
     try:

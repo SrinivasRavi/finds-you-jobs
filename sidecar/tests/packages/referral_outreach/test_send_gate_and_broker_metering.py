@@ -28,7 +28,13 @@ from typing import Any
 
 import pytest
 
-from sidecar.packages.referral_outreach.upstream import actions, pacing, session, worker
+from sidecar.packages.referral_outreach.upstream import (
+    actions,
+    client,
+    pacing,
+    session,
+    worker,
+)
 from sidecar.packages.referral_outreach.upstream.errors import (
     RateLimited,
     ReachedConnectionLimit,
@@ -333,3 +339,109 @@ def test_concurrent_broker_backed_sends_share_the_locked_ledger(
     final = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert final.remaining()["daily_used"] == 2
     assert len(final.state.invites) == 2
+
+
+# ── voyager origin assertion: in-page fetches need a linkedin.com page ──────
+
+
+class _FakePage:
+    """A page stand-in carrying only what `ensure_linkedin_origin` reads: `url`."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+
+def test_ensure_linkedin_origin_navigates_only_when_off_origin(monkeypatch):
+    """A broker surface starts at `about:blank` (and the Browser tab's URL bar
+    can leave it anywhere), where an in-page voyager fetch can only fail
+    (`Page.evaluate: TypeError: Failed to fetch` — the first live contact sync,
+    2026-08-14). Off-origin the session navigates to the feed exactly once;
+    on-origin the check is free."""
+    gotos: list[str] = []
+
+    def _fake_goto_feed(page) -> None:
+        gotos.append(page.url)
+        page.url = session.LINKEDIN_FEED_URL
+
+    monkeypatch.setattr(session, "_goto_feed", _fake_goto_feed)
+
+    s = session.AccountSession()
+    s.page = _FakePage("about:blank")
+    s.ensure_linkedin_origin()
+    assert gotos == ["about:blank"]  # navigated, from blank
+    s.ensure_linkedin_origin()  # now on the feed — no second load
+    assert gotos == ["about:blank"]
+
+
+def test_voyager_fetch_asserts_origin_before_the_inpage_fetch():
+    """`client._fetch` is the one choke point every voyager call funnels
+    through: it must land the page on-origin BEFORE evaluating the fetch, so
+    every caller (sync's `get_profile`, `get_last_message`, search) is covered
+    without per-action guards."""
+    order: list[str] = []
+
+    class _EvalPage:
+        url = "https://www.linkedin.com/feed/"
+
+        def evaluate(self, js, args):
+            order.append("evaluate")
+            return {"status": 200, "ok": True, "body": ""}
+
+    class _CookielessContext:
+        def cookies(self):
+            return []
+
+    class _OriginSession:
+        def __init__(self) -> None:
+            self.page = _EvalPage()
+            self.context = _CookielessContext()
+
+        def ensure_linkedin_origin(self) -> None:
+            order.append("origin")
+
+    api = client.PlaywrightLinkedinAPI(session=_OriginSession())
+    res = api.get("https://www.linkedin.com/voyager/api/identity/x")
+    assert res.status == 200
+    assert order == ["origin", "evaluate"]  # origin asserted first, every fetch
+
+
+def test_send_connection_popup_handler_survives_playwrights_sync_wrapper(monkeypatch):
+    """Playwright's sync `wrap_handler` setattr's an impl handle on any handler
+    given to `page.on`, which a bound builtin (`popups.append`) cannot carry —
+    the first live invite failed exactly there (2026-08-14), a line the
+    wire-cold fixture flow never reaches (it enters below
+    `send_connection_request`). The page stand-in performs the same setattr, so
+    a regression back to a builtin handler fails here, wire-cold."""
+
+    class _Bail(Exception):
+        pass
+
+    registered: list[str] = []
+
+    class _WrappingPage:
+        def on(self, event, handler):
+            handler._pw_impl_instance_ = object()  # what wrap_handler setattr's
+            registered.append(event)
+
+        def remove_listener(self, event, handler):
+            registered.append(f"off:{event}")
+
+    class _Session:
+        page = _WrappingPage()
+
+        def ensure_browser(self):
+            pass
+
+        def wait(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(actions, "_goto_profile", lambda s, p: None)
+    monkeypatch.setattr(
+        actions, "find_and_click_connect",
+        lambda page, capture=None: (_ for _ in ()).throw(_Bail()),
+    )
+
+    sess: Any = _Session()  # duck-typed stand-in for the AccountSession param
+    with pytest.raises(_Bail):
+        actions.send_connection_request(sess, "someone", note="hi")
+    assert registered == ["popup", "off:popup"]  # registered, and cleaned up
