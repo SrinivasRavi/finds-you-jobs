@@ -242,3 +242,42 @@ async def test_finish_without_form_is_not_success(tmp_path: Path) -> None:
 
     assert result.status is ApplyStatus.BLOCKED
     assert result.blockers[0].kind == "no_form"
+
+
+async def test_refilling_a_settled_field_hands_off_not_livelock(tmp_path: Path) -> None:
+    # The eval-indicted livelock: a model that keeps re-filling an
+    # already-settled field, every fill reading back ok so the failure streak
+    # never trips. The per-element redundancy guard ends it as ready_for_human,
+    # because the field IS filled — it does not spin to the deadline.
+    def refill(prompt: str) -> str:
+        return _action("fill", element_id=_eid(prompt, "Full name"), value="Ada Lovelace")
+
+    engine = FakeApplyEngine([refill] * 12)  # far more than the guard needs
+    result, _, _ = await _run(_request(tmp_path, _fixture_url("form.html")), engine)
+
+    assert result.status is ApplyStatus.READY_FOR_HUMAN
+    assert "already filled" in result.summary
+    assert result.steps < 12  # stopped early, did not consume the whole script
+
+
+async def test_upload_into_a_drag_drop_zone(tmp_path: Path) -> None:
+    # A styled dropzone (role=button) wrapping a hidden <input type=file>, the
+    # shape that outnumbers plain file inputs. The executor drives the nested
+    # input instead of refusing the non-file target.
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake resume")
+    script: list[FakeStep] = [
+        lambda p: _action(
+            "upload_artifact",
+            element_id=_eid(p, "Upload your resume"),
+            artifact_id="art-resume",
+        ),
+        _action("finish", reason="resume uploaded to the drag-drop zone"),
+    ]
+    engine = FakeApplyEngine(script)
+    request = _request(tmp_path, _fixture_url("dropzone.html"), resume)
+    result, _, _ = await _run(request, engine)
+
+    assert result.status is ApplyStatus.READY_FOR_HUMAN
+    upload = next(f for f in result.fields if f.action == "upload")
+    assert upload.ok, upload.note

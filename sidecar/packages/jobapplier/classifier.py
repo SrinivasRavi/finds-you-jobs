@@ -51,6 +51,28 @@ _CAPTCHA_HINTS = re.compile(
     r"verify you are human|cloudflare)\b",
     re.IGNORECASE,
 )
+# The second signal that separates a rendered, interactive challenge from a
+# passive reCAPTCHA v3 badge or a bot-management cookie. Every measured form
+# carries the passive kind and it never walls the applicant; only a challenge
+# that actually renders does (Our Finding 11/12; agents/external-corpus.md
+# resolved the field-wide rule: block on a challenge iframe or an interactive
+# challenge control, let an invisible badge through).
+_CHALLENGE_HOST = re.compile(
+    r"(recaptcha/api2/bframe|hcaptcha\.com|challenges\.cloudflare\.com|"
+    r"/turnstile/|arkoselabs|funcaptcha)",
+    re.IGNORECASE,
+)
+_INVISIBLE_BADGE = re.compile(r"size=invisible|grecaptcha-badge", re.IGNORECASE)
+_CHALLENGE_CONTROL = re.compile(
+    r"\b(i'?m not a robot|verify (you are|i am) (a )?human|press (and|&) hold|"
+    r"select all (images|squares|the)|complete the (captcha|challenge|puzzle))\b",
+    re.IGNORECASE,
+)
+_CHALLENGE_INTERSTITIAL = re.compile(
+    r"\b(just a moment|checking your browser|verifying you are human|"
+    r"please (stand by|wait) while we verify|one more step)\b",
+    re.IGNORECASE,
+)
 _CLOSED_HINTS = re.compile(
     r"\b(no longer (accepting|available|active)|position (has been )?(filled|closed)|"
     r"job (is )?closed|posting (has )?expired|this job is not available)\b",
@@ -122,7 +144,7 @@ def classify(obs: Observation) -> frozenset[PageState]:
         e.attributes.get("type", "").lower() == "password" for e in obs.elements
     ):
         states.add(PageState.LOGIN_WALL)
-    if _CAPTCHA_HINTS.search(text):
+    if _CAPTCHA_HINTS.search(text) and _has_active_challenge(obs):
         states.add(PageState.CAPTCHA_OR_ANTI_BOT)
     if _CLOSED_HINTS.search(text):
         states.add(PageState.POSTING_CLOSED)
@@ -146,3 +168,35 @@ def _is_external(current_url: str, href: str) -> bool:
     if not target.netloc:
         return False
     return target.netloc != urlparse(current_url).netloc
+
+
+def _has_active_challenge(obs: Observation) -> bool:
+    """A rendered, interactive anti-bot challenge is present — not merely a
+    passive badge or bot-management telemetry the markup mentions.
+
+    Three concrete signals, any one is enough: a full-page interstitial title
+    ("just a moment", "checking your browser"); a challenge iframe pointing at a
+    known challenge host and NOT flagged invisible (the reCAPTCHA bframe, an
+    hcaptcha/turnstile frame); or an interactable challenge control ("I'm not a
+    robot", "select all images"). A reCAPTCHA v3 badge or a ``__cf_bm`` cookie
+    has none of these, so it no longer walls the run (the bug this fixes fired
+    on the word alone and aborted 81% of measured forms)."""
+    if _CHALLENGE_INTERSTITIAL.search(obs.title or ""):
+        return True
+    for element in obs.elements:
+        src = str(element.attributes.get("src", ""))
+        if (
+            element.tag.lower() == "iframe"
+            and _CHALLENGE_HOST.search(src)
+            and not _INVISIBLE_BADGE.search(src)
+        ):
+            return True
+        if element.interactable:
+            blob = (
+                f"{element.label} {element.text} "
+                f"{element.attributes.get('title', '')} "
+                f"{element.attributes.get('aria-label', '')}"
+            )
+            if _CHALLENGE_CONTROL.search(blob):
+                return True
+    return False

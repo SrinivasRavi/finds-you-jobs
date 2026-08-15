@@ -219,11 +219,36 @@ class Executor:
             return ExecOutcome(
                 ok=False, note="refused: not a user-approved artifact"
             )
-        if element.attributes.get("type", "").lower() != "file":
-            return ExecOutcome(ok=False, note="target is not a file input")
         locator = await self._locator(element)
-        await locator.set_input_files(artifact.path, timeout=_ACTION_TIMEOUT_MS)
-        read_back = await locator.evaluate("el => el.files.length")
-        if not read_back:
-            return ExecOutcome(ok=False, note="upload did not register a file")
-        return ExecOutcome(ok=True, note=f"uploaded {artifact.label}")
+
+        # A plain <input type=file>: set it directly and read back its count.
+        if element.attributes.get("type", "").lower() == "file":
+            await locator.set_input_files(artifact.path, timeout=_ACTION_TIMEOUT_MS)
+            if not await locator.evaluate("el => el.files.length"):
+                return ExecOutcome(ok=False, note="upload did not register a file")
+            return ExecOutcome(ok=True, note=f"uploaded {artifact.label}")
+
+        # A drag-drop zone: the styled control wraps a hidden <input type=file>,
+        # the shape that outnumbers plain file inputs 20 to 3 on the corpus.
+        # Prefer that nested input and read back its file count.
+        nested = locator.locator("input[type=file]").first
+        if await nested.count():
+            await nested.set_input_files(artifact.path, timeout=_ACTION_TIMEOUT_MS)
+            if await nested.evaluate("el => el.files.length"):
+                return ExecOutcome(ok=True, note=f"uploaded {artifact.label}")
+
+        # No reachable input in the subtree: some zones open a native file
+        # chooser on click. Drive that — the chooser takes the path
+        # executor-side, so no filesystem path is ever exposed (section 5.3).
+        try:
+            async with self._page.expect_file_chooser(
+                timeout=_ACTION_TIMEOUT_MS
+            ) as chooser_info:
+                await locator.click(timeout=_ACTION_TIMEOUT_MS)
+            chooser = await chooser_info.value
+            await chooser.set_files(artifact.path)
+            return ExecOutcome(ok=True, note=f"uploaded {artifact.label} via chooser")
+        except PlaywrightError:
+            return ExecOutcome(
+                ok=False, note="no file input reachable from this control"
+            )

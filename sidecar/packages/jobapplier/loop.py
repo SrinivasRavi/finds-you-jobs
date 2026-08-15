@@ -58,6 +58,7 @@ class ApplyEngine(Protocol):
 
 _NO_PROGRESS_OBSERVATIONS = 3  # materially identical observations in a row
 _MAX_CONSECUTIVE_FAILURES = 4  # failed/disallowed actions in a row
+_REDUNDANT_ACTIONS = 3  # verified re-fills of an already-settled field in a row
 _HARD_WALLS = {
     PageState.POSTING_CLOSED: "posting_closed",
     PageState.CAPTCHA_OR_ANTI_BOT: "captcha",
@@ -112,6 +113,11 @@ class _Run:
         self._steps = 0
         self._phase: ApplyPhase | None = None
         self._form_seen = False
+        # Signatures of field actions already verified this run. A re-verified
+        # signature is redundant work, not progress — the guard against the
+        # livelock the eval indicted (a model re-filling a settled field forever
+        # while every fill reads back ok and resets the failure streak).
+        self._verified_sigs: set[str] = set()
 
     # -- plumbing -------------------------------------------------------------
 
@@ -248,6 +254,7 @@ class _Run:
 
         identical_streak = 0
         failure_streak = 0
+        redundant_streak = 0
         last_digest = ""
 
         while True:
@@ -353,11 +360,12 @@ class _Run:
                 continue  # keep filling the rest (section 6)
 
             label = ""
+            unique_id = ""
             if "element_id" in action.args:
                 try:
-                    label = self._executor.resolve(
-                        str(action.args["element_id"])
-                    ).label
+                    resolved = self._executor.resolve(str(action.args["element_id"]))
+                    label = resolved.label
+                    unique_id = resolved.unique_id
                 except (StaleElementError, ApplyError):
                     label = str(action.args["element_id"])
             self._emit(
@@ -409,6 +417,29 @@ class _Run:
                     f"repeated action failures without new evidence: {outcome.note}",
                     obs,
                 )
+
+            if action.tool in _FIELD_TOOLS and outcome.ok and unique_id:
+                value_sig = str(action.args.get("value", action.args.get("option", "")))
+                sig = f"{unique_id}|{action.tool}|{value_sig}"
+                if sig in self._verified_sigs:
+                    redundant_streak += 1
+                else:
+                    self._verified_sigs.add(sig)
+                    redundant_streak = 0
+                if redundant_streak >= _REDUNDANT_ACTIONS:
+                    # Re-verifying already-settled fields is not progress: the
+                    # form is filled, so hand off rather than spin. This is the
+                    # livelock the eval indicted — every re-fill read back ok and
+                    # reset the failure streak, so nothing else caught it.
+                    self._set_phase(ApplyPhase.VERIFYING)
+                    obs = await self._observe()
+                    await self._screenshot("handoff")
+                    self._set_phase(ApplyPhase.READY_FOR_HUMAN)
+                    reason = "form already filled; stopped re-verifying settled fields"
+                    self._emit(
+                        ApplyEvent(ApplyEventType.READY_FOR_HUMAN, {"reason": reason})
+                    )
+                    return self._result(ApplyStatus.READY_FOR_HUMAN, reason, obs)
 
             if action.tool in _MUTATING_TOOLS:
                 obs = await self._observe()
