@@ -647,6 +647,7 @@ def default_operation_registry() -> OperationRegistry:
     from .contact_sync_op import contact_sync_entrypoints
     from .linkedin_op import linkedin_entrypoints
     from .networker_ops import networker_entrypoints
+    from .view_page_op import view_page_entrypoints
 
     return OperationRegistry(
         {
@@ -660,5 +661,6 @@ def default_operation_registry() -> OperationRegistry:
             **linkedin_entrypoints(),  # linkedin_login / archive_stale_contacts
             **contact_sync_entrypoints(),  # contact_sync
             **apply_entrypoints(),  # apply (the Applier agent)
+            **view_page_entrypoints(),  # view_page (queued watch-surface show)
         }
     )
