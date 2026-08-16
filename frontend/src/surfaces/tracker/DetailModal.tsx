@@ -111,7 +111,7 @@ function JobDetail({ job }: { job: Job }) {
           <span
             data-testid="detail-match-score"
             title={t("tracker.jobDetail.matchScoreTitle")}
-            className={`inline-grid h-10 w-10 shrink-0 place-items-center rounded-full border font-mono text-[13px] font-semibold ${tier?.ring} ${tier?.text}`}
+            className={`inline-grid h-10 w-10 shrink-0 place-items-center rounded-full border text-[13px] font-semibold ${tier?.ring} ${tier?.text}`}
           >
             {job.score.score_0_100}
           </span>
@@ -218,7 +218,7 @@ export function DetailModal({
                 ))}
               </select>
               <span
-                className="ml-auto font-mono text-[11px] text-ink-4"
+                className="ml-auto text-[11px] text-ink-4"
                 data-testid="app-ref"
                 title={t("tracker.detail.appRefTitle")}
               >
@@ -329,7 +329,7 @@ export function DetailModal({
                   />
                   <span className="flex-1">{e.label}</span>
                   {e.at ? (
-                    <span className="font-mono text-[10.5px] text-ink-4">
+                    <span className="text-[10.5px] text-ink-4">
                       {formatActivityAt(e.at)}
                     </span>
                   ) : null}

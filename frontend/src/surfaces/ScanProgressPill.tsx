@@ -105,7 +105,7 @@ export function ScanProgressPill() {
             : t("jobBoard.scanProgress.done", { count: doneCount })}
       </span>
       {scoring ? (
-        <span className="font-mono text-[11px] text-ink-3" data-testid="scan-progress-count">
+        <span className="text-[11px] text-ink-3" data-testid="scan-progress-count">
           {t("jobBoard.scanProgress.count", { done: data.score_done, found: data.new_found })}
         </span>
       ) : null}

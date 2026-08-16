@@ -104,7 +104,7 @@ export const AboutSection = memo(function AboutSection() {
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <div className="text-[13px] font-medium text-ink">{t("settingsPage.about.currentVersion")}</div>
-              <div className="font-mono text-[13px] text-ink-2" data-testid="about-version">
+              <div className="text-[13px] text-ink-2" data-testid="about-version">
                 {version ?? "…"}
               </div>
             </div>

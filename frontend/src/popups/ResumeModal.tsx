@@ -50,7 +50,7 @@ function PacketPill({ state }: { state: PacketState }) {
   // crash the destructure (2026-07-24 unsafe-lookup audit).
   const [label, cls] = map[state] ?? map.none;
   return (
-    <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${cls}`}>
+    <span className={`rounded-full px-2 py-0.5 text-[10px] ${cls}`}>
       {label}
     </span>
   );
@@ -532,17 +532,17 @@ export function ResumeModal({
 
   const header = submitted ? (
     <div className="flex items-center gap-2">
-      <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wider ${PILL[kind].cls}`}>
+      <span className={`rounded-full px-2 py-0.5 text-[10px] tracking-wider ${PILL[kind].cls}`}>
         {t(PILL[kind].label)}
       </span>
-      <span className="rounded-full bg-good-wash px-2 py-0.5 font-mono text-[10px] text-good">
+      <span className="rounded-full bg-good-wash px-2 py-0.5 text-[10px] text-good">
         {t("popups.resume.submittedPill")}
       </span>
       <DownloadDocButton doc={submitted} />
     </div>
   ) : (
     <div className="flex items-center gap-2">
-      <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wider ${PILL[kind].cls}`}>
+      <span className={`rounded-full px-2 py-0.5 text-[10px] tracking-wider ${PILL[kind].cls}`}>
         {t(PILL[kind].label)}
       </span>
       {/* The review-state pill: "Ready to review" flips to "Approved" once the

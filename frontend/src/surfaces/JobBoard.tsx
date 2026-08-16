@@ -97,7 +97,7 @@ function MatchRing({ score, keyword = false }: { score: number; keyword?: boolea
         className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-border-2 bg-surface-2"
         data-testid="keyword-score-ring"
       >
-        <span className="font-mono text-[13px] font-semibold text-ink-3">{score}</span>
+        <span className="text-[13px] font-semibold text-ink-3">{score}</span>
       </div>
     );
   }
@@ -109,7 +109,7 @@ function MatchRing({ score, keyword = false }: { score: number; keyword?: boolea
       style={{ background: `conic-gradient(${tier.ring} ${deg}deg, var(--surface-3) 0deg)` }}
     >
       <div className="grid h-9 w-9 place-items-center rounded-full bg-surface">
-        <span className={`font-mono text-[13px] font-semibold ${tier.text}`}>{score}</span>
+        <span className={`text-[13px] font-semibold ${tier.text}`}>{score}</span>
       </div>
     </div>
   );
@@ -218,7 +218,7 @@ const JobRow = memo(function JobRow({
             </span>
           ))}
           <span
-            className={`inline-flex h-[16px] items-center rounded-full border px-1.5 font-mono text-[9.5px] ${sourceClasses(job.source_adapter)}`}
+            className={`inline-flex h-[16px] items-center rounded-full border px-1.5 text-[9.5px] ${sourceClasses(job.source_adapter)}`}
           >
             {job.source_adapter}
           </span>
@@ -238,7 +238,7 @@ const JobRow = memo(function JobRow({
                 : undefined
             }
             className={
-              "font-mono text-[15px] font-semibold " +
+              "text-[15px] font-semibold " +
               (job.score.scorer_impl === "scorer-deterministic"
                 ? "text-ink-3"
                 : (tier?.text ?? ""))
@@ -249,7 +249,7 @@ const JobRow = memo(function JobRow({
         ) : (
           <span
             data-testid="scoring-inflight"
-            className="font-mono text-[10px] font-medium text-ink-4"
+            className="text-[10px] font-medium text-ink-4"
           >
             {t("jobBoard.row.scoring")}
           </span>
@@ -353,7 +353,7 @@ function JobDetail({
               data-source={job.source_adapter}
               onClick={() => onToggleSource(job.source_adapter)}
               className={
-                "inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] hover:opacity-80 " +
+                "inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10px] hover:opacity-80 " +
                 sourceClasses(job.source_adapter) +
                 (active ? " ring-2 ring-accent" : "")
               }
@@ -1155,7 +1155,7 @@ function TrackedCompanies() {
               <div className="truncate text-[12.5px] font-medium text-ink">
                 {e.company || e.url}
               </div>
-              <div className="truncate font-mono text-[11px] text-ink-3">
+              <div className="truncate text-[11px] text-ink-3">
                 {e.adapter ? `${e.adapter} · ` : ""}
                 {e.url}
               </div>
@@ -1426,7 +1426,7 @@ function FinderPrefsModal({
                   ? t("jobBoard.prefs.master.named", { name: masterName })
                   : t("jobBoard.prefs.master.none")}
               </div>
-              <div className="font-mono text-[11px] text-ink-3">
+              <div className="text-[11px] text-ink-3">
                 {masterName ? t("jobBoard.prefs.master.ready") : t("jobBoard.prefs.master.addOne")}
               </div>
             </div>

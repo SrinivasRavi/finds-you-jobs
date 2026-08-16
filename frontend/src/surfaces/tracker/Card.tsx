@@ -24,7 +24,7 @@ const PRIORITY_CLS: Record<Priority, string> = {
 function PriorityChip({ p }: { p: Priority }) {
   const { t } = useTranslation();
   return (
-    <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ${PRIORITY_CLS[p] ?? PRIORITY_CLS.P3}`}>
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${PRIORITY_CLS[p] ?? PRIORITY_CLS.P3}`}>
       {t("tracker.priorityChip", { p })}
     </span>
   );
@@ -152,7 +152,7 @@ export const Card = memo(function Card({
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {app.job.score ? (
-          <span className={`font-mono text-[11px] font-semibold ${tier?.text}`}>
+          <span className={`text-[11px] font-semibold ${tier?.text}`}>
             {app.job.score.score_0_100}
           </span>
         ) : app.origin === "manual" ? (
@@ -166,7 +166,7 @@ export const Card = memo(function Card({
             {t("tracker.card.manual")}
           </span>
         ) : (
-          <span className="rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 font-mono text-[9.5px] text-ink-3">
+          <span className="rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[9.5px] text-ink-3">
             {t("tracker.card.pending")}
           </span>
         )}
@@ -219,7 +219,7 @@ export const Card = memo(function Card({
         )}
       </div>
       {/* days-in-column + last-touched (US-TR-01) */}
-      <div className="mt-2 font-mono text-[10px] text-ink-4" data-testid="card-timestamps">
+      <div className="mt-2 text-[10px] text-ink-4" data-testid="card-timestamps">
         {t("tracker.card.timestamps", {
           days: daysIn(app.created_at),
           touched: app.updated_at.slice(5, 10).replace("-", "/"),

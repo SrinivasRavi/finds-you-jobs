@@ -135,7 +135,7 @@ export const LifecycleSection = memo(function LifecycleSection({
           testid="archived-apps-purge"
         />
         {/* The contact-sync cadence control is gone with the schedule itself:
-            syncing is user-initiated only (the Sync button / on-open refresh —
+            syncing is manual-only (the Sync button, nothing else —
             docs/internal/linkedin-addon.md section 5). */}
       </div>
     </Section>

@@ -283,7 +283,7 @@ export function Tracker() {
             >
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-[12px] font-semibold text-ink-2">{t(`tracker.stage.${stage}`)}</span>
-                <span className="rounded bg-surface-3 px-1.5 font-mono text-[11px] text-ink-3">
+                <span className="rounded bg-surface-3 px-1.5 text-[11px] text-ink-3">
                   {cards.length}
                 </span>
               </div>

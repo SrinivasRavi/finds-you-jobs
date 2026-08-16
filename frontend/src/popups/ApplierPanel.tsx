@@ -316,14 +316,14 @@ export function ApplierPanel({
       <div className="flex h-[76vh] flex-col" data-testid="applier-panel">
         {/* Budget + cost strip */}
         <div className="flex items-center gap-3 border-b border-border bg-surface-2 px-5 py-2 text-[11.5px]">
-          <span className="font-mono text-ink-2" data-testid="applier-cost-line">
+          <span className="text-ink-2" data-testid="applier-cost-line">
             {costLine}
           </span>
           {remainingMs != null ? (
             <>
               <span className="text-ink-4">·</span>
               <span
-                className="font-mono text-ink-3"
+                className="text-ink-3"
                 title={t("popups.applier.budgetTooltip")}
               >
                 {phase.live
@@ -358,7 +358,7 @@ export function ApplierPanel({
         <div className="flex min-h-0 flex-1">
           {/* Event feed */}
           <div className="flex min-h-0 w-1/2 flex-col border-r border-border">
-            <div className="border-b border-border px-4 py-2 font-mono text-[10px] font-medium text-ink-3">
+            <div className="border-b border-border px-4 py-2 text-[10px] font-medium text-ink-3">
               {t("popups.applier.activity")}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="applier-event-feed">
@@ -385,7 +385,7 @@ export function ApplierPanel({
 
           {/* Latest evidence screenshot */}
           <div className="flex min-h-0 w-1/2 flex-col">
-            <div className="border-b border-border px-4 py-2 font-mono text-[10px] font-medium text-ink-3">
+            <div className="border-b border-border px-4 py-2 text-[10px] font-medium text-ink-3">
               {t("popups.applier.latestScreenshot")}
             </div>
             <div
