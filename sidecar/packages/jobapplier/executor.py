@@ -20,6 +20,7 @@ the contract. Independently of what the model asks for:
 from __future__ import annotations
 
 import ipaddress
+import re
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -33,6 +34,78 @@ from .upstream.constants import SKYVERN_ID_ATTR
 
 _NAV_TIMEOUT_MS = 30_000
 _ACTION_TIMEOUT_MS = 10_000
+_OPTION_WAIT_MS = 3_000
+_SETTLE_MS = 150
+
+# Options a custom dropdown/typeahead reveals: ARIA listbox options (Ashby)
+# or menu items (BambooHR's fab-Select renders a [role=menu] of menuitems).
+_OPTION_SELECTOR = "[role=option], [role=menuitem]"
+
+# A click on a rich widget must observably change SOMETHING; this fingerprint
+# is compared before/after so a swallowed click (SPA re-render races, an
+# overlay eating the event) is caught instead of blindly reported ok. It reads
+# the element's own state attributes, its parent's inputs (Ashby yes/no pairs
+# keep their state in a hidden sibling checkbox), and the open-overlay count.
+_CLICK_STATE_JS = """el => {
+  const own = [el.className || '', el.getAttribute('aria-pressed'),
+               el.getAttribute('aria-checked'), el.getAttribute('aria-selected'),
+               el.getAttribute('aria-expanded')].join('|');
+  const parent = el.parentElement;
+  const kin = parent
+    ? Array.from(parent.querySelectorAll('input'))
+        .map(i => `${i.name}=${i.checked}`).join(';') + '|' + (parent.className || '')
+    : '';
+  const overlays = document.querySelectorAll('[role=listbox],[role=menu],[role=dialog]').length;
+  return own + '::' + kin + '::' + overlays;
+}"""
+
+
+def _norm_option(text: str) -> str:
+    """Case, punctuation (typographic apostrophes included) and whitespace
+    never distinguish menu options; compare on the alphanumeric skeleton."""
+    return re.sub(r"\s+", " ", re.sub(r"[^0-9a-z ]+", "", text.lower())).strip()
+
+
+def _match_option(texts: list[str], wanted: str) -> int | None:
+    """Index of the option matching ``wanted``: exact (normalized), else a
+    UNIQUE prefix match, else a UNIQUE containment either way. The prefix tier
+    exists because containment alone ties "India" between "India" and "British
+    Indian Ocean Territory". Never a blind first-option guess."""
+    want = _norm_option(wanted)
+    if not want:
+        return None
+    cleaned = [_norm_option(t) for t in texts]
+    for i, t in enumerate(cleaned):
+        if t == want:
+            return i
+    starts = [i for i, t in enumerate(cleaned) if t and t.startswith(want)]
+    if len(starts) == 1:
+        return starts[0]
+    hits = [i for i, t in enumerate(cleaned) if t and (want in t or t in want)]
+    if len(hits) == 1:
+        return hits[0]
+    return _match_bucket(texts, wanted)
+
+
+def _match_bucket(texts: list[str], wanted: str) -> int | None:
+    """When ``wanted`` is a bare number and the options are numeric ranges
+    ("0-5 years" / "6-10 years" / "10+ years"), the UNIQUE range containing it.
+    Ambiguous boundaries (10 in both "6-10" and "10+") return None rather than
+    guess. This is derivation (9 years of experience is in the 6-10 bucket),
+    the only kind of inference the fill contract permits."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*", wanted)
+    if not m:
+        return None
+    n = float(m.group(1))
+    matches: list[int] = []
+    for i, t in enumerate(texts):
+        lo_hi = re.search(r"(\d+)\s*(?:-|to|–)\s*(\d+)", t)
+        plus = re.search(r"(\d+)\s*\+", t)
+        if lo_hi and int(lo_hi.group(1)) <= n <= int(lo_hi.group(2)):
+            matches.append(i)
+        elif plus and n >= int(plus.group(1)):
+            matches.append(i)
+    return matches[0] if len(matches) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -150,8 +223,38 @@ class Executor:
     async def _do_click(self, action: Action) -> ExecOutcome:
         element = self.resolve(str(action.args["element_id"]))
         locator = await self._locator(element)
+        name = element.label or element.text or element.tag
+        try:
+            before = await locator.evaluate(_CLICK_STATE_JS)
+        except PlaywrightError:
+            before = None
         await locator.click(timeout=_ACTION_TIMEOUT_MS)
-        return ExecOutcome(ok=True, note=f"clicked {element.label or element.tag}")
+        if before is None:
+            return ExecOutcome(ok=True, note=f"clicked {name}")
+        await self._page.wait_for_timeout(_SETTLE_MS)
+        try:
+            after = await locator.evaluate(_CLICK_STATE_JS)
+        except PlaywrightError:
+            # The click consumed the element (navigation or a re-render that
+            # replaced the node): it plainly had an effect.
+            return ExecOutcome(ok=True, note=f"clicked {name}")
+        if after == before:
+            # A SPA re-render or an overlay dismissal can swallow the first
+            # click; the state comparison proves nothing changed, so one
+            # retry cannot toggle an already-applied answer back off.
+            await self._page.wait_for_timeout(2 * _SETTLE_MS)
+            await locator.click(timeout=_ACTION_TIMEOUT_MS)
+            await self._page.wait_for_timeout(_SETTLE_MS)
+            try:
+                after = await locator.evaluate(_CLICK_STATE_JS)
+            except PlaywrightError:
+                return ExecOutcome(ok=True, note=f"clicked {name}")
+            if after == before:
+                return ExecOutcome(
+                    ok=True,
+                    note=f"clicked {name} (no observable state change)",
+                )
+        return ExecOutcome(ok=True, note=f"clicked {name}")
 
     async def _do_navigate(self, action: Action) -> ExecOutcome:
         url = urljoin(self._page.url, str(action.args["url"]))
@@ -187,18 +290,103 @@ class Executor:
         read_back = await locator.input_value(timeout=_ACTION_TIMEOUT_MS)
         if read_back != value:
             return ExecOutcome(ok=False, note="read-back mismatch after fill")
-        return ExecOutcome(ok=True, note=f"filled {element.label or element.tag}")
+        name = element.label or element.tag
+        role = (element.role or str(element.attributes.get("role") or "")).lower()
+        aria_auto = str(element.attributes.get("aria-autocomplete") or "").lower()
+        if role == "combobox" or aria_auto in ("list", "both"):
+            return await self._commit_combobox(locator, value, name)
+        return ExecOutcome(ok=True, note=f"filled {name}")
+
+    async def _visible_options(self):
+        """The VISIBLE menu options on the page, or (None, []) when none
+        appear in time. Visibility filtering matters: a closed menu elsewhere
+        on the page also carries option/menuitem nodes."""
+        options = self._page.locator(_OPTION_SELECTOR).locator("visible=true")
+        try:
+            await options.first.wait_for(state="visible", timeout=_OPTION_WAIT_MS)
+        except PlaywrightError:
+            return None, []
+        return options, await options.all_inner_texts()
+
+    async def _commit_combobox(
+        self, locator, value: str, name: str
+    ) -> ExecOutcome:
+        """A typeahead combobox discards uncommitted text on blur (Ashby's
+        location field): typing alone verifies and then silently vanishes.
+        Commit by clicking the suggestion matching the typed value, and report
+        honestly when the suggestion list cannot match (a US-state list given a
+        non-US value)."""
+        options, texts = await self._visible_options()
+        pick = _match_option(texts, value) if options is not None else None
+        if pick is None:
+            # Some typeaheads (Greenhouse's geocoded location) only match on a
+            # short query: the full "City, State, Country" string returns
+            # nothing while its prefix surfaces the exact option. Retype a
+            # prefix and match the suggestions against the FULL wanted value.
+            await locator.fill("", timeout=_ACTION_TIMEOUT_MS)
+            await locator.press_sequentially(value[:5], delay=40)
+            options, texts = await self._visible_options()
+            pick = _match_option(texts, value) if options is not None else None
+        if options is None:
+            return ExecOutcome(
+                ok=True,
+                note=f"filled {name} (combobox: no suggestions; may not persist)",
+            )
+        if pick is None:
+            return ExecOutcome(
+                ok=False,
+                note=f"combobox: no suggestion matches {value!r} "
+                f"({len(texts)} offered); value will not persist",
+            )
+        picked = texts[pick].strip()
+        await options.nth(pick).click(timeout=_ACTION_TIMEOUT_MS)
+        # The widget applies the pick asynchronously; read back after a beat.
+        await self._page.wait_for_timeout(_SETTLE_MS)
+        committed = await locator.input_value(timeout=_ACTION_TIMEOUT_MS)
+        return ExecOutcome(
+            ok=True,
+            note=f"filled {name} (committed suggestion {(committed or picked)!r})",
+        )
 
     async def _do_select(self, action: Action) -> ExecOutcome:
         element = self.resolve(str(action.args["element_id"]))
         option = str(action.args["option"])
         locator = await self._locator(element)
-        selected = await locator.select_option(
-            label=option, timeout=_ACTION_TIMEOUT_MS
-        )
-        if not selected:
-            return ExecOutcome(ok=False, note=f"option {option!r} not selected")
-        return ExecOutcome(ok=True, note=f"selected {option!r}")
+        if element.tag.lower() == "select":
+            selected = await locator.select_option(
+                label=option, timeout=_ACTION_TIMEOUT_MS
+            )
+            if not selected:
+                return ExecOutcome(ok=False, note=f"option {option!r} not selected")
+            return ExecOutcome(ok=True, note=f"selected {option!r}")
+        # An editable typeahead (Greenhouse's location/react-select renders an
+        # input): options only populate on typing, so a bare open-click shows
+        # nothing. Route through the combobox commit, which types and retries
+        # on a prefix.
+        if element.tag.lower() in ("input", "textarea"):
+            await locator.fill(option, timeout=_ACTION_TIMEOUT_MS)
+            return await self._commit_combobox(
+                locator, option, element.label or element.tag
+            )
+        # A custom dropdown: a button (BambooHR's fab-Select) or combobox
+        # toggle that opens an ARIA menu/listbox. Open it, pick the matching
+        # option, and read the toggle back.
+        await locator.click(timeout=_ACTION_TIMEOUT_MS)
+        options, texts = await self._visible_options()
+        if options is None:
+            return ExecOutcome(
+                ok=False, note=f"no option menu appeared under {element.label or element.tag}"
+            )
+        pick = _match_option(texts, option)
+        if pick is None:
+            # Close the menu so it cannot cover later targets.
+            await self._page.keyboard.press("Escape")
+            return ExecOutcome(
+                ok=False,
+                note=f"option {option!r} not in the menu ({len(texts)} offered)",
+            )
+        await options.nth(pick).click(timeout=_ACTION_TIMEOUT_MS)
+        return ExecOutcome(ok=True, note=f"selected {texts[pick].strip()!r}")
 
     async def _do_check(self, action: Action) -> ExecOutcome:
         element = self.resolve(str(action.args["element_id"]))
@@ -226,6 +414,7 @@ class Executor:
             await locator.set_input_files(artifact.path, timeout=_ACTION_TIMEOUT_MS)
             if not await locator.evaluate("el => el.files.length"):
                 return ExecOutcome(ok=False, note="upload did not register a file")
+            await self._settle_after_upload()
             return ExecOutcome(ok=True, note=f"uploaded {artifact.label}")
 
         # A drag-drop zone: the styled control wraps a hidden <input type=file>,
@@ -234,12 +423,28 @@ class Executor:
         nested = locator.locator("input[type=file]").first
         if await nested.count():
             await nested.set_input_files(artifact.path, timeout=_ACTION_TIMEOUT_MS)
-            if await nested.evaluate("el => el.files.length"):
+            if await self._upload_registered(nested):
+                await self._settle_after_upload()
                 return ExecOutcome(ok=True, note=f"uploaded {artifact.label}")
 
-        # No reachable input in the subtree: some zones open a native file
-        # chooser on click. Drive that — the chooser takes the path
-        # executor-side, so no filesystem path is ever exposed (section 5.3).
+        # An Attach BUTTON with the real <input type=file> as a sibling
+        # (Greenhouse): walk up a few ancestors and take the input only when
+        # it is unambiguous — 2 file inputs in scope could be the resume and
+        # the cover letter, and guessing between them is worse than failing.
+        for up in ("..", "../..", "../../.."):
+            scope = locator.locator(up).locator("input[type=file]")
+            if await scope.count() == 1:
+                await scope.first.set_input_files(
+                    artifact.path, timeout=_ACTION_TIMEOUT_MS
+                )
+                if await self._upload_registered(scope.first):
+                    await self._settle_after_upload()
+                    return ExecOutcome(ok=True, note=f"uploaded {artifact.label}")
+                break
+
+        # No reachable input: some zones open a native file chooser on click.
+        # Drive that — the chooser takes the path executor-side, so no
+        # filesystem path is ever exposed (section 5.3).
         try:
             async with self._page.expect_file_chooser(
                 timeout=_ACTION_TIMEOUT_MS
@@ -247,8 +452,68 @@ class Executor:
                 await locator.click(timeout=_ACTION_TIMEOUT_MS)
             chooser = await chooser_info.value
             await chooser.set_files(artifact.path)
+            await self._settle_after_upload()
             return ExecOutcome(ok=True, note=f"uploaded {artifact.label} via chooser")
         except PlaywrightError:
-            return ExecOutcome(
-                ok=False, note="no file input reachable from this control"
+            pass
+        # The click may have opened a source MENU instead (Jobvite's Select →
+        # My Computer / Dropbox / Drive). Pick the local-file item — searching
+        # every frame, since Jobvite renders its form inside an iframe — and
+        # expect the chooser from IT.
+        # The item may be an <a>, a menuitem, or (Jobvite) a <span role=button>
+        # reading "File" inside a role=dialog. Match on a role=button too, held
+        # to the local-file words so a submit/close control never qualifies.
+        menu_sel = (
+            _OPTION_SELECTOR
+            + ", [role=menu] a, ul li a, [role=dialog] [role=button], [role=menu] [role=button]"
+        )
+        local_re = re.compile(r"\b(computer|device|browse|local|file|upload)\b", re.I)
+        for frame in [self._page.main_frame, *self._page.frames]:
+            local_item = (
+                frame.locator(menu_sel)
+                .locator("visible=true")
+                .filter(has_text=local_re)
+                .first
             )
+            try:
+                if not await local_item.count():
+                    continue
+                async with self._page.expect_file_chooser(
+                    timeout=_ACTION_TIMEOUT_MS
+                ) as chooser_info:
+                    await local_item.click(timeout=_ACTION_TIMEOUT_MS)
+                chooser = await chooser_info.value
+                await chooser.set_files(artifact.path)
+                await self._settle_after_upload()
+                return ExecOutcome(
+                    ok=True, note=f"uploaded {artifact.label} via source menu"
+                )
+            except PlaywrightError:
+                continue
+        return ExecOutcome(ok=False, note="no file input reachable from this control")
+
+    async def _upload_registered(self, file_input) -> bool:
+        """True when the file registered. An upload widget may CONSUME its
+        input node the moment a file lands (Greenhouse swaps the attach block
+        for an uploaded-state view), so a vanished node right after
+        ``set_input_files`` succeeded reads as registered, not as failure."""
+        try:
+            return bool(
+                await file_input.evaluate(
+                    "el => el.files.length", timeout=2_000
+                )
+            )
+        except PlaywrightError:
+            return True
+
+    async def _settle_after_upload(self) -> None:
+        """An accepted resume commonly triggers a server-side parse whose
+        completion re-renders the form (Ashby's autofill-from-resume). Acting
+        during that re-render loses clicks and typed values, so wait for the
+        network to settle, bounded — an SPA with a polling channel never goes
+        fully idle."""
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=6_000)
+        except PlaywrightError:
+            pass
+        await self._page.wait_for_timeout(400)
