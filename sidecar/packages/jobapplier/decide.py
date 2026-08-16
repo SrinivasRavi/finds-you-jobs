@@ -596,10 +596,16 @@ def _resolve(rule: dict | None, f: Field, request: ApplyRequest, state: DecideSt
         return Action(tool="check", args={"element_id": member.element_id})
 
     # text / textarea / email / tel / number / combobox / datepicker_custom
+    # A decline or consent source that reached a free-text field (a demographic
+    # question rendered as a textarea, say) has no value to type: declining a
+    # free-text field means leaving it blank, never typing the word "None".
+    if value is None:
+        state.declined += 1
+        return None
     if f.kind == "combobox":
-        state.pending = _Pending(f.key, re.escape(str(value))[:120])
+        state.pending = _Pending(f.key, re.escape(value)[:120])
     state.filled += 1
-    return Action(tool="fill", args={"element_id": f.elements[0].element_id, "value": str(value)[:4000]})
+    return Action(tool="fill", args={"element_id": f.elements[0].element_id, "value": value[:4000]})
 
 
 def decide_next(obs: Observation, request: ApplyRequest, state: DecideState) -> Action:
