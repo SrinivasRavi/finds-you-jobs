@@ -482,12 +482,11 @@ const es: DeepPartial<Messages> = {
       connecting: "Conectando…",
       backingOff: "En espera",
       connect: "Conectar LinkedIn",
-      title: "Solo lectura — conecta/activa LinkedIn desde Ajustes",
+      inProgress: "LinkedIn en curso",
+      titleOpen: "Abrir el navegador de LinkedIn",
+      titleSettings: "Conecta LinkedIn desde Ajustes",
     },
     addByUrl: "Añadir un contacto por URL",
-    connectionCount_one: "{{count}} contacto",
-    connectionCount_other: "{{count}} contactos",
-    degreeSummary: "{{first}} de 1.º · {{second}} de 2.º",
     filters: {
       company: "Empresa",
       all: "Todas",
@@ -521,7 +520,6 @@ const es: DeepPartial<Messages> = {
       today: "hoy",
       days: "{{n}} d",
       inStatus: "{{duration}} en {{status}}",
-      you: "Tú:",
     },
     deleted: {
       title: "Contactos eliminados",
@@ -532,7 +530,6 @@ const es: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Último mensaje",
       archive: "Eliminar",
     },
     add: {
@@ -1033,6 +1030,9 @@ const es: DeepPartial<Messages> = {
       scanningHint:
         "Escaneando LinkedIn con tu sesión · normalmente 10–30 s. Si el nombre de la empresa es ambiguo, haremos una pausa y te pediremos confirmarlo.",
       emptyConnected: "Aún no se han encontrado contactos en esta empresa.",
+      refusedTitle: "Búsqueda pausada por tus límites de ritmo",
+      refusedBody:
+        "No se escaneó LinkedIn para <strong>{{company}}</strong>: un límite de lectura autoimpuesto está agotado o hay una pausa de contención activa. Se libera solo cuando la ventana avanza — inténtalo más tarde o ajusta tus límites en Ajustes → Networking.",
       emptyManual:
         "Aún no hay contactos — añade uno por URL desde la página de Networking, o activa Referral Outreach en Ajustes para autodescubrir personas en esta empresa.",
       contactsFound_one: "{{count}} contacto encontrado",

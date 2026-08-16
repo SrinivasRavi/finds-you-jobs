@@ -496,12 +496,11 @@ const nl: DeepPartial<Messages> = {
       connecting: "Verbinden…",
       backingOff: "Afkoelen",
       connect: "LinkedIn verbinden",
-      title: "Alleen-lezen — verbind/activeer LinkedIn via Instellingen",
+      inProgress: "LinkedIn bezig",
+      titleOpen: "Open de LinkedIn-browser",
+      titleSettings: "Verbind LinkedIn via Instellingen",
     },
     addByUrl: "Contact toevoegen via URL",
-    connectionCount_one: "{{count}} connectie",
-    connectionCount_other: "{{count}} connecties",
-    degreeSummary: "{{first}} 1e · {{second}} 2e",
     filters: {
       company: "Bedrijf",
       all: "Alle",
@@ -535,7 +534,6 @@ const nl: DeepPartial<Messages> = {
       today: "vandaag",
       days: "{{n}}d",
       inStatus: "{{duration}} in {{status}}",
-      you: "Jij:",
     },
     deleted: {
       title: "Verwijderde contacten",
@@ -546,7 +544,6 @@ const nl: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Laatste bericht",
       archive: "Verwijderen",
     },
     add: {
@@ -1046,6 +1043,9 @@ const nl: DeepPartial<Messages> = {
       scanningHint:
         "LinkedIn scannen via je sessie · meestal 10–30 s. Is de bedrijfsnaam dubbelzinnig, dan pauzeren we en vragen we je hem te bevestigen.",
       emptyConnected: "Nog geen contacten gevonden bij dit bedrijf.",
+      refusedTitle: "Zoeken gepauzeerd door je snelheidslimieten",
+      refusedBody:
+        "LinkedIn is niet gescand voor <strong>{{company}}</strong>: een zelfopgelegde leeslimiet is op of een backoff is actief. Dit komt vanzelf weer vrij zodra het venster doorschuift — probeer het later opnieuw of pas je limieten aan in Instellingen → Networking.",
       emptyManual:
         "Nog geen contacten — voeg er een toe via URL vanaf de pagina Netwerk, of zet Referral Outreach aan in Instellingen om automatisch mensen bij dit bedrijf te vinden.",
       contactsFound_one: "{{count}} contact gevonden",

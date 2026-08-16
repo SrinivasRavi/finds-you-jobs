@@ -27,7 +27,7 @@ export const QuotaBar = memo(function QuotaBar({
       data-testid="referrals-quota-bar"
     >
       <div className="flex items-center gap-3">
-        <span data-testid="referrals-quota-counter" className="font-mono text-ink-2">
+        <span data-testid="referrals-quota-counter" className="text-ink-2">
           {t("popups.referrals.reachesSent", { count: alreadyReached })}
         </span>
         {/* Our conservative caps only apply when WE do the sending

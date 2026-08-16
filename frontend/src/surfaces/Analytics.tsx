@@ -51,7 +51,7 @@ const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
   {
     key: "networking",
     label: "analytics.groups.networking",
-    kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search"],
+    kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search", "view_page"],
   },
   { key: "apply", label: "analytics.groups.apply", kinds: ["apply", "extract", "prep"] },
   { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
@@ -79,7 +79,7 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
       <div className="text-[11px] font-medium text-ink-3">{label}</div>
-      <div className="mt-1 font-mono text-[20px] font-semibold text-ink">{value}</div>
+      <div className="mt-1 text-[20px] font-semibold text-ink">{value}</div>
       {sub ? <div className="text-[11px] text-ink-3">{sub}</div> : null}
     </div>
   );
@@ -107,14 +107,14 @@ function CostPanel({ totals }: { totals: CostTotals | undefined }) {
         <div className="space-y-1.5">
           {(Object.keys(byKind) as OperationKind[]).map((kind) => (
             <div key={kind} className="flex items-center gap-2">
-              <span className="w-12 font-mono text-[10.5px] text-ink-3">{kind}</span>
+              <span className="w-12 text-[10.5px] text-ink-3">{kind}</span>
               <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-2">
                 <div
                   className="h-full rounded-full bg-accent"
                   style={{ width: `${(byKind[kind] / maxKind) * 100}%` }}
                 />
               </div>
-              <span className="w-12 text-right font-mono text-[10.5px] text-ink-2">
+              <span className="w-12 text-right text-[10.5px] text-ink-2">
                 ${byKind[kind].toFixed(2)}
               </span>
             </div>
@@ -146,9 +146,9 @@ function SpanDetail({ operationId }: { operationId: string }) {
         return (
           <div key={s.span_id} className="rounded-lg border border-border bg-surface-2 p-3">
             <div className="mb-2 flex items-center gap-2">
-              <span className="font-mono text-[11px] font-semibold text-ink">{s.name}</span>
+              <span className="text-[11px] font-semibold text-ink">{s.name}</span>
               <span
-                className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${
+                className={`rounded-full px-2 py-0.5 text-[10px] ${
                   s.status === "ERROR" ? "bg-bad-wash text-bad" : "bg-good-wash text-good"
                 }`}
               >
@@ -156,7 +156,7 @@ function SpanDetail({ operationId }: { operationId: string }) {
                     for our completed spans that means OK; show that, not jargon. */}
                 {s.status === "ERROR" ? t("analytics.span.error") : t("analytics.span.ok")}
               </span>
-              <span className="ml-auto font-mono text-[11px] text-ink-2">
+              <span className="ml-auto text-[11px] text-ink-2">
                 {t("analytics.span.ms", { value: s.duration_ms.toFixed(0) })}
               </span>
             </div>
@@ -185,7 +185,7 @@ function SpanDetail({ operationId }: { operationId: string }) {
                 {s.events.map((ev, i) => (
                   <span
                     key={i}
-                    className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] text-ink-3"
+                    className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-ink-3"
                   >
                     {ev.name}
                   </span>
@@ -203,7 +203,7 @@ function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-ink-4">{label}</dt>
-      <dd className="font-mono text-ink-2">{value}</dd>
+      <dd className="text-ink-2">{value}</dd>
     </div>
   );
 }
@@ -387,7 +387,7 @@ function SubjectCell({ entry }: { entry: LedgerEntry }) {
   return (
     <>
       <div className="flex min-w-0 items-baseline gap-x-2">
-        <span className="shrink-0 font-mono text-[11px] text-ink-3">{entry.kind}</span>
+        <span className="shrink-0 text-[11px] text-ink-3">{entry.kind}</span>
         {label ? (
           s?.href ? (
             <a
@@ -477,7 +477,7 @@ function ExpandedBlocks({ entry }: { entry: LedgerEntry }) {
             {list.map((item) => (
               <span
                 key={item}
-                className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] text-ink-3"
+                className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-ink-3"
               >
                 {item}
               </span>
@@ -536,7 +536,7 @@ function DiscoveryPanel() {
           >
             <div className="flex items-baseline justify-between gap-2">
               <span className="truncate text-[12.5px] font-medium text-ink">{s.label}</span>
-              <span className="font-mono text-[12px] text-ink-2">
+              <span className="text-[12px] text-ink-2">
                 {t("analytics.discovery.jobs", { jobs: s.jobs })}
               </span>
             </div>
@@ -682,7 +682,7 @@ export function Analytics() {
                         data-testid="log-row"
                         onClick={() => setExpandedId(open ? null : e.id)}
                       >
-                        <td className="px-2 py-2 font-mono text-[10px] text-ink-4">
+                        <td className="px-2 py-2 text-[10px] text-ink-4">
                           {open ? "▾" : "▸"}
                         </td>
                         <td className="px-3 py-2">
@@ -692,14 +692,14 @@ export function Analytics() {
                         <td className="px-3 py-2">
                           {e.state === "failed" && e.retried_as ? (
                             <span
-                              className="rounded-full bg-surface-3 px-2 py-0.5 font-mono text-[10px] capitalize text-ink-3"
+                              className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] capitalize text-ink-3"
                               data-testid="log-retried-pill"
                             >
                               {t("analytics.ledger.retried")}
                             </span>
                           ) : (
                             <span
-                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] capitalize ${STATE_CLS[e.state] ?? "bg-surface-3 text-ink-3"}`}
+                              className={`rounded-full px-2 py-0.5 text-[10px] capitalize ${STATE_CLS[e.state] ?? "bg-surface-3 text-ink-3"}`}
                             >
                               {e.state}
                             </span>
@@ -708,7 +708,7 @@ export function Analytics() {
                           <StopButton entry={e} />
                         </td>
                         <td
-                          className="px-3 py-2 font-mono text-[11px] text-ink-3"
+                          className="px-3 py-2 text-[11px] text-ink-3"
                           data-testid="log-started"
                         >
                           {formatWhen(e.started_at ?? e.created_at, "timestamp")}
@@ -720,7 +720,7 @@ export function Analytics() {
                           {e.model ?? "—"}
                         </td>
                         <td
-                          className="px-3 py-2 text-right font-mono text-ink-2"
+                          className="px-3 py-2 text-right text-ink-2"
                           title={e.usd == null ? t("analytics.ledger.costUnknown") : undefined}
                         >
                           <div>{e.usd != null ? `$${e.usd.toFixed(2)}` : "—"}</div>

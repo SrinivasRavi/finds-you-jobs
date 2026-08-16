@@ -982,20 +982,17 @@ export interface paths {
         /**
          * Networking Contact Sync
          * @description Refresh LinkedIn contact statuses for the Networking kanban (US-NW-12 /
-         *     FR-NW-15) — **user-initiated only**.
+         *     FR-NW-15). **Manual-only**: the Sync button is the one caller (maintainer
+         *     decision, 2026-08-15).
          *
-         *     This replaces the old 12 h `contact_sync` schedule, which touched LinkedIn
-         *     with nobody present (`docs/internal/linkedin-addon.md` section 5). Two callers:
-         *
-         *     - the explicit **Sync** button, which passes `force=true` and always runs —
-         *       an on-demand refresh the user asked for, no more LinkedIn traffic than
-         *       them opening linkedin.com and looking at their invitations themselves;
-         *     - opening the **Networking** surface, which passes `force=false` and is
-         *       throttled to `CONTACT_SYNC_MIN_INTERVAL_MINUTES` so navigating back and
-         *       forth cannot turn into a request loop.
+         *     No schedule, no on-open refresh, no background timer. Each press is an
+         *     on-demand refresh the user asked for, no more LinkedIn traffic than them
+         *     opening linkedin.com and looking at their invitations themselves. The old
+         *     12 h schedule and the later throttled on-open refresh are both retired
+         *     (`docs/internal/linkedin-addon.md` section 5, `docs/internal/status.md`).
          *
          *     Already-running syncs are joined rather than duplicated, so a double click
-         *     or a remount mid-sync does not fan out.
+         *     does not fan out.
          */
         post: operations["networking_contact_sync_api_networking_contact_sync_post"];
         delete?: never;
@@ -1211,6 +1208,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/browser/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * View Browser Page
+         * @description Queue a `view_page` operation that shows `url` on a watch-only broker
+         *     surface (2026-08-16 — the queued successor to /api/browser/open's immediate
+         *     navigation). The op waits its admission turn behind any browser-driving
+         *     operation (policy rule 3), so a user's click can never corrupt a running
+         *     op's page state — and a view of the already-shown page settles as a
+         *     no-op (`skipped`). Gated on the Referral Outreach toggle, NOT on session
+         *     validity: a never-connected session can still watch a page; validity gates
+         *     the ops that act. Vendor-agnostic: url and slug are runtime arguments.
+         */
+        post: operations["view_browser_page_api_browser_view_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dev/linkedin/mark-session-valid": {
         parameters: {
             query?: never;
@@ -1238,6 +1262,30 @@ export interface paths {
          *     row is the same row a real login writes, with the same fields.
          */
         post: operations["dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/browser/navigate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Navigate Browser Surface
+         * @description Navigate a broker surface server-side, exactly the way an operation
+         *     does (2026-08-16). The user-facing surface went WATCH-ONLY (no URL bar),
+         *     and a surface holds ONE viewer — a test driving it over a second
+         *     screencast socket steals the stream from the page under test. This is the
+         *     e2e stack's navigation lever; same FYJ_DEV gate as every dev tool.
+         */
+        post: operations["dev_navigate_browser_surface_api_dev_browser_navigate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1943,8 +1991,8 @@ export interface components {
         };
         /**
          * ApplyRunDTO
-         * @description One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1) for the
-         *     companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
+         * @description One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1)
+         *     for the companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
          *     never raw form values); `screenshots` counts the evidence PNGs served by
          *     `GET /api/apply-runs/{id}/screenshots/{index}`.
          */
@@ -2158,6 +2206,29 @@ export interface components {
             status: string;
         };
         /**
+         * BrowserViewRequest
+         * @description POST /api/browser/view — queue a `view_page` operation that shows `url`
+         *     on a watch-only broker surface once the lane is free (2026-08-16; the
+         *     queued successor to the immediate /api/browser/open). `width`/`height`/
+         *     `dpr` are the caller's display metrics (fail-closed geometry);
+         *     `contact_id` links the ledger row to the contact whose button was
+         *     clicked.
+         */
+        BrowserViewRequest: {
+            /** Url */
+            url: string;
+            /** Surface */
+            surface?: string | null;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
+            /** Dpr */
+            dpr?: number | null;
+            /** Contact Id */
+            contact_id?: string | null;
+        };
+        /**
          * ContactCreate
          * @description Manual add-a-contact (US-NW-02) — the rank-don't-gate escape hatch. The
          *     user can always add a contact by URL/name regardless of LinkedIn state.
@@ -2238,21 +2309,58 @@ export interface components {
             last_message?: string | null;
             /** Last Message At */
             last_message_at?: string | null;
+            /** Last Message Direction */
+            last_message_direction?: string | null;
+            /** Last Message From */
+            last_message_from?: string | null;
         };
         /**
          * ContactSyncAccepted
-         * @description Result of a user-initiated contact-status refresh (FR-NW-15).
+         * @description Result of a Sync-button contact-status refresh (FR-NW-15, manual-only).
          *
-         *     `state` is `queued` (a sync started), `already_running` (joined the one in
-         *     flight), or `throttled` (the opportunistic surface-open refresh declined
-         *     because the last sync was too recent — the explicit Sync button ignores
-         *     it). `id` is set only for `queued`.
+         *     `state` is `queued` (a sync started) or `already_running` (joined the one
+         *     in flight). `id` is set only for `queued`.
          */
         ContactSyncAccepted: {
             /** Id */
             id?: string | null;
             /** State */
             state: string;
+        };
+        /**
+         * ContactSyncOutcomeDTO
+         * @description What the newest contact-sync attempt did (US-NW-12 honesty). `stopped`
+         *     is "" for a clean sweep, else the verbatim stop reason the sweep surfaced
+         *     (cap_or_backoff | rate_limited | auth_error | batch_failed) with
+         *     `unprobed` sizing the untouched tail — the Networking header shows it so a
+         *     refused press never reads as a successful sync.
+         */
+        ContactSyncOutcomeDTO: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Synced
+             * @default 0
+             */
+            synced: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Stopped
+             * @default
+             */
+            stopped: string;
+            /**
+             * Unprobed
+             * @default 0
+             */
+            unprobed: number;
         };
         /**
          * ContactUpdate
@@ -2797,6 +2905,9 @@ export interface components {
             paused_reason: string;
             search_cursor?: components["schemas"]["LinkedInSearchCursorDTO"] | null;
             rate_limits?: components["schemas"]["LinkedInRateLimitsDTO"] | null;
+            /** Contact Sync Last At */
+            contact_sync_last_at?: string | null;
+            contact_sync_last_outcome?: components["schemas"]["ContactSyncOutcomeDTO"] | null;
         };
         /**
          * NetworkingContactDTO
@@ -2872,6 +2983,10 @@ export interface components {
             /** Finished At */
             finished_at: string | null;
             subject?: components["schemas"]["OperationSubjectDTO"] | null;
+            /** Progress */
+            progress?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * OperationSubjectDTO
@@ -3212,6 +3327,13 @@ export interface components {
              * @default false
              */
             confirm_url_failed: boolean;
+            /**
+             * Refusal Reason
+             * @default
+             */
+            refusal_reason: string;
+            /** In Flight Contact Ids */
+            in_flight_contact_ids?: string[];
         };
         /**
          * RescorePreviewDTO
@@ -3513,7 +3635,7 @@ export interface components {
          * @description Referral-outreach progress (networker_ops / contact_sync / linkedin_op).
          *
          *     Phases published today: synced, needs_company_confirm, candidate,
-         *     discovered, sent, send_failed, auto_archived.
+         *     discovered, sending, sent, send_failed, auto_archived.
          */
         NetworkerEventPayload: {
             /** Id */
@@ -5101,9 +5223,7 @@ export interface operations {
     };
     networking_contact_sync_api_networking_contact_sync_post: {
         parameters: {
-            query?: {
-                force?: boolean;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -5117,15 +5237,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContactSyncAccepted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5331,6 +5442,39 @@ export interface operations {
             };
         };
     };
+    view_browser_page_api_browser_view_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserViewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post: {
         parameters: {
             query?: never;
@@ -5349,6 +5493,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    dev_navigate_browser_surface_api_dev_browser_navigate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

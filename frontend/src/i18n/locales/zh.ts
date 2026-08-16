@@ -469,11 +469,11 @@ const zh: DeepPartial<Messages> = {
       connecting: "连接中…",
       backingOff: "暂缓中",
       connect: "连接 LinkedIn",
-      title: "只读 — 请在设置中连接/启用 LinkedIn",
+      inProgress: "LinkedIn 进行中",
+      titleOpen: "打开 LinkedIn 浏览器",
+      titleSettings: "请在设置中连接 LinkedIn",
     },
     addByUrl: "通过 URL 添加联系人",
-    connectionCount_other: "{{count}} 位联系人",
-    degreeSummary: "一度 {{first}} · 二度 {{second}}",
     filters: {
       company: "公司",
       all: "全部",
@@ -507,7 +507,6 @@ const zh: DeepPartial<Messages> = {
       today: "今天",
       days: "{{n}} 天",
       inStatus: "处于“{{status}}”{{duration}}",
-      you: "你：",
     },
     deleted: {
       title: "已删除联系人",
@@ -518,7 +517,6 @@ const zh: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "最近消息",
       archive: "删除",
     },
     add: {
@@ -1009,6 +1007,9 @@ const zh: DeepPartial<Messages> = {
       scanningHint:
         "正在通过你的会话扫描 LinkedIn · 通常需要 10–30 秒。如果公司名称有歧义，我们会暂停并请你确认。",
       emptyConnected: "尚未在该公司找到联系人。",
+      refusedTitle: "搜索已因你的速率限制暂停",
+      refusedBody:
+        "未对 <strong>{{company}}</strong> 扫描 LinkedIn：自设的读取限额已用完，或退避暂停正在生效。随着时间窗口滚动它会自动恢复 — 稍后再试，或在设置 → 人脉拓展中调整限额。",
       emptyManual:
         "还没有联系人 — 在人脉页通过 URL 添加，或在设置中开启内推联络以自动发现该公司的员工。",
       contactsFound_other: "找到 {{count}} 位联系人",

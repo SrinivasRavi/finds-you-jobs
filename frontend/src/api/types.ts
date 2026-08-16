@@ -413,8 +413,16 @@ export interface NetContact {
   connection_status: ConnectionStatus;
   last_message: string | null;
   last_message_at: string | null;
+  /** Attribution for `last_message`: "me" = the user sent it, "them" = the
+   *  contact did (synced from the real thread; the pre-sync OutreachLog
+   *  fallback is always "me"). */
+  last_message_direction: "me" | "them" | null;
+  /** The contact's display name as the thread reported it — set only when
+   *  direction is "them". */
+  last_message_from: string | null;
   sent_at: string | null;
   accepted_at: string | null;
+  added_at: string;
 }
 
 /** One row in the find-referrals popup (US-NW-09 / US-REF-01/02/03/10). */
@@ -441,11 +449,18 @@ export interface ReferralCandidates {
   company: string;
   candidates: ReferralCandidate[];
   already_reached_count: number;
-  // Last discover outcome (2026-07-17): never | found | empty | confirm — lets
-  // a reopened popup recover a background Save-discover instead of a blank start.
-  discover_state: "never" | "found" | "empty" | "confirm";
+  // Last discover outcome (2026-07-17): never | found | empty | confirm |
+  // refused — lets a reopened popup recover a background Save-discover instead
+  // of a blank start. `refused` (2026-08-15) = voyager declined the read
+  // (self-imposed cap / backoff); the verbatim reason is in `refusal_reason` —
+  // it must never render as "no contacts found".
+  discover_state: "never" | "found" | "empty" | "confirm" | "refused";
   company_confirm: CompanyCandidate[];
   confirm_url_failed: boolean;
+  refusal_reason: string;
+  /** Contacts with a send op queued or running right now — seeds the popup's
+   *  per-row Sending state so it survives close/reopen (2026-08-16). */
+  in_flight_contact_ids: string[];
 }
 
 /** One LinkedIn company entity a company name resolved to (FR-NW-02). Shown in
@@ -539,16 +554,32 @@ export interface LinkedInSessionState {
   search_cursor: LinkedInSearchCursorState | null;
   /** The self-imposed rate-limit profile (membership × risk% × overrides). */
   rate_limits: LinkedInRateLimitsState | null;
+  /** When the last contact-status sync that ACTUALLY PROBED finished (null =
+   *  never) — the Networking header's "Synced Nm ago" stamp. A sweep the read
+   *  budget refused outright does not re-stamp it. */
+  contact_sync_last_at: string | null;
+  /** What the newest sync attempt did (null until one has run) — the header
+   *  shows `stopped` so a refused press never reads as a clean sync. */
+  contact_sync_last_outcome: ContactSyncOutcome | null;
 }
 
-/** Result of a user-initiated contact-status refresh (FR-NW-15).
+/** Outcome of the newest contact-sync attempt (US-NW-12 honesty). `stopped`
+ *  is "" for a clean sweep, else cap_or_backoff | rate_limited | auth_error |
+ *  batch_failed, with `unprobed` sizing the untouched tail. */
+export interface ContactSyncOutcome {
+  at: string;
+  synced: number;
+  failed: number;
+  stopped: string;
+  unprobed: number;
+}
+
+/** Result of a Sync-button contact-status refresh (FR-NW-15, manual-only).
  *  `queued` — a sync started. `already_running` — joined the one in flight.
- *  `throttled` — the opportunistic on-open refresh declined because the last
- *  sync was too recent; the Sync button ignores the throttle. There is no
- *  scheduled sync. */
+ *  There is no scheduled or on-open sync. */
 export interface ContactSyncResult {
   id: string | null;
-  state: "queued" | "already_running" | "throttled";
+  state: "queued" | "already_running";
 }
 
 /** Manual add-a-contact input (US-NW-02). */
@@ -682,6 +713,9 @@ export type OperationKind =
   | "linkedin_search"
   | "archive_stale_contacts"
   | "contact_sync"
+  // A user's queued page-view on the browser surface (2026-08-16) — ledger'd
+  // with the contact as its subject, so Analytics must know it.
+  | "view_page"
   // Watch-company attempts (2026-07-22): synchronous API action recorded into
   // the ledger so Analytics → Logs keeps the verbatim refusal reason.
   | "watch_company";
@@ -940,6 +974,9 @@ export interface LedgerEntry {
   /** Set on a failed row that was re-run (US-LOG-01 Retry): the new op's id.
    *  The row renders as "Retried" instead of a permanently nagging FAILED. */
   retried_as?: string | null;
+  /** A live send op's routed channel + completed step keys (2026-08-16) — how
+   *  a queue panel mounting mid-send recovers the fine steps it missed. */
+  progress?: { channel?: string; steps?: string[] } | null;
   /** Set when a send op succeeded but our own caps/backoff refused the send
    *  before touching LinkedIn (result_ref error `cap_or_backoff`): the verbatim
    *  refusal reason. The op genuinely succeeded — this is an outcome marker,

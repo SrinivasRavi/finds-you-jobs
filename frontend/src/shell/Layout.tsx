@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import { eventBus, type StreamState } from "../api/events";
 import i18n from "../i18n";
+import { LinkedInBrowserProvider } from "../surfaces/LinkedInBrowserProvider";
 import { LeftRail } from "./LeftRail";
 import { MutationErrorBanner } from "./MutationErrorBanner";
 import {
@@ -117,33 +118,38 @@ export function Layout() {
   const stream = useStreamState();
   const update = useLaunchUpdateCheck();
   return (
-    <div className="grid h-screen grid-cols-[76px_1fr] overflow-hidden bg-canvas">
-      <LeftRail />
-      <div className="flex min-h-0 flex-col overflow-hidden">
-        {update ? <UpdateBanner update={update} /> : null}
-        {fatal ? (
-          <div
-            className="border-b border-bad bg-bad-wash px-4 py-2 text-[12.5px] text-bad"
-            data-testid="sidecar-fatal-banner"
-          >
-            {t("shell.sidecarFatalBanner", { message: fatal })}
-          </div>
-        ) : null}
-        {/* Slim reconnect strip — only during a real gap ("connecting" is the
-            normal boot handshake; the fatal banner supersedes it). Recovery
-            refetches happen in useSSEInvalidation, this is just the honest
-            indicator. */}
-        {!fatal && stream === "reconnecting" ? (
-          <div
-            className="border-b border-border bg-surface px-4 py-1.5 text-[12px] text-ink-3"
-            data-testid="stream-reconnecting-banner"
-          >
-            {t("shell.streamReconnecting")}
-          </div>
-        ) : null}
-        <Outlet />
+    // The LinkedIn browser modal opens from Networking, the Tracker's referrals
+    // popup, and any send path — its provider wraps every routed surface so all
+    // of them share the one opener + op feed (maintainer, 2026-08-16).
+    <LinkedInBrowserProvider>
+      <div className="grid h-screen grid-cols-[76px_1fr] overflow-hidden bg-canvas">
+        <LeftRail />
+        <div className="flex min-h-0 flex-col overflow-hidden">
+          {update ? <UpdateBanner update={update} /> : null}
+          {fatal ? (
+            <div
+              className="border-b border-bad bg-bad-wash px-4 py-2 text-[12.5px] text-bad"
+              data-testid="sidecar-fatal-banner"
+            >
+              {t("shell.sidecarFatalBanner", { message: fatal })}
+            </div>
+          ) : null}
+          {/* Slim reconnect strip — only during a real gap ("connecting" is the
+              normal boot handshake; the fatal banner supersedes it). Recovery
+              refetches happen in useSSEInvalidation, this is just the honest
+              indicator. */}
+          {!fatal && stream === "reconnecting" ? (
+            <div
+              className="border-b border-border bg-surface px-4 py-1.5 text-[12px] text-ink-3"
+              data-testid="stream-reconnecting-banner"
+            >
+              {t("shell.streamReconnecting")}
+            </div>
+          ) : null}
+          <Outlet />
+        </div>
+        <MutationErrorBanner />
       </div>
-      <MutationErrorBanner />
-    </div>
+    </LinkedInBrowserProvider>
   );
 }

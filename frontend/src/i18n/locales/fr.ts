@@ -483,12 +483,11 @@ const fr: DeepPartial<Messages> = {
       connecting: "Connexion…",
       backingOff: "En pause",
       connect: "Connecter LinkedIn",
-      title: "Lecture seule — connectez/activez LinkedIn dans Réglages",
+      inProgress: "LinkedIn en cours",
+      titleOpen: "Ouvrir le navigateur LinkedIn",
+      titleSettings: "Connectez LinkedIn dans Réglages",
     },
     addByUrl: "Ajouter un contact par URL",
-    connectionCount_one: "{{count}} relation",
-    connectionCount_other: "{{count}} relations",
-    degreeSummary: "{{first}} 1er · {{second}} 2e",
     filters: {
       company: "Entreprise",
       all: "Toutes",
@@ -522,7 +521,6 @@ const fr: DeepPartial<Messages> = {
       today: "aujourd'hui",
       days: "{{n}} j",
       inStatus: "{{duration}} en {{status}}",
-      you: "Vous :",
     },
     deleted: {
       title: "Contacts supprimés",
@@ -533,7 +531,6 @@ const fr: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Dernier message",
       archive: "Supprimer",
     },
     add: {
@@ -1042,6 +1039,9 @@ const fr: DeepPartial<Messages> = {
       scanningHint:
         "Scan de LinkedIn via votre session · en général 10–30 s. Si le nom de l'entreprise est ambigu, nous ferons une pause pour vous demander de le confirmer.",
       emptyConnected: "Aucun contact trouvé dans cette entreprise pour l'instant.",
+      refusedTitle: "Recherche mise en pause par vos limites de débit",
+      refusedBody:
+        "LinkedIn n'a pas été analysé pour <strong>{{company}}</strong> : une limite de lecture auto-imposée est épuisée ou un backoff est actif. Elle se libère d'elle-même au fil de la fenêtre — réessayez plus tard ou ajustez vos limites dans Réglages → Networking.",
       emptyManual:
         "Pas encore de contacts — ajoutez-en un par URL depuis la page Réseau, ou activez les demandes de recommandation dans Réglages pour découvrir automatiquement des personnes de cette entreprise.",
       contactsFound_one: "{{count}} contact trouvé",

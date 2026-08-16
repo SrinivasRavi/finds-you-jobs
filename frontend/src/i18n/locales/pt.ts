@@ -482,12 +482,11 @@ const pt: DeepPartial<Messages> = {
       connecting: "Conectando…",
       backingOff: "Em espera",
       connect: "Conectar LinkedIn",
-      title: "Somente leitura — conecte/ative o LinkedIn em Ajustes",
+      inProgress: "LinkedIn em andamento",
+      titleOpen: "Abrir o navegador do LinkedIn",
+      titleSettings: "Conecte o LinkedIn em Ajustes",
     },
     addByUrl: "Adicionar contato por URL",
-    connectionCount_one: "{{count}} conexão",
-    connectionCount_other: "{{count}} conexões",
-    degreeSummary: "{{first}} de 1º · {{second}} de 2º",
     filters: {
       company: "Empresa",
       all: "Todas",
@@ -521,7 +520,6 @@ const pt: DeepPartial<Messages> = {
       today: "hoje",
       days: "{{n}}d",
       inStatus: "{{duration}} em {{status}}",
-      you: "Você:",
     },
     deleted: {
       title: "Contatos excluídos",
@@ -532,7 +530,6 @@ const pt: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Última mensagem",
       archive: "Excluir",
     },
     add: {
@@ -1034,6 +1031,9 @@ const pt: DeepPartial<Messages> = {
       scanningHint:
         "Varrendo o LinkedIn pela sua sessão · normalmente 10–30 s. Se o nome da empresa for ambíguo, vamos pausar e pedir que você o confirme.",
       emptyConnected: "Nenhum contato encontrado nesta empresa ainda.",
+      refusedTitle: "Busca pausada pelos seus limites de ritmo",
+      refusedBody:
+        "O LinkedIn não foi verificado para <strong>{{company}}</strong>: um limite de leitura autoimposto se esgotou ou um backoff está ativo. Ele se libera sozinho conforme a janela avança — tente de novo mais tarde ou ajuste seus limites em Configurações → Networking.",
       emptyManual:
         "Nenhum contato ainda — adicione um por URL na página Networking, ou ligue os Pedidos de Indicação em Ajustes para descobrir pessoas desta empresa automaticamente.",
       contactsFound_one: "{{count}} contato encontrado",

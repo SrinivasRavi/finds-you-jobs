@@ -7,6 +7,8 @@
 // Zero model calls.
 
 import { readFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,6 +59,34 @@ const CANVAS_SIG = `(() => {
   return sig;
 })()`;
 
+
+/** Drive the shared surface the way an operation would — server-side via the
+ *  dev navigate route. The surface is WATCH-ONLY in the UI (maintainer,
+ *  2026-08-16) and holds ONE viewer, so a second screencast socket would
+ *  steal the stream from the page under test. */
+async function navigateSurface(
+  page: import("@playwright/test").Page,
+  request: import("@playwright/test").APIRequestContext,
+  base: string,
+  token: string,
+  url: string,
+): Promise<void> {
+  // Navigation fails closed without display geometry — state the page's own,
+  // exactly what its screencast viewer sends.
+  const geometry = await page.evaluate(() => ({
+    width: screen.width,
+    height: screen.height,
+    dpr: window.devicePixelRatio,
+  }));
+  const res = await request.post(`${base}/api/dev/browser/navigate`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { url, ...geometry },
+  });
+  if (!res.ok()) {
+    throw new Error(`dev navigate failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
 test("screencast: a live stream that paints frames for every navigation", async ({
   page,
   request,
@@ -82,12 +112,11 @@ test("screencast: a live stream that paints frames for every navigation", async 
     // value proves the canvas actually caught up, not a stale old-page frame.
     const beforeSig = await page.evaluate(CANVAS_SIG);
     const before = Number(await frameCount.textContent());
-    await page.getByTestId("browser-url").fill(url);
-    await page.getByTestId("browser-go").click();
+    await navigateSurface(page, request, base, token, url);
     // Load-bearing: screencast-page-url is driven ONLY by the sidecar's
     // committed page.url, so a stale paint shows the wrong host and fails here.
     await expect(pageUrl).toContainText(host, { timeout: 20_000 });
-    // Frames flowed since the click (the transport is live).
+    // Frames flowed since the navigate (the transport is live).
     await expect(async () => {
       expect(Number(await frameCount.textContent())).toBeGreaterThan(before);
     }).toPass({ timeout: 20_000 });
@@ -101,5 +130,71 @@ test("screencast: a live stream that paints frames for every navigation", async 
     expect(await page.evaluate(CANVAS_SIG)).not.toBe(beforeSig);
     await expect(page.getByTestId("screencast-error")).toHaveCount(0);
     await page.screenshot({ path: `${DIR}/${name}.png`, fullPage: true });
+  }
+});
+
+// A LOCAL fixture the broker's Chrome navigates on its own: one page that does
+// an in-page SPA route change (history.pushState) and then a full navigation
+// (location.assign), with the user typing nothing after the initial Go. The
+// URL bar and the bottom line must track both — the surface now pushes its
+// committed main-frame URL on every change, not just after a typed navigate.
+function spaFixture(): Promise<{ server: Server; base: string }> {
+  const server = createServer((req, res) => {
+    if (req.url === "/start") {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(
+        "<html><body><h1>fixture start</h1><script>" +
+          "setTimeout(() => history.pushState({}, '', '/spa-route'), 800);" +
+          "setTimeout(() => location.assign('/landed'), 2000);" +
+          "</script></body></html>",
+      );
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<html><body><h1>fixture landed</h1></body></html>");
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({ server, base: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
+test("the read-only URL line tracks SPA and full navigations the user never typed", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  await request.post(`${base}/api/profile`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { resume_markdown: "# E2E Candidate" },
+  });
+  const fixture = await spaFixture();
+  try {
+    await page.goto("/browser");
+    await expect(page.getByTestId("screencast-status")).toHaveText("live", {
+      timeout: 30_000,
+    });
+
+    const pageUrl = page.getByTestId("screencast-page-url");
+    // Watch-only: there is no bar to type into (maintainer, 2026-08-16).
+    await expect(page.getByTestId("browser-url")).toHaveCount(0);
+
+    // Open the fixture the way an operation would.
+    await navigateSurface(page, request, base, token, `${fixture.base}/start`);
+    await expect(pageUrl).toContainText("/start", { timeout: 20_000 });
+    await page.screenshot({ path: `${DIR}/url-track-start.png`, fullPage: true });
+
+    // The page pushState-s itself to /spa-route — nobody typed anything.
+    await expect(pageUrl).toContainText("/spa-route", { timeout: 20_000 });
+    await page.screenshot({ path: `${DIR}/url-track-spa.png`, fullPage: true });
+
+    // Then it fully navigates itself to /landed — still hands-off.
+    await expect(pageUrl).toContainText("/landed", { timeout: 20_000 });
+    await expect(page.getByTestId("screencast-error")).toHaveCount(0);
+    await page.screenshot({ path: `${DIR}/url-track-landed.png`, fullPage: true });
+  } finally {
+    fixture.server.close();
   }
 });

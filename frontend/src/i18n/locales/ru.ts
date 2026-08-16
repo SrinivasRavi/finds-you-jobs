@@ -504,14 +504,11 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       connecting: "Подключение…",
       backingOff: "Пауза",
       connect: "Подключить LinkedIn",
-      title: "Только чтение — подключить/включить LinkedIn можно в Настройках",
+      inProgress: "LinkedIn в работе",
+      titleOpen: "Открыть браузер LinkedIn",
+      titleSettings: "Подключите LinkedIn в Настройках",
     },
     addByUrl: "Добавить контакт по URL",
-    connectionCount_one: "{{count}} контакт",
-    connectionCount_few: "{{count}} контакта",
-    connectionCount_many: "{{count}} контактов",
-    connectionCount_other: "{{count}} контакта",
-    degreeSummary: "{{first}} 1-й · {{second}} 2-й",
     filters: {
       company: "Компания",
       all: "Все",
@@ -545,7 +542,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       today: "сегодня",
       days: "{{n}} дн",
       inStatus: "{{duration}} в «{{status}}»",
-      you: "Вы:",
     },
     deleted: {
       title: "Удалённые контакты",
@@ -556,7 +552,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Последнее сообщение",
       archive: "Удалить",
     },
     add: {
@@ -1071,6 +1066,9 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       scanningHint:
         "Сканируем LinkedIn через вашу сессию · обычно 10–30 с. Если название компании неоднозначно, мы остановимся и попросим подтвердить его.",
       emptyConnected: "В этой компании пока не найдено контактов.",
+      refusedTitle: "Поиск приостановлен вашими лимитами частоты",
+      refusedBody:
+        "LinkedIn не сканировался для <strong>{{company}}</strong>: исчерпан самоустановленный лимит чтения или действует пауза-бэкофф. Лимит освободится сам по мере сдвига окна — попробуйте позже или измените лимиты в Настройки → Нетворкинг.",
       emptyManual:
         "Контактов пока нет — добавьте по URL со страницы «Нетворкинг» или включите Referral Outreach в Настройках, чтобы автоматически находить людей в этой компании.",
       contactsFound_one: "Найден {{count}} контакт",

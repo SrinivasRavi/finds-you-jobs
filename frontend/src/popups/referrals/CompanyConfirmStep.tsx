@@ -103,7 +103,7 @@ export function CompanyConfirmStep({
               <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
                 <span className="truncate">{c.name}</span>
                 {c.domain_match && (
-                  <span className="inline-flex h-[16px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[9.5px] text-good">
+                  <span className="inline-flex h-[16px] items-center rounded-full border border-good bg-good-wash px-1.5 text-[9.5px] text-good">
                     {t("popups.referrals.bestMatch")}
                   </span>
                 )}

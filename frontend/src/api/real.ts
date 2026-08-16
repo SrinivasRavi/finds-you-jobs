@@ -1369,6 +1369,8 @@ export class RealApi {
       discover_state: (d.discover_state ?? "never") as ReferralCandidates["discover_state"],
       company_confirm: (d.company_confirm ?? []) as unknown as ReferralCandidates["company_confirm"],
       confirm_url_failed: Boolean(d.confirm_url_failed),
+      refusal_reason: d.refusal_reason ?? "",
+      in_flight_contact_ids: [...(d.in_flight_contact_ids ?? [])],
     };
   }
 
@@ -1465,13 +1467,11 @@ export class RealApi {
     )) as LinkedInSessionDTO);
   }
 
-  /** Refresh contact statuses from LinkedIn (FR-NW-15). `force` is the user
-   *  pressing Sync; without it the sidecar throttles the opportunistic refresh
-   *  that fires when the Networking surface opens. There is no scheduled sync —
-   *  see `docs/internal/linkedin-addon.md` section 5. */
-  async syncContacts(force = false): Promise<ContactSyncResult> {
-    const q = force ? "?force=true" : "";
-    const dto = (await this.json("POST", `/api/networking/contact-sync${q}`, {})) as {
+  /** Refresh contact statuses from LinkedIn (FR-NW-15). Manual-only: the Sync
+   *  button is the one caller (maintainer decision, 2026-08-15) — no on-open
+   *  refresh, no schedule. See `docs/internal/linkedin-addon.md` section 5. */
+  async syncContacts(): Promise<ContactSyncResult> {
+    const dto = (await this.json("POST", "/api/networking/contact-sync", {})) as {
       id?: string | null; state: string;
     };
     return { id: dto.id ?? null, state: dto.state as ContactSyncResult["state"] };
@@ -1490,6 +1490,24 @@ export class RealApi {
     return toLinkedInSession((await this.json(
       "POST", "/api/linkedin/rate-limits", body,
     )) as LinkedInSessionDTO);
+  }
+
+  /** Queue a `view_page` operation that shows `url` on the in-app watch-only
+   *  browser surface (2026-08-16 — the queued successor to the immediate
+   *  /api/browser/open). 202 always: the view waits its turn behind whatever
+   *  op is driving the surface, never a 409, and a view of the already-shown
+   *  page settles as a no-op. Sends this display's metrics (a surface's first
+   *  navigation fails closed without geometry); `contactId` names the ledger
+   *  row's subject. */
+  async viewInBrowser(url: string, surface?: string, contactId?: string): Promise<void> {
+    await this.json("POST", "/api/browser/view", {
+      url,
+      surface,
+      width: screen.width,
+      height: screen.height,
+      dpr: window.devicePixelRatio,
+      contact_id: contactId,
+    });
   }
 
   // ── Dev tools (local fault injection — US-DEV-01) ──────────────────────────
@@ -1522,6 +1540,10 @@ function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
     rate_limits: rl
       ? { ...rl, memberships: [...rl.memberships], caps: rl.caps.map((x) => ({ ...x })) }
       : null,
+    contact_sync_last_at: d.contact_sync_last_at ?? null,
+    contact_sync_last_outcome: d.contact_sync_last_outcome
+      ? { ...d.contact_sync_last_outcome }
+      : null,
   };
 }
 
@@ -1540,8 +1562,12 @@ function toContact(d: ContactDTO): NetContact {
     connection_status: d.connection_status as NetContact["connection_status"],
     last_message: d.last_message ?? null,
     last_message_at: d.last_message_at ?? null,
+    last_message_direction:
+      (d.last_message_direction as NetContact["last_message_direction"]) ?? null,
+    last_message_from: d.last_message_from ?? null,
     sent_at: d.sent_at ?? null,
     accepted_at: d.accepted_at ?? null,
+    added_at: d.added_at,
   };
 }
 

@@ -6,41 +6,41 @@
 // Always reachable (2026-07-09 always-on decision): the CRM carries no account
 // risk; the LinkedIn risk toggle gates only automated actions (FR-SET-03).
 //
-// The LinkedIn status pill below is read-only (`useLinkedInSession`) — the
-// connect/enable controls live in Settings, which hasn't landed on this repo
-// yet (its own commit); there is no button here to trigger them.
+// The LinkedIn status button below (2026-08-16, was a read-only pill) is the
+// one opener for the LinkedIn browser modal: it shows the session status —
+// plus a live "in progress" state while an op drives the surface — and opens
+// the modal, except in the expired/never-connected states, where it lands on
+// Settings (the connect flow lives there).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import {
   useAddContact,
   useArchivedContacts,
+  useContactSyncInFlight,
   useContacts,
   useLinkedInSession,
   useReachOut,
   useSyncContacts,
   useUpdateContact,
+  useViewInBrowser,
 } from "../api/queries";
 import type { AudienceTag, ConnectionStatus, NetContact } from "../api/types";
-import { ReachOutConfirm } from "../popups/referrals/ReachOutConfirm";
 import { audienceTag } from "../shell/audienceTag";
 import { Avatar } from "../shell/Avatar";
-import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { Icon } from "../shell/icons";
+import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 import { RecoveryListModal } from "../shell/RecoveryListModal";
-import { BrowserSurface } from "./BrowserSurface";
+import { opBusy } from "./BrowserOpPlan";
+import { ContactComposer } from "./ContactComposer";
 import { daysBetween } from "./jobFormat";
+import { useLinkedInBrowser } from "./LinkedInBrowserProvider";
 import { type LinkedInPillState, type LinkedInPillTone, linkedInStatusPill } from "./linkedInStatus";
-
-// The broker surface slug the Browser tab attaches to. Owned by the add-on side
-// (this surface is LinkedIn's), never spelled inside the shared BrowserSurface /
-// screencast components, which stay vendor-agnostic — the tab is the add-on's,
-// the surface is core's (`docs/internal/linkedin-addon.md` section 12.2).
-const LINKEDIN_SURFACE_SLUG = "linkedin";
 
 // label/empty hold i18n keys — wrapped with t(...) at render.
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
@@ -72,36 +72,115 @@ function daysSince(iso: string | null): number | null {
   return daysBetween(iso, "floor");
 }
 
+/** Who the last-message snippet belongs to, as an i18n key (+ name): the
+ *  thread's real last message is attributed honestly — "Me:" when we sent it,
+ *  the contact's first name when they did (their thread display name first,
+ *  falling back to the stored contact name). The label and composition go
+ *  through i18n; the name itself is data. Exported for its unit tests. */
+export function lastMessageAttribution(
+  c: Pick<NetContact, "last_message_direction" | "last_message_from" | "name">,
+): { key: string; name?: string } {
+  if (c.last_message_direction === "them") {
+    const source = (c.last_message_from ?? "").trim() || (c.name ?? "").trim();
+    const first = source.split(/\s+/)[0];
+    if (first) return { key: "networking.card.from", name: first };
+  }
+  return { key: "networking.card.me" };
+}
+
+/** The instant a card's shown activity happened, for ordering a kanban column
+ *  (most recent first, maintainer ask 2026-08-16). Exactly the timestamp the
+ *  card displays (`last_message_at ?? sent_at`), then the row's other
+ *  lifecycle stamps so undated cards still order deterministically — and NEVER
+ *  `last_touched_at`, the sync engine's rotation cursor, whose churn is what
+ *  made the board reshuffle on every Sync press. Exported for its unit
+ *  tests. */
+export function cardActivityAt(
+  c: Pick<NetContact, "last_message_at" | "sent_at" | "accepted_at" | "added_at">,
+): number {
+  for (const iso of [c.last_message_at, c.sent_at, c.accepted_at, c.added_at]) {
+    if (!iso) continue;
+    const t = new Date(iso).getTime();
+    if (Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+
+/** A column's cards, most-recent activity first; ties break on name then id so
+ *  the order is stable across refetches. Exported for its unit tests. */
+export function sortColumn(cards: NetContact[]): NetContact[] {
+  return [...cards].sort((a, b) => {
+    const dt = cardActivityAt(b) - cardActivityAt(a);
+    if (dt !== 0) return dt;
+    const byName = (a.name || "").localeCompare(b.name || "");
+    if (byName !== 0) return byName;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/** The i18n key for a stopped sync attempt's header note (null = nothing to
+ *  say: no attempt yet, or the newest attempt swept cleanly). Exported for
+ *  its unit tests. */
+export function syncStoppedKey(
+  outcome: { stopped: string } | null | undefined,
+): string | null {
+  if (!outcome?.stopped) return null;
+  switch (outcome.stopped) {
+    case "cap_or_backoff":
+      return "networking.sync.stoppedCap";
+    case "rate_limited":
+      return "networking.sync.stoppedRate";
+    case "auth_error":
+      return "networking.sync.stoppedAuth";
+    default:
+      return "networking.sync.stoppedOther";
+  }
+}
+
+/** The "Synced Nm ago" stamp beside the Sync button: which i18n unit key and
+ *  which number. null when there has never been a successful sync (the stamp
+ *  simply doesn't render — the Sync button is the affordance then). Exported
+ *  for its unit tests. */
+export function syncedAgo(iso: string | null): { key: string; n?: number } | null {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return null;
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return { key: "networking.sync.justNow" };
+  if (mins < 60) return { key: "networking.sync.minutesAgo", n: mins };
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return { key: "networking.sync.hoursAgo", n: hours };
+  return { key: "networking.sync.daysAgo", n: Math.floor(hours / 24) };
+}
+
 export function Networking() {
   const { t } = useTranslation();
   const session = useLinkedInSession();
   // Referral Outreach master toggle. The contact kanban is always reachable (it
-  // carries no account risk), but the add-on's Browser tab and the paste-a-URL
-  // reach-out both open a real LinkedIn session, so they surface only once the
-  // user has opted in (FR-SET-03 / vision ethos).
-  const enabled = Boolean(session.data?.enabled);
-  const [view, setView] = useState<"contacts" | "browser">("contacts");
-  const [reachOpen, setReachOpen] = useState(false);
+  // carries no account risk), but the LinkedIn browser modal and the contact
+  // composer's send open a real LinkedIn session, so they surface only once
+  // the user has opted in (FR-SET-03 / vision ethos).
+  const navigate = useNavigate();
+  const linkedinBrowser = useLinkedInBrowser();
   const contactsQ = useContacts();
   const contacts = useMemo(() => contactsQ.data ?? [], [contactsQ.data]);
   const update = useUpdateContact();
   const sync = useSyncContacts();
+  // Manual-only sync (maintainer decision, 2026-08-15): the Sync button below
+  // is the ONE trigger. No on-open refresh, no interval, no background timer —
+  // opening this tab causes zero LinkedIn traffic.
+  //
+  // Busy state follows the real operation, not the 202: the POST returns the
+  // moment the sweep is enqueued while the paced read probes run on for a
+  // while, so `syncInFlight` tracks the live `contact_sync` op off the SSE bus
+  // (with a ledger seed for one already running at mount) and holds the button
+  // in "Syncing…" until the op actually settles — at which point the SSE
+  // terminal handler refetches the kanban and the "Synced just now" stamp.
+  const syncInFlight = useContactSyncInFlight();
+  const syncBusy = sync.isPending || syncInFlight;
   // Refreshing needs both the master toggle and a live session; without either
   // the sidecar refuses (403/409), so don't offer the control.
   const canSync = Boolean(session.data?.enabled && session.data.status === "valid");
-  // Opportunistic refresh when the user opens Networking — the replacement for
-  // the retired 12 h schedule. Fires once per mount and only when usable; the
-  // sidecar throttles it to CONTACT_SYNC_MIN_INTERVAL_MINUTES, so navigating
-  // in and out cannot turn into a request loop. A ref (not state) so a re-render
-  // between the guard and the call cannot double-fire it.
-  const autoSyncedRef = useRef(false);
-  useEffect(() => {
-    if (!canSync || autoSyncedRef.current) return;
-    autoSyncedRef.current = true;
-    sync.mutate(false);
-    // `sync` is a stable mutation object; re-running on it would defeat the ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSync]);
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
   const [audienceFilter, setAudienceFilter] = useState<AudienceTag | null>(null);
   const [search, setSearch] = useState("");
@@ -110,6 +189,25 @@ export function Networking() {
   const [active, setActive] = useState<NetContact | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const reachOut = useReachOut();
+
+  // The ONE send path (useReachOut → POST /api/referrals/reach-out), owned here
+  // so it outlives the modal that asked for it. A send is meant to be WATCHED
+  // (vision: transparency; the live view is the point of the broker surface),
+  // so starting one closes the composer and opens the LinkedIn browser modal
+  // before the operation's first step — the maintainer sees the whole send,
+  // not its aftermath.
+  function startSend(contactId: string, message: string) {
+    reachOut.mutate(
+      { contacts: [{ contact_id: contactId, message }] },
+      {
+        onError: (err) =>
+          setError(err instanceof Error ? err.message : t("networking.sendError")),
+      },
+    );
+    setActive(null);
+    linkedinBrowser.open();
+  }
 
   // Move a contact between kanban columns by patching its connection_status to
   // the drop target (US-NW-07). The server allows every column→column
@@ -151,94 +249,126 @@ export function Networking() {
     return rows;
   }, [contacts, companyFilter, audienceFilter, search]);
 
-  const firstDeg = scoped.filter((c) => c.connection_degree === 1).length;
-  const secondDeg = scoped.filter((c) => c.connection_degree === 2).length;
-
   const pill = session.data?.enabled ? linkedInStatusPill(session.data.status) : null;
+  // A live/queued op wins the button's face (the recording-style pulse): the
+  // user sees "in progress" whatever the session chip would otherwise say.
+  // Expired/never-connected clicks land on Settings — the connect flow lives
+  // there — every other state opens the browser modal.
+  const laneBusy =
+    opBusy(linkedinBrowser.ops.current) || linkedinBrowser.ops.queued.length > 0;
   const connState = pill
-    ? { cls: PILL_CLS[pill.tone], label: t(PILL_LABEL[pill.state]) }
+    ? laneBusy
+      ? {
+          cls: PILL_CLS.good,
+          label: t("networking.linkedinPill.inProgress"),
+          live: true,
+          opensModal: true,
+        }
+      : {
+          cls: PILL_CLS[pill.tone],
+          label: t(PILL_LABEL[pill.state]),
+          live: false,
+          opensModal: pill.state !== "expired" && pill.state !== "disconnected",
+        }
     : null;
 
   return (
     <>
-      {/* Contacts / Browser tab bar — only when Referral Outreach is on; a
-          single-tab bar would be noise for the always-on kanban otherwise. */}
-      {enabled && (
-        <div
-          className="flex items-center gap-1 border-b border-border bg-surface px-5"
-          role="tablist"
-          data-testid="networking-tabs"
-        >
-          {(["contacts", "browser"] as const).map((tb) => (
-            <button
-              key={tb}
-              type="button"
-              role="tab"
-              aria-selected={view === tb}
-              data-testid={`networking-tab-${tb}`}
-              onClick={() => setView(tb)}
-              className={
-                "border-b-2 px-3 py-2 text-[12.5px] " +
-                (view === tb
-                  ? "border-accent font-medium text-ink"
-                  : "border-transparent text-ink-3 hover:text-ink")
-              }
-            >
-              {t(`networking.tabs.${tb}`)}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {enabled && view === "browser" ? (
-        // The core browser surface, pointed at the add-on's LinkedIn slug. The
-        // shared component never names the vendor — the slug is passed in here.
-        <BrowserSurface surface={LINKEDIN_SURFACE_SLUG} />
-      ) : (
-        <>
       <header className="flex min-h-[48px] items-center gap-3 border-b border-border bg-surface px-5">
         <h1 className="text-[14px] font-semibold text-ink">{t("nav.networking")}</h1>
         <div className="ml-auto flex items-center gap-3">
+          {/* FIXED footprint (h-[30px] w-[170px] — maintainer, 2026-08-16):
+              the label changes with the state, the button's box never does,
+              so the header stops shifting as statuses come and go. */}
           {connState && (
-            <span
+            <button
+              type="button"
               data-testid="linkedin-state-pill"
-              title={t("networking.linkedinPill.title")}
-              className={`inline-flex h-[22px] items-center gap-[5px] rounded-full border px-2 text-[11.5px] font-medium ${connState.cls}`}
+              title={t(
+                connState.opensModal
+                  ? "networking.linkedinPill.titleOpen"
+                  : "networking.linkedinPill.titleSettings",
+              )}
+              onClick={() => {
+                if (connState.opensModal) linkedinBrowser.open();
+                else void navigate("/settings");
+              }}
+              className={`inline-flex h-[30px] w-[170px] shrink-0 items-center gap-[6px] rounded-full border px-3 text-[11.5px] font-medium hover:opacity-85 ${connState.cls}`}
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-current" />
-              {connState.label}
-            </span>
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full bg-current ${
+                  connState.live ? "animate-pulse" : ""
+                }`}
+              />
+              <span className="truncate">{connState.label}</span>
+            </button>
           )}
-          {/* Sync is the ONLY way LinkedIn contact statuses refresh, alongside
-              the throttled on-open refresh in the effect above. There is no
-              background timer (`docs/internal/linkedin-addon.md` section 5). Shown
-              only when the feature is usable, so it never reads as a dead
+          {/* Contact statuses refresh ONE way: this Sync button. No on-open
+              refresh, no background timer (`docs/internal/linkedin-addon.md`
+              section 5; manual-only per the maintainer, 2026-08-15). It only
+              appears when the feature is usable, so it never reads as a dead
               control on an install that never enabled Referral Outreach. */}
-          {canSync && (
-            <button
-              type="button"
-              data-testid="sync-contacts-btn"
-              onClick={() => sync.mutate(true)}
-              disabled={sync.isPending}
-              title={t("networking.sync.title")}
-              className="inline-flex h-[22px] items-center gap-[5px] rounded-full border border-border px-2 text-[11.5px] font-medium text-ink-2 hover:text-ink disabled:opacity-60"
-            >
-              {sync.isPending ? t("networking.sync.busy") : t("networking.sync.label")}
-            </button>
-          )}
-          {/* Paste-a-URL reach-out (opt-in only): files the contact on the
-              kanban, then opens the per-action confirm composer. */}
-          {enabled && (
-            <button
-              type="button"
-              data-testid="reach-out-by-url-button"
-              onClick={() => setReachOpen(true)}
-              className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
-            >
-              <Icon name="share" size={14} strokeWidth={2} />
-              {t("networking.reachByUrl.open")}
-            </button>
-          )}
+          {/* ONE merged control at a FIXED footprint (h-[30px] w-[240px] —
+              maintainer, 2026-08-16: the stamp and the warn pill beside the
+              button kept resizing the header): the status lives INSIDE the
+              button — exactly one of the running note, the stopped reason
+              (amber text, full reason + stamp in its tooltip), or the
+              "Synced Nm ago" stamp — truncated, never moving the box. */}
+          {canSync && (() => {
+            const ago = syncedAgo(session.data?.contact_sync_last_at ?? null);
+            const agoText = ago
+              ? t("networking.sync.lastSynced", {
+                  when: t(ago.key, ago.n === undefined ? undefined : { n: ago.n }),
+                })
+              : null;
+            const outcome = session.data?.contact_sync_last_outcome ?? null;
+            const stoppedKey = syncBusy ? null : syncStoppedKey(outcome);
+            const stoppedText = stoppedKey
+              ? t(stoppedKey) +
+                (outcome && outcome.unprobed > 0
+                  ? ` · ${t("networking.sync.notChecked", { n: outcome.unprobed })}`
+                  : "")
+              : null;
+            return (
+              <button
+                type="button"
+                data-testid="sync-contacts-btn"
+                onClick={() => sync.mutate()}
+                disabled={syncBusy}
+                title={t("networking.sync.title")}
+                className="inline-flex h-[30px] w-[240px] shrink-0 items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Icon
+                  name="refreshCw"
+                  size={14}
+                  strokeWidth={2}
+                  className={syncBusy ? "shrink-0 animate-spin" : "shrink-0"}
+                />
+                <span className="shrink-0">{t("networking.sync.label")}</span>
+                {syncBusy ? (
+                  <span className="min-w-0 truncate text-[11px] font-normal text-ink-3">
+                    {t("networking.sync.running")}
+                  </span>
+                ) : stoppedText ? (
+                  <span
+                    data-testid="sync-stopped-note"
+                    title={agoText ? `${stoppedText} · ${agoText}` : stoppedText}
+                    className="min-w-0 truncate text-[11px] font-normal text-warn"
+                  >
+                    {stoppedText}
+                  </span>
+                ) : agoText ? (
+                  <span
+                    data-testid="last-synced-stamp"
+                    title={t("networking.sync.title")}
+                    className="min-w-0 truncate text-[11px] font-normal text-ink-3"
+                  >
+                    {agoText}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })()}
           {/* Master Resume: shared launcher, one spot left of the Deleted+Add
               cluster — pixel-aligned with the Job Board / Applications tabs. */}
           <MasterResumeLauncher />
@@ -257,21 +387,11 @@ export function Networking() {
       </header>
 
       {/* Row 2 — view modifiers, styled like the Job Board / Applications
-          filter row: connection-count context on the left, labeled filter
-          groups + "|" separators + trailing Search on the right. */}
-      <FilterBar
-        left={
-          <>
-            <span className="inline-flex h-[22px] items-center gap-[5px] rounded-full border border-good bg-good-wash px-2 text-[11.5px] font-medium text-good">
-              <span className="h-1.5 w-1.5 rounded-full bg-good" />
-              {t("networking.connectionCount", { count: scoped.length })}
-            </span>
-            <span className="inline-flex h-[22px] items-center rounded-full border border-border bg-surface-3 px-2 font-mono text-[11px] text-ink-2">
-              {t("networking.degreeSummary", { first: firstDeg, second: secondDeg })}
-            </span>
-          </>
-        }
-      >
+          filter row: labeled filter groups + "|" separators + trailing
+          Search. The old connection-count/degree chips are gone (maintainer,
+          2026-08-16: the two numbers counted different populations and read
+          as a mismatch). */}
+      <FilterBar>
         <FilterGroup label={t("networking.filters.company")}>
           <select
             value={companyFilter ?? ""}
@@ -316,7 +436,7 @@ export function Networking() {
         data-testid="networking-kanban"
       >
         {COLUMNS.map((col) => {
-          const cards = scoped.filter((c) => c.connection_status === col.id);
+          const cards = sortColumn(scoped.filter((c) => c.connection_status === col.id));
           return (
             <div
               key={col.id}
@@ -330,7 +450,7 @@ export function Networking() {
                   <span className={`h-1.5 w-1.5 rounded-full ${col.dot}`} />
                   {t(col.label)}
                 </span>
-                <span className="rounded bg-surface-3 px-1.5 font-mono text-[11px] text-ink-3">
+                <span className="rounded bg-surface-3 px-1.5 text-[11px] text-ink-3">
                   {cards.length}
                 </span>
               </div>
@@ -354,8 +474,20 @@ export function Networking() {
         })}
       </main>
 
-      {/* Drag-move failure toast — the update mutation reports rejections here
-          rather than failing silently. */}
+      {addOpen && <AddContactModal onClose={() => setAddOpen(false)} />}
+      {deletedOpen && <DeletedContactsModal onClose={() => setDeletedOpen(false)} />}
+      {active && (
+        <ContactDetailModal
+          contact={active}
+          onClose={() => setActive(null)}
+          onSend={(message) => startSend(active.id, message)}
+        />
+      )}
+
+      {/* Failure toast (drag moves, send enqueues) — mutations report their
+          rejections here rather than failing silently. Outside the tab switch
+          on purpose: a send flips the view to Browser, and its error must not
+          vanish with the Contacts render. */}
       {error ? (
         <div
           role="alert"
@@ -368,13 +500,6 @@ export function Networking() {
           </button>
         </div>
       ) : null}
-
-      {addOpen && <AddContactModal onClose={() => setAddOpen(false)} />}
-      {deletedOpen && <DeletedContactsModal onClose={() => setDeletedOpen(false)} />}
-      {active && <ContactDetailModal contact={active} onClose={() => setActive(null)} />}
-      {reachOpen && <ReachOutByUrlModal onClose={() => setReachOpen(false)} />}
-        </>
-      )}
     </>
   );
 }
@@ -440,40 +565,101 @@ function ContactCard({
         </div>
       </div>
       {days != null && (
-        <div className="font-mono text-[10.5px] text-ink-3">
+        <div className="text-[10.5px] text-ink-3">
           {t("networking.card.inStatus", {
             duration: days === 0 ? t("networking.card.today") : t("networking.card.days", { n: days }),
             status: c.connection_status,
           })}
         </div>
       )}
-      {c.last_message && (
-        <div className="rounded-md border border-border bg-surface-3/70 px-2 py-1.5 text-[11px] leading-snug text-ink-3">
-          <span className="text-[10px] font-semibold text-ink-2">{t("networking.card.you")}</span>{" "}
-          <span className="italic">&ldquo;{c.last_message.slice(0, 90)}{c.last_message.length > 90 ? "…" : ""}&rdquo;</span>
-        </div>
-      )}
+      {c.last_message && (() => {
+        const attr = lastMessageAttribution(c);
+        return (
+          <div
+            data-testid="contact-last-message"
+            className="rounded-md border border-border bg-surface-3/70 px-2 py-1.5 text-[11px] leading-snug text-ink-3"
+          >
+            <span className="text-[10px] font-semibold text-ink-2">
+              {t(attr.key, attr.name === undefined ? undefined : { name: attr.name })}
+            </span>{" "}
+            <span className="italic">&ldquo;{c.last_message.slice(0, 90)}{c.last_message.length > 90 ? "…" : ""}&rdquo;</span>
+          </div>
+        );
+      })()}
     </button>
   );
 }
 
-function ContactDetailModal({ contact, onClose }: { contact: NetContact; onClose: () => void }) {
+// One deliberate "Send" and no second dialog (maintainer, 2026-08-15): this
+// modal IS the per-action review surface — it names the recipient (title),
+// shows the editable message, and states the real channel plus the
+// irreversibility right beside the button — so the single click satisfies the
+// P1 per-action-confirmation invariant without a redundant re-ask.
+function ContactDetailModal({
+  contact,
+  onClose,
+  onSend,
+}: {
+  contact: NetContact;
+  onClose: () => void;
+  onSend: (message: string) => void;
+}) {
   const { t } = useTranslation();
+  const linkedinBrowser = useLinkedInBrowser();
+  const viewInBrowser = useViewInBrowser();
   const update = useUpdateContact();
+  const session = useLinkedInSession();
+  // The stage-aware composer sends through the one gated path (the parent's
+  // useReachOut), so it only surfaces behind the Referral Outreach opt-in —
+  // the always-on kanban itself never sends anything.
+  const composeEnabled = Boolean(session.data?.enabled);
+
   return (
     <Modal title={contact.name} onClose={onClose} width={520}>
       <div className="flex flex-col gap-4 px-5 py-5">
         <div className="text-[13px] text-ink-2">
           {contact.current_role} · {contact.current_company}
-          <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className="ml-2 text-accent underline">
+          <button
+            type="button"
+            data-testid="contact-open-linkedin"
+            onClick={() => {
+              // Show the profile on the in-app LinkedIn surface (2026-08-16 —
+              // never an external browser). The view is a QUEUED operation:
+              // it waits behind whatever is driving the surface instead of
+              // interrupting it, and the modal opens to watch either way. A
+              // mutation so a failed enqueue surfaces (MutationErrorBanner),
+              // never a silent nothing.
+              viewInBrowser.mutate({
+                url: contact.linkedin_url,
+                surface: "linkedin",
+                contactId: contact.id,
+              });
+              onClose();
+              linkedinBrowser.open();
+            }}
+            className="ml-2 text-accent underline"
+          >
             {t("networking.detail.linkedin")}
-          </a>
+          </button>
         </div>
-        {contact.last_message && (
-          <div className="rounded-md border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2">
-            <div className="mb-1 text-[10.5px] font-medium text-ink-4">{t("networking.detail.lastMessage")}</div>
-            {contact.last_message}
-          </div>
+        {contact.last_message && (() => {
+          // Same honest attribution as the kanban card: "Me:" or the
+          // contact's first name, never a bare unattributed "Last message".
+          const attr = lastMessageAttribution(contact);
+          return (
+            <div
+              data-testid="contact-modal-last-message"
+              className="rounded-md border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2"
+            >
+              <div className="mb-1 text-[10.5px] font-medium text-ink-4">
+                {t(attr.key, attr.name === undefined ? undefined : { name: attr.name })}
+              </div>
+              {contact.last_message}
+            </div>
+          );
+        })()}
+        {composeEnabled && (
+          <ContactComposer contact={contact} onSubmit={(message) => onSend(message)} />
         )}
         <div className="flex justify-end gap-2">
           <button
@@ -554,88 +740,6 @@ function AddContactModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </form>
-    </Modal>
-  );
-}
-
-// Paste-a-URL reach-out (the maintainer-approved, kanban-free entry point). The
-// contact is filed on the kanban FIRST — there is no send path that doesn't
-// start from a contact — then the existing per-action confirm composer opens
-// over the compose form. Reuses the one send path (`useReachOut`); it never
-// builds a parallel one.
-function ReachOutByUrlModal({ onClose }: { onClose: () => void }) {
-  const { t } = useTranslation();
-  const add = useAddContact();
-  const reachOut = useReachOut();
-  const [url, setUrl] = useState("");
-  const [name, setName] = useState("");
-  const [message, setMessage] = useState("");
-  // The freshly-filed contact; set once "Continue" adds it, which flips the
-  // modal from compose to the per-action confirm overlay.
-  const [contact, setContact] = useState<NetContact | null>(null);
-
-  async function compose() {
-    if (!url.trim() || add.isPending) return;
-    const created = await add.mutateAsync({
-      linkedin_url: url.trim(),
-      name: name.trim(),
-      connection_status: "sent",
-    });
-    setContact(created);
-  }
-
-  async function send() {
-    if (!contact || reachOut.isPending) return;
-    // Job-free reach-out to the new contact (US-NW-09). The confirm above is the
-    // irreversible-action gate; the master toggle already gated this entry.
-    await reachOut.mutateAsync({ contacts: [{ contact_id: contact.id, message }] });
-    onClose();
-  }
-
-  return (
-    <Modal title={t("networking.reachByUrl.title")} onClose={onClose} width={520}>
-      <form
-        data-testid="reach-out-by-url-form"
-        onSubmit={(e) => { e.preventDefault(); void compose(); }}
-        className="flex flex-col gap-3 px-5 py-5"
-      >
-        <p className="text-[12.5px] text-ink-3">{t("networking.reachByUrl.blurb")}</p>
-        <Field label={t("networking.reachByUrl.urlLabel")}>
-          <input data-testid="reach-out-by-url-input" type="url" required value={url} onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.linkedin.com/in/sarah-tan"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
-        </Field>
-        <Field label={t("networking.reachByUrl.nameLabel")}>
-          <input data-testid="reach-out-by-url-name" value={name} onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none" />
-        </Field>
-        <Field label={t("networking.reachByUrl.messageLabel")}>
-          <textarea data-testid="reach-out-by-url-message" value={message} onChange={(e) => setMessage(e.target.value)} rows={4}
-            placeholder={t("networking.reachByUrl.messagePlaceholder")}
-            className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-[13px] leading-relaxed text-ink focus:border-accent focus:outline-none" />
-        </Field>
-        <div className="mt-1 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="h-[30px] rounded-md border border-border bg-surface px-3 text-[12.5px] text-ink-2 hover:bg-surface-2">
-            {t("networking.reachByUrl.cancel")}
-          </button>
-          <button type="submit" data-testid="reach-out-by-url-submit" disabled={add.isPending}
-            className="h-[30px] rounded-md border border-accent bg-accent px-3 text-[12.5px] font-medium text-white hover:bg-accent-ink disabled:opacity-60">
-            {t("networking.reachByUrl.submit")}
-          </button>
-        </div>
-      </form>
-      {/* Per-action confirm — the exact note that will be sent (US-NW-09 /
-          posture doc section 5.1). A new contact is a cold invite + note. */}
-      {contact && (
-        <ReachOutConfirm
-          name={contact.name || url.trim()}
-          channel="connection_note"
-          message={message}
-          sending={reachOut.isPending}
-          onCancel={() => setContact(null)}
-          onSend={() => void send()}
-        />
-      )}
     </Modal>
   );
 }

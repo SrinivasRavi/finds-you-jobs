@@ -1,8 +1,16 @@
 // Browser surface (browser broker, commit 1) — paints the sidecar's headless
-// Chrome into a canvas over the screencast WebSocket, with a URL bar to drive
-// it. Vendor-agnostic and parameterized: `surface` names which broker surface to
-// attach to (omitted → the dev `/browser` route's generic `default`; a vendor
-// slug is passed by the add-on that mounts it, e.g. the Networking Browser tab).
+// Chrome into a canvas over the screencast WebSocket. Vendor-agnostic and
+// parameterized: `surface` names which broker surface to attach to (omitted →
+// the dev `/browser` route's generic `default`; a vendor slug is passed by the
+// add-on that mounts it).
+//
+// WATCH-ONLY (maintainer, 2026-08-16): the bar is a read-only view of the live
+// page URL — users watch the agent work, they don't steer the surface, so
+// there is no typable URL field to interrupt an operation with. `origin`
+// (optional) is the surface's home: when the attach status reports no page
+// yet, the surface auto-opens it (`autoHome`, on by default) so the canvas is
+// never dead blank. The origin is a runtime argument the mounting add-on
+// passes; this component still names no site of its own.
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,22 +21,31 @@ import {
   type ScreencastState,
 } from "../api/screencast";
 
-export function BrowserSurface({ surface }: { surface?: string }) {
+export function BrowserSurface({
+  surface,
+  origin,
+  autoHome = true,
+}: {
+  surface?: string;
+  origin?: string;
+  autoHome?: boolean;
+}) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const clientRef = useRef<ScreencastClient | null>(null);
-  // The URL bar starts empty (the surface opens on about:blank) and then tracks
-  // the live page, so it shows where the surface actually is — not a fixed seed.
-  const [url, setUrl] = useState("");
-  // True while the user is editing the bar, so a page navigation mid-typing does
-  // not clobber their text. A submit clears it, letting the resolved URL (after
-  // any redirect) settle back into the bar.
-  const editingRef = useRef(false);
   const [state, setState] = useState<ScreencastState>("connecting");
   const [frames, setFrames] = useState(0);
   const [pageUrl, setPageUrl] = useState("");
   const [error, setError] = useState("");
+  // Set when the attach status says the surface has no page yet ("" URL);
+  // cleared the moment any page URL lands. While set (and `autoHome` allows),
+  // the effect below opens the frozen origin so the canvas is never dead blank.
+  const [needsHome, setNeedsHome] = useState(false);
+  // The socket effect reads these through refs so prop changes never tear the
+  // socket down (its dependency is the surface slug alone).
+  const originRef = useRef(origin);
+  originRef.current = origin;
 
   useEffect(() => {
     // Newest-frame-wins decode. createImageBitmap is async and the stream runs
@@ -73,7 +90,16 @@ export function BrowserSurface({ surface }: { surface?: string }) {
       },
       onControl: (msg: ScreencastControl) => {
         if (msg.type === "status") {
-          if (msg.url) setPageUrl(msg.url);
+          if (msg.url) {
+            setPageUrl(msg.url);
+            setNeedsHome(false);
+          } else if (msg.state === "streaming" && originRef.current) {
+            // The attach status says the surface still sits on its launch
+            // about:blank — with a frozen origin that means "open home"
+            // (gated on `autoHome` by the effect below, so it never yanks a
+            // surface an operation is about to drive).
+            setNeedsHome(true);
+          }
           setError("");
         } else {
           setError(msg.message);
@@ -105,10 +131,16 @@ export function BrowserSurface({ surface }: { surface?: string }) {
   }, [surface]);
 
   useEffect(() => {
-    // Reflect the live page URL in the bar, unless the user is mid-edit (their
-    // typing wins until they submit or leave the field).
-    if (pageUrl && !editingRef.current) setUrl(pageUrl);
-  }, [pageUrl]);
+    // Auto-open the frozen origin over a pageless surface ("always on, never a
+    // blank canvas"). `needsHome` comes only from the attach status, so a page
+    // that is already somewhere is never re-navigated; `autoHome={false}` (the
+    // add-on passes it while one of its operations is queued or running on this
+    // surface) defers the open until the lane is quiet again. Idempotent: the
+    // origin navigation publishes a URL, which clears `needsHome`.
+    if (origin && autoHome && needsHome) {
+      clientRef.current?.sendNavigate(origin);
+    }
+  }, [origin, autoHome, needsHome]);
 
   useEffect(() => {
     // Keep the remote viewport the size of the box we paint it into. Queued
@@ -126,34 +158,20 @@ export function BrowserSurface({ surface }: { surface?: string }) {
 
   return (
     <>
+      {/* The bar is a READ-ONLY view of where the surface is (maintainer,
+          2026-08-16): users watch the referral outreach agent, they don't
+          steer it — a typable bar invited mid-operation navigation and the
+          unexpected states that come with it. No heading either; where this
+          surface mounts, the tab above already names it. */}
       <header className="flex min-h-[48px] items-center gap-3 border-b border-border bg-surface px-5">
-        <h1 className="text-[14px] font-semibold text-ink">{t("browser.title")}</h1>
-        <form
-          className="flex flex-1 items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            editingRef.current = false;  // let the resolved URL settle back in
-            clientRef.current?.sendNavigate(url);
-          }}
+        <span
+          className="min-w-0 flex-1 truncate text-[12.5px] text-ink-2"
+          data-testid="screencast-page-url"
+          title={pageUrl || undefined}
         >
-          <input
-            data-testid="browser-url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onFocus={() => { editingRef.current = true; }}
-            onBlur={() => { editingRef.current = false; }}
-            placeholder={t("browser.urlPlaceholder")}
-            className="w-full max-w-xl rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink focus:border-accent focus:outline-none"
-          />
-          <button
-            type="submit"
-            data-testid="browser-go"
-            className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
-          >
-            {t("browser.go")}
-          </button>
-        </form>
-        <span className="text-[12px] text-ink-3">
+          {pageUrl || t("browser.noPage")}
+        </span>
+        <span className="shrink-0 text-[12px] text-ink-3">
           {/* `state` stays the raw enum ("live" / "connecting"): tests and the
               broker's own vocabulary assert on it, so it is not translated. */}
           <span data-testid="screencast-status">{state}</span> ·{" "}
@@ -176,9 +194,6 @@ export function BrowserSurface({ surface }: { surface?: string }) {
             className="h-full w-full object-contain"
           />
         </div>
-        <p className="truncate text-[12px] text-ink-3" data-testid="screencast-page-url">
-          {pageUrl || t("browser.noPage")}
-        </p>
       </main>
     </>
   );

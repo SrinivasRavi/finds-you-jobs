@@ -18,7 +18,7 @@ import {
   type InfiniteData,
   type QueryClient,
 } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
@@ -908,18 +908,75 @@ export function useResumeLinkedIn() {
   return useLinkedInSessionMutation(() => api.resumeLinkedIn());
 }
 
-/** Refresh contact statuses from LinkedIn (FR-NW-15). Pass `true` for the Sync
- *  button (always runs); `false`/omitted is the opportunistic refresh the
- *  Networking surface fires on open, which the sidecar throttles. Replaces the
- *  retired 12 h schedule — no LinkedIn traffic happens without a user present
+/** Refresh contact statuses from LinkedIn (FR-NW-15). Manual-only: the Sync
+ *  button is the one caller (maintainer decision, 2026-08-15) — the on-open
+ *  refresh and the 12 h schedule before it are both retired, so no LinkedIn
+ *  traffic happens unless the user presses Sync
  *  (`docs/internal/linkedin-addon.md` section 5). */
 export function useSyncContacts() {
   return useMutation({
-    mutationFn: (force?: boolean) => Promise.resolve(api.syncContacts(Boolean(force))),
+    mutationFn: () => Promise.resolve(api.syncContacts()),
     // No invalidation here: a 202 means the sync hasn't touched a contact yet.
     // The SSE terminal handler (contact_sync → invalidateNetworkingLists) does
     // the refetch when the op actually finishes.
   });
+}
+
+/** Queue a `view_page` operation that shows a page on the browser surface
+ *  (2026-08-16). No invalidation: the queue panel tracks the op off the SSE
+ *  operation events. A mutation, not a bare api call, ON PURPOSE — the old
+ *  fire-and-forget swallowed its failure, so a click against a sidecar
+ *  without the route showed nothing anywhere; now the global
+ *  MutationErrorBanner nets it. */
+export function useViewInBrowser() {
+  return useMutation({
+    mutationFn: (args: { url: string; surface?: string; contactId?: string }) =>
+      api.viewInBrowser(args.url, args.surface, args.contactId),
+  });
+}
+
+/** True while a `contact_sync` operation is genuinely in flight (queued or
+ *  running). The POST above answers 202 the moment the sweep is enqueued, but
+ *  the sweep itself runs for a while in the background (paced read probes), so
+ *  the Sync button's busy state must follow the OPERATION, not the request:
+ *  SSE operation events drive this from enqueue to terminal, and a ledger read
+ *  seeds a sweep already in flight at mount (tab switch, reload, or a join via
+ *  `already_running`). Same tracking pattern as `useBrowserOp`
+ *  (BrowserOpPlan.tsx), scoped to the one kind. */
+export function useContactSyncInFlight(): boolean {
+  const [op, setOp] = useState<{ id: string; state: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listLedger()
+      .then((rows) => {
+        if (cancelled) return;
+        const live = rows.find(
+          (r) => r.kind === "contact_sync" && (r.state === "queued" || r.state === "running"),
+        );
+        // Seed only when no SSE event has spoken yet — an event-driven value
+        // (even a terminal one) is fresher than this snapshot.
+        if (live) setOp((cur) => cur ?? { id: live.id, state: live.state });
+      })
+      .catch(() => {
+        /* SSE still drives the state; a failed seed just means not busy */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return eventBus.subscribe((ev) => {
+      if (ev.type !== "operation") return;
+      const p = ev.payload;
+      if (p.kind !== "contact_sync") return;
+      setOp({ id: p.id, state: p.state });
+    });
+  }, []);
+
+  return op != null && (op.state === "queued" || op.state === "running");
 }
 
 /** Set the self-imposed LinkedIn rate-limit profile (2026-08-01): membership,
@@ -1142,6 +1199,12 @@ export function useSSEInvalidation(qc: QueryClient): void {
         if (networkingAffecting && terminal) {
           invalidateNetworkingLists();
           if (p.kind === "linkedin_login") {
+            qc.invalidateQueries({ queryKey: qk.linkedinSession });
+          }
+          // A finished sync also refreshes the session snapshot: it carries
+          // `contact_sync_last_at`, the "Synced Nm ago" stamp beside the
+          // manual-only Sync button in the Networking header.
+          if (p.kind === "contact_sync") {
             qc.invalidateQueries({ queryKey: qk.linkedinSession });
           }
         }

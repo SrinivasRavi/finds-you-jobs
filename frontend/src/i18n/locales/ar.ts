@@ -498,16 +498,11 @@ const ar = {
       connecting: "جارٍ الاتصال…",
       backingOff: "تراجع مؤقت",
       connect: "اربط LinkedIn",
-      title: "للقراءة فقط — اربط/فعِّل LinkedIn من الإعدادات",
+      inProgress: "LinkedIn قيد التنفيذ",
+      titleOpen: "افتح متصفح LinkedIn",
+      titleSettings: "اربط LinkedIn من الإعدادات",
     },
     addByUrl: "أضف جهة اتصال عبر URL",
-    connectionCount_zero: "لا جهات اتصال",
-    connectionCount_one: "جهة اتصال واحدة",
-    connectionCount_two: "جهتا اتصال",
-    connectionCount_few: "{{count}} جهات اتصال",
-    connectionCount_many: "{{count}} جهة اتصال",
-    connectionCount_other: "{{count}} جهة اتصال",
-    degreeSummary: "{{first}} درجة أولى · {{second}} درجة ثانية",
     filters: {
       company: "الشركة",
       all: "الكل",
@@ -541,7 +536,6 @@ const ar = {
       today: "اليوم",
       days: "{{n}} يوم",
       inStatus: "{{duration}} في «{{status}}»",
-      you: "أنت:",
     },
     deleted: {
       title: "جهات الاتصال المحذوفة",
@@ -552,7 +546,6 @@ const ar = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "آخر رسالة",
       archive: "حذف",
     },
     add: {
@@ -1070,6 +1063,9 @@ const ar = {
       scanningHint:
         "جارٍ فحص LinkedIn عبر جلستك · عادةً 10–30 ث. إذا كان اسم الشركة ملتبسًا فسنتوقف ونطلب منك تأكيده.",
       emptyConnected: "لم يُعثر على جهات اتصال في هذه الشركة بعد.",
+      refusedTitle: "تم إيقاف البحث مؤقتًا بسبب حدود المعدل التي عيّنتها",
+      refusedBody:
+        "لم يتم فحص LinkedIn بحثًا عن <strong>{{company}}</strong>: نفد حد قراءة مفروض ذاتيًا أو هناك تهدئة نشطة. سيتحرر تلقائيًا مع مرور الوقت — حاول لاحقًا أو عدّل حدودك في الإعدادات ← التواصل.",
       emptyManual:
         "لا جهات اتصال بعد — أضف واحدة عبر URL من صفحة التواصل، أو فعِّل التواصل لطلب التوصيات من الإعدادات لاكتشاف الأشخاص في هذه الشركة تلقائيًا.",
       contactsFound_zero: "لم يُعثر على جهات اتصال",

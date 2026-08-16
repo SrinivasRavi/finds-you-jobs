@@ -51,7 +51,14 @@ export default defineConfig({
     // it, each spec's profile save enqueued an `extract` op that ran a REAL
     // `claude -p` on the dev machine's subscription (2026-07-18 finding) —
     // real tokens, ~10s child subprocesses, shutdown-drain flakes.
-    env: { FYJ_DATA_DIR: E2E_DATA_DIR, FYJ_APPLY_DEV: "1", FYJ_FAKE_LLM: "1" },
+    // FYJ_DATA_DIR honours an explicit caller override (an agent's scratchpad
+    // profile, say) but still always lands on a throwaway dir, never the real
+    // app data.
+    env: {
+      FYJ_DATA_DIR: process.env.FYJ_DATA_DIR ?? E2E_DATA_DIR,
+      FYJ_APPLY_DEV: "1",
+      FYJ_FAKE_LLM: "1",
+    },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

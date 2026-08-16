@@ -476,12 +476,11 @@ const hi: DeepPartial<Messages> = {
       connecting: "जुड़ रहा है…",
       backingOff: "विराम पर",
       connect: "LinkedIn जोड़ें",
-      title: "केवल-पठन — LinkedIn को सेटिंग्स से जोड़ें/चालू करें",
+      inProgress: "LinkedIn चालू है",
+      titleOpen: "LinkedIn ब्राउज़र खोलें",
+      titleSettings: "LinkedIn को सेटिंग्स से जोड़ें",
     },
     addByUrl: "URL से संपर्क जोड़ें",
-    connectionCount_one: "{{count}} कनेक्शन",
-    connectionCount_other: "{{count}} कनेक्शन",
-    degreeSummary: "{{first}} 1st · {{second}} 2nd",
     filters: {
       company: "कंपनी",
       all: "सभी",
@@ -515,7 +514,6 @@ const hi: DeepPartial<Messages> = {
       today: "आज",
       days: "{{n}} दिन",
       inStatus: "{{duration}} से {{status}} में",
-      you: "आप:",
     },
     deleted: {
       title: "हटाए गए संपर्क",
@@ -526,7 +524,6 @@ const hi: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "अंतिम संदेश",
       archive: "हटाएँ",
     },
     add: {
@@ -1024,6 +1021,9 @@ const hi: DeepPartial<Messages> = {
       scanningHint:
         "आपके सेशन से LinkedIn स्कैन हो रहा है · सामान्यतः 10–30 सेकंड। कंपनी का नाम अस्पष्ट हुआ तो हम रुककर आपसे पुष्टि माँगेंगे।",
       emptyConnected: "इस कंपनी में अभी कोई संपर्क नहीं मिला।",
+      refusedTitle: "आपकी दर सीमाओं के कारण खोज रुकी हुई है",
+      refusedBody:
+        "<strong>{{company}}</strong> के लिए LinkedIn स्कैन नहीं हुआ: एक स्व-निर्धारित पठन सीमा खत्म हो गई है या बैकऑफ़ सक्रिय है। समय-खिड़की आगे बढ़ने पर यह अपने आप खुल जाएगी — बाद में फिर आज़माएँ, या Settings → Networking में अपनी सीमाएँ बदलें।",
       emptyManual:
         "अभी कोई संपर्क नहीं — नेटवर्किंग पेज से URL द्वारा एक जोड़ें, या इस कंपनी के लोगों की स्वतः-खोज के लिए सेटिंग्स में रेफ़रल आउटरीच चालू करें।",
       contactsFound_one: "{{count}} संपर्क मिला",

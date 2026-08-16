@@ -9,7 +9,9 @@ import { useTranslation } from "react-i18next";
 import logoUrl from "../assets/logo.png";
 import { Icon } from "./icons";
 
-type IconName = "search" | "briefcase" | "bookmark" | "share" | "barChart" | "file" | "settings";
+type IconName =
+  | "search" | "briefcase" | "bookmark" | "share" | "barChart" | "file"
+  | "settings" | "linkedin";
 
 interface RailItem {
   to: string;
@@ -73,6 +75,8 @@ export function LeftRail() {
   // Networking (the contact CRM + kanban) is always available — it carries no
   // ToS risk. The risk toggle gates only the automated LinkedIn actions
   // (discover/send), inside the surfaces (FR-SET-03 as-built 2026-07-09).
+  // The LinkedIn view left the rail on 2026-08-16: it is a modal now, opened
+  // from the Networking header's status button.
   const top = TOP;
 
   return (

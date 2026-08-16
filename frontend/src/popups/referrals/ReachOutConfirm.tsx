@@ -2,8 +2,11 @@
 // 2026-07-30: the batch "Send {{count}} messages?" confirm went away with the
 // multi-select — each row's Connect/Message button opens this for exactly one
 // person, showing the message that will actually go out (per-contact confirm;
-// posture doc section 5.1). Not memoized: it only mounts while the confirm overlay is
-// open, so there is no tree to shield.
+// posture doc section 5.1). Since 2026-08-16 this is also THE editor for a
+// connected send: the message box is an editable textarea (the maintainer:
+// edit where you confirm, not in a row box that only expands to be revealed).
+// Not memoized: it only mounts while the confirm overlay is open, so there is
+// no tree to shield.
 
 import { Trans, useTranslation } from "react-i18next";
 
@@ -12,6 +15,7 @@ export function ReachOutConfirm({
   channel,
   message,
   sending,
+  onChange,
   onCancel,
   onSend,
 }: {
@@ -19,6 +23,8 @@ export function ReachOutConfirm({
   channel: "dm" | "connection_note";
   message: string;
   sending: boolean;
+  /** Edits flow into the modal's per-contact draft map, so a cancel keeps them. */
+  onChange: (v: string) => void;
   onCancel: () => void;
   onSend: () => void;
 }) {
@@ -34,13 +40,16 @@ export function ReachOutConfirm({
             ? t("popups.referrals.sendConfirmChannelDm")
             : t("popups.referrals.sendConfirmChannelInvite")}
         </p>
-        {/* The exact text that will be sent — confirm what, not just whether. */}
-        <div
-          className="mt-3 max-h-[180px] overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-ink-2"
+        {/* The exact text that will be sent — confirm what, not just whether,
+            and edit it right here (the one place the send actually leaves from). */}
+        <textarea
           data-testid="reach-out-confirm-message"
-        >
-          {message}
-        </div>
+          value={message}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={sending}
+          rows={5}
+          className="mt-3 max-h-[180px] w-full resize-none overflow-y-auto rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-ink-2 focus:border-accent focus:outline-none disabled:opacity-60"
+        />
         <p className="mt-3 text-[12px] text-ink-3">
           <Trans
             i18nKey="popups.referrals.sendConfirmBody"

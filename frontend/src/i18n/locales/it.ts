@@ -474,12 +474,11 @@ const it: DeepPartial<Messages> = {
       connecting: "Connessione…",
       backingOff: "In pausa",
       connect: "Collega LinkedIn",
-      title: "Sola lettura — collega/attiva LinkedIn dalle Impostazioni",
+      inProgress: "LinkedIn in corso",
+      titleOpen: "Apri il browser LinkedIn",
+      titleSettings: "Collega LinkedIn dalle Impostazioni",
     },
     addByUrl: "Aggiungi un contatto tramite URL",
-    connectionCount_one: "{{count}} collegamento",
-    connectionCount_other: "{{count}} collegamenti",
-    degreeSummary: "{{first}} di 1º · {{second}} di 2º",
     filters: {
       company: "Azienda",
       all: "Tutti",
@@ -513,7 +512,6 @@ const it: DeepPartial<Messages> = {
       today: "oggi",
       days: "{{n}}g",
       inStatus: "{{duration}} in {{status}}",
-      you: "Tu:",
     },
     deleted: {
       title: "Contatti eliminati",
@@ -524,7 +522,6 @@ const it: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Ultimo messaggio",
       archive: "Elimina",
     },
     add: {
@@ -1023,6 +1020,9 @@ const it: DeepPartial<Messages> = {
       scanningHint:
         "Scansione di LinkedIn tramite la tua sessione · in genere 10–30 s. Se il nome dell'azienda è ambiguo, ci fermeremo e ti chiederemo di confermarlo.",
       emptyConnected: "Ancora nessun contatto trovato in questa azienda.",
+      refusedTitle: "Ricerca in pausa per i tuoi limiti di frequenza",
+      refusedBody:
+        "LinkedIn non è stato scansionato per <strong>{{company}}</strong>: un limite di lettura auto-imposto è esaurito o è attivo un backoff. Si libera da solo con lo scorrere della finestra — riprova più tardi o regola i limiti in Impostazioni → Networking.",
       emptyManual:
         "Ancora nessun contatto — aggiungine uno tramite URL dalla pagina Rete, oppure attiva Referral Outreach nelle Impostazioni per trovare automaticamente persone in questa azienda.",
       contactsFound_one: "{{count}} contatto trovato",

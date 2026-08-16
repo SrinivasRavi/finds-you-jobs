@@ -479,12 +479,11 @@ const de: DeepPartial<Messages> = {
       connecting: "Wird verbunden…",
       backingOff: "Pausiert",
       connect: "LinkedIn verbinden",
-      title: "Nur Lesen — LinkedIn in den Einstellungen verbinden/aktivieren",
+      inProgress: "LinkedIn läuft",
+      titleOpen: "LinkedIn-Browser öffnen",
+      titleSettings: "LinkedIn in den Einstellungen verbinden",
     },
     addByUrl: "Kontakt per URL hinzufügen",
-    connectionCount_one: "{{count}} Kontakt",
-    connectionCount_other: "{{count}} Kontakte",
-    degreeSummary: "{{first}} 1. · {{second}} 2.",
     filters: {
       company: "Firma",
       all: "Alle",
@@ -518,7 +517,6 @@ const de: DeepPartial<Messages> = {
       today: "heute",
       days: "{{n}} T",
       inStatus: "{{duration}} in {{status}}",
-      you: "Du:",
     },
     deleted: {
       title: "Gelöschte Kontakte",
@@ -529,7 +527,6 @@ const de: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Letzte Nachricht",
       archive: "Löschen",
     },
     add: {
@@ -1025,6 +1022,9 @@ const de: DeepPartial<Messages> = {
       scanningHint:
         "LinkedIn wird über deine Sitzung gescannt · typisch 10–30 s. Ist der Firmenname mehrdeutig, pausieren wir und bitten dich, ihn zu bestätigen.",
       emptyConnected: "Bei dieser Firma wurden noch keine Kontakte gefunden.",
+      refusedTitle: "Suche durch deine Ratenlimits pausiert",
+      refusedBody:
+        "LinkedIn wurde für <strong>{{company}}</strong> nicht durchsucht: ein selbst gesetztes Leselimit ist aufgebraucht oder ein Backoff ist aktiv. Es gibt sich von selbst wieder frei, sobald das Zeitfenster weiterrollt — versuch es später erneut oder passe deine Limits unter Einstellungen → Networking an.",
       emptyManual:
         "Noch keine Kontakte — füge einen per URL auf der Netzwerk-Seite hinzu oder schalte Referral Outreach in den Einstellungen ein, um Leute bei dieser Firma automatisch zu finden.",
       contactsFound_one: "{{count}} Kontakt gefunden",

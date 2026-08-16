@@ -29,10 +29,12 @@ import {
   useReachOut,
   useReferralCandidates,
   useReferralQuota,
+  useViewInBrowser,
 } from "../api/queries";
 import type { CompanyCandidate } from "../api/types";
 import i18n from "../i18n";
 import { Modal } from "../shell/Modal";
+import { useLinkedInBrowser } from "../surfaces/LinkedInBrowserProvider";
 import { CandidateRow } from "./referrals/CandidateRow";
 import { CompanyConfirmStep } from "./referrals/CompanyConfirmStep";
 import { QuotaBar } from "./referrals/QuotaBar";
@@ -53,6 +55,31 @@ function omit(map: Record<string, string>, id: string): Record<string, string> {
 }
 
 type Phase = "start" | "searching" | "confirm" | "review";
+
+/** How long a just-clicked row keeps its Sending badge even when a refetched
+ *  candidates payload (fetched before the 202 landed) doesn't list it yet. */
+export const SEND_CLICK_GRACE_MS = 15_000;
+
+/** The Sending set after a fresh candidates payload: the server's in-flight
+ *  contacts, plus rows clicked within the grace window (their op may postdate
+ *  the payload). Everything else drops — a missed terminal SSE event must
+ *  never wedge a row on "Sending" forever. Pure; exported for its unit
+ *  tests. */
+export function reconcileSendingIds(
+  prev: Set<string>,
+  inFlight: string[] | undefined,
+  clickedAt: Map<string, number>,
+  now: number,
+): Set<string> {
+  const next = new Set(inFlight ?? []);
+  const cutoff = now - SEND_CLICK_GRACE_MS;
+  for (const id of prev) {
+    const t = clickedAt.get(id);
+    if (t !== undefined && t > cutoff) next.add(id);
+  }
+  if (next.size === prev.size && [...next].every((id) => prev.has(id))) return prev;
+  return next;
+}
 
 export function ReferralsModal({
   jobId,
@@ -159,6 +186,15 @@ export function ReferralsModal({
         void candidatesQ.refetch();
         return;
       }
+      // Voyager refused the read (self-imposed cap / backoff) — nothing was
+      // scanned. Land in review; the empty state renders the verbatim reason
+      // via discover_state === "refused" (never "no contacts found").
+      if (p.phase === "discover_refused") {
+        setDiscovering(false);
+        void candidatesQ.refetch();
+        setPhase((cur) => (cur === "confirm" ? cur : "review"));
+        return;
+      }
       if (!p.contact_id) return;
       if (p.phase === "sent") {
         setSendingIds((prev) => remove(prev, p.contact_id as string));
@@ -204,6 +240,12 @@ export function ReferralsModal({
           if (!cancelled) setPhase("confirm");
           return;
         }
+        // A refused discover (cap/backoff) reopens onto the honest refusal
+        // state in review, not a blank start screen.
+        if (data?.discover_state === "refused") {
+          if (!cancelled) setPhase("review");
+          return;
+        }
         // Empty roster: idle `start` screen with an explicit Find-referrals
         // button (its copy notes when a prior scan found nobody). Nothing
         // scans until the user asks.
@@ -239,6 +281,28 @@ export function ReferralsModal({
     // discovery ran — don't clobber it with review.
     setPhase((cur) => (cur === "confirm" ? cur : "review"));
   }
+
+  // RECONCILE the per-row Sending state against the sidecar's in-flight send
+  // ops on every candidates refresh (2026-08-16). Two failure modes this
+  // covers at once: a send started here still shows (with its
+  // View-in-browser jump) after the popup is closed and reopened, AND a row
+  // can never wedge on "Sending" when the terminal SSE event was missed (a
+  // reconnect gap — or dev HMR — swallowed it; the live 08-16 stuck row).
+  // Server truth wins; the only local additions kept are clicks fresh enough
+  // that the refetched payload may predate their 202 (`SEND_CLICK_GRACE_MS`).
+  const clickedAtRef = useRef<Map<string, number>>(new Map());
+  const candidatesData = candidatesQ.data;
+  useEffect(() => {
+    if (!candidatesData) return;
+    setSendingIds((prev) =>
+      reconcileSendingIds(
+        prev,
+        candidatesData.in_flight_contact_ids,
+        clickedAtRef.current,
+        Date.now(),
+      ),
+    );
+  }, [candidatesData]);
 
   // Seed each row's editable draft once, when the full connected review list
   // first lands (US-NW-09). (No pre-selection any more — there is no selection;
@@ -277,6 +341,32 @@ export function ReferralsModal({
     setDrafts((d) => ({ ...d, [id]: v }));
   }, []);
 
+  // A row's LinkedIn button: show the contact on the in-app LinkedIn browser
+  // modal (2026-08-16 — never an external browser). The view is a QUEUED
+  // operation, so it can never interrupt a running send — but while THAT
+  // row's send is in flight the surface is already showing the contact, so
+  // don't even enqueue a pointless view; just go watch. A mutation so a
+  // failed enqueue surfaces (MutationErrorBanner), never a silent nothing.
+  // Close-then-open: the referrals popup is itself a modal, and the browser
+  // dialog replaces it rather than stacking on it.
+  const linkedinBrowser = useLinkedInBrowser();
+  const viewInBrowser = useViewInBrowser();
+  const handleOpenLinkedIn = useCallback(
+    (id: string) => {
+      const target = candidates.find((c) => c.contact_id === id);
+      if (target?.linkedin_url && !sendingIds.has(id)) {
+        viewInBrowser.mutate({
+          url: target.linkedin_url,
+          surface: "linkedin",
+          contactId: id,
+        });
+      }
+      onClose();
+      linkedinBrowser.open();
+    },
+    [candidates, sendingIds, viewInBrowser, linkedinBrowser, onClose],
+  );
+
   async function doReachOut(contactId: string) {
     // Dedup guard: ignore a repeated Send now while THIS contact is in flight
     // (the sidecar also skips duplicates, but this stops the click from firing).
@@ -287,7 +377,10 @@ export function ReferralsModal({
     // Immediate feedback: the row shows a Sending badge before the request
     // resolves; the SSE outcome flips it to Reached/failed. The list stays on
     // screen — pacing spaces real sends 30-90 s apart, so a full-screen
-    // "sending…" takeover would just hide the roster for minutes.
+    // "sending…" takeover would just hide the roster for minutes. The click
+    // time feeds the reconcile's grace window (a refetch racing the 202 must
+    // not strip this fresh badge).
+    clickedAtRef.current.set(contactId, Date.now());
     setSendingIds((prev) => new Set(prev).add(contactId));
     setFailures((prev) => omit(prev, contactId));
     try {
@@ -522,6 +615,32 @@ export function ReferralsModal({
                     </div>
                   </div>
                 </div>
+              ) : connected && candidatesQ.data?.discover_state === "refused" ? (
+                // The scan was REFUSED (self-imposed cap / backoff), not run.
+                // Saying "no contacts found" here is what hid the Kaseya bug —
+                // show the verbatim pacer reason instead.
+                <div
+                  className="flex h-full flex-col items-center justify-center gap-3 px-8 py-16 text-center"
+                  data-testid="referrals-refused"
+                >
+                  <div className="max-w-md">
+                    <div className="text-[14px] font-semibold text-ink">
+                      {t("popups.referrals.refusedTitle")}
+                    </div>
+                    <div className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3">
+                      <Trans
+                        i18nKey="popups.referrals.refusedBody"
+                        values={{ company }}
+                        components={{ strong: <strong className="text-ink-2" /> }}
+                      />
+                    </div>
+                  </div>
+                  {candidatesQ.data.refusal_reason && (
+                    <code className="rounded bg-surface-2 px-2 py-1 text-[11.5px] text-ink-2">
+                      {candidatesQ.data.refusal_reason}
+                    </code>
+                  )}
+                </div>
               ) : (
               <div className="flex h-full items-center justify-center px-8 text-center text-[13px] text-ink-3">
                 {connected
@@ -549,6 +668,7 @@ export function ReferralsModal({
                   onAsk={handleAsk}
                   onExpand={handleExpand}
                   onDraft={handleDraft}
+                  onOpenLinkedIn={handleOpenLinkedIn}
                 />
               ))
             ))}
@@ -618,6 +738,7 @@ export function ReferralsModal({
             channel={c.channel}
             message={drafts[c.contact_id] ?? c.draft}
             sending={reachOut.isPending || sendingIds.has(c.contact_id)}
+            onChange={(v) => handleDraft(c.contact_id, v)}
             onCancel={() => setConfirmingId(null)}
             onSend={() => void doReachOut(c.contact_id)}
           />

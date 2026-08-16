@@ -469,11 +469,11 @@ const ja: DeepPartial<Messages> = {
       connecting: "接続中…",
       backingOff: "一時停止中",
       connect: "LinkedInを接続",
-      title: "読み取り専用 — 設定からLinkedInを接続・有効化してください",
+      inProgress: "LinkedIn実行中",
+      titleOpen: "LinkedInブラウザを開く",
+      titleSettings: "設定からLinkedInを接続してください",
     },
     addByUrl: "URLでコンタクトを追加",
-    connectionCount_other: "{{count}}人のつながり",
-    degreeSummary: "1次 {{first}} · 2次 {{second}}",
     filters: {
       company: "企業",
       all: "すべて",
@@ -507,7 +507,6 @@ const ja: DeepPartial<Messages> = {
       today: "今日",
       days: "{{n}}日",
       inStatus: "{{status}}で{{duration}}",
-      you: "あなた:",
     },
     deleted: {
       title: "削除したコンタクト",
@@ -518,7 +517,6 @@ const ja: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "最新メッセージ",
       archive: "削除",
     },
     add: {
@@ -1009,6 +1007,9 @@ const ja: DeepPartial<Messages> = {
       scanningHint:
         "あなたのセッション経由でLinkedInをスキャン中 · 通常10〜30秒。企業名が曖昧な場合は一時停止し、確認をお願いします。",
       emptyConnected: "この企業のコンタクトはまだ見つかっていません。",
+      refusedTitle: "レート上限により検索を一時停止しました",
+      refusedBody:
+        "<strong>{{company}}</strong> の LinkedIn スキャンは実行されませんでした。自己設定の読み取り上限を使い切ったか、バックオフが有効です。時間経過で自動的に回復します — 後でもう一度試すか、設定 → ネットワーキングで上限を調整してください。",
       emptyManual:
         "コンタクトはまだありません — 人脈ページからURLで追加するか、設定でリファラルアウトリーチをオンにしてこの企業の人を自動発見してください。",
       contactsFound_other: "{{count}}人のコンタクトが見つかりました",

@@ -495,12 +495,12 @@ const pl: DeepPartial<Messages> = {
       connecting: "Łączenie…",
       backingOff: "Wstrzymano",
       connect: "Połącz LinkedIn",
-      title: "Tylko do odczytu — połącz/włącz LinkedIn w Ustawieniach",
+      inProgress: "LinkedIn w toku",
+      titleOpen: "Otwórz przeglądarkę LinkedIn",
+      titleSettings: "Połącz LinkedIn w Ustawieniach",
     },
     addByUrl: "Dodaj kontakt z URL",
-    connectionCount_one: "{{count}} kontakt",
-    ...{ connectionCount_few: "{{count}} kontakty", connectionCount_many: "{{count}} kontaktów" },
-    degreeSummary: "{{first}} 1. st. · {{second}} 2. st.",
+    ...{ connectionCount_many: "{{count}} kontaktów" },
     filters: {
       company: "Firma",
       all: "Wszystkie",
@@ -534,7 +534,6 @@ const pl: DeepPartial<Messages> = {
       today: "dziś",
       days: "{{n}} d",
       inStatus: "{{duration}} w: {{status}}",
-      you: "Ty:",
     },
     deleted: {
       title: "Usunięte kontakty",
@@ -545,7 +544,6 @@ const pl: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "Ostatnia wiadomość",
       archive: "Usuń",
     },
     add: {
@@ -1062,6 +1060,9 @@ const pl: DeepPartial<Messages> = {
       scanningHint:
         "Skanowanie LinkedIn przez twoją sesję · zwykle 10–30 s. Jeśli nazwa firmy okaże się niejednoznaczna, zatrzymamy się i poprosimy o potwierdzenie.",
       emptyConnected: "Nie znaleziono jeszcze kontaktów w tej firmie.",
+      refusedTitle: "Wyszukiwanie wstrzymane przez Twoje limity tempa",
+      refusedBody:
+        "LinkedIn nie został przeskanowany dla <strong>{{company}}</strong>: samodzielnie ustawiony limit odczytów jest wyczerpany albo aktywny jest backoff. Zwolni się sam wraz z przesuwaniem się okna — spróbuj później lub zmień limity w Ustawienia → Networking.",
       emptyManual:
         "Brak kontaktów — dodaj kogoś z URL na stronie Networking albo włącz Referral Outreach w Ustawieniach, aby automatycznie znajdować osoby w tej firmie.",
       contactsFound_one: "Znaleziono {{count}} kontakt",
