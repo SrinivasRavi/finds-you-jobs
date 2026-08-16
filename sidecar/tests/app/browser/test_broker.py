@@ -1,17 +1,22 @@
 """Covers: the browser-session broker's contract (`sidecar/app/browser`).
 
-No real Chrome. A fake CDP session, page, context and Playwright handle go in
-through the broker's `opener` seam, so the tests drive the real surface thread,
-the real cross-thread marshalling and the real ack accounting — everything the
-broker actually owns — with only the browser itself faked.
+No real Chrome (except the two `test_real_*` cases). A fake CDP session, page,
+context and Playwright handle go in through the broker's `opener` seam, so the
+tests drive the real surface thread, the real cross-thread marshalling and the
+real ack accounting — everything the broker actually owns — with only the
+browser itself faked.
 
 The three things worth breaking a build over:
 
-- **Exactly one ack per frame.** Chrome captures the next frame only once the
-  previous one is acked, so a missing ack stalls the stream forever and a double
-  ack lets capture outrun the viewer.
-- **Shipped frames are acked after the flush, dropped ones at once.**
-- **Drop the newest**, never the queued frame the viewer is already sending.
+- **Exactly one ack per frame, at capture.** Chrome captures the next frame
+  only once the previous one is acked, so a missing ack stalls the stream
+  forever and a double ack lets capture outrun the viewer.
+- **The ack never waits for the run loop.** A driver op is one long lane
+  action; an ack the run loop has to drain freezes the stream for its whole
+  length (the watchability defect, fixed 2026-08-15).
+- **Keep the newest**: overflow evicts the older queued frame — a viewer of a
+  live surface always wants the freshest capture, and acked frames carry no
+  debt.
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ import pytest
 from sidecar.app.browser import BrowserBroker, BrowserLaunchError, Frame, Viewer
 from sidecar.app.browser import broker as broker_module
 from sidecar.app.browser import launch as launch_module
-from sidecar.app.browser.broker import SurfaceSession
+from sidecar.app.browser.broker import BrowserSurface, SurfaceSession
 
 FRAME_BYTES = b"\xff\xd8\xff\xe0-not-really-a-jpeg"
 # A de-headlessed Chrome UA, standing in for the throwaway-launch resolution so
@@ -264,33 +269,31 @@ async def test_the_launcher_gets_the_guardrailed_kwargs(
     assert "--disable-blink-features=AutomationControlled" in kwargs["args"]
 
 
-async def test_delivered_frame_is_acked_only_after_the_viewer_flushes(
+async def test_frames_are_acked_at_capture_and_delivered(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
+    """The ack goes out the moment the frame event runs on the surface thread —
+    never deferred to a queue the run loop drains, which is what froze the
+    stream for the length of every lane action (module docstring)."""
     surface = broker.surface("pane-a")
     await surface.wait_ready()
     viewer = Viewer()
     surface.set_viewer(viewer)
 
     fake.emit(11)
+    assert await _until(lambda: fake.cdp.acked == [11])
     assert await _until(lambda: not viewer.queue.empty())
     frame = viewer.queue.get_nowait()
     assert isinstance(frame, Frame)
     assert frame.jpeg == FRAME_BYTES and frame.session_id == 11
     assert (frame.width, frame.height) == (1280, 800)
 
-    # Ordering: the frame is in the viewer's hands and still NOT acked. Acking
-    # on delivery instead would let capture outrun the websocket.
-    await asyncio.sleep(0.05)
-    assert fake.cdp.acked == []
 
-    surface.ack(frame.session_id)
-    assert await _until(lambda: fake.cdp.acked == [11])
-
-
-async def test_full_viewer_queue_drops_the_newest_and_acks_it_at_once(
+async def test_full_viewer_queue_keeps_the_newest_frame(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
+    """Overflow evicts the OLDER queued frame: frames carry no ack debt now, and
+    a viewer of a live surface always wants the freshest capture."""
     surface = broker.surface("pane-a")
     await surface.wait_ready()
     viewer = Viewer()
@@ -300,29 +303,32 @@ async def test_full_viewer_queue_drops_the_newest_and_acks_it_at_once(
     assert await _until(viewer.queue.full)
     fake.emit(22, data=b"second")
 
-    # The queued frame stays (it is already on its way out); the newest one goes
-    # and is acked immediately, so the screencast never stalls.
-    assert await _until(lambda: fake.cdp.acked == [22])
-    assert viewer.queue.get_nowait().jpeg == b"first"
-    await asyncio.sleep(0.05)
-    assert fake.cdp.acked == [22]
+    assert await _until(lambda: fake.cdp.acked == [21, 22])
+    assert await _until(viewer.queue.full)
+    assert viewer.queue.get_nowait().jpeg == b"second"
 
 
 async def test_frames_with_no_viewer_are_acked_and_dropped(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
-    await broker.surface("pane-a").wait_ready()
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
 
     fake.emit(31)
     fake.emit(32)
     assert await _until(lambda: fake.cdp.acked == [31, 32])
+    # Nothing was held back for a later viewer: an attach starts clean.
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+    await asyncio.sleep(0.05)
+    assert viewer.queue.empty()
 
 
-async def test_detaching_a_viewer_acks_what_it_never_sent(
+async def test_detach_stops_delivery_without_stalling_capture(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
-    """A socket that dies holding a frame must not leave the screencast waiting
-    on an ack nobody is left to send."""
+    """A socket that dies mid-frame costs nothing: its frame was acked at
+    capture, so Chrome keeps capturing and only delivery stops."""
     surface = broker.surface("pane-a")
     await surface.wait_ready()
     viewer = Viewer()
@@ -331,7 +337,45 @@ async def test_detaching_a_viewer_acks_what_it_never_sent(
     fake.emit(41)
     assert await _until(viewer.queue.full)
     surface.detach(viewer)
-    assert await _until(lambda: fake.cdp.acked == [41])
+    fake.emit(42)
+    assert await _until(lambda: fake.cdp.acked == [41, 42])
+    # The detached viewer got nothing new; 41 (already delivered) is all it has.
+    assert viewer.queue.get_nowait().session_id == 41
+    assert viewer.queue.empty()
+
+
+async def test_frames_keep_flowing_while_a_lane_action_holds_the_surface_thread(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """THE watchability invariant (maintainer priority, 2026-08-15): a driver op
+    is ONE long lane action — a referral send navigates and types for tens of
+    seconds without returning to the run loop — and the frames Chrome captures
+    mid-action must be acked mid-action, or the live view freezes on a stale
+    frame for the whole op. The frame handler fires from inside the action's own
+    page calls (Playwright dispatches events there), so the ack must complete
+    before the action ends, never wait for the run loop."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+
+    acked_mid_action: list[int] = []
+
+    def long_action(session: SurfaceSession) -> str:
+        # Chrome hands two frames to the handler while the action still runs,
+        # exactly as a real send's typing repaints the page.
+        session.cdp.handlers["Page.screencastFrame"](_frame_params(81, data=b"early"))
+        session.cdp.handlers["Page.screencastFrame"](_frame_params(82, data=b"late"))
+        acked_mid_action.extend(fake.cdp.acked)
+        return "done"
+
+    assert await asyncio.wrap_future(surface.run_on_lane(long_action)) == "done"
+    # Both frames were acked BEFORE the action returned — capture never stalled.
+    assert acked_mid_action == [81, 82]
+    # The offers were queued to the loop ahead of the action's own completion
+    # wake-up, so by now the slot deterministically holds the freshest frame.
+    assert viewer.queue.get_nowait().session_id == 82
+    assert viewer.queue.empty()
 
 
 async def test_navigate_and_evaluate_run_on_the_surface_thread(
@@ -347,6 +391,92 @@ async def test_navigate_and_evaluate_run_on_the_surface_thread(
     assert await asyncio.wrap_future(navigated) == "https://example.test/page"
     assert await asyncio.wrap_future(evaluated) == "evaluated:1 + 1"
     assert fake.page.calls == [("goto", "https://example.test/page"), ("evaluate", "1 + 1")]
+
+
+async def test_navigation_publishes_the_committed_url_to_the_viewer(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """The viewer hears about the committed URL from the surface's own watcher,
+    not only from the websocket's navigate echo."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+
+    await asyncio.wrap_future(surface.set_geometry(1280, 800, 2.0))
+    await asyncio.wrap_future(surface.navigate("https://example.test/page"))
+    assert await _until(lambda: not viewer.urls.empty())
+    assert viewer.urls.get_nowait() == "https://example.test/page"
+
+
+async def test_spontaneous_url_change_is_published_without_a_navigate(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """A driver-driven navigation or an in-page SPA route change moves
+    `page.url` with no viewer command — the watcher must still publish it."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+
+    fake.page.url = "https://example.test/spa-route"
+    assert await _until(lambda: not viewer.urls.empty())
+    assert viewer.urls.get_nowait() == "https://example.test/spa-route"
+
+    # Only CHANGES are published — the same URL never repeats on the wire.
+    await asyncio.sleep(0.05)
+    assert viewer.urls.empty()
+
+
+def test_offer_url_drops_the_old_for_the_newest() -> None:
+    """URL overflow keeps the NEWEST (the opposite of frames): a superseded URL
+    is worthless, and there is no ack to account for."""
+    viewer = Viewer()
+    BrowserSurface._offer_url(viewer, "https://example.test/old")  # noqa: SLF001
+    BrowserSurface._offer_url(viewer, "https://example.test/new")  # noqa: SLF001
+    assert viewer.urls.qsize() == 1
+    assert viewer.urls.get_nowait() == "https://example.test/new"
+
+
+async def test_blank_urls_are_never_published(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """`about:blank` (the fresh surface) and an empty URL are "no page yet",
+    not destinations — the viewer must not see them."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+
+    fake.page.url = "about:blank"
+    await asyncio.sleep(0.05)
+    assert viewer.urls.empty()
+
+    fake.page.url = "https://example.test/real"
+    assert await _until(lambda: not viewer.urls.empty())
+    assert viewer.urls.get_nowait() == "https://example.test/real"
+
+
+async def test_late_viewer_is_seeded_with_the_current_url(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """A viewer that attaches after the page is already somewhere (a reconnect,
+    a tab re-mount) is told where it is at once — never "no page yet" over a
+    live page."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+
+    fake.page.url = "https://example.test/already-here"
+    # No viewer yet: the URL lands in the surface's own record.
+    assert await _until(lambda: surface._page_url != "")  # noqa: SLF001
+
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+    assert viewer.urls.get_nowait() == "https://example.test/already-here"
+    # The same record is what the websocket quotes in its attach status, so a
+    # client can tell "no page yet" from "page already here" without racing the
+    # URL pump.
+    assert surface.page_url == "https://example.test/already-here"
 
 
 async def test_run_on_lane_runs_an_arbitrary_callable_on_the_surface_thread(
@@ -643,8 +773,8 @@ async def test_a_stale_detach_never_mutes_the_viewer_that_took_over(
 ) -> None:
     """Two sockets on one slug. The second attach takes the surface over; when
     the first later closes, its detach is checked by identity and does nothing,
-    so it can't mute the second — and every frame is acked exactly once across
-    the swap."""
+    so it can't mute the second — and every frame is acked exactly once, at
+    capture."""
     surface = broker.surface("pane-a")
     await surface.wait_ready()
 
@@ -653,32 +783,28 @@ async def test_a_stale_detach_never_mutes_the_viewer_that_took_over(
     fake.emit(61)
     assert await _until(first.queue.full)  # frame 61 sits in the first viewer
 
-    # A second socket attaches on the same slug. It takes over, and the first
-    # viewer's in-flight frame is acked exactly once as it is dropped.
+    # A second socket attaches on the same slug and takes over. The first
+    # viewer keeps its already-delivered frame (no ack debt to settle).
     second = Viewer()
     surface.set_viewer(second)
-    assert await _until(lambda: fake.cdp.acked == [61])
-    assert first.queue.empty()
 
     # New frames now go to the current viewer, the second one.
     fake.emit(62)
     assert await _until(second.queue.full)
-    assert first.queue.empty()
+    assert first.queue.get_nowait().session_id == 61
 
     # The first socket now closes and detaches by identity. Because the second
     # viewer took over, this stale detach clears nothing: the second stays
-    # current and its in-flight frame is left untouched, never re-acked.
+    # current and its in-flight frame is left untouched.
     surface.detach(first)
     assert second.queue.get_nowait().session_id == 62
-    surface.ack(62)
 
     # The second viewer still receives after the stale detach.
     fake.emit(63)
     assert await _until(second.queue.full)
     assert second.queue.get_nowait().session_id == 63
-    surface.ack(63)
 
-    # Exactly once each, in order: the stale detach added no duplicate ack.
+    # Exactly once each, in order, at capture.
     assert await _until(lambda: fake.cdp.acked == [61, 62, 63])
 
 
@@ -738,5 +864,66 @@ async def test_real_surface_driving_primitives_over_cdp(tmp_path: Path) -> None:
         # persist_profile: an explicit storage-state snapshot lands on disk.
         await asyncio.wrap_future(surface.persist_profile())
         assert surface.storage_state_path.is_file()
+    finally:
+        broker.shutdown()
+
+
+async def test_real_screencast_stays_live_through_a_long_lane_action(
+    tmp_path: Path,
+) -> None:
+    """The watchability fix against REAL Chrome: one lane action holds the
+    surface thread while it clicks and types into a page — the exact shape of a
+    referral send — and screencast frames must keep arriving at the viewer
+    THROUGHOUT. Under the old ack-after-flush design the ack queue drained only
+    between lane actions, so the stream froze after a single frame for the
+    length of every driver op (the maintainer watched a DM send as a still
+    image, 2026-08-15). A `data:` page and local typing only; no network."""
+    pytest.importorskip("playwright.sync_api")
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=5.0,
+    )
+    surface = broker.surface("pane-a")
+    try:
+        try:
+            await surface.wait_ready(timeout_seconds=60)
+        except BrowserLaunchError as exc:  # pragma: no cover — CI without Chrome
+            pytest.skip(f"real Chrome unavailable: {exc}")
+
+        viewer = Viewer()
+        surface.set_viewer(viewer)
+        await asyncio.wrap_future(surface.set_geometry(1280, 800, 1.0))
+        await asyncio.wrap_future(
+            surface.navigate(
+                "data:text/html,<html><body><textarea id='box' rows='8' cols='40'>"
+                "</textarea></body></html>"
+            )
+        )
+
+        def drive(session: Any) -> str:
+            # The driver's shape: focus, then type character by character with
+            # real key events and pauses, all inside ONE lane action that never
+            # returns to the run loop until the whole message is in.
+            session.page.locator("#box").click()
+            for ch in "watch me type this, live":
+                session.page.keyboard.type(ch)
+                session.page.wait_for_timeout(40)
+            return session.page.locator("#box").input_value()
+
+        wrapped = asyncio.ensure_future(asyncio.wrap_future(surface.run_on_lane(drive)))
+        frames_during = 0
+        while not wrapped.done():
+            try:
+                frame = await asyncio.wait_for(viewer.queue.get(), timeout=0.25)
+            except TimeoutError:
+                continue
+            assert frame.jpeg[:2] == b"\xff\xd8"  # a real JPEG
+            frames_during += 1
+        assert await wrapped == "watch me type this, live"
+        # More than one frame arrived while the action still ran: the typing was
+        # genuinely watchable. The old design could deliver at most one.
+        assert frames_during > 1
     finally:
         broker.shutdown()

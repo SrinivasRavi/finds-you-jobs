@@ -189,7 +189,7 @@ def test_quota_snapshot_reads_the_same_ledger_the_send_path_charges(
     monkeypatch.setattr(ops, "linkedin_state_dir", lambda: state)
     monkeypatch.setattr(pacing, "send_delay_seconds", lambda: 0.0)
     monkeypatch.setattr(
-        actions, "send_connection_request", lambda s, p, note="": ("pending", "")
+        actions, "send_connection_request", lambda s, p, note="", on_step=None: ("pending", "")
     )
 
     class _Inline:

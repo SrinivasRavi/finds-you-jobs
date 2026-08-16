@@ -70,7 +70,7 @@ class NetworkerEventPayload(_EventPayload):
     """Referral-outreach progress (networker_ops / contact_sync / linkedin_op).
 
     Phases published today: synced, needs_company_confirm, candidate,
-    discovered, sent, send_failed, auto_archived.
+    discovered, sending, sent, send_failed, auto_archived.
     """
 
     id: str  # the publishing operation's id

@@ -119,6 +119,8 @@ def resolve(
             if r.get("urn")
         ]
         return ResolveResult(company=company, candidates=candidates,
+                             error=str(raw.get("error") or ""),
+                             reason=str(raw.get("reason") or ""),
                              usage=Usage(internal_calls=1))
     finally:
         drv.close()
@@ -148,6 +150,8 @@ def discover(
         rows = raw.get("contacts", []) or []
         contacts = [_contact_from_raw(r) for r in rows]
         return DiscoverResult(company=company, contacts=contacts,
+                              error=str(raw.get("error") or ""),
+                              reason=str(raw.get("reason") or ""),
                               usage=Usage(internal_calls=1))
     finally:
         drv.close()
@@ -242,9 +246,15 @@ def send(
     driver: VoyagerDriver | None = None,
     *,
     dry_run: bool = False,
+    on_step: Callable[[str], None] | None = None,
 ) -> SendResult:
     """Send `message` to `contact` via the voyager subprocess (US-REF-04 /
     FR-NW-03). Warm → DM; cold → connection-request-with-note. Zero-LLM.
+
+    `on_step`, when given, receives each completed send step's key (the
+    `dm1..dm4` / `invite1..invite5` plan the host's queue panel renders) as
+    the driver finishes it — real progress, reported from the code driving
+    the page (2026-08-16).
 
     A voyager-reported not-sent (cap hit / backoff / UI failure) returns a
     SendResult with `sent=False` + the verbatim reason; only a subprocess crash
@@ -256,10 +266,13 @@ def send(
     drv = driver or DirectVoyagerDriver()
     try:
         if channel.value == "dm":
-            raw = drv.send_dm(contact.public_identifier, message, dry_run=dry_run)
+            raw = drv.send_dm(
+                contact.public_identifier, message, dry_run=dry_run, on_step=on_step
+            )
         else:
             raw = drv.send_connection(
-                contact.public_identifier, note=message, dry_run=dry_run
+                contact.public_identifier, note=message, dry_run=dry_run,
+                on_step=on_step,
             )
         return _send_result_from_raw(raw, contact, channel, dry_run)
     finally:
@@ -315,6 +328,8 @@ def probe(
             is_first_degree=bool(raw.get("is_first_degree", degree == 1)),
             last_message_direction=raw.get("last_message_direction") or "",
             last_message_at=raw.get("last_message_at"),
+            last_message_text=raw.get("last_message_text") or "",
+            last_message_from=raw.get("last_message_from") or "",
             usage=Usage(internal_calls=1),
         )
     finally:
@@ -325,15 +340,25 @@ def probe_batch(
     contacts: list[Contact],
     driver: VoyagerDriver | None = None,
     *,
+    urns: dict[str, str] | None = None,
+    thread_only: set[str] | None = None,
     dry_run: bool = False,
 ) -> list[ProbeResult]:
     """Probe many contacts' live LinkedIn state in ONE browser session (US-NW-12
     / FR-NW-15). Zero-LLM, READ-ONLY — one `contact-sync-states` driver call
     instead of a browser launch/quit cycle per contact.
 
-    Returns one ProbeResult per PROBED contact, in input order. The worker stops
-    the sweep on the first rate-limit/cap refusal or auth failure, so the list
-    may be shorter than `contacts` — the stop reason rides on the last result
+    `urns` maps public_identifier → the contact's cached fsd_profile urn (from
+    an earlier probe's `target_urn`); `thread_only` names the contacts whose
+    degree question is settled. A contact in both runs as an UNMETERED
+    thread-only probe off the sweep's one inbox read; the rest are full paced
+    profile probes, and each full probe's result carries the `target_urn` it
+    resolved for the caller to cache.
+
+    Returns one ProbeResult per PROBED contact — thread-only probes first, NOT
+    input order (join by `public_identifier`). The worker stops the sweep on
+    the first rate-limit/cap refusal or auth failure, so the list may be
+    shorter than `contacts` — the stop reason rides on the last result
     (`ok=False`, `error`, verbatim `reason`); untouched contacts get no result.
     A hard driver failure raises NetworkerError, exactly like `probe`."""
     for contact in contacts:
@@ -341,21 +366,33 @@ def probe_batch(
             raise NetworkerError("probe", "contact.public_identifier is required")
     if not contacts:
         return []
+    urns = urns or {}
+    thread_pids = thread_only or set()
     drv = driver or DirectVoyagerDriver()
     try:
         raw = drv.contact_sync_states(
-            [c.public_identifier for c in contacts], dry_run=dry_run
+            [
+                {
+                    "public_identifier": c.public_identifier,
+                    "urn": urns.get(c.public_identifier, ""),
+                    "thread_only": c.public_identifier in thread_pids,
+                }
+                for c in contacts
+            ],
+            dry_run=dry_run,
         )
         results: list[ProbeResult] = []
-        entries = raw.get("results") or []
-        for contact, entry in zip(contacts, entries, strict=False):
+        for entry in raw.get("results") or []:
             degree = entry.get("degree")
             results.append(ProbeResult(
-                public_identifier=contact.public_identifier,
+                public_identifier=str(entry.get("public_identifier") or ""),
                 degree=degree,
                 is_first_degree=bool(entry.get("is_first_degree", degree == 1)),
                 last_message_direction=entry.get("last_message_direction") or "",
                 last_message_at=entry.get("last_message_at"),
+                last_message_text=entry.get("last_message_text") or "",
+                last_message_from=entry.get("last_message_from") or "",
+                target_urn=str(entry.get("target_urn") or ""),
                 ok=bool(entry.get("ok", False)),
                 error=str(entry.get("error") or ""),
                 reason=str(entry.get("reason") or ""),

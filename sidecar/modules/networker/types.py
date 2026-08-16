@@ -110,19 +110,33 @@ class CompanyCandidate:
 class ResolveResult:
     """Output of one resolve() operation — ranked company entities for a name.
     Zero-LLM (one voyager typeahead call, plus optional per-candidate website
-    lookups when a domain anchor is supplied)."""
+    lookups when a domain anchor is supplied).
+
+    `error`/`reason` carry a voyager refusal (`cap_or_backoff` / `rate_limited`)
+    verbatim when the typeahead never ran — an empty `candidates` with a set
+    `error` means "refused", never "no such company" (the Kaseya 0-contact bug:
+    a spent read budget rendered as an honest empty roster)."""
 
     company: str
     candidates: list[CompanyCandidate] = field(default_factory=list)
+    error: str = ""
+    reason: str = ""
     usage: Usage = field(default_factory=Usage)
 
 
 @dataclass
 class DiscoverResult:
-    """Output of one discover() operation (US-REF-01). Zero-LLM."""
+    """Output of one discover() operation (US-REF-01). Zero-LLM.
+
+    `error`/`reason` mirror SendResult: a voyager refusal (`cap_or_backoff` /
+    `rate_limited`) rides here verbatim, so an empty `contacts` with a set
+    `error` is a refusal — the host must never present it as "nobody works
+    here"."""
 
     company: str
     contacts: list[Contact] = field(default_factory=list)
+    error: str = ""
+    reason: str = ""
     usage: Usage = field(default_factory=Usage)
 
 
@@ -169,7 +183,8 @@ class ProbeResult:
     The live LinkedIn state the sync engine maps onto the kanban lifecycle:
     connection degree (1 ⇒ connected/accepted) plus the 1:1 thread's last-message
     direction (`them` = they replied last; `me` = our message is last; `""` = no
-    readable history) and its timestamp (epoch seconds). Explicit-empty-allowed —
+    readable history) and its timestamp (epoch seconds), text, and the contact's
+    display name (the card/modal display pair; "" = unread). Explicit-empty-allowed —
     a read miss leaves the message fields empty/None (no transition this tick).
 
     `ok`/`error`/`reason` carry the per-contact outcome from the batched sweep
@@ -182,6 +197,12 @@ class ProbeResult:
     is_first_degree: bool = False
     last_message_direction: str = ""  # them | me | "" (none)
     last_message_at: float | None = None
+    last_message_text: str = ""  # the thread's last message body ("" = none read)
+    last_message_from: str = ""  # the contact's thread display name ("" = unknown)
+    # The contact's fsd_profile urn the probe resolved ("" = not resolved). The
+    # host caches it per contact so later sweeps can answer the thread question
+    # from the one inbox read alone — an unmetered thread-only probe.
+    target_urn: str = ""
     ok: bool = True
     error: str = ""
     reason: str = ""

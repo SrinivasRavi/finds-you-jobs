@@ -567,11 +567,12 @@ def test_disconnect_clears_the_search_cursor(paged_search_client) -> None:
     assert cur is None
 
 
-# --- user-initiated contact sync (FR-NW-15) --------------------------------
+# --- manual-only contact sync (FR-NW-15) -----------------------------------
 # contact_sync used to be a 12 h schedule that touched LinkedIn with nobody
-# present. It is now user-initiated only: an explicit Sync button (force=true)
-# plus a throttled opportunistic refresh when the Networking surface opens.
-# See `docs/internal/linkedin-addon.md` section 5.
+# present, then briefly a Sync button plus a throttled on-open refresh. It is
+# now manual-only (maintainer decision, 2026-08-15): the Sync button is the
+# one caller, with an already-running join guard and no throttle. See
+# `docs/internal/linkedin-addon.md` section 5 and `docs/internal/status.md`.
 
 
 def test_contact_sync_is_not_a_seeded_schedule(app_client) -> None:
@@ -612,23 +613,94 @@ def test_contact_sync_runs_when_enabled_and_connected(app_client) -> None:
     assert body["id"]
 
 
-def test_opportunistic_refresh_is_throttled_but_the_button_is_not(app_client) -> None:
+def test_repeat_sync_presses_are_never_throttled(app_client) -> None:
+    """Manual-only means no throttle path: with nothing in flight, every press
+    queues a fresh sweep — the user asked for it."""
     _app, client = app_client
     _connect(_app, client)
     first = client.post("/api/networking/contact-sync", headers=AUTH).json()
     wait_for_state(_app.state.db, first["id"], "succeeded")
 
-    # Surface re-open (force absent → false): declined, with a next-eligible time.
-    throttled = client.post("/api/networking/contact-sync", headers=AUTH).json()
-    assert throttled["state"] == "throttled"
-    assert throttled["id"] is None
+    again = client.post("/api/networking/contact-sync", headers=AUTH).json()
+    assert again["state"] == "queued"
+    assert again["id"]
 
-    # The user pressing Sync overrides the throttle — they asked for it.
-    forced = client.post(
-        "/api/networking/contact-sync?force=true", headers=AUTH
-    ).json()
-    assert forced["state"] == "queued"
-    assert forced["id"]
+
+def test_a_running_sync_is_joined_not_duplicated(app_client) -> None:
+    """The already_running guard survives the throttle removal: a press while a
+    sweep is in flight joins it (no second op, no id)."""
+    _app, client = app_client
+    _connect(_app, client)
+    # An in-flight row planted directly (not via the runner, so it stays live).
+    with _app.state.db.repos() as repos:
+        row = repos.operations.create("contact_sync", {})
+        repos.operations.mark_running(row.id)
+
+    joined = client.post("/api/networking/contact-sync", headers=AUTH).json()
+    assert joined["state"] == "already_running"
+    assert joined["id"] is None
+
+
+# --- the honest sync stamp + outcome (2026-08-16) ---------------------------
+# The 2026-08-15 live confusion: a spent read budget refused every sweep in
+# ~10 ms, each op "succeeded" with synced 0, and the header stamped "Synced
+# just now" — the user reasonably read Sync as broken. The stamp now claims
+# only sweeps that actually probed (or cleanly checked an empty roster), and
+# the newest attempt's outcome rides the session DTO for the header to show.
+
+
+def _plant_sync_op(app, result_ref: dict) -> None:
+    with app.state.db.repos() as repos:
+        row = repos.operations.create("contact_sync", {})
+        repos.operations.mark_running(row.id)
+        repos.operations.mark_succeeded(row.id, result_ref=result_ref)
+
+
+def test_refused_sweep_does_not_restamp_synced(app_client) -> None:
+    _app, client = app_client
+    _connect(_app, client)
+    _plant_sync_op(_app, {"synced": 3, "failed": 0, "frozen": 0, "batch": 3,
+                          "transitions": {}})
+    real_at = client.get("/api/linkedin/session", headers=AUTH).json()[
+        "contact_sync_last_at"]
+    assert real_at is not None
+
+    _plant_sync_op(_app, {"synced": 0, "failed": 0, "frozen": 0, "batch": 3,
+                          "transitions": {}, "stopped": "cap_or_backoff",
+                          "unprobed": 2})
+    body = client.get("/api/linkedin/session", headers=AUTH).json()
+    # The stamp still points at the sweep that actually probed …
+    assert body["contact_sync_last_at"] == real_at
+    # … while the newest attempt's refusal is surfaced beside it.
+    outcome = body["contact_sync_last_outcome"]
+    assert outcome["stopped"] == "cap_or_backoff"
+    assert outcome["synced"] == 0
+    assert outcome["unprobed"] == 2
+
+
+def test_clean_sweep_stamps_and_reports_clean_outcome(app_client) -> None:
+    _app, client = app_client
+    _connect(_app, client)
+    _plant_sync_op(_app, {"synced": 2, "failed": 1, "frozen": 0, "batch": 3,
+                          "transitions": {"accepted->engagement": 1}})
+    body = client.get("/api/linkedin/session", headers=AUTH).json()
+    assert body["contact_sync_last_at"] is not None
+    outcome = body["contact_sync_last_outcome"]
+    assert outcome["stopped"] == ""
+    assert outcome["synced"] == 2
+    assert outcome["failed"] == 1
+
+
+def test_gate_skipped_noop_neither_stamps_nor_reports(app_client) -> None:
+    """A disabled-toggle/no-session no-op is not a sync attempt the header
+    should narrate."""
+    _app, client = app_client
+    _connect(_app, client)
+    _plant_sync_op(_app, {"synced": 0, "skipped": "networking_disabled",
+                          "transitions": {}})
+    body = client.get("/api/linkedin/session", headers=AUTH).json()
+    assert body["contact_sync_last_at"] is None
+    assert body["contact_sync_last_outcome"] is None
 
 
 # --- caps + self-imposed rate-limit profile (posture doc section 4 fixes 7 + 10;
@@ -794,3 +866,41 @@ def test_login_op_self_gates_even_if_enqueued(app_client) -> None:
     assert outcome.result_ref is not None
     assert outcome.result_ref["skipped"] == "no_linkedin_feature_enabled"
     assert outcome.result_ref["connected"] is False
+
+
+# --- the LinkedIn view's supporting routes (2026-08-16) ---------------------
+
+
+def test_browser_open_is_retired(app_client) -> None:
+    """The immediate-navigation /api/browser/open is GONE (2026-08-16): every
+    user page-view rides the op queue via POST /api/browser/view instead
+    (test_view_page_op.py), so a click can never race a running op."""
+    _app, client = app_client
+    resp = client.post("/api/browser/open", headers=AUTH,
+                       json={"url": "https://www.linkedin.com/in/x/"})
+    assert resp.status_code == 404
+
+
+def test_live_send_progress_rides_the_ledger(app_client) -> None:
+    """A queued/running send op's routed channel + completed steps ride the
+    ledger row (`progress`), so a queue panel mounting mid-send can render
+    the fine steps it missed on SSE (2026-08-16)."""
+    from sidecar.app.registry import networker_ops
+
+    _app, client = app_client
+    with _app.state.db.repos() as repos:
+        row = repos.operations.create("send", {"contact_id": "c1"})
+        repos.operations.mark_running(row.id)
+    networker_ops.SEND_PROGRESS[row.id] = {
+        "channel": "connection_note", "steps": ["invite1", "invite2"],
+    }
+    try:
+        rows = client.get("/api/operations", headers=AUTH).json()
+        mine = next(r for r in rows if r["id"] == row.id)
+        assert mine["progress"] == {
+            "channel": "connection_note", "steps": ["invite1", "invite2"],
+        }
+    finally:
+        networker_ops.SEND_PROGRESS.pop(row.id, None)
+        with _app.state.db.repos() as repos:
+            repos.operations.mark_failed(row.id, error="test cleanup")

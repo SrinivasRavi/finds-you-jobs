@@ -1,9 +1,11 @@
 """Live browser surface over a websocket (`GET /api/browser/screencast`).
 
 Binary messages are one JPEG screencast frame each. Text messages are JSON
-control in both directions: the server sends `status` and `error`, the client
-sends `viewport` (once, on open, carrying its real display geometry), `navigate`
-and `resize`. Which surface a socket attaches to is a `?surface=` slug the client
+control in both directions: the server sends `status` and `error` (a
+`status{url}` is pushed on EVERY committed main-frame URL change — driver-driven
+and in-page SPA navigations included, plus the echo after a typed navigate), the
+client sends `viewport` (once, on open, carrying its real display geometry),
+`navigate` and `resize`. Which surface a socket attaches to is a `?surface=` slug the client
 passes, never a name this file knows
 (`docs/internal/plugin-architecture.md` section 8.1 rule 5).
 
@@ -77,42 +79,52 @@ async def screencast(websocket: WebSocket) -> None:
 
     viewer = Viewer()
     surface.set_viewer(viewer)
-    await websocket.send_json({"type": "status", "state": "streaming", "surface": slug})
-    frames = asyncio.create_task(_pump_frames(websocket, surface, viewer))
+    # The attach status quotes where the surface already is (`""` = still on its
+    # launch about:blank). Deterministic — the client must not have to infer
+    # "no page yet" from the absence of a URL push it might simply be racing:
+    # the auto-open-home decision (a surface with a frozen origin opens on it
+    # rather than sitting blank) keys off exactly this field.
+    await websocket.send_json(
+        {"type": "status", "state": "streaming", "surface": slug, "url": surface.page_url}
+    )
+    frames = asyncio.create_task(_pump_frames(websocket, viewer))
     control = asyncio.create_task(_read_control(websocket, surface))
+    urls = asyncio.create_task(_pump_urls(websocket, viewer))
     try:
-        # Either side ending ends the session: a dead socket stops the pump, a
+        # Any side ending ends the session: a dead socket stops the pumps, a
         # client disconnect stops the reader.
-        await asyncio.wait({frames, control}, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait({frames, control, urls}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         # Detach by identity: if another socket has since taken this surface
         # over, this close must not clear its viewer out from under it.
         surface.detach(viewer)
-        for task in (frames, control):
+        for task in (frames, control, urls):
             task.cancel()
         # `wait` here, never `gather(return_exceptions=True)`: gather would
         # swallow a cancellation aimed at THIS coroutine and return as if the
         # socket had closed cleanly, which leaves the ASGI server believing a
         # cancelled task finished normally.
-        await asyncio.wait({frames, control})
+        await asyncio.wait({frames, control, urls})
 
 
-async def _pump_frames(
-    websocket: WebSocket, surface: BrowserSurface, viewer: Viewer
-) -> None:
-    """One JPEG per binary message.
-
-    The ack is Chrome's permission to capture the next frame, so it is sent only
-    once this frame's send has flushed — acking earlier would let capture outrun
-    the socket. It is sent even when the send fails, because the invariant is
-    exactly one ack per frame and a stalled screencast would outlive this socket.
-    """
+async def _pump_frames(websocket: WebSocket, viewer: Viewer) -> None:
+    """One JPEG per binary message. Frames are acked at capture (see the broker
+    module docstring — the liveness fix for driver ops), so this pump only
+    ships them; a slow socket sees the queue's keep-newest eviction, never a
+    stalled screencast."""
     while True:
         frame = await viewer.queue.get()
-        try:
-            await websocket.send_bytes(frame.jpeg)
-        finally:
-            surface.ack(frame.session_id)
+        await websocket.send_bytes(frame.jpeg)
+
+
+async def _pump_urls(websocket: WebSocket, viewer: Viewer) -> None:
+    """Push the surface's committed main-frame URL to the client whenever it
+    changes — driver-driven navigations and in-page SPA route changes included,
+    not just the echo after a viewer-typed navigate. Same `status{url}` frame
+    the client already understands, so the URL bar tracks the live page."""
+    while True:
+        url = await viewer.urls.get()
+        await websocket.send_json({"type": "status", "url": url})
 
 
 async def _read_control(websocket: WebSocket, surface: BrowserSurface) -> None:

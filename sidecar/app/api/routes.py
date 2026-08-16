@@ -17,6 +17,7 @@ import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
@@ -32,7 +33,6 @@ from ..db.base import now_utc
 from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
 from ..db.repos import snapshot_matches
 from ..events import heartbeat_stream
-from ..lifecycle import CONTACT_SYNC_MIN_INTERVAL_MINUTES
 from ..logging_setup import get_logger
 from ..observability import reconfigure_observability
 from ..observability.config import observability_config
@@ -1449,6 +1449,11 @@ async def create_operation(
             status_code=422,
             detail="use POST /api/networking/contact-sync to refresh contact statuses",
         )
+    if kind == "view_page":
+        raise HTTPException(
+            status_code=422,
+            detail="use POST /api/browser/view to show a page on the browser surface",
+        )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
     operation_id = runner.submit(kind, input_snapshot or {})
@@ -1534,7 +1539,7 @@ async def cancel_operation(request: Request, operation_id: str) -> dto.Operation
 # verbatim entity data; the frontend adds count nouns / mode names via i18n.
 
 _JOB_SUBJECT_KINDS = frozenset({"score", "tailor", "cover"})
-_CONTACT_SUBJECT_KINDS = frozenset({"draft", "send"})
+_CONTACT_SUBJECT_KINDS = frozenset({"draft", "send", "view_page"})
 
 
 def _job_subject(job: Any | None) -> dto.OperationSubjectDTO | None:
@@ -1564,6 +1569,16 @@ def _operation_subject(
     if kind in _CONTACT_SUBJECT_KINDS:
         contact = contacts.get(str(snap.get("contact_id") or ""))
         if contact is None:
+            # A contact-less page view still names WHAT it showed: the URL's
+            # path (compact), or the whole URL for a bare origin — never the
+            # blank row that renders as the vague kind label (2026-08-16).
+            if kind == "view_page":
+                url = str(snap.get("url") or "")
+                if not url:
+                    return None
+                path = urlparse(url).path
+                label = path if path not in ("", "/") else url
+                return dto.OperationSubjectDTO(label=label, href=url)
             return None
         job = jobs.get(str(snap.get("job_id") or ""))
         context = None
@@ -1674,7 +1689,13 @@ async def list_operations(request: Request, limit: int = 100) -> list[dto.Operat
     with _db(request).repos() as repos:
         ops = repos.operations.list_recent(limit)
         subjects = _ledger_subjects(repos, ops)
-        return [dto.operation_dto(op, subjects.get(op.id)) for op in ops]
+        rows = [dto.operation_dto(op, subjects.get(op.id)) for op in ops]
+    # A live send op's routed channel + completed steps (in-memory registry) —
+    # lets a queue panel mounting mid-send render the fine steps (2026-08-16).
+    for row in rows:
+        if row.kind == "send" and row.state in ("queued", "running"):
+            row.progress = networker_ops.send_progress(row.id)
+    return rows
 
 
 @router.get("/api/cost/totals")
@@ -1908,6 +1929,16 @@ async def list_referral_candidates(
             for log in repos.outreach_logs.list_for_job(job_id)
             if log.outcome == "sent"
         }
+        # Contacts with a send op live RIGHT NOW (queued or running) — the
+        # popup's per-row Sending state must survive a close/reopen (2026-08-16:
+        # it used to live only in modal state, so leaving and coming back showed
+        # Connect again while the Messenger was still mid-send).
+        in_flight_ids = sorted({
+            str((op.input_snapshot or {}).get("contact_id") or "")
+            for op in repos.operations.list_by_kind_states(
+                "send", ("queued", "running")
+            )
+        } - {""})
         # Persisted selection (FR-NW-01): restores which contacts the user picked
         # so a reopened `pending` popup shows the selection, not just the roster.
         selected_ids = repos.contact_job_assocs.selected_contact_ids(job_id)
@@ -1925,6 +1956,7 @@ async def list_referral_candidates(
         discover_state = "never"
         company_confirm: list[dict[str, Any]] = []
         confirm_url_failed = False
+        refusal_reason = ""
         discover_ops = repos.operations.list_for_snapshot(
             "discover", {"succeeded"}, key="job_id", value=job_id
         )
@@ -1935,6 +1967,11 @@ async def list_referral_candidates(
                 discover_state = "confirm"
                 company_confirm = list(ref.get("candidates") or [])
                 confirm_url_failed = bool(ref.get("url_failed"))
+            elif ref.get("refused") and not candidates:
+                # Voyager refused the read (cap/backoff) and no earlier roster
+                # exists — honest state, not `empty` ("nobody works here").
+                discover_state = "refused"
+                refusal_reason = str(ref.get("reason") or "")
             elif candidates:
                 discover_state = "found"
             else:
@@ -1947,7 +1984,9 @@ async def list_referral_candidates(
         job_id=job_id, company=company, candidates=candidates,
         discover_state=discover_state, company_confirm=company_confirm,
         confirm_url_failed=confirm_url_failed,
+        refusal_reason=refusal_reason,
         already_reached_count=len(reached_ids),
+        in_flight_contact_ids=in_flight_ids,
     )
 
 
@@ -2099,24 +2138,19 @@ async def referrals_quota(request: Request) -> dto.QuotaDTO:
 
 
 @router.post("/api/networking/contact-sync", status_code=202)
-async def networking_contact_sync(
-    request: Request, force: bool = False
-) -> dto.ContactSyncAccepted:
+async def networking_contact_sync(request: Request) -> dto.ContactSyncAccepted:
     """Refresh LinkedIn contact statuses for the Networking kanban (US-NW-12 /
-    FR-NW-15) — **user-initiated only**.
+    FR-NW-15). **Manual-only**: the Sync button is the one caller (maintainer
+    decision, 2026-08-15).
 
-    This replaces the old 12 h `contact_sync` schedule, which touched LinkedIn
-    with nobody present (`docs/internal/linkedin-addon.md` section 5). Two callers:
-
-    - the explicit **Sync** button, which passes `force=true` and always runs —
-      an on-demand refresh the user asked for, no more LinkedIn traffic than
-      them opening linkedin.com and looking at their invitations themselves;
-    - opening the **Networking** surface, which passes `force=false` and is
-      throttled to `CONTACT_SYNC_MIN_INTERVAL_MINUTES` so navigating back and
-      forth cannot turn into a request loop.
+    No schedule, no on-open refresh, no background timer. Each press is an
+    on-demand refresh the user asked for, no more LinkedIn traffic than them
+    opening linkedin.com and looking at their invitations themselves. The old
+    12 h schedule and the later throttled on-open refresh are both retired
+    (`docs/internal/linkedin-addon.md` section 5, `docs/internal/status.md`).
 
     Already-running syncs are joined rather than duplicated, so a double click
-    or a remount mid-sync does not fan out.
+    does not fan out.
     """
     with _db(request).repos() as repos:
         _require_networking_enabled(repos)
@@ -2127,17 +2161,9 @@ async def networking_contact_sync(
                 detail="No valid LinkedIn session — connect in Settings first.",
             )
         in_flight = repos.operations.any_in_flight("contact_sync")
-        last = repos.operations.latest_by_kind("contact_sync")
 
     if in_flight:
         return dto.ContactSyncAccepted(state="already_running")
-
-    if not force and last is not None:
-        min_gap = timedelta(minutes=CONTACT_SYNC_MIN_INTERVAL_MINUTES)
-        if last.created_at + min_gap > now_utc():
-            # Not an error: the kanban the user is looking at was refreshed
-            # recently enough. The Sync button is right there if they disagree.
-            return dto.ContactSyncAccepted(state="throttled")
 
     operation_id = _runner(request).submit("contact_sync", {})
     return dto.ContactSyncAccepted(id=operation_id, state="queued")
@@ -2158,7 +2184,45 @@ def _linkedin_session_base(repos: Any) -> tuple[dto.LinkedInSessionDTO, Any]:
         session, enabled=bool(prefs.voyager_risk_marker_on),
         cursor=repos.linkedin_search_cursor.get(),
     )
+    # The "Synced Nm ago" stamp for the Networking header: when a sweep last
+    # ACTUALLY PROBED (or cleanly checked an empty roster). A budget-refused
+    # sweep succeeds as an operation with synced 0 + a stop reason, and must
+    # not re-stamp "Synced just now" — its outcome is surfaced separately so
+    # the user sees WHY nothing refreshed (the 2026-08-15 live confusion:
+    # every press answered in 10 ms, stamped "just now", and synced nothing).
+    recent = repos.operations.recent_succeeded_by_kind("contact_sync", limit=25)
+    base.contact_sync_last_at = next(
+        (
+            op.finished_at
+            for op in recent
+            if _is_real_sweep(op.result_ref or {})
+        ),
+        None,
+    )
+    if recent:
+        newest = recent[0]
+        ref = newest.result_ref or {}
+        if newest.finished_at is not None and "skipped" not in ref:
+            base.contact_sync_last_outcome = dto.ContactSyncOutcomeDTO(
+                at=newest.finished_at,
+                synced=int(ref.get("synced") or 0),
+                failed=int(ref.get("failed") or 0),
+                stopped=str(ref.get("stopped") or ""),
+                unprobed=int(ref.get("unprobed") or 0),
+            )
     return base, profile
+
+
+def _is_real_sweep(ref: dict[str, Any]) -> bool:
+    """True when a succeeded contact-sync op actually swept: it probed at
+    least one contact, or checked a roster with nothing stopping it. A
+    gate-skipped no-op (`skipped`) or a refused-at-zero sweep is not a sync
+    the "Synced Nm ago" stamp may claim."""
+    if "skipped" in ref:
+        return False
+    if int(ref.get("synced") or 0) > 0:
+        return True
+    return not ref.get("stopped")
 
 
 async def _linkedin_session_response(request: Request) -> dto.LinkedInSessionDTO:
@@ -2418,6 +2482,44 @@ async def linkedin_set_rate_limits(
     return await _linkedin_session_response(request)
 
 
+@router.post("/api/browser/view", status_code=202)
+async def view_browser_page(
+    request: Request, payload: dto.BrowserViewRequest
+) -> dto.OperationAccepted:
+    """Queue a `view_page` operation that shows `url` on a watch-only broker
+    surface (2026-08-16 — the queued successor to /api/browser/open's immediate
+    navigation). The op waits its admission turn behind any browser-driving
+    operation (policy rule 3), so a user's click can never corrupt a running
+    op's page state — and a view of the already-shown page settles as a
+    no-op (`skipped`). Gated on the Referral Outreach toggle, NOT on session
+    validity: a never-connected session can still watch a page; validity gates
+    the ops that act. Vendor-agnostic: url and slug are runtime arguments."""
+    url = (payload.url or "").strip()
+    if not url.startswith(("https://", "http://")):
+        raise HTTPException(status_code=422, detail="url must be http(s)")
+    with _db(request).repos() as repos:
+        _require_networking_enabled(repos)
+    if getattr(request.app.state, "browser", None) is None:
+        raise HTTPException(status_code=503, detail="browser broker unavailable")
+    snapshot: dict[str, Any] = {
+        "url": url,
+        "surface": payload.surface or "default",
+        # The click IS the presence (invariant 3) — only this route sets it,
+        # and the generic enqueue refuses the kind.
+        "user_initiated": True,
+    }
+    if (
+        isinstance(payload.width, int)
+        and isinstance(payload.height, int)
+        and isinstance(payload.dpr, (int, float))
+    ):
+        snapshot.update(width=payload.width, height=payload.height, dpr=payload.dpr)
+    if payload.contact_id:
+        snapshot["contact_id"] = payload.contact_id
+    operation_id = _runner(request).submit("view_page", snapshot)
+    return dto.OperationAccepted(id=operation_id, kind="view_page", state="queued")
+
+
 # -- Dev tools (local testing only) ----------------------------------------
 # A single-user local app on the user's own machine — these fault-injection
 # endpoints power the Dev surface (US-DEV-01, dev-only): simulate an expired
@@ -2452,6 +2554,48 @@ async def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
     with _db(request).repos() as repos:
         repos.linkedin_session.update(status="valid", connected_as="Dev Session")
     return {"ok": True, "status": "valid"}
+
+
+@router.post("/api/dev/browser/navigate")
+async def dev_navigate_browser_surface(
+    request: Request, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Navigate a broker surface server-side, exactly the way an operation
+    does (2026-08-16). The user-facing surface went WATCH-ONLY (no URL bar),
+    and a surface holds ONE viewer — a test driving it over a second
+    screencast socket steals the stream from the page under test. This is the
+    e2e stack's navigation lever; same FYJ_DEV gate as every dev tool."""
+    _require_dev_mode()
+    url = str(payload.get("url") or "")
+    if not url:
+        raise HTTPException(status_code=422, detail="url is required")
+    slug = str(payload.get("surface") or "default")
+    broker = getattr(request.app.state, "browser", None)
+    if broker is None:
+        raise HTTPException(status_code=503, detail="browser broker unavailable")
+    surface = broker.surface(slug)
+    try:
+        await surface.wait_ready()
+        # Optional geometry, same contract as a viewer's `viewport` message —
+        # navigation fails closed without display metrics, and a test driving
+        # the surface before (or instead of) a viewer must state its own.
+        width, height, dpr = (
+            payload.get("width"), payload.get("height"), payload.get("dpr")
+        )
+        if (
+            isinstance(width, int)
+            and isinstance(height, int)
+            and isinstance(dpr, (int, float))
+        ):
+            surface.set_geometry(width, height, dpr)
+        committed = await asyncio.wait_for(
+            asyncio.wrap_future(surface.navigate(url)), timeout=45.0
+        )
+    except Exception as exc:  # noqa: BLE001 — verbatim to the caller (a dev tool)
+        raise HTTPException(
+            status_code=502, detail=f"{type(exc).__name__}: {exc}"
+        ) from exc
+    return {"ok": True, "url": committed}
 
 
 @router.post("/api/dev/linkedin/seed-search-cursor")

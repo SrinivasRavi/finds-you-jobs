@@ -22,8 +22,22 @@ thread's last-message direction/timestamp):
 record: it is never in the syncable set, so auto never enters or exits it. Every
 auto move stamps `profile_payload.status_meta = {source: "auto", changed_at}`; a
 manual drag stamps `source: "manual"` (the PATCH route). A contact whose last move
-was **manual within `MANUAL_OVERRIDE_COOLDOWN_DAYS`** is rotated but not probed —
-auto never immediately fights a fresh manual move.
+was **manual within `MANUAL_OVERRIDE_COOLDOWN_DAYS`** never has its STATUS
+auto-moved — but a frozen accepted/engagement row with a cached urn still gets
+an unmetered thread-only probe for its display snapshot (a read-only refresh
+fights no manual move); other frozen rows rotate unprobed.
+
+**Read-budget economics (2026-08-16).** Only `sent` rows and urn-less rows pay
+a charged profile read; accepted/engagement rows with a cached
+`profile_payload.fsd_urn` sync from the sweep's ONE inbox read, unmetered —
+so a spent profile-view budget can never silence the message-driven columns.
+A budget/backoff/auth-refused row is surfaced (`stopped`), never rotated.
+
+**Display persistence.** A probe that read the thread also writes
+`profile_payload.last_thread_message = {text, direction, at, from_name}` — the
+REAL last message the kanban card and contact modal show with Me/name
+attribution (no schema change; it rides the same JSON column as `status_meta`).
+A probe with no thread never blanks a previous sync's snapshot.
 
 **Gating.** No-ops cleanly when Referral Outreach is OFF (`voyager_risk_marker_on`)
 or the LinkedIn session is not `valid` — the schedule can stay enabled; the tick
@@ -36,7 +50,7 @@ driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; section 2).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sidecar.modules.networker import ProbeResult, probe_batch
@@ -148,13 +162,18 @@ def _is_manual_frozen(contact: ContactRow, now: datetime) -> bool:
     return (now - moment).total_seconds() / 86400.0 < MANUAL_OVERRIDE_COOLDOWN_DAYS
 
 
-def payload_with_status_meta(contact: ContactRow, source: str, now: datetime) -> dict[str, Any]:
+def payload_with_status_meta(
+    contact: ContactRow, source: str, now: datetime,
+    base: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """The one place the `status_meta` stamp is written — this engine stamps
     `auto`, the contact PATCH route stamps `manual`, and `_is_manual_frozen`
     above reads both. Public so the route stamps the same shape the reader
-    expects (a key/format drift silently disables the manual-wins cooldown)."""
+    expects (a key/format drift silently disables the manual-wins cooldown).
+    `base` lets a caller stamp onto a payload it is already composing (the
+    sync engine's urn/thread riders); default is the row's stored payload."""
     return {
-        **(contact.profile_payload or {}),
+        **(dict(contact.profile_payload or {}) if base is None else base),
         "status_meta": {"source": source, "changed_at": now.isoformat()},
     }
 
@@ -188,91 +207,172 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
     transitions: dict[str, int] = {}
     probed = 0
     frozen = 0
+    failed = 0
     internal_calls = 0
     stopped = ""
 
-    # Partition the batch: manual-frozen rows rotate without a probe; the rest
-    # are probed together in ONE browser session (2026-08-04 — the old loop
-    # drove one driver op per contact, and every op builds its own paced
-    # session, so a 5-contact sweep launched and quit a full Chromium 5 times).
-    eligible: list[tuple[str, Any, str, datetime | None, datetime | None]] = []
+    # Partition the batch (2026-08-16, the read-budget redesign). A contact in
+    # accepted/engagement with a CACHED fsd_profile urn (`profile_payload.
+    # fsd_urn`, written back from an earlier full probe) needs no degree read:
+    # its whole sync question is the 1:1 thread, answered by the sweep's one
+    # inbox read — an unmetered thread-only probe that a spent profile-view
+    # budget can never refuse. Only `sent` rows (is the invite accepted?) and
+    # urn-less rows (the bootstrap read that learns the urn) pay a charged
+    # profile read. Manual-frozen rows used to rotate unprobed, which held
+    # their card's last message stale for the whole cooldown; a frozen
+    # accepted/engagement row with a cached urn now rides the thread-only pass
+    # with its TRANSITION suppressed (display refresh only — a read-only
+    # snapshot fights no manual move). Everything eligible probes in ONE
+    # browser session (2026-08-04 — the per-contact loop launched a full
+    # Chromium 5 times for a 5-contact sweep).
+    eligible: list[dict[str, Any]] = []
     for contact_id in contact_ids:
         with ctx.db.repos() as repos:
             contact = repos.contacts.get(contact_id)
             if contact is None:
                 continue
-            if _is_manual_frozen(contact, now):
-                # Rotate (bump last_touched_at) without a probe — auto never fights
-                # a fresh manual move, and the row still cycles out of the queue.
+            payload = contact.profile_payload or {}
+            cached_urn = str(payload.get("fsd_urn") or "")
+            manual_frozen = _is_manual_frozen(contact, now)
+            thread_only = bool(
+                cached_urn
+                and contact.connection_status in ("accepted", "engagement")
+            )
+            if manual_frozen and not thread_only:
+                # Rotate (bump last_touched_at) without a probe — auto never
+                # fights a fresh manual move, and a metered probe would buy
+                # nothing it may act on.
                 repos.contacts.update(contact_id, last_touched_at=now)
                 frozen += 1
                 continue
-            eligible.append((
-                contact_id, _net_contact_from_row(contact),
-                contact.connection_status, contact.sent_at, contact.accepted_at,
-            ))
+            net_contact = _net_contact_from_row(contact)
+            eligible.append({
+                "contact_id": contact_id,
+                "net_contact": net_contact,
+                "pid": net_contact.public_identifier,
+                "current": contact.connection_status,
+                "sent_at": contact.sent_at,
+                "accepted_at": contact.accepted_at,
+                "urn": cached_urn,
+                "thread_only": thread_only,
+                # Frozen rows refresh their display snapshot only — the manual
+                # column choice stands until the cooldown lapses.
+                "display_only": manual_frozen,
+            })
 
     probes: list[ProbeResult] = []
     if eligible:
         driver = DRIVER_FACTORY(profile)
         try:
-            probes = probe_batch([e[1] for e in eligible], driver=driver)
+            probes = probe_batch(
+                [e["net_contact"] for e in eligible],
+                driver=driver,
+                urns={e["pid"]: e["urn"] for e in eligible if e["urn"]},
+                thread_only={e["pid"] for e in eligible if e["thread_only"]},
+            )
         except NetworkerError as exc:
             # A hard batch failure (driver crash / unparseable envelope) must not
-            # kill the tick — log verbatim, rotate the whole batch, report zero
-            # (exactly what the per-contact loop did when every probe raised).
+            # kill the tick — log verbatim, rotate the whole batch, and SAY so in
+            # the result_ref (`stopped: "batch_failed"`) instead of reporting a
+            # clean zero that reads like "nothing to do".
             log.warning("contact_sync: batch probe failed: %s", exc)
             with ctx.db.repos() as repos:
-                for contact_id, *_rest in eligible:
-                    repos.contacts.update(contact_id, last_touched_at=now)
+                for entry in eligible:
+                    repos.contacts.update(entry["contact_id"], last_touched_at=now)
             probes = []
+            stopped = "batch_failed"
 
     # The worker stops the sweep on the first rate-limit/cap/auth refusal
-    # (section 0.4: the first 429 stops the batch), so `probes` may be shorter than
-    # `eligible` — the untouched tail stays first in line for the next tick.
-    for (contact_id, _net_contact, current, sent_at, accepted_at), probe in zip(
-        eligible, probes, strict=False
-    ):
+    # (section 0.4: the first 429 stops the batch), and it reorders (thread-only
+    # first), so probes are JOINED BY public_identifier — contacts without a
+    # result were never probed and stay first in line for the next tick. The
+    # auth stop is deliberate: a 401 is a dead SESSION, not one bad contact,
+    # so every later probe would 401 identically and probing on just burns
+    # authenticated reads. What must not happen is the stop hiding — it is
+    # surfaced in the result_ref (`stopped` + `unprobed`), never swallowed. A
+    # refused row is NOT rotated: nothing was learned from it, and the old
+    # rotate-on-refusal made every budget-refused Sync press churn one card's
+    # cursor for zero LinkedIn traffic.
+    by_pid = {p.public_identifier: p for p in probes}
+    for entry in eligible:
+        probe = by_pid.get(entry["pid"])
+        if probe is None:
+            continue  # unprobed tail of a stopped sweep
+        contact_id = entry["contact_id"]
+        current = entry["current"]
         if probe.error in ("rate_limited", "cap_or_backoff", "auth_error"):
-            # The sweep stopped here. Rotate this row and surface the reason —
-            # no transition is decided on an empty refused probe.
+            # The sweep stopped here — surface the reason; the row stays
+            # untouched (first in line when the budget/session recovers).
             log.warning(
                 "contact_sync: sweep stopped at %s: %s (%s)",
                 contact_id, probe.error, probe.reason,
             )
-            with ctx.db.repos() as repos:
-                repos.contacts.update(contact_id, last_touched_at=now)
             stopped = probe.error
-            break
+            continue
         if probe.error:
-            # A hard probe failure (403/404/parse) must not kill the sweep —
-            # log verbatim, rotate the row, move on (gentle).
+            # A per-contact failure (403/404/parse) must not kill the sweep —
+            # log verbatim, rotate the row, move on (gentle) — and it is
+            # COUNTED (`failed` in the result_ref), so a sweep that skipped
+            # half its batch never reads as a clean `synced: N`.
             log.warning(
                 "contact_sync: probe failed for %s: %s", contact_id, probe.reason
             )
+            failed += 1
             with ctx.db.repos() as repos:
                 repos.contacts.update(contact_id, last_touched_at=now)
             continue
         probed += 1
         internal_calls += 1
 
-        decision = decide_transition(
-            current, probe, sent_at=sent_at, accepted_at=accepted_at,
-            settings=settings, now=now,
+        decision = (
+            SyncDecision()
+            if entry["display_only"]
+            else decide_transition(
+                current, probe,
+                sent_at=entry["sent_at"], accepted_at=entry["accepted_at"],
+                settings=settings, now=now,
+            )
         )
         with ctx.db.repos() as repos:
             contact = repos.contacts.get(contact_id)
             if contact is None:
                 continue
             fields: dict[str, Any] = {}
+            payload = dict(contact.profile_payload or {})
+            payload_changed = False
             # Always refresh degree from a successful probe (cheap, keeps the card
-            # honest); the probe carries it whether or not the status moved.
+            # honest); a thread-only probe carries None (no read this sweep) and
+            # the stored degree stands.
             if probe.degree is not None:
                 fields["connection_degree"] = probe.degree
                 fields["is_first_degree"] = probe.is_first_degree
+            # Cache the urn a full probe resolved — what makes every later
+            # sweep's thread question free for this contact.
+            if probe.target_urn and payload.get("fsd_urn") != probe.target_urn:
+                payload["fsd_urn"] = probe.target_urn
+                payload_changed = True
+            # Display persistence (see the module docstring): a probe that read
+            # the thread stores its REAL last message beside status_meta. Only
+            # a read direction writes — an absent thread keeps the previous
+            # snapshot rather than blanking the card.
+            if probe.last_message_direction in ("me", "them"):
+                payload["last_thread_message"] = {
+                    "text": probe.last_message_text,
+                    "direction": probe.last_message_direction,
+                    "at": (
+                        datetime.fromtimestamp(
+                            probe.last_message_at, tz=UTC
+                        ).isoformat()
+                        if probe.last_message_at is not None
+                        else None
+                    ),
+                    "from_name": probe.last_message_from or None,
+                }
+                payload_changed = True
             if decision.new_status and decision.new_status != current:
                 fields["connection_status"] = decision.new_status
-                fields["profile_payload"] = payload_with_status_meta(contact, "auto", now)
+                payload = payload_with_status_meta(contact, "auto", now, base=payload)
+                payload_changed = True
                 if decision.set_accepted_at and contact.accepted_at is None:
                     fields["accepted_at"] = now
                 transitions[f"{current}->{decision.new_status}"] = (
@@ -281,6 +381,8 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             else:
                 # No move — still touch it so the round-robin cursor advances.
                 fields["last_touched_at"] = now
+            if payload_changed:
+                fields["profile_payload"] = payload
             repos.contacts.update(contact_id, **fields)
 
     if ctx.publish is not None and transitions:
@@ -290,13 +392,18 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             "id": ctx.operation_id, "phase": "synced",
             "transitions": transitions, "probed": probed,
         }))
+    # Contacts that were eligible but never got a probe result — a stopped sweep's
+    # tail (they stay first in line for the next tick). Zero on a full sweep.
+    unprobed = max(0, len(eligible) - len(probes))
     return OperationOutcome(
         result_ref={
-            "synced": probed, "frozen": frozen, "batch": len(contact_ids),
-            "transitions": transitions,
-            # Present only when the worker cut the sweep short (rate_limited /
-            # cap_or_backoff / auth_error) — surfaced, never swallowed.
-            **({"stopped": stopped} if stopped else {}),
+            "synced": probed, "failed": failed, "frozen": frozen,
+            "batch": len(contact_ids), "transitions": transitions,
+            # Present only when the sweep was cut short (rate_limited /
+            # cap_or_backoff / auth_error / batch_failed) — surfaced with the
+            # size of the untouched tail, never a clean `synced: N` that hides
+            # an early stop.
+            **({"stopped": stopped, "unprobed": unprobed} if stopped else {}),
         },
         usage={"internal_calls": internal_calls},
     )

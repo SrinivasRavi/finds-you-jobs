@@ -98,14 +98,23 @@ class FakeVoyagerDriver:
         self._maybe_raise("search_jobs")
         return self._search_jobs
 
-    def send_connection(self, public_identifier, note, *, dry_run) -> dict:
+    def send_connection(self, public_identifier, note, *, dry_run, on_step=None) -> dict:
         self.calls.append(("send_connection", public_identifier, note, dry_run))
         self._maybe_raise("send_connection")
+        # Mirror the real driver's narration: report the invite plan's steps
+        # as "completed" when a canned send succeeds (tests assert the host
+        # publishes them verbatim).
+        if on_step is not None and not dry_run and self._connection.get("sent"):
+            for step in ("invite1", "invite2", "invite3", "invite4", "invite5"):
+                on_step(step)
         return self._connection
 
-    def send_dm(self, public_identifier, message, *, dry_run) -> dict:
+    def send_dm(self, public_identifier, message, *, dry_run, on_step=None) -> dict:
         self.calls.append(("send_dm", public_identifier, message, dry_run))
         self._maybe_raise("send_dm")
+        if on_step is not None and not dry_run and self._dm.get("sent"):
+            for step in ("dm1", "dm2", "dm3", "dm4"):
+                on_step(step)
         return self._dm
 
     def status(self, public_identifier, *, dry_run) -> dict:
@@ -118,16 +127,33 @@ class FakeVoyagerDriver:
         self._maybe_raise("contact_sync")
         return self._contact_sync
 
-    def contact_sync_states(self, public_identifiers, *, dry_run) -> dict:
-        """Mirrors the worker's batch contract: one envelope per pid in input
-        order, stopping after the first rate-limit/cap/auth result (the worker
-        ends the sweep there — later pids get no entry)."""
-        self.calls.append(("contact_sync_states", tuple(public_identifiers), dry_run))
+    def contact_sync_states(self, entries, *, dry_run) -> dict:
+        """Mirrors the worker's batch contract: one envelope per entry —
+        thread-only entries (with a urn) first, exactly like the worker's
+        unmetered pass, then the full probes — stopping after the first
+        rate-limit/cap/auth result (the worker ends the sweep there — later
+        pids get no entry). Thread-only envelopes answer degree None."""
+        self.calls.append((
+            "contact_sync_states",
+            tuple(e["public_identifier"] for e in entries),
+            dry_run,
+            tuple(sorted(e["public_identifier"] for e in entries
+                         if e.get("thread_only") and e.get("urn"))),
+        ))
         self._maybe_raise("contact_sync_states")
+        ordered = (
+            [e for e in entries if e.get("thread_only") and e.get("urn")]
+            + [e for e in entries if not (e.get("thread_only") and e.get("urn"))]
+        )
         results = []
-        for pid in public_identifiers:
+        for spec in ordered:
+            pid = spec["public_identifier"]
             entry = dict(self._contact_sync_batch.get(pid, self._contact_sync))
             entry.setdefault("public_identifier", pid)
+            if spec.get("thread_only") and spec.get("urn") and not entry.get("error"):
+                entry["degree"] = None
+                entry["is_first_degree"] = False
+                entry.setdefault("target_urn", spec["urn"])
             results.append(entry)
             if entry.get("error") in ("rate_limited", "cap_or_backoff", "auth_error"):
                 break

@@ -10,6 +10,24 @@
 # no-note connect flow — is preserved verbatim. Adapted: Django `dump_page_html`
 # and the `ProfileState` enum are dropped (we return plain strings); the DB Lead
 # lookups are gone (URN is resolved live via the forked client).
+# finds-you-jobs fork changes (see ../provenance.md):
+#   - Contact-sync probe (2026-08-15): `get_contact_sync_state` answers the
+#     last-message question from the sweep's ONE GraphQL inbox read
+#     (`client.inbox_last_messages`, session-cached; the legacy per-contact
+#     REST finder is dead — live wire evidence), orchestrates the all-paths
+#     ProbeCapture (one redacted JSON per probed contact, every path), and
+#     propagates RateLimited — a messaging 429 used to die in the blanket
+#     `except`, so the backoff the client raises for was unreachable.
+#     Same-day display extension: the probe dict also returns the last
+#     message's text and the contact's display name (`last_message_text` /
+#     `last_message_from`, off the same one inbox read) for the host's
+#     card/modal attribution; neither ever enters the redacted capture.
+#   - Unmetered thread-only probe (2026-08-16): the full probe also returns
+#     its resolved `target_urn`, and `get_contact_thread_state` answers the
+#     thread question for a host-cached urn from the sweep's one inbox read
+#     alone — no profile read, no profile-view charge (the live 2026-08-15
+#     sweeps spent the whole day's read budget re-resolving urns the host
+#     had already seen, and every later Sync press was refused).
 """Connection status, connection-request send, and DM send — the three live
 LinkedIn write/read actions the worker drives. Selectors are upstream's."""
 
@@ -24,13 +42,26 @@ from urllib.parse import quote
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .client import PlaywrightLinkedinAPI, resolve_degree
-from .errors import AuthenticationError, ReachedConnectionLimit, SkipProfile
+from .client import PlaywrightLinkedinAPI, ProbeCapture, resolve_degree
+from .errors import AuthenticationError, RateLimited, ReachedConnectionLimit, SkipProfile
 from .mouse_dynamics import human_click
 from .scroll_dynamics import read_profile
 from .session import AccountSession, goto_page, human_type
+from .voyager import inbox_direction_for
 
 logger = logging.getLogger("voyager_py.actions")
+
+
+def _emit_step(on_step, key: str) -> None:
+    """Report a completed send step to the host (2026-08-16 fork edit: the
+    host's queue panel ticks REAL progress). Reporting must never break the
+    send it narrates."""
+    if on_step is None:
+        return
+    try:
+        on_step(key)
+    except Exception:  # noqa: BLE001 — narration, never load-bearing
+        logger.debug("on_step callback failed", exc_info=True)
 
 # --- connection status strings (replace upstream's ProfileState enum) ---
 STATUS_CONNECTED = "connected"      # 1st-degree
@@ -403,35 +434,129 @@ def get_contact_sync_state(session: AccountSession, public_identifier: str) -> d
     """Read a contact's live LinkedIn state for the status-sync engine (FR-NW-15).
 
     Purely READ-ONLY (never sends): the current connection degree, plus the last
-    message's direction (`me` = we sent last, `them` = they did) and timestamp in
-    the 1:1 thread. The sync entrypoint maps these onto the kanban transitions
+    message's direction (`me` = we sent last, `them` = they did), timestamp,
+    text, and the contact's display name in the 1:1 thread (the display pair
+    the host's card/modal attributes). The sync entrypoint maps these onto the kanban transitions
     (Sent→Accepted / →Engagement, Accepted→Engagement, →Ghosted). Best-effort: a
     missing/unreadable thread returns null message fields (no transition), never a
-    crash — the account risk is the user's, so the tick stays gentle + honest."""
+    crash — the account risk is the user's, so the tick stays gentle + honest.
+
+    The message data comes from the sweep's ONE GraphQL inbox read
+    (`client.inbox_last_messages`, session-cached — one messaging request per
+    sync run, not one per contact), joined to this contact by their fsd_profile
+    urn (`voyager.inbox_direction_for`). A contact with no 1:1 thread on the
+    fetched page gets honest nulls; degree transitions still apply.
+
+    Every probe writes ONE redacted capture file when `FYJ_LINKEDIN_CAPTURE_DIR`
+    is set (see `ProbeCapture`) — on success and on every failure or skip alike,
+    so a single live sweep pins where each contact's probe stopped."""
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
-    parsed, _raw = api.get_profile(public_identifier=public_identifier)
-    degree = resolve_degree(api, parsed, public_identifier, best_effort=False)
-    target_urn = (parsed or {}).get("urn")
-
-    direction: str | None = None
-    sent_at: float | None = None
-    if target_urn:
+    capture = ProbeCapture(session)
+    capture.record_contact(public_identifier)
+    try:
         try:
-            msg = api.get_last_message(target_urn)
-            direction = msg.get("direction")
-            sent_at = msg.get("sent_at")
-        except AuthenticationError:
+            parsed, _raw = api.get_profile(public_identifier=public_identifier)
+            degree = resolve_degree(api, parsed, public_identifier, best_effort=False)
+        except Exception as exc:
+            capture.record_stage_error("profile", exc)
+            raise
+        target_urn = (parsed or {}).get("urn")
+        capture.record_profile(target_urn, degree)
+
+        direction: str | None = None
+        sent_at: float | None = None
+        text = ""
+        from_name: str | None = None
+        if target_urn:
+            try:
+                inbox = api.inbox_last_messages(capture=capture)
+                direction, sent_at, found, text, from_name = inbox_direction_for(
+                    inbox, target_urn
+                )
+                capture.record_thread(found)
+            except (AuthenticationError, RateLimited):
+                # A dead session or an explicit throttle is a SWEEP signal, not a
+                # per-contact miss: the worker maps these to auth-stop / backoff.
+                # (RateLimited used to die in the blanket except below, so the
+                # backoff the client raises for was unreachable.)
+                raise
+            except Exception as exc:  # noqa: BLE001 — a read miss is not fatal
+                capture.record_stage_error("messaging", exc)
+                logger.debug("inbox lookup failed for %s: %s", public_identifier, exc)
+        else:
+            capture.record_messaging_skipped("no_target_urn")
+
+        capture.record_parsed(direction, sent_at)
+        return {
+            "degree": degree,
+            "is_first_degree": degree == 1,
+            "last_message_direction": direction,
+            "last_message_at": sent_at,
+            # Display pair (2026-08-15): the thread's real last-message text +
+            # the contact's display name off the same one inbox read, so the
+            # host's card/modal can show WHAT was said and attribute it. Never
+            # captured — `ProbeCapture` stays identity- and body-free.
+            "last_message_text": text or None,
+            "last_message_from": from_name,
+            # The join key this probe resolved (2026-08-16) — the host caches it
+            # per contact so later sweeps can answer the thread question from
+            # the inbox read alone (`get_contact_thread_state`, unmetered).
+            "target_urn": target_urn or None,
+        }
+    finally:
+        capture.write()
+
+
+def get_contact_thread_state(
+    session: AccountSession, public_identifier: str, target_urn: str
+) -> dict:
+    """The thread half of the sync probe from the sweep's ONE inbox read alone
+    (FR-NW-15, 2026-08-16) — for a contact whose fsd_profile urn the host
+    already cached from an earlier full probe. NO profile read happens, so the
+    probe charges nothing against the profile-view budget: the whole cost is
+    the sweep's single session-cached messaging request. This is what keeps a
+    Sync press affordable — the full probe (degree + urn resolution) is needed
+    only while an invite is pending or the urn is not yet known.
+
+    Same envelope as `get_contact_sync_state` minus the degree answer
+    (`degree` None — "not read this sweep", the host keeps its stored value).
+    A 401/429 on the inbox read propagates as the sweep's auth-stop/backoff,
+    exactly like the full probe; any other read miss degrades to honest nulls.
+    One capture file lands per probe here too, marked `cached_urn`."""
+    session.ensure_browser()
+    api = PlaywrightLinkedinAPI(session=session)
+    capture = ProbeCapture(session)
+    capture.record_contact(public_identifier)
+    try:
+        capture.record_profile_cached(target_urn)
+        direction: str | None = None
+        sent_at: float | None = None
+        text = ""
+        from_name: str | None = None
+        try:
+            inbox = api.inbox_last_messages(capture=capture)
+            direction, sent_at, found, text, from_name = inbox_direction_for(
+                inbox, target_urn
+            )
+            capture.record_thread(found)
+        except (AuthenticationError, RateLimited):
             raise
         except Exception as exc:  # noqa: BLE001 — a read miss is not fatal
-            logger.debug("get_last_message failed for %s: %s", public_identifier, exc)
-
-    return {
-        "degree": degree,
-        "is_first_degree": degree == 1,
-        "last_message_direction": direction,
-        "last_message_at": sent_at,
-    }
+            capture.record_stage_error("messaging", exc)
+            logger.debug("inbox lookup failed for %s: %s", public_identifier, exc)
+        capture.record_parsed(direction, sent_at)
+        return {
+            "degree": None,
+            "is_first_degree": False,
+            "last_message_direction": direction,
+            "last_message_at": sent_at,
+            "last_message_text": text or None,
+            "last_message_from": from_name,
+            "target_urn": target_urn,
+        }
+    finally:
+        capture.write()
 
 
 # ── send connection request (no note — fastest & safest, upstream default) ──
@@ -616,7 +741,7 @@ def _verify_invite_sent(session: AccountSession, *, timeout_ms: int = 6000) -> b
 
 
 def send_connection_request(
-    session: AccountSession, public_identifier: str, note: str = ""
+    session: AccountSession, public_identifier: str, note: str = "", on_step=None
 ) -> tuple[str, str]:
     """Send a LinkedIn connection request. With a `note` it uses the with-note
     flow (cold referral-ask rides in the note, FR-NW-03); without one it sends
@@ -636,6 +761,7 @@ def send_connection_request(
     session.ensure_browser()
     _goto_profile(session, public_identifier)
     session.wait()
+    _emit_step(on_step, "invite2")
     # Watch for popup tabs across the Connect click (the SDUI custom-invite
     # anchor can spawn them — see _adopt_or_close_popups). The listener stays
     # registered for the whole flow; adoption retargets session.page so the
@@ -660,11 +786,13 @@ def send_connection_request(
         session.page = _adopt_or_close_popups(main_page, popups)
         if session.page is not main_page:
             adopted_page = session.page
+        _emit_step(on_step, "invite3")
         note_outcome = ""
         if note:
             note_outcome = _click_with_note(session, note)
         else:
             _click_without_note(session)
+        _emit_step(on_step, "invite4")
         if session.page.locator(CONNECT_SELECTORS["weekly_limit"]).count() > 0:
             raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
         # Confirm it actually went out before we report success. An unconfirmed send
@@ -683,6 +811,7 @@ def send_connection_request(
                 "toast and no Pending state after the Send click (the click may have "
                 f"landed on a control that didn't submit the invite); debug capture: {debug}"
             )
+        _emit_step(on_step, "invite5")
         return STATUS_PENDING, note_outcome
     finally:
         try:
@@ -713,7 +842,9 @@ def _encode_urn(urn: str) -> str:
     return quote(urn, safe="")
 
 
-def _send_dm_via_ui(session: AccountSession, target_urn: str, message: str) -> bool:
+def _send_dm_via_ui(
+    session: AccountSession, target_urn: str, message: str, on_step=None
+) -> bool:
     """Navigate to a new thread for the recipient URN, compose, send."""
     thread_url = f"{LINKEDIN_MESSAGING_URL}?recipient={_encode_urn(target_urn)}"
     try:
@@ -725,10 +856,12 @@ def _send_dm_via_ui(session: AccountSession, target_urn: str, message: str) -> b
             error_message="Error opening messaging thread",
         )
         session.wait(1, 2)
+        _emit_step(on_step, "dm3")
         human_type(_find_chain(session.page, "compose_input").first, message, 10, 50)
         send = _find_chain(session.page, "compose_send").first
         human_click(send, fallback=lambda: send.click(delay=200))
         session.wait(0.5, 1)
+        _emit_step(on_step, "dm4")
         return True
     except (PlaywrightError, TimeoutError) as e:
         logger.error("UI DM send failed for %s → %s", target_urn, e)
@@ -764,7 +897,9 @@ def _send_message_api(api: PlaywrightLinkedinAPI, conversation_urn: str,
     return res.json()
 
 
-def send_dm(session: AccountSession, public_identifier: str, message: str) -> bool:
+def send_dm(
+    session: AccountSession, public_identifier: str, message: str, on_step=None
+) -> bool:
     """Resolve the recipient URN live, then send `message` via the thread UI."""
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
@@ -773,4 +908,5 @@ def send_dm(session: AccountSession, public_identifier: str, message: str) -> bo
     if not target_urn:
         logger.error("No URN resolved for %s — cannot send DM", public_identifier)
         return False
-    return _send_dm_via_ui(session, target_urn, message)
+    _emit_step(on_step, "dm2")
+    return _send_dm_via_ui(session, target_urn, message, on_step=on_step)

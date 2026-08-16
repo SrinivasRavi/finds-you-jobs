@@ -230,6 +230,18 @@ class OperationsRepo:
         )
         return self._s.scalars(stmt).first()
 
+    def recent_succeeded_by_kind(self, kind: str, *, limit: int) -> list[Operation]:
+        """The newest `limit` succeeded ops of `kind`, newest first — the
+        contact-sync stamp/outcome derivation scans these for the last sweep
+        that actually probed (a budget-refused sweep still "succeeds")."""
+        stmt = (
+            select(Operation)
+            .where(Operation.kind == kind, Operation.state == "succeeded")
+            .order_by(Operation.finished_at.desc())
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
     def any_in_flight(self, kind: str) -> bool:
         stmt = select(Operation.id).where(
             Operation.kind == kind, Operation.state.in_(OP_ACTIVE_STATES)

@@ -609,10 +609,16 @@ class ContactDTO(BaseModel):
     sent_at: datetime | None
     accepted_at: datetime | None
     archived_at: datetime | None
-    # Derived last-message snippet for the kanban card (US-NW-01). P1 has no
-    # reply detection (that's P2), so this is always the last message *we* sent.
+    # The card/modal last-message snippet (US-NW-01/03): the thread's REAL last
+    # message once contact-sync has read it (`profile_payload.last_thread_message`),
+    # attributed by `last_message_direction` — "me" is ours, "them" is the
+    # contact's, with `last_message_from` naming them. Before any sync the
+    # latest OutreachLog fills in (always direction "me"), so a card that has
+    # outreach history is never blank.
     last_message: str | None = None
     last_message_at: datetime | None = None
+    last_message_direction: str | None = None  # "me" | "them" | None (no message)
+    last_message_from: str | None = None  # their display name, only when direction == "them"
 
 
 class ContactCreate(BaseModel):
@@ -672,11 +678,19 @@ class ReferralCandidatesDTO(BaseModel):
     #   found   — discover persisted candidates (they're in `candidates`)
     #   empty   — discover ran but LinkedIn returned nobody at the company
     #   confirm — discover needs the user to pick the company entity
+    #   refused — voyager refused the read (self-imposed cap / backoff); the
+    #             verbatim reason is in `refusal_reason` (2026-08-15: this state
+    #             used to masquerade as `empty`)
     discover_state: str = "never"
     # When discover_state == "confirm": the entity candidates to choose from
     # (may be empty → paste-URL only) and whether a pasted URL had failed.
     company_confirm: list[dict[str, Any]] = Field(default_factory=list)
     confirm_url_failed: bool = False
+    # When discover_state == "refused": the verbatim pacer/backoff reason.
+    refusal_reason: str = ""
+    # Contacts with a send op queued or running RIGHT NOW — the popup seeds its
+    # per-row Sending state from this, so it survives close/reopen (2026-08-16).
+    in_flight_contact_ids: list[str] = Field(default_factory=list)
 
 
 class ReachOutContact(BaseModel):
@@ -795,6 +809,36 @@ class LinkedInRateLimitsDTO(BaseModel):
     job_search_hour_remaining: int
 
 
+class BrowserViewRequest(BaseModel):
+    """POST /api/browser/view — queue a `view_page` operation that shows `url`
+    on a watch-only broker surface once the lane is free (2026-08-16; the
+    queued successor to the immediate /api/browser/open). `width`/`height`/
+    `dpr` are the caller's display metrics (fail-closed geometry);
+    `contact_id` links the ledger row to the contact whose button was
+    clicked."""
+
+    url: str
+    surface: str | None = None
+    width: int | None = None
+    height: int | None = None
+    dpr: float | None = None
+    contact_id: str | None = None
+
+
+class ContactSyncOutcomeDTO(BaseModel):
+    """What the newest contact-sync attempt did (US-NW-12 honesty). `stopped`
+    is "" for a clean sweep, else the verbatim stop reason the sweep surfaced
+    (cap_or_backoff | rate_limited | auth_error | batch_failed) with
+    `unprobed` sizing the untouched tail — the Networking header shows it so a
+    refused press never reads as a successful sync."""
+
+    at: datetime
+    synced: int = 0
+    failed: int = 0
+    stopped: str = ""
+    unprobed: int = 0
+
+
 class LinkedInSessionDTO(BaseModel):
     """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
 
@@ -815,6 +859,19 @@ class LinkedInSessionDTO(BaseModel):
     paused_reason: str = ""
     search_cursor: LinkedInSearchCursorDTO | None = None
     rate_limits: LinkedInRateLimitsDTO | None = None
+    # When the last contact-status sync that ACTUALLY PROBED finished (None =
+    # never). Backs the Networking header's "Synced Nm ago" stamp beside the
+    # Sync button — the one trigger there is (manual-only, 2026-08-15); each
+    # press is real LinkedIn read traffic. A sweep the read budget refused
+    # outright "succeeds" as an operation but synced nothing, so it must not
+    # re-stamp "Synced just now" (the 2026-08-15 live confusion). Attached by
+    # `routes._linkedin_session_base`.
+    contact_sync_last_at: datetime | None = None
+    # What the NEWEST sync attempt did — synced/failed counts plus the stop
+    # reason and untouched-tail size when the sweep was cut short. The
+    # Networking header renders the stop reason instead of letting a refused
+    # press read as a clean sync. None until a sync has ever run.
+    contact_sync_last_outcome: ContactSyncOutcomeDTO | None = None
 
 
 class LinkedInConnectRequest(BaseModel):
@@ -977,6 +1034,10 @@ class OperationDTO(BaseModel):
     finished_at: datetime | None
     # Not a DB column — filled by the ledger route's batched subject pass.
     subject: OperationSubjectDTO | None = None
+    # Not a DB column — a live send op's routed channel + completed step keys
+    # (from the in-memory progress registry), so a queue panel mounting
+    # mid-send still renders the fine steps (2026-08-16).
+    progress: dict[str, Any] | None = None
 
 
 class OperationAccepted(BaseModel):
@@ -986,12 +1047,10 @@ class OperationAccepted(BaseModel):
 
 
 class ContactSyncAccepted(BaseModel):
-    """Result of a user-initiated contact-status refresh (FR-NW-15).
+    """Result of a Sync-button contact-status refresh (FR-NW-15, manual-only).
 
-    `state` is `queued` (a sync started), `already_running` (joined the one in
-    flight), or `throttled` (the opportunistic surface-open refresh declined
-    because the last sync was too recent — the explicit Sync button ignores
-    it). `id` is set only for `queued`."""
+    `state` is `queued` (a sync started) or `already_running` (joined the one
+    in flight). `id` is set only for `queued`."""
 
     id: str | None = None
     state: str
@@ -1229,10 +1288,33 @@ def template_draft(name: str, company: str, audience_tag: str, warmth: str) -> s
 
 
 def contact_dto(contact: Contact, last_log: OutreachLog | None = None) -> ContactDTO:
+    """Prefers the synced thread snapshot (`profile_payload.last_thread_message`,
+    the REAL last message with honest attribution) and falls back to the latest
+    OutreachLog — our own sent message, direction "me" — when no sync has read
+    the thread yet. See the ContactDTO field comment."""
     dto = ContactDTO.model_validate(contact)
+    thread = (contact.profile_payload or {}).get("last_thread_message")
+    if (
+        isinstance(thread, dict)
+        and thread.get("direction") in ("me", "them")
+        and thread.get("text")
+    ):
+        dto.last_message = str(thread["text"])
+        dto.last_message_direction = str(thread["direction"])
+        at = thread.get("at")
+        if isinstance(at, str):
+            try:
+                dto.last_message_at = datetime.fromisoformat(at)
+            except ValueError:
+                dto.last_message_at = None
+        from_name = thread.get("from_name")
+        if thread["direction"] == "them" and isinstance(from_name, str) and from_name:
+            dto.last_message_from = from_name
+        return dto
     if last_log is not None:
         dto.last_message = last_log.body_sent
         dto.last_message_at = last_log.sent_at or last_log.created_at
+        dto.last_message_direction = "me"
     return dto
 
 

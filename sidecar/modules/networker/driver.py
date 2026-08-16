@@ -56,15 +56,17 @@ class VoyagerDriver(Protocol):
         dry_run: bool = False
     ) -> dict: ...
     def send_connection(
-        self, public_identifier: str, note: str, *, dry_run: bool
+        self, public_identifier: str, note: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict: ...
     def send_dm(
-        self, public_identifier: str, message: str, *, dry_run: bool
+        self, public_identifier: str, message: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict: ...
     def status(self, public_identifier: str, *, dry_run: bool) -> dict: ...
     def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict: ...
     def contact_sync_states(
-        self, public_identifiers: list[str], *, dry_run: bool
+        self, entries: list[dict], *, dry_run: bool
     ) -> dict: ...
     def quota(self) -> dict: ...
     def resume(self) -> dict: ...
@@ -225,12 +227,14 @@ class DirectVoyagerDriver:
         )
 
     def send_connection(
-        self, public_identifier: str, note: str, *, dry_run: bool
+        self, public_identifier: str, note: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict:
         return self._call(
             self._worker().send_connection,
             public_identifier=public_identifier,
             note=note,
+            on_step=on_step,
             profile=self.pacing_profile,
             linkedin_plan=self.linkedin_plan,
             state_dir=self.state_dir,
@@ -242,12 +246,14 @@ class DirectVoyagerDriver:
         )
 
     def send_dm(
-        self, public_identifier: str, message: str, *, dry_run: bool
+        self, public_identifier: str, message: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict:
         return self._call(
             self._worker().send_dm,
             public_identifier=public_identifier,
             message=message,
+            on_step=on_step,
             profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
@@ -285,15 +291,18 @@ class DirectVoyagerDriver:
         )
 
     def contact_sync_states(
-        self, public_identifiers: list[str], *, dry_run: bool
+        self, entries: list[dict], *, dry_run: bool
     ) -> dict:
         """Batched read-only contact-status probes in ONE browser session (the
         sync sweep — one `contact_sync` op per contact launched and quit a full
-        Chromium per contact). Same per-probe charges/pacing as `contact_sync`,
+        Chromium per contact). Each entry is `{public_identifier, urn,
+        thread_only}`: a thread-only entry with a cached urn is answered from
+        the sweep's one inbox read and charges nothing; the rest are full
+        probes with the same per-probe charges/pacing as `contact_sync`,
         enforced inside the worker."""
         return self._call(
             self._worker().contact_sync_states,
-            public_identifiers=public_identifiers,
+            entries=entries,
             profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,

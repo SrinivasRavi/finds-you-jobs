@@ -62,7 +62,7 @@ def _notes_used(state_dir) -> int:
 def test_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monkeypatch):
     """A crash AFTER the click may still have sent the invite — keep the charge
     (drifting low is the unsafe direction)."""
-    def _boom(sess, pid, note=""):
+    def _boom(sess, pid, note="", on_step=None):
         raise RuntimeError("browser died mid-verification")
 
     monkeypatch.setattr(actions, "send_connection_request", _boom)
@@ -74,7 +74,7 @@ def test_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monkeypa
 def test_weekly_limit_dialog_refunds_the_attempt(tmp_path, fake_browser, no_jitter, monkeypatch):
     """LinkedIn's weekly-cap dialog appears INSTEAD of the invite sending — a
     proven no-send: refund, then enter backoff."""
-    def _blocked(sess, pid, note=""):
+    def _blocked(sess, pid, note="", on_step=None):
         raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
 
     monkeypatch.setattr(actions, "send_connection_request", _blocked)
@@ -86,7 +86,7 @@ def test_weekly_limit_dialog_refunds_the_attempt(tmp_path, fake_browser, no_jitt
 
 def test_successful_send_is_charged_once(tmp_path, fake_browser, no_jitter, monkeypatch):
     monkeypatch.setattr(
-        actions, "send_connection_request", lambda s, p, note="": ("pending", "")
+        actions, "send_connection_request", lambda s, p, note="", on_step=None: ("pending", "")
     )
     out = worker.send_connection("someone", state_dir=str(tmp_path))
     assert out["ok"] and out["sent"]
@@ -100,7 +100,8 @@ def test_free_plan_charges_the_note_and_gates_at_the_cap(
     tmp_path, fake_browser, no_jitter, monkeypatch
 ):
     monkeypatch.setattr(
-        actions, "send_connection_request", lambda s, p, note="": ("pending", "with_note")
+        actions, "send_connection_request",
+        lambda s, p, note="", on_step=None: ("pending", "with_note"),
     )
     for i in range(3):  # notes cap: 3 / rolling 30 d
         out = worker.send_connection(
@@ -119,7 +120,8 @@ def test_free_plan_charges_the_note_and_gates_at_the_cap(
 
 def test_premium_plan_never_gates_on_notes(tmp_path, fake_browser, no_jitter, monkeypatch):
     monkeypatch.setattr(
-        actions, "send_connection_request", lambda s, p, note="": ("pending", "with_note")
+        actions, "send_connection_request",
+        lambda s, p, note="", on_step=None: ("pending", "with_note"),
     )
     for i in range(5):
         out = worker.send_connection(
@@ -138,7 +140,7 @@ def test_upsell_degrade_saturates_the_note_allowance(
     monkeypatch.setattr(
         actions,
         "send_connection_request",
-        lambda s, p, note="": ("pending", "noteless_upsell"),
+        lambda s, p, note="", on_step=None: ("pending", "noteless_upsell"),
     )
     out = worker.send_connection(
         "p1", note="hi", state_dir=str(tmp_path), linkedin_plan="free"
@@ -156,14 +158,14 @@ def test_upsell_degrade_saturates_the_note_allowance(
 
 
 def test_dm_proven_no_send_is_refunded(tmp_path, fake_browser, no_jitter, monkeypatch):
-    monkeypatch.setattr(actions, "send_dm", lambda s, p, m: False)
+    monkeypatch.setattr(actions, "send_dm", lambda s, p, m, on_step=None: False)
     out = worker.send_dm("someone", "hello", state_dir=str(tmp_path))
     assert out["ok"] is False and out["sent"] is False
     assert Pacer(resolve_profile(None), state_dir=tmp_path).remaining()["dm_daily_sent"] == 0
 
 
 def test_dm_rate_limit_refunds_and_backs_off(tmp_path, fake_browser, no_jitter, monkeypatch):
-    def _throttled(s, p, m):
+    def _throttled(s, p, m, on_step=None):
         raise RateLimited("LinkedIn returned HTTP 429 (throttled/blocked)")
 
     monkeypatch.setattr(actions, "send_dm", _throttled)
@@ -175,7 +177,7 @@ def test_dm_rate_limit_refunds_and_backs_off(tmp_path, fake_browser, no_jitter, 
 
 
 def test_dm_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monkeypatch):
-    def _boom(s, p, m):
+    def _boom(s, p, m, on_step=None):
         raise RuntimeError("browser died mid-send")
 
     monkeypatch.setattr(actions, "send_dm", _boom)
@@ -326,3 +328,53 @@ def test_search_jobs_enters_backoff_on_throttle(tmp_path, monkeypatch):
     # The attempted page (which reached LinkedIn and 429'd) is still charged —
     # charge-on-attempt keeps the hourly ledger from drifting low.
     assert p.usage("job_search_pages")["hour_used"] == 1
+
+
+def test_send_narrates_steps_to_the_host(tmp_path, fake_browser, no_jitter, monkeypatch):
+    """The 2026-08-16 narration fork: the worker reports the pacing wait as
+    step 1 (`invite1`/`dm1`) and hands the SAME callback to the driving action,
+    so every later step reaches the host from the code that performed it."""
+    seen: list[str] = []
+
+    def _drive(s, p, note="", on_step=None):
+        assert on_step is not None
+        on_step("invite2")
+        return ("pending", "")
+
+    monkeypatch.setattr(actions, "send_connection_request", _drive)
+    out = worker.send_connection(
+        "someone", note="", state_dir=str(tmp_path), on_step=seen.append
+    )
+    assert out["sent"] is True
+    assert seen == ["invite1", "invite2"]
+
+    seen.clear()
+
+    def _dm_drive(s, p, m, on_step=None):
+        assert on_step is not None
+        on_step("dm2")
+        return True
+
+    monkeypatch.setattr(actions, "send_dm", _dm_drive)
+    out = worker.send_dm(
+        "someone", "hello", state_dir=str(tmp_path), on_step=seen.append
+    )
+    assert out["sent"] is True
+    assert seen == ["dm1", "dm2"]
+
+
+def test_step_narration_failure_never_breaks_the_send(
+    tmp_path, fake_browser, no_jitter, monkeypatch
+):
+    """A callback that explodes must not fail the send it narrates."""
+    def _bad_callback(step: str) -> None:
+        raise RuntimeError("listener died")
+
+    monkeypatch.setattr(
+        actions, "send_connection_request",
+        lambda s, p, note="", on_step=None: ("pending", ""),
+    )
+    out = worker.send_connection(
+        "someone", note="", state_dir=str(tmp_path), on_step=_bad_callback
+    )
+    assert out["sent"] is True

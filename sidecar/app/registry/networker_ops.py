@@ -403,7 +403,7 @@ def _resolve_company_urn(
     profile: PacingProfile | None,
     company_url: str | None,
     dry_run: bool,
-) -> tuple[str | None, str, list[dict], dict]:
+) -> tuple[str | None, str, list[dict], dict, str]:
     """Resolve `company` → the LinkedIn company URN to scope discovery by (FR-NW-02).
 
     Precedence: a pasted LinkedIn company URL (authoritative) → a prior cached
@@ -414,9 +414,13 @@ def _resolve_company_urn(
     for the "zip" failure, where a 0-hit typeahead silently reverted to a keyword
     search and returned employees of unrelated namesake companies.
 
-    Returns (company_urn | None, resolved_name, confirm_candidates, usage). A
-    `company_urn is None` return ALWAYS means "ask the user" (never "discover
-    anyway"); `confirm_candidates` may be empty (→ the popup offers paste-only)."""
+    Returns (company_urn | None, resolved_name, confirm_candidates, usage,
+    refusal_reason). A `company_urn is None` return with an empty
+    `refusal_reason` ALWAYS means "ask the user" (never "discover anyway");
+    `confirm_candidates` may be empty (→ the popup offers paste-only). A set
+    `refusal_reason` means voyager REFUSED to look (cap/backoff) — the caller
+    must surface the refusal, never the confirm step (a spent read budget is
+    not "we couldn't find this company")."""
     assert ctx.db is not None  # caller guarantees a DB context
     key = resolution_key(canonical_url, source_adapter, company)
 
@@ -427,15 +431,17 @@ def _resolve_company_urn(
         if result.candidates:
             c = result.candidates[0]
             _cache_resolution(ctx, key, c, "user")
-            return c.urn, (c.name or company), [], asdict(result.usage)
+            return c.urn, (c.name or company), [], asdict(result.usage), ""
+        if result.error:
+            return None, company, [], asdict(result.usage), (result.reason or result.error)
         # The pasted URL didn't resolve to a company — re-ask (no discovery).
-        return None, company, [], asdict(result.usage)
+        return None, company, [], asdict(result.usage), ""
 
     # 2) Cached choice for this employer.
     with ctx.db.repos() as repos:
         cached = repos.company_resolutions.get(key)
     if cached is not None and cached.company_urn:
-        return cached.company_urn, (cached.company_name or company), [], {}
+        return cached.company_urn, (cached.company_name or company), [], {}, ""
 
     # 3) Fresh typeahead — ONLY a domain-website match is confident enough to auto-pick.
     domain = employer_domain(canonical_url)
@@ -444,12 +450,39 @@ def _resolve_company_urn(
         company, driver=driver, prefer_domain=domain or None, limit=5, dry_run=dry_run
     )
     usage = asdict(result.usage)
+    if result.error:
+        # Voyager refused the typeahead (cap/backoff). An empty candidate list
+        # here is NOT "unknown company" — bubbling it into the confirm step sent
+        # the user hunting for a URL that would then be refused too.
+        return None, company, [], usage, (result.reason or result.error)
     domain_hit = next((c for c in result.candidates if c.domain_match), None)
     if domain_hit is not None:
         _cache_resolution(ctx, key, domain_hit, "domain")
-        return domain_hit.urn, (domain_hit.name or company), [], usage
+        return domain_hit.urn, (domain_hit.name or company), [], usage, ""
     # Anything else (ambiguous, single, or zero) → confirm/paste. Never keyword-search.
-    return None, company, [_candidate_dto(c) for c in result.candidates], usage
+    return None, company, [_candidate_dto(c) for c in result.candidates], usage, ""
+
+
+def _refused_outcome(
+    ctx: OperationContext, *, company: str, job_id: str | None, reason: str,
+    usage: dict,
+) -> OperationOutcome:
+    """The discover outcome for a voyager read refusal (cap/backoff).
+
+    Emits `discover_refused` (the popup stops its spinner and shows the verbatim
+    reason) and marks the result_ref `refused` so the candidates endpoint can
+    tell "we were not allowed to look" apart from "we looked and found nobody"
+    — the distinction the Kaseya 0-contact bug collapsed."""
+    if ctx.publish is not None:
+        ctx.publish(make_event("networker", {
+            "id": ctx.operation_id, "phase": "discover_refused",
+            "company": company, "job_id": job_id, "reason": reason,
+        }))
+    return OperationOutcome(
+        result_ref={"refused": True, "reason": reason, "company": company,
+                    "job_id": job_id, "count": 0},
+        usage=usage,
+    )
 
 
 def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
@@ -495,11 +528,21 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
                     industry=snap.get("company_industry", ""), source="user",
                 )
     else:
-        company_urn, resolved_name, confirm_cands, resolve_usage = _resolve_company_urn(
-            ctx, company=company, canonical_url=canonical_url,
-            source_adapter=source_adapter, profile=profile, company_url=company_url,
-            dry_run=dry_run,
+        company_urn, resolved_name, confirm_cands, resolve_usage, refusal = (
+            _resolve_company_urn(
+                ctx, company=company, canonical_url=canonical_url,
+                source_adapter=source_adapter, profile=profile, company_url=company_url,
+                dry_run=dry_run,
+            )
         )
+        if refusal:
+            # Voyager refused the resolve read (cap/backoff) — surface the
+            # refusal verbatim (US-NW-09 honesty; the Kaseya bug rendered this
+            # as "no contacts found"). Nothing was searched; nothing to upsert.
+            return _refused_outcome(
+                ctx, company=company, job_id=job_id, reason=refusal,
+                usage=resolve_usage,
+            )
         if company_urn is None:
             # We could NOT confidently resolve the target company. Do NOT discover
             # (the old keyword fallback returned namesake-company employees — the
@@ -524,6 +567,19 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         company, job_text, driver=driver, limit=limit, dry_run=dry_run,
         company_urn=company_urn, page=page,
     )
+    if result.error:
+        # Voyager refused the People search (cap/backoff) — no browser ran.
+        # This used to fall through as an honest empty roster ("No contacts
+        # found at this company yet" for a 5k-employee company; live 2026-08-15).
+        usage = asdict(result.usage)
+        if resolve_usage.get("internal_calls"):
+            usage["internal_calls"] = (
+                usage.get("internal_calls", 0) + resolve_usage["internal_calls"]
+            )
+        return _refused_outcome(
+            ctx, company=company, job_id=job_id,
+            reason=result.reason or result.error, usage=usage,
+        )
 
     contact_ids: list[str] = []
     with ctx.db.repos() as repos:
@@ -686,6 +742,28 @@ def _maybe_move_on_batch_settle(
         repos.applications.update(application_id, column="seeking_referral")
 
 
+# Live send progress by operation id — the routed channel + completed step
+# keys, mirrored from the published SSE events so a ledger read can seed a
+# queue panel that mounted mid-send (2026-08-16; SSE events before mount are
+# gone). In-memory on purpose: a dead process has no live sends. Bounded.
+SEND_PROGRESS: dict[str, dict[str, Any]] = {}
+_SEND_PROGRESS_CAP = 32
+
+
+def _progress_start(operation_id: str, channel: str) -> None:
+    while len(SEND_PROGRESS) >= _SEND_PROGRESS_CAP:
+        SEND_PROGRESS.pop(next(iter(SEND_PROGRESS)))
+    SEND_PROGRESS[operation_id] = {"channel": channel, "steps": []}
+
+
+def send_progress(operation_id: str) -> dict[str, Any] | None:
+    """A COPY of the live progress for one send op (None when not sending)."""
+    entry = SEND_PROGRESS.get(operation_id)
+    if entry is None:
+        return None
+    return {"channel": entry["channel"], "steps": list(entry["steps"])}
+
+
 def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Send one referral-ask via the voyager driver; persist the audit (US-REF-04)."""
     snap = ctx.input_snapshot
@@ -711,9 +789,41 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         audience_tag = row.audience_tag
     driver = DRIVER_FACTORY(profile)
 
+    # The send announces itself (`sending`, with the routed channel), then
+    # narrates REAL progress: the driver reports each completed step
+    # (`send_step` with the plan key) from the code that drove it — the
+    # pacing wait, the profile open, the click, the note, the verified send
+    # (maintainer, 2026-08-16: the queue panel ticks live, no fabrication
+    # needed since we are the ones driving).
+    routed_channel = "dm" if is_first_degree else "connection_note"
+    op_id = ctx.operation_id or ""
+    _progress_start(op_id, routed_channel)
+    if ctx.publish is not None:
+        ctx.publish(make_event("networker", {
+            "id": ctx.operation_id, "phase": "sending",
+            "contact_id": contact_id, "job_id": job_id,
+            "channel": routed_channel,
+            "dry_run": dry_run,
+        }))
+
+    def _publish_step(step: str) -> None:
+        # Called from the op's worker thread as the driver finishes each step.
+        entry = SEND_PROGRESS.get(op_id)
+        if entry is not None:
+            entry["steps"].append(step)
+        if ctx.publish is not None:
+            ctx.publish(make_event("networker", {
+                "id": ctx.operation_id, "phase": "send_step",
+                "contact_id": contact_id, "job_id": job_id, "step": step,
+            }))
+
     try:
-        result = net_send(message, net_contact, driver=driver, dry_run=dry_run)
+        result = net_send(
+            message, net_contact, driver=driver, dry_run=dry_run,
+            on_step=_publish_step,
+        )
     except NetworkerError as exc:
+        SEND_PROGRESS.pop(op_id, None)
         # A hard voyager failure (stale selector, subprocess crash, unparseable
         # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,
         # outreach_logs empty" dogfood bug. The audit row is a hard requirement for
@@ -805,6 +915,11 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 paused_reason=(result.reason or result.error or "LinkedIn rate-limit backoff"),
             )
 
+    # The DM plan's last step is the audit write above ("Record the outcome in
+    # your log") — app-side work, so it is reported here, not by the driver.
+    if result.sent and not dry_run and result.channel.value == "dm":
+        _publish_step("dm5")
+    SEND_PROGRESS.pop(op_id, None)
     if ctx.publish is not None:
         ctx.publish(make_event("networker", {
             "id": ctx.operation_id, "phase": "sent" if result.sent else "send_failed",

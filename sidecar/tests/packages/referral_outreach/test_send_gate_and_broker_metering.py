@@ -125,7 +125,7 @@ def test_send_connection_refuses_under_backoff_before_any_surface(
     ran: list[str] = []
     monkeypatch.setattr(
         actions, "send_connection_request",
-        lambda s, p, note="": ran.append(p) or ("pending", ""),
+        lambda s, p, note="", on_step=None: ran.append(p) or ("pending", ""),
     )
     p = Pacer(resolve_profile(None), state_dir=tmp_path)
     p.pause_for_backoff("LinkedIn returned HTTP 429 (throttled/blocked)")
@@ -146,7 +146,7 @@ def test_send_connection_refuses_when_invite_cap_spent_before_any_surface(
     ran: list[str] = []
     monkeypatch.setattr(
         actions, "send_connection_request",
-        lambda s, p, note="": ran.append(p) or ("pending", ""),
+        lambda s, p, note="", on_step=None: ran.append(p) or ("pending", ""),
     )
     # Pin the day cap to 1 and spend it directly on the shared ledger.
     profile = PacingProfile(overrides={"invites_day": 1})
@@ -170,7 +170,7 @@ def test_send_dm_refuses_under_backoff_before_any_surface(
     """The DM path shares the same up-front backoff refusal as the invite path."""
     ran: list[str] = []
     monkeypatch.setattr(
-        actions, "send_dm", lambda s, p, m: ran.append(p) or True
+        actions, "send_dm", lambda s, p, m, on_step=None: ran.append(p) or True
     )
     p = Pacer(resolve_profile(None), state_dir=tmp_path)
     p.pause_for_backoff("LinkedIn returned HTTP 429 (throttled/blocked)")
@@ -190,7 +190,7 @@ def test_broker_backed_send_also_refuses_before_acquiring_the_surface(
     the surface provider is ever called, so no lane is acquired (point 1 + 5)."""
     acquired: list[str] = []
     monkeypatch.setattr(
-        actions, "send_connection_request", lambda s, p, note="": ("pending", "")
+        actions, "send_connection_request", lambda s, p, note="", on_step=None: ("pending", "")
     )
     p = Pacer(resolve_profile(None), state_dir=tmp_path)
     p.pause_for_backoff("LinkedIn returned HTTP 429 (throttled/blocked)")
@@ -220,7 +220,7 @@ def test_rate_limit_stops_the_batch_and_never_retries(
     batch stops, it never loops."""
     calls: list[str] = []
 
-    def _blocked(sess, pid, note=""):
+    def _blocked(sess, pid, note="", on_step=None):
         calls.append(pid)
         raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
 
@@ -248,7 +248,7 @@ def test_dm_rate_limit_stops_without_retry(
     """A DM 429 is the same STOP: one attempt, refund, backoff — no retry loop."""
     calls: list[str] = []
 
-    def _throttled(s, p, m):
+    def _throttled(s, p, m, on_step=None):
         calls.append(p)
         raise RateLimited("LinkedIn returned HTTP 429 (throttled/blocked)")
 
@@ -272,7 +272,7 @@ def test_metering_is_identical_self_launched_and_broker_backed(
     page action onto the broker lane must leave the ledger byte-identical. One
     successful send each way lands exactly one invite charge."""
     monkeypatch.setattr(
-        actions, "send_connection_request", lambda s, p, note="": ("pending", "")
+        actions, "send_connection_request", lambda s, p, note="", on_step=None: ("pending", "")
     )
 
     # (a) self-launch: an inline AccountSession stand-in, scoped so the broker leg
@@ -311,7 +311,7 @@ def test_concurrent_broker_backed_sends_share_the_locked_ledger(
     the unsafe direction). Both sends are broker-backed here, to prove the broker
     path opens NO second writer that routes around the lock."""
     monkeypatch.setattr(
-        actions, "send_connection_request", lambda s, p, note="": ("pending", "")
+        actions, "send_connection_request", lambda s, p, note="", on_step=None: ("pending", "")
     )
     barrier = threading.Barrier(2)
     errors: list[BaseException] = []
@@ -376,8 +376,8 @@ def test_ensure_linkedin_origin_navigates_only_when_off_origin(monkeypatch):
 def test_voyager_fetch_asserts_origin_before_the_inpage_fetch():
     """`client._fetch` is the one choke point every voyager call funnels
     through: it must land the page on-origin BEFORE evaluating the fetch, so
-    every caller (sync's `get_profile`, `get_last_message`, search) is covered
-    without per-action guards."""
+    every caller (sync's `get_profile`, `inbox_last_messages`, search) is
+    covered without per-action guards."""
     order: list[str] = []
 
     class _EvalPage:

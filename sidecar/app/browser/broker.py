@@ -16,14 +16,21 @@ ever touches a Playwright object. The loop hands work in through two
 thread-safe queues (acks, commands) and hears back through
 `loop.call_soon_threadsafe`, the same cross-thread marshalling `EventHub` uses.
 
-**Back-pressure.** Chrome captures the next screencast frame only once the
-previous one is acked, so the ack is the flow-control valve. The invariant:
-every frame gets exactly one ack. A frame that ships is acked after the
-websocket send flushes, so capture can never outrun the socket. A frame that is
-dropped is acked at once, so the stream never stalls. On overflow we drop the
-NEWEST frame, the opposite of the SSE hub's drop-oldest, because a viewer of a
-live surface wants the frame it is already sending finished and then the
-freshest capture after it, never a stale one held in a queue.
+**Liveness over back-pressure.** Chrome captures the next screencast frame only
+once the previous one is acked. The first design acked after the websocket send
+flushed, with the surface thread's run loop draining the acks — elegant flow
+control, and a liveness bug: a driver op runs as ONE lane action (a referral
+send holds the thread for tens of seconds of navigating and typing), the run
+loop never ticks inside an action, so after one unacked frame the stream froze
+for exactly the window the live view exists for (the maintainer watched a DM
+"send" as a still image, 2026-08-15). Every frame is therefore acked
+IMMEDIATELY, on the surface thread, inside the frame event itself — Playwright
+dispatches events while a lane action sits in its own page calls, so capture
+keeps running mid-action and the viewer genuinely watches the driver work. Flow
+control is now the viewer queue: one slot, keep-newest (a superseded live frame
+is worthless), drained by the serving loop's websocket send. A slow socket sees
+the freshest frame instead of stalling capture; one local viewer on a loopback
+socket keeps up with JPEG-60 frames in the tens of kilobytes without effort.
 """
 
 from __future__ import annotations
@@ -82,7 +89,8 @@ class BrowserLaunchError(RuntimeError):
 
 
 class Frame(NamedTuple):
-    """One decoded screencast frame. `session_id` is what the ack quotes back."""
+    """One decoded screencast frame. `session_id` is Chrome's capture id (the
+    ack already quoted it back, at capture, on the surface thread)."""
 
     jpeg: bytes
     session_id: int
@@ -94,11 +102,18 @@ class Viewer:
     """The single consumer attached to a surface (one websocket).
 
     A one-slot queue on purpose: the viewer is showing live pixels, so holding a
-    backlog would only mean showing older ones later.
+    backlog would only mean showing older ones later. Overflow keeps the NEWEST
+    (the older queued frame is evicted): frames are acked at capture now, so a
+    queued frame carries no ack debt, and a superseded live frame is worthless.
+
+    `urls` carries the surface's committed main-frame URL whenever it changes —
+    driver-driven navigations and in-page SPA route changes included, not just
+    the viewer's own typed ones. Same one-slot, keep-newest shape.
     """
 
     def __init__(self) -> None:
         self.queue: asyncio.Queue[Frame] = asyncio.Queue(maxsize=1)
+        self.urls: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
 
 
 class SurfaceSession(NamedTuple):
@@ -170,13 +185,17 @@ class BrowserSurface:
         # applied; the first navigation waits on it, fail-closed.
         self._geometry_ready = threading.Event()
         self._error: BaseException | None = None
-        self._acks: queue.SimpleQueue[int] = queue.SimpleQueue()
         self._commands: queue.SimpleQueue[
             tuple[Future[Any], Callable[[SurfaceSession], Any]]
         ] = queue.SimpleQueue()
         self._viewer: Viewer | None = None
         self._max_width = DEFAULT_MAX_WIDTH
         self._max_height = DEFAULT_MAX_HEIGHT
+        # Committed main-frame URL tracking. `_last_url` is the surface thread's
+        # change detector; `_page_url` is the serving-loop copy a late-attaching
+        # viewer is seeded from, so a reconnect shows where the page already is.
+        self._last_url = ""
+        self._page_url = ""
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -241,7 +260,10 @@ class BrowserSurface:
             # Compute the launch kwargs here, on the surface thread: it may spend a
             # throwaway Chrome launch to de-headless the UA (`resolve_user_agent`).
             session = self._opener(self._profile_dir, self._launch_kwargs())
-            session.cdp.on("Page.screencastFrame", self._on_frame)
+            session.cdp.on(
+                "Page.screencastFrame",
+                lambda params: self._on_frame(session, params),
+            )
             # The continuous screencast (everyNthFrame:1) is also the surface's
             # requestAnimationFrame cadence source: Chrome services rAF while it is
             # capturing. It must never be paused while a surface is live, or the
@@ -257,8 +279,8 @@ class BrowserSurface:
         self._signal_ready()
         try:
             while not self._stopping.is_set():
-                self._drain_acks(session)
                 self._drain_commands(session)
+                self._watch_url(session)
                 # Parking inside Playwright is what lets its sync event
                 # handlers run, so the frame callbacks fire from here.
                 session.page.wait_for_timeout(THREAD_TICK_MS)
@@ -280,17 +302,6 @@ class BrowserSurface:
             "everyNthFrame": 1,
         }
 
-    def _drain_acks(self, session: SurfaceSession) -> None:
-        while True:
-            try:
-                session_id = self._acks.get_nowait()
-            except queue.Empty:
-                return
-            try:
-                session.cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
-            except Exception:  # noqa: BLE001 — the session may already be gone
-                self._log.debug("screencast ack dropped", exc_info=True)
-
     def _drain_commands(self, session: SurfaceSession) -> None:
         while True:
             try:
@@ -303,6 +314,43 @@ class BrowserSurface:
                 future.set_result(action(session))
             except Exception as exc:  # noqa: BLE001 — travels to the caller
                 future.set_exception(exc)
+
+    def _watch_url(self, session: SurfaceSession) -> None:
+        """Emit the committed main-frame URL to the viewer WHENEVER it changes,
+        not only after a viewer-typed navigate. On the surface thread, once per
+        tick: `page.url` is Playwright's own locally-tracked frame URL (updated
+        through its internal navigation events, full and in-page/SPA alike), so
+        this read is a plain attribute — no CDP round-trip, no new domain
+        enable, nothing the page can observe. Publishes only on change, so the
+        wire never sees a repeat."""
+        url = session.page.url
+        if url == self._last_url:
+            return
+        self._last_url = url
+        # A blank page is "no page yet", not a destination worth reporting.
+        if not url or url == "about:blank":
+            return
+        self._call_on_loop(self._publish_url, url)
+
+    def _publish_url(self, url: str) -> None:
+        """Record the current URL and offer it to the viewer, on the serving
+        loop. Drop-OLD on overflow — the newest URL is the only true one."""
+        self._page_url = url
+        viewer = self._viewer
+        if viewer is None:
+            return
+        self._offer_url(viewer, url)
+
+    @staticmethod
+    def _offer_url(viewer: Viewer, url: str) -> None:
+        try:
+            viewer.urls.put_nowait(url)
+        except asyncio.QueueFull:
+            try:
+                viewer.urls.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            viewer.urls.put_nowait(url)
 
     def _teardown(self, session: SurfaceSession | None) -> None:
         if session is None:
@@ -323,15 +371,26 @@ class BrowserSurface:
 
     # -- frames ------------------------------------------------------------
 
-    def _on_frame(self, params: dict[str, Any]) -> None:
+    def _on_frame(self, session: SurfaceSession, params: dict[str, Any]) -> None:
         """CDP `Page.screencastFrame`, on the surface thread. Decode here (the
-        loop should never spend time on base64), then hand the bytes over."""
+        loop should never spend time on base64), ack AT ONCE so Chrome keeps
+        capturing, then hand the bytes over.
+
+        The immediate ack is the liveness fix (module docstring): it runs inside
+        the frame event, which Playwright dispatches while a lane action sits in
+        its own page calls — the nested `cdp.send` from a handler is the same
+        documented shape as accepting a dialog from its handler. Ack-after-
+        websocket-flush froze the stream for the length of every driver op."""
         try:
             jpeg = base64.b64decode(params["data"])
             session_id = int(params["sessionId"])
         except Exception:  # noqa: BLE001 — one unreadable frame is not fatal
             self._log.warning("unreadable screencast frame", exc_info=True)
             return
+        try:
+            session.cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
+        except Exception:  # noqa: BLE001 — the session may already be gone
+            self._log.debug("screencast ack dropped", exc_info=True)
         metadata = params.get("metadata") or {}
         self._call_on_loop(
             self._offer,
@@ -344,45 +403,42 @@ class BrowserSurface:
         )
 
     def _offer(self, frame: Frame) -> None:
-        """Deliver one frame to the viewer, on the serving loop. Exactly one of
-        the three paths acks: no viewer, full queue, or the viewer's send."""
+        """Deliver one frame to the viewer, on the serving loop. No viewer →
+        dropped. Full slot → the OLDER queued frame is evicted for this one
+        (keep-newest): the frame is already acked, so nothing is owed on it, and
+        the viewer of a live surface always wants the freshest capture."""
         viewer = self._viewer
         if viewer is None:
-            self.ack(frame.session_id)
             return
         try:
             viewer.queue.put_nowait(frame)
         except asyncio.QueueFull:
-            # Drop the NEWEST: the queued frame is already on its way out and
-            # the next capture will be fresher than this one is.
-            self.ack(frame.session_id)
-
-    def ack(self, session_id: int) -> None:
-        """Release Chrome to capture the next frame. Exactly one per delivered
-        frame, whether that frame shipped or was dropped."""
-        self._acks.put(session_id)
+            try:
+                viewer.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            viewer.queue.put_nowait(frame)
 
     def set_viewer(self, viewer: Viewer) -> None:
         """Attach the single viewer, on the serving loop. A new attach takes the
-        surface over from whatever viewer was current; the outgoing one is
-        drained and acked so a frame it never sent can't leave the screencast
-        waiting forever on an ack nobody is left to send.
+        surface over from whatever viewer was current; the outgoing one simply
+        stops receiving (its queued frame is already acked, so nothing stalls).
         """
-        previous, self._viewer = self._viewer, viewer
-        if previous is not None and previous is not viewer:
-            self._drain_and_ack(previous)
+        self._viewer = viewer
+        # Seed the incoming viewer with where the page already is, so a
+        # reconnect (or a tab re-mount) never reads "no page yet" over a live,
+        # fully loaded page.
+        if self._page_url:
+            self._offer_url(viewer, self._page_url)
 
     def detach(self, viewer: Viewer) -> None:
         """Detach `viewer`, on the serving loop, but only if it is still the
         current one. A viewer a newer attach already replaced detaches nothing
         here, so one socket closing can never mute the client that took the
-        surface over. The outgoing viewer is drained and acked, the same
-        fail-safe the takeover in `set_viewer` uses.
-        """
+        surface over."""
         if self._viewer is not viewer:
             return
         self._viewer = None
-        self._drain_and_ack(viewer)
 
     @property
     def has_viewer(self) -> bool:
@@ -393,16 +449,14 @@ class BrowserSurface:
         reads it to know the user is watching this surface (Our Claim 9)."""
         return self._viewer is not None
 
-    def _drain_and_ack(self, viewer: Viewer) -> None:
-        """Ack every frame still sitting in the outgoing viewer's queue, so a
-        socket that dies mid-frame never leaves the screencast stalled on an ack
-        nobody is left to send."""
-        while True:
-            try:
-                frame = viewer.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                return
-            self.ack(frame.session_id)
+    @property
+    def page_url(self) -> str:
+        """The committed main-frame URL as last published to the serving loop —
+        empty while the surface still sits on its launch `about:blank`. The
+        websocket quotes it in the attach status so a client knows, without
+        racing the URL pump, whether the surface has a page at all (the
+        auto-open-home decision reads exactly this)."""
+        return self._page_url
 
     # -- commands ----------------------------------------------------------
 

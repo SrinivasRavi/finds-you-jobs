@@ -36,10 +36,18 @@ class FakeSurface:
         self.launch_error = launch_error
         self.viewers: list[Viewer] = []
         self.detaches: list[Viewer] = []
-        self.acks: list[int] = []
         self.navigations: list[str] = []
         self.resizes: list[tuple[int, int]] = []
         self.geometries: list[tuple[int, int, float]] = []
+        # Mirrors the real broker's attach-time URL record: the attach status
+        # quotes it, "" meaning "still on the launch about:blank".
+        self.page_url = ""
+        # Mirrors the real broker's attach-time URL seeding (a reconnect learns
+        # where the page already is). None → no seed; set alongside
+        # `frame_on_attach=False` so a test can hear the url pump without racing
+        # the frame pump for the socket.
+        self.seed_url: str | None = None
+        self.frame_on_attach = True
 
     async def wait_ready(self) -> None:
         if self.launch_error is not None:
@@ -48,14 +56,15 @@ class FakeSurface:
     def set_viewer(self, viewer: Viewer) -> None:
         self.viewers.append(viewer)
         # `set_viewer` runs on the serving loop, exactly where the real broker's
-        # `_offer` puts a frame, so this hand-off is faithful.
-        viewer.queue.put_nowait(FRAME)
+        # `_offer` puts a frame (and `_publish_url` a URL), so this hand-off is
+        # faithful.
+        if self.frame_on_attach:
+            viewer.queue.put_nowait(FRAME)
+        if self.seed_url is not None:
+            viewer.urls.put_nowait(self.seed_url)
 
     def detach(self, viewer: Viewer) -> None:
         self.detaches.append(viewer)
-
-    def ack(self, session_id: int) -> None:
-        self.acks.append(session_id)
 
     def navigate(self, url: str) -> concurrent.futures.Future[str]:
         # The real surface hands back a future that resolves to the committed
@@ -156,14 +165,34 @@ def test_correct_token_streams_status_then_frames(
 ) -> None:
     with client.websocket_connect(_url(surface="pane-a")) as ws:
         status = json.loads(ws.receive_text())
-        assert status == {"type": "status", "state": "streaming", "surface": "pane-a"}
+        # The attach status quotes the surface's current URL — "" here, meaning
+        # "still on the launch about:blank" (the auto-open-home signal).
+        assert status == {
+            "type": "status",
+            "state": "streaming",
+            "surface": "pane-a",
+            "url": "",
+        }
         assert ws.receive_bytes() == FRAME.jpeg
 
     surface = broker.surfaces["pane-a"]
-    # Acked exactly once, and only after the send flushed.
-    assert _eventually(lambda: surface.acks == [7])
     # Attached on entry, and the very viewer it installed detached on exit.
     assert _eventually(lambda: len(surface.viewers) == 1 and surface.detaches == surface.viewers)
+
+
+def test_attach_status_quotes_where_the_surface_already_is(
+    client: TestClient, broker: FakeBroker
+) -> None:
+    """A reconnect (or a tab re-mount) over a live page hears that page's URL in
+    the attach status itself — deterministically, not by racing the url pump —
+    so a client never auto-opens a home page over a page that is already
+    somewhere."""
+    surface = broker.surface("pane-a")
+    surface.page_url = "https://example.test/already-here"
+    with client.websocket_connect(_url(surface="pane-a")) as ws:
+        status = json.loads(ws.receive_text())
+    assert status["state"] == "streaming"
+    assert status["url"] == "https://example.test/already-here"
 
 
 def test_client_control_messages_reach_the_surface(
@@ -188,6 +217,32 @@ def test_client_control_messages_reach_the_surface(
         # Still live after the malformed and the unknown message.
         ws.send_text(json.dumps({"type": "navigate", "url": "https://second.test/"}))
         assert _eventually(lambda: len(surface.navigations) == 2)
+
+
+def test_surface_url_changes_are_pushed_without_a_navigate(
+    client: TestClient, broker: FakeBroker
+) -> None:
+    """The url pump forwards every URL the surface publishes as the same
+    `status{url}` frame the navigate echo uses — so a driver-driven or SPA
+    navigation reaches the URL bar with no client command in flight."""
+    surface = broker.surface("pane-a")
+    surface.frame_on_attach = False
+    surface.seed_url = "https://example.test/already-loaded"
+    with client.websocket_connect(_url(surface="pane-a")) as ws:
+        assert json.loads(ws.receive_text())["state"] == "streaming"
+        assert json.loads(ws.receive_text()) == {
+            "type": "status",
+            "url": "https://example.test/already-loaded",
+        }
+        # The socket is still fully live beside the url pump: a typed navigate
+        # still round-trips its own echo. (Later spontaneous changes reaching
+        # `viewer.urls` are covered at the broker level, where the loop that
+        # feeds the queue is the test's own.)
+        ws.send_text(json.dumps({"type": "navigate", "url": "https://example.test/go"}))
+        assert json.loads(ws.receive_text()) == {
+            "type": "status",
+            "url": "https://example.test/go",
+        }
 
 
 def test_viewport_control_message_sets_the_display_geometry(
@@ -235,7 +290,7 @@ def test_launch_failure_reports_an_error_then_closes(
 
 
 async def test_viewer_queue_holds_exactly_one_frame() -> None:
-    """The one-slot queue is the shape the drop-newest rule depends on."""
+    """The one-slot queue is the shape the keep-newest rule depends on."""
     viewer = Viewer()
     viewer.queue.put_nowait(FRAME)
     with pytest.raises(asyncio.QueueFull):

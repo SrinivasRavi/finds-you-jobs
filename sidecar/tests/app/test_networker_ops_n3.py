@@ -265,6 +265,61 @@ def test_resolve_zero_hits_confirms_never_keyword_searches(wired: Wired) -> None
         assert repos.contacts.list() == []
 
 
+_REFUSAL_REASON = "profile_views cap reached (87/day, plan=sales_navigator)"
+_DISCOVER_REFUSED = {
+    "op": "discover", "ok": False, "error": "cap_or_backoff",
+    "reason": _REFUSAL_REASON, "count": 0, "contacts": [],
+}
+_RESOLVE_REFUSED = {
+    "op": "resolve-company", "ok": False, "error": "cap_or_backoff",
+    "reason": _REFUSAL_REASON, "count": 0, "companies": [],
+}
+
+
+def test_discover_cap_refusal_surfaces_refused_never_empty(wired: Wired) -> None:
+    # THE Kaseya 2026-08-15 regression guard: a voyager read refusal (spent
+    # profile-view budget) used to fall through as an honest empty roster —
+    # "No contacts found at this company yet" for a 5k-employee company. The
+    # refusal must surface verbatim, never as "nobody works here".
+    drv = FakeVoyagerDriver(resolve_result=_DOMAIN_HIT, discover_result=_DISCOVER_REFUSED)
+    ops.DRIVER_FACTORY = lambda tier: drv
+    events: list[dict] = []
+    out = ops.discover_entrypoint(
+        _ctx(wired.db, "discover", {"company": "Northline", "job_id": wired.job_id},
+             events=events)
+    )
+    ref = _nn(out.result_ref)
+    assert ref["refused"] is True
+    assert ref["reason"] == _REFUSAL_REASON
+    assert ref["count"] == 0
+    with wired.db.repos() as repos:
+        assert repos.contacts.list() == []
+    phases = [e["payload"]["phase"] for e in events]
+    assert "discover_refused" in phases
+    assert "discovered" not in phases  # a refusal is not a completed scan
+    refused = next(e for e in events if e["payload"]["phase"] == "discover_refused")
+    assert refused["payload"]["reason"] == _REFUSAL_REASON
+
+
+def test_resolve_cap_refusal_surfaces_refused_not_confirm(wired: Wired) -> None:
+    # A refused typeahead must NOT masquerade as "we couldn't find this company"
+    # (the confirm/paste step) — a pasted URL would only be refused again.
+    drv = FakeVoyagerDriver(resolve_result=_RESOLVE_REFUSED, discover_result=DISCOVER_ROWS)
+    ops.DRIVER_FACTORY = lambda tier: drv
+    events: list[dict] = []
+    out = ops.discover_entrypoint(
+        _ctx(wired.db, "discover", {"company": "Northline", "job_id": wired.job_id},
+             events=events)
+    )
+    ref = _nn(out.result_ref)
+    assert ref["refused"] is True
+    assert ref["reason"] == _REFUSAL_REASON
+    assert ref.get("needs_company_confirm") is None
+    assert _driver_calls(drv, "discover") == []
+    assert any(e["payload"]["phase"] == "discover_refused" for e in events)
+    assert not any(e["payload"]["phase"] == "needs_company_confirm" for e in events)
+
+
 def test_paste_company_url_resolves_authoritatively_and_discovers(wired: Wired) -> None:
     drv = FakeVoyagerDriver(resolve_result=_URL_HIT, discover_result=DISCOVER_ROWS)
     ops.DRIVER_FACTORY = lambda tier: drv
@@ -446,6 +501,52 @@ def test_send_first_degree_lands_accepted(wired: Wired) -> None:
         c = _nn(repos.contacts.get(cid))
         assert c.connection_status == "accepted"  # already connected → Accepted
         assert c.accepted_at is not None
+
+
+def test_send_publishes_sending_then_real_steps_then_sent(wired: Wired) -> None:
+    """The Messenger queue panel keys off the send's honest narration: the
+    `sending` phase (with the routed channel) fires first, each completed step
+    follows as a `send_step` event with the plan's key — REAL progress from
+    the code driving the page (2026-08-16) — and the terminal phase closes it.
+    The DM plan's last step (the audit-log write) is app-side, so the host
+    appends `dm5` itself."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        raj = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/raj-io"))  # 1st deg
+        sarah = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan"))  # 2nd
+        raj_id, sarah_id = raj.id, sarah.id
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        dm_result={"op": "send-dm", "ok": True, "sent": True, "status": "sent"},
+        connection_result={"op": "send-connection", "ok": True, "sent": True, "status": "sent"},
+    )
+    events: list[dict] = []
+    ops.send_entrypoint(
+        _ctx(wired.db, "send", {"contact_id": raj_id, "message": "Hi Raj!"}, events=events)
+    )
+    phases = [e["payload"]["phase"] for e in events]
+    assert phases == ["sending"] + ["send_step"] * 5 + ["sent"]
+    sending = events[0]["payload"]
+    assert sending["channel"] == "dm"
+    assert sending["contact_id"] == raj_id
+    steps = [e["payload"]["step"] for e in events if e["payload"]["phase"] == "send_step"]
+    assert steps == ["dm1", "dm2", "dm3", "dm4", "dm5"]
+    assert all(
+        e["payload"]["contact_id"] == raj_id
+        for e in events if e["payload"]["phase"] == "send_step"
+    )
+
+    events.clear()
+    ops.send_entrypoint(
+        _ctx(wired.db, "send", {"contact_id": sarah_id, "message": "Hi Sarah!"}, events=events)
+    )
+    assert [e["payload"]["phase"] for e in events] == (
+        ["sending"] + ["send_step"] * 5 + ["sent"]
+    )
+    assert events[0]["payload"]["channel"] == "connection_note"
+    steps = [e["payload"]["step"] for e in events if e["payload"]["phase"] == "send_step"]
+    assert steps == ["invite1", "invite2", "invite3", "invite4", "invite5"]
 
 
 def test_send_failure_records_verbatim_reason_no_flip(wired: Wired) -> None:

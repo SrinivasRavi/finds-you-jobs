@@ -159,3 +159,57 @@ def test_discover_that_found_nobody_reports_empty(empty_client) -> None:
     body = client.get(f"/api/jobs/{job_id}/referrals/candidates", headers=AUTH).json()
     assert body["discover_state"] == "empty"
     assert body["candidates"] == []
+
+
+_REFUSAL_REASON = "profile_views cap reached (87/day, plan=sales_navigator)"
+
+
+@pytest.fixture
+def refused_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    yield from _make_client(
+        tmp_path,
+        FakeVoyagerDriver(
+            resolve_result={"op": "resolve-company", "ok": True, "companies": [
+                {"urn": "urn:li:fsd_company:9", "company_id": "9", "name": "Okta", "vanity": "okta",
+                 "website": "okta.com", "domain_match": True}]},
+            discover_result={"op": "discover", "ok": False, "error": "cap_or_backoff",
+                             "reason": _REFUSAL_REASON, "count": 0, "contacts": []},
+        ),
+    )
+
+
+def test_discover_refused_reports_refused_with_verbatim_reason(refused_client) -> None:
+    # The Kaseya 2026-08-15 bug: a cap/backoff refusal rendered as `empty`
+    # ("No contacts found at this company yet"). The endpoint must recover the
+    # refusal with its verbatim pacer reason.
+    _app, client = refused_client
+    job_id = _enable_and_seed_job(client)
+    client.post(f"/api/jobs/{job_id}/referrals/discover", headers=AUTH, json={})
+    _wait_op(client, job_id)
+
+    body = client.get(f"/api/jobs/{job_id}/referrals/candidates", headers=AUTH).json()
+    assert body["discover_state"] == "refused"
+    assert body["refusal_reason"] == _REFUSAL_REASON
+    assert body["candidates"] == []
+
+
+def test_in_flight_sends_ride_the_candidates_payload(confirm_client) -> None:
+    """A queued/running send op's contact rides `in_flight_contact_ids`, so the
+    popup's per-row Sending state survives a close/reopen (2026-08-16: it used
+    to live only in modal state — leaving and coming back showed Connect again
+    while the referral outreach agent was still mid-send)."""
+    _app, client = confirm_client
+    job_id = _enable_and_seed_job(client)
+    contact = client.post("/api/contacts", headers=AUTH, json={
+        "linkedin_url": "https://www.linkedin.com/in/inflight-fixture",
+        "name": "Inflight Fixture", "current_company": "Okta",
+        "connection_status": "candidate",
+    }).json()
+
+    # An in-flight send op planted directly (not via the runner, so it stays
+    # queued for the read below).
+    with _app.state.db.repos() as repos:
+        repos.operations.create("send", {"contact_id": contact["id"], "job_id": job_id})
+
+    body = client.get(f"/api/jobs/{job_id}/referrals/candidates", headers=AUTH).json()
+    assert body["in_flight_contact_ids"] == [contact["id"]]

@@ -87,9 +87,9 @@ def seed_defaults(db: Database) -> None:
         # which is the single hardest thing to defend and the one fact that broke
         # the "every LinkedIn action is user-initiated" claim
         # (`docs/internal/linkedin-addon.md` section 5, maintainer directive
-        # 2026-07-30). Refreshing is now something the user asks for: an explicit
-        # Sync button, plus an opportunistic refresh when they open the Networking
-        # surface (throttled — see CONTACT_SYNC_MIN_INTERVAL_MINUTES).
+        # 2026-07-30). Refreshing is now something the user asks for: the
+        # explicit Sync button, and nothing else (the throttled on-open refresh
+        # that briefly existed was removed 2026-08-15 — manual-only).
         #
         # Existing installs carry an enabled row from before this change, so
         # retire it here rather than leaving a timer running after an update.

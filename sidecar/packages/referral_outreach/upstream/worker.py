@@ -451,6 +451,7 @@ def send_connection(
     public_identifier: str,
     *,
     note: str = "",
+    on_step=None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     linkedin_plan: str = "free",
@@ -508,6 +509,11 @@ def send_connection(
     # runner dispatches a batch as N separate single-flight `send` ops, so this
     # is what keeps a batch from going out at machine pace.
     waited_s = pacer.wait_before_send()
+    if on_step is not None:
+        try:
+            on_step("invite1")
+        except Exception:  # noqa: BLE001 — narration, never load-bearing
+            pass
 
     # Charge on ATTEMPT, before the browser launches (posture doc section 4 fix 4): a
     # send that reached LinkedIn but died in post-send verification must not go
@@ -529,7 +535,9 @@ def send_connection(
                         surface_provider=surface_provider) as session:
         try:
             status, note_outcome = session.run_browser(
-                lambda: send_connection_request(session, public_identifier, note=note)
+                lambda: send_connection_request(
+                    session, public_identifier, note=note, on_step=on_step
+                )
             )
         except ReachedConnectionLimit as e:
             # LinkedIn's weekly-cap dialog appeared INSTEAD of the invite going
@@ -570,6 +578,7 @@ def send_dm(
     public_identifier: str,
     message: str,
     *,
+    on_step=None,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
     storage_state: str | None = None,
@@ -609,6 +618,11 @@ def send_dm(
     # Same inter-send spacing as the invite path — one account, one clock
     # (NFR-LI-01).
     waited_s = pacer.wait_before_send()
+    if on_step is not None:
+        try:
+            on_step("dm1")
+        except Exception:  # noqa: BLE001 — narration, never load-bearing
+            pass
 
     # Charge on ATTEMPT (posture doc section 4 fix 4); a proven no-send refunds below.
     pacer.record_dm()
@@ -624,7 +638,7 @@ def send_dm(
                         surface_provider=surface_provider) as session:
         try:
             sent = session.run_browser(
-                lambda: _send_dm(session, public_identifier, message)
+                lambda: _send_dm(session, public_identifier, message, on_step=on_step)
             )
             if not sent:
                 # actions.send_dm returned a definite "did not send" (no thread /
@@ -719,7 +733,7 @@ def contact_sync(
 
 
 def contact_sync_states(
-    public_identifiers: list[str],
+    entries: list[dict],
     *,
     profile: PacingProfile | None = None,
     state_dir: str | None = None,
@@ -731,40 +745,56 @@ def contact_sync_states(
 ) -> dict:
     """Batched read-only contact-status probes (FR-NW-15) in ONE browser session.
 
-    The host's sync sweep used to dispatch one `contact_sync` op per tracked
-    contact, and every browser op builds its own `_paced_session` — so a
-    5-contact sweep launched and quit a full Chromium five times (~2 min of
-    pure browser churn for seconds of reads). This op opens the session ONCE
-    and probes each contact inside it, preserving the single op's per-contact
-    semantics exactly:
+    `entries` is one dict per contact: `public_identifier` (required), `urn`
+    (the contact's fsd_profile urn if the host cached one from an earlier full
+    probe), and `thread_only` (True when the degree question is settled and
+    only the 1:1 thread matters). The sweep splits on it (2026-08-16):
 
-      - each probe charges the profile-view budget on ATTEMPT and is refused
-        once the budget/backoff gate says stop (a refusal ends the sweep — every
-        later probe would refuse identically);
-      - probes are paced inside the session with the same 6-10 s inter-read
-        jitter the discovery enrichment loop uses (OpenOutreach's own
-        per-profile pause), on top of the per-action page jitter;
-      - a 403/404/parse failure skips THAT contact (`error: "probe_failed"`)
-        and the sweep continues;
-      - the first RateLimited enters backoff and STOPS the remaining sweep
-        (section 0.4: the first 429 stops the batch — the old per-op loop kept
-        launching browsers into a throttle);
-      - an AuthenticationError stops the sweep and surfaces (`error:
-        "auth_error"`) — a dead session cannot be fixed by probing harder.
+      - **Thread-only probes run FIRST and charge nothing.** With a cached urn
+        the thread answer comes from the sweep's ONE session-cached inbox read
+        (`get_contact_thread_state`) — no profile navigation, no profile-view
+        charge, no inter-read pacing (there is no per-contact request to pace).
+        These can never be refused by the read budget, so the message-driven
+        columns stay syncable even on a spent ledger. A `thread_only` entry
+        WITHOUT a urn is treated as a full probe (the bootstrap read that
+        learns it).
+      - **Full probes keep the single op's semantics exactly**: each charges
+        the profile-view budget on ATTEMPT and is refused once the
+        budget/backoff gate says stop (a refusal ends the metered tail — every
+        later full probe would refuse identically); full probes are paced with
+        the same 6-10 s inter-read jitter the discovery enrichment loop uses;
+        a 403/404/parse failure skips THAT contact (`error: "probe_failed"`)
+        and the sweep continues; the first RateLimited enters backoff and
+        stops the sweep (section 0.4); an AuthenticationError stops and
+        surfaces (`error: "auth_error"`). A full probe's envelope carries the
+        `target_urn` it resolved, for the host to cache.
 
     Each entry in `results` is exactly the single `contact_sync` envelope for
-    that contact, in input order; a stopped sweep simply has fewer entries.
-    The `finally` inside `_paced_session` persists every charge and any backoff
-    pause, then closes the one browser."""
-    pids = [_normalize_public_id(p) for p in public_identifiers if p]
-    if not pids:
+    that contact, keyed by `public_identifier` — thread-only probes first, so
+    the order is NOT the input order (the host joins by pid). A stopped sweep
+    has fewer entries; contacts with no entry were never probed. The `finally`
+    inside `_paced_session` persists every charge and any backoff pause, then
+    closes the one browser."""
+    specs = [
+        {
+            "public_identifier": _normalize_public_id(str(e.get("public_identifier") or "")),
+            "urn": str(e.get("urn") or ""),
+            "thread_only": bool(e.get("thread_only")),
+        }
+        for e in entries
+        if e.get("public_identifier")
+    ]
+    if not specs:
         raise VoyagerError("contact-sync-states requires public_identifiers")
+    thread_specs = [s for s in specs if s["thread_only"] and s["urn"]]
+    full_specs = [s for s in specs if not (s["thread_only"] and s["urn"])]
     if dry_run:
         return {
             "op": "contact-sync-batch", "ok": True, "dry_run": True,
-            "count": len(pids),
-            "plan": f"would probe {len(pids)} contact(s) read-only in ONE browser "
-                    "session (degree + last-message direction/timestamp; no send)",
+            "count": len(specs),
+            "plan": f"would probe {len(specs)} contact(s) read-only in ONE browser "
+                    f"session ({len(thread_specs)} from the one inbox read alone, "
+                    f"{len(full_specs)} full profile read(s); no send)",
             "results": [],
         }
     pacer = _pacer(profile, state_dir)
@@ -776,17 +806,21 @@ def contact_sync_states(
                 "last_message_direction": None, "last_message_at": None,
                 "quota": pacer.remaining(), **extra}
 
-    # Gate up front: when the very first probe would be refused (backoff / spent
-    # read budget) no browser launches at all — zero LinkedIn traffic, exactly
-    # like the single op refusing before its session.
-    allowed, reason = pacer.can_view_profile()
-    if not allowed:
-        return {"op": "contact-sync-batch", "ok": False, "count": 1,
-                "error": "cap_or_backoff", "reason": reason,
-                "results": [_blocked(pids[0], "cap_or_backoff", reason)],
-                "quota": pacer.remaining()}
+    # Gate up front only when there is nothing unmetered to do: a sweep with
+    # thread-only work still runs it on a spent ledger (those probes charge
+    # nothing), while an all-full sweep whose FIRST probe would be refused
+    # launches no browser at all — zero LinkedIn traffic, exactly like the
+    # single op refusing before its session.
+    if not thread_specs:
+        allowed, reason = pacer.can_view_profile()
+        if not allowed:
+            return {"op": "contact-sync-batch", "ok": False, "count": 1,
+                    "error": "cap_or_backoff", "reason": reason,
+                    "results": [_blocked(full_specs[0]["public_identifier"],
+                                         "cap_or_backoff", reason)],
+                    "quota": pacer.remaining()}
 
-    from .actions import get_contact_sync_state
+    from .actions import get_contact_sync_state, get_contact_thread_state
     from .session import random_sleep
 
     results: list[dict] = []
@@ -795,10 +829,40 @@ def contact_sync_states(
     with _paced_session(pacer, storage_state=storage_state,
                         user_data_dir=user_data_dir, headed=headed,
                         surface_provider=surface_provider) as session:
-        for probed, pid in enumerate(pids):
+        for spec in thread_specs:
+            pid, urn = spec["public_identifier"], spec["urn"]
+            try:
+                state = session.run_browser(
+                    lambda pid=pid, urn=urn: get_contact_thread_state(
+                        session, pid, urn
+                    )
+                )
+            except RateLimited as e:
+                # The one inbox read itself was throttled — nothing else in
+                # this sweep can succeed (thread probes need that read, full
+                # probes would 429 the same way).
+                deadline = pacer.pause_for_backoff(str(e))
+                results.append(_blocked(pid, "rate_limited", str(e),
+                                        paused_until=deadline))
+                batch_error, batch_reason = "rate_limited", str(e)
+                break
+            except AuthenticationError as e:
+                results.append(_blocked(pid, "auth_error", str(e)))
+                batch_error, batch_reason = "auth_error", str(e)
+                break
+            except VoyagerError as e:
+                results.append(_blocked(pid, "probe_failed", str(e)))
+                continue
+            results.append({"op": "contact-sync", "ok": True,
+                            "public_identifier": pid, **state,
+                            "quota": pacer.remaining()})
+        for probed, spec in enumerate(full_specs):
+            if batch_error:
+                break  # the thread pass already hit a sweep-stop signal
+            pid = spec["public_identifier"]
             allowed, reason = pacer.can_view_profile()
             if not allowed:
-                # The read budget ran out mid-batch — every later probe would
+                # The read budget ran out — every later full probe would
                 # refuse identically, so stop here (the rest stays queued).
                 results.append(_blocked(pid, "cap_or_backoff", reason))
                 batch_error, batch_reason = "cap_or_backoff", reason

@@ -22,8 +22,9 @@ from typing import Any
 # existed (trashed jobs = the old TRASH_TTL_DAYS=7) and (b) be sensible bootstraps
 # where none did. All are whole days except the sync cadence (hours).
 LIFECYCLE_DEFAULTS: dict[str, int] = {
-    # NOTE: `contact_sync_cadence_hours` is gone — contact sync is user-initiated
-    # only (no schedule to retime; see CONTACT_SYNC_MIN_INTERVAL_MINUTES below).
+    # NOTE: `contact_sync_cadence_hours` is gone — contact sync is manual-only
+    # (the Sync button; no schedule to retime, no on-open refresh either since
+    # 2026-08-15).
     # Contact kanban ghosting (FR-NW-15). Engagement threads go quiet → Ghosted;
     # a separate, longer window covers Sent/Accepted-but-never-replied stalls.
     "engagement_ghosted_days": 14,
@@ -40,13 +41,6 @@ LIFECYCLE_DEFAULTS: dict[str, int] = {
     "trashed_jobs_purge_days": 7,       # trashed jobs (was TRASH_TTL_DAYS)
     "archived_applications_purge_days": 30,  # archived tracker cards (was: never)
 }
-
-# Contact sync is user-initiated only (no scheduled LinkedIn traffic — see
-# `seed.py` and `docs/internal/linkedin-addon.md` section 5). Opening the Networking
-# surface may trigger an opportunistic refresh, but no more often than this. The
-# explicit Sync button bypasses it: an on-demand refresh is the user asking, and
-# is no more traffic than them opening linkedin.com themselves.
-CONTACT_SYNC_MIN_INTERVAL_MINUTES = 15
 
 # How recently a MANUAL kanban drag protects a contact from being auto-overridden
 # (manual-wins). Not surfaced in the UI — a fixed guard so auto never immediately
