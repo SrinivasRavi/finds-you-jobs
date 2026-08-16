@@ -373,6 +373,12 @@ class _Run:
                     )
                 )
                 failure_streak = 0
+                # Reporting a blocker is progress through the form, not a stall,
+                # even though it leaves the page unchanged. Reset the no-progress
+                # streak so a run of trailing ungrounded fields (a form's custom
+                # screening questions) doesn't trip the frozen-page guard before
+                # the fillable fields elsewhere are reached.
+                identical_streak = 0
                 continue  # keep filling the rest (section 6)
 
             label = ""

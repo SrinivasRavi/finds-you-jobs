@@ -952,7 +952,7 @@ RULES: list[dict] = [
      "then": {"source": "derived:adult", "option_prefs": YES_PREFS}},
 
     # -- consents (marketing declined before the data-consent catch-all) --
-    {"id": "marketing-consent-attr", "when": {"attr": r"marketing|newsletter|subscribe|promo"}, "then": {"source": "leave_blank"}},
+    {"id": "marketing-consent-attr", "when": {"attr": r"marketing|newsletter|subscribe|promo|sms.?consent|smsconsent|text.?message"}, "then": {"source": "leave_blank"}},
     {"id": "marketing-consent",
      "when": {"label": r"future (job )?(opportunit|opening|role|position)|marketing (email|communication|consent|purpose|material)|consent.{0,40}marketing|receive.{0,40}(marketing|promotional|sms|text message)|newsletter|talent (pool|community|network)|other (roles|positions|opportunities)|keep me (informed|updated|posted)|email me about|subscribe|contact me about (future|other)"},
      "then": {"source": "leave_blank"}},
