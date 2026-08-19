@@ -1,17 +1,19 @@
-"""Flight-recorder log — the internal debug layer (architecture §10, layer 3).
+"""Flight-recorder log — the internal debug layer (architecture section 10, layer 3).
 
 stdlib `logging` → a rotating file handler. This is the net for failures that
 happen before/outside the Logfire span pipeline and the DB (boot, handshake,
 runner internals, migration errors) — never user-facing.
 
-Dev location: `<repo>/logs/sidecar.log`. The app-data path swaps in later by
-passing `log_dir` (or setting `FYJ_LOG_DIR`); nothing else changes.
+Dev location: `<repo>/logs/sidecar.log`. Packaged (PyInstaller) location: the
+platform app-data dir, beside the database. `log_dir` / `FYJ_LOG_DIR` override
+both.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -26,12 +28,25 @@ _BACKUP_COUNT = 3
 
 
 def resolve_log_dir(log_dir: str | os.PathLike[str] | None = None) -> Path:
-    """Where the flight recorder writes. Precedence: arg > FYJ_LOG_DIR > repo/logs."""
+    """Where the flight recorder writes.
+
+    Precedence: arg > FYJ_LOG_DIR > app-data dir (packaged) > repo/logs (dev).
+    """
     if log_dir is not None:
         return Path(log_dir)
     env = os.environ.get("FYJ_LOG_DIR")
     if env:
         return Path(env)
+    if getattr(sys, "frozen", False):
+        # PyInstaller build: _REPO_ROOT resolves inside the .app bundle, and a
+        # signed bundle must never be written to — macOS blocks the mkdir
+        # (boot crash, seen live 2026-08-10) and any write would invalidate
+        # the notarization seal. Logs go to the app-data dir instead.
+        # Local import: db.database must not be pulled in before __main__
+        # finishes wiring the boot path.
+        from .db.database import resolve_data_dir
+
+        return resolve_data_dir() / "logs"
     return _REPO_ROOT / "logs"
 
 
