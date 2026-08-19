@@ -12,11 +12,12 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from playwright.async_api import async_playwright
 
 from sidecar.packages.jobapplier.executor import UrlPolicy
 from sidecar.packages.jobapplier.fake import FakeApplyEngine, FakeStep
-from sidecar.packages.jobapplier.loop import run_apply
+from sidecar.packages.jobapplier.loop import ApplyEngine, run_apply
 from sidecar.packages.jobapplier.types import (
     ApplyControl,
     ApplyEvent,
@@ -72,7 +73,7 @@ def _request(tmp_path: Path, job_url: str, resume: Path | None = None) -> ApplyR
     )
 
 
-async def _run(request: ApplyRequest, engine: FakeApplyEngine, *, control=None):
+async def _run(request: ApplyRequest, engine: ApplyEngine, *, control=None):
     events: list[ApplyEvent] = []
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -281,3 +282,27 @@ async def test_upload_into_a_drag_drop_zone(tmp_path: Path) -> None:
     assert result.status is ApplyStatus.READY_FOR_HUMAN
     upload = next(f for f in result.fields if f.action == "upload")
     assert upload.ok, upload.note
+
+
+async def test_real_engine_spend_lands_in_the_run_cost(tmp_path: Path) -> None:
+    # The app's EngineUsage names the spend field `usd`; the package's own fake
+    # names it `cost_usd`. The loop reads both, so a real engine's spend is
+    # never silently dropped from the cost record the dashboard reports.
+    class _AppUsage:
+        tokens_in = 120
+        tokens_out = 40
+        usd = 0.25
+
+    class _AppEngine:
+        def __init__(self, replies: list[str]) -> None:
+            self._replies = list(replies)
+
+        def complete(self, system_prompt: str, user_prompt: str):
+            return self._replies.pop(0), _AppUsage()
+
+    engine = _AppEngine([_action("finish", reason="nothing to fill")])
+    result, _, _ = await _run(_request(tmp_path, _fixture_url("form.html")), engine)
+
+    assert result.usage.tokens_in == 120
+    assert result.usage.tokens_out == 40
+    assert result.usage.cost_usd == pytest.approx(0.25)

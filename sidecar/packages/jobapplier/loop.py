@@ -186,7 +186,12 @@ class _Run:
         self._usage_calls += 1
         tokens_in = getattr(usage, "tokens_in", None)
         tokens_out = getattr(usage, "tokens_out", None)
-        cost = getattr(usage, "cost_usd", None)
+        # The app's EngineUsage names the spend field ``usd``; the package's own
+        # fakes name it ``cost_usd``. Read both, or a real engine's spend is
+        # dropped from the run's cost record and the dashboard under-reports.
+        cost = getattr(usage, "usd", None)
+        if cost is None:
+            cost = getattr(usage, "cost_usd", None)
         if tokens_in:
             self._usage_in += int(tokens_in)
         if tokens_out:
