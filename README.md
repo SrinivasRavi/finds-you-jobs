@@ -49,15 +49,15 @@ you from your own LinkedIn account.★
 onboarding: paste your resume, set your job preferences, pick an AI provider,
 and add your key. No terminal, no build steps.
 
-### [⬇ Download finds-you-jobs v0.5.6-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.6-beta)
+### [⬇ Download finds-you-jobs v0.5.7-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.7-beta)
 
 | Your computer | Download this file | On first launch |
 |---|---|---|
-| **Windows** 10/11 | `finds-you-jobs_0.5.6-beta_x64-setup.exe` | SmartScreen warns because the Windows build isn't code-signed yet: click **More info → Run anyway** |
-| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.6-beta_aarch64.dmg` | Signed and notarized by Apple. Drag the app into **Applications** and open it — no warnings, no Terminal |
-| **Mac** (Intel) | `finds-you-jobs_0.5.6-beta_x64.dmg` | same as above |
-| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.6-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
-| **Linux** (any distro, portable) | `finds-you-jobs_0.5.6-beta_amd64.AppImage` | `chmod +x` the file, then run it |
+| **Windows** 10/11 | `finds-you-jobs_0.5.7-beta_x64-setup.exe` | SmartScreen warns because the Windows build isn't code-signed yet: click **More info → Run anyway** |
+| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.7-beta_aarch64.dmg` | Signed and notarized by Apple. Drag the app into **Applications** and open it — no warnings, no Terminal |
+| **Mac** (Intel) | `finds-you-jobs_0.5.7-beta_x64.dmg` | same as above |
+| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.7-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
+| **Linux** (any distro, portable) | `finds-you-jobs_0.5.7-beta_amd64.AppImage` | `chmod +x` the file, then run it |
 
 The Windows warning is there only because the Windows build isn't code-signed
 yet; that's the next signing job. macOS is done: the `.dmg` files are signed
