@@ -35,6 +35,7 @@
   },
   "bundle": {
     "active": true,
+    "copyright": "© Srinivas Ravi",
     "targets": "all",
     "createUpdaterArtifacts": true,
     "icon": [
