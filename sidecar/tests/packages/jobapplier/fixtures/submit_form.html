@@ -1,0 +1,39 @@
+<!-- finds-you-jobs — AGPL-3.0-only. Fixture: a filled application form whose
+     real submit control sits at the end, below the decoys the sweep measured
+     ("Apply Later" outranked it on a text-plus-area scorer). Submitting swaps
+     in a confirmation; leaving the required field blank raises a validation
+     error instead. Local only, no network. -->
+<html>
+<head><title>Apply — Staff Engineer at Acme</title></head>
+<body>
+  <h1>Apply for Staff Engineer</h1>
+  <div id="page">
+    <a href="#save">Save job</a>
+    <button type="button" id="later">Apply Later</button>
+    <form id="app" onsubmit="return handle(event)">
+      <label>Full name <input name="name" value="Ada Lovelace"></label>
+      <label>Email <input name="email" value="ada@example.com"></label>
+      <!-- Validated in the handler, not by the `required` attribute: native
+           constraint validation blocks submit outright, so the handler (and
+           the page's own error text) would never run. -->
+      <label>Why us? <textarea name="why">Because the monolith.</textarea></label>
+      <button type="button" id="cancel">Cancel</button>
+      <button type="submit" id="go">Submit application</button>
+    </form>
+  </div>
+  <script>
+    function handle(e) {
+      e.preventDefault();
+      var why = document.querySelector('[name=why]').value;
+      if (!why) {
+        document.getElementById('page').innerHTML =
+          '<p>Why us? is required. Please complete the field.</p>';
+        return false;
+      }
+      document.getElementById('page').innerHTML =
+        '<h2>Application received</h2><p>Thank you for applying to Acme.</p>';
+      return false;
+    }
+  </script>
+</body>
+</html>
