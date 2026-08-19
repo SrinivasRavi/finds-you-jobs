@@ -75,8 +75,8 @@ def test_anthropic_complete_parses_text_and_usage():
     assert usage.tokens_in == 12
     assert usage.tokens_out == 5
     assert usage.model == "claude-opus-4-8"
-    # usd is a real lookup for a known model (15/75 per Mtok).
-    assert usage.usd == pytest.approx((12 * 15.0 + 5 * 75.0) / 1_000_000, rel=1e-6)
+    # usd is a real lookup for a known model (5/25 per Mtok).
+    assert usage.usd == pytest.approx((12 * 5.0 + 5 * 25.0) / 1_000_000, rel=1e-6)
 
     call = transport.calls[0]
     assert call.method == "POST"
@@ -210,7 +210,7 @@ def test_openrouter_falls_back_to_static_map_when_cost_absent():
         transport=transport,
     )
     _, usage = engine.complete("", "hi")
-    assert usage.usd == pytest.approx(15.0)
+    assert usage.usd == pytest.approx(5.0)
 
 
 def test_non_openrouter_endpoint_does_not_request_usage_cost():
@@ -282,7 +282,12 @@ def test_price_usd_unknown_model_is_none_not_guessed():
     assert price_usd(None, 1000, 1000) is None
     assert price_usd("claude-opus-4-8", None, 5) is None
     # OpenRouter-prefixed known model resolves via the tail.
-    assert price_usd("anthropic/claude-opus-4-8", 1_000_000, 0) == pytest.approx(15.0)
+    assert price_usd("anthropic/claude-opus-4-8", 1_000_000, 0) == pytest.approx(5.0)
+    # Current Anthropic list prices, per Mtok in / out.
+    assert price_usd("claude-opus-5", 1_000_000, 1_000_000) == pytest.approx(30.0)
+    assert price_usd("claude-fable-5", 1_000_000, 1_000_000) == pytest.approx(60.0)
+    assert price_usd("claude-sonnet-5", 1_000_000, 1_000_000) == pytest.approx(18.0)
+    assert price_usd("claude-haiku-4-5", 1_000_000, 1_000_000) == pytest.approx(6.0)
 
 
 # ---------------------------------------------------------------------------
