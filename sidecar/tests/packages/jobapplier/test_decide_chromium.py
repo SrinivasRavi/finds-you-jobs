@@ -49,7 +49,12 @@ def _request(tmp_path: Path, job_url: str, resume: Path | None = None) -> ApplyR
     artifacts = ()
     if resume is not None:
         artifacts = (
-            ArtifactRef(artifact_id="art-resume", label="master resume (PDF)", path=str(resume), kind="resume"),
+            ArtifactRef(
+                artifact_id="art-resume",
+                label="master resume (PDF)",
+                path=str(resume),
+                kind="resume",
+            ),
         )
     return ApplyRequest(
         run_id="run-d",
@@ -114,7 +119,9 @@ async def test_decider_skips_a_honeypot(tmp_path: Path) -> None:
 async def test_decider_uploads_resume_to_dropzone(tmp_path: Path) -> None:
     resume = tmp_path / "resume.pdf"
     resume.write_bytes(b"%PDF-1.4 fake resume")
-    result, _ = await _run_decider(_request(tmp_path, (FIXTURES / "dropzone.html").as_uri(), resume))
+    result, _ = await _run_decider(
+        _request(tmp_path, (FIXTURES / "dropzone.html").as_uri(), resume)
+    )
 
     assert result.status is ApplyStatus.READY_FOR_HUMAN
     upload = next((f for f in result.fields if f.action == "upload"), None)
