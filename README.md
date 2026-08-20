@@ -54,8 +54,8 @@ and add your key. No terminal, no build steps.
 | Your computer | Download this file | On first launch |
 |---|---|---|
 | **Windows** 10/11 | `finds-you-jobs_0.5.7-beta_x64-setup.exe` | SmartScreen warns because the Windows build isn't code-signed yet: click **More info → Run anyway** |
-| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.7-beta_aarch64.dmg` | Signed and notarized by Apple. Drag the app into **Applications** and open it — no warnings, no Terminal |
-| **Mac** (Intel) | `finds-you-jobs_0.5.7-beta_x64.dmg` | same as above |
+| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs-0.5.7-beta-arm64.dmg` | Signed and notarized by Apple. Drag the app into **Applications** and open it — no warnings, no Terminal |
+| **Mac** (Intel) | `finds-you-jobs-0.5.7-beta-intel.dmg` | same as above |
 | **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.7-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
 | **Linux** (any distro, portable) | `finds-you-jobs_0.5.7-beta_amd64.AppImage` | `chmod +x` the file, then run it |
 
