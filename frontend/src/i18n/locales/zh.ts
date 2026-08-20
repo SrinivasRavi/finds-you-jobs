@@ -469,11 +469,11 @@ const zh: DeepPartial<Messages> = {
       connecting: "连接中…",
       backingOff: "暂缓中",
       connect: "连接 LinkedIn",
-      title: "只读 — 请在设置中连接/启用 LinkedIn",
+      inProgress: "LinkedIn 进行中",
+      titleOpen: "打开 LinkedIn 浏览器",
+      titleSettings: "请在设置中连接 LinkedIn",
     },
     addByUrl: "通过 URL 添加联系人",
-    connectionCount_other: "{{count}} 位联系人",
-    degreeSummary: "一度 {{first}} · 二度 {{second}}",
     filters: {
       company: "公司",
       all: "全部",
@@ -507,7 +507,6 @@ const zh: DeepPartial<Messages> = {
       today: "今天",
       days: "{{n}} 天",
       inStatus: "处于“{{status}}”{{duration}}",
-      you: "你：",
     },
     deleted: {
       title: "已删除联系人",
@@ -518,7 +517,6 @@ const zh: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "最近消息",
       archive: "删除",
     },
     add: {
@@ -581,11 +579,9 @@ const zh: DeepPartial<Messages> = {
     ledger: {
       show: "显示",
       operation: "操作",
-      kind: "类型",
       state: "状态",
       started: "开始时间",
       model: "模型",
-      latency: "延迟",
       cost: "成本",
       retried: "已重试",
       retry: "重试",
@@ -748,13 +744,7 @@ const zh: DeepPartial<Messages> = {
     },
     referral: {
       title: "内推联络",
-      intro:
-        "自动向你正在申请的公司的员工发消息 — 通过你自己的 LinkedIn 账号 — 请求内推。每批消息发送前都需要你确认。",
       howLabel: "内推联络如何工作",
-      howInfo:
-        "它会找到该公司的<em>在职</em>员工，并按固定的分角色模板（同行 / 招聘经理 / 招聘官 / 高管）为每人起草一条简短消息，你可以编辑 — 或点击“重新生成”获得基于你个人资料的 AI 版本。发送通过你自己的 LinkedIn 会话进行，形式为连接请求或 DM，节奏缓慢并采用保守的每日/每周上限以降低被检测的风险。默认关闭；你也可以只用它起草、自己手动发送。手动跟踪联系人（人脉标签页）始终可用，无需以上任何功能。",
-      warning:
-        "任何形式的 LinkedIn 自动化都违反 LinkedIn 的服务条款。finds-you-jobs 不会滥用该自动化去收集数据、出售数据或从中牟利，并让自动化与真人操作保持一比一一致 — 以人类打字速度发送消息、遵守每日上限、并随机化时间间隔。但无论怎么解释，LinkedIn 的服务条款终究被违反了，因此我们坚持要求你自行判断，并对来自 LinkedIn 的一切后果承担全部责任。你的账号可能受到限制，finds-you-jobs 对你 LinkedIn 账号的任何后果概不负责。请负责任地使用此功能，留意你已发送的消息，一旦发现账号异常请立即关闭。不使用此功能不会对你的 LinkedIn 账号或任何其他账号产生任何影响。",
       ack: "我要自动化 LinkedIn 内推联络，代价是【违反】LinkedIn 的服务条款 — 这可能导致账号受限，直至永久封禁。我承担全部责任。",
       enable: "启用内推联络",
       lockedHint:
@@ -767,21 +757,56 @@ const zh: DeepPartial<Messages> = {
       howLabel: "LinkedIn 职位搜索如何工作",
       howInfo:
         "通过你已登录的 LinkedIn 会话进行一次性搜索，仅在你点击“搜索”时运行 — 定时扫描绝不会触及它。对 LinkedIn 只读；结果会与已发现的所有职位去重。与内推联络共用同一会话。",
-      warning:
-        "登录状态下搜索 LinkedIn 意味着通过自动化读取其职位列表，这违反 LinkedIn 的服务条款。finds-you-jobs 绝不转售或滥用读取到的内容，并把足迹保持在最小：搜索只在你点击时运行（绝不定时执行），且每次只拉取少量职位 — 默认 25 个 — 并保持人类浏览节奏，因此看起来更像普通浏览而非批量抓取。但无论怎么解释，LinkedIn 的服务条款终究被违反了，请自行判断并承担全部责任。你的账号可能受到限制，finds-you-jobs 对你 LinkedIn 账号的任何后果概不负责。一旦发现账号异常请立即关闭。不使用此功能不会对你的 LinkedIn 账号产生任何影响。",
       ack: "我要在登录状态下搜索 LinkedIn，代价是【违反】LinkedIn 的服务条款 — 这可能导致账号受限，直至永久封禁。我承担全部责任。",
       enable: "启用“扫描 LinkedIn 职位（需登录 LinkedIn）”",
       connectHint: "先在上方连接 LinkedIn 会话才能运行搜索。",
       runNow:
         "现在用你保存的职位和地点运行一次搜索 — 结果会进入你的发现职位信息流。",
-      searching: "搜索中…",
-      searchBtn: "搜索 LinkedIn 职位",
+      freshBtn: "全新搜索",
+      nextBtn: "下一页",
+      nextHint: "从上次搜索停下的位置继续 — 每个职位×地点再取 25 条结果。",
+      nextInfo:
+        "“下一页”会以下一个偏移量重新执行上次全新搜索的完全相同的职位与地点 — 中途修改偏好不会影响它（要生效请执行全新搜索）。全新搜索后 12 小时内可用，之后消失：LinkedIn 会持续重新排序结果，旧的偏移量会指向已经移位的列表。LinkedIn 本身没有分页超时 — 这个时间窗口是我们自己的新鲜度规则。当 LinkedIn 的结果取完时按钮也会消失。",
       resultsPerSearch: "每次搜索结果数",
-      resultsPerSearchInfo:
-        "每个职位 × 地点组合拉取多少个职位，按每页 25 个分页。数值越高结果越多 — 但也意味着在<strong>你自己的</strong> LinkedIn 账号上一次性发出更多请求，会提高限流/账号风险。请保持适度。",
-      jobsOption: "{{n}} 个职位",
       started: "搜索已启动 — 新匹配的职位很快会出现在发现职位中。",
       failed: "搜索失败。",
+      scanning: "正在扫描 LinkedIn…",
+      hourlyReached:
+        "已达到每小时职位搜索上限 — 一小时内会自动重置，或在“LinkedIn 自设速率限制”中调高。",
+    },
+    rateLimits: {
+      title: "对 LinkedIn 的自设速率限制",
+      intro:
+        "finds-you-jobs 针对 LinkedIn 对自身的限流强度。选择你的会员类型，然后设定你愿意在多接近 LinkedIn 估计上限的程度下运行。",
+      info:
+        "这些上限是我们【自己】设的 — LinkedIn 几乎不公开其真实限制，因此这里每个上限都是估计值。你的会员类型决定估计上限；风险滑块对其进行缩放；你也可以覆盖任意单个上限。联络代码严格执行这些数值。",
+      membershipLabel: "LinkedIn 会员",
+      membershipHint: "决定我们据以缩放的每项操作估计上限。",
+      membership: {
+        free: "免费版（基础版）",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "风险偏好",
+      riskWarn:
+        "在 100% 时，每个上限都设在我们对 LinkedIn 针对你会员类型自身限制的最佳估计值上。LinkedIn 不公开这些数字，因此它们都是估计值 — 对状态良好的账号最为可靠。数值越低，安全余量越大；这里的任何设置都无法保证你的账号不会被限制。",
+      capsLabel: "各项限制",
+      capsInfo:
+        "每项限制从“会员上限 × 风险%”开始。输入一个数字即可固定它。更改会员类型或风险滑块会将所有已固定的限制重置回计算得到的默认值。",
+      cap: {
+        invites_day: "每天连接请求数",
+        invites_week: "每周连接请求数",
+        dms_day: "每天私信数",
+        dms_week: "每周私信数",
+        profile_views_day: "每天查看个人资料数",
+        searches_month: "每月人员搜索数",
+        notes_month: "每月邀请附言数",
+        job_search_pages_hour: "每小时职位搜索页数（每页 25 个职位）",
+      },
+      ofCeiling: "上限：~{{ceiling}}",
+      custom: "自定义",
+      resetBtn: "重置为默认值",
     },
     session: {
       title: "LinkedIn 会话",
@@ -812,13 +837,6 @@ const zh: DeepPartial<Messages> = {
       errorFallback: "错误",
       resume: "恢复联络",
       disconnect: "断开连接",
-      tier: "账号级别",
-      tierCapsLabel: "账号级别上限",
-      tierInfo:
-        "LinkedIn 工作线程会强制执行这些上限。新账号 = 15/天 · 100/周。成熟账号 = 30/天 · 200/周。请如实选择符合你账号情况的级别。",
-      tierHint: "选择符合你账号情况的级别。",
-      tierNew: "新账号（安全默认）",
-      tierSeasoned: "成熟账号",
     },
     observability: {
       title: "可观测性",
@@ -849,6 +867,9 @@ const zh: DeepPartial<Messages> = {
         "连接请求始终未被接受（或接受后始终未回复）达这么多天。",
       contactPurgeLabel: "已删除的联系人在以下时长后永久清除",
       contactPurgeHint: "已删除的联系人会在这么多天后被永久清除。",
+      expireListingLabel: "在以下时长后将职位标记为“较早”",
+      expireListingHint:
+        "在扫描中已有这么多天未再出现的职位会被置灰为“较早的职位” — 仍留在看板上，你可以将其恢复。",
       trashedJobsLabel: "已删除的职位在以下时长后永久清除",
       trashedJobsHint:
         "已删除的职位会在这么多天后被永久清除（且不会被重新抓取）。",
@@ -944,7 +965,6 @@ const zh: DeepPartial<Messages> = {
         nth: "{{degree}}度",
       },
       titleConfirmCompany: "确认公司",
-      titleSendingMessages: "正在发送消息",
       titleFinding: "正在寻找内推…",
       titleView: "查看内推",
       findReferrals: "寻找内推",
@@ -953,9 +973,6 @@ const zh: DeepPartial<Messages> = {
         "按滚动窗口计算，而非自然日/周 — 每条消息在发出 24 小时（每日）或 7 天（每周）后释放额度。上限设置保守，远低于 LinkedIn 的限制。",
       automatedQuota:
         "自动化额度 — 过去 24 小时：<strong>{{dailyUsed}}/{{dailyLimit}}</strong> 过去 7 天：<strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
-      dmTooltip:
-        "发给一度联系人的 DM 不设上限，也不计入邀请额度",
-      dmCounter: "DM（过去 24 小时）：<strong>{{dmSent}}</strong>（不设上限）",
       manualModeQuota: "手动模式 — 请自行留意你的 LinkedIn 限额",
       dailyLimitReached: "已达每日上限。新请求将排队至明天。",
       closeToLimit_other: "即将达到每日上限 — 今天还剩 {{count}} 个请求。",
@@ -989,10 +1006,10 @@ const zh: DeepPartial<Messages> = {
       findingContacts: "正在寻找 {{company}} 的联系人…",
       scanningHint:
         "正在通过你的会话扫描 LinkedIn · 通常需要 10–30 秒。如果公司名称有歧义，我们会暂停并请你确认。",
-      sendingTitle: "正在发送消息…",
-      sendingHint:
-        "以人类打字速度逐条发送，模拟自然行为。你可以关闭此窗口 — 发送会在后台继续。",
       emptyConnected: "尚未在该公司找到联系人。",
+      refusedTitle: "搜索已因你的速率限制暂停",
+      refusedBody:
+        "未对 <strong>{{company}}</strong> 扫描 LinkedIn：自设的读取限额已用完，或退避暂停正在生效。随着时间窗口滚动它会自动恢复 — 稍后再试，或在设置 → 人脉拓展中调整限额。",
       emptyManual:
         "还没有联系人 — 在人脉页通过 URL 添加，或在设置中开启内推联络以自动发现该公司的员工。",
       contactsFound_other: "找到 {{count}} 位联系人",
@@ -1001,10 +1018,6 @@ const zh: DeepPartial<Messages> = {
       findMore: "再找 10 位",
       confirmCompanyNext: "确认公司 →",
       close: "关闭",
-      reachOut: "发起联络（{{count}}）",
-      sendConfirmTitle_other: "发送 {{count}} 条联络消息？",
-      sendConfirmBody:
-        "这会从你的账号逐条发送真实的 LinkedIn 连接请求 / DM。finds-you-jobs 无法撤回它们 — 要撤回请求或删除消息，请自行前往 <span>linkedin.com</span> 操作。",
       sendingEllipsis: "发送中…",
       sendNow: "立即发送",
       rowReached: "已联络",

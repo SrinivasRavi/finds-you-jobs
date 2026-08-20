@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections import Counter
+from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -33,11 +34,12 @@ from sidecar.modules.scraper.config import SourceEntry
 from sidecar.modules.scraper.http import Fetcher
 from sidecar.modules.scraper.types import ScraperError
 
-from ..db import Database
 from ..db.base import now_utc
 from ..registry.persistence import SCRAPER_ENGINE_PREFIX
 from ..security import get_app_key, mask_key, seal_secret
 from . import dto
+from .deps import data_dir as _data_dir
+from .deps import db as _db
 
 router = APIRouter()
 
@@ -54,11 +56,28 @@ ACTOR_LABELS: dict[str, str] = {
 }
 
 
-def _db(request: Request) -> Database:
-    db = getattr(request.app.state, "db", None)
-    if db is None:
-        raise HTTPException(status_code=503, detail="storage not initialized")
-    return db
+def _portals(repos) -> dict:  # noqa: ANN001 — Repos
+    """A fresh shallow COPY of the stored `portals_config` document.
+
+    The ONE place that reads it (D-A1). Copy, never mutate the stored document
+    in place: the loaded JSON shares its nested dicts/lists with the ORM row, so
+    an in-place edit changes "old" and "new" alike and SQLAlchemy sees no change
+    to flush (found 2026-07-22 — the silent "toggle never turns on" bug). A row
+    inside `sources` must likewise be REPLACED (`{**raw, ...}`), never edited.
+    """
+    return dict(repos.preferences.get_or_create().portals_config or {})
+
+
+def _portals_for_update(repos) -> tuple[dict, Callable[[], None]]:  # noqa: ANN001 — Repos
+    """`_portals` plus the write-back that persists whatever the caller left in
+    the returned copy. Saving stays the caller's explicit call, so a mutation
+    that turns out to be a no-op writes nothing."""
+    portals = _portals(repos)
+
+    def save() -> None:
+        repos.preferences.update(portals_config=portals)
+
+    return portals, save
 
 
 def _entry_counts(portals_config: dict) -> Counter[str]:
@@ -116,8 +135,7 @@ def _catalog(portals_config: dict) -> list[dto.DiscoverySourceDTO]:
 @router.get("/api/discovery/sources")
 async def list_discovery_sources(request: Request) -> list[dto.DiscoverySourceDTO]:
     with _db(request).repos() as repos:
-        prefs = repos.preferences.get_or_create()
-        portals = dict(prefs.portals_config or {})
+        portals = _portals(repos)
     return _catalog(portals)
 
 
@@ -139,8 +157,7 @@ async def toggle_discovery_source(
                 status_code=404, detail=f"unknown discovery source {source_id!r}"
             )
     with _db(request).repos() as repos:
-        prefs = repos.preferences.get_or_create()
-        portals = dict(prefs.portals_config or {})
+        portals, save = _portals_for_update(repos)
         disabled = set(portals.get("disabled_sources", []))
         for source_id in ids:
             if payload.enabled:
@@ -148,7 +165,7 @@ async def toggle_discovery_source(
             else:
                 disabled.add(source_id)
         portals["disabled_sources"] = sorted(disabled)
-        repos.preferences.update(portals_config=portals)
+        save()
     return _catalog(portals)
 
 
@@ -279,8 +296,7 @@ async def watch_company(
         if not url:
             raise HTTPException(status_code=422, detail="url or job_id required")
         snapshot = {"url": url, "company": company, "job_id": payload.job_id or ""}
-        prefs = repos.preferences.get_or_create()
-        sources = list((prefs.portals_config or {}).get("sources", []))
+        sources = list(_portals(repos).get("sources", []))
 
     # Network probes run OUTSIDE any DB session and OFF the event loop
     # (asyncio.to_thread — the routes.py `probe_url` pattern). A synchronous
@@ -365,8 +381,7 @@ async def watch_company(
             _ledger_watch(ledger_repos, snapshot, fail)
         raise HTTPException(status_code=422, detail=fail)
     with _db(request).repos() as repos:
-        prefs = repos.preferences.get_or_create()
-        portals = dict(prefs.portals_config or {})
+        portals, save = _portals_for_update(repos)
         sources = list(portals.get("sources", []))
         already = False
         for i, raw in enumerate(sources):
@@ -378,17 +393,14 @@ async def watch_company(
                 # A registry-seeded row the user explicitly watches becomes a
                 # managed roster entry (watched=True) — so the watch toggle
                 # reflects it and unwatch can remove it. REPLACE the row dict,
-                # never mutate it in place: the loaded JSON shares these nested
-                # dicts, so an in-place edit changes "old" and "new" alike and
-                # SQLAlchemy sees no change to flush (found 2026-07-22 — the
-                # silent "toggle never turns on" bug).
+                # never mutate it in place (see `_portals`).
                 if not raw.get("watched"):
                     stamped = {**raw, "watched": True}
                     if company and not raw.get("company"):
                         stamped["company"] = company
                     sources[i] = stamped
                     portals["sources"] = sources
-                    repos.preferences.update(portals_config=portals)
+                    save()
                 break
         if not already:
             # `watched` marks the row as user-tracked so the roster view can
@@ -399,7 +411,7 @@ async def watch_company(
                 row["company"] = company
             sources.append(row)
             portals["sources"] = sources
-            repos.preferences.update(portals_config=portals)
+            save()
         _ledger_watch(repos, snapshot, None)
     return dto.WatchCompanyResult(
         added=not already, source_url=source_url, adapter=adapter_id, company=company
@@ -412,8 +424,7 @@ async def list_watched_companies(request: Request) -> dto.WatchlistDTO:
     `portals_config.sources`. Rows added before the marker existed don't
     appear — they keep scanning; re-watching stamps them."""
     with _db(request).repos() as repos:
-        prefs = repos.preferences.get_or_create()
-        sources = (prefs.portals_config or {}).get("sources", [])
+        sources = _portals(repos).get("sources", [])
     entries = []
     for raw in sources:
         if not (isinstance(raw, dict) and raw.get("watched") and raw.get("url")):
@@ -436,8 +447,7 @@ async def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
     roster; source families are toggled in Settings → Discovery sources."""
     target = url.rstrip("/")
     with _db(request).repos() as repos:
-        prefs = repos.preferences.get_or_create()
-        portals = dict(prefs.portals_config or {})
+        portals, save = _portals_for_update(repos)
         sources = list(portals.get("sources", []))
         kept = [
             raw
@@ -451,7 +461,7 @@ async def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
         removed = len(kept) != len(sources)
         if removed:
             portals["sources"] = kept
-            repos.preferences.update(portals_config=portals)
+            save()
     return dto.WatchRemoveResult(removed=removed)
 
 
@@ -568,13 +578,6 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
 # -- BYO scraper keys (Apify / Brave) ----------------------------------------
 
 
-def _data_dir(request: Request):  # noqa: ANN202 — Path, mirrors engines.py
-    data_dir = getattr(request.app.state, "data_dir", None)
-    if data_dir is None:
-        raise HTTPException(status_code=503, detail="data dir not initialized")
-    return data_dir
-
-
 def _credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
     with _db(request).repos() as repos:
         out = []
@@ -595,8 +598,7 @@ def _credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
 def _seed_apify_sources(repos) -> None:  # noqa: ANN001 — Repos
     """First Apify key save: add the default actor `[[sources]]` entries so
     the sources exist, per-actor toggleable, without touching existing rows."""
-    prefs = repos.preferences.get_or_create()
-    portals = dict(prefs.portals_config or {})
+    portals, save = _portals_for_update(repos)
     sources = list(portals.get("sources", []))
     present = {
         str(raw.get("actor", ""))
@@ -610,13 +612,12 @@ def _seed_apify_sources(repos) -> None:  # noqa: ANN001 — Repos
             added = True
     if added:
         portals["sources"] = sources
-        repos.preferences.update(portals_config=portals)
+        save()
 
 
 def _seed_brave_source(repos) -> None:  # noqa: ANN001 — Repos
     """First Brave key save: add the single `board = "brave"` source entry."""
-    prefs = repos.preferences.get_or_create()
-    portals = dict(prefs.portals_config or {})
+    portals, save = _portals_for_update(repos)
     sources = list(portals.get("sources", []))
     if any(
         isinstance(raw, dict) and str(raw.get("board", "")) == "brave" for raw in sources
@@ -624,7 +625,7 @@ def _seed_brave_source(repos) -> None:  # noqa: ANN001 — Repos
         return
     sources.append({"board": "brave"})
     portals["sources"] = sources
-    repos.preferences.update(portals_config=portals)
+    save()
 
 
 @router.get("/api/discovery/credentials")

@@ -1,8 +1,8 @@
-"""FastAPI app factory (architecture §4.1 `app/api`).
+"""FastAPI app factory (architecture section 4.1 `app/api`).
 
 Wires the scaffold (bearer auth, loopback CORS, flight-recorder log, orphan
 watchdog, lifecycle routes) plus the core-storage slice
-(`docs/internal/roadmap.md` §7.2 #3): the SQLite storage + migrations, the SSE
+(`docs/internal/roadmap.md` section 7.2 #3): the SQLite storage + migrations, the SSE
 event hub, and the Operation Runner. The runner comes up in the lifespan and
 drains on shutdown. Engine routing and the scheduler land with their feature
 commits in this same lifespan.
@@ -24,11 +24,14 @@ from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
 from .api.routes import router
+from .api.screencast_ws import router as screencast_router
 from .auth import BearerAuthMiddleware
+from .browser import BrowserBroker
 from .db import Database, resolve_db_url
 from .db.base import now_utc
 from .db.database import resolve_data_dir
 from .db.migrate import upgrade_to_head
+from .db.models import OP_ACTIVE_STATES
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub, register_sse_schemas
 from .logging_setup import get_logger, setup_flight_recorder
 from .observability import ObservabilityHandle, configure_observability
@@ -43,7 +46,7 @@ from .security import migrate_plaintext_session
 from .seed import seed_defaults
 from .watchdog import watch_parent
 
-# §4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
+# section 4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
 SHUTDOWN_DRAIN_SECONDS = 10.0
 
 # The webview loads from tauri://localhost (macOS/Linux) or
@@ -52,8 +55,8 @@ SHUTDOWN_DRAIN_SECONDS = 10.0
 # origin, but the regex itself never actually matched it (only http(s)://
 # loopback) — every real fetch from a packaged build failed CORS silently,
 # invisible until now because no packaged build had ever been run+tested
-# (docs/internal/distribution.md §2/§7). Loopback-only by design otherwise
-# (§4.2) — this only widens it to the exact schemes Tauri itself uses.
+# (docs/internal/distribution.md section 2/section 7). Loopback-only by design otherwise
+# (section 4.2) — this only widens it to the exact schemes Tauri itself uses.
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
@@ -104,7 +107,7 @@ def create_app(
         log = get_logger()
         log.info("sidecar app starting (original_ppid=%s)", original_ppid)
 
-        # Storage: migrate to head, then open the engine (architecture §5.3 boot).
+        # Storage: migrate to head, then open the engine (architecture section 5.3 boot).
         db_url = resolve_db_url(data_dir)
         upgrade_to_head(db_url)
         # Alembic's fileConfig (inside upgrade_to_head) disables existing loggers,
@@ -138,7 +141,7 @@ def create_app(
             engines, routing, engine_rows=engine_rows, data_dir=resolved_data_dir
         )
 
-        # Observability (architecture §10): wire Logfire → local `logfire.sqlite`
+        # Observability (architecture section 10): wire Logfire → local `logfire.sqlite`
         # under the data dir. `send_to_logfire=False` is the hard invariant (no
         # network by default, NFR-OBS-01); OTLP export only when the user opted
         # in via Settings. Failure-tolerant: observability must never block boot,
@@ -156,8 +159,8 @@ def create_app(
         except Exception:  # noqa: BLE001 — observability must never block boot
             log.exception("observability configuration failed; continuing without spans")
 
-        # Applier boot recovery (`docs/internal/applier.md` §9.3): an active
-        # browser context cannot be silently restored after a restart. Mark
+        # Applier boot recovery (`docs/internal/archived/applier-as-built.md` section 9.3): an
+        # active browser context cannot be silently restored after a restart. Mark
         # orphaned active runs interrupted and cancel their pending ops BEFORE
         # runner boot recovery, so a queued `apply` never relaunches a browser
         # nobody asked for.
@@ -173,7 +176,7 @@ def create_app(
                     )
                     if run.operation_id:
                         op = repos.operations.get(run.operation_id)
-                        if op is not None and op.state in ("queued", "running"):
+                        if op is not None and op.state in OP_ACTIVE_STATES:
                             repos.operations.mark_cancelled(run.operation_id)
         except Exception:  # noqa: BLE001 — recovery must never block boot
             log.exception("apply-run boot recovery failed")
@@ -221,12 +224,31 @@ def create_app(
             target=_boot_keyword_floor, name="keyword-floor", daemon=True
         ).start()
 
+        # Browser surfaces (`app/browser`). Constructed here, but NOTHING
+        # launches: the first `surface(slug)` call is what spends a Chrome
+        # process, so a boot that never opens a surface never pays for one.
+        # It holds the serving loop so its surface threads can marshal frames
+        # back onto it (the EventHub cross-thread pattern).
+        browser = BrowserBroker(resolved_data_dir, asyncio.get_running_loop())
+
         app.state.db = db
         app.state.hub = hub
         app.state.engines = engines
         app.state.runner = runner
         app.state.observability = observability
         app.state.data_dir = resolved_data_dir
+        app.state.browser = browser
+
+        # Referral Outreach runs on the browser broker's serialized lane, and
+        # its presence gate reads the broker's live surface. Wiring both here
+        # activates the broker-backed path; unset, the referral ops self-launch
+        # (the pre-broker behaviour). The slugs are the referral package's own
+        # runtime values, so nothing vendor-named enters this core module.
+        from .registry import networker_ops
+
+        networker_ops.SURFACE_PROVIDER = networker_ops.build_surface_provider(
+            browser, asyncio.get_running_loop()
+        )
 
         scheduler: Scheduler | None = None
         scheduler_task: asyncio.Task[None] | None = None
@@ -271,8 +293,11 @@ def create_app(
                         await task
                     except asyncio.CancelledError:
                         pass
-            # Drain in-flight operations, then release the DB engine (§4.4 step 3).
+            # Drain in-flight operations, then release the DB engine (section 4.4 step 3).
             runner.shutdown(drain_timeout=SHUTDOWN_DRAIN_SECONDS)
+            # Close every browser surface before the DB goes: each one is a real
+            # Chrome process that would otherwise outlive the sidecar.
+            browser.shutdown()
             db.dispose()
             log.info("sidecar app stopped")
 
@@ -307,6 +332,7 @@ def create_app(
     app.include_router(engines_router)
     app.include_router(discovery_router)
     app.include_router(ingest_router)
+    app.include_router(screencast_router)
 
     # Schema-emission glue only (F-M2/F-L3): /api/events streams the SSEEnvelope
     # union, which FastAPI can't infer from a StreamingResponse — inject those

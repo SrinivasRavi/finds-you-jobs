@@ -1,4 +1,4 @@
-"""Save → packet enqueue (architecture §4.2 long-op UX, AM5).
+"""Save → packet enqueue (architecture section 4.2 long-op UX, AM5).
 
 Saving a job (or a manual regenerate) enqueues the tailored-resume and
 cover-letter operations as two independent ops and pre-creates one empty
@@ -7,7 +7,7 @@ cover-letter operations as two independent ops and pre-creates one empty
 regeneration chains the prior head via `superseded_by`.
 
 The prior repository also enqueued a Save-time `prep` op here; Save-time
-form-prep is retired in this rebuild (`docs/internal/applier.md` §2).
+form-prep is retired in this rebuild (`docs/internal/archived/applier-as-built.md` section 2).
 """
 
 from __future__ import annotations
@@ -16,6 +16,12 @@ from ..db import Database
 from ..runner import OperationRunner
 
 _ARTIFACT_KIND = {"tailor": "tailored_resume", "cover": "cover_letter"}
+
+# The packet's artifact kinds, in packet order — the ONE vocabulary (D-A14) for
+# every "resume or cover?" check: `Artifact.kind`, the uploaded-document slots
+# (`ApplicationDocument.kind`), and the `tailor`/`cover` ops that produce them.
+# Order is user-visible: it is what the "kind must be one of …" 422 lists.
+PACKET_KINDS: tuple[str, ...] = tuple(_ARTIFACT_KIND.values())
 
 
 def auto_resume_default(thresholds: dict | None) -> bool:

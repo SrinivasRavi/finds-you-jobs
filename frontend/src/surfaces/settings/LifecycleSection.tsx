@@ -18,6 +18,7 @@ function LifecycleRow({
   value,
   onChange,
   testid,
+  options,
 }: {
   label: string;
   hint: string;
@@ -25,6 +26,8 @@ function LifecycleRow({
   value: number;
   onChange: (v: number) => void;
   testid: string;
+  /** Fixed choices instead of a free number input (can't be typo'd). */
+  options?: number[];
 }) {
   return (
     <div className="flex items-center gap-3" data-testid={`lifecycle-${testid}-row`}>
@@ -33,14 +36,29 @@ function LifecycleRow({
         <div className="text-[12px] text-ink-3">{hint}</div>
       </div>
       <div className="flex items-center gap-2">
-        <input
-          type="number"
-          min={1}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value) || 0)}
-          data-testid={`lifecycle-${testid}`}
-          className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink"
-        />
+        {options ? (
+          <select
+            value={value}
+            onChange={(e) => onChange(Number(e.target.value))}
+            data-testid={`lifecycle-${testid}`}
+            className="rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink"
+          >
+            {options.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="number"
+            min={1}
+            value={value}
+            onChange={(e) => onChange(Number(e.target.value) || 0)}
+            data-testid={`lifecycle-${testid}`}
+            className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink"
+          />
+        )}
         <span className="text-[11.5px] text-ink-3">{unit}</span>
       </div>
     </div>
@@ -90,6 +108,16 @@ export const LifecycleSection = memo(function LifecycleSection({
           onChange={set("contact_purge_days")}
           testid="contact-purge"
         />
+        {/* Fixed choices, not a free number (maintainer 2026-08-02). */}
+        <LifecycleRow
+          label={t("settingsPage.lifecycle.expireListingLabel")}
+          hint={t("settingsPage.lifecycle.expireListingHint")}
+          unit={t("settingsPage.lifecycle.days")}
+          value={lc.expire_listing_days}
+          onChange={set("expire_listing_days")}
+          testid="expire-listing"
+          options={[7, 14, 30, 60]}
+        />
         <LifecycleRow
           label={t("settingsPage.lifecycle.trashedJobsLabel")}
           hint={t("settingsPage.lifecycle.trashedJobsHint")}
@@ -106,16 +134,9 @@ export const LifecycleSection = memo(function LifecycleSection({
           onChange={set("archived_applications_purge_days")}
           testid="archived-apps-purge"
         />
-        {settings.networking_enabled ? (
-          <LifecycleRow
-            label={t("settingsPage.lifecycle.syncCadenceLabel")}
-            hint={t("settingsPage.lifecycle.syncCadenceHint")}
-            unit={t("settingsPage.lifecycle.hours")}
-            value={lc.contact_sync_cadence_hours}
-            onChange={set("contact_sync_cadence_hours")}
-            testid="sync-cadence"
-          />
-        ) : null}
+        {/* The contact-sync cadence control is gone with the schedule itself:
+            syncing is manual-only (the Sync button, nothing else —
+            docs/internal/linkedin-addon.md section 5). */}
       </div>
     </Section>
   );

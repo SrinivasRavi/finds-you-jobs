@@ -1,6 +1,6 @@
 [project]
 name = "finds-you-jobs"
-version = "0.5.6"
+version = "0.5.7"
 description = "Open-source AI job-search desktop tool"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -22,7 +22,7 @@ dependencies = [
     # never bundled). Also used by the Applier browser agent when it lands.
     "playwright>=1.48",
     "markdown-it-py>=4.2.0",
-    # Observability (architecture §10): Logfire SDK for per-operation tracing
+    # Observability (architecture section 10): Logfire SDK for per-operation tracing
     # spans. Logfire itself is MIT; its OpenTelemetry deps are Apache-2.0 (both
     # permissive / AGPL-compatible). App-layer only — never imported by
     # `modules/` (the one-way rule). Spans persist to a local `logfire.sqlite`

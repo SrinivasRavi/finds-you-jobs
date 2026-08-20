@@ -5,7 +5,7 @@
 Synthetic typeahead / company-detail fixtures (no captured LinkedIn payloads).
 We assert the two shapes we handle, the id/domain helpers, and the
 domain-anchor match — the logic the app's silent-auto-pick vs user-confirm
-decision rides on (docs/referral-outreach-discovery-design.md §2)."""
+decision rides on (docs/referral-outreach-discovery-design.md section 2)."""
 
 from __future__ import annotations
 
@@ -36,6 +36,19 @@ def test_registrable_domain_and_match():
     assert domains_match("https://abnormal.ai/x", "careers.abnormal.ai") is True
     assert domains_match("atob.com", "goatob.com") is False
     assert domains_match("", "atob.com") is False
+
+
+def test_registrable_domain_two_level_suffixes_never_cross_match():
+    # `domain_match` drives the host's SILENT auto-pick, so this parse must be
+    # correct, not merely preferential: with the old last-two-label guess every
+    # `.co.in` site collapsed to `co.in` and ANY `.co.in`-website candidate
+    # matched ANY `.co.in` employer domain — a wrong silent pick.
+    assert registrable_domain("careers.tataelxsi.co.in") == "tataelxsi.co.in"
+    assert registrable_domain("https://www.example.co.uk/about") == "example.co.uk"
+    assert domains_match("careers.tataelxsi.co.in", "www.tataelxsi.co.in") is True
+    assert domains_match("careers.tataelxsi.co.in", "www.othercorp.co.in") is False
+    # Unlisted multi-part TLDs keep the conservative two-label guess.
+    assert registrable_domain("bjak.my") == "bjak.my"
 
 
 def _typeahead_shape_a() -> dict:

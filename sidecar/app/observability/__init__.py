@@ -1,4 +1,4 @@
-"""Observability (architecture §10, layer 2 — Logfire tracing spans).
+"""Observability (architecture section 10, layer 2 — Logfire tracing spans).
 
 Public surface:
 

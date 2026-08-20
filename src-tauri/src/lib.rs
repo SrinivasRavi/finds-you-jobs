@@ -1,4 +1,4 @@
-//! finds-you-jobs Tauri shell — rarely-touched glue (architecture §4.1).
+//! finds-you-jobs Tauri shell — rarely-touched glue (architecture section 4.1).
 //! Spawns + supervises the Python sidecar, exposes the PORT/TOKEN handshake to
 //! the frontend as Tauri commands, and kills the sidecar's process group on
 //! quit. All the intelligence is in the sidecar; this is process management +
@@ -135,7 +135,7 @@ fn set_macos_dock_icon() {
     }
 }
 
-/// Frontend reads the sidecar port through this command (architecture §4.4).
+/// Frontend reads the sidecar port through this command (architecture section 4.4).
 #[tauri::command]
 fn get_sidecar_port(state: State<AppState>) -> Result<u16, String> {
     state

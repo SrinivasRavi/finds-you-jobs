@@ -1,4 +1,4 @@
-"""Covers: A3 Operation Runner (architecture §5.3).
+"""Covers: A3 Operation Runner (architecture section 5.3).
 
 Happy path (state transitions + usage ledger + events), verbatim error
 propagation (NFR-SIDE-04), and the per-kind concurrency policy — the pure
@@ -88,7 +88,7 @@ def test_can_start_scan_is_single_flight() -> None:
 
 def test_apply_runs_beside_llm_ops_but_single_flight() -> None:
     # The agentic apply op WAITS for a still-generating tailored resume
-    # (applier.md §8.1), so `tailor` MUST be startable while apply runs —
+    # (applier-as-built.md section 8.1), so `tailor` MUST be startable while apply runs —
     # exclusivity here dead-locked the packet wait (2026-07-17 dogfood).
     assert can_start("apply", ["score"], DEFAULT_POLICY) is True
     assert can_start("tailor", ["apply"], DEFAULT_POLICY) is True

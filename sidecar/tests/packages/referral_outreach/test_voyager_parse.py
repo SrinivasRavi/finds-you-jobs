@@ -101,3 +101,4 @@ def test_missing_profile_entity_raises():
 
     with pytest.raises(ValueError):
         parse_linkedin_voyager_response({"data": {}, "included": []})
+

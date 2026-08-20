@@ -33,7 +33,9 @@ Registry + auto-detection live in `adapters/__init__.py`.
 
 from __future__ import annotations
 
+from collections.abc import Container
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from ..config import SourceEntry
 from ..http import Fetcher
@@ -60,3 +62,36 @@ class SearchAdapter(Protocol):
     def search(
         self, entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher
     ) -> list[NormalizedJob]: ...
+
+
+# ---------------------------------------------------------------------------
+# Tenant-key helpers (duplication audit D-M6). Every ATS adapter derives its
+# board/org/account key from the source URL, and each was re-deriving the same
+# two idioms by hand. These are the one copy; adapters still own their host
+# validation (allowlist, anchored regex, reserved segments) — only the parsing
+# is shared.
+# ---------------------------------------------------------------------------
+
+
+def path_segments(url: str) -> list[str]:
+    """The URL path's non-empty `/`-separated segments — leading, trailing and
+    doubled slashes contribute nothing, an empty path gives `[]`."""
+    return [s for s in urlsplit(url).path.split("/") if s]
+
+
+def first_path_segment(url: str) -> str:
+    """The board/org/account slug a career URL carries as its first path
+    segment (`""` when the path has none). Validate the host first."""
+    segments = path_segments(url)
+    return segments[0] if segments else ""
+
+
+def subdomain_tenant(url: str, suffix: str, reserved: Container[str] = ()) -> str:
+    """The tenant label of a `<tenant><suffix>` hosting URL (Breezy, BambooHR),
+    or `""` when the host doesn't end in `suffix`, carries a further dotted
+    label, or names one of the vendor's own `reserved` subdomains."""
+    host = urlsplit(url).netloc.lower() if url else ""
+    if not host.endswith(suffix):
+        return ""
+    sub = host[: -len(suffix)]
+    return "" if (not sub or "." in sub or sub in reserved) else sub

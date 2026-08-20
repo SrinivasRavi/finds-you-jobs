@@ -1,4 +1,4 @@
-"""Canonical-URL normalization — the dedup key (FR-SYS-01, ROADMAP §4).
+"""Canonical-URL normalization — the dedup key (FR-SYS-01, ROADMAP section 4).
 
 Same posting, same key: lowercase scheme/host, default ports and fragments
 dropped, tracking params stripped, remaining params sorted, trailing slash

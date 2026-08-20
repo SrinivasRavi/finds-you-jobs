@@ -4,7 +4,7 @@
 # tree — this is what `tauri.conf.json`'s `bundle.resources` ships as
 # `sidecar/` inside the packaged app, and what `sidecar.rs`'s prod path
 # (`PROD_SIDECAR_REL = "sidecar/fyj-sidecar"`) spawns at runtime
-# (docs/internal/distribution.md §8).
+# (docs/internal/distribution.md section 8).
 #
 # Onedir, not onefile: onefile self-extracts to a temp dir on every launch,
 # which would show up as extra sidecar-handshake latency on every app start.

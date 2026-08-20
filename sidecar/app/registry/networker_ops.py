@@ -16,9 +16,9 @@ runner as three bounded ops (US-REF-01/03/04, FR-REF-*):
   Seeking Referral on the first real send (US-NW-09 batch-settle guard).
 
 **Direct in-process.** This is `app/` importing `modules/` (the allowed one-way
-direction, §5.2). The GPLv3 OpenOutreach-derived worker is reached through the
+direction, section 5.2). The GPLv3 OpenOutreach-derived worker is reached through the
 silo's `DirectVoyagerDriver`, which calls it in-process — the subprocess firewall
-the prior MIT-era repository used is retired (AGPL host; §2).
+the prior MIT-era repository used is retired (AGPL host; section 2).
 
 **Test seam.** The voyager driver is built through `DRIVER_FACTORY` so tests
 inject a fake driver (zero live LinkedIn traffic — the wire stays cold; the
@@ -28,6 +28,8 @@ maintainer dogfoods the live send path). The LLM engine for `draft` comes from
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -41,45 +43,148 @@ from sidecar.modules.networker import resolve as net_resolve
 from sidecar.modules.networker import send as net_send
 from sidecar.modules.networker.driver import DirectVoyagerDriver, VoyagerDriver
 from sidecar.modules.networker.types import Audience, NetworkerError, Warmth
+from sidecar.packages.referral_outreach import PacingProfile, plan_for_membership
 
 from ..db.base import now_utc
 from ..db.database import resolve_data_dir
+from ..db.models import OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
-from .operations import OperationContext, OperationOutcome
+from .operations import OperationContext, OperationOutcome, llm_outcome
+from .presence_gate import PresenceAbsent, decide_presence
 
 if TYPE_CHECKING:
     from ..db import Repos
     from ..db.models import Contact as ContactRow
+    from ..db.models import LinkedInSession
 
 # ---------------------------------------------------------------------------
 # Driver factory seam (tests override this; production builds the real one).
 # ---------------------------------------------------------------------------
 
-DriverFactory = Callable[[str | None], VoyagerDriver]
+# The factory now receives the full pacing PROFILE (membership × risk% ×
+# overrides), not a bare tier string — the caps derive from all three. Tests
+# override this seam with a fake that ignores the arg.
+DriverFactory = Callable[["PacingProfile | None"], VoyagerDriver]
+
+# Broker seam (Phase-3 referral integration). A `(slug) -> ready surface`
+# callable over the core browser broker; the slug is a runtime argument owned
+# inside the GPL package, so this module never names the vendor. When set (by the
+# host — see `build_surface_provider`), the real driver runs every referral page
+# action on the broker's single serialized surface lane instead of launching its
+# own Chromium. None (the default) keeps the self-launch path — the only path the
+# automated tests exercise, since they inject a fake driver through
+# `DRIVER_FACTORY` and never reach this seam.
+SurfaceProvider = Callable[[str], Any]
+SURFACE_PROVIDER: SurfaceProvider | None = None
+
+
+def build_surface_provider(
+    broker: Any, loop: asyncio.AbstractEventLoop
+) -> SurfaceProvider:
+    """A `(slug) -> ready surface` provider over the core browser broker, built by
+    the host (which holds the broker and the serving loop) and safe to invoke
+    from an operation WORKER THREAD.
+
+    The bridge that makes a synchronous worker op able to drive an async-launched
+    surface: `broker.surface(slug)` starts the surface's own thread synchronously,
+    but waiting for it to come up (`wait_ready`) awaits a loop-bound event, so we
+    marshal that await onto the serving loop with `run_coroutine_threadsafe` and
+    block only THIS worker thread on the returned `concurrent.futures.Future` —
+    never the serving loop (async-first). Actions then run on the surface's lane,
+    whose `run_on_lane` hands back a `concurrent.futures.Future` the sync worker
+    likewise `.result()`s. The serving loop is never blocked at any point."""
+
+    def _provider(slug: str) -> Any:
+        surface = broker.surface(slug)
+        asyncio.run_coroutine_threadsafe(surface.wait_ready(), loop).result()
+        return surface
+
+    return _provider
+
+
+# ---------------------------------------------------------------------------
+# Presence gate (invariant 3 / Our Claim 9, as revised 2026-08-14).
+# ---------------------------------------------------------------------------
+
+
+def _require_presence(ctx: OperationContext) -> None:
+    """Refuse a logged-in LinkedIn run unless the user asked for it (invariant 3).
+
+    Presence IS the user's explicit click: gated runs must carry the
+    `user_initiated` snapshot marker that only a click path sets, so a background
+    timer or scheduler can never start one. The first live version also demanded
+    an attached screencast viewer and a visible surface; the maintainer killed
+    both signals on 2026-08-14 (they gate on attention, not presence — see
+    `presence_gate.py`). Raises `PresenceAbsent`, surfaced verbatim on the op
+    row."""
+    verdict = decide_presence(
+        user_initiated=bool(ctx.input_snapshot.get("user_initiated"))
+    )
+    if not verdict.present:
+        raise PresenceAbsent(verdict.reason)
 
 
 def linkedin_data_dir() -> Path:
-    """`<app-data>/linkedin/` — home of the saved session + the pacing ledger.
-    Never the repo (the storage-state file is a secret-at-rest, §NFR-SEC-01)."""
+    """`<app-data>/linkedin/` — home of the pacing ledger (the persistent browser
+    profile moved to the broker's per-slug dir in Phase 5, see
+    `linkedin_profile_dir`). Never the repo (secret-at-rest, NFR-SEC-01)."""
     return resolve_data_dir() / "linkedin"
 
 
-def linkedin_storage_path() -> Path:
-    """The Playwright storage-state file the headed-login flow writes (N4)."""
-    return linkedin_data_dir() / "storage_state.json"
+def linkedin_broker_profile_dir() -> Path:
+    """The core browser broker's PER-SLUG persistent profile dir for the referral
+    surface — `<data>/browser/<slug>/profile`.
+
+    Phase-5 reconciliation (2026-08): the one-time headed login and every later
+    referral op now share ONE Chromium profile with the broker's headless surface
+    for this slug, so a session captured by the login is the session a broker
+    surface (launched on the same slug) reads back. Two invariants hold it
+    together, both deliberate:
+      - The slug is the package's runtime value (`referral_surface_slug()`), owned
+        inside the GPL package — no broker-slug vendor literal is added to core.
+      - The `<data>/browser/<slug>/profile` layout is the broker's OWN derivation
+        (`BrowserBroker.profile_dir`), reused here so the login-write dir and the
+        surface-read dir can never drift. The throwaway broker launches nothing
+        (construction only computes the path)."""
+    from sidecar.app.browser import BrowserBroker
+    from sidecar.packages.referral_outreach import referral_surface_slug
+
+    return BrowserBroker(resolve_data_dir()).profile_dir(referral_surface_slug())
 
 
 def linkedin_profile_dir() -> Path:
-    """`<app-data>/linkedin/profile/` — the PERSISTENT Chromium user-data-dir.
-    Cookies live here across sessions; the user can reopen this profile and log
-    out to end the app's session (2026-07-09). Secret-at-rest like the JSON."""
-    return linkedin_data_dir() / "profile"
+    """`<app-data>/browser/<slug>/profile/` — the PERSISTENT Chromium user-data-dir
+    the one-time headed login writes into and a headless broker surface reads back
+    (Phase 5). Cookies live here across sessions; the user can reopen this profile
+    and log out to end the app's session. Secret-at-rest like the JSON.
+
+    **Maintainer-only live path.** The real login runs a VISIBLE Chrome the
+    maintainer signs into by hand (2FA, most-trusted fingerprint); it writes the
+    session here. Automated tests never touch it — they inject a fake driver, or
+    drive `capture_login` against a LOCAL fixture into a temp profile dir."""
+    return linkedin_broker_profile_dir()
 
 
-def _default_driver_factory(tier: str | None) -> VoyagerDriver:
-    """Build the production subprocess driver from the app-data dir.
+def linkedin_storage_path() -> Path:
+    """The Playwright storage-state file (sealed cookies) the headed-login flow
+    writes — alongside the broker's per-slug profile, matching
+    `BrowserSurface.storage_state_path` so the login export and a broker surface's
+    own `persist_profile` snapshot are the same file (Phase 5)."""
+    return linkedin_profile_dir().parent / "storage_state.json"
+
+
+def linkedin_state_dir() -> Path:
+    """The voyager pacing-ledger dir — ONE derivation, shared by the enforcing
+    driver and the display snapshot so they can never point at different
+    ledgers. Stays under `<data>/linkedin/` (it is a ledger, not a browser
+    profile, so it is not part of the Phase-5 profile reconciliation)."""
+    return linkedin_data_dir() / "state"
+
+
+def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:
+    """Build the production in-process driver from the app-data dir.
 
     `storage_state` is the saved-cookie file the LinkedIn-connect flow writes
     (the path is always passed — `login` *creates* it, and discover/send fail
@@ -87,25 +192,137 @@ def _default_driver_factory(tier: str | None) -> VoyagerDriver:
     voyager pacing ledger. Both live under the data dir. The session-store
     encryption key rides in the child env (NFR-SEC-01) so voyager seals/reads
     the storage-state file — env, never argv. This is only ever *run* live by
-    the maintainer — automated tests inject a fake driver (wire stays cold)."""
+    the maintainer — automated tests inject a fake driver (wire stays cold).
+
+    `profile` (membership × risk% × overrides) drives every cap. `linkedin_plan`
+    is derived from the membership purely so the note-budget path (which still
+    branches on free-vs-paid) keeps working: any paid membership → 'premium'."""
     from ..security import SESSION_KEY_ENV, get_session_key
 
-    data = linkedin_data_dir()
+    plan = plan_for_membership(profile.membership if profile is not None else None)
     return DirectVoyagerDriver(
-        storage_state=str(data / "storage_state.json"),
-        user_data_dir=str(data / "profile"),
-        state_dir=str(data / "state"),
-        tier=tier,
+        # Through the helpers above, never re-typed here: the secret-at-rest
+        # paths get exactly ONE spelling, so the enforcing driver and every
+        # reader (disconnect, session status) can never point at different
+        # files ("disconnected but still logged in" — D-A11).
+        storage_state=str(linkedin_storage_path()),
+        user_data_dir=str(linkedin_profile_dir()),
+        state_dir=str(linkedin_state_dir()),
+        pacing_profile=profile,
+        linkedin_plan=plan,
+        # TEMPORARY inspection lever (maintainer 2026-08-02): FYJ_LINKEDIN_HEADED=1
+        # runs EVERY LinkedIn operation in a visible browser window so each
+        # request can be watched live (our voyager calls ride the page's own
+        # fetch — open DevTools → Network in the window to see them verbatim).
+        # Default stays headless; remove the env var to go back.
+        headed=os.environ.get("FYJ_LINKEDIN_HEADED") == "1",
         env={SESSION_KEY_ENV: get_session_key(resolve_data_dir())},
+        # When the host has installed the broker seam, the driver runs every
+        # page action on the broker's shared surface lane; otherwise (the
+        # default) it self-launches its own Chromium exactly as before.
+        surface_provider=SURFACE_PROVIDER,
     )
 
 
 DRIVER_FACTORY: DriverFactory = _default_driver_factory
 
 
-def _resolve_tier(repos: Repos) -> str | None:
-    session = repos.linkedin_session.get()
-    return session.account_tier if session is not None else None
+def resolve_pacing_profile(
+    repos: Repos, session: LinkedInSession | None = None
+) -> PacingProfile:
+    """The user's pacing choices (membership, risk%, overrides) → the profile the
+    package derives caps from. Defaults (free · 60% · no overrides) when no
+    session row exists yet. Pass `session` when the caller already holds the row
+    to skip the re-read."""
+    if session is None:
+        session = repos.linkedin_session.get()
+    if session is None:
+        return PacingProfile()
+    return PacingProfile(
+        membership=session.membership_type or "free",
+        risk_pct=session.risk_pct if session.risk_pct is not None else 60,
+        overrides=dict(session.cap_overrides or {}),
+    )
+
+
+# Per-meter human labels for the "self-imposed rate limits" UI. Kept here (not in
+# the frontend) so the wire contract and the enforced meters can never drift.
+CAP_LABELS: dict[str, str] = {
+    "invites_day": "Connection requests / day",
+    "invites_week": "Connection requests / week",
+    "dms_day": "Direct messages / day",
+    "dms_week": "Direct messages / week",
+    "profile_views_day": "Profile views / day",
+    "searches_month": "People searches / month",
+    "notes_month": "Invitation notes / month",
+    "job_search_pages_hour": "Job-search pages / hour",
+}
+
+
+def linkedin_caps_snapshot(profile: PacingProfile) -> dict:
+    """The effective self-imposed caps for `profile`, for the Settings UI and
+    Next-page gating. The NUMBERS come from the package (`resolve_profile`,
+    `resolve_membership`) — the host never computes them — and the live hourly
+    job-search usage is read from the same ledger the worker charges, so the
+    display and the enforcement can never disagree (NFR-LI-02).
+
+    DB-free on purpose: it reads the pacing-ledger FILE, so async routes call it
+    through `asyncio.to_thread` (async-first rule) after resolving the profile
+    inside their repos context."""
+    from sidecar.packages.referral_outreach import (
+        MEMBERSHIPS,
+        OVERRIDABLE,
+        resolve_membership,
+        resolve_profile,
+    )
+    from sidecar.packages.referral_outreach.facade import Pacer
+
+    effective = resolve_profile(profile)            # ceiling × risk% + overrides
+    ceilings = resolve_membership(profile.membership)  # the 100% estimates
+    overrides = profile.overrides or {}
+    caps = []
+    for meter, window in OVERRIDABLE:
+        key = f"{meter}_{window}"
+        eff = getattr(getattr(effective, meter), window)
+        ceil = getattr(getattr(ceilings, meter), window)
+        if eff is None or ceil is None:
+            continue
+        caps.append({
+            "key": key, "meter": meter, "window": window, "label": CAP_LABELS.get(key, key),
+            "effective": int(eff), "ceiling": int(ceil), "overridden": key in overrides,
+        })
+    # Live hourly job-search budget — read from the enforcing ledger, not recomputed.
+    pacer = Pacer(effective, state_dir=linkedin_state_dir())
+    js = pacer.usage("job_search_pages")
+    return {
+        "membership_type": profile.membership,
+        "risk_pct": profile.risk_pct,
+        "memberships": list(MEMBERSHIPS),
+        "caps": caps,
+        "job_search_hour_remaining": int(js.get("hour_remaining") or 0),
+    }
+
+
+def linkedin_quota_snapshot(profile: PacingProfile) -> dict:
+    """The referral-quota payload (used + caps per window) read from the SAME
+    pacing ledger the send path enforces — the popup's numbers and the refusals
+    can never disagree (the old app-side OutreachLog recount drifted: it saw
+    only confirmed sends, while enforcement charges attempts and refunds proven
+    no-sends). DB-free; async routes call it via `asyncio.to_thread` (ledger
+    file read)."""
+    from sidecar.packages.referral_outreach import resolve_profile
+    from sidecar.packages.referral_outreach.facade import Pacer
+
+    return Pacer(resolve_profile(profile), state_dir=linkedin_state_dir()).remaining()
+
+
+def linkedin_feature_flags(repos: Repos) -> tuple[bool, bool]:
+    """`(referral_outreach_on, job_search_on)` — the two INDEPENDENT opt-ins that
+    share one LinkedIn session. Each has its own toggle + typed ack in Settings;
+    either one alone justifies holding a session. Lives here (not in the API
+    layer) so registry ops can self-gate on it without importing routes."""
+    prefs = repos.preferences.get_or_create()
+    return bool(prefs.voyager_risk_marker_on), bool(prefs.linkedin_search_enabled)
 
 
 # ---------------------------------------------------------------------------
@@ -183,10 +400,10 @@ def _resolve_company_urn(
     company: str,
     canonical_url: str,
     source_adapter: str,
-    tier: str | None,
+    profile: PacingProfile | None,
     company_url: str | None,
     dry_run: bool,
-) -> tuple[str | None, str, list[dict], dict]:
+) -> tuple[str | None, str, list[dict], dict, str]:
     """Resolve `company` → the LinkedIn company URN to scope discovery by (FR-NW-02).
 
     Precedence: a pasted LinkedIn company URL (authoritative) → a prior cached
@@ -197,42 +414,75 @@ def _resolve_company_urn(
     for the "zip" failure, where a 0-hit typeahead silently reverted to a keyword
     search and returned employees of unrelated namesake companies.
 
-    Returns (company_urn | None, resolved_name, confirm_candidates, usage). A
-    `company_urn is None` return ALWAYS means "ask the user" (never "discover
-    anyway"); `confirm_candidates` may be empty (→ the popup offers paste-only)."""
+    Returns (company_urn | None, resolved_name, confirm_candidates, usage,
+    refusal_reason). A `company_urn is None` return with an empty
+    `refusal_reason` ALWAYS means "ask the user" (never "discover anyway");
+    `confirm_candidates` may be empty (→ the popup offers paste-only). A set
+    `refusal_reason` means voyager REFUSED to look (cap/backoff) — the caller
+    must surface the refusal, never the confirm step (a spent read budget is
+    not "we couldn't find this company")."""
     assert ctx.db is not None  # caller guarantees a DB context
     key = resolution_key(canonical_url, source_adapter, company)
 
     # 1) Authoritative: the user pasted the company's LinkedIn URL.
     if company_url:
-        driver = DRIVER_FACTORY(tier)
+        driver = DRIVER_FACTORY(profile)
         result = net_resolve("", driver=driver, url=company_url, dry_run=dry_run)
         if result.candidates:
             c = result.candidates[0]
             _cache_resolution(ctx, key, c, "user")
-            return c.urn, (c.name or company), [], asdict(result.usage)
+            return c.urn, (c.name or company), [], asdict(result.usage), ""
+        if result.error:
+            return None, company, [], asdict(result.usage), (result.reason or result.error)
         # The pasted URL didn't resolve to a company — re-ask (no discovery).
-        return None, company, [], asdict(result.usage)
+        return None, company, [], asdict(result.usage), ""
 
     # 2) Cached choice for this employer.
     with ctx.db.repos() as repos:
         cached = repos.company_resolutions.get(key)
     if cached is not None and cached.company_urn:
-        return cached.company_urn, (cached.company_name or company), [], {}
+        return cached.company_urn, (cached.company_name or company), [], {}, ""
 
     # 3) Fresh typeahead — ONLY a domain-website match is confident enough to auto-pick.
     domain = employer_domain(canonical_url)
-    driver = DRIVER_FACTORY(tier)
+    driver = DRIVER_FACTORY(profile)
     result = net_resolve(
         company, driver=driver, prefer_domain=domain or None, limit=5, dry_run=dry_run
     )
     usage = asdict(result.usage)
+    if result.error:
+        # Voyager refused the typeahead (cap/backoff). An empty candidate list
+        # here is NOT "unknown company" — bubbling it into the confirm step sent
+        # the user hunting for a URL that would then be refused too.
+        return None, company, [], usage, (result.reason or result.error)
     domain_hit = next((c for c in result.candidates if c.domain_match), None)
     if domain_hit is not None:
         _cache_resolution(ctx, key, domain_hit, "domain")
-        return domain_hit.urn, (domain_hit.name or company), [], usage
+        return domain_hit.urn, (domain_hit.name or company), [], usage, ""
     # Anything else (ambiguous, single, or zero) → confirm/paste. Never keyword-search.
-    return None, company, [_candidate_dto(c) for c in result.candidates], usage
+    return None, company, [_candidate_dto(c) for c in result.candidates], usage, ""
+
+
+def _refused_outcome(
+    ctx: OperationContext, *, company: str, job_id: str | None, reason: str,
+    usage: dict,
+) -> OperationOutcome:
+    """The discover outcome for a voyager read refusal (cap/backoff).
+
+    Emits `discover_refused` (the popup stops its spinner and shows the verbatim
+    reason) and marks the result_ref `refused` so the candidates endpoint can
+    tell "we were not allowed to look" apart from "we looked and found nobody"
+    — the distinction the Kaseya 0-contact bug collapsed."""
+    if ctx.publish is not None:
+        ctx.publish(make_event("networker", {
+            "id": ctx.operation_id, "phase": "discover_refused",
+            "company": company, "job_id": job_id, "reason": reason,
+        }))
+    return OperationOutcome(
+        result_ref={"refused": True, "reason": reason, "company": company,
+                    "job_id": job_id, "count": 0},
+        usage=usage,
+    )
 
 
 def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
@@ -253,9 +503,12 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     company_url = snap.get("company_url")  # a pasted LinkedIn company URL (authoritative)
     if ctx.db is None:
         raise RuntimeError("discover operation requires a database context")
+    # Presence gate (invariant 3): no LinkedIn read starts unless the user is
+    # present. Refuses before the first typeahead touches the network.
+    _require_presence(ctx)
 
     with ctx.db.repos() as repos:
-        tier = _resolve_tier(repos)
+        profile = resolve_pacing_profile(repos)
         job = repos.jobs.get(job_id) if job_id else None
         job_text = job.description if job is not None else ""
         canonical_url = job.canonical_url if job is not None else ""
@@ -275,10 +528,21 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
                     industry=snap.get("company_industry", ""), source="user",
                 )
     else:
-        company_urn, resolved_name, confirm_cands, resolve_usage = _resolve_company_urn(
-            ctx, company=company, canonical_url=canonical_url,
-            source_adapter=source_adapter, tier=tier, company_url=company_url, dry_run=dry_run,
+        company_urn, resolved_name, confirm_cands, resolve_usage, refusal = (
+            _resolve_company_urn(
+                ctx, company=company, canonical_url=canonical_url,
+                source_adapter=source_adapter, profile=profile, company_url=company_url,
+                dry_run=dry_run,
+            )
         )
+        if refusal:
+            # Voyager refused the resolve read (cap/backoff) — surface the
+            # refusal verbatim (US-NW-09 honesty; the Kaseya bug rendered this
+            # as "no contacts found"). Nothing was searched; nothing to upsert.
+            return _refused_outcome(
+                ctx, company=company, job_id=job_id, reason=refusal,
+                usage=resolve_usage,
+            )
         if company_urn is None:
             # We could NOT confidently resolve the target company. Do NOT discover
             # (the old keyword fallback returned namesake-company employees — the
@@ -298,11 +562,24 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 usage=resolve_usage,
             )
 
-    driver = DRIVER_FACTORY(tier)
+    driver = DRIVER_FACTORY(profile)
     result = net_discover(
         company, job_text, driver=driver, limit=limit, dry_run=dry_run,
         company_urn=company_urn, page=page,
     )
+    if result.error:
+        # Voyager refused the People search (cap/backoff) — no browser ran.
+        # This used to fall through as an honest empty roster ("No contacts
+        # found at this company yet" for a 5k-employee company; live 2026-08-15).
+        usage = asdict(result.usage)
+        if resolve_usage.get("internal_calls"):
+            usage["internal_calls"] = (
+                usage.get("internal_calls", 0) + resolve_usage["internal_calls"]
+            )
+        return _refused_outcome(
+            ctx, company=company, job_id=job_id,
+            reason=result.reason or result.error, usage=usage,
+        )
 
     contact_ids: list[str] = []
     with ctx.db.repos() as repos:
@@ -348,7 +625,11 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     if resolve_usage.get("internal_calls"):
         usage["internal_calls"] = usage.get("internal_calls", 0) + resolve_usage["internal_calls"]
     return OperationOutcome(
+        # `company_name` is the RESOLVED entity name (vs `company`, the raw
+        # search string) — the ledger row's subject says which entity was
+        # actually discovered against (US-LOG-01 legibility, 2026-08-03).
         result_ref={"company": company, "job_id": job_id, "company_urn": company_urn,
+                    "company_name": resolved_name,
                     "contact_ids": contact_ids, "count": len(contact_ids)},
         usage=usage,
     )
@@ -385,16 +666,21 @@ def draft_entrypoint(ctx: OperationContext) -> OperationOutcome:
         net_contact, job_text, guidance=guidance,
         master_md=master_md, engine=ctx.engine.engine,
         skill_md=get_override("networker_draft"),
+        cancelled=ctx.cancelled,
     )
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "contact_id": contact_id, "job_id": job_id,
             "message": result.message, "channel": result.channel.value,
             "warmth": result.warmth.value, "audience": result.audience.value,
             "char_count": result.char_count, "notes": list(result.notes),
         },
-        usage=asdict(result.usage),
-        engine=ctx.engine.name,
+        usage=result.usage,
+        resolved=ctx.engine,
+        # PRESERVED, not aligned (D-A2): draft reads the model straight off the
+        # `Usage` dataclass where score/tailor/cover read it out of the usage
+        # dict. Same answer for a `Usage` that has a `model` field — kept
+        # verbatim pending the maintainer's call on which precedence wins.
         model=result.usage.model or ctx.engine.model,
     )
 
@@ -412,9 +698,6 @@ def _is_rate_limited(result: Any) -> bool:
     quota = getattr(result, "quota", None) or {}
     return bool(quota.get("paused"))
 
-
-_SEND_ACTIVE = frozenset({"queued", "running"})
-_SEND_ALL = frozenset({"queued", "running", "succeeded", "failed", "cancelled"})
 
 
 def _maybe_move_on_batch_settle(
@@ -440,11 +723,12 @@ def _maybe_move_on_batch_settle(
     if batch_id:
         siblings = [
             op
-            for op in repos.operations.list_by_kind_states("send", set(_SEND_ALL))
-            if (op.input_snapshot or {}).get("batch_id") == batch_id
-            and op.id != current_op_id
+            for op in repos.operations.list_for_snapshot(
+                "send", OP_ALL_STATES, key="batch_id", value=batch_id
+            )
+            if op.id != current_op_id
         ]
-        if any(op.state in _SEND_ACTIVE for op in siblings):
+        if any(op.state in OP_ACTIVE_STATES for op in siblings):
             return  # batch has not settled yet — a sibling is still queued/running
         member_ids |= {op.id for op in siblings}
     sent_in_batch = any(
@@ -458,6 +742,28 @@ def _maybe_move_on_batch_settle(
         repos.applications.update(application_id, column="seeking_referral")
 
 
+# Live send progress by operation id — the routed channel + completed step
+# keys, mirrored from the published SSE events so a ledger read can seed a
+# queue panel that mounted mid-send (2026-08-16; SSE events before mount are
+# gone). In-memory on purpose: a dead process has no live sends. Bounded.
+SEND_PROGRESS: dict[str, dict[str, Any]] = {}
+_SEND_PROGRESS_CAP = 32
+
+
+def _progress_start(operation_id: str, channel: str) -> None:
+    while len(SEND_PROGRESS) >= _SEND_PROGRESS_CAP:
+        SEND_PROGRESS.pop(next(iter(SEND_PROGRESS)))
+    SEND_PROGRESS[operation_id] = {"channel": channel, "steps": []}
+
+
+def send_progress(operation_id: str) -> dict[str, Any] | None:
+    """A COPY of the live progress for one send op (None when not sending)."""
+    entry = SEND_PROGRESS.get(operation_id)
+    if entry is None:
+        return None
+    return {"channel": entry["channel"], "steps": list(entry["steps"])}
+
+
 def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Send one referral-ask via the voyager driver; persist the audit (US-REF-04)."""
     snap = ctx.input_snapshot
@@ -469,20 +775,55 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     dry_run = bool(snap.get("dry_run", False))
     if ctx.db is None:
         raise RuntimeError("send operation requires a database context")
+    # Presence gate (invariant 3): no send touches LinkedIn unless the user is
+    # present. Refuses before the driver is built or the wire is touched.
+    _require_presence(ctx)
 
     with ctx.db.repos() as repos:
         row = repos.contacts.get(contact_id)
         if row is None:
             raise LookupError(f"contact {contact_id!r} not found")
         net_contact = _net_contact_from_row(row)
-        tier = _resolve_tier(repos)
+        profile = resolve_pacing_profile(repos)
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
-    driver = DRIVER_FACTORY(tier)
+    driver = DRIVER_FACTORY(profile)
+
+    # The send announces itself (`sending`, with the routed channel), then
+    # narrates REAL progress: the driver reports each completed step
+    # (`send_step` with the plan key) from the code that drove it — the
+    # pacing wait, the profile open, the click, the note, the verified send
+    # (maintainer, 2026-08-16: the queue panel ticks live, no fabrication
+    # needed since we are the ones driving).
+    routed_channel = "dm" if is_first_degree else "connection_note"
+    op_id = ctx.operation_id or ""
+    _progress_start(op_id, routed_channel)
+    if ctx.publish is not None:
+        ctx.publish(make_event("networker", {
+            "id": ctx.operation_id, "phase": "sending",
+            "contact_id": contact_id, "job_id": job_id,
+            "channel": routed_channel,
+            "dry_run": dry_run,
+        }))
+
+    def _publish_step(step: str) -> None:
+        # Called from the op's worker thread as the driver finishes each step.
+        entry = SEND_PROGRESS.get(op_id)
+        if entry is not None:
+            entry["steps"].append(step)
+        if ctx.publish is not None:
+            ctx.publish(make_event("networker", {
+                "id": ctx.operation_id, "phase": "send_step",
+                "contact_id": contact_id, "job_id": job_id, "step": step,
+            }))
 
     try:
-        result = net_send(message, net_contact, driver=driver, tier=tier, dry_run=dry_run)
+        result = net_send(
+            message, net_contact, driver=driver, dry_run=dry_run,
+            on_step=_publish_step,
+        )
     except NetworkerError as exc:
+        SEND_PROGRESS.pop(op_id, None)
         # A hard voyager failure (stale selector, subprocess crash, unparseable
         # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,
         # outreach_logs empty" dogfood bug. The audit row is a hard requirement for
@@ -514,7 +855,11 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         raise
 
     outcome_str = "sent" if result.sent else ("pending" if dry_run else "failed")
-    outcome_detail = result.error or result.reason or ""
+    # Reason first: `error` is a terse code (`cap_or_backoff`), `reason` the
+    # explanation ("…the free-plan personalized-note allowance is out…"). The
+    # old error-first order rendered the code in the referrals modal and the
+    # OutreachLog while the actionable reason was dropped (live 2026-08-02).
+    outcome_detail = result.reason or result.error or ""
     now = now_utc()
     with ctx.db.repos() as repos:
         log = repos.outreach_logs.create(
@@ -570,6 +915,11 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 paused_reason=(result.reason or result.error or "LinkedIn rate-limit backoff"),
             )
 
+    # The DM plan's last step is the audit write above ("Record the outcome in
+    # your log") — app-side work, so it is reported here, not by the driver.
+    if result.sent and not dry_run and result.channel.value == "dm":
+        _publish_step("dm5")
+    SEND_PROGRESS.pop(op_id, None)
     if ctx.publish is not None:
         ctx.publish(make_event("networker", {
             "id": ctx.operation_id, "phase": "sent" if result.sent else "send_failed",

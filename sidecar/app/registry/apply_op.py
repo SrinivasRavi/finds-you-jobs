@@ -1,13 +1,13 @@
-"""The Applier operation (docs/internal/applier.md §8) — one direct `apply`
+"""The Applier operation (docs/internal/archived/applier-as-built.md section 8) — one direct `apply`
 op from the Tracker, driving the jobapplier package's agent loop.
 
-Lifecycle (§8.1): the route creates the durable ApplyRun immediately; this
+Lifecycle (section 8.1): the route creates the durable ApplyRun immediately; this
 entrypoint waits for the packet (a still-generating tailored resume) if
 needed, freezes the exact artifact used, renders it to PDF, opens the
 browser, and hands off to `jobapplier.run_apply`. The loop cannot submit —
-its tool vocabulary has no submit tool (§4.2).
+its tool vocabulary has no submit tool (section 4.2).
 
-P1 handoff (§8.4): on `ready_for_human` the HEADED browser stays open for a
+P1 handoff (section 8.4): on `ready_for_human` the HEADED browser stays open for a
 bounded review window while we watch for a confirmation page. A detected
 confirmation records `submitted` with `submit_evidence=confirmation_detected`
 and moves the card to Applied; otherwise the run stays `ready_for_human` and
@@ -49,8 +49,10 @@ from sidecar.packages.jobapplier import (
 from sidecar.packages.jobapplier.fake import FakeApplyEngine
 from sidecar.packages.jobapplier.loop import ApplyEngine
 
+from ..db import Repos
 from ..db.base import now_utc
 from ..db.database import Database, resolve_data_dir
+from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES
 from ..events import make_event
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome
@@ -205,7 +207,7 @@ async def _apply_async(
     # finalizers are guarded to ACTIVE rows, so a row `_finalize` already
     # landed is never re-written.
     try:
-        # -- wait for the packet, freeze the exact artifacts (§8.1) ----------
+        # -- wait for the packet, freeze the exact artifacts (section 8.1) ----------
         resume_md, resume_label, resume_artifact_id = await _wait_for_packet(
             ctx, application_id, run_id, control
         )
@@ -327,7 +329,7 @@ async def _wait_for_packet(
     ctx: OperationContext, application_id: str, run_id: str, control: ApplyControl
 ) -> tuple[str, str, str | None]:
     """Resolve the resume to use, waiting for an in-flight tailored artifact
-    (§8.1). Returns (markdown, honesty label, artifact_id | None)."""
+    (section 8.1). Returns (markdown, honesty label, artifact_id | None)."""
     db = ctx.db
     assert db is not None
     waited = 0.0
@@ -345,7 +347,7 @@ async def _wait_for_packet(
             pending = False
             if head is not None and head.operation_id:
                 op = repos.operations.get(head.operation_id)
-                pending = op is not None and op.state in ("queued", "running")
+                pending = op is not None and op.state in OP_ACTIVE_STATES
             if not pending:
                 profile = repos.profile.get_current()
                 if profile is None or not profile.resume_markdown:
@@ -385,7 +387,7 @@ async def _wait_for_packet(
 
 
 def _persist_event(ctx: OperationContext, run_id: str, event: ApplyEvent) -> None:
-    """Fold progress into the durable run row (state-first, then SSE §9.2)."""
+    """Fold progress into the durable run row (state-first, then SSE section 9.2)."""
     db = ctx.db
     assert db is not None
     fields: dict[str, Any] = {}
@@ -414,7 +416,7 @@ async def _review_window(
     review_wait_s: float,
     control: ApplyControl,
 ) -> ApplyResult:
-    """§8.4: after ready_for_human, hold the browser open and watch for a
+    """section 8.4: after ready_for_human, hold the browser open and watch for a
     machine-detectable confirmation while the human reviews and submits."""
     if result.status is not ApplyStatus.READY_FOR_HUMAN or review_wait_s <= 0:
         return result
@@ -462,10 +464,10 @@ async def _review_window(
     return result
 
 
-# Statuses a live run holds before it lands terminal — the only states a
-# late-failure/cancel finalize may overwrite (double-finalize impossible:
-# a row that already landed terminal is left untouched).
-_ACTIVE_RUN_STATUSES = ("queued", "waiting_for_packet", "running")
+# `APPLY_RUN_ACTIVE_STATUSES` (db/models.py) is the set of statuses a live run
+# holds before it lands terminal — the only states a late-failure/cancel
+# finalize below may overwrite (double-finalize impossible: a row that already
+# landed terminal is left untouched).
 
 
 def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
@@ -477,7 +479,7 @@ def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
     status forever."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
-        if run is None or run.status not in _ACTIVE_RUN_STATUSES:
+        if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
         repos.apply_runs.update(
             run_id,
@@ -501,7 +503,7 @@ def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
     entrypoint raced ahead and finalized the run itself)."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
-        if run is None or run.status not in _ACTIVE_RUN_STATUSES:
+        if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
         repos.apply_runs.update(
             run_id,
@@ -510,6 +512,25 @@ def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
             summary=summary,
             ended_at=now_utc(),
         )
+
+
+def advance_card_to_applied(repos: Repos, application_id: str, *, by: str) -> None:
+    """Move a pre-submission card to Applied and record the move (section 8.4).
+
+    The ONE implementation of the transition (D-A7): the applier's own
+    confirmation detection (`by="applier"`) and the human's attestation
+    (`by="user_attested"`) differ only in who is credited in the event detail —
+    they must never diverge in *what* they write. A card already past
+    Saved/Seeking Referral is left alone (never dragged backward)."""
+    app_row = repos.applications.get(application_id)
+    if app_row is None or app_row.column not in ("saved", "seeking_referral"):
+        return
+    repos.applications.update(application_id, column="applied", applied_via="applier")
+    repos.application_events.create(
+        application_id,
+        "column_change",
+        {"from": app_row.column, "to": "applied", "by": by},
+    )
 
 
 def _finalize_cancel(ctx: OperationContext, run_id: str) -> OperationOutcome:
@@ -556,16 +577,7 @@ def _finalize(
             ended_at=now_utc(),
         )
         if confirmed:
-            app_row = repos.applications.get(application_id)
-            if app_row is not None and app_row.column in ("saved", "seeking_referral"):
-                repos.applications.update(
-                    application_id, column="applied", applied_via="applier"
-                )
-                repos.application_events.create(
-                    application_id,
-                    "column_change",
-                    {"from": app_row.column, "to": "applied", "by": "applier"},
-                )
+            advance_card_to_applied(repos, application_id, by="applier")
     usage = {
         "tokens_in": result.usage.tokens_in,
         "tokens_out": result.usage.tokens_out,

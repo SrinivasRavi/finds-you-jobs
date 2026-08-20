@@ -1,7 +1,7 @@
-"""tracker applications — the pipeline slice (database-design.md §4 slice).
+"""tracker applications — the pipeline slice (database-design.md section 4 slice).
 
 Creates the tracker tables for the saved/optional-referral/ready-to-apply
-commit (`docs/internal/roadmap.md` §7.2 #8): applications (with the §5.1
+commit (`docs/internal/roadmap.md` section 7.2 #8): applications (with the section 5.1
 exclusive `intent` column folded into the initial DDL; the prior repository's
 retired `apply_state`/`form_prep` columns are deliberately absent), artifacts
 (with `approved_at` folded in), and application_events.

@@ -1,10 +1,16 @@
 """SSRF guard (technical-audit F-M1) — the ONE copy of the fetch-layer URL
 refusal logic, shared by `scraper/http.py` and `_shared/job_input.py` (they
 deliberately mirrored each other until the 2026-07-25 dedup; this module is
-that mirror collapsed). Mirrors jobapplier's UrlPolicy (packages/jobapplier/
-executor.py §4.3) at the fetch layer: watchlisted/pasted URLs must not let the
-sidecar fetch its own loopback services, LAN gear, or a cloud metadata
-endpoint (169.254.169.254). Every URL — and every redirect hop — is checked
+that mirror collapsed). The browser-navigate layer refuses the same class of
+target through its own guard, jobapplier's UrlPolicy (packages/jobapplier/
+executor.py section 4.3); the two deliberately differ (this one resolves, that one
+reads literal IPs) and are NOT kept aligned by hand — the shared case table in
+`tests/modules/shared/test_url_guard_corpus.py` runs against both and pins the
+divergence (duplication audit D-M10).
+
+At the fetch layer: watchlisted/pasted URLs must not let the sidecar fetch its
+own loopback services, LAN gear, or a cloud metadata endpoint
+(169.254.169.254). Every URL — and every redirect hop — is checked
 against the addresses its host actually resolves to, immediately before the
 fetch. Documented boundary: resolution here and urllib's own resolve are two
 lookups, so a DNS-rebinding TOCTOU between them remains possible; full IP

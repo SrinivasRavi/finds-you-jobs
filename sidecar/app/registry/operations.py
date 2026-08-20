@@ -1,4 +1,4 @@
-"""Operation registry: `kind → entrypoint` (architecture §5.4).
+"""Operation registry: `kind → entrypoint` (architecture section 5.4).
 
 An entrypoint is the thin app-side wrapper over one `sidecar.modules.*` bounded
 operation. It receives an `OperationContext` (the durable input snapshot + a
@@ -8,7 +8,7 @@ usage + engine/model for the ledger). The runner never knows what a kind *does*
 
 **Core-storage boundary.** This commit ships the contract and an empty default
 registry: real kinds (scan/score/tailor/cover/…) register here as their module
-commits land (`docs/internal/roadmap.md` §7.2 #5+). The core tests exercise the
+commits land (`docs/internal/roadmap.md` section 7.2 #5+). The core tests exercise the
 runner with fake entrypoints only.
 """
 
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from .engines import EngineNotConfiguredError, ResolvedEngine
 
 if TYPE_CHECKING:
-    from ..db import Database
+    from ..db import Database, Repos
 
 PublishFn = Callable[[dict[str, Any]], None]
 
@@ -110,6 +110,50 @@ def _require_engine(ctx: OperationContext) -> ResolvedEngine:
     return ctx.engine
 
 
+def _load_job_inputs(
+    ctx: OperationContext, *, also: Callable[[Repos], Any] | None = None
+) -> tuple[str, str, int, Any]:
+    """The ONE load-job block of the job-shaped LLM entrypoints (score / tailor /
+    cover): `(job_text, master_md, profile_version)` out of the DB, or straight
+    off the snapshot on the DB-free fake-entrypoint path.
+
+    `also` runs inside the SAME repos context (score reads its scoring mode
+    there — one session, as before) and comes back as the 4th element; it is
+    None whenever there is no DB."""
+    from .persistence import load_job_and_master
+
+    snap = ctx.input_snapshot
+    if ctx.db is None:
+        return snap["job"], snap["master_md"], 0, None
+    with ctx.db.repos() as repos:
+        job_text, master_md, profile_version = load_job_and_master(repos, snap)
+        extra = also(repos) if also is not None else None
+    return job_text, master_md, profile_version, extra
+
+
+def llm_outcome(
+    result_ref: dict[str, Any] | None,
+    *,
+    usage: Any,
+    resolved: ResolvedEngine,
+    model: str | None = None,
+) -> OperationOutcome:
+    """The ONE usage/outcome tail every routed-engine entrypoint returns: the
+    ledger's usage dict plus the engine/model audit pair. A usage-accounting
+    change lands here, not once per kind.
+
+    `model` overrides the model precedence for a caller that computes it its own
+    way — `draft` (networker_ops) reads `result.usage.model` off the dataclass
+    where the kinds here read it out of the usage dict. Passed through verbatim
+    rather than silently aligned (D-A2)."""
+    usage_dict = _usage_to_dict(usage)
+    if model is None:
+        model = (usage_dict or {}).get("model") or resolved.model
+    return OperationOutcome(
+        result_ref=result_ref, usage=usage_dict, engine=resolved.name, model=model
+    )
+
+
 def scan_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Zero-LLM job scan (Scraper module) → persisted `Job` rows. No engine."""
     from sidecar.modules.scraper import scan
@@ -152,8 +196,8 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
     - **Trash TTL** (FR-SYS-04): tombstone + delete Trashed jobs past the window
       (default 7 days).
-    - **Expired aging** (FR-SYS-03): grey active jobs at 14 days, hard-delete
-      Expired ones (no tombstone) at 30 days.
+    - **Expired aging** (FR-SYS-03): grey active jobs at the configured window
+      (default 14 days), hard-delete Expired ones (no tombstone) at 30 days.
     - **Archived-application purge** (FR-SYS-06): permanently remove archived
       tracker cards past the window (default 30 days).
 
@@ -174,7 +218,7 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     settings = settings or dict(LIFECYCLE_DEFAULTS)
 
     tombstoned = evict_stale_trash(ctx.db, ttl_days=settings["trashed_jobs_purge_days"])
-    aged = age_expired_jobs(ctx.db)
+    aged = age_expired_jobs(ctx.db, expire_after_days=settings["expire_listing_days"])
     purged_apps = purge_archived_applications(
         ctx.db, retention_days=settings["archived_applications_purge_days"]
     )
@@ -290,24 +334,16 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
       pass). No hidden re-scoring; nothing to fall back below keyword.
     """
     from ..prompt_overrides import get_override
-    from .persistence import (
-        SCORER_IMPL,
-        SCORER_IMPL_DETERMINISTIC,
-        load_job_and_master,
-        scoring_mode,
-    )
+    from .persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC, scoring_mode
 
     snap = ctx.input_snapshot
     job_id = snap.get("job_id")
 
-    mode = "llm"
-    if ctx.db is not None:
-        with ctx.db.repos() as repos:
-            job_text, master_md, profile_version = load_job_and_master(repos, snap)
-            mode = scoring_mode(repos.preferences.get_or_create())
-    else:
-        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
-        mode = str(snap.get("scoring_mode") or "llm")
+    job_text, master_md, profile_version, stored_mode = _load_job_inputs(
+        ctx, also=lambda repos: scoring_mode(repos.preferences.get_or_create())
+    )
+    # DB-free path (fake-entrypoint tests): the mode rides the snapshot instead.
+    mode: str = stored_mode if ctx.db is not None else str(snap.get("scoring_mode") or "llm")
 
     if mode == "keyword":
         from sidecar.modules.scorer.deterministic import score_deterministic
@@ -369,11 +405,10 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             scorer_impl=SCORER_IMPL,
             feed_priority_stats=True,
         )
-    return OperationOutcome(
-        result_ref={"score": result.score, "job_id": job_id, "score_id": score_id},
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+    return llm_outcome(
+        {"score": result.score, "job_id": job_id, "score_id": score_id},
+        usage=result.usage,
+        resolved=resolved,
     )
 
 
@@ -490,14 +525,9 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from sidecar.modules.tailorer import tailor
 
     from ..prompt_overrides import get_override
-    from .persistence import load_job_and_master
 
     snap = ctx.input_snapshot
-    if ctx.db is not None:
-        with ctx.db.repos() as repos:
-            job_text, master_md, profile_version = load_job_and_master(repos, snap)
-    else:
-        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
 
     result = tailor(
         master_md,
@@ -515,15 +545,14 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile_version=profile_version,
         guidance=snap.get("guidance", ""),
     )
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "artifact_id": artifact_id,
             "application_id": snap.get("application_id"),
             "kind": "tailored_resume",
         },
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+        usage=result.usage,
+        resolved=resolved,
     )
 
 
@@ -533,14 +562,9 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from sidecar.modules.coverletterer.coverletterer import cover
 
     from ..prompt_overrides import get_override
-    from .persistence import load_job_and_master
 
     snap = ctx.input_snapshot
-    if ctx.db is not None:
-        with ctx.db.repos() as repos:
-            job_text, master_md, profile_version = load_job_and_master(repos, snap)
-    else:
-        job_text, master_md, profile_version = snap["job"], snap["master_md"], 0
+    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
 
     result = cover(
         master_md,
@@ -558,15 +582,14 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile_version=profile_version,
         guidance=snap.get("guidance", ""),
     )
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "artifact_id": artifact_id,
             "application_id": snap.get("application_id"),
             "kind": "cover_letter",
         },
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+        usage=result.usage,
+        resolved=resolved,
     )
 
 
@@ -594,14 +617,13 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
     record = {**result.profile, "profile_version": version, "source": "extracted"}
     with ctx.db.repos() as repos:
         repos.profile.set_application_profile(record)
-    return OperationOutcome(
-        result_ref={
+    return llm_outcome(
+        {
             "profile_version": version,
             "keys_filled": sorted(k for k, v in result.profile.items() if v),
         },
-        usage=_usage_to_dict(result.usage),
-        engine=resolved.name,
-        model=(_usage_to_dict(result.usage) or {}).get("model") or resolved.model,
+        usage=result.usage,
+        resolved=resolved,
     )
 
 
@@ -617,7 +639,7 @@ CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover
 
 def default_operation_registry() -> OperationRegistry:
     """The app's real `kind → entrypoint` table. Grows as module commits land
-    (architecture §5.4)."""
+    (architecture section 5.4)."""
     # Imported here (not at module top) so the operations module stays free of
     # the networking package's playwright import cost unless a networking kind is
     # actually wired.
@@ -625,6 +647,7 @@ def default_operation_registry() -> OperationRegistry:
     from .contact_sync_op import contact_sync_entrypoints
     from .linkedin_op import linkedin_entrypoints
     from .networker_ops import networker_entrypoints
+    from .view_page_op import view_page_entrypoints
 
     return OperationRegistry(
         {
@@ -638,5 +661,6 @@ def default_operation_registry() -> OperationRegistry:
             **linkedin_entrypoints(),  # linkedin_login / archive_stale_contacts
             **contact_sync_entrypoints(),  # contact_sync
             **apply_entrypoints(),  # apply (the Applier agent)
+            **view_page_entrypoints(),  # view_page (queued watch-surface show)
         }
     )

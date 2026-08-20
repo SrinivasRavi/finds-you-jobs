@@ -10,6 +10,24 @@
 # no-note connect flow — is preserved verbatim. Adapted: Django `dump_page_html`
 # and the `ProfileState` enum are dropped (we return plain strings); the DB Lead
 # lookups are gone (URN is resolved live via the forked client).
+# finds-you-jobs fork changes (see ../provenance.md):
+#   - Contact-sync probe (2026-08-15): `get_contact_sync_state` answers the
+#     last-message question from the sweep's ONE GraphQL inbox read
+#     (`client.inbox_last_messages`, session-cached; the legacy per-contact
+#     REST finder is dead — live wire evidence), orchestrates the all-paths
+#     ProbeCapture (one redacted JSON per probed contact, every path), and
+#     propagates RateLimited — a messaging 429 used to die in the blanket
+#     `except`, so the backoff the client raises for was unreachable.
+#     Same-day display extension: the probe dict also returns the last
+#     message's text and the contact's display name (`last_message_text` /
+#     `last_message_from`, off the same one inbox read) for the host's
+#     card/modal attribution; neither ever enters the redacted capture.
+#   - Unmetered thread-only probe (2026-08-16): the full probe also returns
+#     its resolved `target_urn`, and `get_contact_thread_state` answers the
+#     thread question for a host-cached urn from the sweep's one inbox read
+#     alone — no profile read, no profile-view charge (the live 2026-08-15
+#     sweeps spent the whole day's read budget re-resolving urns the host
+#     had already seen, and every later Sync press was refused).
 """Connection status, connection-request send, and DM send — the three live
 LinkedIn write/read actions the worker drives. Selectors are upstream's."""
 
@@ -22,12 +40,28 @@ import uuid
 from urllib.parse import quote
 
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .client import PlaywrightLinkedinAPI
-from .errors import AuthenticationError, ReachedConnectionLimit, SkipProfile
+from .client import PlaywrightLinkedinAPI, ProbeCapture, resolve_degree
+from .errors import AuthenticationError, RateLimited, ReachedConnectionLimit, SkipProfile
+from .mouse_dynamics import human_click
+from .scroll_dynamics import read_profile
 from .session import AccountSession, goto_page, human_type
+from .voyager import inbox_direction_for
 
 logger = logging.getLogger("voyager_py.actions")
+
+
+def _emit_step(on_step, key: str) -> None:
+    """Report a completed send step to the host (2026-08-16 fork edit: the
+    host's queue panel ticks REAL progress). Reporting must never break the
+    send it narrates."""
+    if on_step is None:
+        return
+    try:
+        on_step(key)
+    except Exception:  # noqa: BLE001 — narration, never load-bearing
+        logger.debug("on_step callback failed", exc_info=True)
 
 # --- connection status strings (replace upstream's ProfileState enum) ---
 STATUS_CONNECTED = "connected"      # 1st-degree
@@ -269,6 +303,31 @@ def _raise_on_error_toast(page) -> None:
         raise SkipProfile(error.first.inner_text().strip())
 
 
+# Overlay-hardened click (2026-08-02 live timeout: LinkedIn's SDUI shell keeps a
+# full-bleed <div id="interop-outlet" data-testid="interop-shadowdom"> overlay
+# above the top card that intercepted pointer events over the "More" button for
+# the whole 30s default timeout). One normal, bounded click; on THAT
+# interception signature — and only that — one force=True retry. force skips
+# only the hit-target check the overlay is failing; the target itself was
+# already located and visible. Any other failure re-raises unchanged.
+_CLICK_TIMEOUT_MS = 10_000
+_INTERCEPT_SIGNATURES = ("intercepts pointer events", "interop-outlet")
+
+
+def _is_pointer_intercepted(message: str) -> bool:
+    return any(sig in message for sig in _INTERCEPT_SIGNATURES)
+
+
+def _click_through_overlay(locator, *, timeout_ms: int = _CLICK_TIMEOUT_MS) -> None:
+    try:
+        human_click(locator, timeout_ms=timeout_ms,
+                    fallback=lambda: locator.click(timeout=timeout_ms))
+    except PlaywrightTimeoutError as e:
+        if not _is_pointer_intercepted(str(e)):
+            raise
+        locator.click(timeout=timeout_ms, force=True)
+
+
 def _open_more_and_click_connect(page, scope, wait_ms: int) -> bool:
     """Open the "More"/overflow menu (if needed) and click its Connect item.
     The dropdown renders as a portal outside the top card, so it is searched
@@ -278,7 +337,7 @@ def _open_more_and_click_connect(page, scope, wait_ms: int) -> bool:
         more = scope.locator(CONNECT_SELECTORS["more_button"])
         if more.count() == 0:
             return False
-        more.first.click()
+        _click_through_overlay(more.first)
         try:
             page.locator(CONNECT_SELECTORS["connect_option"]).first.wait_for(
                 state="visible", timeout=wait_ms
@@ -288,7 +347,7 @@ def _open_more_and_click_connect(page, scope, wait_ms: int) -> bool:
         connect_option = page.locator(CONNECT_SELECTORS["connect_option"])
     if connect_option.count() == 0:
         return False
-    connect_option.first.click()
+    _click_through_overlay(connect_option.first)
     return True
 
 
@@ -345,6 +404,11 @@ def _goto_profile(session: AccountSession, public_identifier: str) -> None:
             error_message="Failed to navigate to the target profile",
         )
     _reload_past_404_shell(session, public_identifier)
+    # Read the page the way a person does before acting on it. This is the only
+    # place the LinkedIn path emits wheel events at all — the one input channel
+    # that was null in 100% of detected agent sessions — and it is also what
+    # makes LinkedIn's lazy-loaded profile sections render before we read them.
+    read_profile(session.page)
 
 
 # ── connection status ─────────────────────────────────────────────
@@ -353,9 +417,7 @@ def get_connection_status(session: AccountSession, public_identifier: str) -> st
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
     fresh, _raw = api.get_profile(public_identifier=public_identifier)
-    degree = (fresh or {}).get("connection_degree")
-    if degree is None:
-        degree = api.get_connection_degree(public_identifier)
+    degree = resolve_degree(api, fresh, public_identifier, best_effort=False)
     if degree == 1:
         return STATUS_CONNECTED
 
@@ -372,44 +434,136 @@ def get_contact_sync_state(session: AccountSession, public_identifier: str) -> d
     """Read a contact's live LinkedIn state for the status-sync engine (FR-NW-15).
 
     Purely READ-ONLY (never sends): the current connection degree, plus the last
-    message's direction (`me` = we sent last, `them` = they did) and timestamp in
-    the 1:1 thread. The sync entrypoint maps these onto the kanban transitions
+    message's direction (`me` = we sent last, `them` = they did), timestamp,
+    text, and the contact's display name in the 1:1 thread (the display pair
+    the host's card/modal attributes). The sync entrypoint maps these onto the kanban transitions
     (Sent→Accepted / →Engagement, Accepted→Engagement, →Ghosted). Best-effort: a
     missing/unreadable thread returns null message fields (no transition), never a
-    crash — the account risk is the user's, so the tick stays gentle + honest."""
+    crash — the account risk is the user's, so the tick stays gentle + honest.
+
+    The message data comes from the sweep's ONE GraphQL inbox read
+    (`client.inbox_last_messages`, session-cached — one messaging request per
+    sync run, not one per contact), joined to this contact by their fsd_profile
+    urn (`voyager.inbox_direction_for`). A contact with no 1:1 thread on the
+    fetched page gets honest nulls; degree transitions still apply.
+
+    Every probe writes ONE redacted capture file when `FYJ_LINKEDIN_CAPTURE_DIR`
+    is set (see `ProbeCapture`) — on success and on every failure or skip alike,
+    so a single live sweep pins where each contact's probe stopped."""
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
-    parsed, _raw = api.get_profile(public_identifier=public_identifier)
-    degree = (parsed or {}).get("connection_degree")
-    if degree is None:
-        degree = api.get_connection_degree(public_identifier)
-    target_urn = (parsed or {}).get("urn")
-
-    direction: str | None = None
-    sent_at: float | None = None
-    if target_urn:
+    capture = ProbeCapture(session)
+    capture.record_contact(public_identifier)
+    try:
         try:
-            msg = api.get_last_message(target_urn)
-            direction = msg.get("direction")
-            sent_at = msg.get("sent_at")
-        except AuthenticationError:
+            parsed, _raw = api.get_profile(public_identifier=public_identifier)
+            degree = resolve_degree(api, parsed, public_identifier, best_effort=False)
+        except Exception as exc:
+            capture.record_stage_error("profile", exc)
+            raise
+        target_urn = (parsed or {}).get("urn")
+        capture.record_profile(target_urn, degree)
+
+        direction: str | None = None
+        sent_at: float | None = None
+        text = ""
+        from_name: str | None = None
+        if target_urn:
+            try:
+                inbox = api.inbox_last_messages(capture=capture)
+                direction, sent_at, found, text, from_name = inbox_direction_for(
+                    inbox, target_urn
+                )
+                capture.record_thread(found)
+            except (AuthenticationError, RateLimited):
+                # A dead session or an explicit throttle is a SWEEP signal, not a
+                # per-contact miss: the worker maps these to auth-stop / backoff.
+                # (RateLimited used to die in the blanket except below, so the
+                # backoff the client raises for was unreachable.)
+                raise
+            except Exception as exc:  # noqa: BLE001 — a read miss is not fatal
+                capture.record_stage_error("messaging", exc)
+                logger.debug("inbox lookup failed for %s: %s", public_identifier, exc)
+        else:
+            capture.record_messaging_skipped("no_target_urn")
+
+        capture.record_parsed(direction, sent_at)
+        return {
+            "degree": degree,
+            "is_first_degree": degree == 1,
+            "last_message_direction": direction,
+            "last_message_at": sent_at,
+            # Display pair (2026-08-15): the thread's real last-message text +
+            # the contact's display name off the same one inbox read, so the
+            # host's card/modal can show WHAT was said and attribute it. Never
+            # captured — `ProbeCapture` stays identity- and body-free.
+            "last_message_text": text or None,
+            "last_message_from": from_name,
+            # The join key this probe resolved (2026-08-16) — the host caches it
+            # per contact so later sweeps can answer the thread question from
+            # the inbox read alone (`get_contact_thread_state`, unmetered).
+            "target_urn": target_urn or None,
+        }
+    finally:
+        capture.write()
+
+
+def get_contact_thread_state(
+    session: AccountSession, public_identifier: str, target_urn: str
+) -> dict:
+    """The thread half of the sync probe from the sweep's ONE inbox read alone
+    (FR-NW-15, 2026-08-16) — for a contact whose fsd_profile urn the host
+    already cached from an earlier full probe. NO profile read happens, so the
+    probe charges nothing against the profile-view budget: the whole cost is
+    the sweep's single session-cached messaging request. This is what keeps a
+    Sync press affordable — the full probe (degree + urn resolution) is needed
+    only while an invite is pending or the urn is not yet known.
+
+    Same envelope as `get_contact_sync_state` minus the degree answer
+    (`degree` None — "not read this sweep", the host keeps its stored value).
+    A 401/429 on the inbox read propagates as the sweep's auth-stop/backoff,
+    exactly like the full probe; any other read miss degrades to honest nulls.
+    One capture file lands per probe here too, marked `cached_urn`."""
+    session.ensure_browser()
+    api = PlaywrightLinkedinAPI(session=session)
+    capture = ProbeCapture(session)
+    capture.record_contact(public_identifier)
+    try:
+        capture.record_profile_cached(target_urn)
+        direction: str | None = None
+        sent_at: float | None = None
+        text = ""
+        from_name: str | None = None
+        try:
+            inbox = api.inbox_last_messages(capture=capture)
+            direction, sent_at, found, text, from_name = inbox_direction_for(
+                inbox, target_urn
+            )
+            capture.record_thread(found)
+        except (AuthenticationError, RateLimited):
             raise
         except Exception as exc:  # noqa: BLE001 — a read miss is not fatal
-            logger.debug("get_last_message failed for %s: %s", public_identifier, exc)
-
-    return {
-        "degree": degree,
-        "is_first_degree": degree == 1,
-        "last_message_direction": direction,
-        "last_message_at": sent_at,
-    }
+            capture.record_stage_error("messaging", exc)
+            logger.debug("inbox lookup failed for %s: %s", public_identifier, exc)
+        capture.record_parsed(direction, sent_at)
+        return {
+            "degree": None,
+            "is_first_degree": False,
+            "last_message_direction": direction,
+            "last_message_at": sent_at,
+            "last_message_text": text or None,
+            "last_message_from": from_name,
+            "target_urn": target_urn,
+        }
+    finally:
+        capture.write()
 
 
 # ── send connection request (no note — fastest & safest, upstream default) ──
 def _click_without_note(session: AccountSession) -> None:
     session.wait()
-    send_btn = session.page.locator(CONNECT_SELECTORS["send_now"])
-    send_btn.first.click(force=True)
+    send_btn = session.page.locator(CONNECT_SELECTORS["send_now"]).first
+    human_click(send_btn, fallback=lambda: send_btn.click(force=True))
     session.wait()
 
 
@@ -423,12 +577,13 @@ def _fill_note_and_send(session: AccountSession, note: str, *, timeout_ms: int) 
         return False
     human_type(note_box, note, 10, 50)
     session.wait()
-    session.page.locator(CONNECT_SELECTORS["send_invitation"]).first.click(force=True)
+    send = session.page.locator(CONNECT_SELECTORS["send_invitation"]).first
+    human_click(send, fallback=lambda: send.click(force=True))
     session.wait()
     return True
 
 
-def _click_with_note(session: AccountSession, note: str) -> None:
+def _click_with_note(session: AccountSession, note: str) -> str:
     """Best-effort connection-request-WITH-note flow (FR-NW-03). Surface-aware
     because LinkedIn ships two invite layouts:
 
@@ -442,12 +597,21 @@ def _click_with_note(session: AccountSession, note: str) -> None:
     Order: use an already-present note field first; else click "Add a note" and
     use the field it reveals; else degrade honestly to a note-less send (the
     connect still lands; the ask can follow as a post-accept DM). Tested against
-    both layouts as local fixtures — see tests/test_connect_note_flow.py."""
+    both layouts as local fixtures — see tests/test_connect_note_flow.py.
+
+    Returns what actually happened to the note, so the caller can meter and
+    report it instead of the degrade staying a log-only event (posture doc section 6):
+      "with_note"        — the note was typed and sent
+      "noteless_upsell"  — free-plan note allowance exhausted (Premium upsell);
+                           sent note-less, and the caller should mark the
+                           allowance exhausted
+      "noteless_missing" — markup churn, no note field reachable; sent note-less
+    """
     session.wait()
     # SDUI / Premium: note field opens directly. Short probe so the classic path
     # (field absent until "Add a note") doesn't eat the full timeout here.
     if _fill_note_and_send(session, note, timeout_ms=2_000):
-        return
+        return "with_note"
 
     # Classic modal: reveal the note field via "Add a note", then fill it.
     add_note = session.page.locator(CONNECT_SELECTORS["add_note"])
@@ -455,7 +619,7 @@ def _click_with_note(session: AccountSession, note: str) -> None:
         add_note.first.click()
         session.wait()
         if _fill_note_and_send(session, note, timeout_ms=8_000):
-            return
+            return "with_note"
 
     # No note field reachable. On the FREE tier "Add a note" opens a Premium
     # UPSELL instead of the note box (2026-07-12 capture …-note-box-missing);
@@ -463,7 +627,9 @@ def _click_with_note(session: AccountSession, note: str) -> None:
     from .session import capture_failure
 
     upsell = session.page.locator(CONNECT_SELECTORS["premium_upsell"])
+    note_outcome = "noteless_missing"
     if upsell.count() > 0:
+        note_outcome = "noteless_upsell"
         logger.warning(
             "LinkedIn free custom-note limit reached (Premium upsell shown) "
             "— dismissing and sending WITHOUT the note"
@@ -487,6 +653,64 @@ def _click_with_note(session: AccountSession, note: str) -> None:
         find_and_click_connect(session.page)
         _click_without_note(session)
     session.wait()
+    return note_outcome
+
+
+# The SDUI Connect affordance can be a real <a href="/preload/custom-invite/…">
+# anchor (see the 2026-07-13 CONNECT_SELECTORS annotations); clicking it in
+# headed mode opened blank popup tab(s) (live 2026-08-02) instead of composing
+# in place. Adopt a popup that hosts the invite compose; close anything blank
+# or irrelevant so a run never leaks tabs.
+_POPUP_SETTLE_MS = 2_500
+_INVITE_COMPOSE_PROBES = (
+    CONNECT_SELECTORS["note_textarea"],
+    CONNECT_SELECTORS["add_note"],
+    CONNECT_SELECTORS["send_now"],
+    CONNECT_SELECTORS["send_invitation"],
+)
+
+
+def _hosts_invite_compose(popup, *, settle_ms: int = _POPUP_SETTLE_MS) -> bool:
+    """True when the popup navigated somewhere real AND shows any invite-compose
+    control. The settle wait is bounded; a popup still on about:blank after it
+    is judged irrelevant."""
+    try:
+        popup.wait_for_load_state("domcontentloaded", timeout=settle_ms)
+    except (PlaywrightError, TimeoutError):
+        pass
+    try:
+        if popup.is_closed() or popup.url in ("", "about:blank"):
+            return False
+        return any(popup.locator(sel).count() > 0 for sel in _INVITE_COMPOSE_PROBES)
+    except PlaywrightError:
+        return False
+
+
+def _adopt_or_close_popups(main_page, popups, *, settle_ms: int = _POPUP_SETTLE_MS):
+    """The page the invite flow should continue on: the first popup hosting the
+    invite compose (adopted), else `main_page`. Every non-adopted popup is
+    closed. Only a popup that actually opened pays the bounded settle wait —
+    the no-popup path is a plain list check."""
+    if not popups:
+        # Popup creation races the click's return — one short pump before
+        # concluding none opened (still ~nothing next to the human-pace waits).
+        try:
+            main_page.wait_for_timeout(300)
+        except PlaywrightError:
+            pass
+        if not popups:
+            return main_page
+    adopted = None
+    for popup in popups:
+        if adopted is None and _hosts_invite_compose(popup, settle_ms=settle_ms):
+            adopted = popup
+            logger.info("invite compose opened in a popup tab — continuing there")
+            continue
+        try:
+            popup.close()
+        except PlaywrightError:
+            pass
+    return adopted if adopted is not None else main_page
 
 
 def _verify_invite_sent(session: AccountSession, *, timeout_ms: int = 6000) -> bool:
@@ -517,11 +741,15 @@ def _verify_invite_sent(session: AccountSession, *, timeout_ms: int = 6000) -> b
 
 
 def send_connection_request(
-    session: AccountSession, public_identifier: str, note: str = ""
-) -> str:
+    session: AccountSession, public_identifier: str, note: str = "", on_step=None
+) -> tuple[str, str]:
     """Send a LinkedIn connection request. With a `note` it uses the with-note
     flow (cold referral-ask rides in the note, FR-NW-03); without one it sends
-    note-less (upstream default — fastest/safest). Returns the new status.
+    note-less (upstream default — fastest/safest). Returns
+    `(new_status, note_outcome)` — `note_outcome` is `_click_with_note`'s result
+    ("with_note" / "noteless_upsell" / "noteless_missing"), or "" when no note
+    was requested, so the caller can meter the free-note allowance and surface a
+    degrade instead of it staying a log-only event (posture doc section 6).
 
     Raises ReachedConnectionLimit if LinkedIn's weekly-cap UI appears (the host
     maps that to voyager-owned backoff), and a typed SkipProfile (naming the
@@ -533,26 +761,69 @@ def send_connection_request(
     session.ensure_browser()
     _goto_profile(session, public_identifier)
     session.wait()
-    probe = find_and_click_connect(
-        session.page, capture=lambda: capture_failure(session, "connect-no-affordance")
-    )
-    logger.debug("connect affordance via %s for %s", probe, public_identifier)
-    if note:
-        _click_with_note(session, note)
-    else:
-        _click_without_note(session)
-    if session.page.locator(CONNECT_SELECTORS["weekly_limit"]).count() > 0:
-        raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
-    # Confirm it actually went out before we report success. An unconfirmed send
-    # is a typed failure (with a debug capture), never a silent false "sent".
-    if not _verify_invite_sent(session):
-        debug = capture_failure(session, "invite-unconfirmed")
-        raise SkipProfile(
-            "connection request could not be confirmed sent — no 'Invitation sent' "
-            "toast and no Pending state after the Send click (the click may have "
-            f"landed on a control that didn't submit the invite); debug capture: {debug}"
+    _emit_step(on_step, "invite2")
+    # Watch for popup tabs across the Connect click (the SDUI custom-invite
+    # anchor can spawn them — see _adopt_or_close_popups). The listener stays
+    # registered for the whole flow; adoption retargets session.page so the
+    # note/send/verify steps below drive whichever surface hosts the compose.
+    main_page = session.page
+    popups: list = []
+
+    def on_popup(popup) -> None:
+        # A PLAIN function on purpose, never `popups.append` itself: Playwright's
+        # sync wrapper setattr's an impl handle on the handler it's given, and a
+        # bound builtin carries no `__dict__` (the first live invite failed
+        # exactly there, 2026-08-14).
+        popups.append(popup)
+
+    main_page.on("popup", on_popup)
+    adopted_page = None
+    try:
+        probe = find_and_click_connect(
+            session.page, capture=lambda: capture_failure(session, "connect-no-affordance")
         )
-    return STATUS_PENDING
+        logger.debug("connect affordance via %s for %s", probe, public_identifier)
+        session.page = _adopt_or_close_popups(main_page, popups)
+        if session.page is not main_page:
+            adopted_page = session.page
+        _emit_step(on_step, "invite3")
+        note_outcome = ""
+        if note:
+            note_outcome = _click_with_note(session, note)
+        else:
+            _click_without_note(session)
+        _emit_step(on_step, "invite4")
+        if session.page.locator(CONNECT_SELECTORS["weekly_limit"]).count() > 0:
+            raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
+        # Confirm it actually went out before we report success. An unconfirmed send
+        # is a typed failure (with a debug capture), never a silent false "sent".
+        confirmed = _verify_invite_sent(session)
+        if not confirmed and session.page is not main_page:
+            # The adopted compose popup may close itself on send — re-check on
+            # the profile page before calling a real send a miss (a false miss
+            # here refunds a charge for an invite that DID go out).
+            session.page = main_page
+            confirmed = _verify_invite_sent(session)
+        if not confirmed:
+            debug = capture_failure(session, "invite-unconfirmed")
+            raise SkipProfile(
+                "connection request could not be confirmed sent — no 'Invitation sent' "
+                "toast and no Pending state after the Send click (the click may have "
+                f"landed on a control that didn't submit the invite); debug capture: {debug}"
+            )
+        _emit_step(on_step, "invite5")
+        return STATUS_PENDING, note_outcome
+    finally:
+        try:
+            main_page.remove_listener("popup", on_popup)
+        except (PlaywrightError, KeyError):
+            pass
+        session.page = main_page
+        if adopted_page is not None:
+            try:
+                adopted_page.close()
+            except PlaywrightError:
+                pass
 
 
 # ── DM send (warm referral-ask path) ──────────────────────────────
@@ -571,7 +842,9 @@ def _encode_urn(urn: str) -> str:
     return quote(urn, safe="")
 
 
-def _send_dm_via_ui(session: AccountSession, target_urn: str, message: str) -> bool:
+def _send_dm_via_ui(
+    session: AccountSession, target_urn: str, message: str, on_step=None
+) -> bool:
     """Navigate to a new thread for the recipient URN, compose, send."""
     thread_url = f"{LINKEDIN_MESSAGING_URL}?recipient={_encode_urn(target_urn)}"
     try:
@@ -583,9 +856,12 @@ def _send_dm_via_ui(session: AccountSession, target_urn: str, message: str) -> b
             error_message="Error opening messaging thread",
         )
         session.wait(1, 2)
+        _emit_step(on_step, "dm3")
         human_type(_find_chain(session.page, "compose_input").first, message, 10, 50)
-        _find_chain(session.page, "compose_send").first.click(delay=200)
+        send = _find_chain(session.page, "compose_send").first
+        human_click(send, fallback=lambda: send.click(delay=200))
         session.wait(0.5, 1)
+        _emit_step(on_step, "dm4")
         return True
     except (PlaywrightError, TimeoutError) as e:
         logger.error("UI DM send failed for %s → %s", target_urn, e)
@@ -613,14 +889,17 @@ def _send_message_api(api: PlaywrightLinkedinAPI, conversation_urn: str,
     headers = {**api.headers, "accept": "application/json",
                "content-type": "text/plain;charset=UTF-8"}
     res = api.post(url, headers=headers, data=json.dumps(payload))
-    if res.status == 401:
-        raise AuthenticationError("Messaging API 401 (send_message)")
+    # Same order as every other site: 401 (dead session) before anything else —
+    # this path carries no throttle check of its own.
+    api._raise_if_unauthorized(res, "Messaging API 401 (send_message)")
     if not res.ok:
         raise OSError(f"Messaging API {res.status}: {res.text()[:500]}")
     return res.json()
 
 
-def send_dm(session: AccountSession, public_identifier: str, message: str) -> bool:
+def send_dm(
+    session: AccountSession, public_identifier: str, message: str, on_step=None
+) -> bool:
     """Resolve the recipient URN live, then send `message` via the thread UI."""
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
@@ -629,4 +908,5 @@ def send_dm(session: AccountSession, public_identifier: str, message: str) -> bo
     if not target_urn:
         logger.error("No URN resolved for %s — cannot send DM", public_identifier)
         return False
-    return _send_dm_via_ui(session, target_urn, message)
+    _emit_step(on_step, "dm2")
+    return _send_dm_via_ui(session, target_urn, message, on_step=on_step)

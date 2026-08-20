@@ -303,7 +303,7 @@ test("the ledger Stop control never renders on an apply-kind row (queued or runn
         id: "e2e-apply-queued",
         kind: "apply",
         state: "queued",
-        context: "e2e-apply-no-stop",
+        subject: { label: "e2e-apply-no-stop" },
         usage: null,
         error: null,
         created_at: now,
@@ -314,7 +314,7 @@ test("the ledger Stop control never renders on an apply-kind row (queued or runn
         id: "e2e-cleanup-queued",
         kind: "cleanup_trash",
         state: "queued",
-        context: "e2e-cleanup-has-stop",
+        subject: { label: "e2e-cleanup-has-stop" },
         usage: null,
         error: null,
         created_at: now,
@@ -342,6 +342,148 @@ test("the ledger Stop control never renders on an apply-kind row (queued or runn
   // …but the queued apply row offers none.
   await expect(applyRow.getByTestId("log-stop")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/ledger-apply-no-stop.png`, fullPage: true });
+});
+
+test("the ledger fits the window — no horizontal scroll, even with worst-case rows", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  // At least one REAL terminal row under the injected ones.
+  await request.post(`${base}/api/operations/cleanup_trash`, { headers: auth, data: {} });
+  // Worst-case rows injected deterministically (the apply-stop test's pattern):
+  // an unbroken 650-char verbatim error token on a failed scan that ALSO
+  // carries a 12-source list, a long subject with a long DM detail + linked
+  // profile, a multi-query linkedin_search, and an over-long model id —
+  // everything that used to force the table wide or balloon a collapsed row.
+  // The layout must WRAP all of it, clamp the error preview, and keep every
+  // bulk payload (source list, query list, message) expanded-only.
+  const longToken = "https://example.com/very-long-unbroken-error-token/" + "x".repeat(600);
+  const sourceNames = [
+    "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee",
+    "personio", "breezy", "jazzhr", "teamtailor", "bamboohr", "jobvite",
+  ];
+  await page.route("**/api/operations?*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const now = new Date().toISOString();
+    const injected = [
+      {
+        id: "e2e-wide-send",
+        kind: "send",
+        state: "succeeded",
+        subject: {
+          label: "Extraordinarily Hyphenated-Name Of A Very Long Contact",
+          href: "https://www.linkedin.com/in/e2e-fit-probe",
+          context: "Principal Distributed Systems Engineer, Payments Infrastructure · Acme Corp",
+          detail: "Hi — I came across the Staff Engineer opening at Acme and " +
+            "would love a referral. ".repeat(8),
+          count: null,
+        },
+        usage: { model: "claude-sonnet-4-5-20250929-extremely-long-model-id", latency_ms: 12345 },
+        error: null,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+      {
+        id: "e2e-wide-error",
+        kind: "scan",
+        state: "failed",
+        subject: {
+          label: "",
+          href: null,
+          context: sourceNames.join(", "),
+          detail: null,
+          count: 37,
+        },
+        usage: null,
+        error: longToken,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+      {
+        id: "e2e-wide-search",
+        kind: "linkedin_search",
+        state: "succeeded",
+        subject: {
+          label: "python developer remote, senior backend engineer, staff platform engineer",
+          href: null,
+          context: "fresh",
+          detail: null,
+          count: 5,
+        },
+        usage: null,
+        error: null,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+    ];
+    const response = await route.fetch();
+    const body = (await response.json()) as unknown[];
+    await route.fulfill({ response, json: [...injected, ...body] });
+  });
+
+  // The app's default window is 1200×800 (tauri.conf.json); its floor is 900.
+  // The no-sideways-scroll claim must hold at both.
+  for (const width of [1200, 900]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/analytics");
+    await expect(page.getByTestId("agent-filters")).toBeVisible({ timeout: 15_000 });
+    const wideRow = page.getByTestId("log-row").filter({ hasText: "Hyphenated-Name" }).first();
+    await expect(wideRow).toBeVisible();
+    // The linked subject (the referrals external-link pattern) renders…
+    await expect(wideRow.getByTestId("log-subject")).toHaveAttribute(
+      "href",
+      "https://www.linkedin.com/in/e2e-fit-probe",
+    );
+    // …and the full DM text lives in the EXPANDED detail, not the row.
+    await expect(wideRow).not.toContainText("would love a referral");
+    // Expand via the Started cell — the subject link swallows clicks (external).
+    await wideRow.getByTestId("log-started").click();
+    await expect(page.getByTestId("log-detail")).toContainText("would love a referral");
+
+    // The failed scan's COLLAPSED row: counts only ("37 new jobs" · "12
+    // sources"), never the source list, and the error is a CLAMPED preview —
+    // the row stays a sane height instead of dumping a full stack.
+    const errRow = page.getByTestId("log-row").filter({ hasText: "37 new jobs" }).first();
+    await expect(errRow).toBeVisible();
+    await expect(errRow.getByTestId("log-context")).toHaveText("12 sources");
+    await expect(errRow).not.toContainText("greenhouse");
+    const clamp = await errRow
+      .getByTestId("log-error")
+      .evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }));
+    expect(clamp.scroll).toBeGreaterThan(clamp.client); // clamp is doing work
+    expect(clamp.client).toBeLessThanOrEqual(40); // ≤ 2 mono text lines
+    const errBox = await errRow.boundingBox();
+    expect(errBox!.height).toBeLessThanOrEqual(110); // whole collapsed row stays short
+
+    // The linkedin_search COLLAPSED row: mode + query count, never the queries.
+    const searchRow = page.getByTestId("log-row").filter({ hasText: "5 new jobs" }).first();
+    await expect(searchRow.getByTestId("log-context")).toHaveText(
+      "Fresh search · 3 search queries",
+    );
+    await expect(searchRow).not.toContainText("python developer");
+
+    // EXPANDED, the bulk payloads appear as labeled blocks: the full source
+    // list and the FULL verbatim error text.
+    await errRow.getByTestId("log-started").click();
+    await expect(page.getByTestId("log-sources")).toContainText("greenhouse");
+    await expect(page.getByTestId("log-sources")).toContainText("jobvite");
+    await expect(page.getByTestId("log-error-full")).toContainText(longToken);
+    // The query list too, on the linkedin_search row.
+    await searchRow.getByTestId("log-started").click();
+    await expect(page.getByTestId("log-sources")).toContainText("python developer remote");
+
+    // The container never scrolls sideways — with the expanded row open too.
+    const overflow = await page
+      .getByTestId("ledger-scroll")
+      .evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: `${DIR}/analytics-ledger-fit-${width}.png`, fullPage: true });
+  }
 });
 
 test("discovery sources: all on by default, opt-out persists across reload", async ({ page }) => {

@@ -469,11 +469,11 @@ const ja: DeepPartial<Messages> = {
       connecting: "接続中…",
       backingOff: "一時停止中",
       connect: "LinkedInを接続",
-      title: "読み取り専用 — 設定からLinkedInを接続・有効化してください",
+      inProgress: "LinkedIn実行中",
+      titleOpen: "LinkedInブラウザを開く",
+      titleSettings: "設定からLinkedInを接続してください",
     },
     addByUrl: "URLでコンタクトを追加",
-    connectionCount_other: "{{count}}人のつながり",
-    degreeSummary: "1次 {{first}} · 2次 {{second}}",
     filters: {
       company: "企業",
       all: "すべて",
@@ -507,7 +507,6 @@ const ja: DeepPartial<Messages> = {
       today: "今日",
       days: "{{n}}日",
       inStatus: "{{status}}で{{duration}}",
-      you: "あなた:",
     },
     deleted: {
       title: "削除したコンタクト",
@@ -518,7 +517,6 @@ const ja: DeepPartial<Messages> = {
     },
     detail: {
       linkedin: "LinkedIn",
-      lastMessage: "最新メッセージ",
       archive: "削除",
     },
     add: {
@@ -581,11 +579,9 @@ const ja: DeepPartial<Messages> = {
     ledger: {
       show: "表示",
       operation: "オペレーション",
-      kind: "種類",
       state: "状態",
       started: "開始",
       model: "モデル",
-      latency: "レイテンシ",
       cost: "コスト",
       retried: "再試行済み",
       retry: "再試行",
@@ -748,13 +744,7 @@ const ja: DeepPartial<Messages> = {
     },
     referral: {
       title: "リファラルアウトリーチ",
-      intro:
-        "応募先企業の社員に — あなた自身のLinkedInアカウントから — 自動でメッセージを送り、リファラル(社員紹介)を依頼します。送信前に、必ずすべてのバッチを確認します。",
       howLabel: "リファラルアウトリーチの仕組み",
-      howInfo:
-        "その企業の<em>現在の</em>社員を見つけ、役割別の固定テンプレート(同僚 / 採用マネージャー / リクルーター / 経営層)からそれぞれに短いメッセージを下書きします。編集も、あなたのプロフィールに基づくAI版への「再生成」も可能です。送信はあなた自身のLinkedInセッションを通じて、つながりリクエストまたはDMとして行われ、検出リスクを下げるために控えめな日次・週次上限のもとゆっくりと進みます。デフォルトはオフです。下書きのみ作成して自分で送信することもできます。手動でのコンタクト管理(人脈タブ)は常に利用でき、これらの設定は一切不要です。",
-      warning:
-        "LinkedIn上のあらゆる自動化は、LinkedInの利用規約に違反します。finds-you-jobsは自動化を悪用してデータを収集・販売したり、そこから利益を得たりすることはなく、自動化を人間の行動と1対1で同一に保ちます — 人間のタイピング速度でメッセージを送り、日次上限を守り、タイミングをランダム化します。それでも、どのように運用してもLinkedInの利用規約に違反していることに変わりはありません。そのため、ご自身の判断で使用し、LinkedInから受けるいかなる結果についても全責任を負っていただくようお願いします。アカウントが制限を受ける可能性があり、finds-you-jobsはあなたのLinkedInアカウントへのいかなる影響についても責任を負いません。この機能は責任を持って使用し、送信したメッセージを確認し、アカウントに異常な挙動が見られた場合はオフにしてください。この機能を使用しなければ、あなたのLinkedInアカウントやその他のアカウントに影響は一切ありません。",
       ack: "私は、LinkedInの利用規約に違反することを承知のうえで、リファラルを求めるLinkedInアウトリーチを自動化することを望みます — これはアカウントの制限、最悪の場合は永久停止につながる可能性があります。私はその全責任を負います。",
       enable: "リファラルアウトリーチを有効化",
       lockedHint:
@@ -767,21 +757,56 @@ const ja: DeepPartial<Messages> = {
       howLabel: "LinkedIn求人検索の仕組み",
       howInfo:
         "ログイン済みのあなた自身のLinkedInセッションを通じた単発の検索で、「検索」をクリックしたときだけ実行されます — 定期スキャンが使うことは決してありません。LinkedInに対しては読み取り専用で、結果はすでに見つかっているすべての求人と重複排除されます。リファラルアウトリーチと同じセッションを共有します。",
-      warning:
-        "ログインした状態でLinkedInを検索することは、自動化によって求人情報を読み取る行為であり、LinkedInの利用規約に違反します。finds-you-jobsは読み取った情報を転売・悪用することは決してなく、フットプリントを最小限に保ちます: 検索はあなたがクリックしたときにのみ実行され(スケジュール実行は決してありません)、控えめなバッチ — デフォルトで25件 — を人間のペースで取得するため、大量スクレイピングではなく通常のブラウジングのように見えます。それでも、どのように運用してもLinkedInの利用規約に違反していることに変わりはないため、ご自身の判断で使用し、全責任を負ってください。アカウントが制限を受ける可能性があり、finds-you-jobsはあなたのLinkedInアカウントへのいかなる影響についても責任を負いません。アカウントに異常な挙動が見られた場合はオフにしてください。この機能を使用しなければ、あなたのLinkedInアカウントに影響は一切ありません。",
       ack: "私は、LinkedInの利用規約に違反することを承知のうえで、ログインした状態でLinkedInを検索することを望みます — これはアカウントの制限、最悪の場合は永久停止につながる可能性があります。私はその全責任を負います。",
       enable: "「LinkedIn求人をスキャン(LinkedInログインが必要)」を有効化",
       connectHint: "検索を実行するには、上でLinkedInセッションを接続してください。",
       runNow:
         "保存済みの職種と勤務地で今すぐ検索します — 結果は求人検索フィードに追加されます。",
-      searching: "検索中…",
-      searchBtn: "LinkedIn求人を検索",
+      freshBtn: "新規検索",
+      nextBtn: "次のページ",
+      nextHint: "前回の検索の続きから — ロール×勤務地ごとに次の25件を取得します。",
+      nextInfo:
+        "「次のページ」は、直前の新規検索とまったく同じロール・勤務地を次のオフセットで再実行します。間に設定を変更しても反映されません（反映するには新規検索を実行してください）。新規検索から12時間利用でき、その後は消えます。LinkedInは結果を常に並べ替えるため、古いオフセットはずれたリストを指してしまうからです。LinkedIn自体にページネーションの期限はなく、この12時間は当アプリ独自の鮮度ルールです。LinkedInの結果が尽きた場合もボタンは消えます。",
       resultsPerSearch: "1回の検索あたりの結果数",
-      resultsPerSearchInfo:
-        "職種 × 勤務地ごとに取得する求人数です(25件単位のページ)。多いほど結果は増えますが、<strong>あなた自身の</strong>LinkedInアカウントから一度に発するリクエストも増え、レート制限やアカウントのリスクが高まります。控えめにしてください。",
-      jobsOption: "{{n}}件",
       started: "検索を開始しました — 新しいマッチはまもなく求人検索に表示されます。",
       failed: "検索に失敗しました。",
+      scanning: "LinkedInをスキャン中…",
+      hourlyReached:
+        "1時間あたりの求人検索の上限に達しました — 1時間以内にリセットされます。または「LinkedIn自主的レート制限」で上限を引き上げてください。",
+    },
+    rateLimits: {
+      title: "LinkedInに対する自主的なレート制限",
+      intro:
+        "finds-you-jobsがLinkedInに対してどれだけ強く自らを抑制するかです。メンバーシップを選んでから、LinkedInの推定上限にどれだけ近づいて運用するかを設定してください。",
+      info:
+        "これらの上限は当アプリ独自のものです — LinkedInは実際の上限をほとんど公表していないため、ここにある上限値はすべて推定です。メンバーシップが推定上限を決め、リスクスライダーがそれを調整し、任意の個別上限を上書きできます。アウトリーチのコードはまさにこれらの数値を適用します。",
+      membershipLabel: "LinkedInメンバーシップ",
+      membershipHint: "調整の基準となるアクションごとの推定上限を設定します。",
+      membership: {
+        free: "無料(ベーシック)",
+        premium: "Premium",
+        sales_navigator: "Sales Navigator",
+        recruiter_lite: "Recruiter Lite",
+      },
+      riskLabel: "リスク許容度",
+      riskWarn:
+        "100%では、各上限はあなたのメンバーシップに対するLinkedIn自身の上限についての当アプリの最良の推定値になります。LinkedInはこれらの数値を公表していないため、あくまで推定です — 良好な状態のアカウントで最も信頼できます。低くするほど安全マージンが増えます。ここにあるものはいずれも、アカウントが制限されないことを保証できません。",
+      capsLabel: "個別の上限",
+      capsInfo:
+        "各上限は「メンバーシップ上限 × リスク%」から始まります。数値を入力すると固定できます。メンバーシップまたはリスクスライダーを変更すると、固定したすべての上限が計算された既定値にリセットされます。",
+      cap: {
+        invites_day: "コネクションリクエスト / 日",
+        invites_week: "コネクションリクエスト / 週",
+        dms_day: "ダイレクトメッセージ / 日",
+        dms_week: "ダイレクトメッセージ / 週",
+        profile_views_day: "プロフィール閲覧 / 日",
+        searches_month: "人物検索 / 月",
+        notes_month: "招待メモ / 月",
+        job_search_pages_hour: "求人検索ページ / 時(各25件)",
+      },
+      ofCeiling: "最大: 約{{ceiling}}",
+      custom: "カスタム",
+      resetBtn: "既定値にリセット",
     },
     session: {
       title: "LinkedInセッション",
@@ -812,13 +837,6 @@ const ja: DeepPartial<Messages> = {
       errorFallback: "エラー",
       resume: "アウトリーチを再開",
       disconnect: "切断",
-      tier: "アカウント区分",
-      tierCapsLabel: "アカウント区分ごとの上限",
-      tierInfo:
-        "LinkedInワーカーはこの上限を強制します。新規 = 15/日 · 100/週。実績あり = 30/日 · 200/週。ご自身のアカウントに正直に合う方を選んでください。",
-      tierHint: "アカウントに合った区分を選んでください。",
-      tierNew: "新規アカウント(安全なデフォルト)",
-      tierSeasoned: "実績のあるアカウント",
     },
     observability: {
       title: "オブザーバビリティ",
@@ -849,6 +867,9 @@ const ja: DeepPartial<Messages> = {
         "つながりリクエストがこの日数承認されなかった(または承認後も返信がなかった)場合。",
       contactPurgeLabel: "削除したコンタクトを完全に消去するまで",
       contactPurgeHint: "削除したコンタクトは、この日数が経過すると完全に消去されます。",
+      expireListingLabel: "求人掲載を“古い”とマークするまで",
+      expireListingHint:
+        "この日数、スキャンで再び見つからなかった求人は“古い掲載”としてグレー表示されます — ボード上には残っており、復元できます。",
       trashedJobsLabel: "削除した求人を完全に消去するまで",
       trashedJobsHint:
         "削除した求人は、この日数が経過すると完全に消去されます(再スクレイピングもされません)。",
@@ -944,7 +965,6 @@ const ja: DeepPartial<Messages> = {
         nth: "{{degree}}次",
       },
       titleConfirmCompany: "企業を確認",
-      titleSendingMessages: "メッセージを送信中",
       titleFinding: "リファラルを探しています…",
       titleView: "リファラルを表示",
       findReferrals: "リファラルを探す",
@@ -953,9 +973,6 @@ const ja: DeepPartial<Messages> = {
         "暦の日/週ではなくローリングウィンドウです — 各送信の枠は、送信から24時間(日次)または7日(週次)経つと戻ります。LinkedInの制限より十分低い、控えめな上限です。",
       automatedQuota:
         "自動送信の枠 — 過去24時間: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> 過去7日: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
-      dmTooltip:
-        "1次のつながりへのダイレクトメッセージは無制限で、招待枠を消費することはありません",
-      dmCounter: "DM(過去24時間): <strong>{{dmSent}}</strong>(無制限)",
       manualModeQuota: "手動モード — ご自身のLinkedIn制限に照らして管理してください",
       dailyLimitReached: "日次上限に達しました。新しいリクエストは明日まで待機します。",
       closeToLimit_other: "日次上限が近づいています — 本日はあと{{count}}件です。",
@@ -989,10 +1006,10 @@ const ja: DeepPartial<Messages> = {
       findingContacts: "{{company}}のコンタクトを探しています…",
       scanningHint:
         "あなたのセッション経由でLinkedInをスキャン中 · 通常10〜30秒。企業名が曖昧な場合は一時停止し、確認をお願いします。",
-      sendingTitle: "メッセージを送信中…",
-      sendingHint:
-        "自然な挙動に見せるため、人間のタイピング速度で1件ずつ送信します。この画面は閉じても構いません — 送信はバックグラウンドで続きます。",
       emptyConnected: "この企業のコンタクトはまだ見つかっていません。",
+      refusedTitle: "レート上限により検索を一時停止しました",
+      refusedBody:
+        "<strong>{{company}}</strong> の LinkedIn スキャンは実行されませんでした。自己設定の読み取り上限を使い切ったか、バックオフが有効です。時間経過で自動的に回復します — 後でもう一度試すか、設定 → ネットワーキングで上限を調整してください。",
       emptyManual:
         "コンタクトはまだありません — 人脈ページからURLで追加するか、設定でリファラルアウトリーチをオンにしてこの企業の人を自動発見してください。",
       contactsFound_other: "{{count}}人のコンタクトが見つかりました",
@@ -1001,10 +1018,6 @@ const ja: DeepPartial<Messages> = {
       findMore: "さらに10人探す",
       confirmCompanyNext: "企業を確認 →",
       close: "閉じる",
-      reachOut: "連絡する({{count}})",
-      sendConfirmTitle_other: "{{count}}件のアウトリーチメッセージを送信しますか?",
-      sendConfirmBody:
-        "これはあなたのアカウントから、実際のLinkedInつながりリクエスト/DMを1件ずつ送信します。finds-you-jobsは取り消すことができません — リクエストの取り下げやメッセージの削除は、<span>linkedin.com</span>でご自身で行ってください。",
       sendingEllipsis: "送信中…",
       sendNow: "今すぐ送信",
       rowReached: "連絡済み",

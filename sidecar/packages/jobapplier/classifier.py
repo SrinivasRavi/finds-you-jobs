@@ -1,5 +1,5 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Page-state classifier (docs/internal/applier.md §5.1).
+"""Page-state classifier (docs/internal/archived/applier-as-built.md section 5.1).
 
 Pure logic over an ``Observation``: no browser, no network, no model call —
 so it is exhaustively unit-testable. It must not declare an application form
@@ -25,7 +25,7 @@ _APPLY_CONTROL = re.compile(
 )
 # Application-SPECIFIC vocabulary only. Generic contact fields (name, email,
 # phone) deliberately do NOT count — a newsletter/talent-community signup has
-# those too (§5.1); what distinguishes an application form is resume/CV,
+# those too (section 5.1); what distinguishes an application form is resume/CV,
 # authorization, salary, screening-question language, or a file upload.
 _FORM_FIELD_HINTS = re.compile(
     r"\b(resume|cv|cover letter|linkedin( profile)?|work authorization|"
@@ -49,6 +49,28 @@ _LOGIN_HINTS = re.compile(
 _CAPTCHA_HINTS = re.compile(
     r"\b(captcha|recaptcha|hcaptcha|are you a robot|unusual traffic|"
     r"verify you are human|cloudflare)\b",
+    re.IGNORECASE,
+)
+# The second signal that separates a rendered, interactive challenge from a
+# passive reCAPTCHA v3 badge or a bot-management cookie. Every measured form
+# carries the passive kind and it never walls the applicant; only a challenge
+# that actually renders does (Our Finding 11/12; agents/external-corpus.md
+# resolved the field-wide rule: block on a challenge iframe or an interactive
+# challenge control, let an invisible badge through).
+_CHALLENGE_HOST = re.compile(
+    r"(recaptcha/api2/bframe|hcaptcha\.com|challenges\.cloudflare\.com|"
+    r"/turnstile/|arkoselabs|funcaptcha)",
+    re.IGNORECASE,
+)
+_INVISIBLE_BADGE = re.compile(r"size=invisible|grecaptcha-badge", re.IGNORECASE)
+_CHALLENGE_CONTROL = re.compile(
+    r"\b(i'?m not a robot|verify (you are|i am) (a )?human|press (and|&) hold|"
+    r"select all (images|squares|the)|complete the (captcha|challenge|puzzle))\b",
+    re.IGNORECASE,
+)
+_CHALLENGE_INTERSTITIAL = re.compile(
+    r"\b(just a moment|checking your browser|verifying you are human|"
+    r"please (stand by|wait) while we verify|one more step)\b",
     re.IGNORECASE,
 )
 _CLOSED_HINTS = re.compile(
@@ -94,7 +116,7 @@ def classify(obs: Observation) -> frozenset[PageState]:
     )
     # An application form needs application-shaped evidence: several inputs AND
     # (application field vocabulary OR a resume upload) AND not a
-    # newsletter-only surface (§5.1).
+    # newsletter-only surface (section 5.1).
     application_vocab = bool(_FORM_FIELD_HINTS.search(labels_blob) or file_upload)
     newsletter_only = bool(
         _NEWSLETTER_HINTS.search(text)
@@ -122,7 +144,7 @@ def classify(obs: Observation) -> frozenset[PageState]:
         e.attributes.get("type", "").lower() == "password" for e in obs.elements
     ):
         states.add(PageState.LOGIN_WALL)
-    if _CAPTCHA_HINTS.search(text):
+    if _CAPTCHA_HINTS.search(text) and _has_active_challenge(obs):
         states.add(PageState.CAPTCHA_OR_ANTI_BOT)
     if _CLOSED_HINTS.search(text):
         states.add(PageState.POSTING_CLOSED)
@@ -137,7 +159,7 @@ def classify(obs: Observation) -> frozenset[PageState]:
 
 
 def _is_external(current_url: str, href: str) -> bool:
-    """True when ``href`` leaves the current host (a hosted-ATS hop, §5.2)."""
+    """True when ``href`` leaves the current host (a hosted-ATS hop, section 5.2)."""
     from urllib.parse import urlparse
 
     if not href or href.startswith(("#", "javascript:", "mailto:")):
@@ -146,3 +168,35 @@ def _is_external(current_url: str, href: str) -> bool:
     if not target.netloc:
         return False
     return target.netloc != urlparse(current_url).netloc
+
+
+def _has_active_challenge(obs: Observation) -> bool:
+    """A rendered, interactive anti-bot challenge is present — not merely a
+    passive badge or bot-management telemetry the markup mentions.
+
+    Three concrete signals, any one is enough: a full-page interstitial title
+    ("just a moment", "checking your browser"); a challenge iframe pointing at a
+    known challenge host and NOT flagged invisible (the reCAPTCHA bframe, an
+    hcaptcha/turnstile frame); or an interactable challenge control ("I'm not a
+    robot", "select all images"). A reCAPTCHA v3 badge or a ``__cf_bm`` cookie
+    has none of these, so it no longer walls the run (the bug this fixes fired
+    on the word alone and aborted 81% of measured forms)."""
+    if _CHALLENGE_INTERSTITIAL.search(obs.title or ""):
+        return True
+    for element in obs.elements:
+        src = str(element.attributes.get("src", ""))
+        if (
+            element.tag.lower() == "iframe"
+            and _CHALLENGE_HOST.search(src)
+            and not _INVISIBLE_BADGE.search(src)
+        ):
+            return True
+        if element.interactable:
+            blob = (
+                f"{element.label} {element.text} "
+                f"{element.attributes.get('title', '')} "
+                f"{element.attributes.get('aria-label', '')}"
+            )
+            if _CHALLENGE_CONTROL.search(blob):
+                return True
+    return False

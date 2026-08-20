@@ -1,4 +1,4 @@
-//! Sidecar lifecycle — the §4.4 contract (AM1–AM3), decided numbers built in.
+//! Sidecar lifecycle — the section 4.4 contract (AM1–AM3), decided numbers built in.
 //!
 //! Spawn the Python sidecar, capture its `PORT=`/`TOKEN=` handshake (20 s cap),
 //! supervise `/healthz` with a restart cap (3 failures in 30 s, exponential
@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 
-// --- Decided lifecycle numbers (architecture §4.4 / ROADMAP §A0.5) ---
+// --- Decided lifecycle numbers (architecture section 4.4 / ROADMAP section A0.5) ---
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20); // AM1
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const RESTART_WINDOW: Duration = Duration::from_secs(30); // AM2
@@ -37,7 +37,7 @@ const STARTUP_GRACE: Duration = Duration::from_secs(180);
 /// PROD sidecar binary (PyInstaller onedir), resolved against the packaged
 /// app's resource dir at spawn time — resolve_prod_sidecar_bin() below.
 /// Matches `bundle.resources` in tauri.conf.json and the onedir COLLECT name
-/// in sidecar/fyj-sidecar.spec (docs/internal/distribution.md §8).
+/// in sidecar/fyj-sidecar.spec (docs/internal/distribution.md section 8).
 #[cfg(windows)]
 const PROD_SIDECAR_REL: &str = "sidecar/fyj-sidecar.exe";
 #[cfg(not(windows))]

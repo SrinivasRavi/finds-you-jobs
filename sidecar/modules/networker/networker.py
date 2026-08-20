@@ -1,4 +1,4 @@
-"""The Networker black box: discover / draft / send (ROADMAP §66).
+"""The Networker black box: discover / draft / send (ROADMAP section 66).
 
 - `discover(company, job) → contacts[]` — zero-LLM; delegates to the voyager
   subprocess (driver), then tags each contact by audience + warmth.
@@ -11,7 +11,7 @@
 **Two seams, mirroring the other silos:** the voyager subprocess sits behind the
 `VoyagerDriver` protocol (production = `DirectVoyagerDriver`; test = a fake),
 and the LLM sits behind the `Engine` protocol. Teardown of the driver happens in
-`finally` (NFR-MEM-02 / §4). Storage stance (§4): the module owns no persistent
+`finally` (NFR-MEM-02 / section 4). Storage stance (section 4): the module owns no persistent
 storage; `draft` uses a per-operation scratch dir deleted on return.
 
 **Design note — deterministic audience tagging (flagged).** FR-REF-01 says "the
@@ -27,7 +27,17 @@ Open question for the maintainer — see the ROADMAP N2 as-built note.
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 
+from sidecar.modules._shared.claude_engine import EngineError
+from sidecar.modules._shared.completion_retry import (
+    MAX_ATTEMPTS,
+    merge_usage,
+    raise_if_cancelled,
+    retry_delay_s,
+    wait_before_retry,
+)
+from sidecar.modules._shared.dry_run import assemble_dry_run
 from sidecar.modules._shared.job_input import JobInputError
 from sidecar.modules._shared.job_input import resolve_job as _resolve_job
 
@@ -109,6 +119,8 @@ def resolve(
             if r.get("urn")
         ]
         return ResolveResult(company=company, candidates=candidates,
+                             error=str(raw.get("error") or ""),
+                             reason=str(raw.get("reason") or ""),
                              usage=Usage(internal_calls=1))
     finally:
         drv.close()
@@ -116,7 +128,7 @@ def resolve(
 
 def discover(
     company: str,
-    job: str = "",  # part of the §66 contract; reserved for JD-aware tagging (module note)
+    job: str = "",  # part of the section 66 contract; reserved for JD-aware tagging (module note)
     driver: VoyagerDriver | None = None,
     limit: int = 10,
     dry_run: bool = False,
@@ -129,7 +141,7 @@ def discover(
     by the host) scopes the People search by the `currentCompany` facet — the
     current-employees-only correctness fix. `page` fetches the next batch for
     "find 10 more" (voyager paginates the results page). `job` is accepted per the
-    §66 contract and reserved for future JD-aware relevance (module note)."""
+    section 66 contract and reserved for future JD-aware relevance (module note)."""
     if not company:
         raise NetworkerError("discover", "company is required")
     drv = driver or DirectVoyagerDriver()
@@ -138,6 +150,8 @@ def discover(
         rows = raw.get("contacts", []) or []
         contacts = [_contact_from_raw(r) for r in rows]
         return DiscoverResult(company=company, contacts=contacts,
+                              error=str(raw.get("error") or ""),
+                              reason=str(raw.get("reason") or ""),
                               usage=Usage(internal_calls=1))
     finally:
         drv.close()
@@ -152,6 +166,7 @@ def draft(
     engine: Engine | None = None,
     keep_scratch: bool = False,
     skill_md: str | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> DraftResult:
     """Draft one grounded referral-ask for `contact` (US-REF-03 / FR-REF-02).
 
@@ -161,9 +176,12 @@ def draft(
     it, surfacing any refusal in `notes`).
 
     `skill_md`, when provided, replaces the on-disk draft skill file as the
-    system prompt (the app's user-editable-prompt override, §5). None → the
+    system prompt (the app's user-editable-prompt override, section 5). None → the
     default. The bound audience playbook is unaffected — it stays appended to the
-    user prompt."""
+    user prompt.
+
+    `cancelled`, when provided, is polled at the retry checkpoints (loop top,
+    mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7)."""
     if not contact.public_identifier:
         raise NetworkerError("draft", "contact.public_identifier is required")
     engine = engine or ClaudeCliEngine()
@@ -178,17 +196,45 @@ def draft(
 
     scratch = tempfile.TemporaryDirectory(prefix="fyj-draft-")
     try:
-        raw, usage = engine.complete(system_prompt, user_prompt)
-        message, notes = parse_output(raw)
-        return DraftResult(
-            message=message,
-            audience=contact.audience,
-            warmth=warmth,
-            channel=channel,
-            notes=notes,
-            char_count=len(message),
-            usage=usage,
-        )
+        # A single completion is non-deterministic enough that a transient
+        # engine failure (EngineError) or a contract-drifted response
+        # (NetworkerError, stage="parse") is worth a bounded re-ask before the
+        # whole operation fails onto the user's Retry button. Engine failures
+        # are classified (F-H5): deterministic rejections fail fast; transient
+        # ones back off (jittered, Retry-After honored) before the re-ask.
+        # Parse drift keeps its immediate re-ask. Every attempt that actually
+        # produced billable output — even one that then failed to parse — is
+        # folded into the final usage (cost honesty: a retry must never make
+        # a real spend vanish from the ledger).
+        billed: list[Usage] = []
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            raise_if_cancelled(cancelled)
+            try:
+                raw, usage = engine.complete(system_prompt, user_prompt)
+            except EngineError as e:
+                delay = retry_delay_s(e, attempt)
+                if delay is None:
+                    raise
+                wait_before_retry(delay, cancelled)
+                continue
+            try:
+                message, notes = parse_output(raw)
+            except NetworkerError as e:
+                billed.append(usage)
+                if e.stage != "parse" or attempt == MAX_ATTEMPTS:
+                    raise
+                continue
+            billed.append(usage)
+            return DraftResult(
+                message=message,
+                audience=contact.audience,
+                warmth=warmth,
+                channel=channel,
+                notes=notes,
+                char_count=len(message),
+                usage=Usage(**merge_usage(billed)),
+            )
+        raise AssertionError("unreachable — loop always returns or raises")
     finally:
         if not keep_scratch:
             scratch.cleanup()
@@ -199,11 +245,16 @@ def send(
     contact: Contact,
     driver: VoyagerDriver | None = None,
     *,
-    tier: str | None = None,
     dry_run: bool = False,
+    on_step: Callable[[str], None] | None = None,
 ) -> SendResult:
     """Send `message` to `contact` via the voyager subprocess (US-REF-04 /
     FR-NW-03). Warm → DM; cold → connection-request-with-note. Zero-LLM.
+
+    `on_step`, when given, receives each completed send step's key (the
+    `dm1..dm4` / `invite1..invite5` plan the host's queue panel renders) as
+    the driver finishes it — real progress, reported from the code driving
+    the page (2026-08-16).
 
     A voyager-reported not-sent (cap hit / backoff / UI failure) returns a
     SendResult with `sent=False` + the verbatim reason; only a subprocess crash
@@ -215,10 +266,13 @@ def send(
     drv = driver or DirectVoyagerDriver()
     try:
         if channel.value == "dm":
-            raw = drv.send_dm(contact.public_identifier, message, tier, dry_run=dry_run)
+            raw = drv.send_dm(
+                contact.public_identifier, message, dry_run=dry_run, on_step=on_step
+            )
         else:
             raw = drv.send_connection(
-                contact.public_identifier, note=message, tier=tier, dry_run=dry_run
+                contact.public_identifier, note=message, dry_run=dry_run,
+                on_step=on_step,
             )
         return _send_result_from_raw(raw, contact, channel, dry_run)
     finally:
@@ -274,18 +328,87 @@ def probe(
             is_first_degree=bool(raw.get("is_first_degree", degree == 1)),
             last_message_direction=raw.get("last_message_direction") or "",
             last_message_at=raw.get("last_message_at"),
+            last_message_text=raw.get("last_message_text") or "",
+            last_message_from=raw.get("last_message_from") or "",
             usage=Usage(internal_calls=1),
         )
     finally:
         drv.close()
 
 
-def quota(driver: VoyagerDriver | None = None, *, tier: str | None = None) -> dict:
+def probe_batch(
+    contacts: list[Contact],
+    driver: VoyagerDriver | None = None,
+    *,
+    urns: dict[str, str] | None = None,
+    thread_only: set[str] | None = None,
+    dry_run: bool = False,
+) -> list[ProbeResult]:
+    """Probe many contacts' live LinkedIn state in ONE browser session (US-NW-12
+    / FR-NW-15). Zero-LLM, READ-ONLY — one `contact-sync-states` driver call
+    instead of a browser launch/quit cycle per contact.
+
+    `urns` maps public_identifier → the contact's cached fsd_profile urn (from
+    an earlier probe's `target_urn`); `thread_only` names the contacts whose
+    degree question is settled. A contact in both runs as an UNMETERED
+    thread-only probe off the sweep's one inbox read; the rest are full paced
+    profile probes, and each full probe's result carries the `target_urn` it
+    resolved for the caller to cache.
+
+    Returns one ProbeResult per PROBED contact — thread-only probes first, NOT
+    input order (join by `public_identifier`). The worker stops the sweep on
+    the first rate-limit/cap refusal or auth failure, so the list may be
+    shorter than `contacts` — the stop reason rides on the last result
+    (`ok=False`, `error`, verbatim `reason`); untouched contacts get no result.
+    A hard driver failure raises NetworkerError, exactly like `probe`."""
+    for contact in contacts:
+        if not contact.public_identifier:
+            raise NetworkerError("probe", "contact.public_identifier is required")
+    if not contacts:
+        return []
+    urns = urns or {}
+    thread_pids = thread_only or set()
+    drv = driver or DirectVoyagerDriver()
+    try:
+        raw = drv.contact_sync_states(
+            [
+                {
+                    "public_identifier": c.public_identifier,
+                    "urn": urns.get(c.public_identifier, ""),
+                    "thread_only": c.public_identifier in thread_pids,
+                }
+                for c in contacts
+            ],
+            dry_run=dry_run,
+        )
+        results: list[ProbeResult] = []
+        for entry in raw.get("results") or []:
+            degree = entry.get("degree")
+            results.append(ProbeResult(
+                public_identifier=str(entry.get("public_identifier") or ""),
+                degree=degree,
+                is_first_degree=bool(entry.get("is_first_degree", degree == 1)),
+                last_message_direction=entry.get("last_message_direction") or "",
+                last_message_at=entry.get("last_message_at"),
+                last_message_text=entry.get("last_message_text") or "",
+                last_message_from=entry.get("last_message_from") or "",
+                target_urn=str(entry.get("target_urn") or ""),
+                ok=bool(entry.get("ok", False)),
+                error=str(entry.get("error") or ""),
+                reason=str(entry.get("reason") or ""),
+                usage=Usage(internal_calls=1),
+            ))
+        return results
+    finally:
+        drv.close()
+
+
+def quota(driver: VoyagerDriver | None = None) -> dict:
     """The live remaining cap the host displays + gates its UI on (FR-NW-01/04,
     NFR-LI-02). Zero-LLM."""
     drv = driver or DirectVoyagerDriver()
     try:
-        return drv.quota(tier)
+        return drv.quota()
     finally:
         drv.close()
 
@@ -296,9 +419,8 @@ def dry_run_prompt(contact: Contact, job: str, master_md: str = "", guidance: st
     warmth = warmth_for_degree(contact.connection_degree)
     channel = channel_for_warmth(warmth)
     playbook_md = load_playbook(contact.audience)
-    return (
-        "########## SYSTEM (draft skill) ##########\n"
-        + load_skill()
-        + "\n########## USER ##########\n"
-        + build_user_prompt(master_md, jd_md, contact, warmth, channel, playbook_md, guidance)
+    return assemble_dry_run(
+        load_skill(),
+        build_user_prompt(master_md, jd_md, contact, warmth, channel, playbook_md, guidance),
+        "draft skill",
     )

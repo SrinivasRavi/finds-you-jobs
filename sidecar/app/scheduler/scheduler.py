@@ -1,4 +1,4 @@
-"""Scheduler tick (architecture §5.5, NFR-LONG-01).
+"""Scheduler tick (architecture section 5.5, NFR-LONG-01).
 
 `tick_once` is the pure-ish unit of work (sync, testable): find due schedules,
 skip any whose last operation is still pending (double-enqueue guard), enqueue
@@ -16,14 +16,12 @@ from typing import Any
 
 from ..db import Database
 from ..db.base import now_utc
+from ..db.models import OP_ACTIVE_STATES
 from ..events import scheduler_event
 from ..logging_setup import get_logger
 from ..runner import OperationRunner
 
 TICK_INTERVAL_SECONDS = 60.0
-
-# States that mean "the previous enqueue hasn't resolved yet" — the guard.
-_PENDING_STATES = frozenset({"queued", "running"})
 
 SnapshotBuilder = Callable[[str], dict[str, Any]]
 # A planner maps one due schedule kind to the concrete operations to enqueue.
@@ -122,7 +120,8 @@ class Scheduler:
             return False
         with self._db.repos() as repos:
             op = repos.operations.get(last_op_id)
-        return op is not None and op.state in _PENDING_STATES
+        # Active means "the previous enqueue hasn't resolved yet" — the guard.
+        return op is not None and op.state in OP_ACTIVE_STATES
 
     def _advance(self, schedule_id: str, now: datetime, interval_minutes: int) -> None:
         next_due = now + timedelta(minutes=interval_minutes)

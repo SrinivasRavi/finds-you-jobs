@@ -1,7 +1,7 @@
 """Operation-entrypoint persistence helpers.
 
 The wrappers call the modules; this file makes them persist their results into
-the DB the app owns (architecture §5.3/§5.6, database-design §3–§4):
+the DB the app owns (architecture section 5.3/section 5.6, database-design section 3–section 4):
 
 - scan → `Job` rows, canonical-URL dedup (first-seen wins) + `Tombstone`
   suppression + a per-source report into `result_ref`;
@@ -23,6 +23,7 @@ from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, 
 
 from ..db import Database, Repos
 from ..db.base import now_utc
+from ..lifecycle import LIFECYCLE_DEFAULTS
 
 SCORER_IMPL = "scorer-llm"
 
@@ -39,14 +40,20 @@ def scoring_mode(prefs: Any) -> str:
     through here so the default and the key can never drift apart."""
     return str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "llm")
 
+# The user-configurable windows below are DERIVED from `LIFECYCLE_DEFAULTS`
+# (D-A15) — they used to be re-typed here, so a Settings default change could
+# silently disagree with the fallback these functions use. Single home:
+# `app/lifecycle.py`.
+
 # Trash TTL — a removed job is tombstoned this many days after it entered Trash
 # (FR-JB-12 / FR-SYS-04: "permanently removed after 7 days").
-TRASH_TTL_DAYS = 7
+TRASH_TTL_DAYS = LIFECYCLE_DEFAULTS["trashed_jobs_purge_days"]
 
 # Expired aging (FR-SYS-03): a feed job greys to `Expired` this many days after
 # it entered the feed, and is hard-deleted (no tombstone) that many days after
-# entering Expired. A still-live posting can re-enter on a later scrape.
-EXPIRE_AFTER_DAYS = 14
+# entering Expired. A still-live posting can re-enter on a later scrape. The
+# delete window has no lifecycle key — it is not user-configurable.
+EXPIRE_AFTER_DAYS = LIFECYCLE_DEFAULTS["expire_listing_days"]
 EXPIRED_DELETE_AFTER_DAYS = 30
 
 
@@ -499,6 +506,25 @@ def _saved_job_ids(repos: Repos) -> set[str]:
     return repos.applications.job_ids()
 
 
+def delete_application_cascade(repos: Repos, application_id: str) -> tuple[bool, list[str]]:
+    """Delete one application row and every FK child (`foreign_keys=ON`):
+    events, uploaded-document links (manual cards — 2026-07-24 bug class), and
+    apply runs — an archived manual card used to IntegrityError here and wedge
+    the whole retention pass. Artifacts cascade via the ORM relationship.
+
+    The ONE implementation of the cascade (D-A3): the unsave route and the
+    retention pass both call it, so a new FK child can never wedge one path
+    while the other keeps working. Returns `(deleted, apply_run_ids)` — the
+    runs' on-disk dirs are the caller's to purge (`purge_run_dirs`), because
+    the two callers do it in different contexts (off-loop vs sync).
+    """
+    run_ids = [r.id for r in repos.apply_runs.list_for_application(application_id)]
+    repos.application_events.delete_for_application(application_id)
+    repos.application_documents.delete_for_application(application_id)
+    repos.apply_runs.delete_for_application(application_id)
+    return repos.applications.delete(application_id), run_ids
+
+
 def purge_archived_applications(
     db: Database | None, *, retention_days: int, now: datetime | None = None
 ) -> list[str]:
@@ -516,15 +542,9 @@ def purge_archived_applications(
     run_ids: list[str] = []
     with db.repos() as repos:
         for app in repos.applications.list_archived_before(cutoff):
-            # Purge every FK child (`foreign_keys=ON`): events, uploaded-
-            # document links (manual cards — 2026-07-24 bug class), and apply
-            # runs — an archived manual card used to IntegrityError here and
-            # wedge the whole retention pass.
-            run_ids += [r.id for r in repos.apply_runs.list_for_application(app.id)]
-            repos.application_events.delete_for_application(app.id)
-            repos.application_documents.delete_for_application(app.id)
-            repos.apply_runs.delete_for_application(app.id)
-            if repos.applications.delete(app.id):
+            deleted, app_run_ids = delete_application_cascade(repos, app.id)
+            run_ids += app_run_ids
+            if deleted:
                 purged.append(app.id)
     # F-M8: the runs' on-disk artifact dirs go with the rows (best-effort,
     # path-guarded). Sync context — retention runs on a runner worker thread.

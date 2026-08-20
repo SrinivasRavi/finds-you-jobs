@@ -1,4 +1,4 @@
-// OpenAPI → TypeScript codegen (architecture §4.3).
+// OpenAPI → TypeScript codegen (architecture section 4.3).
 //
 // Dumps the sidecar's OpenAPI schema (via `python -m sidecar.app.openapi_export`)
 // and runs `openapi-typescript` into `frontend/src/api/schema.d.ts` — the single

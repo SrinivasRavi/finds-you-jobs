@@ -8,7 +8,7 @@ Two bounded ops beyond the N3 discover/draft/send core:
   2FA), detects the `li_at` auth cookie, and persists the Playwright
   storage-state under the app-data dir. **The password never passes through
   finds-you-jobs** — the human logs in themselves. Long-running + user-interactive,
-  cancellable via `LOGIN_CONTROL` (mirrors the Applier's takeover latch, §A5b).
+  cancellable via `LOGIN_CONTROL` (mirrors the Applier's takeover latch, section A5b).
   Streams typed `linkedin` SSE events for the connect UI + pill.
 
 - `archive_stale_contacts` — the US-NW-11 / FR-NW-13 scheduler tick: auto-archive
@@ -16,30 +16,64 @@ Two bounded ops beyond the N3 discover/draft/send core:
   zero-network, non-destructive (the same restorable Archive as a manual one).
 
 **License firewall.** `voyager_py` is reached ONLY through the silo's subprocess
-driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; §2).
+driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; section 2).
 """
 
 from __future__ import annotations
 
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sidecar.modules.networker.types import NetworkerError
+from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
 
 from ..db.base import now_utc
 from ..events import make_event
 from . import networker_ops
-from .networker_ops import _resolve_tier, linkedin_storage_path
+from .networker_ops import linkedin_feature_flags, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # 60-day never-accepted auto-archive window (US-NW-11 / FR-NW-13).
 STALE_CONTACT_DAYS = 60
 # How long the headed login browser stays open waiting for the user (seconds).
 LOGIN_TIMEOUT_S = 300
+# How long a Fresh search's pagination snapshot stays continuable (Next page).
+# LinkedIn's own pagination is stateless — the offset lives in the URL and
+# nothing server-side expires — so this mirrors no LinkedIn limit. It bounds
+# result-coherence drift (rankings shift between requests, so a stale offset
+# points into a different list) to one job-hunting session (maintainer,
+# 2026-08-01). After it lapses, only a Fresh search makes sense.
+SEARCH_CURSOR_TTL = timedelta(hours=12)
+
+# Refusal copy for the LinkedIn-search preconditions, worded once. The route
+# pre-checks each of these for a fast 4xx and this op re-checks the same thing
+# as its own self-gate, so the two sites must never say different things — the
+# not-connected copy had already drifted into pointing a search-only user at
+# Referral Outreach, the wrong opt-in for the feature they enabled.
+SEARCH_NOT_CONNECTED = (
+    "LinkedIn is not connected — connect your session under Referral Outreach "
+    "or LinkedIn job search in Settings first."
+)
+SEARCH_NO_CURSOR = "No search to continue — run a Fresh search first."
+SEARCH_CURSOR_EXPIRED = "The last Fresh search has expired — run a Fresh search first."
+SEARCH_CURSOR_EXHAUSTED = (
+    "No more results — the last search reached LinkedIn's end of results. "
+    "Run a Fresh search."
+)
+
+
+def cursor_state(
+    fresh_at: datetime | None, entries: list[dict], now: datetime | None = None
+) -> tuple[bool, bool]:
+    """`(expired, exhausted)` for a Fresh-search cursor. The single derivation
+    of the continuable predicate — the DTO mapper and the op self-gate both call
+    this, so the route's 409 and the op's refusal can never disagree. An absent
+    cursor (no fresh_at / no entries) is the caller's "None" case, not ours."""
+    now = now or datetime.now(UTC)
+    expired = fresh_at is None or now - fresh_at > SEARCH_CURSOR_TTL
+    exhausted = bool(entries) and all(bool(e.get("exhausted")) for e in entries)
+    return expired, exhausted
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +156,24 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
     login_url = snap.get("login_url")  # None in production; a fixture for the maintainer
     timeout_s = float(snap.get("timeout_s", LOGIN_TIMEOUT_S))
 
+    # Self-gate, like `contact_sync` (posture doc section 4 #8): the route gates too,
+    # but this op *launches a real browser at linkedin.com*, so it re-checks its
+    # own precondition rather than trusting whoever enqueued it. Both opt-ins
+    # off → clean no-op, zero LinkedIn traffic.
     with ctx.db.repos() as repos:
-        tier = _resolve_tier(repos)
+        referral_on, search_on = linkedin_feature_flags(repos)
+    if not (referral_on or search_on):
+        return OperationOutcome(
+            result_ref={"connected": False, "skipped": "no_linkedin_feature_enabled"}
+        )
+
+    with ctx.db.repos() as repos:
+        profile = resolve_pacing_profile(repos)
         repos.linkedin_session.update(status="connecting", paused_until=None, paused_reason="")
     _publish_linkedin(ctx, "connecting")
 
     control = LOGIN_CONTROL.register(ctx.operation_id or "")
-    driver = networker_ops.DRIVER_FACTORY(tier)
+    driver = networker_ops.DRIVER_FACTORY(profile)
     try:
         # The --linger window (TEMPORARY, 2026-07-08) was retired 2026-07-09:
         # the persistent Chromium profile keeps the session reusable across
@@ -193,6 +238,16 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
     also found by the guest adapter or Apify collapses to one row), tombstone
     suppression, and per-source diagnostics. `source_adapter="linkedin"` keeps
     it indistinguishable downstream from a guest-found LinkedIn row.
+
+    **Fresh search / Next page (2026-08-01).** `mode: "fresh"` (default) runs
+    page 0 of every query pair and snapshots them into the single-row cursor;
+    `mode: "next"` resumes the SNAPSHOT — each pair from its own `next_start`,
+    exhausted pairs skipped (no request wasted on a list LinkedIn already
+    ended). Next page self-gates on the cursor being younger than
+    `SEARCH_CURSOR_TTL` and not fully exhausted — the route pre-checks the
+    same for a fast 409, but this op re-checks its own precondition rather
+    than trusting whoever enqueued it. Every request is still exactly one
+    page of 25 (the package clamp is untouched).
     """
     if ctx.db is None:
         raise RuntimeError("linkedin_search requires a database context")
@@ -212,49 +267,81 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from .persistence import persist_scan, resolve_scan_prefs
 
     snap = ctx.input_snapshot
-    limit = int(snap.get("limit", 50))
+    mode = str(snap.get("mode", "fresh"))
     dry_run = bool(snap.get("dry_run", False))
 
     with ctx.db.repos() as repos:
         session = repos.linkedin_session.get_or_create()
         if session.status != "valid":
-            raise NetworkerError(
-                "voyager",
-                "LinkedIn is not connected — connect your session in "
-                "Settings → Referral Outreach before running a LinkedIn search",
-            )
-        tier = _resolve_tier(repos)
+            raise NetworkerError("voyager", SEARCH_NOT_CONNECTED)
+        profile = resolve_pacing_profile(repos)
         prefs = resolve_scan_prefs(snap, repos=repos) or ScanPrefs(
             title_allow=[str(a) for a in (repos.preferences.get_or_create().role_aliases or [])],
             location_allow=[
                 str(loc) for loc in (repos.preferences.get_or_create().locations or [])
             ],
         )
+        cursor_row = repos.linkedin_search_cursor.get()
+        cursor_fresh_at = cursor_row.fresh_at if cursor_row is not None else None
+        cursor_entries = list(cursor_row.queries or []) if cursor_row is not None else []
 
-    queries = build_queries(prefs)
-    if not queries:
-        raise NetworkerError(
-            "voyager",
-            "LinkedIn search needs at least one role alias — set your roles in "
-            "onboarding/preferences first",
-        )
+    now = datetime.now(UTC)
+    if mode == "next":
+        if cursor_fresh_at is None or not cursor_entries:
+            raise NetworkerError("voyager", SEARCH_NO_CURSOR)
+        expired, exhausted = cursor_state(cursor_fresh_at, cursor_entries, now)
+        if expired:
+            raise NetworkerError("voyager", SEARCH_CURSOR_EXPIRED)
+        if exhausted:
+            raise NetworkerError("voyager", SEARCH_CURSOR_EXHAUSTED)
+        entries = cursor_entries
+    else:
+        queries = build_queries(prefs)
+        if not queries:
+            raise NetworkerError(
+                "voyager",
+                "LinkedIn search needs at least one role alias — set your roles in "
+                "onboarding/preferences first",
+            )
+        entries = [
+            {"keyword": q.keyword, "location": q.location,
+             "next_start": 0, "exhausted": False}
+            for q in queries
+        ]
 
     _publish_linkedin(ctx, "searching")
-    driver = networker_ops.DRIVER_FACTORY(tier)
+    driver = networker_ops.DRIVER_FACTORY(profile)
     report = SourceReport(usage=Usage())
     jobs: list[NormalizedJob] = []
-    now = datetime.now(UTC)
     try:
-        for q in queries:
+        for entry in entries:
+            if entry.get("exhausted"):
+                continue
+            start = max(0, int(entry.get("next_start", 0)))
             try:
                 result = driver.search_jobs(
-                    q.keyword, q.location, limit=limit, dry_run=dry_run
+                    str(entry["keyword"]), str(entry["location"]),
+                    start=start, dry_run=dry_run,
                 )
             except NetworkerError as exc:
-                report.errors.append(f"{q.keyword!r}@{q.location!r}: {exc}")
+                report.errors.append(f"{entry['keyword']!r}@{entry['location']!r}: {exc}")
                 continue
             report.usage.internal_calls += 1
-            for raw in result.get("jobs", []):
+            raws = result.get("jobs", [])
+            if result.get("ok") and not dry_run:
+                # Advance this pair's cursor only on a real, successful page.
+                # A backoff refusal (ok=False) leaves it untouched to retry.
+                entry["next_start"] = int(result.get("next_start", start + MAX_JOBS_PER_SEARCH))
+                entry["exhausted"] = bool(result.get("exhausted", len(raws) < MAX_JOBS_PER_SEARCH))
+            elif not result.get("ok"):
+                # The worker refuses via ok=False dicts (backoff, hourly budget),
+                # not exceptions — without this the refusal reason vanished and a
+                # paused search completed "successfully" with 0 jobs.
+                report.errors.append(
+                    f"{entry['keyword']!r}@{entry['location']!r}: "
+                    f"{result.get('reason') or result.get('error') or 'refused'}"
+                )
+            for raw in raws:
                 report.fetched += 1
                 job = NormalizedJob(
                     title=str(raw.get("title", "")),
@@ -280,8 +367,26 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
         deduped.append(job)
     report.kept = len(deduped)
 
+    if not dry_run:
+        with ctx.db.repos() as repos:
+            if mode == "next":
+                repos.linkedin_search_cursor.update(queries=entries)
+            else:
+                repos.linkedin_search_cursor.update(fresh_at=now, queries=entries)
+
     scan_result = ScanResult(jobs=deduped, per_source={"linkedin:search": report})
     result_ref = persist_scan(ctx.db, scan_result)
+    result_ref["search_cursor"] = {
+        "mode": mode,
+        "exhausted": all(e.get("exhausted") for e in entries),
+    }
+    # WHICH query pairs this search ran — the ledger row's subject (US-LOG-01
+    # legibility, 2026-08-03). Display strings only; the cursor row above stays
+    # the single continuation record.
+    result_ref["queries"] = [
+        " · ".join(str(part) for part in (e.get("keyword"), e.get("location")) if part)
+        for e in entries
+    ]
     _publish_linkedin(ctx, "search_done", found=result_ref["scan"]["persisted"])
     return OperationOutcome(
         result_ref=result_ref,
@@ -322,8 +427,3 @@ def linkedin_entrypoints() -> dict[str, Any]:
         "linkedin_search": linkedin_search_entrypoint,
         "archive_stale_contacts": archive_stale_contacts_entrypoint,
     }
-
-
-def storage_path_for_disconnect() -> Path:
-    """Exposed for the disconnect route (delete the saved session file)."""
-    return linkedin_storage_path()

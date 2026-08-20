@@ -1,6 +1,6 @@
 """The Profiler black box: extract_profile(master_md) → ProfileResult.
 
-One bounded operation (ROADMAP §4): one LLM call that reads the master resume
+One bounded operation (ROADMAP section 4): one LLM call that reads the master resume
 and returns the structured application-profile record the Applier fills forms
 from (FR-APP-01, 2026-07-11). The grounding rule is absolute — every value
 must appear in the resume; anything absent stays empty. The record is
@@ -89,7 +89,7 @@ def extract_profile(
     """Extract the structured application profile from the master resume.
 
     `system_prompt`, when provided, replaces the built-in `SYSTEM_PROMPT` (the
-    app's user-editable-prompt override, §5). None → the default."""
+    app's user-editable-prompt override, section 5). None → the default."""
     if not master_md.strip():
         raise ProfileError("input", "master resume is empty — nothing to extract")
     engine = engine or ClaudeCliEngine()

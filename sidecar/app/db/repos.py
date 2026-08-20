@@ -1,4 +1,4 @@
-"""Typed repositories per aggregate (architecture §5, database-design §9).
+"""Typed repositories per aggregate (architecture section 5, database-design section 9).
 
 Routes and the runner go through `Repos`, never a raw session. Each sub-repo is
 a thin, typed surface over one aggregate; the `Repos` container binds them to a
@@ -7,6 +7,7 @@ single session (one short transaction per unit of work — AM4).
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,6 +19,9 @@ from sqlalchemy.orm import Session
 
 from .base import now_utc
 from .models import (
+    APPLY_RUN_ACTIVE_STATUSES,
+    OP_ACTIVE_STATES,
+    OP_TERMINAL_STATES,
     Application,
     ApplicationDocument,
     ApplicationEvent,
@@ -30,6 +34,7 @@ from .models import (
     EngineSettings,
     Job,
     JobScore,
+    LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
     Operation,
@@ -91,6 +96,14 @@ def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
     return merged
 
 
+def snapshot_matches(op: Operation, key: str, value: Any) -> bool:
+    """`op.input_snapshot[key] == value` — the ONE spelling of the ledger-scan
+    predicate (D-A13). Callers that already hold a batch of ops (the tracker's
+    hoisted per-card lookups) use it directly; callers that don't go through
+    `OperationsRepo.list_for_snapshot`."""
+    return (op.input_snapshot or {}).get(key) == value
+
+
 class OperationsRepo:
     """The runner's durable queue + the cost ledger."""
 
@@ -131,12 +144,11 @@ class OperationsRepo:
         ledger retention (US-LOG-01 #2: ~5 pages). Only terminal rows are
         pruned so an in-flight `queued`/`running` op is never dropped mid-flight.
         Returns the number deleted."""
-        terminal = ("succeeded", "failed", "cancelled")
-        keep_ids = select(Operation.id).where(Operation.state.in_(terminal)).order_by(
-            Operation.created_at.desc()
-        ).limit(keep)
+        keep_ids = select(Operation.id).where(
+            Operation.state.in_(OP_TERMINAL_STATES)
+        ).order_by(Operation.created_at.desc()).limit(keep)
         stmt = delete(Operation).where(
-            Operation.state.in_(terminal), Operation.id.not_in(keep_ids)
+            Operation.state.in_(OP_TERMINAL_STATES), Operation.id.not_in(keep_ids)
         )
         result = cast("CursorResult[Any]", self._s.execute(stmt))
         return result.rowcount or 0
@@ -145,10 +157,9 @@ class OperationsRepo:
         """The cost aggregate of the terminal ops `trim_to(keep)` would prune —
         i.e. all-but-the-newest-`keep` terminal rows. Folded into the persistent
         lifetime aggregate *before* pruning so all-time spend survives retention."""
-        terminal = ("succeeded", "failed", "cancelled")
         stmt = (
             select(Operation)
-            .where(Operation.state.in_(terminal))
+            .where(Operation.state.in_(OP_TERMINAL_STATES))
             .order_by(Operation.created_at.desc())
             .offset(keep)
         )
@@ -166,11 +177,25 @@ class OperationsRepo:
             _accumulate_op(agg, op)
         return agg
 
-    def list_by_kind_states(self, kind: str, states: set[str]) -> list[Operation]:
+    def list_by_kind_states(self, kind: str, states: Collection[str]) -> list[Operation]:
         stmt = select(Operation).where(
             Operation.kind == kind, Operation.state.in_(states)
         )
         return list(self._s.scalars(stmt))
+
+    def list_for_snapshot(
+        self, kind: str, states: Collection[str], *, key: str, value: Any
+    ) -> list[Operation]:
+        """Ops of `kind` in `states` whose `input_snapshot[key] == value` — the
+        "which ops belong to this job / batch / contact?" question every ledger
+        surface asks (D-A13). The snapshot is opaque JSON, so the match happens
+        in Python over the same bounded `list_by_kind_states` set the callers
+        already fetched by hand."""
+        return [
+            op
+            for op in self.list_by_kind_states(kind, states)
+            if snapshot_matches(op, key, value)
+        ]
 
     def score_states_by_job(self) -> dict[str, set[str]]:
         """job_id → the set of its `score` operation states — the board's
@@ -205,9 +230,21 @@ class OperationsRepo:
         )
         return self._s.scalars(stmt).first()
 
+    def recent_succeeded_by_kind(self, kind: str, *, limit: int) -> list[Operation]:
+        """The newest `limit` succeeded ops of `kind`, newest first — the
+        contact-sync stamp/outcome derivation scans these for the last sweep
+        that actually probed (a budget-refused sweep still "succeeds")."""
+        stmt = (
+            select(Operation)
+            .where(Operation.kind == kind, Operation.state == "succeeded")
+            .order_by(Operation.finished_at.desc())
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
     def any_in_flight(self, kind: str) -> bool:
         stmt = select(Operation.id).where(
-            Operation.kind == kind, Operation.state.in_(("queued", "running"))
+            Operation.kind == kind, Operation.state.in_(OP_ACTIVE_STATES)
         )
         return self._s.scalars(stmt).first() is not None
 
@@ -637,6 +674,14 @@ class ApplicationsRepo:
     def get(self, application_id: str) -> Application | None:
         return self._s.get(Application, application_id)
 
+    def get_many(self, application_ids: list[str]) -> dict[str, Application]:
+        """id → Application for a batch — one IN query for the ledger's apply
+        subject pass (US-LOG-01 legibility), same shape as JobsRepo.get_many."""
+        if not application_ids:
+            return {}
+        stmt = select(Application).where(Application.id.in_(application_ids))
+        return {app.id: app for app in self._s.scalars(stmt)}
+
     def list(self, *, include_archived: bool = False) -> list[Application]:
         stmt = select(Application)
         if not include_archived:
@@ -1002,6 +1047,14 @@ class ContactsRepo:
     def get(self, contact_id: str) -> Contact | None:
         return self._s.get(Contact, contact_id)
 
+    def get_many(self, contact_ids: list[str]) -> dict[str, Contact]:
+        """id → Contact for a batch — one IN query for the ledger's send/draft
+        subject pass (US-LOG-01 legibility), same shape as JobsRepo.get_many."""
+        if not contact_ids:
+            return {}
+        stmt = select(Contact).where(Contact.id.in_(contact_ids))
+        return {contact.id: contact for contact in self._s.scalars(stmt)}
+
     def get_by_url(self, linkedin_url: str) -> Contact | None:
         stmt = select(Contact).where(Contact.linkedin_url == linkedin_url)
         return self._s.scalars(stmt).first()
@@ -1187,7 +1240,7 @@ class ContactJobAssocsRepo:
 
 
 class OutreachLogsRepo:
-    """Per-message audit (database-design §5)."""
+    """Per-message audit (database-design section 5)."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1277,7 +1330,7 @@ class SequencesRepo:
 
 
 class LinkedInSessionRepo:
-    """Single-row LinkedIn session state (database-design §5)."""
+    """Single-row LinkedIn session state (database-design section 5)."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1300,8 +1353,40 @@ class LinkedInSessionRepo:
         return row
 
 
+class LinkedInSearchCursorRepo:
+    """Single-row pagination cursor for the logged-in job search (Fresh search /
+    Next page). Same single-row pattern as `LinkedInSessionRepo`."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self) -> LinkedInSearchCursor | None:
+        return self._s.scalars(select(LinkedInSearchCursor).limit(1)).first()
+
+    def get_or_create(self) -> LinkedInSearchCursor:
+        row = self.get()
+        if row is None:
+            row = LinkedInSearchCursor()
+            self._s.add(row)
+            self._s.flush()
+        return row
+
+    def update(self, **fields: Any) -> LinkedInSearchCursor:
+        row = self.get_or_create()
+        for key, value in fields.items():
+            setattr(row, key, value)
+        return row
+
+    def clear(self) -> None:
+        """Drop the cursor (Fresh search resets it; Disconnect clears it)."""
+        row = self.get()
+        if row is not None:
+            row.fresh_at = None
+            row.queries = []
+
+
 class ApplyRunsRepo:
-    """Durable Applier attempts (`docs/internal/applier.md` §9.1). Runs are
+    """Durable Applier attempts (`docs/internal/archived/applier-as-built.md` section 9.1). Runs are
     append-only evidence: `update` mutates only the LIVE run's progress
     columns; a retry creates a new row via `create(retry_of_run_id=...)`."""
 
@@ -1369,9 +1454,9 @@ class ApplyRunsRepo:
         return latest
 
     def list_active(self) -> list[ApplyRun]:
-        """Runs a boot-recovery pass must mark interrupted (§9.3)."""
+        """Runs a boot-recovery pass must mark interrupted (section 9.3)."""
         stmt = select(ApplyRun).where(
-            ApplyRun.status.in_(("queued", "waiting_for_packet", "running"))
+            ApplyRun.status.in_(APPLY_RUN_ACTIVE_STATUSES)
         )
         return list(self._s.scalars(stmt))
 
@@ -1400,6 +1485,7 @@ class Repos:
         self.outreach_logs = OutreachLogsRepo(session)
         self.sequences = SequencesRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
+        self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)
         self.apply_runs = ApplyRunsRepo(session)
 
     def prune_ledger(self, keep: int) -> int:

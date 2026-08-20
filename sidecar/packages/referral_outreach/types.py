@@ -1,7 +1,7 @@
 """Typed request/result values + errors for the Referral Outreach facade.
 
 finds-you-jobs-owned (AGPL-3.0-only). These are the plain dataclasses the
-`ReferralAutomation` facade speaks (`docs/internal/referral-outreach.md` §3.1) —
+`ReferralAutomation` facade speaks (`docs/internal/referral-outreach.md` section 3.1) —
 no SQLAlchemy, no FastAPI, no browser types cross this line. The
 OpenOutreach-derived browser core lives under `upstream/` (GPLv3) and is reached
 only through the facade's concrete implementation, never by callers.
@@ -24,7 +24,6 @@ class AccountRef:
     """Identifies the single local LinkedIn account (P1 is single-user)."""
 
     storage_state_path: str
-    tier: str = "new"  # new | seasoned
 
 
 @dataclass(frozen=True)

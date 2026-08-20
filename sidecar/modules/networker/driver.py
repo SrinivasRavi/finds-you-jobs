@@ -9,7 +9,7 @@ This replaces the prior repository's `SubprocessVoyagerDriver`, which spawned
 `python -m voyager_py <command>` and parsed JSON over stdout to keep GPL code
 off an MIT host. finds-you-jobs is AGPL-3.0-only, so GPLv3 + AGPLv3 combine
 directly and the subprocess firewall is retired
-(`docs/internal/referral-outreach.md` §2). The `upstream.worker` functions
+(`docs/internal/referral-outreach.md` section 2). The `upstream.worker` functions
 already return the exact dict envelopes this protocol expects, so this driver is
 a thin faithful adapter — it translates a worker `VoyagerError` into the
 module's typed `NetworkerError`, exactly as the subprocess driver did.
@@ -25,9 +25,12 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .types import NetworkerError
+
+if TYPE_CHECKING:
+    from sidecar.packages.referral_outreach.facade import PacingProfile
 
 
 class VoyagerDriver(Protocol):
@@ -49,17 +52,23 @@ class VoyagerDriver(Protocol):
         page: int = 1, dry_run: bool
     ) -> dict: ...
     def search_jobs(
-        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+        self, keywords: str, location: str = "", *, start: int = 0,
+        dry_run: bool = False
     ) -> dict: ...
     def send_connection(
-        self, public_identifier: str, note: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, note: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict: ...
     def send_dm(
-        self, public_identifier: str, message: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, message: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict: ...
     def status(self, public_identifier: str, *, dry_run: bool) -> dict: ...
     def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict: ...
-    def quota(self, tier: str | None) -> dict: ...
+    def contact_sync_states(
+        self, entries: list[dict], *, dry_run: bool
+    ) -> dict: ...
+    def quota(self) -> dict: ...
     def resume(self) -> dict: ...
     def session_status(self) -> dict: ...
     def login(
@@ -77,10 +86,17 @@ class DirectVoyagerDriver:
 
     Config the host owns and passes in: the saved cookie file (`storage_state`),
     the persistent Chromium profile dir (`user_data_dir`), the pacing-ledger dir
-    (`state_dir`), the account tier, and `headed`. The session-store encryption
+    (`state_dir`), the pacing profile, and `headed`. The session-store encryption
     key is read by `upstream.secure_store` from the `FYJ_SESSION_KEY` env var
     (NFR-SEC-01) — the host sets it in the process env before a browser op.
     `dry_run` on any call forwards to the worker so no browser/network is touched.
+
+    `surface_provider` (optional) hooks the worker to the core browser broker:
+    when set, every page-driving action runs on the broker's single serialized
+    surface lane rather than launching this driver's own Chromium (the `page`
+    is the broker surface's own). It is a `(slug) -> ready surface` callable; the
+    slug is a runtime argument owned inside the GPL package, so this core module
+    never names the vendor. None keeps the self-launch path.
     """
 
     def __init__(
@@ -89,31 +105,46 @@ class DirectVoyagerDriver:
         storage_state: str | None = None,
         user_data_dir: str | None = None,
         state_dir: str | None = None,
-        tier: str | None = None,
+        pacing_profile: PacingProfile | None = None,
+        linkedin_plan: str = "free",
         headed: bool = False,
         env: dict[str, str] | None = None,
+        surface_provider: Callable[[str], Any] | None = None,
     ) -> None:
         self.storage_state = storage_state
         self.user_data_dir = user_data_dir
         self.state_dir = state_dir
-        self.tier = tier
+        # The membership × risk% × override basis (2026-08-01) — drives every cap
+        # (the worker computes the numbers from it).
+        self.pacing_profile = pacing_profile
+        # free|premium — conditions the worker's personalized-note budget
+        # (free-only allowance). 'free' is the conservative default.
+        self.linkedin_plan = linkedin_plan
         self.headed = headed
         # Applied to os.environ for the duration of a call (e.g. FYJ_SESSION_KEY,
         # which `upstream.secure_store` reads to seal/open the storage-state).
         self.env = env
+        # The host's hook to the core browser broker: given the referral surface
+        # slug (a runtime argument owned inside the GPL package, never named
+        # here), return that surface's ready handle. When set, the worker runs
+        # every page-driving action on the broker's serialized lane instead of
+        # launching its own Chromium; None keeps the self-launch path.
+        self.surface_provider = surface_provider
         self.invocations = 0
 
     def _worker(self):  # type: ignore[no-untyped-def]
-        # Imported lazily so a caller that only builds the driver never imports
-        # the GPL browser core (and its playwright dep) until an op runs.
-        from sidecar.packages.referral_outreach.upstream import worker
+        # Through the F-P10 facade so this core module never imports `upstream.*`
+        # directly. Still lazy (the accessor imports the worker on first use), so
+        # a caller that only builds the driver never pulls the GPL browser core
+        # (and its playwright dep) in until an op runs.
+        from sidecar.packages.referral_outreach.facade import worker_module
 
-        return worker
+        return worker_module()
 
     def _call(self, fn: Callable[..., dict], /, **kwargs: Any) -> dict:
         """Run a worker op with `self.env` applied to the process env, translating
         a worker `VoyagerError` into the module's typed `NetworkerError`."""
-        from sidecar.packages.referral_outreach.upstream.errors import VoyagerError
+        from sidecar.packages.referral_outreach.facade import VoyagerError
 
         self.invocations += 1
         prior: dict[str, str | None] = {}
@@ -149,9 +180,12 @@ class DirectVoyagerDriver:
             url=url,
             limit=limit,
             prefer_domain=prefer_domain,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -165,53 +199,67 @@ class DirectVoyagerDriver:
             limit=limit,
             page=page,
             company_urn=company_urn,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
     def search_jobs(
-        self, keywords: str, location: str = "", *, limit: int = 50, dry_run: bool = False
+        self, keywords: str, location: str = "", *, start: int = 0,
+        dry_run: bool = False
     ) -> dict:
         return self._call(
             self._worker().search_jobs,
             keywords=keywords,
             location=location,
-            limit=limit,
+            start=start,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
     def send_connection(
-        self, public_identifier: str, note: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, note: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict:
         return self._call(
             self._worker().send_connection,
             public_identifier=public_identifier,
             note=note,
-            tier=tier if tier is not None else self.tier,
+            on_step=on_step,
+            profile=self.pacing_profile,
+            linkedin_plan=self.linkedin_plan,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
     def send_dm(
-        self, public_identifier: str, message: str, tier: str | None, *, dry_run: bool
+        self, public_identifier: str, message: str, *, dry_run: bool,
+        on_step: Callable[[str], None] | None = None,
     ) -> dict:
         return self._call(
             self._worker().send_dm,
             public_identifier=public_identifier,
             message=message,
-            tier=tier if tier is not None else self.tier,
+            on_step=on_step,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
@@ -222,25 +270,52 @@ class DirectVoyagerDriver:
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
     def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict:
         """Read-only contact-status probe (FR-NW-15): degree + last-message
-        direction/timestamp. No caps decrement (a read, not a send)."""
+        direction/timestamp. Charges the profile-view budget — it is a read, but
+        an authenticated one, and reads are what the restriction ladder watches."""
         return self._call(
             self._worker().contact_sync,
             public_identifier=public_identifier,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,
+            surface_provider=self.surface_provider,
             dry_run=dry_run,
         )
 
-    def quota(self, tier: str | None) -> dict:
+    def contact_sync_states(
+        self, entries: list[dict], *, dry_run: bool
+    ) -> dict:
+        """Batched read-only contact-status probes in ONE browser session (the
+        sync sweep — one `contact_sync` op per contact launched and quit a full
+        Chromium per contact). Each entry is `{public_identifier, urn,
+        thread_only}`: a thread-only entry with a cached urn is answered from
+        the sweep's one inbox read and charges nothing; the rest are full
+        probes with the same per-probe charges/pacing as `contact_sync`,
+        enforced inside the worker."""
+        return self._call(
+            self._worker().contact_sync_states,
+            entries=entries,
+            profile=self.pacing_profile,
+            state_dir=self.state_dir,
+            storage_state=self.storage_state,
+            user_data_dir=self.user_data_dir,
+            headed=self.headed,
+            surface_provider=self.surface_provider,
+            dry_run=dry_run,
+        )
+
+    def quota(self) -> dict:
         return self._call(
             self._worker().quota,
-            tier=tier if tier is not None else self.tier,
+            profile=self.pacing_profile,
             state_dir=self.state_dir,
         )
 
@@ -248,7 +323,8 @@ class DirectVoyagerDriver:
         """Clear the pacing backoff pause (FR-NW-05 manual resume). Local ledger
         only — no browser, no network."""
         return self._call(
-            self._worker().resume, tier=self.tier, state_dir=self.state_dir
+            self._worker().resume, profile=self.pacing_profile,
+            state_dir=self.state_dir
         )
 
     def session_status(self) -> dict:
@@ -271,7 +347,7 @@ class DirectVoyagerDriver:
 
         `cancel_check` is accepted for protocol symmetry; a blocking in-process
         headed login is bounded by `timeout_s` rather than an interrupting poll
-        (a token-based cancel is a follow-on — see `referral-outreach.md` §3.2).
+        (a token-based cancel is a follow-on — see `referral-outreach.md` section 3.2).
         """
         if not self.storage_state:
             raise NetworkerError(

@@ -1,6 +1,6 @@
 // Typed reads over the operations ledger. The wire DTO comes from the
 // generated OpenAPI types (schema.d.ts) — so Pydantic↔TS drift is a build
-// error (architecture §4.3).
+// error (architecture section 4.3).
 
 import type { components } from "./schema";
 import { apiFetch, getSidecarInfo } from "./client";

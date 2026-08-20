@@ -1,7 +1,7 @@
 # voyager_py/tests/test_discovery_filter.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
 """Discovery's URN-scoped search URL + the enrich-time re-verify filter — the
-L1/L2 correctness core (docs/referral-outreach-discovery-design.md §2). Pure;
+L1/L2 correctness core (docs/referral-outreach-discovery-design.md section 2). Pure;
 no browser, no network."""
 
 from __future__ import annotations

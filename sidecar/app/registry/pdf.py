@@ -4,7 +4,7 @@ Carried from the maintainer's prior repository
 (`sidecar/modules/applier_redesign/pdf.py` — same CSS, same page setup) and
 adapted to async Playwright so the apply op renders inside its own event
 loop. PDF-first upload is the observed-ATS regression knowledge the applier
-redesign keeps (`docs/internal/applier.md` §2).
+redesign keeps (`docs/internal/archived/applier-as-built.md` section 2).
 """
 
 from __future__ import annotations

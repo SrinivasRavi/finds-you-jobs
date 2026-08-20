@@ -3,14 +3,18 @@
 // exists on this sidecar).
 //
 // State machine (ports assets/shell.js openReferralsModal):
-//   searching → review (multi-select + per-row draft edit) → confirm → sending → done
-// With the LinkedIn master toggle ON + a valid session, the Reach out path sends
-// through the networker module (per-action confirmation before anything leaves;
-// the voyager quota/caps + backoff are surfaced here). With it OFF (default) or
-// no session, the popup is drafts-only: copy each message and send it yourself —
-// the module never sends (matches README + vision). Discovery/sends are streamed
-// as `networker` SSE events. The LinkedIn enable toggle itself lives in Settings
-// (not built on this repo yet) — this modal only reads session state.
+//   searching → review (per-row draft edit + per-row Connect/Message) → confirm
+// Reworked 2026-07-30: the checkbox multi-select + "Reach out (N)" batch became
+// a per-row Connect (cold invite+note) / Message (warm DM) button — each opens
+// a pre-send confirmation showing THAT person's message, and sends exactly one
+// contact (per-contact confirm; posture doc section 5.1). Rows show Sending/Reached
+// badges in place, so there is no full-screen "sending" phase any more.
+// With the LinkedIn master toggle ON + a valid session, sends go through the
+// networker module (the voyager quota/caps + backoff are surfaced here). With
+// it OFF (default) or no session, the popup is drafts-only: copy each message
+// and send it yourself — the module never sends (matches README + vision).
+// Discovery/sends are streamed as `networker` SSE events. The LinkedIn enable
+// toggle itself lives in Settings — this modal only reads session state.
 //
 // Split 2026-07-25 (F-M6): the per-row, quota-bar, company-confirm, and
 // send-confirm pieces live in ./referrals/*; this file keeps the state machine.
@@ -25,16 +29,16 @@ import {
   useReachOut,
   useReferralCandidates,
   useReferralQuota,
+  useViewInBrowser,
 } from "../api/queries";
 import type { CompanyCandidate } from "../api/types";
 import i18n from "../i18n";
 import { Modal } from "../shell/Modal";
+import { useLinkedInBrowser } from "../surfaces/LinkedInBrowserProvider";
 import { CandidateRow } from "./referrals/CandidateRow";
 import { CompanyConfirmStep } from "./referrals/CompanyConfirmStep";
 import { QuotaBar } from "./referrals/QuotaBar";
 import { ReachOutConfirm } from "./referrals/ReachOutConfirm";
-
-const BUDGET = 10; // recommended-max reaches per role (US-NW-09; not hard-enforced)
 
 function remove(set: Set<string>, id: string): Set<string> {
   if (!set.has(id)) return set;
@@ -50,7 +54,32 @@ function omit(map: Record<string, string>, id: string): Record<string, string> {
   return rest;
 }
 
-type Phase = "start" | "searching" | "confirm" | "review" | "sending" | "done";
+type Phase = "start" | "searching" | "confirm" | "review";
+
+/** How long a just-clicked row keeps its Sending badge even when a refetched
+ *  candidates payload (fetched before the 202 landed) doesn't list it yet. */
+export const SEND_CLICK_GRACE_MS = 15_000;
+
+/** The Sending set after a fresh candidates payload: the server's in-flight
+ *  contacts, plus rows clicked within the grace window (their op may postdate
+ *  the payload). Everything else drops — a missed terminal SSE event must
+ *  never wedge a row on "Sending" forever. Pure; exported for its unit
+ *  tests. */
+export function reconcileSendingIds(
+  prev: Set<string>,
+  inFlight: string[] | undefined,
+  clickedAt: Map<string, number>,
+  now: number,
+): Set<string> {
+  const next = new Set(inFlight ?? []);
+  const cutoff = now - SEND_CLICK_GRACE_MS;
+  for (const id of prev) {
+    const t = clickedAt.get(id);
+    if (t !== undefined && t > cutoff) next.add(id);
+  }
+  if (next.size === prev.size && [...next].every((id) => prev.has(id))) return prev;
+  return next;
+}
 
 export function ReferralsModal({
   jobId,
@@ -77,10 +106,11 @@ export function ReferralsModal({
   const alreadyReached = candidatesQ.data?.already_reached_count ?? 0;
 
   const [phase, setPhase] = useState<Phase>("searching");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  // The contact whose pre-send confirmation is open (per-contact confirm —
+  // each row's Connect/Message button targets exactly one person).
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   // Per-contact send outcomes, streamed as `networker` SSE events: contacts with
   // a send in flight (spinner) and verbatim per-contact failures (US-NW-09). Before
   // this, a failed send surfaced nowhere — the maintainer only learned by checking
@@ -88,7 +118,6 @@ export function ReferralsModal({
   const [sendingIds, setSendingIds] = useState<Set<string>>(new Set());
   const [failures, setFailures] = useState<Record<string, string>>({});
   const [skippedCount, setSkippedCount] = useState(0);
-  const userTouchedRef = useRef(false);
   // Company-confirm step (FR-NW-02): when discovery can't auto-pick the target
   // company (ambiguous name / no employer-domain match), the sidecar streams a
   // `needs_company_confirm` event with the candidate entities and discovers
@@ -157,6 +186,15 @@ export function ReferralsModal({
         void candidatesQ.refetch();
         return;
       }
+      // Voyager refused the read (self-imposed cap / backoff) — nothing was
+      // scanned. Land in review; the empty state renders the verbatim reason
+      // via discover_state === "refused" (never "no contacts found").
+      if (p.phase === "discover_refused") {
+        setDiscovering(false);
+        void candidatesQ.refetch();
+        setPhase((cur) => (cur === "confirm" ? cur : "review"));
+        return;
+      }
       if (!p.contact_id) return;
       if (p.phase === "sent") {
         setSendingIds((prev) => remove(prev, p.contact_id as string));
@@ -202,6 +240,12 @@ export function ReferralsModal({
           if (!cancelled) setPhase("confirm");
           return;
         }
+        // A refused discover (cap/backoff) reopens onto the honest refusal
+        // state in review, not a blank start screen.
+        if (data?.discover_state === "refused") {
+          if (!cancelled) setPhase("review");
+          return;
+        }
         // Empty roster: idle `start` screen with an explicit Find-referrals
         // button (its copy notes when a prior scan found nobody). Nothing
         // scans until the user asks.
@@ -238,8 +282,31 @@ export function ReferralsModal({
     setPhase((cur) => (cur === "confirm" ? cur : "review"));
   }
 
-  // Seed each row's editable draft + pre-select up to 5 not-yet-reached
-  // candidates once, when the full connected review list first lands (US-NW-09).
+  // RECONCILE the per-row Sending state against the sidecar's in-flight send
+  // ops on every candidates refresh (2026-08-16). Two failure modes this
+  // covers at once: a send started here still shows (with its
+  // View-in-browser jump) after the popup is closed and reopened, AND a row
+  // can never wedge on "Sending" when the terminal SSE event was missed (a
+  // reconnect gap — or dev HMR — swallowed it; the live 08-16 stuck row).
+  // Server truth wins; the only local additions kept are clicks fresh enough
+  // that the refetched payload may predate their 202 (`SEND_CLICK_GRACE_MS`).
+  const clickedAtRef = useRef<Map<string, number>>(new Map());
+  const candidatesData = candidatesQ.data;
+  useEffect(() => {
+    if (!candidatesData) return;
+    setSendingIds((prev) =>
+      reconcileSendingIds(
+        prev,
+        candidatesData.in_flight_contact_ids,
+        clickedAtRef.current,
+        Date.now(),
+      ),
+    );
+  }, [candidatesData]);
+
+  // Seed each row's editable draft once, when the full connected review list
+  // first lands (US-NW-09). (No pre-selection any more — there is no selection;
+  // each row sends itself via its own button.)
   useEffect(() => {
     if (phase !== "review" || candidates.length === 0) return;
     setDrafts((prev) => {
@@ -247,45 +314,24 @@ export function ReferralsModal({
       for (const c of candidates) if (next[c.contact_id] === undefined) next[c.contact_id] = c.draft;
       return next;
     });
-    // Restore the persisted selection (FR-NW-01): a reopened `pending` popup
-    // shows the contacts the user already picked (minus any now reached). When
-    // there is no persisted selection, pre-select the first ≤5 not-yet-reached
-    // candidates. Recomputed as the list grows until the user touches it.
-    if (connected && !userTouchedRef.current) {
-      const persisted = candidates.filter((c) => c.already_selected && !c.already_reached);
-      if (persisted.length > 0) {
-        setSelected(new Set(persisted.map((c) => c.contact_id)));
-      } else {
-        const pick = new Set<string>();
-        for (const c of candidates) {
-          if (pick.size >= 5) break;
-          if (!c.already_reached) pick.add(c.contact_id);
-        }
-        setSelected(pick);
-      }
-    }
-  }, [phase, candidates, connected]);
+  }, [phase, candidates]);
 
-  const remaining = Math.max(BUDGET - alreadyReached, 0);
   const dailyRemaining = quota.data ? quota.data.daily_limit - quota.data.daily_used : 99;
   const capReached = dailyRemaining <= 0;
+  // DMs have their own budget (2026-07-30): a spent invite cap must not block a
+  // warm 1st-degree Message, and vice versa. Limit 0 means "unknown" (stale
+  // sidecar) — treat as not blocked; the package refuses authoritatively anyway.
+  const dmCapReached = Boolean(
+    quota.data && quota.data.dm_daily_sent >= quota.data.dm_daily_limit,
+  );
   const failureCount = Object.keys(failures).length;
 
   // Stable per-row callbacks (id-passing) so the memoized CandidateRow only
   // re-renders when its own props change — not on every keystroke in a sibling
   // row's draft.
-  const toggle = useCallback(
-    (id: string) => {
-      userTouchedRef.current = true;
-      setSelected((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id);
-        else if (next.size < remaining && !capReached) next.add(id);
-        return next;
-      });
-    },
-    [remaining, capReached],
-  );
+  const handleAsk = useCallback((id: string) => {
+    setConfirmingId(id);
+  }, []);
 
   const handleExpand = useCallback((id: string) => {
     setExpanded((cur) => (cur === id ? null : id));
@@ -295,45 +341,67 @@ export function ReferralsModal({
     setDrafts((d) => ({ ...d, [id]: v }));
   }, []);
 
-  async function doReachOut() {
-    // Dedup guard: ignore a repeated Send now while a batch is already in flight
+  // A row's LinkedIn button: show the contact on the in-app LinkedIn browser
+  // modal (2026-08-16 — never an external browser). The view is a QUEUED
+  // operation, so it can never interrupt a running send — but while THAT
+  // row's send is in flight the surface is already showing the contact, so
+  // don't even enqueue a pointless view; just go watch. A mutation so a
+  // failed enqueue surfaces (MutationErrorBanner), never a silent nothing.
+  // Close-then-open: the referrals popup is itself a modal, and the browser
+  // dialog replaces it rather than stacking on it.
+  const linkedinBrowser = useLinkedInBrowser();
+  const viewInBrowser = useViewInBrowser();
+  const handleOpenLinkedIn = useCallback(
+    (id: string) => {
+      const target = candidates.find((c) => c.contact_id === id);
+      if (target?.linkedin_url && !sendingIds.has(id)) {
+        viewInBrowser.mutate({
+          url: target.linkedin_url,
+          surface: "linkedin",
+          contactId: id,
+        });
+      }
+      onClose();
+      linkedinBrowser.open();
+    },
+    [candidates, sendingIds, viewInBrowser, linkedinBrowser, onClose],
+  );
+
+  async function doReachOut(contactId: string) {
+    // Dedup guard: ignore a repeated Send now while THIS contact is in flight
     // (the sidecar also skips duplicates, but this stops the click from firing).
-    if (reachOut.isPending || sendingIds.size > 0) return;
-    setConfirming(false);
-    const picks = [...selected].map((id) => ({
-      contact_id: id,
-      message: drafts[id] ?? candidates.find((c) => c.contact_id === id)?.draft ?? "",
-    }));
-    // Immediate feedback: mark every picked contact as sending before the request
-    // resolves; SSE outcomes flip each to sent/failed.
-    setSendingIds(new Set(picks.map((p) => p.contact_id)));
-    setFailures({});
-    setSkippedCount(0);
-    setPhase("sending");
+    if (reachOut.isPending || sendingIds.has(contactId)) return;
+    setConfirmingId(null);
+    const message =
+      drafts[contactId] ?? candidates.find((c) => c.contact_id === contactId)?.draft ?? "";
+    // Immediate feedback: the row shows a Sending badge before the request
+    // resolves; the SSE outcome flips it to Reached/failed. The list stays on
+    // screen — pacing spaces real sends 30-90 s apart, so a full-screen
+    // "sending…" takeover would just hide the roster for minutes. The click
+    // time feeds the reconcile's grace window (a refetch racing the 202 must
+    // not strip this fresh badge).
+    clickedAtRef.current.set(contactId, Date.now());
+    setSendingIds((prev) => new Set(prev).add(contactId));
+    setFailures((prev) => omit(prev, contactId));
     try {
       const res = await Promise.resolve(
-        reachOut.mutateAsync({ job_id: jobId, application_id: applicationId, contacts: picks }),
+        reachOut.mutateAsync({
+          job_id: jobId,
+          application_id: applicationId,
+          contacts: [{ contact_id: contactId, message }],
+        }),
       );
-      // Duplicates the sidecar refused never entered flight — drop their spinners.
-      const skipped = res?.skipped_contact_ids ?? [];
-      if (skipped.length > 0) {
-        setSkippedCount(skipped.length);
-        setSendingIds((prev) => {
-          const next = new Set(prev);
-          for (const id of skipped) next.delete(id);
-          return next;
-        });
+      // A duplicate the sidecar refused never entered flight — drop the spinner.
+      if ((res?.skipped_contact_ids ?? []).includes(contactId)) {
+        setSkippedCount((n) => n + 1);
+        setSendingIds((prev) => remove(prev, contactId));
       }
       await candidatesQ.refetch();
       await quota.refetch();
-      setSelected(new Set());
-      setPhase("done");
     } catch {
-      // The batch never entered flight (the global MutationCache hook logs +
-      // banners it) — un-stick every spinner and return to review so the user
-      // can retry, instead of an eternal "sending" (2026-07-24 audit).
-      setSendingIds(new Set());
-      setPhase("review");
+      // The send never entered flight (the global MutationCache hook logs +
+      // banners it) — un-stick the spinner so the user can retry.
+      setSendingIds((prev) => remove(prev, contactId));
     }
   }
 
@@ -408,7 +476,6 @@ export function ReferralsModal({
   // Discovery is genuinely in flight (submit + the long server-side op).
   const finding = phase === "searching" || discovering;
   const titleVerb = phase === "confirm" ? t("popups.referrals.titleConfirmCompany")
-    : phase === "sending" ? t("popups.referrals.titleSendingMessages")
     : finding ? t("popups.referrals.titleFinding")
     : alreadyReached > 0 ? t("popups.referrals.titleView") : t("popups.referrals.findReferrals");
   const title = `${titleVerb} — ${jobTitle} · ${company}`;
@@ -437,8 +504,9 @@ export function ReferralsModal({
           </div>
         )}
 
-        {/* Outcome summary — failures + skipped duplicates (US-NW-09) */}
-        {phase === "done" && (failureCount > 0 || skippedCount > 0) && (
+        {/* Outcome summary — failures + skipped duplicates (US-NW-09). Shown in
+            review as sends resolve; rows carry the per-contact detail. */}
+        {phase === "review" && (failureCount > 0 || skippedCount > 0) && (
           <div
             className="border-b border-border bg-surface-2 px-5 py-2 text-[11.5px]"
             data-testid="referrals-outcome-summary"
@@ -532,19 +600,7 @@ export function ReferralsModal({
             </div>
           )}
 
-          {phase === "sending" && (
-            <div className="flex h-full flex-col items-center justify-center gap-4 py-16 text-center" data-testid="referrals-sending">
-              <div className="h-9 w-9 animate-spin rounded-full border-2 border-warn border-t-transparent" />
-              <div>
-                <div className="text-[14px] font-semibold text-ink">{t("popups.referrals.sendingTitle")}</div>
-                <div className="mt-1 text-[12px] text-ink-3">
-                  {t("popups.referrals.sendingHint")}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {(phase === "review" || phase === "done") &&
+          {phase === "review" &&
             (candidates.length === 0 ? (
               connected && discovering ? (
                 // The 202 resolves long before the ~30s voyager op — an empty
@@ -559,6 +615,32 @@ export function ReferralsModal({
                     </div>
                   </div>
                 </div>
+              ) : connected && candidatesQ.data?.discover_state === "refused" ? (
+                // The scan was REFUSED (self-imposed cap / backoff), not run.
+                // Saying "no contacts found" here is what hid the Kaseya bug —
+                // show the verbatim pacer reason instead.
+                <div
+                  className="flex h-full flex-col items-center justify-center gap-3 px-8 py-16 text-center"
+                  data-testid="referrals-refused"
+                >
+                  <div className="max-w-md">
+                    <div className="text-[14px] font-semibold text-ink">
+                      {t("popups.referrals.refusedTitle")}
+                    </div>
+                    <div className="mt-1.5 text-[12.5px] leading-relaxed text-ink-3">
+                      <Trans
+                        i18nKey="popups.referrals.refusedBody"
+                        values={{ company }}
+                        components={{ strong: <strong className="text-ink-2" /> }}
+                      />
+                    </div>
+                  </div>
+                  {candidatesQ.data.refusal_reason && (
+                    <code className="rounded bg-surface-2 px-2 py-1 text-[11.5px] text-ink-2">
+                      {candidatesQ.data.refusal_reason}
+                    </code>
+                  )}
+                </div>
               ) : (
               <div className="flex h-full items-center justify-center px-8 text-center text-[13px] text-ink-3">
                 {connected
@@ -572,22 +654,28 @@ export function ReferralsModal({
                   key={c.contact_id}
                   c={c}
                   connected={connected}
-                  selectable={connected && !c.already_reached && !capReached && !sendingIds.has(c.contact_id)}
-                  checked={selected.has(c.contact_id)}
+                  sendable={
+                    connected &&
+                    !c.already_reached &&
+                    !sendingIds.has(c.contact_id) &&
+                    // Channel-specific budget: invites and DMs are separate meters.
+                    (c.channel === "dm" ? !dmCapReached : !capReached)
+                  }
                   draft={drafts[c.contact_id] ?? c.draft}
                   expanded={expanded === c.contact_id}
                   sending={sendingIds.has(c.contact_id)}
                   failure={failures[c.contact_id] ?? null}
-                  onToggle={toggle}
+                  onAsk={handleAsk}
                   onExpand={handleExpand}
                   onDraft={handleDraft}
+                  onOpenLinkedIn={handleOpenLinkedIn}
                 />
               ))
             ))}
 
           {/* Discover more (FR-NW-01/02) — pulls the next batch of candidates.
               Shown when connected (voyager-driven); manual mode has no roster. */}
-          {connected && (phase === "review" || phase === "done") && (
+          {connected && phase === "review" && (
             <div className="flex flex-col items-center gap-1.5 px-5 py-4">
               {candidates.length > 0 && (
                 <div className="text-[11.5px] text-ink-3" data-testid="referrals-roster-count">
@@ -616,8 +704,9 @@ export function ReferralsModal({
         </div>
         )}
 
-        {/* Footer */}
-        {(phase === "review" || phase === "done") && (
+        {/* Footer — sending moved into the rows (per-row Connect/Message), so
+            only Close + the company-confirm shortcut live here now. */}
+        {phase === "review" && (
           <div className="flex items-center justify-end gap-2 border-t border-border bg-surface-2 px-5 py-3">
             {companyCandidates.length > 0 && (
               <button
@@ -634,29 +723,27 @@ export function ReferralsModal({
             >
               {t("popups.referrals.close")}
             </button>
-            {connected && (
-              <button
-                data-testid="referrals-reach-out-btn"
-                disabled={selected.size === 0 || capReached}
-                onClick={() => setConfirming(true)}
-                className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {t("popups.referrals.reachOut", { count: selected.size })}
-              </button>
-            )}
           </div>
         )}
       </div>
 
-      {/* Per-action confirmation before anything sends (US-NW-09 / vision) */}
-      {confirming && (
-        <ReachOutConfirm
-          count={selected.size}
-          sending={reachOut.isPending || sendingIds.size > 0}
-          onCancel={() => setConfirming(false)}
-          onSend={() => void doReachOut()}
-        />
-      )}
+      {/* Pre-send confirmation for the one contact whose button was clicked
+          (per-contact confirm — US-NW-09 / vision / posture doc section 5.1). */}
+      {confirmingId && (() => {
+        const c = candidates.find((x) => x.contact_id === confirmingId);
+        if (!c) return null;
+        return (
+          <ReachOutConfirm
+            name={c.name}
+            channel={c.channel}
+            message={drafts[c.contact_id] ?? c.draft}
+            sending={reachOut.isPending || sendingIds.has(c.contact_id)}
+            onChange={(v) => handleDraft(c.contact_id, v)}
+            onCancel={() => setConfirmingId(null)}
+            onSend={() => void doReachOut(c.contact_id)}
+          />
+        );
+      })()}
     </Modal>
   );
 }

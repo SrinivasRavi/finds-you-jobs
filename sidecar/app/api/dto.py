@@ -1,4 +1,4 @@
-"""Pydantic DTOs — the HTTP boundary (architecture §4.2, §5.2 one-way rule).
+"""Pydantic DTOs — the HTTP boundary (architecture section 4.2, section 5.2 one-way rule).
 
 DTO ↔ ORM conversion happens *here* and only here: models/dataclasses never
 cross into the wire types, and Pydantic never leaks into `modules/`. These
@@ -14,12 +14,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..db.models import (
+    OP_ACTIVE_STATES,
     Application,
     Artifact,
     Contact,
     EngineSettings,
     Job,
     JobScore,
+    LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
     Operation,
@@ -200,7 +202,7 @@ class ScheduleRunResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Applications (database-design §4)
+# Applications (database-design section 4)
 # ---------------------------------------------------------------------------
 
 
@@ -246,7 +248,7 @@ class ApplicationDTO(BaseModel):
     job: JobDTO | None = None
     column: str
     priority: str
-    # Exclusive pre-submission intent (`docs/internal/roadmap.md` §5.1):
+    # Exclusive pre-submission intent (`docs/internal/roadmap.md` section 5.1):
     # `none | referral | apply` — one authoritative value.
     intent: str = "none"
     notes_markdown: str
@@ -271,8 +273,8 @@ class ApplicationDTO(BaseModel):
     # `pending` | `sending` | `reachedOut` | `failed`. See derive_referrals_state.
     referrals_state: str = Field(default="none", serialization_alias="referralsState")
     referrals_count: int = Field(default=0, serialization_alias="referralsCount")
-    # Latest Applier run for the card's Apply slot (`docs/internal/applier.md`
-    # §8.2/§9.1): none | waiting_for_packet | running | ready_for_human |
+    # Latest Applier run for the card's Apply slot (`docs/internal/archived/applier-as-built.md`
+    # section 8.2/section 9.1): none | waiting_for_packet | running | ready_for_human |
     # blocked | timed_out | interrupted | failed | submitted.
     apply_run_status: str = Field(default="none", serialization_alias="applyRunStatus")
     apply_run_id: str | None = Field(default=None, serialization_alias="applyRunId")
@@ -285,8 +287,8 @@ class ApplicationDTO(BaseModel):
 
 
 class ApplyRunDTO(BaseModel):
-    """One durable Applier attempt (`docs/internal/applier.md` §9.1) for the
-    companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
+    """One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1)
+    for the companion panel. `blockers`/`fields` are redacted evidence (labels/kinds,
     never raw form values); `screenshots` counts the evidence PNGs served by
     `GET /api/apply-runs/{id}/screenshots/{index}`."""
 
@@ -313,9 +315,9 @@ class ApplyRunDTO(BaseModel):
 
 
 class ApplyStartRequest(BaseModel):
-    """POST /api/applications/{id}/apply — no pre-confirm modal (§8.1); the
+    """POST /api/applications/{id}/apply — no pre-confirm modal (section 8.1); the
     click IS the action. `retry_of_run_id` links a Retry / Reopen-and-refill
-    to the immutable prior run (§8.3). The `dev` knobs pass through to the op
+    to the immutable prior run (section 8.3). The `dev` knobs pass through to the op
     and are honored only when the sidecar runs with FYJ_APPLY_DEV=1."""
 
     retry_of_run_id: str | None = None
@@ -324,7 +326,7 @@ class ApplyStartRequest(BaseModel):
 
 class ApplyAttestRequest(BaseModel):
     """POST /api/apply-runs/{id}/attest — the human says what happened after
-    reviewing the P1 handoff (§8.4). `submitted=True` records a user-attested
+    reviewing the P1 handoff (section 8.4). `submitted=True` records a user-attested
     submission and moves the card to Applied; False leaves the card where it
     is with the honest run result."""
 
@@ -348,7 +350,7 @@ class ApplicationCreate(BaseModel):
 class ApplicationUpdate(BaseModel):
     column: str | None = None
     priority: str | None = None
-    # Exclusive intent (`docs/internal/roadmap.md` §5.1): setting one value
+    # Exclusive intent (`docs/internal/roadmap.md` section 5.1): setting one value
     # replaces the other — the column IS the single authoritative store.
     intent: Literal["none", "referral", "apply"] | None = None
     notes_markdown: str | None = None
@@ -388,7 +390,7 @@ class ActivityEntryDTO(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Profile (database-design §3)
+# Profile (database-design section 3)
 # ---------------------------------------------------------------------------
 
 
@@ -426,6 +428,8 @@ class PreferencesDTO(BaseModel):
     thresholds: dict[str, Any]
     portals_config: dict[str, Any]
     voyager_risk_marker_on: bool
+    linkedin_search_enabled: bool
+    linkedin_search_ack_at: datetime | None
     engine_routing: dict[str, Any]
     ui_state: dict[str, Any]
 
@@ -440,6 +444,8 @@ class PreferencesUpdate(BaseModel):
     thresholds: dict[str, Any] | None = None
     portals_config: dict[str, Any] | None = None
     voyager_risk_marker_on: bool | None = None
+    linkedin_search_enabled: bool | None = None
+    linkedin_search_ack_at: datetime | None = None
     engine_routing: dict[str, Any] | None = None
     ui_state: dict[str, Any] | None = None
 
@@ -561,7 +567,7 @@ class SettingsDTO(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Networking (database-design §5)
+# Networking (database-design section 5)
 # ---------------------------------------------------------------------------
 
 
@@ -603,10 +609,16 @@ class ContactDTO(BaseModel):
     sent_at: datetime | None
     accepted_at: datetime | None
     archived_at: datetime | None
-    # Derived last-message snippet for the kanban card (US-NW-01). P1 has no
-    # reply detection (that's P2), so this is always the last message *we* sent.
+    # The card/modal last-message snippet (US-NW-01/03): the thread's REAL last
+    # message once contact-sync has read it (`profile_payload.last_thread_message`),
+    # attributed by `last_message_direction` — "me" is ours, "them" is the
+    # contact's, with `last_message_from` naming them. Before any sync the
+    # latest OutreachLog fills in (always direction "me"), so a card that has
+    # outreach history is never blank.
     last_message: str | None = None
     last_message_at: datetime | None = None
+    last_message_direction: str | None = None  # "me" | "them" | None (no message)
+    last_message_from: str | None = None  # their display name, only when direction == "them"
 
 
 class ContactCreate(BaseModel):
@@ -666,11 +678,19 @@ class ReferralCandidatesDTO(BaseModel):
     #   found   — discover persisted candidates (they're in `candidates`)
     #   empty   — discover ran but LinkedIn returned nobody at the company
     #   confirm — discover needs the user to pick the company entity
+    #   refused — voyager refused the read (self-imposed cap / backoff); the
+    #             verbatim reason is in `refusal_reason` (2026-08-15: this state
+    #             used to masquerade as `empty`)
     discover_state: str = "never"
     # When discover_state == "confirm": the entity candidates to choose from
     # (may be empty → paste-URL only) and whether a pasted URL had failed.
     company_confirm: list[dict[str, Any]] = Field(default_factory=list)
     confirm_url_failed: bool = False
+    # When discover_state == "refused": the verbatim pacer/backoff reason.
+    refusal_reason: str = ""
+    # Contacts with a send op queued or running RIGHT NOW — the popup seeds its
+    # per-row Sending state from this, so it survives close/reopen (2026-08-16).
+    in_flight_contact_ids: list[str] = Field(default_factory=list)
 
 
 class ReachOutContact(BaseModel):
@@ -698,14 +718,20 @@ class DiscoverReferralsRequest(BaseModel):
 
 
 class ReachOutRequest(BaseModel):
-    """Batch reach-out (US-NW-09). Each contact gets ITS audience/warmth template
-    (fanned out per person, not one string). Per-action confirmation lives in the
-    UI; `dry_run` plans the sends without touching LinkedIn."""
+    """Reach-out (US-NW-09). Each contact gets ITS audience/warmth template
+    (fanned out per person, not one string). The pre-send confirmation gate
+    lives in the UI (per contact since 2026-07-30 — each row's Connect/Message
+    button confirms and sends one person); `dry_run` plans without touching
+    LinkedIn.
+
+    `contacts` is hard-capped: an unbounded list meant one HTTP request could
+    authorise arbitrarily many real sends (posture doc section 5.1 — a user-control
+    ceiling, not a compliance claim). The UI sends one contact per confirm."""
 
     job_id: str | None = None
     application_id: str | None = None
     dry_run: bool = False
-    contacts: list[ReachOutContact]
+    contacts: list[ReachOutContact] = Field(min_length=1, max_length=10)
 
 
 class ReachOutResult(BaseModel):
@@ -729,15 +755,88 @@ class QuotaDTO(BaseModel):
     only on the maintainer's live-dogfood path."""
 
     connected: bool
-    tier: str
     daily_used: int
     daily_limit: int
     weekly_used: int
     weekly_limit: int
-    # 1st-degree DMs: tracked + displayed, never capped — they do not decrement
-    # the invite counters above (FR-NW-04 / NFR-LI-02).
+    # 1st-degree DMs: separately budgeted (they never decrement the invite
+    # counters above — FR-NW-04), and since 2026-07-30 they ARE capped: an
+    # unbounded DM channel next to a capped invite channel was a loophole
+    # (posture doc section 4). Limits mirror the package's enforced tier table.
     dm_daily_sent: int = 0
     dm_weekly_sent: int = 0
+    dm_daily_limit: int = 0
+
+
+class LinkedInSearchCursorDTO(BaseModel):
+    """Fresh-search pagination state for "Scan LinkedIn jobs" (Fresh search /
+    Next page). `next_page_available` is the one flag the UI gates the
+    Next-page button on; `expired`/`exhausted` drive the route's 409 wording.
+    The TTL is a host freshness policy (result coherence) — LinkedIn's own
+    pagination is stateless and never expires."""
+
+    expired: bool
+    exhausted: bool               # every snapshotted query hit end-of-results
+    next_page_available: bool     # not expired and not exhausted
+
+
+class LinkedInCapDTO(BaseModel):
+    """One self-imposed cap the user can override. `effective` is the enforced
+    number (an override, or ceiling × risk%); `ceiling` is the estimated
+    LinkedIn limit (the 100% reference); `overridden` says whether `effective`
+    is a manual pin. `key` is the `{meter}_{window}` wire id."""
+
+    key: str
+    meter: str
+    window: str
+    label: str
+    effective: int
+    ceiling: int
+    overridden: bool
+
+
+class LinkedInRateLimitsDTO(BaseModel):
+    """The self-imposed LinkedIn rate-limit profile (maintainer directive
+    2026-08-01). Membership picks the estimated ceilings; `risk_pct` (10–100)
+    scales them (100% = sitting at the estimated real limit); each cap is
+    independently overridable. `job_search_hour_*` is the live pages/hour budget
+    the Next-page button gates on."""
+
+    membership_type: str
+    risk_pct: int
+    memberships: list[str]
+    caps: list[LinkedInCapDTO]
+    job_search_hour_remaining: int
+
+
+class BrowserViewRequest(BaseModel):
+    """POST /api/browser/view — queue a `view_page` operation that shows `url`
+    on a watch-only broker surface once the lane is free (2026-08-16; the
+    queued successor to the immediate /api/browser/open). `width`/`height`/
+    `dpr` are the caller's display metrics (fail-closed geometry);
+    `contact_id` links the ledger row to the contact whose button was
+    clicked."""
+
+    url: str
+    surface: str | None = None
+    width: int | None = None
+    height: int | None = None
+    dpr: float | None = None
+    contact_id: str | None = None
+
+
+class ContactSyncOutcomeDTO(BaseModel):
+    """What the newest contact-sync attempt did (US-NW-12 honesty). `stopped`
+    is "" for a clean sweep, else the verbatim stop reason the sweep surfaced
+    (cap_or_backoff | rate_limited | auth_error | batch_failed) with
+    `unprobed` sizing the untouched tail — the Networking header shows it so a
+    refused press never reads as a successful sync."""
+
+    at: datetime
+    synced: int = 0
+    failed: int = 0
+    stopped: str = ""
+    unprobed: int = 0
 
 
 class LinkedInSessionDTO(BaseModel):
@@ -746,16 +845,33 @@ class LinkedInSessionDTO(BaseModel):
     `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
     `status` is the session validity. The popup send path unlocks only when
     enabled AND status == 'valid'. N4 adds the session-capture metadata the
-    Settings → LinkedIn session UI renders (connected-as, expiry, backoff)."""
+    Settings → LinkedIn session UI renders (connected-as, expiry, backoff);
+    `search_cursor` (2026-08-01) is the job-search pagination state — None
+    until a Fresh search has run; `rate_limits` is the self-imposed
+    membership/risk/override profile."""
 
     enabled: bool
     status: str        # valid | expired | never_set | connecting | backing_off
-    account_tier: str  # new | seasoned
     connected_as: str = ""
     li_at_expires_at: datetime | None = None
     last_validated_at: datetime | None = None
     paused_until: datetime | None = None
     paused_reason: str = ""
+    search_cursor: LinkedInSearchCursorDTO | None = None
+    rate_limits: LinkedInRateLimitsDTO | None = None
+    # When the last contact-status sync that ACTUALLY PROBED finished (None =
+    # never). Backs the Networking header's "Synced Nm ago" stamp beside the
+    # Sync button — the one trigger there is (manual-only, 2026-08-15); each
+    # press is real LinkedIn read traffic. A sweep the read budget refused
+    # outright "succeeds" as an operation but synced nothing, so it must not
+    # re-stamp "Synced just now" (the 2026-08-15 live confusion). Attached by
+    # `routes._linkedin_session_base`.
+    contact_sync_last_at: datetime | None = None
+    # What the NEWEST sync attempt did — synced/failed counts plus the stop
+    # reason and untouched-tail size when the sweep was cut short. The
+    # Networking header renders the stop reason instead of letting a refused
+    # press read as a clean sync. None until a sync has ever run.
+    contact_sync_last_outcome: ContactSyncOutcomeDTO | None = None
 
 
 class LinkedInConnectRequest(BaseModel):
@@ -768,17 +884,26 @@ class LinkedInConnectRequest(BaseModel):
 
 
 class LinkedInSearchRequest(BaseModel):
-    """One-shot logged-in job search (discovery-expansion #6). `limit` is the
-    per-query fetch budget (rows per role-alias × location pair); the route
-    clamps it to a safe range. Omitted → the server default."""
+    """One-shot logged-in job search (discovery-expansion #6). Always one page
+    of 25 per role-alias × location pair (the package invariant). `mode` picks
+    the button: `fresh` runs page 0 from current prefs and resets the pagination
+    cursor; `next` continues the last Fresh search's snapshot (409 when there
+    is none, it expired, or it is exhausted)."""
 
-    limit: int | None = None
+    mode: Literal["fresh", "next"] = "fresh"
 
 
-class LinkedInTierRequest(BaseModel):
-    """Set the account-tier the app passes to the outreach package (US-REF-08)."""
+class LinkedInRateLimitsRequest(BaseModel):
+    """Set the self-imposed rate-limit profile (2026-08-01). Provide the basis
+    (`membership_type` and/or `risk_pct`) — which resets overrides — OR pin one
+    cap via `override_key`/`override_value`, OR `reset_overrides`. The route
+    rejects a request that provides none of these."""
 
-    account_tier: str  # new | seasoned
+    membership_type: str | None = None  # free | premium | sales_navigator | recruiter_lite
+    risk_pct: int | None = None          # 10–100 (clamped)
+    override_key: str | None = None      # "{meter}_{window}", e.g. "invites_week"
+    override_value: int | None = None    # absolute pin, >= 0
+    reset_overrides: bool = False
 
 
 class PromptDTO(BaseModel):
@@ -872,8 +997,24 @@ class EngineSettingUpsert(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Operations (architecture §5.3 — the ledger surface)
+# Operations (architecture section 5.3 — the ledger surface)
 # ---------------------------------------------------------------------------
+
+
+class OperationSubjectDTO(BaseModel):
+    """What one ledger row acted ON — its human subject (US-LOG-01 legibility,
+    maintainer directive 2026-08-03). Every field is verbatim entity data
+    (a contact's name, "title · company", the note text) — never localized
+    here; the frontend adds its own chrome (count nouns, mode names) via i18n.
+    Computed batched in the ledger route from the row's snapshot/result refs;
+    absent whenever those refs don't resolve (historical rows, deleted
+    entities) — the row then renders as before, nothing is fabricated."""
+
+    label: str = ""  # primary line ("Jane Doe", "Backend Engineer") — may be ""
+    href: str | None = None  # external link (LinkedIn profile / posting URL)
+    context: str | None = None  # secondary line (the role a send was for; search mode)
+    detail: str | None = None  # long text for the EXPANDED row (the DM/note sent)
+    count: int | None = None  # entities touched (contacts found, jobs persisted…)
 
 
 class OperationDTO(BaseModel):
@@ -891,11 +1032,27 @@ class OperationDTO(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    # Not a DB column — filled by the ledger route's batched subject pass.
+    subject: OperationSubjectDTO | None = None
+    # Not a DB column — a live send op's routed channel + completed step keys
+    # (from the in-memory progress registry), so a queue panel mounting
+    # mid-send still renders the fine steps (2026-08-16).
+    progress: dict[str, Any] | None = None
 
 
 class OperationAccepted(BaseModel):
     id: str
     kind: str
+    state: str
+
+
+class ContactSyncAccepted(BaseModel):
+    """Result of a Sync-button contact-status refresh (FR-NW-15, manual-only).
+
+    `state` is `queued` (a sync started) or `already_running` (joined the one
+    in flight). `id` is set only for `queued`."""
+
+    id: str | None = None
     state: str
 
 
@@ -931,7 +1088,7 @@ def derive_score_status(has_score: bool, op_states: set[str]) -> str:
     score means `Score failed`; else Pending (not yet attempted)."""
     if has_score:
         return "scored"
-    if "queued" in op_states or "running" in op_states:
+    if op_states & OP_ACTIVE_STATES:
         return "pending"
     if "failed" in op_states:
         return "failed"
@@ -972,14 +1129,14 @@ def job_dto(
 
 
 def derive_packet_state(operation_states: list[str | None]) -> str:
-    """The card's packetState from its artifacts' operation states (database-design §4).
+    """The card's packetState from its artifacts' operation states (database-design section 4).
 
     none → no artifacts yet; generating → any op still queued/running;
     failed → an op failed and none is generating; ready → everything settled.
     """
     if not operation_states:
         return "none"
-    if any(state in ("queued", "running") for state in operation_states):
+    if any(state in OP_ACTIVE_STATES for state in operation_states):
         return "generating"
     if any(state == "failed" for state in operation_states):
         return "failed"
@@ -994,7 +1151,7 @@ def derive_artifact_state(
     approved_at is stamped; ready → otherwise settled."""
     if artifact is None:
         return "none"
-    if operation_state in ("queued", "running"):
+    if operation_state in OP_ACTIVE_STATES:
         return "generating"
     if operation_state == "failed":
         return "failed"
@@ -1098,7 +1255,7 @@ def apply_run_dto(run: Any) -> ApplyRunDTO:
 
 
 def template_draft(name: str, company: str, audience_tag: str, warmth: str) -> str:
-    """A deterministic per-audience/warmth referral draft (US-NW-09 §9 8-template
+    """A deterministic per-audience/warmth referral draft (US-NW-09 section 9 8-template
     model). Zero-LLM — shown instantly in the popup, editable, and replaceable by
     a grounded LLM rewrite via the `draft` op. Mirrors the prototype copy."""
     first = (name.split(" ")[0] if name else "there")
@@ -1131,10 +1288,33 @@ def template_draft(name: str, company: str, audience_tag: str, warmth: str) -> s
 
 
 def contact_dto(contact: Contact, last_log: OutreachLog | None = None) -> ContactDTO:
+    """Prefers the synced thread snapshot (`profile_payload.last_thread_message`,
+    the REAL last message with honest attribution) and falls back to the latest
+    OutreachLog — our own sent message, direction "me" — when no sync has read
+    the thread yet. See the ContactDTO field comment."""
     dto = ContactDTO.model_validate(contact)
+    thread = (contact.profile_payload or {}).get("last_thread_message")
+    if (
+        isinstance(thread, dict)
+        and thread.get("direction") in ("me", "them")
+        and thread.get("text")
+    ):
+        dto.last_message = str(thread["text"])
+        dto.last_message_direction = str(thread["direction"])
+        at = thread.get("at")
+        if isinstance(at, str):
+            try:
+                dto.last_message_at = datetime.fromisoformat(at)
+            except ValueError:
+                dto.last_message_at = None
+        from_name = thread.get("from_name")
+        if thread["direction"] == "them" and isinstance(from_name, str) and from_name:
+            dto.last_message_from = from_name
+        return dto
     if last_log is not None:
         dto.last_message = last_log.body_sent
         dto.last_message_at = last_log.sent_at or last_log.created_at
+        dto.last_message_direction = "me"
     return dto
 
 
@@ -1160,39 +1340,69 @@ def referral_candidate_dto(
     )
 
 
-# Account-tier rolling caps (US-NW-10 illustrative OpenOutreach defaults). NOT a
-# hard contract — the outreach package owns the authoritative caps (§17).
-# Surfaced for the popup's counter only.
-_TIER_CAPS = {"new": (15, 100), "seasoned": (30, 200)}
-
-
-def quota_dto(
-    *, connected: bool, tier: str, daily_used: int, weekly_used: int,
-    dm_daily_sent: int = 0, dm_weekly_sent: int = 0,
-) -> QuotaDTO:
-    daily_limit, weekly_limit = _TIER_CAPS.get(tier, _TIER_CAPS["new"])
+def quota_dto(*, connected: bool, quota: dict) -> QuotaDTO:
+    """`quota` is `Pacer.remaining()` from the ENFORCING ledger
+    (`networker_ops.linkedin_quota_snapshot`) — used-counts and caps from the
+    single source the send path refuses on (maintainer 2026-08-02; the old
+    app-side OutreachLog recount could disagree with enforcement)."""
     return QuotaDTO(
-        connected=connected, tier=tier,
-        daily_used=daily_used, daily_limit=daily_limit,
-        weekly_used=weekly_used, weekly_limit=weekly_limit,
-        dm_daily_sent=dm_daily_sent, dm_weekly_sent=dm_weekly_sent,
+        connected=connected,
+        daily_used=int(quota.get("daily_used") or 0),
+        daily_limit=int(quota.get("daily_cap") or 0),
+        weekly_used=int(quota.get("weekly_used") or 0),
+        weekly_limit=int(quota.get("weekly_cap") or 0),
+        dm_daily_sent=int(quota.get("dm_daily_sent") or 0),
+        dm_weekly_sent=int(quota.get("dm_weekly_sent") or 0),
+        dm_daily_limit=int(quota.get("dm_daily_limit") or 0),
     )
 
 
+def linkedin_search_cursor_dto(
+    cursor: LinkedInSearchCursor | None,
+) -> LinkedInSearchCursorDTO | None:
+    """Cursor row → wire state, None while no Fresh search has ever run. The
+    expired/exhausted derivation lives in the registry (`cursor_state`) so the
+    route's 409 and the op's self-gate can never disagree with this mapper."""
+    if cursor is None or cursor.fresh_at is None or not cursor.queries:
+        return None
+    from ..registry.linkedin_op import cursor_state
+
+    expired, exhausted = cursor_state(cursor.fresh_at, list(cursor.queries))
+    return LinkedInSearchCursorDTO(
+        expired=expired,
+        exhausted=exhausted,
+        next_page_available=not expired and not exhausted,
+    )
+
+
+def rate_limits_dto(snapshot: dict | None) -> LinkedInRateLimitsDTO | None:
+    """`linkedin_caps_snapshot()` output → DTO. The snapshot's keys ARE the DTO
+    fields (pydantic validates the cap entries)."""
+    if snapshot is None:
+        return None
+    return LinkedInRateLimitsDTO(**snapshot)
+
+
 def linkedin_session_dto(
-    session: LinkedInSession | None, *, enabled: bool
+    session: LinkedInSession | None, *, enabled: bool,
+    cursor: LinkedInSearchCursor | None = None,
 ) -> LinkedInSessionDTO:
+    """`rate_limits` is attached by the route after the off-loop ledger read
+    (`routes._linkedin_session_response`) — this mapper touches DB rows only."""
     if session is None:
-        return LinkedInSessionDTO(enabled=enabled, status="never_set", account_tier="new")
+        return LinkedInSessionDTO(
+            enabled=enabled, status="never_set",
+            search_cursor=linkedin_search_cursor_dto(cursor),
+        )
     return LinkedInSessionDTO(
         enabled=enabled,
         status=session.status,
-        account_tier=session.account_tier,
         connected_as=session.connected_as,
         li_at_expires_at=session.li_at_expires_at,
         last_validated_at=session.last_validated_at,
         paused_until=session.paused_until,
         paused_reason=session.paused_reason,
+        search_cursor=linkedin_search_cursor_dto(cursor),
     )
 
 
@@ -1220,7 +1430,7 @@ def derive_referrals_state(
     - No batch yet but candidates were discovered for the role → `pending`.
     - Nothing discovered or sent → `none` (frontend `notStarted`).
     """
-    if any(state in ("queued", "running") for state in send_op_states):
+    if any(state in OP_ACTIVE_STATES for state in send_op_states):
         return "sending"
     if discover_in_flight:
         return "finding"
@@ -1260,8 +1470,10 @@ def engine_setting_dto(row: EngineSettings) -> EngineSettingDTO:
     )
 
 
-def operation_dto(op: Operation) -> OperationDTO:
-    return OperationDTO.model_validate(op)
+def operation_dto(op: Operation, subject: OperationSubjectDTO | None = None) -> OperationDTO:
+    out = OperationDTO.model_validate(op)
+    out.subject = subject
+    return out
 
 
 def cost_totals_dto(totals: dict[str, Any]) -> CostTotalsDTO:

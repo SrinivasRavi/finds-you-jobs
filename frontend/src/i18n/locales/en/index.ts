@@ -1,6 +1,7 @@
 // English — assembled from per-namespace slices so extraction work can land
 // file-by-file. This object's shape is the contract every locale mirrors.
 import analytics from "./analytics";
+import browser from "./browser";
 import common from "./common";
 import jobBoard from "./jobBoard";
 import networking from "./networking";
@@ -20,6 +21,7 @@ const en = {
   settingsPage,
   popups,
   shell,
+  browser,
 };
 
 export default en;

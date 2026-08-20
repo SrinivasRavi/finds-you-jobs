@@ -1,4 +1,4 @@
-"""Scraper CLI — the silo dogfood entry point (ROADMAP §4 CLI convention).
+"""Scraper CLI — the silo dogfood entry point (ROADMAP section 4 CLI convention).
 
 Examples:
     uv run python -m sidecar.modules.scraper \

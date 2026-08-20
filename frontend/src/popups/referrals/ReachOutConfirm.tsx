@@ -1,27 +1,56 @@
-// Per-action confirmation before anything sends (US-NW-09 / vision).
-// (Extracted from ReferralsModal.tsx 2026-07-25, F-M6 monolith split — pure
-// move, zero behavior change.) Not memoized: it only mounts while the confirm
-// overlay is open, so there is no tree to shield.
+// Pre-send confirmation for ONE contact (US-NW-09 / vision). Reworked
+// 2026-07-30: the batch "Send {{count}} messages?" confirm went away with the
+// multi-select — each row's Connect/Message button opens this for exactly one
+// person, showing the message that will actually go out (per-contact confirm;
+// posture doc section 5.1). Since 2026-08-16 this is also THE editor for a
+// connected send: the message box is an editable textarea (the maintainer:
+// edit where you confirm, not in a row box that only expands to be revealed).
+// Not memoized: it only mounts while the confirm overlay is open, so there is
+// no tree to shield.
 
 import { Trans, useTranslation } from "react-i18next";
 
 export function ReachOutConfirm({
-  count,
+  name,
+  channel,
+  message,
   sending,
+  onChange,
   onCancel,
   onSend,
 }: {
-  count: number;
+  name: string;
+  channel: "dm" | "connection_note";
+  message: string;
   sending: boolean;
+  /** Edits flow into the modal's per-contact draft map, so a cancel keeps them. */
+  onChange: (v: string) => void;
   onCancel: () => void;
   onSend: () => void;
 }) {
   const { t } = useTranslation();
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-[rgba(0,0,0,0.35)]" data-testid="reach-out-confirm">
-      <div className="w-[380px] rounded-[12px] border border-border bg-surface p-5 shadow-xl">
-        <h3 className="text-[14px] font-semibold text-ink">{t("popups.referrals.sendConfirmTitle", { count })}</h3>
-        <p className="mt-2 text-[12.5px] text-ink-3">
+      <div className="w-[420px] rounded-[12px] border border-border bg-surface p-5 shadow-xl">
+        <h3 className="text-[14px] font-semibold text-ink">
+          {t("popups.referrals.sendConfirmTitle", { name })}
+        </h3>
+        <p className="mt-1 text-[11.5px] text-ink-3">
+          {channel === "dm"
+            ? t("popups.referrals.sendConfirmChannelDm")
+            : t("popups.referrals.sendConfirmChannelInvite")}
+        </p>
+        {/* The exact text that will be sent — confirm what, not just whether,
+            and edit it right here (the one place the send actually leaves from). */}
+        <textarea
+          data-testid="reach-out-confirm-message"
+          value={message}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={sending}
+          rows={5}
+          className="mt-3 max-h-[180px] w-full resize-none overflow-y-auto rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-ink-2 focus:border-accent focus:outline-none disabled:opacity-60"
+        />
+        <p className="mt-3 text-[12px] text-ink-3">
           <Trans
             i18nKey="popups.referrals.sendConfirmBody"
             components={{ span: <span className="text-ink-2" /> }}

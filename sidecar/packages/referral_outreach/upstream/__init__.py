@@ -6,7 +6,7 @@
 # AGPL-3.0-only, and GPLv3 + AGPLv3 are compatible for this combination, so the
 # code is imported and called DIRECTLY in-process (no subprocess firewall — the
 # subprocess boundary the prior MIT-era repository used is retired here;
-# `docs/internal/referral-outreach.md` §2). The GPL notices on these files are
+# `docs/internal/referral-outreach.md` section 2). The GPL notices on these files are
 # retained; the aggregate is AGPL-based while these files stay GPLv3.
 #
 # NOTE: inline comments below that reference "the subprocess", "the MIT host",

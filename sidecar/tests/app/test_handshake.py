@@ -1,4 +1,4 @@
-"""Covers: A1 scaffold — the PORT/TOKEN handshake contract (architecture §4.4).
+"""Covers: A1 scaffold — the PORT/TOKEN handshake contract (architecture section 4.4).
 
 The shell parses two flushed stdout lines; these tests pin that exact format and
 the free-port helper.

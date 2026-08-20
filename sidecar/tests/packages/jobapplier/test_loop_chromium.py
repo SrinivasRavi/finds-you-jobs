@@ -1,6 +1,6 @@
 # finds-you-jobs — AGPL-3.0-only.
 """The apply loop against real headless Chromium and local file:// fixtures
-(applier.md §11 browser integration tests) — a scripted FakeApplyEngine, no
+(applier-as-built.md section 11 browser integration tests) — a scripted FakeApplyEngine, no
 model, ZERO network. Covers the JD→form navigation hop, grounded filling with
 per-action read-back, the refusal paths (password fill, private-IP navigate,
 prompt-injected metadata URL), hard walls, stale ids, cancellation, budget
@@ -12,11 +12,12 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from playwright.async_api import async_playwright
 
 from sidecar.packages.jobapplier.executor import UrlPolicy
 from sidecar.packages.jobapplier.fake import FakeApplyEngine, FakeStep
-from sidecar.packages.jobapplier.loop import run_apply
+from sidecar.packages.jobapplier.loop import ApplyEngine, run_apply
 from sidecar.packages.jobapplier.types import (
     ApplyControl,
     ApplyEvent,
@@ -72,7 +73,7 @@ def _request(tmp_path: Path, job_url: str, resume: Path | None = None) -> ApplyR
     )
 
 
-async def _run(request: ApplyRequest, engine: FakeApplyEngine, *, control=None):
+async def _run(request: ApplyRequest, engine: ApplyEngine, *, control=None):
     events: list[ApplyEvent] = []
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -128,7 +129,7 @@ async def test_happy_path_jd_to_form_to_ready_for_human(tmp_path: Path) -> None:
     assert types[0] is ApplyEventType.PHASE_CHANGED
     assert ApplyEventType.READY_FOR_HUMAN in types
     assert types[-1] is ApplyEventType.COMPLETED
-    # Nothing ever claimed submission (§8.4).
+    # Nothing ever claimed submission (section 8.4).
     assert "submitted" not in result.summary.lower()
 
 
@@ -149,7 +150,7 @@ async def test_password_fill_refused_and_reported(tmp_path: Path) -> None:
 async def test_prompt_injected_metadata_navigate_is_refused(tmp_path: Path) -> None:
     # The jd.html fixture carries an injection line telling the agent to visit
     # the cloud metadata endpoint. Simulate a model that obeys: the EXECUTOR
-    # must refuse (§4.3) — with allow_local off, like production.
+    # must refuse (section 4.3) — with allow_local off, like production.
     script: list[FakeStep] = [
         _action("navigate", url="http://169.254.169.254/latest/meta-data"),
         _action("report_blocked", kind="error", detail="cannot navigate"),
@@ -242,3 +243,66 @@ async def test_finish_without_form_is_not_success(tmp_path: Path) -> None:
 
     assert result.status is ApplyStatus.BLOCKED
     assert result.blockers[0].kind == "no_form"
+
+
+async def test_refilling_a_settled_field_hands_off_not_livelock(tmp_path: Path) -> None:
+    # The eval-indicted livelock: a model that keeps re-filling an
+    # already-settled field, every fill reading back ok so the failure streak
+    # never trips. The per-element redundancy guard ends it as ready_for_human,
+    # because the field IS filled — it does not spin to the deadline.
+    def refill(prompt: str) -> str:
+        return _action("fill", element_id=_eid(prompt, "Full name"), value="Ada Lovelace")
+
+    engine = FakeApplyEngine([refill] * 12)  # far more than the guard needs
+    result, _, _ = await _run(_request(tmp_path, _fixture_url("form.html")), engine)
+
+    assert result.status is ApplyStatus.READY_FOR_HUMAN
+    assert "already filled" in result.summary
+    assert result.steps < 12  # stopped early, did not consume the whole script
+
+
+async def test_upload_into_a_drag_drop_zone(tmp_path: Path) -> None:
+    # A styled dropzone (role=button) wrapping a hidden <input type=file>, the
+    # shape that outnumbers plain file inputs. The executor drives the nested
+    # input instead of refusing the non-file target.
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake resume")
+    script: list[FakeStep] = [
+        lambda p: _action(
+            "upload_artifact",
+            element_id=_eid(p, "Upload your resume"),
+            artifact_id="art-resume",
+        ),
+        _action("finish", reason="resume uploaded to the drag-drop zone"),
+    ]
+    engine = FakeApplyEngine(script)
+    request = _request(tmp_path, _fixture_url("dropzone.html"), resume)
+    result, _, _ = await _run(request, engine)
+
+    assert result.status is ApplyStatus.READY_FOR_HUMAN
+    upload = next(f for f in result.fields if f.action == "upload")
+    assert upload.ok, upload.note
+
+
+async def test_real_engine_spend_lands_in_the_run_cost(tmp_path: Path) -> None:
+    # The app's EngineUsage names the spend field `usd`; the package's own fake
+    # names it `cost_usd`. The loop reads both, so a real engine's spend is
+    # never silently dropped from the cost record the dashboard reports.
+    class _AppUsage:
+        tokens_in = 120
+        tokens_out = 40
+        usd = 0.25
+
+    class _AppEngine:
+        def __init__(self, replies: list[str]) -> None:
+            self._replies = list(replies)
+
+        def complete(self, system_prompt: str, user_prompt: str):
+            return self._replies.pop(0), _AppUsage()
+
+    engine = _AppEngine([_action("finish", reason="nothing to fill")])
+    result, _, _ = await _run(_request(tmp_path, _fixture_url("form.html")), engine)
+
+    assert result.usage.tokens_in == 120
+    assert result.usage.tokens_out == 40
+    assert result.usage.cost_usd == pytest.approx(0.25)

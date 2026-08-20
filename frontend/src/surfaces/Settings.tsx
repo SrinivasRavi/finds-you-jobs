@@ -1,4 +1,4 @@
-// Settings (US-SET / §13) — Automation-on-Save, LLM providers + per-operation
+// Settings (US-SET / section 13) — Automation-on-Save, LLM providers + per-operation
 // engine routing, the LinkedIn networking risk toggle w/ warning copy + ack,
 // observability, appearance (theme). Ports settings*.html (product sections
 // only — the prototype's purple "internal UI testing" mockups are not product).
@@ -19,7 +19,7 @@ import { AppearanceSection } from "./settings/AppearanceSection";
 import { AutomationSection } from "./settings/AutomationSection";
 import { DiscoveryKeysSection, DiscoverySourcesSection } from "./settings/DiscoverySources";
 import { LifecycleSection } from "./settings/LifecycleSection";
-import { LinkedInJobSearchSection } from "./settings/LinkedInSections";
+import { LinkedInJobSearchSection, LinkedInRateLimitsSection } from "./settings/LinkedInSections";
 import { ObservabilitySection } from "./settings/ObservabilitySection";
 import { EngineRoutingSection } from "./settings/PromptsSection";
 import { ReferralOutreachSection } from "./settings/ReferralOutreachSection";
@@ -155,6 +155,14 @@ export function Settings() {
               is deliberately the feature's ONE reveal point (it is never
               advertised elsewhere), so the copy carries the full context. */}
           <ReferralOutreachSection settings={settings} patch={patch} ack={ack} onAck={setAck} />
+
+          {/* LinkedIn self-imposed rate limits — beside the feature whose
+              session it governs (maintainer 2026-08-02: feature configs live in
+              their feature's category; only lifecycle + logs stay under Data).
+              It also caps the Discover-jobs LinkedIn search (pages/hour) — that
+              block links here by name. Renders nothing until a rate-limit
+              profile exists. */}
+          <LinkedInRateLimitsSection />
           </div>
           )}
 
@@ -164,7 +172,7 @@ export function Settings() {
           <ObservabilitySection settings={settings} patch={patch} />
 
           {/* Contact & data lifecycle (FR-SYS-06 / FR-NW-15) — configurable
-              windows for kanban ghosting, purge, and the contact-sync cadence. */}
+              windows for kanban ghosting, purge, and feed aging. */}
           <LifecycleSection settings={settings} patch={patch} />
           </div>
           )}

@@ -63,7 +63,7 @@ export const AutomationSection = memo(function AutomationSection({
         </div>
         {/* The prior repository's "Application form answers when I save a
             job" (auto_prep_on_save) toggle is retired with the Save-time
-            prep op (docs/internal/applier.md §2) — the agentic Applier
+            prep op (docs/internal/archived/applier-as-built.md section 2) — the agentic Applier
             reads the live form instead. */}
         {/* Referrals default — only when Referral Outreach is enabled
             (it's the experimental, account-risk path). */}

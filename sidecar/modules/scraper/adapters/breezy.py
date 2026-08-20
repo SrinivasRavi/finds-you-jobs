@@ -13,11 +13,10 @@ behavioral reference (no code copied — see THIRD_PARTY_NOTICES.md).
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
-
 from ..config import SourceEntry
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import subdomain_tenant
 
 ID = "breezy"
 
@@ -26,11 +25,7 @@ _NOT_TENANTS = {"www", "app", "api", "help"}
 
 
 def _tenant(url: str) -> str:
-    host = urlsplit(url).netloc.lower() if url else ""
-    if not host.endswith(_SUFFIX):
-        return ""
-    sub = host[: -len(_SUFFIX)]
-    return "" if (not sub or "." in sub or sub in _NOT_TENANTS) else sub
+    return subdomain_tenant(url, _SUFFIX, _NOT_TENANTS)
 
 
 def detect(entry: SourceEntry) -> str:

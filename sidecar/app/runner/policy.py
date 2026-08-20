@@ -1,4 +1,4 @@
-"""Per-kind concurrency policy (architecture §5.3) — table-driven + tunable.
+"""Per-kind concurrency policy (architecture section 5.3) — table-driven + tunable.
 
 Defaults: LLM kinds (`score`/`tailor`/`cover`/`draft`) share a user-tunable
 pool (thresholds.llm_concurrency, default 4, 0 = unlimited); `scan` and the
@@ -38,7 +38,7 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         # Trash-TTL eviction (FR-SYS-04): zero-LLM, DB-only, single-flight.
         "cleanup_trash": "cleanup_trash",
         # One apply run at a time — but NOT exclusive: the agentic apply op
-        # WAITS for a still-generating tailored resume (applier.md §8.1), so
+        # WAITS for a still-generating tailored resume (applier-as-built.md section 8.1), so
         # the `tailor` op must be able to run beside it. Making apply
         # exclusive dead-locked that wait until the packet timeout
         # (2026-07-17 dogfood: "Waiting for résumé" for 15 minutes).
@@ -51,15 +51,27 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         # exclusive so nothing else contends for it.
         "linkedin_login": "linkedin_login",
         "archive_stale_contacts": "archive_stale_contacts",
+        # A user's queued page-view on the shared browser surface (2026-08-16).
+        "view_page": "view_page",
     },
     group_limits={
         # 4 = DEFAULT_LLM_CONCURRENCY below; the boot wiring overrides from
         # thresholds.llm_concurrency (Settings → Scoring → Parallel AI calls).
         "llm": 4, "scan": 1, "cleanup_trash": 1, "apply": 1,
         "networker_discover": 1, "networker_send": 1,
-        "linkedin_login": 1, "archive_stale_contacts": 1,
+        "linkedin_login": 1, "archive_stale_contacts": 1, "view_page": 1,
     },
     exclusive_kinds=frozenset({"linkedin_login"}),
+)
+
+
+# The op kinds that drive the shared browser lane (mirrors the frontend queue
+# panel's tracked set). A user's `view_page` must never slot a navigation into
+# the gap BETWEEN a running op's lane actions (discover and contact_sync take
+# the lane several times per op), so admission — not just the lane — keeps a
+# view and any other lane kind mutually exclusive; see `can_start` rule 3.
+BROWSER_LANE_KINDS = frozenset(
+    {"send", "discover", "contact_sync", "linkedin_search", "linkedin_login", "view_page"}
 )
 
 
@@ -121,13 +133,23 @@ def can_start(kind: str, running_kinds: Iterable[str], policy: ConcurrencyPolicy
     Rules, in order:
       1. If an exclusive operation is running, nothing else may start.
       2. If `kind` is exclusive, it may start only when nothing is running.
-      3. Otherwise `kind` may start while its concurrency group is under limit.
+      3. A `view_page` and any other browser-lane kind are mutually exclusive
+         (both directions: a view must not interleave a running lane op's
+         actions, and there is a window between a view being marked running
+         and its lane action landing that a fresh lane op must not enter).
+         `send` ↔ `discover` admission is deliberately untouched.
+      4. Otherwise `kind` may start while its concurrency group is under limit.
     """
     running = list(running_kinds)
     if any(k in policy.exclusive_kinds for k in running):
         return False
     if kind in policy.exclusive_kinds:
         return len(running) == 0
+    if kind == "view_page":
+        if any(k in BROWSER_LANE_KINDS for k in running):
+            return False
+    elif kind in BROWSER_LANE_KINDS and "view_page" in running:
+        return False
     group = policy.group_for(kind)
     running_in_group = sum(1 for k in running if policy.group_for(k) == group)
     return running_in_group < policy.limit_for_group(group)

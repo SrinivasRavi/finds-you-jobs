@@ -1,4 +1,4 @@
-"""The hand-rolled scheduler (architecture §5.5).
+"""The hand-rolled scheduler (architecture section 5.5).
 
 A `schedules` table + a 60 s async tick that enqueues due kinds through the
 runner. Catch-up at boot enqueues anything past-due (NFR-LONG-01); a

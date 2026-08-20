@@ -3,7 +3,7 @@
 The skill file (cover-letter-skill.md, distilled from career-ops's cover mode)
 is the system prompt; the per-run inputs arrive as clearly delimited blocks.
 Everything is in-context — the operation has no tools and no file access
-(ROADMAP §4).
+(ROADMAP section 4).
 """
 
 from __future__ import annotations

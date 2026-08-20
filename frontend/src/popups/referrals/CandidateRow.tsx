@@ -2,29 +2,19 @@
 // F-M6 monolith split — pure move, zero behavior change). Memoized: every prop
 // is a primitive, a query-stable object (`c`), or a root-stable useCallback, so
 // typing in one row's draft no longer re-renders every other row.
+//
+// 2026-08-16 (maintainer): when CONNECTED, the row no longer expands into its
+// own draft editor — the pre-send confirmation is the one editable box (edit
+// where you confirm). The expandable editor remains only in drafts-only manual
+// mode, where no confirm dialog exists and Copy needs a visible draft.
 
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { AudienceTag, ReferralCandidate } from "../../api/types";
+import type { ReferralCandidate } from "../../api/types";
 import i18n from "../../i18n";
-import { initials } from "./shared";
-
-// i18n key map — translated with t(...) at render.
-const TAG_LABEL: Record<AudienceTag, string> = {
-  peer: "popups.referrals.tag.peer",
-  hm: "popups.referrals.tag.hm",
-  recruiter: "popups.referrals.tag.recruiter",
-  leadership: "popups.referrals.tag.leadership",
-  other: "popups.referrals.tag.peer",
-};
-const TAG_CLASS: Record<AudienceTag, string> = {
-  peer: "border-border-2 bg-surface text-ink-2",
-  hm: "border-accent bg-accent-wash text-accent-ink",
-  recruiter: "border-pink bg-pink-wash text-pink",
-  leadership: "border-purple bg-purple-wash text-purple",
-  other: "border-border-2 bg-surface text-ink-2",
-};
+import { audienceTag } from "../../shell/audienceTag";
+import { Avatar } from "../../shell/Avatar";
 
 /** Ordinal degree label, or null when the degree is genuinely unknown (so the
  *  badge is hidden rather than rendering "NULLTH deg"). */
@@ -39,66 +29,70 @@ function degreeLabel(degree: number | null): string | null {
 export const CandidateRow = memo(function CandidateRow({
   c,
   connected,
-  selectable,
-  checked,
+  sendable,
   draft,
   expanded,
   sending,
   failure,
-  onToggle,
+  onAsk,
   onExpand,
   onDraft,
+  onOpenLinkedIn,
 }: {
   c: ReferralCandidate;
   connected: boolean;
-  selectable: boolean;
-  checked: boolean;
+  /** May this row's Connect/Message button fire right now (session live, that
+   *  channel's cap not exhausted, no send already in flight for this row)? */
+  sendable: boolean;
   draft: string;
   expanded: boolean;
   sending: boolean;
   failure: string | null;
-  onToggle: (id: string) => void;
+  /** Open the pre-send confirmation for THIS contact (per-contact confirm —
+   *  the multi-select batch went away 2026-07-30; posture doc section 5.1). */
+  onAsk: (id: string) => void;
   onExpand: (id: string) => void;
   onDraft: (id: string, v: string) => void;
+  /** Open this contact's profile on the in-app LinkedIn view (2026-08-16 —
+   *  never an external browser). While THIS row's send is driving the live
+   *  surface the button glows instead, and clicking it just watches the send.
+   *  Root-stable (id-passing). */
+  onOpenLinkedIn: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const degLabel = degreeLabel(c.degree);
+  const tag = audienceTag(c.audience_tag);
   return (
     <div className="border-b border-border" data-testid="referrals-row">
       <div className="flex items-center gap-3 px-5 py-3">
         {c.already_reached ? (
-          <span className="inline-flex h-[18px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[10px] text-good" data-testid="referrals-row-reached">
+          <span className="inline-flex h-[18px] items-center rounded-full border border-good bg-good-wash px-1.5 text-[10px] text-good" data-testid="referrals-row-reached">
             {t("popups.referrals.rowReached")}
           </span>
         ) : sending ? (
-          <span className="inline-flex h-[18px] items-center gap-1 rounded-full border border-warn bg-warn-wash px-1.5 font-mono text-[10px] text-warn" data-testid="referrals-row-sending">
+          <span className="inline-flex h-[18px] items-center gap-1 rounded-full border border-warn bg-warn-wash px-1.5 text-[10px] text-warn" data-testid="referrals-row-sending">
             <span className="inline-block h-2 w-2 animate-spin rounded-full border border-warn border-t-transparent" />
             {t("popups.referrals.rowSending")}
           </span>
-        ) : selectable ? (
-          <input
-            type="checkbox"
-            data-testid="referrals-row-checkbox"
-            checked={checked}
-            onChange={() => onToggle(c.contact_id)}
-            className="h-4 w-4 cursor-pointer"
-          />
         ) : (
           <span className="h-4 w-4" />
         )}
-        <span className="inline-grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-3 font-mono text-[11px] font-semibold text-ink-2">
-          {initials(c.name)}
-        </span>
-        <button className="min-w-0 flex-1 text-left" onClick={() => onExpand(c.contact_id)}>
+        <Avatar name={c.name} shape="full" tone="raised" />
+        <button
+          className={"min-w-0 flex-1 text-left" + (connected ? " cursor-default" : "")}
+          onClick={() => {
+            if (!connected) onExpand(c.contact_id);
+          }}
+        >
           <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
             <span className="truncate">{c.name}</span>
             {degLabel ? (
-              <span className="inline-flex h-[16px] items-center rounded-full border border-border-2 bg-surface px-1.5 font-mono text-[9.5px] text-ink-3" data-testid="referrals-row-degree">
+              <span className="inline-flex h-[16px] items-center rounded-full border border-border-2 bg-surface px-1.5 text-[9.5px] text-ink-3" data-testid="referrals-row-degree">
                 {t("popups.referrals.degreeBadge", { degree: degLabel })}
               </span>
             ) : null}
-            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 font-mono text-[10px] ${TAG_CLASS[c.audience_tag] ?? TAG_CLASS.other}`} data-testid="referrals-row-tag">
-              {t(TAG_LABEL[c.audience_tag] ?? TAG_LABEL.other)}
+            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10px] ${tag.cls}`} data-testid="referrals-row-tag">
+              {t(tag.shortLabelKey)}
             </span>
           </div>
           <div className="truncate text-[11.5px] text-ink-3">{c.role} · {c.company}</div>
@@ -108,21 +102,66 @@ export const CandidateRow = memo(function CandidateRow({
             </div>
           ) : null}
         </button>
-        {/* Open the contact's LinkedIn profile — lets the user verify who this is
-            (US-REF verifiability). Always shown; never trust discovery blindly. */}
+        {/* Open the contact's profile on the IN-APP LinkedIn view (US-REF
+            verifiability; 2026-08-16 — never an external browser). While this
+            row's send is in flight the same button glows — the action-in-
+            progress signal — and clicking it watches the send live. */}
         {c.linkedin_url ? (
-          <a
-            href={c.linkedin_url}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
             data-testid="referrals-row-linkedin"
             title={t("popups.referrals.verifyProfileTooltip")}
-            onClick={(e) => e.stopPropagation()}
-            className="rounded-md border border-border-2 bg-surface px-2 py-1 text-[11px] font-medium text-ink-2 hover:bg-surface-3"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenLinkedIn(c.contact_id);
+            }}
+            className={
+              "rounded-md border px-2 py-1 text-[11px] font-medium " +
+              (sending
+                ? "animate-pulse border-accent bg-surface text-accent ring-1 ring-accent/40"
+                : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
+            }
           >
             {t("popups.referrals.linkedIn")}
-          </a>
+          </button>
         ) : null}
+        {/* Row-wise send: each contact has its own Connect (cold invite+note)
+            or Message (warm 1st-degree DM) button that opens the pre-send
+            confirmation for exactly this person. Replaces the checkbox
+            multi-select + "Reach out (N)" batch (2026-07-30). The slot holds
+            a FIXED footprint in every connected state (maintainer,
+            2026-08-16: the vanishing button shifted the LinkedIn button
+            between rows): actionable → the button; mid-send → the same
+            button, disabled; already reached → the dull box below. */}
+        {connected && !c.already_reached && (
+          <button
+            type="button"
+            data-testid="referrals-row-send"
+            disabled={!sendable}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAsk(c.contact_id);
+            }}
+            className="inline-flex w-[80px] items-center justify-center rounded-md border border-accent bg-accent px-2.5 py-1 text-[11px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {c.channel === "dm"
+              ? t("popups.referrals.rowMessage")
+              : t("popups.referrals.rowConnect")}
+          </button>
+        )}
+        {/* Already reached: the same-size box, deliberately dull (a span, no
+            hover, muted ink — clearly quieter than the LinkedIn button) so
+            the row states the fact without offering a dead control. */}
+        {connected && c.already_reached && (
+          <span
+            data-testid="referrals-row-requested"
+            className="inline-flex w-[80px] select-none items-center justify-center rounded-md border border-border bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-ink-4"
+          >
+            {c.channel === "dm"
+              ? t("popups.referrals.rowMessaged")
+              : t("popups.referrals.rowRequested")}
+          </span>
+        )}
         {!connected && (
           <button
             className="rounded-md border border-border-2 bg-surface px-2 py-1 text-[11px] text-ink-2 hover:bg-surface-3"
@@ -133,9 +172,9 @@ export const CandidateRow = memo(function CandidateRow({
           </button>
         )}
       </div>
-      {expanded && (
+      {expanded && !connected && (
         <div className="px-[52px] pb-4">
-          <div className="mb-1 font-mono text-[10px] text-ink-3">
+          <div className="mb-1 text-[10px] text-ink-3">
             {c.channel === "dm" ? t("popups.referrals.draftDm") : t("popups.referrals.draftConnection")}
           </div>
           {draft ? (

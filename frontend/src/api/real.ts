@@ -37,6 +37,7 @@ import type {
   EngineVerifyResult,
   Job,
   JobDraft,
+  ContactSyncResult,
   LinkedInSessionState,
   NetContact,
   NetworkingContact,
@@ -59,6 +60,7 @@ import type {
   Stage,
   TombstoneResult,
   LedgerEntry,
+  LedgerSubject,
   Operation,
   OnboardingPrefsInput,
   OperationKind,
@@ -135,10 +137,10 @@ const STAGE_TO_COLUMN: Record<Stage, string> = {
 const LIFECYCLE_DEFAULTS = {
   engagement_ghosted_days: 14,
   sent_ghosted_days: 21,
+  expire_listing_days: 14,
   contact_purge_days: 60,
   trashed_jobs_purge_days: 7,
   archived_applications_purge_days: 30,
-  contact_sync_cadence_hours: 12,
 } as const;
 
 function readLifecycle(raw: unknown): Settings["lifecycle"] {
@@ -255,8 +257,8 @@ function toApplication(d: ApplicationDTO, job: Job): Application {
     posting_closed: false,
     referrals_state: (d.referralsState as Application["referrals_state"]) ?? "none",
     referrals_count: d.referralsCount ?? 0,
-    // Latest Apply Run lifecycle (applier.md §8.2) — drives the card's Apply slot
-    // + reopening the companion to the bound run's snapshot (§9.2).
+    // Latest Apply Run lifecycle (applier-as-built.md section 8.2) — drives the card's Apply slot
+    // + reopening the companion to the bound run's snapshot (section 9.2).
     apply_run_status: (d.applyRunStatus as Application["apply_run_status"]) ?? "none",
     apply_run_id: d.applyRunId ?? null,
     archived: d.archived_at != null,
@@ -265,7 +267,15 @@ function toApplication(d: ApplicationDTO, job: Job): Application {
   };
 }
 
-// The run's usage dict is a redacted ledger snapshot (applier.md §9.1) — read
+/** The one way to read an ApplicationDTO off the wire: the job rides embedded
+ *  on the DTO (server-side join — never joined against a capped /api/jobs list,
+ *  the "(job removed)" bug), with the placeholder as the last resort. Always
+ *  `saved: true` — a card exists ⟺ the job is saved. */
+function appFromDto(d: ApplicationDTO): Application {
+  return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+}
+
+// The run's usage dict is a redacted ledger snapshot (applier-as-built.md section 9.1) — read
 // the applier field names, falling back to the shared Usage names so an early
 // sidecar shape still surfaces a cost line. `cost_usd` stays null when unknown.
 function toApplyUsage(u: Record<string, unknown>): ApplyUsage {
@@ -313,6 +323,34 @@ function toApplyRun(d: ApplyRunDTO): ApplyRun {
   };
 }
 
+/** The one statement of the cost invariant: a null/absent `usd` (unknown cost,
+ *  e.g. an unpriced model) must stay null, never collapse to 0 — a real paid
+ *  call must never read as verified-free. Exported for its unit test. */
+export function usdOrNull(v: unknown): number | null {
+  return typeof v === "number" ? v : null;
+}
+
+/** What the enqueue/retry/cancel routes answer with (not in the codegen'd
+ *  schema — they're declared untyped sidecar-side). */
+type OperationStubDTO = { id: string; kind: string; state: string };
+
+/** The enqueue/retry/cancel responses carry only `{id, kind, state}` — the rest
+ *  of an Operation is genuinely unknown until its ledger row lands, so the stub
+ *  says so (no usage, no error, progress 0) instead of inventing values.
+ *  Exported for its unit test. */
+export function stubOperation(d: OperationStubDTO): Operation {
+  return {
+    id: d.id,
+    kind: d.kind as OperationKind,
+    state: d.state as Operation["state"],
+    progress: 0,
+    step: d.state,
+    usage: null,
+    error: null,
+    created_at: new Date().toISOString(),
+  };
+}
+
 function toOperation(d: OperationDTO): Operation {
   const terminal = d.state === "succeeded" || d.state === "failed";
   return {
@@ -326,9 +364,7 @@ function toOperation(d: OperationDTO): Operation {
           internal_calls: Number(d.usage.internal_calls ?? 0),
           tokens_in: Number(d.usage.tokens_in ?? 0),
           tokens_out: Number(d.usage.tokens_out ?? 0),
-          // null (unknown cost, e.g. an unpriced model) must stay null, never
-          // collapse to 0 — a real paid call must never read as verified-free.
-          usd: typeof d.usage.usd === "number" ? d.usage.usd : null,
+          usd: usdOrNull(d.usage.usd),
           latency_ms: (d.usage.latency_ms as number | null) ?? null,
           model: (d.usage.model as string | null) ?? null,
         }
@@ -344,9 +380,7 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
     id: d.id,
     kind: d.kind as OperationKind,
     state: d.state as LedgerEntry["state"],
-    // null (unknown cost, e.g. an unpriced model) must stay null, never
-    // collapse to 0 — a real paid call must never read as verified-free.
-    usd: typeof usage.usd === "number" ? usage.usd : null,
+    usd: usdOrNull(usage.usd),
     tokens_in: Number(usage.tokens_in ?? 0),
     tokens_out: Number(usage.tokens_out ?? 0),
     model: (usage.model as string | null) ?? d.model ?? null,
@@ -354,14 +388,38 @@ function toLedgerEntry(d: OperationDTO): LedgerEntry {
     error: d.error ?? null,
     created_at: d.created_at,
     started_at: d.started_at ?? null,
-    subject: d.kind,
-    // `context` is added by the backend but not yet in the codegen'd schema type.
-    context: (d as { context?: string | null }).context ?? null,
+    subject: toSubject(d.subject),
     // Old→new retry link, stamped into the failed row's result_ref JSON.
     retried_as: ((d.result_ref as { retried_as?: string } | null)?.retried_as ?? null) as
       | string
       | null,
+    // Cap/backoff refusal marker: the send op succeeded, but our own caps
+    // refused the send in-band (result_ref carries error + verbatim reason).
+    // Without this the ledger row read as a plain "Succeeded" while nothing
+    // went out (live 2026-08-02 — the free-plan notes allowance).
+    refusal: refusalOf(d.result_ref),
   };
+}
+
+/** The row's backend-computed subject — WHICH entity the op acted on
+ *  (US-LOG-01 legibility). Null whenever the backend resolved nothing. */
+function toSubject(s: OperationDTO["subject"]): LedgerSubject | null {
+  if (!s) return null;
+  return {
+    label: s.label ?? "",
+    href: s.href ?? null,
+    context: s.context ?? null,
+    detail: s.detail ?? null,
+    count: typeof s.count === "number" ? s.count : null,
+  };
+}
+
+/** The in-band send refusal from a result_ref, or null. Exported for its unit
+ *  test. */
+export function refusalOf(ref: OperationDTO["result_ref"]): string | null {
+  const r = ref as { error?: string; reason?: string } | null;
+  if (r?.error !== "cap_or_backoff") return null;
+  return r.reason || r.error;
 }
 
 // ─── the client ──────────────────────────────────────────────────────────────
@@ -424,6 +482,28 @@ export class RealApi {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  }
+
+  /** POST a multipart body. No explicit Content-Type — the browser sets the
+   *  multipart boundary. On failure surfaces the sidecar's **verbatim** `detail`
+   *  (the "paste instead" / 409 / 422 messages the surfaces render), and always
+   *  as an `ApiError` so the status code survives for callers that branch on it
+   *  — the resume-ingest path used to drop it (D-F13). `what` names the action
+   *  for the fallback message when the body carries no detail. */
+  private async postForm<T>(path: string, form: FormData, what: string): Promise<T> {
+    const info = await this.info();
+    const res = await apiFetch(info, path, { method: "POST", body: form });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let detail = body;
+      try {
+        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
+      } catch {
+        /* non-JSON body — surface as-is */
+      }
+      throw new ApiError(res.status, detail || `${what} failed (${res.status})`);
+    }
+    return (await res.json()) as T;
   }
 
   // ── jobs ───────────────────────────────────────────────────────────────
@@ -531,7 +611,6 @@ export class RealApi {
    *  upserts the job, creates an `origin=manual` card, and stores the docs
    *  content-addressed. Surfaces the sidecar's verbatim detail on 409/422. */
   async createManualApplication(input: ManualApplicationInput): Promise<Application> {
-    const info = await this.info();
     const form = new FormData();
     form.append("canonical_url", input.canonical_url);
     form.append("title", input.title);
@@ -544,20 +623,9 @@ export class RealApi {
     form.append("notes_markdown", input.notes);
     if (input.resume) form.append("resume", input.resume);
     if (input.cover) form.append("cover", input.cover);
-    // No explicit Content-Type — the browser sets the multipart boundary.
-    const res = await apiFetch(info, "/api/applications/manual", { method: "POST", body: form });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let detail = body;
-      try {
-        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
-      } catch {
-        /* non-JSON body — surface as-is */
-      }
-      throw new ApiError(res.status, detail || `add application failed (${res.status})`);
-    }
-    const d = (await res.json()) as ApplicationDTO;
-    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+    return appFromDto(
+      await this.postForm<ApplicationDTO>("/api/applications/manual", form, "add application"),
+    );
   }
 
   /** Attach a resume/cover FILE to an existing application — the Upload button
@@ -568,26 +636,16 @@ export class RealApi {
     kind: "tailored_resume" | "cover_letter",
     file: File,
   ): Promise<Application> {
-    const info = await this.info();
     const form = new FormData();
     form.append("kind", kind);
     form.append("file", file);
-    const res = await apiFetch(info, `/api/applications/${applicationId}/documents`, {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let detail = body;
-      try {
-        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
-      } catch {
-        /* non-JSON body — surface as-is */
-      }
-      throw new ApiError(res.status, detail || `attach document failed (${res.status})`);
-    }
-    const d = (await res.json()) as ApplicationDTO;
-    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+    return appFromDto(
+      await this.postForm<ApplicationDTO>(
+        `/api/applications/${applicationId}/documents`,
+        form,
+        "attach document",
+      ),
+    );
   }
 
   /** Detach the (application, kind) resume/cover file — the ✕ on the chip. */
@@ -595,11 +653,11 @@ export class RealApi {
     applicationId: string,
     kind: "tailored_resume" | "cover_letter",
   ): Promise<Application> {
-    const d = await this.req<ApplicationDTO>(
-      `/api/applications/${applicationId}/documents/${kind}`,
-      { method: "DELETE" },
+    return appFromDto(
+      await this.req<ApplicationDTO>(`/api/applications/${applicationId}/documents/${kind}`, {
+        method: "DELETE",
+      }),
     );
-    return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
   }
 
   /** One attached document as a Blob (authed — a plain href can't carry the
@@ -663,13 +721,12 @@ export class RealApi {
   // against a capped /api/jobs list (the "(job removed)" bug).
   async listApplications(): Promise<Application[]> {
     const apps = await this.req<ApplicationDTO[]>("/api/applications");
-    return apps.map((d) => toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true)));
+    return apps.map(appFromDto);
   }
 
   async getApplication(id: string): Promise<Application | undefined> {
     try {
-      const d = await this.req<ApplicationDTO>(`/api/applications/${id}`);
-      return toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true));
+      return appFromDto(await this.req<ApplicationDTO>(`/api/applications/${id}`));
     } catch (e) {
       // 404 → genuinely gone; every other failure propagates instead of
       // masquerading as "not found" (2026-07-24 graceful-failure audit).
@@ -711,15 +768,21 @@ export class RealApi {
 
   async listArchived(): Promise<Application[]> {
     const apps = await this.req<ApplicationDTO[]>("/api/applications?include_archived=true");
-    return apps
-      .filter((d) => d.archived_at != null)
-      .map((d) => toApplication(d, toJob(d.job ?? placeholderJob(d.job_id), true)));
+    return apps.filter((d) => d.archived_at != null).map(appFromDto);
+  }
+
+  /** The two PATCH paths (card patch, artifact patch) re-read the job by id
+   *  rather than trusting the response's embedded `job` — kept as-is, so the
+   *  placeholder here covers a job that has since gone, not an absent join. */
+  private async appFromPatchedDto(d: ApplicationDTO): Promise<Application> {
+    const job = await this.getJob(d.job_id);
+    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
   }
 
   private async patchApp(id: string, body: unknown): Promise<Application | undefined> {
-    const d = (await this.json("PATCH", `/api/applications/${id}`, body)) as ApplicationDTO;
-    const job = await this.getJob(d.job_id);
-    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
+    return this.appFromPatchedDto(
+      (await this.json("PATCH", `/api/applications/${id}`, body)) as ApplicationDTO,
+    );
   }
 
   async updateApplication(id: string, patch: Partial<Application>): Promise<Application | undefined> {
@@ -781,11 +844,11 @@ export class RealApi {
     patch: { markdown?: string; approved?: boolean },
   ): Promise<Application | undefined> {
     const artifactKind = kind === "cover" ? "cover_letter" : "tailored_resume";
-    const d = (await this.json(
-      "PATCH", `/api/applications/${appId}/artifacts/${artifactKind}`, patch,
-    )) as ApplicationDTO;
-    const job = await this.getJob(d.job_id);
-    return toApplication(d, job ?? toJob(placeholderJob(d.job_id), true));
+    return this.appFromPatchedDto(
+      (await this.json(
+        "PATCH", `/api/applications/${appId}/artifacts/${artifactKind}`, patch,
+      )) as ApplicationDTO,
+    );
   }
 
   async packetState(appId: string): Promise<PacketState> {
@@ -793,10 +856,10 @@ export class RealApi {
     return (d.packetState as PacketState) ?? "none";
   }
 
-  // ── apply runs (the agentic Applier — applier.md §8/§9) ───────────────────
-  // Starting Apply IS the action (§8.1): no pre-confirm modal, the run is
+  // ── apply runs (the agentic Applier — applier-as-built.md section 8/section 9) ───────────────────
+  // Starting Apply IS the action (section 8.1): no pre-confirm modal, the run is
   // created and the op enqueued immediately. `retryOfRunId` links a Retry /
-  // Reopen-and-refill to the immutable prior run (§8.3).
+  // Reopen-and-refill to the immutable prior run (section 8.3).
   async startApply(applicationId: string, retryOfRunId?: string): Promise<ApplyRun> {
     const body = retryOfRunId ? { retry_of_run_id: retryOfRunId } : {};
     const d = (await this.json(
@@ -811,17 +874,17 @@ export class RealApi {
   }
 
   /** The run snapshot — a reopened companion reads this instead of depending on
-   *  having seen every prior SSE event (§9.2). */
+   *  having seen every prior SSE event (section 9.2). */
   async getApplyRun(runId: string): Promise<ApplyRun> {
     return toApplyRun(await this.req<ApplyRunDTO>(`/api/apply-runs/${runId}`));
   }
 
-  /** Cooperative cancel (§8.2) — the loop lands the run as `interrupted`. */
+  /** Cooperative cancel (section 8.2) — the loop lands the run as `interrupted`. */
   async cancelApplyRun(runId: string): Promise<ApplyRun> {
     return toApplyRun((await this.json("POST", `/api/apply-runs/${runId}/cancel`, {})) as ApplyRunDTO);
   }
 
-  /** The human's word after the P1 handoff (§8.4): `true` records a user-attested
+  /** The human's word after the P1 handoff (section 8.4): `true` records a user-attested
    *  submission and advances the card to Applied; `false` leaves it in place. */
   async attestApplyRun(runId: string, submitted: boolean): Promise<ApplyRun> {
     return toApplyRun(
@@ -897,22 +960,9 @@ export class RealApi {
    *  review. On failure surfaces the sidecar's **verbatim** detail (the
    *  paste-instead message) so the wizard can show it, never a silent empty draft. */
   async ingestResume(file: File): Promise<ProfileIngestResult> {
-    const info = await this.info();
     const form = new FormData();
     form.append("file", file);
-    // No explicit Content-Type — the browser sets the multipart boundary.
-    const res = await apiFetch(info, "/api/profile/ingest", { method: "POST", body: form });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let detail = body;
-      try {
-        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
-      } catch {
-        /* non-JSON body — surface as-is */
-      }
-      throw new Error(detail || `ingest failed (${res.status})`);
-    }
-    return (await res.json()) as ProfileIngestResult;
+    return this.postForm<ProfileIngestResult>("/api/profile/ingest", form, "ingest");
   }
 
   /** Render markdown → PDF into ~/Downloads via the sidecar's Chromium
@@ -1003,12 +1053,11 @@ export class RealApi {
       networking_enabled: p.voyager_risk_marker_on,
       networking_ack_at: (ui.networking_ack_at as string | undefined) ?? null,
       // LinkedIn Job Search — its own experimental opt-in (shares the session).
-      linkedin_search_enabled: Boolean(ui.linkedin_search_enabled),
-      linkedin_search_ack_at: (ui.linkedin_search_ack_at as string | undefined) ?? null,
+      // Typed preference columns since 2026-08-02 (the sidecar 403s on them).
+      linkedin_search_enabled: Boolean(p.linkedin_search_enabled),
+      linkedin_search_ack_at: p.linkedin_search_ack_at ?? null,
       // LinkedIn one-shot per-query fetch budget (discovery-expansion #6);
       // persisted so the user's choice sticks. Default 50 (2 pages).
-      linkedin_search_limit:
-        typeof ui.linkedin_search_limit === "number" ? ui.linkedin_search_limit : 50,
       job_prefs: {
         role_aliases: (p.role_aliases ?? []).map(String),
         locations: (p.locations ?? []).map(String),
@@ -1052,6 +1101,12 @@ export class RealApi {
     if (Object.keys(thresholdPatch).length > 0) {
       body.thresholds = { ...(p.thresholds ?? {}), ...thresholdPatch };
     }
+    if (patch.linkedin_search_enabled !== undefined) {
+      body.linkedin_search_enabled = patch.linkedin_search_enabled;
+    }
+    if (patch.linkedin_search_ack_at !== undefined) {
+      body.linkedin_search_ack_at = patch.linkedin_search_ack_at;
+    }
     if (patch.networking_enabled !== undefined) {
       body.voyager_risk_marker_on = patch.networking_enabled;
     }
@@ -1064,18 +1119,6 @@ export class RealApi {
     let uiTouched = false;
     if (patch.networking_ack_at !== undefined) {
       ui.networking_ack_at = patch.networking_ack_at;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_limit !== undefined) {
-      ui.linkedin_search_limit = patch.linkedin_search_limit;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_enabled !== undefined) {
-      ui.linkedin_search_enabled = patch.linkedin_search_enabled;
-      uiTouched = true;
-    }
-    if (patch.linkedin_search_ack_at !== undefined) {
-      ui.linkedin_search_ack_at = patch.linkedin_search_ack_at;
       uiTouched = true;
     }
     if (patch.observability !== undefined) {
@@ -1168,12 +1211,15 @@ export class RealApi {
   }
   /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Returns
    *  the enqueued op; results land in the normal feed. 403 (toggle off) / 409
-   *  (not connected) surface as errors. */
-  async linkedinSearch(limit?: number): Promise<{ id: string; kind: string; state: string }> {
+   *  (not connected / no continuable cursor) surface as errors. `mode: "next"`
+   *  continues the last Fresh search's snapshot from its saved offset. */
+  async linkedinSearch(
+    mode: "fresh" | "next" = "fresh",
+  ): Promise<{ id: string; kind: string; state: string }> {
     return (await this.json(
       "POST",
       "/api/linkedin/search",
-      limit !== undefined ? { limit } : {},
+      { mode },
     )) as { id: string; kind: string; state: string };
   }
   async watchCompany(input: {
@@ -1248,41 +1294,17 @@ export class RealApi {
 
   /** Re-run a failed op with its original inputs (US-LOG-01 Retry). */
   async retryOperation(id: string): Promise<Operation> {
-    const d = (await this.json("POST", `/api/operations/${id}/retry`, {})) as {
-      id: string;
-      kind: string;
-      state: string;
-    };
-    return {
-      id: d.id,
-      kind: d.kind as OperationKind,
-      state: d.state as Operation["state"],
-      progress: 0,
-      step: d.state,
-      usage: null,
-      error: null,
-      created_at: new Date().toISOString(),
-    };
+    return stubOperation(
+      (await this.json("POST", `/api/operations/${id}/retry`, {})) as OperationStubDTO,
+    );
   }
 
   /** Stop a queued/running op (F-M7 Stop button). 202 with the honest
    *  post-cancel state; 404 unknown; 409 when nothing can honestly cancel. */
   async cancelOperation(id: string): Promise<Operation> {
-    const d = (await this.json("POST", `/api/operations/${id}/cancel`, {})) as {
-      id: string;
-      kind: string;
-      state: string;
-    };
-    return {
-      id: d.id,
-      kind: d.kind as OperationKind,
-      state: d.state as Operation["state"],
-      progress: 0,
-      step: d.state,
-      usage: null,
-      error: null,
-      created_at: new Date().toISOString(),
-    };
+    return stubOperation(
+      (await this.json("POST", `/api/operations/${id}/cancel`, {})) as OperationStubDTO,
+    );
   }
 
   async getOperation(id: string): Promise<Operation | undefined> {
@@ -1297,21 +1319,9 @@ export class RealApi {
   }
 
   async enqueueOperation(kind: OperationKind, _subject = "", _fail = false): Promise<Operation> {
-    const d = (await this.json("POST", `/api/operations/${kind}`, {})) as {
-      id: string;
-      kind: string;
-      state: string;
-    };
-    return {
-      id: d.id,
-      kind: d.kind as OperationKind,
-      state: d.state as Operation["state"],
-      progress: 0,
-      step: d.state,
-      usage: null,
-      error: null,
-      created_at: new Date().toISOString(),
-    };
+    return stubOperation(
+      (await this.json("POST", `/api/operations/${kind}`, {})) as OperationStubDTO,
+    );
   }
 
   // ── networking (Track N3) — restored 2026-07-16 from the prior repo's
@@ -1359,6 +1369,8 @@ export class RealApi {
       discover_state: (d.discover_state ?? "never") as ReferralCandidates["discover_state"],
       company_confirm: (d.company_confirm ?? []) as unknown as ReferralCandidates["company_confirm"],
       confirm_url_failed: Boolean(d.confirm_url_failed),
+      refusal_reason: d.refusal_reason ?? "",
+      in_flight_contact_ids: [...(d.in_flight_contact_ids ?? [])],
     };
   }
 
@@ -1411,13 +1423,13 @@ export class RealApi {
     const d = await this.req<QuotaDTO>("/api/referrals/quota");
     return {
       connected: d.connected,
-      tier: d.tier as ReferralQuota["tier"],
       daily_used: d.daily_used,
       daily_limit: d.daily_limit,
       weekly_used: d.weekly_used,
       weekly_limit: d.weekly_limit,
       dm_daily_sent: d.dm_daily_sent ?? 0,
       dm_weekly_sent: d.dm_weekly_sent ?? 0,
+      dm_daily_limit: d.dm_daily_limit ?? 0,
     };
   }
 
@@ -1455,10 +1467,47 @@ export class RealApi {
     )) as LinkedInSessionDTO);
   }
 
-  async setLinkedInTier(tier: "new" | "seasoned"): Promise<LinkedInSessionState> {
+  /** Refresh contact statuses from LinkedIn (FR-NW-15). Manual-only: the Sync
+   *  button is the one caller (maintainer decision, 2026-08-15) — no on-open
+   *  refresh, no schedule. See `docs/internal/linkedin-addon.md` section 5. */
+  async syncContacts(): Promise<ContactSyncResult> {
+    const dto = (await this.json("POST", "/api/networking/contact-sync", {})) as {
+      id?: string | null; state: string;
+    };
+    return { id: dto.id ?? null, state: dto.state as ContactSyncResult["state"] };
+  }
+
+  /** Set the self-imposed LinkedIn rate-limit profile (2026-08-01). Pass the
+   *  basis (`membership_type` and/or `risk_pct`) — which resets every override —
+   *  OR one `override_key`/`override_value` pin, OR `reset_overrides`. */
+  async setLinkedInRateLimits(body: {
+    membership_type?: string;
+    risk_pct?: number;
+    override_key?: string;
+    override_value?: number;
+    reset_overrides?: boolean;
+  }): Promise<LinkedInSessionState> {
     return toLinkedInSession((await this.json(
-      "POST", "/api/linkedin/tier", { account_tier: tier },
+      "POST", "/api/linkedin/rate-limits", body,
     )) as LinkedInSessionDTO);
+  }
+
+  /** Queue a `view_page` operation that shows `url` on the in-app watch-only
+   *  browser surface (2026-08-16 — the queued successor to the immediate
+   *  /api/browser/open). 202 always: the view waits its turn behind whatever
+   *  op is driving the surface, never a 409, and a view of the already-shown
+   *  page settles as a no-op. Sends this display's metrics (a surface's first
+   *  navigation fails closed without geometry); `contactId` names the ledger
+   *  row's subject. */
+  async viewInBrowser(url: string, surface?: string, contactId?: string): Promise<void> {
+    await this.json("POST", "/api/browser/view", {
+      url,
+      surface,
+      width: screen.width,
+      height: screen.height,
+      dpr: window.devicePixelRatio,
+      contact_id: contactId,
+    });
   }
 
   // ── Dev tools (local fault injection — US-DEV-01) ──────────────────────────
@@ -1474,15 +1523,27 @@ export class RealApi {
 }
 
 function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
+  const c = d.search_cursor ?? null;
+  const rl = d.rate_limits ?? null;
   return {
     enabled: d.enabled,
     status: d.status as LinkedInSessionState["status"],
-    account_tier: d.account_tier as LinkedInSessionState["account_tier"],
     connected_as: d.connected_as ?? "",
     li_at_expires_at: d.li_at_expires_at ?? null,
     last_validated_at: d.last_validated_at ?? null,
     paused_until: d.paused_until ?? null,
     paused_reason: d.paused_reason ?? "",
+    // The DTO shapes match the app types field-for-field — pass through.
+    search_cursor: c
+      ? { expired: c.expired, exhausted: c.exhausted, next_page_available: c.next_page_available }
+      : null,
+    rate_limits: rl
+      ? { ...rl, memberships: [...rl.memberships], caps: rl.caps.map((x) => ({ ...x })) }
+      : null,
+    contact_sync_last_at: d.contact_sync_last_at ?? null,
+    contact_sync_last_outcome: d.contact_sync_last_outcome
+      ? { ...d.contact_sync_last_outcome }
+      : null,
   };
 }
 
@@ -1501,8 +1562,12 @@ function toContact(d: ContactDTO): NetContact {
     connection_status: d.connection_status as NetContact["connection_status"],
     last_message: d.last_message ?? null,
     last_message_at: d.last_message_at ?? null,
+    last_message_direction:
+      (d.last_message_direction as NetContact["last_message_direction"]) ?? null,
+    last_message_from: d.last_message_from ?? null,
     sent_at: d.sent_at ?? null,
     accepted_at: d.accepted_at ?? null,
+    added_at: d.added_at,
   };
 }
 

@@ -1,4 +1,4 @@
-"""Covers: core storage — the first Alembic migration (database-design.md §7 slice).
+"""Covers: core storage — the first Alembic migration (database-design.md section 7 slice).
 
 The real migration applies to a tmp SQLite and creates exactly the core-storage
 table list; downgrade tears it back to baseline.
@@ -12,8 +12,8 @@ from sqlalchemy import create_engine, inspect
 
 from sidecar.app.db.migrate import downgrade_to_base, upgrade_to_head
 
-# Every table the migration chain creates (`docs/internal/roadmap.md` §7.2
-# #3–#8); the rest of the database-design §7 set lands with its feature commits.
+# Every table the migration chain creates (`docs/internal/roadmap.md` section 7.2
+# #3–#8); the rest of the database-design section 7 set lands with its feature commits.
 _EXPECTED = {
     "operations",
     "user_preferences",
@@ -36,6 +36,7 @@ _EXPECTED = {
     "sequence_steps",
     "outreach_logs",
     "linkedin_sessions",
+    "linkedin_search_cursors",
     "apply_runs",
     "documents",
     "application_documents",
@@ -115,3 +116,49 @@ def test_apify_identity_backfill_restamps_by_board_host(tmp_path: Path) -> None:
         }
     for curl, _adapter, expected in rows:
         assert stored[curl] == expected, curl
+
+
+def test_job_board_resolution_keys_are_purged(tmp_path: Path) -> None:
+    """f8b3c6d9e4a2 (data-only): resolutions cached under a shared job-board
+    domain key (the poison — e.g. `domain:naukri.com` → Coupang reused for
+    every naukri job) or a bare two-level-suffix key (`domain:co.in`, minted
+    by the old last-two-label parse for every `.co.in` employer) are deleted;
+    per-employer domain keys — including three-label ccTLD ones — survive."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'db.sqlite'}"
+    # Stop just before the purge, seed a poisoned and a legit row, then run it.
+    command.upgrade(make_alembic_config(url), "e7a1d4c9b2f8")
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        for i, (key, name) in enumerate(
+            [
+                ("domain:naukri.com", "Coupang"),
+                ("domain:co.in", "Some Indian Employer"),
+                ("domain:abnormal.ai", "Abnormal Security"),
+                ("domain:tataelxsi.co.in", "Tata Elxsi"),
+            ]
+        ):
+            conn.execute(
+                text(
+                    "INSERT INTO company_resolutions (id, resolution_key,"
+                    " company_name, company_urn, company_vanity, industry,"
+                    " source, resolved_at) VALUES (:id, :key, :name, '', '',"
+                    " '', 'user', '2026-08-01T00:00:00')"
+                ),
+                {"id": f"res-{i}", "key": key, "name": name},
+            )
+
+    upgrade_to_head(url)
+    with engine.connect() as conn:
+        keys = {
+            r[0]
+            for r in conn.execute(
+                text("SELECT resolution_key FROM company_resolutions")
+            ).fetchall()
+        }
+    assert keys == {"domain:abnormal.ai", "domain:tataelxsi.co.in"}

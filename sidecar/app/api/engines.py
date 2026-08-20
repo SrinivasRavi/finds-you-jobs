@@ -21,40 +21,21 @@ Keys never appear in a response (masked only), a log line, or an error message.
 
 from __future__ import annotations
 
-from pathlib import Path
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from ..db import Database
-from ..registry import EngineRegistry
 from ..registry.engine_config import PROVIDERS, configure_engines, verify_provider
 from ..registry.engines_http import HttpTransport
 from ..security import get_app_key, mask_key, seal_secret
 from . import dto
+from .deps import data_dir as _data_dir
+from .deps import db as _db
+from .deps import engines as _engines
 
 router = APIRouter()
-
-
-# -- app.state accessors ---------------------------------------------------
-
-
-def _db(request: Request) -> Database:
-    db = getattr(request.app.state, "db", None)
-    if db is None:
-        raise HTTPException(status_code=503, detail="storage not initialized")
-    return db
-
-
-def _engines(request: Request) -> EngineRegistry | None:
-    return getattr(request.app.state, "engines", None)
-
-
-def _data_dir(request: Request) -> Path:
-    data_dir = getattr(request.app.state, "data_dir", None)
-    if data_dir is None:
-        raise HTTPException(status_code=503, detail="data dir not initialized")
-    return Path(data_dir)
 
 
 def _transport(request: Request) -> HttpTransport | None:
@@ -104,6 +85,41 @@ def _looks_like_auth_error(detail: str) -> bool:
     return any(marker in low for marker in _AUTH_ERROR_MARKERS)
 
 
+def _cli_not_found(provider: str, detail: str) -> dto.EngineVerifyResult:
+    """The shared resolve-fail tail: the CLI binary is not on PATH, so
+    onboarding shows the install path instead of a dead-end error."""
+    return dto.EngineVerifyResult(
+        ok=False, status="not_found", detail=detail, provider=provider
+    )
+
+
+def _verify_by_completion(
+    engine_cls: Callable[..., Any], *, timeout_s: int, provider: str, ok_detail: str
+) -> dto.EngineVerifyResult:
+    """The shared fallback tail: prove a subscription CLI with one minimal REAL
+    completion. An `EngineError` comes back verbatim, classified `not_logged_in`
+    when its text reads like an auth failure and `error` otherwise. Only the
+    engine class, its timeout, and the two strings are per-provider.
+
+    Blocking (subprocess); callers must run it off the event loop."""
+    from sidecar.modules._shared.claude_engine import EngineError
+
+    try:
+        text, _usage = engine_cls(timeout_s=timeout_s).complete(
+            "Reply with the single word OK.", "OK"
+        )
+    except EngineError as e:
+        detail = str(e)
+        status = "not_logged_in" if _looks_like_auth_error(detail) else "error"
+        return dto.EngineVerifyResult(
+            ok=False, status=status, detail=detail, provider=provider
+        )
+    ok = bool(text.strip())
+    return dto.EngineVerifyResult(
+        ok=ok, status="ok" if ok else "error", detail=ok_detail, provider=provider
+    )
+
+
 def _verify_claude_cli() -> dto.EngineVerifyResult:
     """Verify the Claude-subscription CLI, cheapest-first. Distinguishes 'not
     installed' from 'not logged in' so onboarding can guide the exact fix.
@@ -119,7 +135,6 @@ def _verify_claude_cli() -> dto.EngineVerifyResult:
     """
     from sidecar.modules._shared.claude_engine import (
         ClaudeCliEngine,
-        EngineError,
         claude_auth_status,
         resolve_claude,
     )
@@ -127,11 +142,8 @@ def _verify_claude_cli() -> dto.EngineVerifyResult:
     # refresh=True so a "Retry" after the user installs the CLI re-probes PATH.
     exe = resolve_claude(refresh=True)
     if exe is None:
-        return dto.EngineVerifyResult(
-            ok=False,
-            status="not_found",
-            detail="Claude CLI not found. Install Claude Code, then Verify.",
-            provider="claude-cli",
+        return _cli_not_found(
+            "claude-cli", "Claude CLI not found. Install Claude Code, then Verify."
         )
     auth = claude_auth_status(exe)
     if auth is not None:
@@ -150,22 +162,11 @@ def _verify_claude_cli() -> dto.EngineVerifyResult:
             provider="claude-cli",
         )
     # No auth-status answer (older CLI) — prove it with a minimal completion.
-    try:
-        text, _usage = ClaudeCliEngine(timeout_s=60).complete(
-            "Reply with the single word OK.", "OK"
-        )
-    except EngineError as e:
-        detail = str(e)
-        status = "not_logged_in" if _looks_like_auth_error(detail) else "error"
-        return dto.EngineVerifyResult(
-            ok=False, status=status, detail=detail, provider="claude-cli"
-        )
-    ok = bool(text.strip())
-    return dto.EngineVerifyResult(
-        ok=ok,
-        status="ok" if ok else "error",
-        detail="claude CLI reachable",
+    return _verify_by_completion(
+        ClaudeCliEngine,
+        timeout_s=60,
         provider="claude-cli",
+        ok_detail="claude CLI reachable",
     )
 
 
@@ -174,15 +175,11 @@ def _verify_codex_cli() -> dto.EngineVerifyResult:
     `_verify_claude_cli`: resolve binary → instant `codex login status` probe →
     minimal real completion only when the probe can't answer."""
     from sidecar.modules._shared import cli_engines as ce
-    from sidecar.modules._shared.claude_engine import EngineError
 
     exe = ce.resolve_cli("codex", refresh=True)
     if exe is None:
-        return dto.EngineVerifyResult(
-            ok=False,
-            status="not_found",
-            detail="Codex CLI not found. Install OpenAI Codex, then Verify.",
-            provider="codex-cli",
+        return _cli_not_found(
+            "codex-cli", "Codex CLI not found. Install OpenAI Codex, then Verify."
         )
     probe = ce.codex_login_status(exe)
     if probe is not None:
@@ -193,22 +190,11 @@ def _verify_codex_cli() -> dto.EngineVerifyResult:
         return dto.EngineVerifyResult(
             ok=False, status="not_logged_in", detail=probe.detail, provider="codex-cli"
         )
-    try:
-        text, _usage = ce.CodexCliEngine(timeout_s=60).complete(
-            "Reply with the single word OK.", "OK"
-        )
-    except EngineError as e:
-        detail = str(e)
-        status = "not_logged_in" if _looks_like_auth_error(detail) else "error"
-        return dto.EngineVerifyResult(
-            ok=False, status=status, detail=detail, provider="codex-cli"
-        )
-    ok = bool(text.strip())
-    return dto.EngineVerifyResult(
-        ok=ok,
-        status="ok" if ok else "error",
-        detail="Codex CLI reachable",
+    return _verify_by_completion(
+        ce.CodexCliEngine,
+        timeout_s=60,
         provider="codex-cli",
+        ok_detail="Codex CLI reachable",
     )
 
 
@@ -218,32 +204,18 @@ def _verify_antigravity_cli() -> dto.EngineVerifyResult:
     cheap auth probe: `agy`'s known non-interactive stdout bug must be caught
     here at setup, not later mid-pipeline (design decision 2026-07-17)."""
     from sidecar.modules._shared import cli_engines as ce
-    from sidecar.modules._shared.claude_engine import EngineError
 
     exe = ce.resolve_cli("agy", refresh=True)
     if exe is None:
-        return dto.EngineVerifyResult(
-            ok=False,
-            status="not_found",
-            detail="Antigravity CLI (agy) not found. Install Antigravity, then Verify.",
-            provider="antigravity-cli",
+        return _cli_not_found(
+            "antigravity-cli",
+            "Antigravity CLI (agy) not found. Install Antigravity, then Verify.",
         )
-    try:
-        text, _usage = ce.AntigravityCliEngine(timeout_s=90).complete(
-            "Reply with the single word OK.", "OK"
-        )
-    except EngineError as e:
-        detail = str(e)
-        status = "not_logged_in" if _looks_like_auth_error(detail) else "error"
-        return dto.EngineVerifyResult(
-            ok=False, status=status, detail=detail, provider="antigravity-cli"
-        )
-    ok = bool(text.strip())
-    return dto.EngineVerifyResult(
-        ok=ok,
-        status="ok" if ok else "error",
-        detail="Antigravity CLI reachable (non-interactive mode verified)",
+    return _verify_by_completion(
+        ce.AntigravityCliEngine,
+        timeout_s=90,
         provider="antigravity-cli",
+        ok_detail="Antigravity CLI reachable (non-interactive mode verified)",
     )
 
 

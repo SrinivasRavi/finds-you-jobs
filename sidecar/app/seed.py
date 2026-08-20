@@ -1,4 +1,4 @@
-"""First-run seeding (ROADMAP A4, architecture §7).
+"""First-run seeding (ROADMAP A4, architecture section 7).
 
 On a fresh DB: seed `UserPreferences.portals_config` from the shipped verified
 source registry (`scraper/registry/portals-all.toml`) so the user has an
@@ -8,7 +8,7 @@ out-of-box source set they can trim, and create the recurring `scan` /
 The schedules are seeded **disabled** on purpose: an unattended full-registry
 scan (315 boards) followed by scoring every discovered job would spend real LLM
 budget with no user in the loop, and budget *enforcement* is a G7 item (usage is
-recorded, never enforced — ROADMAP §4). Onboarding/Settings flips them on with
+recorded, never enforced — ROADMAP section 4). Onboarding/Settings flips them on with
 the user's chosen cadence + batch cap. Idempotent — safe to call every boot.
 """
 
@@ -78,16 +78,22 @@ def seed_defaults(db: Database) -> None:
                 "cleanup_trash", 1440,
                 next_due_at=now_utc() + timedelta(days=1), enabled=True,
             )
-        # US-NW-12 / FR-NW-15: periodic LinkedIn contact-status sync. Seeded
-        # **enabled** but the entrypoint no-ops cleanly when Referral Outreach is
-        # OFF or the session is disconnected (zero LinkedIn traffic until the user
-        # opts in), so it's safe on by default. Modest 12 h cadence (720 min);
-        # user-adjustable in Settings → Contact & data lifecycle. First run 1 h out.
-        if "contact_sync" not in existing:
-            from .lifecycle import LIFECYCLE_DEFAULTS
-
-            repos.schedules.create(
-                "contact_sync",
-                LIFECYCLE_DEFAULTS["contact_sync_cadence_hours"] * 60,
-                next_due_at=now_utc() + timedelta(hours=1), enabled=True,
-            )
+        # US-NW-12 / FR-NW-15: contact-status sync is NO LONGER SCHEDULED.
+        #
+        # It used to be seeded **enabled** on a 12 h cadence, on the reasoning
+        # that the entrypoint no-ops while Referral Outreach is off. That gate is
+        # real, but once a user opts in it made the app touch LinkedIn on a timer
+        # with nobody present — an unattended background daemon against LinkedIn,
+        # which is the single hardest thing to defend and the one fact that broke
+        # the "every LinkedIn action is user-initiated" claim
+        # (`docs/internal/linkedin-addon.md` section 5, maintainer directive
+        # 2026-07-30). Refreshing is now something the user asks for: the
+        # explicit Sync button, and nothing else (the throttled on-open refresh
+        # that briefly existed was removed 2026-08-15 — manual-only).
+        #
+        # Existing installs carry an enabled row from before this change, so
+        # retire it here rather than leaving a timer running after an update.
+        stale_sync = next((s for s in repos.schedules.list_all() if s.kind == "contact_sync"), None)
+        if stale_sync is not None and stale_sync.enabled:
+            repos.schedules.update(stale_sync.id, enabled=False)
+            get_logger().info("seed: retired the scheduled contact_sync (user-initiated only now)")

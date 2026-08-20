@@ -138,6 +138,40 @@ def mask_key(plaintext: str) -> str:
     return f"{prefix}…{plaintext[-4:]}"
 
 
+def _sealed_envelope(token: bytes) -> str:
+    """The sealed-JSON envelope — `{"fyj_sealed": 1, "token": "<Fernet token>"}`.
+
+    Constructed HERE and nowhere else on this side of the license firewall: it
+    is the wire contract `referral_outreach/upstream/secure_store.py` (the GPL
+    side) reads, and the two sides interoperate only while this shape has a
+    single spelling. Takes the already-encrypted token so a caller that
+    roundtrip-verifies (`seal_session_file`) writes the exact token it
+    verified."""
+    return json.dumps({SEALED_MARKER: 1, "token": token.decode()})
+
+
+def _atomic_write_text(path: Path, payload: str) -> None:
+    """Write `payload` to `path` via a tmp file in the SAME dir + `os.replace`,
+    so the file is never observed half-written and a failed write leaves no tmp
+    behind. `mkstemp` creates the tmp 0600 and `os.replace` carries that mode
+    over, so a secret never lands world-readable.
+
+    The host's ONE copy: the GPL subtree keeps its own (`secure_store`/`pacing`)
+    — cross-boundary duplication is the license firewall's accepted cost, inside
+    one side it is not (D-M4)."""
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def seal_session_file(path: Path, key: str) -> bool:
     """One-time migration: encrypt a legacy plaintext storage-state file in
     place. Roundtrip-verified before the atomic replace — on ANY doubt the
@@ -164,18 +198,7 @@ def seal_session_file(path: Path, key: str) -> bool:
     if json.loads(f.decrypt(token).decode()) != data:  # roundtrip verify
         logger.error("seal roundtrip mismatch for %s — leaving plaintext untouched", path)
         return False
-    payload = json.dumps({SEALED_MARKER: 1, "token": token.decode()})
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as out:
-            out.write(payload)
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    _atomic_write_text(path, _sealed_envelope(token))
     logger.info("migrated %s to encrypted-at-rest (NFR-SEC-01)", path)
     return True
 
@@ -209,21 +232,10 @@ def write_session_state(path: Path, state: dict, key: str, *, sealed: bool) -> N
     if sealed:
         from cryptography.fernet import Fernet
 
-        token = Fernet(key.encode()).encrypt(json.dumps(state).encode())
-        payload = json.dumps({SEALED_MARKER: 1, "token": token.decode()})
+        payload = _sealed_envelope(Fernet(key.encode()).encrypt(json.dumps(state).encode()))
     else:
         payload = json.dumps(state)
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as out:
-            out.write(payload)
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    _atomic_write_text(path, payload)
 
 
 def migrate_plaintext_session(data_dir: Path) -> bool:

@@ -1,7 +1,7 @@
 """LLM engines for the tailorer black box.
 
 v0 ships one engine: the `claude` CLI in print mode, driven as a subprocess.
-Deliberate choice for the silo phase (ROADMAP §5 M1): it runs on the
+Deliberate choice for the silo phase (ROADMAP section 5 M1): it runs on the
 maintainer's Claude subscription — the same account and model career-ops runs
 on — so parity comparisons are apples-to-apples (roadmap grill Q9).
 An API-keyed engine is a later drop-in behind the same protocol.
@@ -11,7 +11,7 @@ The subprocess mechanics live in `sidecar/modules/_shared/claude_engine.py`
 keeps the tailorer-typed contract (`TailorError`, `Usage`).
 
 Internals of this module may become multi-call/multi-step without touching the
-tailor() interface (black-box rule, ROADMAP §3.2).
+tailor() interface (black-box rule, ROADMAP section 3.2).
 """
 
 from __future__ import annotations

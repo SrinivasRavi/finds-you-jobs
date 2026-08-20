@@ -115,7 +115,7 @@ Section order (optimized for the 6-second recruiter scan):
 3. Core Competencies — 6–8 keyword phrases
 4. Work Experience — reverse chronological
 
-<!-- [FYJ] Strict-ordering rule below, motivated by the parity analysis §5 (head demotions
+<!-- [FYJ] Strict-ordering rule below, motivated by the parity analysis section 5 (head demotions
 on 4/14 FYJ cells; career-ops stock wobbles the same way). Staged disabled 2026-07-05;
 ENABLED 2026-07-05 — G7 item 10 pulled forward into the 8369b40 re-pin grid. -->
 

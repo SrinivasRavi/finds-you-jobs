@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Custom widgets</title></head>
+<body>
+<h1>Custom widget form</h1>
+<form>
+  <!-- Ashby-style paired yes/no buttons over a hidden mirror checkbox:
+       checked means Yes, unchecked means No. -->
+  <div id="sponsor-group">
+    <span>Do you require sponsorship?</span>
+    <div id="sponsor-pair">
+      <button type="button" id="sponsor-yes">Yes</button>
+      <button type="button" id="sponsor-no">No</button>
+      <input type="checkbox" name="sponsor" tabindex="-1" aria-hidden="true">
+    </div>
+  </div>
+
+  <!-- A button that swallows its first click (the SPA re-render race). -->
+  <div id="flaky-pair">
+    <button type="button" id="flaky">Accept</button>
+  </div>
+
+  <!-- BambooHR-style button dropdown over a hidden mirror select. -->
+  <button type="button" id="state-toggle" aria-label="State –Select–">State –Select–</button>
+  <div id="state-menu" role="menu" hidden>
+    <div role="menuitem">Alabama</div>
+    <div role="menuitem">Alaska</div>
+    <div role="menuitem">California</div>
+  </div>
+  <select name="state" aria-hidden="true" tabindex="-1">
+    <option value=""></option>
+    <option>Alabama</option>
+    <option>Alaska</option>
+    <option>California</option>
+  </select>
+
+  <!-- Ashby-style typeahead combobox: discards uncommitted text on blur. -->
+  <label for="loc">Location</label>
+  <input id="loc" role="combobox" aria-autocomplete="list" placeholder="Start typing...">
+  <div id="loc-list" role="listbox" hidden></div>
+
+  <input type="text" name="notes-after" placeholder="after">
+</form>
+<script>
+  // yes/no pair
+  const cb = document.querySelector('input[name=sponsor]');
+  for (const id of ['sponsor-yes', 'sponsor-no']) {
+    document.getElementById(id).addEventListener('click', (ev) => {
+      for (const b of document.querySelectorAll('#sponsor-pair button')) b.classList.remove('active');
+      ev.target.classList.add('active');
+      cb.checked = (id === 'sponsor-yes');
+    });
+  }
+
+  // flaky button: the first click is swallowed, the second commits.
+  let flakyClicks = 0;
+  document.getElementById('flaky').addEventListener('click', (ev) => {
+    flakyClicks += 1;
+    if (flakyClicks >= 2) { ev.target.classList.add('active'); ev.target.setAttribute('aria-pressed', 'true'); }
+  });
+
+  // button dropdown
+  const toggle = document.getElementById('state-toggle');
+  const menu = document.getElementById('state-menu');
+  const mirror = document.querySelector('select[name=state]');
+  toggle.addEventListener('click', () => { menu.hidden = !menu.hidden; });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') menu.hidden = true; });
+  for (const item of menu.querySelectorAll('[role=menuitem]')) {
+    item.addEventListener('click', () => {
+      toggle.textContent = 'State ' + item.textContent;
+      mirror.value = item.textContent;
+      menu.hidden = true;
+    });
+  }
+
+  // typeahead combobox
+  const loc = document.getElementById('loc');
+  const list = document.getElementById('loc-list');
+  let committed = '';
+  const CITIES = ['Mumbai, Maharashtra, India', 'Mumbles, Wales, United Kingdom'];
+  loc.addEventListener('input', () => {
+    const q = loc.value.toLowerCase();
+    list.innerHTML = '';
+    const hits = CITIES.filter(c => q && c.toLowerCase().includes(q.slice(0, 6)));
+    for (const c of hits) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = c;
+      o.addEventListener('mousedown', () => { committed = c; loc.value = c; list.hidden = true; });
+      list.appendChild(o);
+    }
+    list.hidden = hits.length === 0;
+  });
+  loc.addEventListener('blur', () => { if (loc.value !== committed) loc.value = ''; list.hidden = true; });
+</script>
+</body>
+</html>

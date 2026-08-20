@@ -1,7 +1,7 @@
-"""jobs discovery — the scraper slice (database-design.md §2/§3 slice).
+"""jobs discovery — the scraper slice (database-design.md section 2/section 3 slice).
 
 Creates the job-discovery tables for the source-registry commit
-(`docs/internal/roadmap.md` §7.2 #7): jobs (canonical-URL dedup key),
+(`docs/internal/roadmap.md` section 7.2 #7): jobs (canonical-URL dedup key),
 job_scores (the per-profile-version score cache), tombstones (permanent
 discards), and schedules (the recurring-operation rows the scheduler ticks).
 

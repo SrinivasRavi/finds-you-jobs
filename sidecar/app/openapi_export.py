@@ -1,4 +1,4 @@
-"""Dump the sidecar's OpenAPI schema to stdout (architecture §4.3)."""
+"""Dump the sidecar's OpenAPI schema to stdout (architecture section 4.3)."""
 
 from __future__ import annotations
 

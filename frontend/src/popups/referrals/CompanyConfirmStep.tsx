@@ -10,7 +10,7 @@
 import { Trans, useTranslation } from "react-i18next";
 
 import type { CompanyCandidate } from "../../api/types";
-import { initials } from "./shared";
+import { Avatar } from "../../shell/Avatar";
 
 export function CompanyConfirmStep({
   company,
@@ -97,15 +97,13 @@ export function CompanyConfirmStep({
                 className="h-8 w-8 shrink-0 rounded-md object-cover"
               />
             ) : (
-              <span className="inline-grid h-8 w-8 shrink-0 place-items-center rounded-md bg-surface-3 font-mono text-[11px] font-semibold text-ink-2">
-                {initials(c.name)}
-              </span>
+              <Avatar name={c.name} shape="md" tone="raised" />
             )}
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
                 <span className="truncate">{c.name}</span>
                 {c.domain_match && (
-                  <span className="inline-flex h-[16px] items-center rounded-full border border-good bg-good-wash px-1.5 font-mono text-[9.5px] text-good">
+                  <span className="inline-flex h-[16px] items-center rounded-full border border-good bg-good-wash px-1.5 text-[9.5px] text-good">
                     {t("popups.referrals.bestMatch")}
                   </span>
                 )}

@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from ..config import SourceEntry
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import first_path_segment
 
 ID = "lever"
 
@@ -24,12 +25,11 @@ _HOSTS = {
 
 
 def _slug_and_region(url: str) -> tuple[str, str]:
-    parts = urlsplit(url)
-    host = parts.netloc.lower()
+    host = urlsplit(url).netloc.lower()
     if host not in _HOSTS:
         return "", ""
-    segments = [s for s in parts.path.split("/") if s]
-    return (segments[0], _HOSTS[host]) if segments else ("", "")
+    slug = first_path_segment(url)
+    return (slug, _HOSTS[host]) if slug else ("", "")
 
 
 def _posted_at(raw: dict) -> str:

@@ -1,4 +1,4 @@
-"""CoverLetterer CLI — the silo dogfood entry point (ROADMAP §4 CLI convention).
+"""CoverLetterer CLI — the silo dogfood entry point (ROADMAP section 4 CLI convention).
 
 Examples:
     uv run python -m sidecar.modules.coverletterer \

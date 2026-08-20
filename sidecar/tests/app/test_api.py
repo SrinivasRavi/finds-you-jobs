@@ -1,4 +1,4 @@
-"""Covers: skeleton — HTTP surface auth + lifecycle routes (architecture §4.2/§4.4).
+"""Covers: skeleton — HTTP surface auth + lifecycle routes (architecture section 4.2/section 4.4).
 
 Uses FastAPI TestClient (sync) against the real app — no mocks of the surface
 under test.
@@ -56,7 +56,7 @@ def test_shutdown_invokes_hook() -> None:
     assert fired["value"] is True
 
 
-# Regression coverage for a packaged-build-only bug (distribution.md §2/§7):
+# Regression coverage for a packaged-build-only bug (distribution.md section 2/section 7):
 # every real fetch from the packaged app's actual webview origin was silently
 # rejected by CORS, because the origin regex only ever matched http(s)://
 # loopback — never the tauri://localhost / http://tauri.localhost origins the

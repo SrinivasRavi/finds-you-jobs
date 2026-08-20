@@ -1,5 +1,5 @@
-// Typed API surface — mirrors the sidecar's architecture §4.2 shapes and the
-// module result dataclasses (ROADMAP §4 / sidecar/modules/*/types.py).
+// Typed API surface — mirrors the sidecar's architecture section 4.2 shapes and the
+// module result dataclasses (ROADMAP section 4 / sidecar/modules/*/types.py).
 //
 // This repo's sidecar implements a SUBSET of the prior API surface so far:
 // jobs/board/trash/tombstone/preview/add-by-url, operations, cost totals,
@@ -69,7 +69,7 @@ export type WorkStyle = "REMOTE" | "HYBRID" | "ONSITE" | "";
  *
  * FLAGGED (US-JB-01 row spec vs as-built contract): the story promises
  * `work_style`, skill `tags`, and `N applicants` per row, but the as-built
- * NormalizedJob contract (ROADMAP §4) carries none of them and no adapter
+ * NormalizedJob contract (ROADMAP section 4) carries none of them and no adapter
  * provides `applicants` — they render empty on the live path.
  */
 export interface Job {
@@ -161,7 +161,7 @@ export type Priority = "P0" | "P1" | "P2" | "P3";
 
 /**
  * packetState — the card's mirror of the tailor+cover runner state
- * (architecture §4.2 long-op UX contract; AM5 = two operations).
+ * (architecture section 4.2 long-op UX contract; AM5 = two operations).
  */
 export type PacketState =
   | "none" // no packet generated yet — "Generate resume"
@@ -195,7 +195,7 @@ export interface ActivityEntry {
 /** A tracked application (one per saved/applied job). Trimmed from the prior
  *  repo's shape: no apply_state/form_prep/form_prep_summary/
  *  active_apply_operation_id — the Applier and save-time prep surfaces
- *  haven't landed on this sidecar. `intent` is new (§5.1 exclusive value on
+ *  haven't landed on this sidecar. `intent` is new (section 5.1 exclusive value on
  *  ApplicationUpdate). `referrals_state`/`referrals_count` restored
  *  (2026-07-16, referral-outreach frontend) — the networking surface now
  *  exists on this sidecar. */
@@ -240,7 +240,7 @@ export interface Application {
   origin: "discovered" | "manual";
   /** Documents the user attached to a manual card (empty for discovered cards). */
   documents: ApplicationDocument[];
-  /** The §5.1 exclusive next-step marker — "none" | "referral" | "apply". */
+  /** The section 5.1 exclusive next-step marker — "none" | "referral" | "apply". */
   intent: "none" | "referral" | "apply";
   notes: string;
   /** Combined packet state (kept for the card-menu regen logic + Activity tab). */
@@ -259,7 +259,7 @@ export interface Application {
   cover_profile_version: number | null;
   cover_letter_md: string | null;
   cover_notes: string[];
-  /** Applier preview screenshot (loadable URL / data URL) — US-TR-03 §17d.
+  /** Applier preview screenshot (loadable URL / data URL) — US-TR-03 section 17d.
    *  Always null on this sidecar (no Applier surface yet); the DTO field
    *  exists so this stays a straight DTO→type mapping. */
   preview_screenshot: string | null;
@@ -280,23 +280,23 @@ export interface Application {
     | "reachedOut"
     | "failed";
   referrals_count: number;
-  /** Latest Apply Run lifecycle for the tracker Apply slot (applier.md §8.2/§9):
+  /** Latest Apply Run lifecycle for the tracker Apply slot (applier-as-built.md section 8.2/section 9):
    *  `none` (no run — "Apply") → `waiting_for_packet`/`running` ("Applying…") →
    *  `ready_for_human` (P1 handoff — "Review & submit") → `submitted` (advanced
    *  to Applied). `blocked`/`timed_out`/`interrupted`/`failed` are the honest
    *  non-success terminals that offer "Retry". Mirrors ApplicationDTO.applyRunStatus. */
   apply_run_status: ApplyRunStatus;
   /** The bound Apply Run id — reopening the companion fetches this run's
-   *  snapshot (§9.2). Null until the first Apply is started. */
+   *  snapshot (section 9.2). Null until the first Apply is started. */
   apply_run_id: string | null;
   archived: boolean;
   created_at: string;
   updated_at: string;
 }
 
-// ─── Apply Runs (the agentic Applier — applier.md §8/§9) ────────────────────
+// ─── Apply Runs (the agentic Applier — applier-as-built.md section 8/section 9) ────────────────────
 
-/** One durable Apply Run's terminal/live status (applier.md §9.1). `none` is the
+/** One durable Apply Run's terminal/live status (applier-as-built.md section 9.1). `none` is the
  *  application-level "no run yet" marker; a real run is one of the others. */
 export type ApplyRunStatus =
   | "queued"
@@ -311,7 +311,7 @@ export type ApplyRunStatus =
   | "submitted";
 
 /** A redacted blocker the agent hit — kind/label only, never a raw form value
- *  (applier.md §9.1). */
+ *  (applier-as-built.md section 9.1). */
 export interface ApplyBlocker {
   kind: string;
   detail: string;
@@ -319,7 +319,7 @@ export interface ApplyBlocker {
 }
 
 /** A redacted per-field outcome — the truthful filled/struggled record shown in
- *  the §8.4 handoff summary. `ok` is the verified read-back result. */
+ *  the section 8.4 handoff summary. `ok` is the verified read-back result. */
 export interface ApplyField {
   label: string;
   action: string;
@@ -327,7 +327,7 @@ export interface ApplyField {
   note: string;
 }
 
-/** Exact model usage for one run — the companion's cost line (§8.2). */
+/** Exact model usage for one run — the companion's cost line (section 8.2). */
 export interface ApplyUsage {
   calls: number;
   tokens_in: number;
@@ -336,7 +336,7 @@ export interface ApplyUsage {
   cost_usd: number | null;
 }
 
-/** One Applier attempt (applier.md §9.1) backing the companion panel. Maps
+/** One Applier attempt (applier-as-built.md section 9.1) backing the companion panel. Maps
  *  ApplyRunDTO; `blockers`/`fields` are redacted evidence and `screenshot_count`
  *  is the number of evidence PNGs served by
  *  `GET /api/apply-runs/{id}/screenshots/{index}`. */
@@ -344,7 +344,7 @@ export interface ApplyRun {
   id: string;
   application_id: string;
   operation_id: string | null;
-  /** Links a Retry / Reopen-and-refill to the immutable prior run (§8.3). */
+  /** Links a Retry / Reopen-and-refill to the immutable prior run (section 8.3). */
   retry_of_run_id: string | null;
   status: ApplyRunStatus;
   phase: string;
@@ -413,8 +413,16 @@ export interface NetContact {
   connection_status: ConnectionStatus;
   last_message: string | null;
   last_message_at: string | null;
+  /** Attribution for `last_message`: "me" = the user sent it, "them" = the
+   *  contact did (synced from the real thread; the pre-sync OutreachLog
+   *  fallback is always "me"). */
+  last_message_direction: "me" | "them" | null;
+  /** The contact's display name as the thread reported it — set only when
+   *  direction is "them". */
+  last_message_from: string | null;
   sent_at: string | null;
   accepted_at: string | null;
+  added_at: string;
 }
 
 /** One row in the find-referrals popup (US-NW-09 / US-REF-01/02/03/10). */
@@ -441,11 +449,18 @@ export interface ReferralCandidates {
   company: string;
   candidates: ReferralCandidate[];
   already_reached_count: number;
-  // Last discover outcome (2026-07-17): never | found | empty | confirm — lets
-  // a reopened popup recover a background Save-discover instead of a blank start.
-  discover_state: "never" | "found" | "empty" | "confirm";
+  // Last discover outcome (2026-07-17): never | found | empty | confirm |
+  // refused — lets a reopened popup recover a background Save-discover instead
+  // of a blank start. `refused` (2026-08-15) = voyager declined the read
+  // (self-imposed cap / backoff); the verbatim reason is in `refusal_reason` —
+  // it must never render as "no contacts found".
+  discover_state: "never" | "found" | "empty" | "confirm" | "refused";
   company_confirm: CompanyCandidate[];
   confirm_url_failed: boolean;
+  refusal_reason: string;
+  /** Contacts with a send op queued or running right now — seeds the popup's
+   *  per-row Sending state so it survives close/reopen (2026-08-16). */
+  in_flight_contact_ids: string[];
 }
 
 /** One LinkedIn company entity a company name resolved to (FR-NW-02). Shown in
@@ -478,15 +493,49 @@ export interface CompanyConfirmPick {
 /** Rolling outreach quota for the popup counter (US-NW-09/10). */
 export interface ReferralQuota {
   connected: boolean;
-  tier: "new" | "seasoned";
   daily_used: number;
   daily_limit: number;
   weekly_used: number;
   weekly_limit: number;
-  /** 1st-degree DMs: tracked + displayed, never capped (FR-NW-04) — they do
-   *  not decrement the invite counters above. */
+  /** 1st-degree DMs: separately budgeted (FR-NW-04) — they never decrement the
+   *  invite counters above, and since 2026-07-30 they have their own caps. */
   dm_daily_sent: number;
   dm_weekly_sent: number;
+  dm_daily_limit: number;
+}
+
+/** Fresh-search pagination state for "Scan LinkedIn jobs". The Next-page
+ *  button gates on `next_page_available`; the rest explains why. The 12 h TTL
+ *  is a host freshness policy (result coherence) — LinkedIn's own pagination
+ *  is stateless and never expires. */
+export interface LinkedInSearchCursorState {
+  expired: boolean;
+  exhausted: boolean;
+  next_page_available: boolean;
+}
+
+/** One self-imposed cap the user can override. `effective` is the enforced
+ *  number (override, or ceiling × risk%); `ceiling` is the estimated LinkedIn
+ *  limit (100% reference); `overridden` flags a manual pin. */
+export interface LinkedInCap {
+  key: string;
+  meter: string;
+  window: string;
+  label: string;
+  effective: number;
+  ceiling: number;
+  overridden: boolean;
+}
+
+/** The self-imposed LinkedIn rate-limit profile (2026-08-01): membership picks
+ *  the estimated ceilings, `risk_pct` (10–100) scales them (100% = at the
+ *  estimated real limit), each cap independently overridable. */
+export interface LinkedInRateLimitsState {
+  membership_type: string;
+  risk_pct: number;
+  memberships: string[];
+  caps: LinkedInCap[];
+  job_search_hour_remaining: number;
 }
 
 /** LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
@@ -496,12 +545,41 @@ export interface ReferralQuota {
 export interface LinkedInSessionState {
   enabled: boolean;
   status: "valid" | "expired" | "never_set" | "connecting" | "backing_off";
-  account_tier: "new" | "seasoned";
   connected_as: string;
   li_at_expires_at: string | null;
   last_validated_at: string | null;
   paused_until: string | null;
   paused_reason: string;
+  /** null until a Fresh search has ever run. */
+  search_cursor: LinkedInSearchCursorState | null;
+  /** The self-imposed rate-limit profile (membership × risk% × overrides). */
+  rate_limits: LinkedInRateLimitsState | null;
+  /** When the last contact-status sync that ACTUALLY PROBED finished (null =
+   *  never) — the Networking header's "Synced Nm ago" stamp. A sweep the read
+   *  budget refused outright does not re-stamp it. */
+  contact_sync_last_at: string | null;
+  /** What the newest sync attempt did (null until one has run) — the header
+   *  shows `stopped` so a refused press never reads as a clean sync. */
+  contact_sync_last_outcome: ContactSyncOutcome | null;
+}
+
+/** Outcome of the newest contact-sync attempt (US-NW-12 honesty). `stopped`
+ *  is "" for a clean sweep, else cap_or_backoff | rate_limited | auth_error |
+ *  batch_failed, with `unprobed` sizing the untouched tail. */
+export interface ContactSyncOutcome {
+  at: string;
+  synced: number;
+  failed: number;
+  stopped: string;
+  unprobed: number;
+}
+
+/** Result of a Sync-button contact-status refresh (FR-NW-15, manual-only).
+ *  `queued` — a sync started. `already_running` — joined the one in flight.
+ *  There is no scheduled or on-open sync. */
+export interface ContactSyncResult {
+  id: string | null;
+  state: "queued" | "already_running";
 }
 
 /** Manual add-a-contact input (US-NW-02). */
@@ -608,7 +686,7 @@ export interface OnboardingPrefsInput {
 
 // ─── /api/settings ──────────────────────────────────────────────────────────
 
-/** Operation kinds this repo's sidecar actually enqueues today (§4.2 long-op
+/** Operation kinds this repo's sidecar actually enqueues today (section 4.2 long-op
  *  contract). Narrower than the full prior-repo union — apply/prompt kinds
  *  return with their own commits. Networking kinds restored 2026-07-16
  *  (referral-outreach frontend): discover/draft/send (US-NW-09), linkedin_login
@@ -620,7 +698,7 @@ export type OperationKind =
   | "extract"
   | "prep"
   | "scan"
-  // The agentic Applier's run op (applier.md §9) — lands in the ledger, so the
+  // The agentic Applier's run op (applier-as-built.md section 9) — lands in the ledger, so the
   // Analytics filter groups must cover it or its rows get silently hidden.
   | "apply"
   // Grounded copilot answer + daily feed maintenance (FR-SYS-03/04) — also
@@ -630,8 +708,14 @@ export type OperationKind =
   | "draft"
   | "send"
   | "linkedin_login"
+  // Logged-in LinkedIn job search (discovery-expansion #6) — ledger'd like
+  // every kind, so the Analytics groups/subjects must know it.
+  | "linkedin_search"
   | "archive_stale_contacts"
   | "contact_sync"
+  // A user's queued page-view on the browser surface (2026-08-16) — ledger'd
+  // with the contact as its subject, so Analytics must know it.
+  | "view_page"
   // Watch-company attempts (2026-07-22): synchronous API action recorded into
   // the ledger so Analytics → Logs keeps the verbatim refusal reason.
   | "watch_company";
@@ -792,7 +876,6 @@ export interface Settings {
   linkedin_search_ack_at: string | null;
   /** LinkedIn one-shot per-query fetch budget (discovery-expansion #6),
    *  persisted in ui_state. Server clamps to [25, 250]; default 50. */
-  linkedin_search_limit: number;
   /** ISO timestamp of the last time the user checked the Referral Outreach
    *  ToS-risk acknowledgment box and turned the toggle on (audit P2-5) — a
    *  durable record, so re-opening Settings shows *when* the risk was
@@ -827,16 +910,16 @@ export interface Settings {
   };
   /** Configurable entity-lifecycle windows (FR-SYS-06 / FR-NW-15, 2026-07-15).
    *  Every auto-lifecycle timer — contact kanban ghosting, deleted-contact /
-   *  trashed-job / archived-application purge, and the contact-status sync
-   *  cadence — reads its window from here (persisted in `ui_state.lifecycle`).
-   *  Days, except `contact_sync_cadence_hours`. */
+   *  trashed-job / archived-application purge — reads its window from here
+   *  (persisted in `ui_state.lifecycle`). All days. (The contact-sync cadence
+   *  is gone: syncing is user-initiated only — posture doc section 1.) */
   lifecycle: {
     engagement_ghosted_days: number;
     sent_ghosted_days: number;
+    expire_listing_days: number;
     contact_purge_days: number;
     trashed_jobs_purge_days: number;
     archived_applications_purge_days: number;
-    contact_sync_cadence_hours: number;
   };
 }
 
@@ -858,7 +941,19 @@ export interface Operation {
   created_at: string;
 }
 
-// ─── Operations ledger (Logs/Analytics reads this — §10) ────────────────────
+// ─── Operations ledger (Logs/Analytics reads this — section 10) ────────────────────
+
+/** What an operation acted ON (backend-computed, US-LOG-01 legibility):
+ *  verbatim entity data — a contact's name, a job title, the note text —
+ *  never localized. The frontend adds count nouns / mode names via i18n.
+ *  Mirrors OperationSubjectDTO. */
+export interface LedgerSubject {
+  label: string; // primary line ("Jane Doe", "Backend Engineer") — may be ""
+  href: string | null; // external link (LinkedIn profile / posting URL)
+  context: string | null; // secondary line (the role a send was for; search mode)
+  detail: string | null; // long text for the EXPANDED row (the DM/note sent)
+  count: number | null; // entities touched (contacts found, jobs persisted…)
+}
 
 export interface LedgerEntry {
   id: string;
@@ -873,11 +968,20 @@ export interface LedgerEntry {
   error: string | null;
   created_at: string;
   started_at: string | null; // when the op went running (US-LOG-01 timestamp)
-  subject: string; // human label ("Score · Backend @ Glean")
-  context: string | null; // "<company> · <role> · #app" — what the op was for
+  /** Absent on rows whose snapshot/result refs don't resolve (historical rows,
+   *  deleted entities) — the row then renders kind-only, nothing fabricated. */
+  subject: LedgerSubject | null;
   /** Set on a failed row that was re-run (US-LOG-01 Retry): the new op's id.
    *  The row renders as "Retried" instead of a permanently nagging FAILED. */
   retried_as?: string | null;
+  /** A live send op's routed channel + completed step keys (2026-08-16) — how
+   *  a queue panel mounting mid-send recovers the fine steps it missed. */
+  progress?: { channel?: string; steps?: string[] } | null;
+  /** Set when a send op succeeded but our own caps/backoff refused the send
+   *  before touching LinkedIn (result_ref error `cap_or_backoff`): the verbatim
+   *  refusal reason. The op genuinely succeeded — this is an outcome marker,
+   *  not an error. */
+  refusal?: string | null;
 }
 
 /** Result envelope for the Dev-tab fault-injection actions (US-DEV-01). */

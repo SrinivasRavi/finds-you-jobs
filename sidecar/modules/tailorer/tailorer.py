@@ -1,6 +1,6 @@
 """The Tailorer black box: tailor(master, job, ...) → TailorResult.
 
-One bounded operation at the interface (ROADMAP §4). Internals (engine, step
+One bounded operation at the interface (ROADMAP section 4). Internals (engine, step
 count, interim artifacts) are free to change without touching callers.
 
 Storage stance (roadmap comment, resolved 2026-07-03): the module owns no
@@ -24,6 +24,7 @@ from sidecar.modules._shared.completion_retry import (
     retry_delay_s,
     wait_before_retry,
 )
+from sidecar.modules._shared.dry_run import assemble_dry_run
 
 from .engine import ClaudeCliEngine, Engine
 from .job_input import resolve_job
@@ -45,7 +46,7 @@ def tailor(
     """Tailor `master_md` for `job` (raw JD text, a .md/.txt path, or a URL).
 
     `skill_md`, when provided, replaces the on-disk skill file as the system
-    prompt (the app's user-editable-prompt override, §5). None → the default.
+    prompt (the app's user-editable-prompt override, section 5). None → the default.
     `cancelled`, when provided, is polled at the retry checkpoints (loop top,
     mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7)."""
     engine = engine or ClaudeCliEngine()
@@ -106,9 +107,6 @@ def dry_run_prompt(
     """Assemble and return the full prompt without any LLM call (CLI --dry-run)."""
     jd_md = resolve_job(job)
     samples = load_writing_samples(writing_samples_dir)
-    return (
-        "########## SYSTEM (skill) ##########\n"
-        + load_skill()
-        + "\n########## USER ##########\n"
-        + build_user_prompt(master_md, jd_md, guidance, samples)
+    return assemble_dry_run(
+        load_skill(), build_user_prompt(master_md, jd_md, guidance, samples)
     )

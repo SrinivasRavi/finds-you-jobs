@@ -2,7 +2,7 @@
 //
 // A1 hand-writes the minimal handshake + /healthz path. In A3 the generated
 // OpenAPI client + types land in this same `src/api/` directory
-// (openapi-typescript against the sidecar's /openapi.json — architecture §4.3);
+// (openapi-typescript against the sidecar's /openapi.json — architecture section 4.3);
 // the app imports its typed operations from here. Keep hand-written helpers that
 // sit outside the generated surface (the handshake itself) in this file.
 

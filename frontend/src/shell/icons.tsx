@@ -27,7 +27,9 @@ export type IconName =
   | "arrowLeft"
   | "info"
   | "download"
-  | "heart";
+  | "heart"
+  | "refreshCw"
+  | "linkedin";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   search: (
@@ -182,6 +184,20 @@ const PATHS: Record<IconName, React.ReactNode> = {
   ),
   heart: (
     <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+  ),
+  refreshCw: (
+    <>
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </>
+  ),
+  linkedin: (
+    <>
+      <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
+      <rect x="2" y="9" width="4" height="12" />
+      <circle cx="4" cy="4" r="2" />
+    </>
   ),
 };
 

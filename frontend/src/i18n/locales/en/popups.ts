@@ -88,6 +88,7 @@ const popups = {
       hm: "HM",
       recruiter: "Recruiter",
       leadership: "Leadership",
+      other: "Other",
     },
     degree: {
       first: "1st",
@@ -96,61 +97,57 @@ const popups = {
       nth: "{{degree}}th",
     },
     titleConfirmCompany: "Confirm the company",
-    titleSendingMessages: "Sending messages",
     titleFinding: "Finding referrals…",
     titleView: "View referrals",
     findReferrals: "Find referrals",
     reachesSent_one: "{{count}} reach already sent for this role",
     reachesSent_other: "{{count}} reaches already sent for this role",
     quotaTooltip:
-      "Rolling windows, not calendar day/week — each send frees up 24 hours (daily) or 7 days (weekly) after it was sent. Conservative caps kept well under LinkedIn's limits.",
+      "Rolling windows: each send frees up 24 h (daily) or 7 d (weekly) later. Caps stay well under LinkedIn's limits.",
     automatedQuota:
       "Automated quota — last 24h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> last 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
     dmTooltip:
-      "Direct messages to 1st-degree connections are uncapped and never count against the invite quota",
-    dmCounter: "DMs (last 24h): <strong>{{dmSent}}</strong> (uncapped)",
+      "DMs to 1st-degree connections have their own budget and never count against invites.",
+    dmCounter: "DMs (last 24h): <strong>{{dmSent}}/{{dmLimit}}</strong>",
     manualModeQuota: "Manual mode — track against your own LinkedIn limits",
     dailyLimitReached: "Daily limit reached. New requests queue until tomorrow.",
     closeToLimit_one: "Close to your daily limit — {{count}} request left today.",
     closeToLimit_other: "Close to your daily limit — {{count}} requests left today.",
     bannerNotConnected:
-      "LinkedIn not connected — connect it in Settings → LinkedIn to auto-discover and send. Until then you can add contacts by URL and track your outreach here manually.",
+      "LinkedIn not connected. Connect it in Settings to discover and send, or add contacts by URL and track manually.",
     bannerManualOff:
-      "Manual mode — Referral Outreach is off. Add the contacts you're reaching out to by URL and track them here; turn on Referral Outreach in Settings to auto-discover people and send.",
-    sendsFailed_one:
-      "{{count}} send failed — see the row detail (and <code>logs/sidecar.log</code> / the LinkedIn debug capture).",
-    sendsFailed_other:
-      "{{count}} sends failed — see the row detail (and <code>logs/sidecar.log</code> / the LinkedIn debug capture).",
-    skipped: "{{count}} skipped — already sending.",
+      "Manual mode: Referral Outreach is off. Add contacts by URL, or turn it on in Settings to discover and send.",
+    sendsFailed_one: "{{count}} send failed: the row shows why.",
+    sendsFailed_other: "{{count}} sends failed: each row shows why.",
+    skipped: "{{count}} skipped: already sending.",
     confirmIntroPick:
-      "<strong>The search paused.</strong> We couldn’t pin down the exact company <strong>“{{company}}”</strong> refers to. Pick it below — or paste its LinkedIn page URL — so we search its <em>current</em> employees, not people who just share the name. Referral search needs a company that has a LinkedIn page.",
+      "Which company is <strong>“{{company}}”</strong>? Pick it below or paste its LinkedIn page URL. We only search current employees.",
     confirmIntroNoMatch:
-      "We couldn’t match <strong>“{{company}}”</strong> to a LinkedIn company. Paste the company’s LinkedIn page URL to target the right one — we won’t guess by name (that surfaces unrelated look-alike companies). If it has no LinkedIn page, referral search isn’t available for it — close this and track contacts by hand.",
+      "No LinkedIn company matches <strong>“{{company}}”</strong>. Paste its LinkedIn page URL. Without a page, referral search can't run for it.",
     urlFailed:
-      "That link didn’t resolve to a LinkedIn company. Check it’s a<code>linkedin.com/company/…</code> URL and try again.",
+      "That link isn't a <code>linkedin.com/company/…</code> URL. Try again.",
     bestMatch: "Best match",
-    linkedIn: "LinkedIn ↗",
-    pasteUrlPlaceholder: "Paste the company's LinkedIn URL — linkedin.com/company/…",
+    linkedIn: "LinkedIn",
+    pasteUrlPlaceholder: "linkedin.com/company/…",
     useThisUrl: "Use this URL",
     back: "← Back",
-    backHint: "Back keeps the roster as-is; the company stays unconfirmed.",
+    backHint: "Back keeps the roster as-is.",
     cancel: "Cancel",
     findEmployees: "Find employees",
     startEmptyTitle: "No one found — yet",
     startTitle: "Find people who can refer you",
     startEmptyBody:
-      "The last scan didn't turn up anyone at <strong>{{company}}</strong>. The company name may be ambiguous on LinkedIn — try again, and if it still finds nobody, paste the company's LinkedIn URL when prompted.",
+      "Nobody found at <strong>{{company}}</strong> last scan. Try again, or paste the company's LinkedIn URL when asked.",
     startScanBody:
-      "We'll scan LinkedIn via your session for people at <strong>{{company}}</strong> — peers, hiring managers, and recruiters — and draft a tailored outreach message for each. Nothing is sent until you review and confirm.",
+      "Scans LinkedIn for people at <strong>{{company}}</strong> and drafts an outreach message for each. Nothing sends without your confirm.",
     findingContacts: "Finding contacts at {{company}}…",
-    scanningHint:
-      "Scanning LinkedIn via your session · typically 10–30 s. If the company name is ambiguous we'll pause and ask you to confirm it.",
-    sendingTitle: "Sending messages…",
-    sendingHint:
-      "Sent one by one at human typing speed to mimic natural behavior. You can close this — sending continues in the background.",
+    scanningHint: "Usually 10–30 s. We'll ask if the company name is ambiguous.",
     emptyConnected: "No contacts found at this company yet.",
+    refusedTitle: "Search paused by your rate limits",
+    refusedBody:
+      "LinkedIn wasn't scanned for <strong>{{company}}</strong>: a read limit or backoff is active. It frees up on its own; adjust limits in Settings.",
     emptyManual:
-      "No contacts yet — add one by URL from the Networking page, or turn on Referral Outreach in Settings to auto-discover people at this company.",
+      "No contacts yet. Add one by URL from Networking, or turn on Referral Outreach in Settings.",
     contactsFound_one: "{{count}} contact found",
     contactsFound_other: "{{count}} contacts found",
     findingMore: "Finding more…",
@@ -158,11 +155,18 @@ const popups = {
     findMore: "Find 10 more",
     confirmCompanyNext: "Confirm company →",
     close: "Close",
-    reachOut: "Reach out ({{count}})",
-    sendConfirmTitle_one: "Send {{count}} outreach message?",
-    sendConfirmTitle_other: "Send {{count}} outreach messages?",
+    rowConnect: "Connect",
+    rowMessage: "Message",
+    // The reached row's dull, non-clickable stand-in for the button above —
+    // same footprint, so the LinkedIn button never shifts (2026-08-16).
+    rowRequested: "Requested",
+    rowMessaged: "Messaged",
+    sendConfirmTitle: "Send this to {{name}}?",
+    sendConfirmChannelDm: "It goes out as a direct message from your account.",
+    sendConfirmChannelInvite:
+      "It goes out as a connection request with your note from your account.",
     sendConfirmBody:
-      "This sends real LinkedIn connection requests / DMs from your account, one at a time. finds-you-jobs can’t take them back — to withdraw a request or delete a message, do it yourself on <span>linkedin.com</span>.",
+      "A real LinkedIn message from your account. finds-you-jobs can't take it back; undo it yourself on <span>linkedin.com</span>.",
     sendingEllipsis: "Sending…",
     sendNow: "Send now",
     rowReached: "Reached",
@@ -179,6 +183,7 @@ const popups = {
   applier: {
     title: "Applying — {{role}} · {{company}}",
     phase: {
+      notStarted: "Not started",
       queued: "Queued",
       waitingForPacket: "Waiting for résumé",
       readyForHuman: "Ready for review",

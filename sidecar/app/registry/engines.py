@@ -1,4 +1,4 @@
-"""Engine registry (architecture §5.4/§9).
+"""Engine registry (architecture section 5.4/section 9).
 
 Named `Engine` instances + a routing map `operation kind → (engine, model)`.
 In A3 the registry is typically empty: LLM kinds (`score`/`tailor`/`cover`)
@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 
 class Engine(Protocol):
-    """The only place model access lives (architecture §9)."""
+    """The only place model access lives (architecture section 9)."""
 
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Any]: ...
 

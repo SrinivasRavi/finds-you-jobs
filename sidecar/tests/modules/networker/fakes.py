@@ -25,6 +25,7 @@ class FakeVoyagerDriver:
         status_result: dict | None = None,
         search_jobs_result: dict | None = None,
         contact_sync_result: dict | None = None,
+        contact_sync_batch_results: dict[str, dict] | None = None,
         quota_result: dict | None = None,
         login_result: dict | None = None,
         session_status_result: dict | None = None,
@@ -52,6 +53,9 @@ class FakeVoyagerDriver:
             "op": "contact-sync", "ok": True, "degree": None, "is_first_degree": False,
             "last_message_direction": None, "last_message_at": None,
         }
+        # pid → per-contact envelope for the batched sweep; a pid absent from
+        # the map falls back to `contact_sync_result` (same dict for everyone).
+        self._contact_sync_batch = contact_sync_batch_results or {}
         self._quota = quota_result or {"op": "quota", "ok": True, "quota": {"daily_remaining": 15}}
         self._login = login_result or {
             "op": "login", "ok": True, "connected": True, "connected_as": "Test User",
@@ -87,19 +91,30 @@ class FakeVoyagerDriver:
         self._maybe_raise("discover")
         return self._discover
 
-    def search_jobs(self, keywords, location="", *, limit: int = 50, dry_run: bool = False) -> dict:
-        self.calls.append(("search_jobs", keywords, location, limit, dry_run))
+    def search_jobs(
+        self, keywords, location="", *, start: int = 0, dry_run: bool = False,
+    ) -> dict:
+        self.calls.append(("search_jobs", keywords, location, start, dry_run))
         self._maybe_raise("search_jobs")
         return self._search_jobs
 
-    def send_connection(self, public_identifier, note, tier, *, dry_run) -> dict:
-        self.calls.append(("send_connection", public_identifier, note, tier, dry_run))
+    def send_connection(self, public_identifier, note, *, dry_run, on_step=None) -> dict:
+        self.calls.append(("send_connection", public_identifier, note, dry_run))
         self._maybe_raise("send_connection")
+        # Mirror the real driver's narration: report the invite plan's steps
+        # as "completed" when a canned send succeeds (tests assert the host
+        # publishes them verbatim).
+        if on_step is not None and not dry_run and self._connection.get("sent"):
+            for step in ("invite1", "invite2", "invite3", "invite4", "invite5"):
+                on_step(step)
         return self._connection
 
-    def send_dm(self, public_identifier, message, tier, *, dry_run) -> dict:
-        self.calls.append(("send_dm", public_identifier, message, tier, dry_run))
+    def send_dm(self, public_identifier, message, *, dry_run, on_step=None) -> dict:
+        self.calls.append(("send_dm", public_identifier, message, dry_run))
         self._maybe_raise("send_dm")
+        if on_step is not None and not dry_run and self._dm.get("sent"):
+            for step in ("dm1", "dm2", "dm3", "dm4"):
+                on_step(step)
         return self._dm
 
     def status(self, public_identifier, *, dry_run) -> dict:
@@ -112,8 +127,43 @@ class FakeVoyagerDriver:
         self._maybe_raise("contact_sync")
         return self._contact_sync
 
-    def quota(self, tier) -> dict:
-        self.calls.append(("quota", tier))
+    def contact_sync_states(self, entries, *, dry_run) -> dict:
+        """Mirrors the worker's batch contract: one envelope per entry —
+        thread-only entries (with a urn) first, exactly like the worker's
+        unmetered pass, then the full probes — stopping after the first
+        rate-limit/cap/auth result (the worker ends the sweep there — later
+        pids get no entry). Thread-only envelopes answer degree None."""
+        self.calls.append((
+            "contact_sync_states",
+            tuple(e["public_identifier"] for e in entries),
+            dry_run,
+            tuple(sorted(e["public_identifier"] for e in entries
+                         if e.get("thread_only") and e.get("urn"))),
+        ))
+        self._maybe_raise("contact_sync_states")
+        ordered = (
+            [e for e in entries if e.get("thread_only") and e.get("urn")]
+            + [e for e in entries if not (e.get("thread_only") and e.get("urn"))]
+        )
+        results = []
+        for spec in ordered:
+            pid = spec["public_identifier"]
+            entry = dict(self._contact_sync_batch.get(pid, self._contact_sync))
+            entry.setdefault("public_identifier", pid)
+            if spec.get("thread_only") and spec.get("urn") and not entry.get("error"):
+                entry["degree"] = None
+                entry["is_first_degree"] = False
+                entry.setdefault("target_urn", spec["urn"])
+            results.append(entry)
+            if entry.get("error") in ("rate_limited", "cap_or_backoff", "auth_error"):
+                break
+        return {
+            "op": "contact-sync-batch", "ok": True,
+            "count": len(results), "results": results,
+        }
+
+    def quota(self) -> dict:
+        self.calls.append(("quota",))
         self._maybe_raise("quota")
         return self._quota
 

@@ -20,9 +20,11 @@ import { Trans, useTranslation } from "react-i18next";
 import { api } from "../api";
 import { qk } from "../api/queries";
 import type { EngineSaveInput, EngineVerifyResult } from "../api/types";
+import { ChipInput } from "../shell/ChipInput";
 import { InfoDot } from "../shell/InfoDot";
 import { LanguageSelect } from "../shell/LanguageSelect";
 import { openLoginTerminal } from "../shell/openExternal";
+import { CADENCE_OPTIONS, FRESHNESS_DAYS, FRESHNESS_OPTIONS } from "./scanPrefs";
 
 // The wizard's interactive steps (i18n keys). The stepper *displays* "Download
 // the app" ahead of these as stage 1, pre-completed, so the numbering the user
@@ -89,11 +91,9 @@ const CLI_PROVIDERS: Record<
 };
 const isCliProvider = (id: string) => id in CLI_PROVIDERS;
 
-const FRESHNESS_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30 };
-
 // The LLM-backed operation kinds that need a routed engine — mirrors the
 // backend's LLM_KINDS (sidecar/app/registry/engine_config.py). The prior
-// repository's `prep` is retired (applier.md §2); `draft`/`apply` route here.
+// repository's `prep` is retired (applier-as-built.md section 2); `draft`/`apply` route here.
 const LLM_KINDS = ["score", "tailor", "cover", "extract", "draft", "apply"] as const;
 
 const DRAFT_KEY = "fyj-onboarding-draft-v1";
@@ -137,9 +137,7 @@ export function Onboarding() {
 
   // Draft — preferences.
   const [aliases, setAliases] = useState<string[]>(d0.aliases ?? []);
-  const [aliasInput, setAliasInput] = useState("");
   const [locations, setLocations] = useState<string[]>(d0.locations ?? []);
-  const [locInput, setLocInput] = useState("");
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
   // Scoring mode (2026-07-22): "llm" | "keyword" — replaces the retired
@@ -219,12 +217,6 @@ export function Onboarding() {
     step >= STEP_LABELS.length - 1
       ? 100
       : Math.round(((step + 1) / DISPLAY_STEPS.length) * 100);
-
-  function addChip(list: string[], set: (v: string[]) => void, value: string, clear: () => void) {
-    const v = value.trim();
-    if (v && !list.includes(v)) set([...list, v]);
-    clear();
-  }
 
   async function onFile(file: File | undefined) {
     if (!file) return;
@@ -443,32 +435,30 @@ export function Onboarding() {
           ) : step === 1 ? (
             <div className="space-y-4">
               <h1 className="text-[18px] font-semibold text-ink">{t("onboarding.titlePreferences")}</h1>
-              <ChipField
+              <ChipInput
+                variant="plain"
                 label={t("onboarding.aliasLabel")}
                 testid="alias"
                 items={aliases}
-                input={aliasInput}
-                setInput={setAliasInput}
-                onAdd={() => addChip(aliases, setAliases, aliasInput, () => setAliasInput(""))}
-                onRemove={(v) => setAliases(aliases.filter((a) => a !== v))}
+                onAdd={(v) => setAliases((a) => [...a, v])}
+                onRemove={(v) => setAliases((a) => a.filter((x) => x !== v))}
                 placeholder={t("onboarding.aliasPlaceholder")}
                 hint={t("onboarding.aliasHint")}
               />
-              <ChipField
+              <ChipInput
+                variant="plain"
                 label={t("onboarding.locationLabel")}
                 testid="location"
                 items={locations}
-                input={locInput}
-                setInput={setLocInput}
-                onAdd={() => addChip(locations, setLocations, locInput, () => setLocInput(""))}
-                onRemove={(v) => setLocations(locations.filter((a) => a !== v))}
+                onAdd={(v) => setLocations((l) => [...l, v])}
+                onRemove={(v) => setLocations((l) => l.filter((x) => x !== v))}
                 placeholder={t("onboarding.locationPlaceholder")}
                 hint={t("onboarding.locationHint")}
               />
               <div>
                 <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.freshnessLabel")}</div>
                 <div className="flex gap-1.5">
-                  {["24h", "7d", "30d"].map((f) => (
+                  {FRESHNESS_OPTIONS.map((f) => (
                     <Pill key={f} active={freshness === f} onClick={() => setFreshness(f)}>
                       {t(`onboarding.freshness.${f}`)}
                     </Pill>
@@ -478,7 +468,7 @@ export function Onboarding() {
               <div>
                 <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.cadenceLabel")}</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {["Every 6h", "Every 12h", "Every 24h", "Every 48h", "Every 72h"].map((c) => (
+                  {CADENCE_OPTIONS.map((c) => (
                     <Pill key={c} active={cadence === c} onClick={() => setCadence(c)}>
                       {t(`onboarding.cadence.${c}`)}
                     </Pill>
@@ -751,67 +741,5 @@ function Pill({
     >
       {children}
     </button>
-  );
-}
-
-function ChipField({
-  label,
-  testid,
-  items,
-  input,
-  setInput,
-  onAdd,
-  onRemove,
-  placeholder,
-  hint,
-}: {
-  label: string;
-  testid: string;
-  items: string[];
-  input: string;
-  setInput: (v: string) => void;
-  onAdd: () => void;
-  onRemove: (v: string) => void;
-  placeholder: string;
-  hint?: string;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div>
-      <div className="mb-1 text-[12px] text-ink-3">{label}</div>
-      {hint ? <div className="mb-1.5 text-[11px] text-ink-4">{hint}</div> : null}
-      <div className="flex flex-wrap gap-1.5">
-        {items.map((it) => (
-          <span
-            key={it}
-            className="inline-flex items-center gap-1 rounded-full bg-accent-wash px-2 py-0.5 text-[11.5px] text-accent-ink"
-          >
-            {it}
-            <button
-              onClick={() => onRemove(it)}
-              aria-label={t("onboarding.removeChip", { value: it })}
-              className="text-accent-ink/70"
-            >
-              ×
-            </button>
-          </span>
-        ))}
-        <input
-          value={input}
-          data-testid={`${testid}-input`}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            // Comma adds too — parity with the Job-finder-preferences chip
-            // fields (maintainer 2026-07-22 #6).
-            if (e.key === "Enter" || e.key === ",") {
-              e.preventDefault();
-              onAdd();
-            }
-          }}
-          placeholder={placeholder}
-          className="min-w-[160px] flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
-        />
-      </div>
-    </div>
   );
 }

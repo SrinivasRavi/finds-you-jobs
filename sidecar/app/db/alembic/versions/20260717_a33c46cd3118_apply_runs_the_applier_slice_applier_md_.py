@@ -1,4 +1,4 @@
-"""apply runs — the Applier slice (`docs/internal/applier.md` §9.1).
+"""apply runs — the Applier slice (`docs/internal/archived/applier-as-built.md` section 9.1).
 
 One durable row per Applier attempt: immutable evidence, retry-linked
 

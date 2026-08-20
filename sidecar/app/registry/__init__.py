@@ -1,4 +1,4 @@
-"""Registries (architecture §5.4).
+"""Registries (architecture section 5.4).
 
 The operation registry (`kind → module entrypoint`) and the engine registry
 (named `Engine` instances + a routing map `kind → (engine, model)`). The runner

@@ -1,8 +1,9 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""The apply agent loop (docs/internal/applier.md §4/§5): observe → decide →
-execute → verify → repeat, under a hard time budget and a no-progress budget.
+"""The apply agent loop (docs/internal/archived/applier-as-built.md section 4/section 5):
+observe → decide → execute → verify → repeat, under a hard time budget and a
+no-progress budget.
 
-Terminal honesty (§8.4): P1 success is ``ready_for_human`` — the browser
+Terminal honesty (section 8.4): P1 success is ``ready_for_human`` — the browser
 stays open (the caller owns its lifetime), the human reviews and submits.
 The loop cannot submit: there is no submit tool in the vocabulary, and the
 executor would reject one anyway.
@@ -23,7 +24,7 @@ from typing import Any, Protocol
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 
-from .actions import parse_action
+from .actions import Action, parse_action
 from .classifier import classify
 from .executor import Executor, UrlPolicy
 from .observe import Observation, observe
@@ -55,8 +56,18 @@ class ApplyEngine(Protocol):
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Any]: ...
 
 
+class DeciderEngine(Protocol):
+    """A deterministic decider seam. It returns the next ``Action`` straight from
+    the structured observation — no text round-trip, no model spend. The loop
+    prefers this when the engine offers it; the code rung of the ladder
+    (Option 11) plugs in here."""
+
+    def decide(self, obs: Observation, request: ApplyRequest) -> Action: ...
+
+
 _NO_PROGRESS_OBSERVATIONS = 3  # materially identical observations in a row
 _MAX_CONSECUTIVE_FAILURES = 4  # failed/disallowed actions in a row
+_REDUNDANT_ACTIONS = 3  # verified re-fills of an already-settled field in a row
 _HARD_WALLS = {
     PageState.POSTING_CLOSED: "posting_closed",
     PageState.CAPTCHA_OR_ANTI_BOT: "captcha",
@@ -69,14 +80,14 @@ _FIELD_TOOLS = {"fill", "select", "check", "upload_artifact"}
 async def run_apply(
     page: Page,
     request: ApplyRequest,
-    engine: ApplyEngine,
+    engine: ApplyEngine | DeciderEngine,
     on_event: ApplyEventSink,
     control: ApplyControl,
     *,
     policy: UrlPolicy | None = None,
 ) -> ApplyResult:
     """Run one apply attempt on an already-open page. The caller owns the
-    browser context (and keeps it open on ``ready_for_human``, §8.4)."""
+    browser context (and keeps it open on ``ready_for_human``, section 8.4)."""
     runner = _Run(page, request, engine, on_event, control, policy or UrlPolicy())
     return await runner.run()
 
@@ -86,7 +97,7 @@ class _Run:
         self,
         page: Page,
         request: ApplyRequest,
-        engine: ApplyEngine,
+        engine: ApplyEngine | DeciderEngine,
         on_event: ApplyEventSink,
         control: ApplyControl,
         policy: UrlPolicy,
@@ -111,6 +122,11 @@ class _Run:
         self._steps = 0
         self._phase: ApplyPhase | None = None
         self._form_seen = False
+        # Signatures of field actions already verified this run. A re-verified
+        # signature is redundant work, not progress — the guard against the
+        # livelock the eval indicted (a model re-filling a settled field forever
+        # while every fill reads back ok and resets the failure streak).
+        self._verified_sigs: set[str] = set()
 
     # -- plumbing -------------------------------------------------------------
 
@@ -153,15 +169,29 @@ class _Run:
         except PlaywrightError:  # evidence must never kill the run
             logger.warning("screenshot %s failed", tag, exc_info=True)
 
-    def _decide(self, obs: Observation) -> str:
-        reply, usage = self._engine.complete(
+    def _decide(self, obs: Observation) -> Action:
+        """One decision. A deterministic decider (the code rung) is preferred
+        when the engine offers a ``decide`` seam — it returns an Action with no
+        model spend; otherwise the model's text completion is parsed strictly.
+        Either way this runs in a worker thread so the event loop keeps
+        breathing (a ``DisallowedActionError`` propagates to the loop's handler)."""
+        decide = getattr(self._engine, "decide", None)
+        if decide is not None:
+            self._usage_calls += 1
+            return decide(obs, self._request)
+        reply, usage = self._engine.complete(  # type: ignore[union-attr]
             system_prompt(),
             render_turn(self._request, obs, self._history, self._remaining()),
         )
         self._usage_calls += 1
         tokens_in = getattr(usage, "tokens_in", None)
         tokens_out = getattr(usage, "tokens_out", None)
-        cost = getattr(usage, "cost_usd", None)
+        # The app's EngineUsage names the spend field ``usd``; the package's own
+        # fakes name it ``cost_usd``. Read both, or a real engine's spend is
+        # dropped from the run's cost record and the dashboard under-reports.
+        cost = getattr(usage, "usd", None)
+        if cost is None:
+            cost = getattr(usage, "cost_usd", None)
         if tokens_in:
             self._usage_in += int(tokens_in)
         if tokens_out:
@@ -169,7 +199,7 @@ class _Run:
         if cost is not None:
             self._cost_usd += float(cost)
             self._cost_known = True
-        return reply
+        return parse_action(reply)
 
     def _usage(self) -> Usage:
         return Usage(
@@ -224,7 +254,7 @@ class _Run:
             return await self._run_inner()
         except PlaywrightError as exc:
             # The human closed the browser, or the page died mid-action. Not a
-            # success, not a lie — an interruption (§8.3).
+            # success, not a lie — an interruption (section 8.3).
             self._emit(ApplyEvent(ApplyEventType.INTERRUPTED, {"reason": str(exc)}))
             self._set_phase(ApplyPhase.INTERRUPTED)
             return self._result(
@@ -247,6 +277,7 @@ class _Run:
 
         identical_streak = 0
         failure_streak = 0
+        redundant_streak = 0
         last_digest = ""
 
         while True:
@@ -289,11 +320,9 @@ class _Run:
                     obs,
                 )
 
-            reply = await asyncio.to_thread(self._decide, obs)
             self._steps += 1
-
             try:
-                action = parse_action(reply)
+                action = await asyncio.to_thread(self._decide, obs)
             except DisallowedActionError as exc:
                 failure_streak += 1
                 self._history.append(f"(rejected) {exc}")
@@ -309,7 +338,7 @@ class _Run:
             if action.tool == "finish":
                 reason = str(action.args["reason"])
                 if not self._form_seen:
-                    # finish without goal evidence is not a success (§4.2).
+                    # finish without goal evidence is not a success (section 4.2).
                     return self._blocked(
                         "no_form",
                         f"agent finished without reaching a form: {reason}",
@@ -349,14 +378,21 @@ class _Run:
                     )
                 )
                 failure_streak = 0
-                continue  # keep filling the rest (§6)
+                # Reporting a blocker is progress through the form, not a stall,
+                # even though it leaves the page unchanged. Reset the no-progress
+                # streak so a run of trailing ungrounded fields (a form's custom
+                # screening questions) doesn't trip the frozen-page guard before
+                # the fillable fields elsewhere are reached.
+                identical_streak = 0
+                continue  # keep filling the rest (section 6)
 
             label = ""
+            unique_id = ""
             if "element_id" in action.args:
                 try:
-                    label = self._executor.resolve(
-                        str(action.args["element_id"])
-                    ).label
+                    resolved = self._executor.resolve(str(action.args["element_id"]))
+                    label = resolved.label
+                    unique_id = resolved.unique_id
                 except (StaleElementError, ApplyError):
                     label = str(action.args["element_id"])
             self._emit(
@@ -408,6 +444,29 @@ class _Run:
                     f"repeated action failures without new evidence: {outcome.note}",
                     obs,
                 )
+
+            if action.tool in _FIELD_TOOLS and outcome.ok and unique_id:
+                value_sig = str(action.args.get("value", action.args.get("option", "")))
+                sig = f"{unique_id}|{action.tool}|{value_sig}"
+                if sig in self._verified_sigs:
+                    redundant_streak += 1
+                else:
+                    self._verified_sigs.add(sig)
+                    redundant_streak = 0
+                if redundant_streak >= _REDUNDANT_ACTIONS:
+                    # Re-verifying already-settled fields is not progress: the
+                    # form is filled, so hand off rather than spin. This is the
+                    # livelock the eval indicted — every re-fill read back ok and
+                    # reset the failure streak, so nothing else caught it.
+                    self._set_phase(ApplyPhase.VERIFYING)
+                    obs = await self._observe()
+                    await self._screenshot("handoff")
+                    self._set_phase(ApplyPhase.READY_FOR_HUMAN)
+                    reason = "form already filled; stopped re-verifying settled fields"
+                    self._emit(
+                        ApplyEvent(ApplyEventType.READY_FOR_HUMAN, {"reason": reason})
+                    )
+                    return self._result(ApplyStatus.READY_FOR_HUMAN, reason, obs)
 
             if action.tool in _MUTATING_TOOLS:
                 obs = await self._observe()

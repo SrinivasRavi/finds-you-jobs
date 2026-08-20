@@ -15,6 +15,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from sidecar.app.db.models import OP_TERMINAL_STATES
 from sidecar.app.main import create_app
 
 TOKEN = "test-token-profile"  # noqa: S105 — test fixture, not a real secret
@@ -39,7 +40,7 @@ def _wait_for_kind_terminal(client: TestClient, kind: str) -> dict:
     while time.monotonic() < deadline:
         ops = client.get("/api/operations", headers=AUTH).json()
         for op in ops:
-            if op["kind"] == kind and op["state"] in ("succeeded", "failed", "cancelled"):
+            if op["kind"] == kind and op["state"] in OP_TERMINAL_STATES:
                 return op
             if op["kind"] == kind:
                 last = op

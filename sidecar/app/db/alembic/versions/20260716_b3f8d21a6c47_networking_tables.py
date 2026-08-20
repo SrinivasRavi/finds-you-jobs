@@ -1,7 +1,7 @@
-"""networking tables — the Referral Outreach slice (database-design.md §5).
+"""networking tables — the Referral Outreach slice (database-design.md section 5).
 
 Creates the seven networking tables for the referral commit
-(`docs/internal/roadmap.md` §7.2 #10-11): contacts, company_resolutions,
+(`docs/internal/roadmap.md` section 7.2 #10-11): contacts, company_resolutions,
 contact_job_assocs, sequences, sequence_steps, outreach_logs, linkedin_sessions.
 
 Revision ID: b3f8d21a6c47

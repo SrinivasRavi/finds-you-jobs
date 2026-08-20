@@ -1,12 +1,12 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Typed contract of the Applier package (docs/internal/applier.md §3.1).
+"""Typed contract of the Applier package (docs/internal/archived/applier-as-built.md section 3.1).
 
 The app talks to the agent ONLY through these types: an immutable
 ``ApplyRequest`` in, a durable ``ApplyResult`` out, ``ApplyEvent``s streamed
 through a sink while the run is live. No DB session, FastAPI request, bearer
 token, raw secret, or UI object crosses this boundary — and nothing in this
 package can submit an application: the P1 tool vocabulary ends at
-``finish``/``report_blocked`` (§4.2; the P2 ``submit`` tool does not exist
+``finish``/``report_blocked`` (section 4.2; the P2 ``submit`` tool does not exist
 here).
 """
 
@@ -18,7 +18,7 @@ from enum import StrEnum
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Page-state classification (§5.1)
+# Page-state classification (section 5.1)
 # ---------------------------------------------------------------------------
 
 
@@ -38,7 +38,7 @@ class PageState(StrEnum):
 
 
 # ---------------------------------------------------------------------------
-# Run request (§3.1) — immutable for the run
+# Run request (section 3.1) — immutable for the run
 # ---------------------------------------------------------------------------
 
 
@@ -47,7 +47,7 @@ class ArtifactRef:
     """One user-approved artifact the agent may upload — nothing else can be.
 
     ``label`` is what the model sees ("tailored resume (PDF)"); ``path`` stays
-    executor-side and is never shown to the model (§5.3).
+    executor-side and is never shown to the model (section 5.3).
     """
 
     artifact_id: str
@@ -58,7 +58,7 @@ class ArtifactRef:
 
 @dataclass(frozen=True)
 class ApplyRequest:
-    """Everything a run needs, frozen at start (§3.1)."""
+    """Everything a run needs, frozen at start (section 3.1)."""
 
     run_id: str
     application_id: str
@@ -70,14 +70,14 @@ class ApplyRequest:
     preferences: dict[str, str]  # explicit user preferences (e.g. salary)
     approved_links: tuple[str, ...]  # portfolio/GitHub/LinkedIn the user approved
     artifacts: tuple[ArtifactRef, ...]  # the ONLY uploadable files
-    resume_label: str  # "master resume" | "tailored resume" (§3.1 honesty label)
-    deadline_s: float = 20 * 60.0  # total run budget (§5.2)
+    resume_label: str  # "master resume" | "tailored resume" (section 3.1 honesty label)
+    deadline_s: float = 20 * 60.0  # total run budget (section 5.2)
     screenshot_dir: str = ""  # where evidence PNGs are written
-    portal_skill: str | None = None  # reserved (§7); no skills ship yet
+    portal_skill: str | None = None  # reserved (section 7); no skills ship yet
 
 
 # ---------------------------------------------------------------------------
-# Result (§3.1 / §8.4)
+# Result (section 3.1 / section 8.4)
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +92,7 @@ class ApplyStatus(StrEnum):
 
 
 class ApplyPhase(StrEnum):
-    """High-level live phase for the companion UI (§8.2)."""
+    """High-level live phase for the companion UI (section 8.2)."""
 
     OPENING = "opening"
     FINDING_FORM = "finding_form"
@@ -106,7 +106,7 @@ class ApplyPhase(StrEnum):
 
 @dataclass(frozen=True)
 class Blocker:
-    """One honest obstacle: a field we could not ground, a wall we hit (§6)."""
+    """One honest obstacle: a field we could not ground, a wall we hit (section 6)."""
 
     kind: str  # ungrounded_field | login_wall | captcha | posting_closed | no_form | error
     detail: str  # redacted, human-readable
@@ -125,7 +125,7 @@ class FieldOutcome:
 
 @dataclass(frozen=True)
 class Usage:
-    """Exact model spend for the run (§8.2 cost honesty)."""
+    """Exact model spend for the run (section 8.2 cost honesty)."""
 
     calls: int = 0
     tokens_in: int = 0
@@ -135,7 +135,7 @@ class Usage:
 
 @dataclass(frozen=True)
 class ApplyResult:
-    """The durable outcome the app persists (§3.1)."""
+    """The durable outcome the app persists (section 3.1)."""
 
     run_id: str
     status: ApplyStatus
@@ -150,7 +150,7 @@ class ApplyResult:
 
 
 # ---------------------------------------------------------------------------
-# Events (§9.2) — streamed to the app's runner/SSE hub
+# Events (section 9.2) — streamed to the app's runner/SSE hub
 # ---------------------------------------------------------------------------
 
 
@@ -170,7 +170,7 @@ class ApplyEventType(StrEnum):
 @dataclass(frozen=True)
 class ApplyEvent:
     """One redacted progress event. ``data`` holds labels/urls/phase names —
-    never raw form values and never a full model prompt (§9.1)."""
+    never raw form values and never a full model prompt (section 9.1)."""
 
     type: ApplyEventType
     data: dict[str, Any] = field(default_factory=dict)
@@ -180,7 +180,7 @@ ApplyEventSink = Callable[[ApplyEvent], None]
 
 
 # ---------------------------------------------------------------------------
-# Control (§8.2 cancel / §8.3 interruption)
+# Control (section 8.2 cancel / section 8.3 interruption)
 # ---------------------------------------------------------------------------
 
 
@@ -209,8 +209,8 @@ class ApplyError(Exception):
 
 
 class StaleElementError(ApplyError):
-    """An action referenced an element id from an expired observation (§4.1)."""
+    """An action referenced an element id from an expired observation (section 4.1)."""
 
 
 class DisallowedActionError(ApplyError):
-    """The model asked for something outside the executor's contract (§4.3)."""
+    """The model asked for something outside the executor's contract (section 4.3)."""

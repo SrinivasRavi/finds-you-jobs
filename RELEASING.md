@@ -72,10 +72,10 @@ pnpm ship release    # ALSO: merge main->release & push (fires the Release
 `<version>` comes from `src-tauri/tauri.conf.json`. Before `pnpm ship release`,
 bump the version in the six version strings (tauri.conf.json, both Cargo, both
 package.json, pyproject.toml + the sidecar `main.py` string) and commit. The
-pinned install tag (§2) is bumped by the script itself. The site repo is expected
+pinned install tag (section 2) is bumped by the script itself. The site repo is expected
 at `~/dev/findsyoujobs-site`
 (override `FYJ_SITE_DIR`). The Ed25519 secret `TAURI_SIGNING_PRIVATE_KEY` must be
-set on the repo or the build fails by design (see `docs/internal/distribution.md` §9).
+set on the repo or the build fails by design (see `docs/internal/distribution.md` section 9).
 
 **Auto-update:** from v0.5.5-beta on, the app self-updates (Settings › About ›
 Check for updates) against the signed `latest.json` published to the fixed `latest`

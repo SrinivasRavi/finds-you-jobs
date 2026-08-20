@@ -1,4 +1,4 @@
-"""Engine wiring from Settings (architecture §5.4/§9).
+"""Engine wiring from Settings (architecture section 5.4/section 9).
 
 `claude-cli` (the shared `ClaudeCliEngine`) stays the **default** engine of
 record — no routing default is flipped here. It is registered as a per-model
@@ -44,7 +44,7 @@ from .engines_http import (
     verify_openai_compatible,
 )
 
-# The dev engine of record (architecture §9). Stays the routing default — the
+# The dev engine of record (architecture section 9). Stays the routing default — the
 # BYOK engines are opt-in via the Settings routing map, never auto-selected.
 DEFAULT_ENGINE = "claude-cli"
 
@@ -59,7 +59,7 @@ CLI_PROVIDERS = (DEFAULT_ENGINE, "codex-cli", "antigravity-cli")
 # The LLM-backed operation kinds that need a routed engine. `extract` is the
 # application-profile extraction at master-save (FR-APP-01) — a small call; a
 # cheap model is fine. (The prior repository also routed `prep`; Save-time
-# form-prep is retired in this rebuild — `docs/internal/applier.md` §2 — so
+# form-prep is retired in this rebuild — `docs/internal/archived/applier-as-built.md` section 2 — so
 # the kind is deliberately absent.)
 # Every LLM-driven kind must be here or apply_routing never routes it and the
 # op dies EngineNotConfiguredError in production. `draft` (Networker) was

@@ -1,11 +1,11 @@
-// Analytics (§12 / FR-SET-07 + US-LOG-01) — the merged cost-and-usage + logs
+// Analytics (section 12 / FR-SET-07 + US-LOG-01) — the merged cost-and-usage + logs
 // surface. Left 25%: aggregate cost tiles + per-kind spend from the operations
-// ledger (the cost source of truth, architecture §10). Right 75%: the operations
+// ledger (the cost source of truth, architecture section 10). Right 75%: the operations
 // ledger table with a per-operation span drill-down (US-SYS-05 / A6), a Started
 // timestamp, per-agent filter chips, and a friendly "App restarted while
 // generating — retry?" affordance over the boot-recovery note (US-LOG-01).
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -16,7 +16,15 @@ import {
   useOperationSpans,
   useRetryOperation,
 } from "../api/queries";
-import type { CostTotals, LedgerEntry, OperationKind, OperationState, Span } from "../api/types";
+import type {
+  CostTotals,
+  LedgerEntry,
+  LedgerSubject,
+  OperationKind,
+  OperationState,
+  Span,
+} from "../api/types";
+import { formatWhen } from "../shell/datetime";
 
 const STATE_CLS: Record<OperationState, string> = {
   succeeded: "bg-good-wash text-good",
@@ -43,7 +51,7 @@ const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
   {
     key: "networking",
     label: "analytics.groups.networking",
-    kinds: ["discover", "draft", "send", "linkedin_login", "archive_stale_contacts"],
+    kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search", "view_page"],
   },
   { key: "apply", label: "analytics.groups.apply", kinds: ["apply", "extract", "prep"] },
   { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
@@ -65,19 +73,13 @@ function num(v: unknown): number | null {
   return typeof v === "number" ? v : null;
 }
 
-function fmtTime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-}
-
 // ─── left panel: cost dashboard ──────────────────────────────────────────────
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
       <div className="text-[11px] font-medium text-ink-3">{label}</div>
-      <div className="mt-1 font-mono text-[20px] font-semibold text-ink">{value}</div>
+      <div className="mt-1 text-[20px] font-semibold text-ink">{value}</div>
       {sub ? <div className="text-[11px] text-ink-3">{sub}</div> : null}
     </div>
   );
@@ -105,14 +107,14 @@ function CostPanel({ totals }: { totals: CostTotals | undefined }) {
         <div className="space-y-1.5">
           {(Object.keys(byKind) as OperationKind[]).map((kind) => (
             <div key={kind} className="flex items-center gap-2">
-              <span className="w-12 font-mono text-[10.5px] text-ink-3">{kind}</span>
+              <span className="w-12 text-[10.5px] text-ink-3">{kind}</span>
               <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-2">
                 <div
                   className="h-full rounded-full bg-accent"
                   style={{ width: `${(byKind[kind] / maxKind) * 100}%` }}
                 />
               </div>
-              <span className="w-12 text-right font-mono text-[10.5px] text-ink-2">
+              <span className="w-12 text-right text-[10.5px] text-ink-2">
                 ${byKind[kind].toFixed(2)}
               </span>
             </div>
@@ -144,9 +146,9 @@ function SpanDetail({ operationId }: { operationId: string }) {
         return (
           <div key={s.span_id} className="rounded-lg border border-border bg-surface-2 p-3">
             <div className="mb-2 flex items-center gap-2">
-              <span className="font-mono text-[11px] font-semibold text-ink">{s.name}</span>
+              <span className="text-[11px] font-semibold text-ink">{s.name}</span>
               <span
-                className={`rounded-full px-2 py-0.5 font-mono text-[10px] ${
+                className={`rounded-full px-2 py-0.5 text-[10px] ${
                   s.status === "ERROR" ? "bg-bad-wash text-bad" : "bg-good-wash text-good"
                 }`}
               >
@@ -154,7 +156,7 @@ function SpanDetail({ operationId }: { operationId: string }) {
                     for our completed spans that means OK; show that, not jargon. */}
                 {s.status === "ERROR" ? t("analytics.span.error") : t("analytics.span.ok")}
               </span>
-              <span className="ml-auto font-mono text-[11px] text-ink-2">
+              <span className="ml-auto text-[11px] text-ink-2">
                 {t("analytics.span.ms", { value: s.duration_ms.toFixed(0) })}
               </span>
             </div>
@@ -183,7 +185,7 @@ function SpanDetail({ operationId }: { operationId: string }) {
                 {s.events.map((ev, i) => (
                   <span
                     key={i}
-                    className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] text-ink-3"
+                    className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-ink-3"
                   >
                     {ev.name}
                   </span>
@@ -201,7 +203,7 @@ function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-ink-4">{label}</dt>
-      <dd className="font-mono text-ink-2">{value}</dd>
+      <dd className="text-ink-2">{value}</dd>
     </div>
   );
 }
@@ -242,7 +244,7 @@ const CANCELLABLE_RUNNING_KINDS: OperationKind[] = ["score", "tailor", "cover"];
 
 // `apply` cancellation is never a generic ledger Stop — even a queued apply is
 // cancelled through its own apply-run flow (the ApplierPanel's dedicated Cancel,
-// applier.md §8.2), which lands the run honestly. A generic "Stop" here would be
+// applier-as-built.md section 8.2), which lands the run honestly. A generic "Stop" here would be
 // a semantically odd second affordance, so the ledger never renders one for it.
 const STOP_EXCLUDED_KINDS: OperationKind[] = ["apply"];
 
@@ -272,11 +274,29 @@ function StopButton({ entry }: { entry: LedgerEntry }) {
 }
 
 /** The error cell: the boot-recovery note gets friendly copy; other failures
- *  show the verbatim error (de-emphasized once retried). The Retry button
- *  itself lives in the State cell (RetryButton). */
+ *  show a CLAMPED 1-2 line preview (de-emphasized once retried) — the full
+ *  verbatim text lives ONLY in the expanded row (ExpandedBlocks), so a failed
+ *  scan's Chrome-flags stack can never balloon the collapsed row (maintainer
+ *  spec 2026-08-04). The Retry button itself lives in the State cell
+ *  (RetryButton). Everything still WRAPS (break-words) — the ledger must never
+ *  scroll sideways (2026-08-03). */
 function ErrorCell({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
-  if (!entry.error) return null;
+  if (!entry.error) {
+    // A succeeded send our own caps refused in-band: the state pill is honest
+    // ("Succeeded" — the op ran fine) but the row must say nothing went out.
+    if (entry.refusal) {
+      return (
+        <div
+          className="mt-0.5 line-clamp-2 break-words font-mono text-[11px] text-warn"
+          data-testid="log-refused"
+        >
+          {t("analytics.ledger.refused", { reason: entry.refusal })}
+        </div>
+      );
+    }
+    return null;
+  }
   if (entry.error.includes(RESTART_NOTE_MARKER)) {
     return (
       <div className="mt-0.5 flex items-center gap-2 text-[11.5px]" data-testid="log-restart">
@@ -287,12 +307,205 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
   return (
     <div
       className={
-        "mt-0.5 font-mono text-[11px] " + (entry.retried_as ? "text-ink-4" : "text-bad")
+        "mt-0.5 line-clamp-2 break-words font-mono text-[11px] " +
+        (entry.retried_as ? "text-ink-4" : "text-bad")
       }
       data-testid="log-error"
     >
       {entry.error}
     </div>
+  );
+}
+
+// The per-kind noun for a subject's `count` (US-LOG-01 legibility): the number
+// itself is backend data; the noun is UI chrome and stays in the locale files.
+const COUNT_KEYS: Partial<Record<OperationKind, string>> = {
+  discover: "analytics.subject.contactsFound",
+  scan: "analytics.subject.newJobs",
+  linkedin_search: "analytics.subject.newJobs",
+  contact_sync: "analytics.subject.contactsChecked",
+  archive_stale_contacts: "analytics.subject.contactsArchived",
+  cleanup_trash: "analytics.subject.itemsCleaned",
+};
+
+/** Split a backend comma-joined list (scan's per-source names, a linkedin
+ *  search's query list) back into items for counting/blocks. Pure UI reshaping
+ *  of verbatim backend data — nothing is fabricated. */
+function splitList(value: string | null | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/** scan: the source list rides in `context`. */
+function sourceList(s: LedgerSubject | null): string[] {
+  return splitList(s?.context);
+}
+
+/** linkedin_search: the query list rides in `label`. */
+function queryList(s: LedgerSubject | null): string[] {
+  return splitList(s?.label);
+}
+
+/** The COLLAPSED Operation cell — ONE fixed anatomy for EVERY ledger kind
+ *  (maintainer spec 2026-08-04): the kind tag, ONE bold subject label (the
+ *  entity, single-line truncated, hyperlinked when the backend resolved an
+ *  external URL), an optional short count, and ONE muted single-line context
+ *  (truncated) — nothing else, never more than ~2 text lines. Bulk payloads
+ *  (source lists, search queries, messages, transition summaries) render ONLY
+ *  in the expanded row (ExpandedBlocks); collapsed rows show counts instead.
+ *  All entity text is verbatim backend data. */
+function SubjectCell({ entry }: { entry: LedgerEntry }) {
+  const { t } = useTranslation();
+  const s = entry.subject;
+  const countKey = COUNT_KEYS[entry.kind];
+  // Singleton-entity kinds carry no backend subject; name the entity here.
+  // `linkedin_search` has no entity — its `label` is the bulk query list,
+  // which belongs to the expanded row only.
+  const label =
+    entry.kind === "linkedin_search"
+      ? ""
+      : s?.label || (entry.kind === "extract" ? t("analytics.subject.masterResume") : "");
+  let context: string | null;
+  if (entry.kind === "scan") {
+    // Count the sources — the list itself is an expanded-row block.
+    const n = sourceList(s).length;
+    context = n > 0 ? t("analytics.subject.sources", { count: n }) : null;
+  } else if (entry.kind === "linkedin_search") {
+    // `context` is the mode enum ("fresh"/"next") — map it to copy; any
+    // unknown value renders verbatim rather than vanishing.
+    const mode = s?.context
+      ? t(`analytics.subject.searchMode.${s.context}`, { defaultValue: s.context })
+      : null;
+    const n = queryList(s).length;
+    const queries = n > 0 ? t("analytics.subject.queries", { count: n }) : null;
+    context = [mode, queries].filter(Boolean).join(" · ") || null;
+  } else {
+    context = s?.context ?? null;
+  }
+  return (
+    <>
+      <div className="flex min-w-0 items-baseline gap-x-2">
+        <span className="shrink-0 text-[11px] text-ink-3">{entry.kind}</span>
+        {label ? (
+          s?.href ? (
+            <a
+              href={s.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              data-testid="log-subject"
+              title={label}
+              className="min-w-0 truncate font-medium text-ink underline-offset-2 hover:text-accent hover:underline"
+            >
+              {label}
+            </a>
+          ) : (
+            <span
+              className="min-w-0 truncate font-medium text-ink"
+              data-testid="log-subject"
+              title={label}
+            >
+              {label}
+            </span>
+          )
+        ) : null}
+        {s?.count != null && countKey ? (
+          // min-w-0 + truncate (not shrink-0): at the 900px window floor a
+          // long count must ellipsize inside the fixed Operation column, never
+          // bleed under the State pill.
+          <span className="min-w-0 truncate text-[11px] text-ink-3" data-testid="log-count">
+            {t(countKey, { count: s.count })}
+          </span>
+        ) : null}
+      </div>
+      {context ? (
+        <div className="truncate text-[11px] text-ink-3" data-testid="log-context">
+          {context}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** One labeled block in the EXPANDED row — same visual language as the span
+ *  records below it. */
+function ExpandedBlock({
+  heading,
+  children,
+}: {
+  heading: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="px-3 pt-3">
+      <div className="mb-1 text-[11px] font-medium text-ink-4">{heading}</div>
+      {children}
+    </div>
+  );
+}
+
+/** Every bulk payload a collapsed row summarizes, in full (maintainer spec
+ *  2026-08-04): the scan source list / linkedin_search query list as chip
+ *  blocks, the long detail text (the DM/note sent, a contact_sync transition
+ *  summary), and the FULL verbatim error a failed row only previews. */
+function ExpandedBlocks({ entry }: { entry: LedgerEntry }) {
+  const { t } = useTranslation();
+  const list =
+    entry.kind === "scan"
+      ? sourceList(entry.subject)
+      : entry.kind === "linkedin_search"
+        ? queryList(entry.subject)
+        : [];
+  const showError =
+    Boolean(entry.error) && !entry.error!.includes(RESTART_NOTE_MARKER);
+  return (
+    <>
+      {list.length > 0 ? (
+        <ExpandedBlock
+          heading={
+            entry.kind === "scan"
+              ? t("analytics.ledger.sourcesHeading")
+              : t("analytics.ledger.queriesHeading")
+          }
+        >
+          <div
+            className="flex flex-wrap gap-1.5 rounded-lg border border-border bg-surface-2 p-3"
+            data-testid="log-sources"
+          >
+            {list.map((item) => (
+              <span
+                key={item}
+                className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-ink-3"
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+        </ExpandedBlock>
+      ) : null}
+      {entry.subject?.detail ? (
+        <ExpandedBlock heading={t("analytics.ledger.detailHeading")}>
+          <div
+            className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 text-[12px] text-ink-2"
+            data-testid="log-detail"
+          >
+            {entry.subject.detail}
+          </div>
+        </ExpandedBlock>
+      ) : null}
+      {showError ? (
+        <ExpandedBlock heading={t("analytics.ledger.errorHeading")}>
+          <div
+            className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 font-mono text-[11px] text-bad"
+            data-testid="log-error-full"
+          >
+            {entry.error}
+          </div>
+        </ExpandedBlock>
+      ) : null}
+    </>
   );
 }
 
@@ -323,7 +536,7 @@ function DiscoveryPanel() {
           >
             <div className="flex items-baseline justify-between gap-2">
               <span className="truncate text-[12.5px] font-medium text-ink">{s.label}</span>
-              <span className="font-mono text-[12px] text-ink-2">
+              <span className="text-[12px] text-ink-2">
                 {t("analytics.discovery.jobs", { jobs: s.jobs })}
               </span>
             </div>
@@ -440,18 +653,23 @@ export function Analytics() {
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-surface">
-            <table className="w-full border-collapse text-[12.5px]">
+          {/* table-fixed + wrapping cells: the ledger must FIT the window —
+              no horizontal scrolling at the app's default widths (maintainer
+              directive 2026-08-03). Every bounded column has an explicit
+              width; the Operation column absorbs the rest and wraps. */}
+          <div
+            className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-surface"
+            data-testid="ledger-scroll"
+          >
+            <table className="w-full table-fixed border-collapse text-[12.5px]">
               <thead>
                 <tr className="border-b border-border text-left text-ink-3">
-                  <th className="w-6 px-3 py-2" />
+                  <th className="w-7 px-2 py-2" />
                   <th className="px-3 py-2 font-medium">{t("analytics.ledger.operation")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.kind")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.state")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.started")}</th>
-                  <th className="px-3 py-2 font-medium">{t("analytics.ledger.model")}</th>
-                  <th className="px-3 py-2 text-right font-medium">{t("analytics.ledger.latency")}</th>
-                  <th className="px-3 py-2 text-right font-medium">{t("analytics.ledger.cost")}</th>
+                  <th className="w-[96px] px-3 py-2 font-medium">{t("analytics.ledger.state")}</th>
+                  <th className="w-[104px] px-3 py-2 font-medium">{t("analytics.ledger.started")}</th>
+                  <th className="w-[116px] px-3 py-2 font-medium">{t("analytics.ledger.model")}</th>
+                  <th className="w-[88px] px-3 py-2 text-right font-medium">{t("analytics.ledger.cost")}</th>
                 </tr>
               </thead>
               <tbody data-testid="logs-table">
@@ -464,32 +682,24 @@ export function Analytics() {
                         data-testid="log-row"
                         onClick={() => setExpandedId(open ? null : e.id)}
                       >
-                        <td className="px-3 py-2 font-mono text-[10px] text-ink-4">
+                        <td className="px-2 py-2 text-[10px] text-ink-4">
                           {open ? "▾" : "▸"}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="text-ink">{e.subject}</div>
-                          {e.context ? (
-                            <div className="text-[11px] text-ink-3" data-testid="log-context">
-                              {e.context}
-                            </div>
-                          ) : null}
+                          <SubjectCell entry={e} />
                           <ErrorCell entry={e} />
-                        </td>
-                        <td className="px-3 py-2 font-mono text-[11px] text-ink-3">
-                          {e.kind}
                         </td>
                         <td className="px-3 py-2">
                           {e.state === "failed" && e.retried_as ? (
                             <span
-                              className="rounded-full bg-surface-3 px-2 py-0.5 font-mono text-[10px] capitalize text-ink-3"
+                              className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] capitalize text-ink-3"
                               data-testid="log-retried-pill"
                             >
                               {t("analytics.ledger.retried")}
                             </span>
                           ) : (
                             <span
-                              className={`rounded-full px-2 py-0.5 font-mono text-[10px] capitalize ${STATE_CLS[e.state] ?? "bg-surface-3 text-ink-3"}`}
+                              className={`rounded-full px-2 py-0.5 text-[10px] capitalize ${STATE_CLS[e.state] ?? "bg-surface-3 text-ink-3"}`}
                             >
                               {e.state}
                             </span>
@@ -498,28 +708,36 @@ export function Analytics() {
                           <StopButton entry={e} />
                         </td>
                         <td
-                          className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-ink-3"
+                          className="px-3 py-2 text-[11px] text-ink-3"
                           data-testid="log-started"
                         >
-                          {fmtTime(e.started_at ?? e.created_at)}
-                        </td>
-                        <td className="px-3 py-2 text-ink-2">{e.model ?? "—"}</td>
-                        <td className="px-3 py-2 text-right font-mono text-ink-2">
-                          {e.latency_ms
-                            ? t("analytics.ledger.seconds", { value: (e.latency_ms / 1000).toFixed(1) })
-                            : "—"}
+                          {formatWhen(e.started_at ?? e.created_at, "timestamp")}
                         </td>
                         <td
-                          className="px-3 py-2 text-right font-mono text-ink-2"
+                          className="truncate px-3 py-2 text-ink-2"
+                          title={e.model ?? undefined}
+                        >
+                          {e.model ?? "—"}
+                        </td>
+                        <td
+                          className="px-3 py-2 text-right text-ink-2"
                           title={e.usd == null ? t("analytics.ledger.costUnknown") : undefined}
                         >
-                          {e.usd != null ? `$${e.usd.toFixed(2)}` : "—"}
+                          <div>{e.usd != null ? `$${e.usd.toFixed(2)}` : "—"}</div>
+                          {e.latency_ms ? (
+                            <div className="text-[10.5px] text-ink-4">
+                              {t("analytics.ledger.seconds", {
+                                value: (e.latency_ms / 1000).toFixed(1),
+                              })}
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                       {open ? (
                         <tr className="border-b border-border/60 bg-surface-2/40">
                           <td />
-                          <td colSpan={7}>
+                          <td colSpan={5}>
+                            <ExpandedBlocks entry={e} />
                             <SpanDetail operationId={e.id} />
                           </td>
                         </tr>

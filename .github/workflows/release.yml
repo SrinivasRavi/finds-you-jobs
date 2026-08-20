@@ -1,21 +1,23 @@
-name: Release (beta, unsigned)
+name: Release (beta, macOS signed)
 
 # Push to the `release` branch → native builds on every OS → one GitHub
 # Release tagged `v<version>-beta`, marked pre-release, with every installer
 # attached. "Merge and forget": nothing here needs a manual re-run once the
-# push lands (docs/internal/distribution.md §7).
+# push lands (docs/internal/distribution.md section 7).
 #
 # Why it looks the way it does:
 # - Native runners per OS/arch, never cross-compiled: PyInstaller cannot
 #   cross-compile the sidecar at all, and macOS universal2 is a gamble this
-#   dependency set doesn't support (distribution.md §1).
+#   dependency set doesn't support (distribution.md section 1).
 # - `-beta` lives in the tag and the *filenames only*. The embedded bundle
 #   version stays strictly numeric ("0.5.1") because WiX/MSI rejects
 #   non-numeric pre-release suffixes outright — that was a real build
-#   failure, not a hypothetical (distribution.md §2a).
-# - Everything is unsigned for now, deliberately: ship unsigned before ship
-#   late (distribution.md §1). Signing env vars slot into the build step
-#   later without changing this workflow's shape.
+#   failure, not a hypothetical (distribution.md section 2a).
+# - The macOS legs sign and notarize; Windows and Linux stay unsigned (ship
+#   unsigned before ship late, distribution.md section 1 — Windows signing is
+#   the Microsoft Store path, tracked separately in status.md). The signing
+#   env vars slotted into the build step without restructuring anything, as
+#   the original note promised (apple-signing.md section 9).
 # - fail-fast off + release publishes whatever legs succeeded: one broken
 #   leg (Linux is the least-proven) must not block the download button for
 #   the platforms that work. The failed leg still shows red in CI.
@@ -91,6 +93,52 @@ jobs:
       - name: Install project dependencies
         run: pnpm boot
 
+      - name: Import the Apple signing identity (macOS legs)
+        # A throwaway per-run keychain, made the default so both
+        # `sign-sidecar-macos.sh` and Tauri's own bundler find the identity
+        # without either of them creating a second one. The identity's common
+        # name is read back out of the keychain rather than hardcoded: the
+        # certificate carries the Apple account holder's legal name, which has
+        # no business sitting in a public workflow file, and reading it means a
+        # reissued certificate needs no edit here (apple-signing.md section 2a).
+        if: startsWith(matrix.os, 'macos')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/fyj-signing.keychain-db"
+          P12="$RUNNER_TEMP/fyj-developer-id.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Without the partition list, codesign prompts for keychain access and
+          # a headless runner hangs until the job times out.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$P12"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          [ -n "$IDENTITY" ] || {
+            echo "no Developer ID Application identity in the keychain" >&2; exit 1; }
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Stage the notarization API key (macOS legs)
+        # Tauri wants a PATH to the .p8, not its contents, so the secret is
+        # written out here and the path exported for the build step.
+        if: startsWith(matrix.os, 'macos')
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8"
+
       - name: Build the PyInstaller sidecar
         # Build-only tooling (pyproject.toml's `build` dependency group),
         # kept out of the default dev install.
@@ -98,17 +146,48 @@ jobs:
           uv sync --group build
           uv run pyinstaller sidecar/fyj-sidecar.spec --noconfirm
 
+      - name: Deep-sign the sidecar's Mach-O binaries (macOS legs)
+        # Must sit between PyInstaller and `tauri build`: Tauri signs the app
+        # bundle but does not recurse into Resources, and notarization rejects
+        # any embedded Mach-O without a Developer ID signature and a secure
+        # timestamp (rejected live 2026-08-08; apple-signing.md section 7).
+        if: startsWith(matrix.os, 'macos')
+        run: ./scripts/sign-sidecar-macos.sh
+
       - name: Build the app (codegen + frontend + tauri bundle)
         # Signing the updater artifacts needs the Ed25519 private key at build
         # time. With bundle.createUpdaterArtifacts:true the build FAILS if the
         # key is absent — deliberately: better a loud failure than a release
         # whose updates no client can verify. Set the two secrets (see
-        # distribution.md §9) before pushing to `release`. Empty password is
+        # distribution.md section 9) before pushing to `release`. Empty password is
         # fine if the key was generated without one.
+        #
+        # The Apple vars drive codesign + notarize + staple on the macOS legs.
+        # APPLE_SIGNING_IDENTITY arrives from the keychain-import step above.
+        # Tauri reads all of these only on macOS, so the empty values the other
+        # legs see are inert.
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         run: pnpm run build
+
+      - name: Prove the macOS bundle is signed, notarized, and stapled
+        # The build claiming success is not the bar — a notarization that
+        # silently no-ops still produces a .dmg. These 3 checks are the same
+        # ones the local proving run used (apple-signing.md section 7), so a
+        # regression fails the leg here instead of on a user's machine.
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          set -euo pipefail
+          APP=src-tauri/target/release/bundle/macos/finds-you-jobs.app
+          DMG=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl -a -t exec -vv "$APP" 2>&1 | tee /tmp/spctl.txt
+          grep -q "Notarized Developer ID" /tmp/spctl.txt
+          xcrun stapler validate "$DMG"
 
       - name: Collect installers + updater artifacts, stamp -beta into filenames
         # `-beta` is added HERE, to the distributed filenames only — the
@@ -207,16 +286,15 @@ jobs:
           prerelease: true
           files: dist/*
           body: |
-            **Beta build — unsigned installers.** Your OS will warn you the
-            first time; that's expected until code signing lands (it's
-            funded and in progress, waiting on Apple/Microsoft identity
-            review — not on the code).
+            **Beta build.** The macOS builds are signed and notarized by Apple
+            and open on first launch. Windows and Linux are still unsigned, so
+            Windows pushes back once. The exact step that works per OS:
 
             | OS | Download | First-launch note |
             |---|---|---|
-            | Windows | the `*-setup.exe` (NSIS) — or the `.msi` if you prefer | SmartScreen: **More info → Run anyway** |
-            | macOS (Apple Silicon) | the `*_aarch64.dmg` | Gatekeeper: **System Settings → Privacy & Security → Open Anyway** |
+            | macOS (Apple Silicon) | the `*_aarch64.dmg` | Drag into **Applications** and open it. No `xattr`, no warnings |
             | macOS (Intel) | the `*_x64.dmg` | same as above |
+            | Windows | the `*-setup.exe` (NSIS) — or the `.msi` if you prefer | SmartScreen: **More info → Run anyway** |
             | Linux | the `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` (Fedora) | `chmod +x` the AppImage |
 
             Already on a build with in-app updates? Settings › About › **Check

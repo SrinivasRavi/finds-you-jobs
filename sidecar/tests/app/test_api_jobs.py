@@ -57,18 +57,22 @@ def test_schedules_seeded_disabled(app_client: tuple[FastAPI, TestClient]) -> No
     assert resp.status_code == 200
     kinds = {s["kind"]: s for s in resp.json()}
     # scan/score_new seeded OFF (no unattended LLM spend); cleanup_trash +
-    # archive_stale_contacts + contact_sync are zero-LLM housekeeping → seeded ON.
+    # archive_stale_contacts are zero-LLM, zero-network housekeeping → seeded ON.
     assert set(kinds) == {
-        "scan", "score_new", "cleanup_trash", "archive_stale_contacts", "contact_sync",
+        "scan", "score_new", "cleanup_trash", "archive_stale_contacts",
     }
     assert not kinds["scan"]["enabled"]
     assert not kinds["score_new"]["enabled"]
     # FR-SYS-04: zero-LLM/zero-network Trash-TTL eviction → seeded ON.
     assert kinds["cleanup_trash"]["enabled"]
-    # US-NW-11 / US-NW-12: zero-LLM kanban housekeeping → seeded ON (contact_sync
-    # no-ops cleanly until the user enables Referral Outreach + connects).
+    # US-NW-11: zero-LLM, zero-network kanban housekeeping → seeded ON.
     assert kinds["archive_stale_contacts"]["enabled"]
-    assert kinds["contact_sync"]["enabled"]
+    # US-NW-12 / FR-NW-15: contact_sync is deliberately NOT a schedule any more.
+    # It is the only housekeeping op that talks to LinkedIn, and a timer meant it
+    # did so with nobody present (`docs/internal/linkedin-addon.md` section 5,
+    # maintainer directive 2026-07-30). It is user-initiated only now, via
+    # POST /api/networking/contact-sync.
+    assert "contact_sync" not in kinds
 
 
 def test_schedule_enable_and_set_interval(app_client: tuple[FastAPI, TestClient]) -> None:

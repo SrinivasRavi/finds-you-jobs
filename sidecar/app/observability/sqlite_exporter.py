@@ -1,4 +1,4 @@
-"""Local span store — a SQLite `SpanExporter` (architecture §10, layer 2).
+"""Local span store — a SQLite `SpanExporter` (architecture section 10, layer 2).
 
 The Logfire SDK is built on OpenTelemetry, so persisting spans locally is a
 matter of attaching a custom OTel `SpanExporter`. This one writes each finished

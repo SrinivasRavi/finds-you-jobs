@@ -52,7 +52,8 @@ def _session_for(browser, fixture: str):
 def test_classic_modal_types_note_and_sends(browser):
     session = _session_for(browser, "invite_classic_modal.html")
     try:
-        _click_with_note(session, "Hi — hoping to connect re: a referral.")  # type: ignore[arg-type]
+        outcome = _click_with_note(session, "Hi — hoping to connect re: a referral.")  # type: ignore[arg-type]
+        assert outcome == "with_note"
         assert session.page.evaluate("window.__sent") == "Hi — hoping to connect re: a referral."
     finally:
         session.page.close()
@@ -63,7 +64,8 @@ def test_sdui_direct_note_field_still_carries_the_note(browser):
     # button). The note MUST still be typed and sent — not silently dropped.
     session = _session_for(browser, "invite_sdui_direct_note.html")
     try:
-        _click_with_note(session, "Warm intro request for the backend role.")  # type: ignore[arg-type]
+        outcome = _click_with_note(session, "Warm intro request for the backend role.")  # type: ignore[arg-type]
+        assert outcome == "with_note"
         assert session.page.evaluate("window.__sent") == "Warm intro request for the backend role."
     finally:
         session.page.close()
@@ -72,7 +74,10 @@ def test_sdui_direct_note_field_still_carries_the_note(browser):
 def test_no_note_field_degrades_to_noteless_send(browser):
     session = _session_for(browser, "invite_no_note_field.html")
     try:
-        _click_with_note(session, "This note has nowhere to go.")  # type: ignore[arg-type]
+        outcome = _click_with_note(session, "This note has nowhere to go.")  # type: ignore[arg-type]
+        # The degrade is now REPORTED, not just logged — the worker refunds the
+        # note charge off this value (posture doc section 6).
+        assert outcome in ("noteless_missing", "noteless_upsell")
         assert session.page.evaluate("window.__noteless === true")
         # Nothing was typed anywhere — the invite still went out, note-less.
         assert session.page.evaluate("window.__sent === undefined")

@@ -1,12 +1,12 @@
-// Applier companion panel (applier.md §8.2-§8.4) — the surface the app shows
+// Applier companion panel (applier-as-built.md section 8.2-section 8.4) — the surface the app shows
 // *during and after* an Apply Run. The real work happens in a separate headed
 // Chromium tab; this panel narrates it, holds the evidence, and carries the P1
 // handoff. Modeled on ReferralsModal's Modal + eventBus subscription pattern.
 //
 // It must work whether it was open the whole time OR reopened after the fact
-// (§9.2): the live event feed is SEEDED from the run snapshot's fields/blockers,
+// (section 9.2): the live event feed is SEEDED from the run snapshot's fields/blockers,
 // then APPENDED to from `apply` SSE events for this run_id. Closing the panel
-// never cancels the run (§8.2) — it just closes.
+// never cancels the run (section 8.2) — it just closes.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,9 +16,10 @@ import { eventBus, type SSEEvent } from "../api/events";
 import { useApplyRun, useAttestApply, useCancelApply, useStartApply } from "../api/queries";
 import type { ApplyRun, ApplyRunStatus } from "../api/types";
 import i18n from "../i18n";
+import { applyRunDisplay, type ApplyTone } from "../shell/applyRunDisplay";
 import { Modal } from "../shell/Modal";
 
-type Tone = "info" | "ok" | "warn" | "bad";
+type Tone = ApplyTone;
 
 type FeedItem = { id: string; text: string; tone: Tone };
 
@@ -35,43 +36,30 @@ const DOT_CLS: Record<Tone, string> = {
   bad: "bg-bad",
 };
 
-/** The §8.2 high-level phase pill, mapped from status (+ the free-text phase
- *  while running). Spinner shows only while the run is genuinely live. */
+/** The section 8.2 high-level phase pill, mapped from status (+ the free-text phase
+ *  while running). Spinner shows only while the run is genuinely live.
+ *
+ *  Tone/liveness/label come from the shared status table (duplication audit
+ *  D-F14) — this used to be a private switch whose `default` branch painted an
+ *  unrecognised status GREEN "Completed", the opposite of the tracker card's
+ *  conservative fallback for the same enum. `running` is the one status the
+ *  panel refines further, from the run's own free-text phase. */
 function phaseInfo(status: ApplyRunStatus, phase: string): { label: string; tone: Tone; live: boolean } {
-  switch (status) {
-    case "queued":
-      return { label: i18n.t("popups.applier.phase.queued"), tone: "info", live: true };
-    case "waiting_for_packet":
-      return { label: i18n.t("popups.applier.phase.waitingForPacket"), tone: "info", live: true };
-    case "ready_for_human":
-      return { label: i18n.t("popups.applier.phase.readyForHuman"), tone: "warn", live: false };
-    case "blocked":
-      return { label: i18n.t("popups.applier.phase.blocked"), tone: "bad", live: false };
-    case "timed_out":
-      return { label: i18n.t("popups.applier.phase.timedOut"), tone: "bad", live: false };
-    case "interrupted":
-      return { label: i18n.t("popups.applier.phase.interrupted"), tone: "bad", live: false };
-    case "failed":
-      return { label: i18n.t("popups.applier.phase.failed"), tone: "bad", live: false };
-    case "submitted":
-      return { label: i18n.t("popups.applier.phase.submitted"), tone: "ok", live: false };
-    case "running": {
-      const p = phase.toLowerCase();
-      if (p.includes("open")) return { label: i18n.t("popups.applier.phase.openingJob"), tone: "info", live: true };
-      if (p.includes("find") || p.includes("form")) return { label: i18n.t("popups.applier.phase.findingForm"), tone: "info", live: true };
-      if (p.includes("fill")) return { label: i18n.t("popups.applier.phase.filling"), tone: "info", live: true };
-      if (p.includes("verif")) return { label: i18n.t("popups.applier.phase.verifying"), tone: "info", live: true };
-      return { label: i18n.t("popups.applier.phase.working"), tone: "info", live: true };
-    }
-    default:
-      return { label: i18n.t("popups.applier.phase.completed"), tone: "ok", live: false };
+  const d = applyRunDisplay(status);
+  if (status === "running") {
+    const p = phase.toLowerCase();
+    if (p.includes("open")) return { label: i18n.t("popups.applier.phase.openingJob"), tone: d.tone, live: d.live };
+    if (p.includes("find") || p.includes("form")) return { label: i18n.t("popups.applier.phase.findingForm"), tone: d.tone, live: d.live };
+    if (p.includes("fill")) return { label: i18n.t("popups.applier.phase.filling"), tone: d.tone, live: d.live };
+    if (p.includes("verif")) return { label: i18n.t("popups.applier.phase.verifying"), tone: d.tone, live: d.live };
   }
+  return { label: i18n.t(d.phaseKey), tone: d.tone, live: d.live };
 }
 
 const NON_SUCCESS_TERMINALS: ApplyRunStatus[] = ["blocked", "timed_out", "interrupted", "failed"];
 
 /** Seed the feed from the run snapshot — every prior field outcome + blocker,
- *  so a reopened panel is never blank (§9.2). */
+ *  so a reopened panel is never blank (section 9.2). */
 function seedFeed(run: ApplyRun): FeedItem[] {
   const items: FeedItem[] = [];
   run.fields.forEach((f, i) => {
@@ -186,7 +174,7 @@ export function ApplierPanel({
   role: string;
   company: string;
   /** Retry / Reopen-and-refill starts a fresh run — the parent rebinds the
-   *  panel to it (§8.3). */
+   *  panel to it (section 8.3). */
   onRebind: (newRunId: string) => void;
   onClose: () => void;
 }) {
@@ -328,14 +316,14 @@ export function ApplierPanel({
       <div className="flex h-[76vh] flex-col" data-testid="applier-panel">
         {/* Budget + cost strip */}
         <div className="flex items-center gap-3 border-b border-border bg-surface-2 px-5 py-2 text-[11.5px]">
-          <span className="font-mono text-ink-2" data-testid="applier-cost-line">
+          <span className="text-ink-2" data-testid="applier-cost-line">
             {costLine}
           </span>
           {remainingMs != null ? (
             <>
               <span className="text-ink-4">·</span>
               <span
-                className="font-mono text-ink-3"
+                className="text-ink-3"
                 title={t("popups.applier.budgetTooltip")}
               >
                 {phase.live
@@ -357,7 +345,7 @@ export function ApplierPanel({
           ) : null}
         </div>
 
-        {/* Submitted banner (§8.4 — confirmation detected or user-attested) */}
+        {/* Submitted banner (section 8.4 — confirmation detected or user-attested) */}
         {status === "submitted" ? (
           <div className="border-b border-border bg-good-wash px-5 py-2.5 text-[12.5px] font-medium text-good">
             {t("popups.applier.submittedBanner")}
@@ -370,7 +358,7 @@ export function ApplierPanel({
         <div className="flex min-h-0 flex-1">
           {/* Event feed */}
           <div className="flex min-h-0 w-1/2 flex-col border-r border-border">
-            <div className="border-b border-border px-4 py-2 font-mono text-[10px] font-medium text-ink-3">
+            <div className="border-b border-border px-4 py-2 text-[10px] font-medium text-ink-3">
               {t("popups.applier.activity")}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="applier-event-feed">
@@ -397,7 +385,7 @@ export function ApplierPanel({
 
           {/* Latest evidence screenshot */}
           <div className="flex min-h-0 w-1/2 flex-col">
-            <div className="border-b border-border px-4 py-2 font-mono text-[10px] font-medium text-ink-3">
+            <div className="border-b border-border px-4 py-2 text-[10px] font-medium text-ink-3">
               {t("popups.applier.latestScreenshot")}
             </div>
             <div
@@ -417,7 +405,7 @@ export function ApplierPanel({
           </div>
         </div>
 
-        {/* Handoff strip (§8.4) — form ready for the human to submit */}
+        {/* Handoff strip (section 8.4) — form ready for the human to submit */}
         {status === "ready_for_human" ? (
           <div
             className="border-t border-border bg-warn-wash px-5 py-3"
@@ -458,7 +446,7 @@ export function ApplierPanel({
           </div>
         ) : null}
 
-        {/* Non-success terminal (§8.3) — honest summary + blockers + Retry */}
+        {/* Non-success terminal (section 8.3) — honest summary + blockers + Retry */}
         {isRetryable ? (
           <div className="border-t border-border bg-bad-wash px-5 py-3">
             <div className="text-[13px] font-semibold text-bad">
@@ -499,7 +487,7 @@ export function ApplierPanel({
           </div>
         ) : null}
 
-        {/* Footer — Cancel while live; Close never cancels the run (§8.2) */}
+        {/* Footer — Cancel while live; Close never cancels the run (section 8.2) */}
         <div className="flex items-center justify-end gap-2 border-t border-border bg-surface-2 px-5 py-3">
           {canCancel ? (
             <button

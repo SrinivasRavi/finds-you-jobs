@@ -4,40 +4,123 @@
 # NEW code for the finds-you-jobs fork (GPL subtree). The operation layer: it ties
 # the pacing/caps ledger (pacing.py) to the live browser actions (session.py,
 # actions.py, discovery.py) and returns plain dicts the CLI serialises to JSON.
-# Caps + backoff are ENFORCED here, inside the subprocess (ROADMAP §66,
-# NFR-LI-01/02/03) — the MIT host never re-implements them.
+# Caps + backoff are ENFORCED here, inside the subprocess (ROADMAP section 66,
+# NFR-LI-01/02/03) — the MIT host never re-implements them. Enforcement covers
+# READS as well as sends: discover/contact-sync/search-jobs are metered and
+# refused during backoff (2026-07-30 — before that they built no Pacer at all).
+#
+# Broker-backed page work (finds-you-jobs, 2026-08): when a `surface_provider`
+# is passed, the op STRUCTURE is unchanged — same cap gates, charge/refund, and
+# `RateLimited`→envelope translation on this (worker) thread — but the page-
+# driving action runs on the core broker's serialized surface lane via
+# `session.run_browser(...)`, so nothing here launches its own Chromium. Without
+# a provider (the standalone/CLI path) the session self-launches exactly as
+# before. See `provenance.md` and `docs/internal/plugin-architecture.md`.
 """The bounded operations: discover, send-connection, send-dm, status, quota,
-contact-sync, login, and search-jobs (the read-only logged-in job search —
-finds-you-jobs discovery-expansion #6). Every operation supports dry_run (no
-browser, no network — plan only)."""
+contact-sync (single + the one-session `contact_sync_states` batch), login, and
+search-jobs (the read-only logged-in job search — finds-you-jobs
+discovery-expansion #6). Every operation supports dry_run (no browser, no
+network — plan only)."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-from .errors import RateLimited, ReachedConnectionLimit, VoyagerError
+from .errors import AuthenticationError, RateLimited, ReachedConnectionLimit, VoyagerError
 from .url_utils import url_to_public_id
-from .pacing import Pacer, resolve_tier, send_delay_seconds
+from .pacing import (
+    ENRICH_PAUSE_RANGE_S,
+    MAX_JOBS_PER_SEARCH,
+    Pacer,
+    PacingProfile,
+    resolve_profile,
+)
 
 logger = logging.getLogger("voyager_py.worker")
 
+# The host's hook to the core browser broker: given the referral surface slug
+# (owned by `session.SURFACE_SLUG`), return that surface's ready handle. Core
+# supplies the callable; it never names the vendor slug (the slug is the runtime
+# argument). None → the session self-launches its own Chromium (standalone/CLI).
+SurfaceProvider = Callable[[str], Any]
 
-def _pacer(tier_name: str | None, state_dir: str | None) -> Pacer:
+
+def _pacer(profile: PacingProfile | None, state_dir: str | None) -> Pacer:
+    """Build the enforcing Pacer from the profile (membership × risk% ×
+    overrides). None → the conservative defaults (free × 60%). The effective
+    caps are computed HERE, in the package (NFR-LI-02)."""
     sd = Path(state_dir) if state_dir else None
-    return Pacer(resolve_tier(tier_name), state_dir=sd)
+    return Pacer(resolve_profile(profile), state_dir=sd)
 
 
-def quota(tier: str | None = None, state_dir: str | None = None) -> dict:
+@contextlib.contextmanager
+def _paced_session(
+    pacer: Pacer | None,
+    *,
+    storage_state: str | None = None,
+    user_data_dir: str | None = None,
+    headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
+):
+    """The scaffold EVERY browser-touching operation shares: build the session,
+    and on the way out ALWAYS persist the pacing ledger and then close the
+    browser — in that order, whatever happened in between (a return, a refusal,
+    a RateLimited, or an unexpected crash mid-send).
+
+    Three of the past account-safety bugs were one op missing one piece of this
+    scaffold (a read path that built no Pacer at all, a charge that was never
+    saved, a browser left open), which is why it is one function now: the next
+    piece gets added HERE, for every op at once.
+
+    `pacer=None` is the `status` op — the one browser op that meters nothing.
+
+    What deliberately stays in the ops: the caps/backoff gates (each has its own
+    meters), and the `except RateLimited → envelope` translation, because the
+    envelope is the wire contract with the host and its fields differ per op.
+    That `except` must sit INSIDE this block: `pause_for_backoff` only records
+    the pause in memory, so the `finally` save below is what persists it — catch
+    it outside and the 24 h backoff is silently lost.
+
+    The session import is function-local on purpose: importing `.session` pulls
+    in Playwright, which the no-browser ops (quota / resume / session-status)
+    must not pay for.
+    """
+    from .session import AccountSession
+
+    session = AccountSession(
+        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir,
+        surface_provider=surface_provider,
+    )
+    try:
+        yield session
+    finally:
+        if pacer is not None:
+            pacer.save()
+        session.close()
+
+
+def quota(
+    state_dir: str | None = None,
+    *,
+    profile: PacingProfile | None = None,
+) -> dict:
     """Report the live remaining quota + backoff state (FR-NW-01/04). No browser."""
-    pacer = _pacer(tier, state_dir)
+    pacer = _pacer(profile, state_dir)
     return {"op": "quota", "ok": True, "quota": pacer.remaining()}
 
 
-def resume(tier: str | None = None, state_dir: str | None = None) -> dict:
+def resume(
+    state_dir: str | None = None,
+    *,
+    profile: PacingProfile | None = None,
+) -> dict:
     """Clear the voyager-owned backoff pause (Settings → Networking manual resume,
     FR-NW-05 / NFR-LI-03). No browser, no network — just resets the ledger flag."""
-    pacer = _pacer(tier, state_dir)
+    pacer = _pacer(profile, state_dir)
     pacer.resume()
     pacer.save()
     return {"op": "resume", "ok": True, "quota": pacer.remaining()}
@@ -93,9 +176,12 @@ def resolve_company(
     url: str | None = None,
     limit: int = 5,
     prefer_domain: str | None = None,
+    profile: PacingProfile | None = None,
+    state_dir: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Resolve a company → LinkedIn company entities (URN + meta).
@@ -117,19 +203,44 @@ def resolve_company(
                     + (f", domain-anchor on {prefer_domain!r}" if prefer_domain else ""),
             "companies": [],
         }
-    from .company import resolve_company as _resolve
-    from .session import AccountSession
+    # The last read path that built no Pacer at all (posture doc section 4 fix 2):
+    # refuse during backoff, and charge the CUL search budget for the keyword
+    # typeahead (company search is CUL-counted). A pasted URL is a direct
+    # single-entity fetch, not a search — backoff-gated but not CUL-charged.
+    pacer = _pacer(profile, state_dir)
+    charge_search = not (url and url.strip())
+    if charge_search:
+        allowed, reason = pacer.can_search()
+    else:
+        # URL path: only the backoff gate applies — a direct fetch spends no
+        # search budget, but must still stop when LinkedIn said stop.
+        allowed, reason = (False, pacer.paused_reason()) if pacer.is_paused() else (True, "")
+    if not allowed:
+        return {"op": "resolve-company", "ok": False, "keywords": keywords,
+                "url": url, "error": "cap_or_backoff", "reason": reason,
+                "count": 0, "companies": [], "quota": pacer.remaining()}
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        companies = _resolve(session, keywords, url=url, limit=limit, prefer_domain=prefer_domain)
-        return {"op": "resolve-company", "ok": True, "keywords": keywords, "url": url,
-                "prefer_domain": prefer_domain, "count": len(companies),
-                "companies": companies}
-    finally:
-        session.close()
+    from .company import resolve_company as _resolve
+
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        try:
+            if charge_search:
+                pacer.record_search()
+            companies = session.run_browser(
+                lambda: _resolve(
+                    session, keywords, url=url, limit=limit, prefer_domain=prefer_domain
+                )
+            )
+            return {"op": "resolve-company", "ok": True, "keywords": keywords, "url": url,
+                    "prefer_domain": prefer_domain, "count": len(companies),
+                    "companies": companies, "quota": pacer.remaining()}
+        except RateLimited as e:
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "resolve-company", "ok": False, "keywords": keywords, "url": url,
+                    "error": "rate_limited", "reason": str(e), "paused_until": deadline,
+                    "count": 0, "companies": [], "quota": pacer.remaining()}
 
 
 def discover(
@@ -137,10 +248,13 @@ def discover(
     limit: int = 10,
     page: int = 1,
     *,
+    profile: PacingProfile | None = None,
+    state_dir: str | None = None,
     company_urn: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Discover ≤ `limit` current employees of `company` (US-REF-01).
@@ -162,80 +276,165 @@ def discover(
                     f"sort degree-first",
             "contacts": [],
         }
-    from .discovery import discover_company_contacts
-    from .session import AccountSession
+    # Reads are metered and backoff-gated too (NFR-LI-02). This used to build no
+    # Pacer at all: after a rate-limit signal the app kept running People
+    # searches and bulk profile enrichment — precisely the reads the restriction
+    # ladder watches — while LinkedIn was already telling us to stop.
+    #
+    # One discover() costs 1 CUL-counted People search plus up to ~2 profile
+    # views per candidate (the profile fetch, plus a degree fallback), so both
+    # budgets are checked up front and charged for what the run actually did.
+    pacer = _pacer(profile, state_dir)
+    allowed, reason = pacer.can_search()
+    if not allowed:
+        return {"op": "discover", "ok": False, "company": company, "count": 0,
+                "contacts": [], "error": "cap_or_backoff", "reason": reason,
+                "quota": pacer.remaining()}
+    allowed, reason = pacer.can_view_profile()
+    if not allowed:
+        return {"op": "discover", "ok": False, "company": company, "count": 0,
+                "contacts": [], "error": "cap_or_backoff", "reason": reason,
+                "quota": pacer.remaining()}
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        contacts = discover_company_contacts(
-            session, company, limit=limit, page=page, company_urn=company_urn
-        )
-        return {"op": "discover", "ok": True, "company": company, "company_urn": company_urn,
-                "count": len(contacts), "contacts": contacts}
-    finally:
-        session.close()
+    from .discovery import discover_company_contacts
+
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        try:
+            pacer.record_search()
+            # Reserve, don't just gate: a boolean check with 1 view remaining would
+            # happily enrich a whole page and overshoot the day budget by the batch
+            # size. Clamp the enrichment count to what the budget can actually pay.
+            remaining_views = pacer.usage("profile_views").get("day_remaining")
+            if remaining_views is not None:
+                limit = max(1, min(limit, int(remaining_views)))
+            contacts = session.run_browser(
+                lambda: discover_company_contacts(
+                    session, company, limit=limit, page=page, company_urn=company_urn
+                )
+            )
+            # Charge one profile view per candidate we actually enriched. Filtered-out
+            # candidates still cost a request upstream, so this under-counts slightly;
+            # `discovery.py` is where a precise per-fetch charge would go.
+            pacer.record_profile_view(count=len(contacts))
+            return {"op": "discover", "ok": True, "company": company, "company_urn": company_urn,
+                    "count": len(contacts), "contacts": contacts, "quota": pacer.remaining()}
+        except RateLimited as e:
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "discover", "ok": False, "company": company, "count": 0,
+                    "contacts": [], "error": "rate_limited", "reason": str(e),
+                    "paused_until": deadline, "quota": pacer.remaining()}
 
 
 def search_jobs(
     keywords: str,
     location: str = "",
-    limit: int = 50,
     *,
+    start: int = 0,
+    profile: PacingProfile | None = None,
+    state_dir: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
-    """Logged-in LinkedIn job search (read-only) → up to `limit` normalized-ish
-    plain job dicts. NEW for finds-you-jobs — the one-shot job-discovery entry
-    point; never a background scan source. Read-only: no send, no caps decrement
-    (caps govern outreach *sends*, not reads — same stance as `contact_sync`).
+    """Logged-in LinkedIn job search (read-only) → ONE page of
+    `MAX_JOBS_PER_SEARCH` (25, LinkedIn's own page size) plain job dicts from
+    offset `start`. NEW for finds-you-jobs — the one-shot job-discovery entry
+    point; never a background scan source.
 
-    Paginates in pages of 25 (LinkedIn's page size) until `limit` or exhaustion.
-    A page failure keeps what earlier pages returned (rank-don't-gate)."""
+    One page per call is the invariant (maintainer directive 2026-07-30): no
+    host request can turn one click into a multi-hundred-row authenticated
+    crawl. `start` (host-owned Fresh-search/Next-page cursor, 2026-08-01)
+    offsets that single page — LinkedIn's pagination is stateless, so any
+    offset is one independent request of the same size.
+
+    **Deliberately charges no CUL search budget.** Job search on the Jobs page is
+    exempt from LinkedIn's Commercial Use Limit (help `a564226`), and it is the
+    product's highest-volume read — metering it against the People-search budget
+    would throttle the primary use case for zero real risk. It IS backoff-gated,
+    and each page request is charged against the self-imposed `job_search_pages`
+    pages/hour meter (ours, not LinkedIn's); a spent hourly budget refuses
+    BEFORE any LinkedIn traffic, and is not a backoff — the next hour frees it.
+
+    Returns `exhausted`: LinkedIn's result list ends at (or before) the page
+    after this one — a partial page, or `start + 25 >= total`."""
+    start = max(0, int(start))
     if not keywords:
         raise VoyagerError("search_jobs requires keywords")
     if dry_run:
         return {
             "op": "search-jobs", "ok": True, "dry_run": True,
-            "keywords": keywords, "location": location,
+            "keywords": keywords, "location": location, "start": start,
             "plan": f"would run logged-in LinkedIn job search for {keywords!r}"
-                    f"{f' in {location!r}' if location else ''}, page through ≤{limit} results",
-            "jobs": [], "total": 0,
+                    f"{f' in {location!r}' if location else ''}, one page of "
+                    f"{MAX_JOBS_PER_SEARCH} from offset {start}",
+            "jobs": [], "total": 0, "exhausted": False,
         }
-    from .client import PlaywrightLinkedinAPI
-    from .session import AccountSession
+    # Backoff gates reads too: when LinkedIn has already told us to stop, the
+    # loudest read path in the app must not keep going.
+    pacer = _pacer(profile, state_dir)
+    if pacer.is_paused():
+        return {"op": "search-jobs", "ok": False, "keywords": keywords,
+                "location": location, "start": start, "count": 0, "total": 0,
+                "jobs": [], "error": "cap_or_backoff",
+                "reason": pacer.paused_reason(),
+                "exhausted": False, "quota": pacer.remaining()}
+    allowed, reason = pacer.can_search_jobs()
+    if not allowed:
+        return {"op": "search-jobs", "ok": False, "keywords": keywords,
+                "location": location, "start": start, "count": 0, "total": 0,
+                "jobs": [], "error": "rate_limited_hourly", "reason": reason,
+                "exhausted": False, "quota": pacer.remaining()}
 
-    _PAGE = 25
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    jobs: list[dict] = []
-    total = 0
-    try:
-        session.ensure_browser()
-        client = PlaywrightLinkedinAPI(session)
-        seen: set[str] = set()
-        for start in range(0, max(limit, 1), _PAGE):
-            page = client.search_jobs(keywords, location, start=start, count=_PAGE)
-            total = page.get("total", total) or total
-            batch = page.get("jobs", [])
-            if not batch:
-                break
-            for job in batch:
-                jid = job.get("id")
-                if jid and jid not in seen:
-                    seen.add(jid)
-                    jobs.append(job)
-            if len(jobs) >= limit:
-                jobs = jobs[:limit]
-                break
-        return {"op": "search-jobs", "ok": True, "keywords": keywords,
-                "location": location, "count": len(jobs), "total": total, "jobs": jobs}
-    finally:
-        session.close()
+    from .client import PlaywrightLinkedinAPI
+
+    # The `finally` inside `_paced_session` persists the page charge and/or the
+    # backoff pause to the shared ledger (a no-op if neither happened — save()
+    # early-returns) and closes the browser.
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        try:
+            # Charge on ATTEMPT, before issuing the request — a page that reaches
+            # LinkedIn but then 429s or fails to parse still consumed a request
+            # (same safe-direction rule as the send ops).
+            pacer.record_search_page()
+
+            def _fetch() -> dict:
+                # In-page fetch: builds the client and issues the one search on
+                # the browser lane (the client rides the surface page's own fetch).
+                session.ensure_browser()
+                client = PlaywrightLinkedinAPI(session)
+                return client.search_jobs(
+                    keywords, location, start=start, count=MAX_JOBS_PER_SEARCH
+                )
+
+            page = session.run_browser(_fetch)
+            total = int(page.get("total", 0) or 0)
+            jobs = list(page.get("jobs", []))
+            # A short page is LinkedIn's own end-of-results signal; a known total
+            # that the next offset would meet or pass says the same thing.
+            exhausted = len(jobs) < MAX_JOBS_PER_SEARCH or (
+                0 < total <= start + MAX_JOBS_PER_SEARCH
+            )
+            return {"op": "search-jobs", "ok": True, "keywords": keywords,
+                    "location": location, "start": start, "count": len(jobs),
+                    "total": total, "jobs": jobs, "exhausted": exhausted,
+                    "next_start": start + MAX_JOBS_PER_SEARCH}
+        except RateLimited as e:
+            # LinkedIn told us to stop on the loudest authenticated read path. Enter
+            # backoff exactly like `discover` — search_jobs used to let RateLimited
+            # propagate uncaught, so a 429 entered NO backoff and every later
+            # Fresh/Next search kept hammering the throttled endpoint.
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "search-jobs", "ok": False, "keywords": keywords,
+                    "location": location, "start": start, "count": 0, "total": 0,
+                    "jobs": [], "error": "rate_limited",
+                    "reason": str(e), "paused_until": deadline, "exhausted": False,
+                    "quota": pacer.remaining()}
 
 
 def _normalize_public_id(value: str) -> str:
@@ -252,23 +451,42 @@ def send_connection(
     public_identifier: str,
     *,
     note: str = "",
-    tier: str | None = None,
+    on_step=None,
+    profile: PacingProfile | None = None,
     state_dir: str | None = None,
+    linkedin_plan: str = "free",
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Send a cold connection request (with the drafted `note` when given —
     FR-NW-03; note-less otherwise, US-REF-04).
 
     Caps + backoff are enforced HERE before any network call. On LinkedIn's own
-    weekly-cap UI, the pacer enters backoff and the op returns rate_limited."""
+    weekly-cap UI, the pacer enters backoff and the op returns rate_limited.
+
+    `linkedin_plan` conditions the personalized-note budget: the ~5/month note
+    allowance exists only on free accounts, so `free` (the conservative default)
+    gates note-bearing sends on the notes meter while `premium` never does.
+    A note-bearing send on a free plan whose allowance is out is REFUSED, not
+    silently stripped — the note is the referral ask; the user decides whether
+    to send note-less."""
     if not public_identifier:
         raise VoyagerError("send-connection requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
-    pacer = _pacer(tier, state_dir)
+    pacer = _pacer(profile, state_dir)
+    charge_note = bool(note) and linkedin_plan != "premium"
     allowed, reason = pacer.can_send_invite()
+    if allowed and charge_note:
+        allowed, note_reason = pacer.can_use_note()
+        if not allowed:
+            reason = (
+                f"{note_reason} — the free-plan personalized-note allowance is out; "
+                "send note-less (ask via DM after they accept) or set your LinkedIn "
+                "membership in Settings if this account has a paid plan"
+            )
 
     if dry_run:
         return {
@@ -285,16 +503,48 @@ def send_connection(
             "reason": reason, "quota": pacer.remaining(),
         }
 
-    from .actions import send_connection_request
-    from .session import AccountSession
-
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
+    # Space this send from the previous one (NFR-LI-01). Runs AFTER the cap check
+    # so a refused send never sleeps, and BEFORE the browser launch so the pause
+    # is real wall-clock silence rather than a gap between two page loads. The
+    # runner dispatches a batch as N separate single-flight `send` ops, so this
+    # is what keeps a batch from going out at machine pace.
+    waited_s = pacer.wait_before_send()
+    if on_step is not None:
         try:
-            status = send_connection_request(session, public_identifier, note=note)
+            on_step("invite1")
+        except Exception:  # noqa: BLE001 — narration, never load-bearing
+            pass
+
+    # Charge on ATTEMPT, before the browser launches (posture doc section 4 fix 4): a
+    # send that reached LinkedIn but died in post-send verification must not go
+    # uncounted, or the ledger drifts low in the unsafe direction. Proven
+    # no-sends below refund the charge.
+    pacer.record_invite()
+    if charge_note:
+        pacer.record_note()
+    pacer.save()
+
+    from .actions import send_connection_request
+
+    # `_paced_session`'s finally persists whatever is pending even on an
+    # unexpected error mid-send: an unproven send stays charged (unsafe-direction
+    # drift is the one we refuse). save() is idempotent — the paths below that
+    # return already ran it.
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        try:
+            status, note_outcome = session.run_browser(
+                lambda: send_connection_request(
+                    session, public_identifier, note=note, on_step=on_step
+                )
+            )
         except ReachedConnectionLimit as e:
+            # LinkedIn's weekly-cap dialog appeared INSTEAD of the invite going
+            # out — a proven no-send, so give the attempt charges back.
+            pacer.refund("invites")
+            if charge_note:
+                pacer.refund("notes")
             deadline = pacer.pause_for_backoff(str(e))
             pacer.save()
             return {
@@ -302,36 +552,51 @@ def send_connection(
                 "public_identifier": public_identifier, "error": "rate_limited",
                 "reason": str(e), "paused_until": deadline, "quota": pacer.remaining(),
             }
-        pacer.record_invite()
+        if charge_note and note_outcome != "with_note":
+            # The invite went out but the note did not (Premium upsell / markup
+            # churn) — refund the note charge; on the upsell, LinkedIn itself
+            # said the allowance is exhausted, which beats our estimate, so mark
+            # the meter observed-exhausted for the rest of the window.
+            pacer.refund("notes")
+            if note_outcome == "noteless_upsell":
+                pacer.saturate("notes")
         pacer.save()
         return {
             "op": "send-connection", "ok": True, "sent": True,
             "public_identifier": public_identifier, "status": status,
-            "delay_hint_s": round(send_delay_seconds(), 1), "quota": pacer.remaining(),
+            # Surfaced (not just logged) so a dropped note is visible to the
+            # host: the referral ask rides in the note (posture doc section 6).
+            "note_outcome": note_outcome,
+            # What we ACTUALLY slept before this send. Was `delay_hint_s` — a
+            # re-jittered number nothing consumed, which made the pacing look
+            # implemented when it was not.
+            "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
         }
-    finally:
-        session.close()
 
 
 def send_dm(
     public_identifier: str,
     message: str,
     *,
-    tier: str | None = None,
+    on_step=None,
+    profile: PacingProfile | None = None,
     state_dir: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
-    """Send a warm 1st-degree referral-ask DM (US-REF-10). DMs are uncapped but
-    still blocked during backoff; they never decrement the invite counter."""
+    """Send a warm 1st-degree referral-ask DM (US-REF-10). DMs have their own
+    daily/weekly budget (a policy cap of ours — no corroborated LinkedIn DM
+    limit exists), are blocked during backoff, and never decrement the invite
+    counter."""
     if not public_identifier:
         raise VoyagerError("send-dm requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
     if not message:
         raise VoyagerError("send-dm requires a message")
-    pacer = _pacer(tier, state_dir)
+    pacer = _pacer(profile, state_dir)
     allowed, reason = pacer.can_send_dm()
 
     if dry_run:
@@ -343,52 +608,82 @@ def send_dm(
         }
     if not allowed:
         return {
+            # `cap_or_backoff`, matching the invite path: since DMs gained a
+            # budget this refusal can be a cap as well as a backoff.
             "op": "send-dm", "ok": False, "sent": False,
-            "public_identifier": public_identifier, "error": "backoff",
+            "public_identifier": public_identifier, "error": "cap_or_backoff",
             "reason": reason, "quota": pacer.remaining(),
         }
 
-    from .actions import send_dm as _send_dm
-    from .session import AccountSession
+    # Same inter-send spacing as the invite path — one account, one clock
+    # (NFR-LI-01).
+    waited_s = pacer.wait_before_send()
+    if on_step is not None:
+        try:
+            on_step("dm1")
+        except Exception:  # noqa: BLE001 — narration, never load-bearing
+            pass
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        sent = _send_dm(session, public_identifier, message)
-        if sent:
-            pacer.record_dm()
+    # Charge on ATTEMPT (posture doc section 4 fix 4); a proven no-send refunds below.
+    pacer.record_dm()
+    pacer.save()
+
+    from .actions import send_dm as _send_dm
+
+    # An unexpected error mid-send keeps its attempt charge (unsafe-direction
+    # drift is the one we refuse) — `_paced_session`'s finally still saves;
+    # save() is idempotent on the paths below that already ran it.
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        try:
+            sent = session.run_browser(
+                lambda: _send_dm(session, public_identifier, message, on_step=on_step)
+            )
+            if not sent:
+                # actions.send_dm returned a definite "did not send" (no thread /
+                # no compose) — a proven no-send, so the attempt charge goes back.
+                pacer.refund("dms")
             pacer.save()
-        return {
-            "op": "send-dm", "ok": bool(sent), "sent": bool(sent),
-            "public_identifier": public_identifier, "quota": pacer.remaining(),
-        }
-    except RateLimited as e:
-        deadline = pacer.pause_for_backoff(str(e))
-        pacer.save()
-        return {
-            "op": "send-dm", "ok": False, "sent": False,
-            "public_identifier": public_identifier, "error": "rate_limited",
-            "reason": str(e), "paused_until": deadline,
-        }
-    finally:
-        session.close()
+            return {
+                "op": "send-dm", "ok": bool(sent), "sent": bool(sent),
+                "public_identifier": public_identifier,
+                "waited_s": round(waited_s, 1), "quota": pacer.remaining(),
+            }
+        except RateLimited as e:
+            # The throttle hit before the message could go out — refund, then back off.
+            pacer.refund("dms")
+            deadline = pacer.pause_for_backoff(str(e))
+            pacer.save()
+            return {
+                "op": "send-dm", "ok": False, "sent": False,
+                "public_identifier": public_identifier, "error": "rate_limited",
+                "reason": str(e), "paused_until": deadline,
+            }
 
 
 def contact_sync(
     public_identifier: str,
     *,
+    profile: PacingProfile | None = None,
+    state_dir: str | None = None,
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Read-only contact-status probe (FR-NW-15): connection degree + the 1:1
     thread's last-message direction/timestamp. NEVER writes to LinkedIn.
 
-    The MIT host's `contact_sync` scheduler tick drives one of these per tracked
-    contact (batched small, gentle) and maps the result onto the kanban
-    transitions. `dry_run` plans only (no browser, no network)."""
+    Each probe is an authenticated profile read, so it charges the profile-view
+    budget and is refused during backoff. That matters more here than anywhere
+    else: the host drives one of these per tracked contact in a batch, so an
+    unmetered sync could exhaust a whole day's read budget before the user sent a
+    single invite — and a dashboard would still have read "healthy".
+
+    Driven by the user pressing Sync (or opening the Networking surface, once per
+    15 min) — there is no scheduler any more. `dry_run` plans only."""
     if not public_identifier:
         raise VoyagerError("contact-sync requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
@@ -401,18 +696,212 @@ def contact_sync(
             "degree": None, "is_first_degree": False,
             "last_message_direction": None, "last_message_at": None,
         }
-    from .actions import get_contact_sync_state
-    from .session import AccountSession
+    pacer = _pacer(profile, state_dir)
+    allowed, reason = pacer.can_view_profile()
+    if not allowed:
+        return {"op": "contact-sync", "ok": False,
+                "public_identifier": public_identifier,
+                "error": "cap_or_backoff", "reason": reason,
+                "degree": None, "is_first_degree": False,
+                "last_message_direction": None, "last_message_at": None,
+                "quota": pacer.remaining()}
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        state = get_contact_sync_state(session, public_identifier)
-        return {"op": "contact-sync", "ok": True,
-                "public_identifier": public_identifier, **state}
-    finally:
-        session.close()
+    from .actions import get_contact_sync_state
+
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        try:
+            pacer.record_profile_view()
+            state = session.run_browser(
+                lambda: get_contact_sync_state(session, public_identifier)
+            )
+            return {"op": "contact-sync", "ok": True,
+                    "public_identifier": public_identifier, **state,
+                    "quota": pacer.remaining()}
+        except RateLimited as e:
+            # A block on contact 1 used to be logged and swallowed, so the host kept
+            # hammering contacts 2-20 in the same batch. Entering backoff here stops
+            # the whole batch, because every subsequent probe is refused.
+            deadline = pacer.pause_for_backoff(str(e))
+            return {"op": "contact-sync", "ok": False,
+                    "public_identifier": public_identifier,
+                    "error": "rate_limited", "reason": str(e), "paused_until": deadline,
+                    "degree": None, "is_first_degree": False,
+                    "last_message_direction": None, "last_message_at": None,
+                    "quota": pacer.remaining()}
+
+
+def contact_sync_states(
+    entries: list[dict],
+    *,
+    profile: PacingProfile | None = None,
+    state_dir: str | None = None,
+    storage_state: str | None = None,
+    user_data_dir: str | None = None,
+    headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Batched read-only contact-status probes (FR-NW-15) in ONE browser session.
+
+    `entries` is one dict per contact: `public_identifier` (required), `urn`
+    (the contact's fsd_profile urn if the host cached one from an earlier full
+    probe), and `thread_only` (True when the degree question is settled and
+    only the 1:1 thread matters). The sweep splits on it (2026-08-16):
+
+      - **Thread-only probes run FIRST and charge nothing.** With a cached urn
+        the thread answer comes from the sweep's ONE session-cached inbox read
+        (`get_contact_thread_state`) — no profile navigation, no profile-view
+        charge, no inter-read pacing (there is no per-contact request to pace).
+        These can never be refused by the read budget, so the message-driven
+        columns stay syncable even on a spent ledger. A `thread_only` entry
+        WITHOUT a urn is treated as a full probe (the bootstrap read that
+        learns it).
+      - **Full probes keep the single op's semantics exactly**: each charges
+        the profile-view budget on ATTEMPT and is refused once the
+        budget/backoff gate says stop (a refusal ends the metered tail — every
+        later full probe would refuse identically); full probes are paced with
+        the same 6-10 s inter-read jitter the discovery enrichment loop uses;
+        a 403/404/parse failure skips THAT contact (`error: "probe_failed"`)
+        and the sweep continues; the first RateLimited enters backoff and
+        stops the sweep (section 0.4); an AuthenticationError stops and
+        surfaces (`error: "auth_error"`). A full probe's envelope carries the
+        `target_urn` it resolved, for the host to cache.
+
+    Each entry in `results` is exactly the single `contact_sync` envelope for
+    that contact, keyed by `public_identifier` — thread-only probes first, so
+    the order is NOT the input order (the host joins by pid). A stopped sweep
+    has fewer entries; contacts with no entry were never probed. The `finally`
+    inside `_paced_session` persists every charge and any backoff pause, then
+    closes the one browser."""
+    specs = [
+        {
+            "public_identifier": _normalize_public_id(str(e.get("public_identifier") or "")),
+            "urn": str(e.get("urn") or ""),
+            "thread_only": bool(e.get("thread_only")),
+        }
+        for e in entries
+        if e.get("public_identifier")
+    ]
+    if not specs:
+        raise VoyagerError("contact-sync-states requires public_identifiers")
+    thread_specs = [s for s in specs if s["thread_only"] and s["urn"]]
+    full_specs = [s for s in specs if not (s["thread_only"] and s["urn"])]
+    if dry_run:
+        return {
+            "op": "contact-sync-batch", "ok": True, "dry_run": True,
+            "count": len(specs),
+            "plan": f"would probe {len(specs)} contact(s) read-only in ONE browser "
+                    f"session ({len(thread_specs)} from the one inbox read alone, "
+                    f"{len(full_specs)} full profile read(s); no send)",
+            "results": [],
+        }
+    pacer = _pacer(profile, state_dir)
+
+    def _blocked(pid: str, error: str, reason: str, **extra: object) -> dict:
+        return {"op": "contact-sync", "ok": False, "public_identifier": pid,
+                "error": error, "reason": reason,
+                "degree": None, "is_first_degree": False,
+                "last_message_direction": None, "last_message_at": None,
+                "quota": pacer.remaining(), **extra}
+
+    # Gate up front only when there is nothing unmetered to do: a sweep with
+    # thread-only work still runs it on a spent ledger (those probes charge
+    # nothing), while an all-full sweep whose FIRST probe would be refused
+    # launches no browser at all — zero LinkedIn traffic, exactly like the
+    # single op refusing before its session.
+    if not thread_specs:
+        allowed, reason = pacer.can_view_profile()
+        if not allowed:
+            return {"op": "contact-sync-batch", "ok": False, "count": 1,
+                    "error": "cap_or_backoff", "reason": reason,
+                    "results": [_blocked(full_specs[0]["public_identifier"],
+                                         "cap_or_backoff", reason)],
+                    "quota": pacer.remaining()}
+
+    from .actions import get_contact_sync_state, get_contact_thread_state
+    from .session import random_sleep
+
+    results: list[dict] = []
+    batch_error = ""
+    batch_reason = ""
+    with _paced_session(pacer, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        for spec in thread_specs:
+            pid, urn = spec["public_identifier"], spec["urn"]
+            try:
+                state = session.run_browser(
+                    lambda pid=pid, urn=urn: get_contact_thread_state(
+                        session, pid, urn
+                    )
+                )
+            except RateLimited as e:
+                # The one inbox read itself was throttled — nothing else in
+                # this sweep can succeed (thread probes need that read, full
+                # probes would 429 the same way).
+                deadline = pacer.pause_for_backoff(str(e))
+                results.append(_blocked(pid, "rate_limited", str(e),
+                                        paused_until=deadline))
+                batch_error, batch_reason = "rate_limited", str(e)
+                break
+            except AuthenticationError as e:
+                results.append(_blocked(pid, "auth_error", str(e)))
+                batch_error, batch_reason = "auth_error", str(e)
+                break
+            except VoyagerError as e:
+                results.append(_blocked(pid, "probe_failed", str(e)))
+                continue
+            results.append({"op": "contact-sync", "ok": True,
+                            "public_identifier": pid, **state,
+                            "quota": pacer.remaining()})
+        for probed, spec in enumerate(full_specs):
+            if batch_error:
+                break  # the thread pass already hit a sweep-stop signal
+            pid = spec["public_identifier"]
+            allowed, reason = pacer.can_view_profile()
+            if not allowed:
+                # The read budget ran out — every later full probe would
+                # refuse identically, so stop here (the rest stays queued).
+                results.append(_blocked(pid, "cap_or_backoff", reason))
+                batch_error, batch_reason = "cap_or_backoff", reason
+                break
+            if probed:
+                # Per-contact read pacing (NFR-LI-01): the browser-per-contact
+                # loop this replaces was naturally spaced by its launch/quit
+                # churn; inside one session the pause must be explicit.
+                random_sleep(*ENRICH_PAUSE_RANGE_S)
+            # Charge on ATTEMPT, same as the single op — a probe that reached
+            # LinkedIn but failed still consumed an authenticated read.
+            pacer.record_profile_view()
+            try:
+                state = session.run_browser(
+                    lambda pid=pid: get_contact_sync_state(session, pid)
+                )
+            except RateLimited as e:
+                deadline = pacer.pause_for_backoff(str(e))
+                results.append(_blocked(pid, "rate_limited", str(e),
+                                        paused_until=deadline))
+                batch_error, batch_reason = "rate_limited", str(e)
+                break
+            except AuthenticationError as e:
+                results.append(_blocked(pid, "auth_error", str(e)))
+                batch_error, batch_reason = "auth_error", str(e)
+                break
+            except VoyagerError as e:
+                # 403/404/parse miss — THIS contact is skipped (the host logs
+                # and rotates it, exactly as it did when the single op raised);
+                # the sweep goes on.
+                results.append(_blocked(pid, "probe_failed", str(e)))
+                continue
+            results.append({"op": "contact-sync", "ok": True,
+                            "public_identifier": pid, **state,
+                            "quota": pacer.remaining()})
+    return {"op": "contact-sync-batch", "ok": not batch_error,
+            "count": len(results), "results": results,
+            **({"error": batch_error, "reason": batch_reason} if batch_error else {}),
+            "quota": pacer.remaining()}
 
 
 def status(
@@ -421,6 +910,7 @@ def status(
     storage_state: str | None = None,
     user_data_dir: str | None = None,
     headed: bool = False,
+    surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Report a contact's connection status: connected / pending / qualified."""
@@ -434,14 +924,15 @@ def status(
             "plan": "would resolve connection degree via Voyager (UI fallback)",
         }
     from .actions import get_connection_status
-    from .session import AccountSession
 
-    session = AccountSession(
-        storage_state_path=storage_state, headed=headed, user_data_dir=user_data_dir
-    )
-    try:
-        state = get_connection_status(session, public_identifier)
+    # No pacer: `status` is the one browser op that meters nothing (it is driven
+    # by the host's own already-metered flows), so the scaffold only owns the
+    # browser teardown here.
+    with _paced_session(None, storage_state=storage_state,
+                        user_data_dir=user_data_dir, headed=headed,
+                        surface_provider=surface_provider) as session:
+        state = session.run_browser(
+            lambda: get_connection_status(session, public_identifier)
+        )
         return {"op": "status", "ok": True,
                 "public_identifier": public_identifier, "status": state}
-    finally:
-        session.close()

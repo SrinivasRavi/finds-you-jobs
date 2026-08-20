@@ -6,14 +6,18 @@
 // entirely by fake timers (Date + setTimeout are both faked so `elapsed`
 // math is exact).
 import { QueryClient } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 // The bridge under test reads the singleton event bus and the api client at
 // module scope — both are seams we fake: the bus so tests can emit SSE
 // envelopes directly, the api so no RealApi (handshake fetch) is constructed.
+// `ledgerRows` feeds useContactSyncInFlight's mount seed per test.
+const fakes = vi.hoisted(() => ({
+  ledgerRows: [] as { id: string; kind: string; state: string }[],
+}));
 vi.mock("./index", () => ({
-  api: {},
+  api: { listLedger: () => Promise.resolve(fakes.ledgerRows) },
   hasSidecar: () => false,
   makeApi: () => ({}),
 }));
@@ -38,7 +42,7 @@ vi.mock("./events", () => {
 });
 
 import { eventBus } from "./events";
-import { makeTrailingThrottle, useSSEInvalidation } from "./queries";
+import { makeTrailingThrottle, useContactSyncInFlight, useSSEInvalidation } from "./queries";
 
 const bus = eventBus as unknown as { emitEvent: (ev: unknown) => void };
 
@@ -237,5 +241,74 @@ describe("useSSEInvalidation — networker candidate lane", () => {
     unmount();
     vi.advanceTimersByTime(10 * CANDIDATE_WINDOW);
     expect(spy).toHaveBeenCalledTimes(ROSTER_KEYS.length); // only the leading group
+  });
+});
+
+// ─── useContactSyncInFlight — the Sync button's honest busy state ────────────
+// The POST answers 202 at enqueue while the sweep runs on in the background,
+// so busy must follow the OPERATION off the SSE bus (with a ledger seed for a
+// sweep already live at mount), from enqueue to terminal.
+
+const syncOp = (state: string, id = "op1") => ({
+  type: "operation",
+  payload: { id, kind: "contact_sync", state },
+});
+
+function emitOp(ev: unknown): void {
+  act(() => bus.emitEvent(ev));
+}
+
+describe("useContactSyncInFlight", () => {
+  afterEach(() => {
+    fakes.ledgerRows = [];
+  });
+
+  it("is false at rest, true from enqueue through running, false at terminal", () => {
+    const { result, unmount } = renderHook(() => useContactSyncInFlight());
+    expect(result.current).toBe(false);
+    emitOp(syncOp("queued"));
+    expect(result.current).toBe(true);
+    emitOp(syncOp("running"));
+    expect(result.current).toBe(true);
+    emitOp(syncOp("succeeded"));
+    expect(result.current).toBe(false);
+    unmount();
+  });
+
+  it("a failed sweep releases the busy state too", () => {
+    const { result, unmount } = renderHook(() => useContactSyncInFlight());
+    emitOp(syncOp("queued"));
+    expect(result.current).toBe(true);
+    emitOp(syncOp("failed"));
+    expect(result.current).toBe(false);
+    unmount();
+  });
+
+  it("ignores every other operation kind", () => {
+    const { result, unmount } = renderHook(() => useContactSyncInFlight());
+    emitOp({ type: "operation", payload: { id: "s1", kind: "send", state: "running" } });
+    emitOp({ type: "operation", payload: { id: "d1", kind: "discover", state: "queued" } });
+    expect(result.current).toBe(false);
+    unmount();
+  });
+
+  it("seeds true from a ledger row already in flight at mount (join / remount mid-sweep)", async () => {
+    fakes.ledgerRows = [{ id: "op9", kind: "contact_sync", state: "running" }];
+    const { result, unmount } = renderHook(() => useContactSyncInFlight());
+    await waitFor(() => expect(result.current).toBe(true));
+    emitOp(syncOp("succeeded", "op9"));
+    expect(result.current).toBe(false);
+    unmount();
+  });
+
+  it("a terminal event seen before the ledger seed resolves wins (no stuck busy)", async () => {
+    fakes.ledgerRows = [{ id: "op9", kind: "contact_sync", state: "queued" }];
+    const { result, unmount } = renderHook(() => useContactSyncInFlight());
+    // The sweep settles before the seed's promise lands — the fresher SSE
+    // value must not be overwritten by the stale snapshot.
+    emitOp(syncOp("succeeded", "op9"));
+    await act(() => Promise.resolve()); // let the seed's .then run
+    expect(result.current).toBe(false);
+    unmount();
   });
 });

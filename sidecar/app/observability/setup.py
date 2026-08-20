@@ -1,4 +1,4 @@
-"""Observability configuration (architecture §10, layer 2 — Logfire tracing).
+"""Observability configuration (architecture section 10, layer 2 — Logfire tracing).
 
 `configure_observability` is the single entry point the app lifespan calls. It
 wires Logfire to a **purely-local** span pipeline:

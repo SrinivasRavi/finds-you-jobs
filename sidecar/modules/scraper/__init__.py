@@ -1,4 +1,4 @@
-"""Scraper module silo — Track M3 (docs/ROADMAP.md §5).
+"""Scraper module silo — Track M3 (docs/ROADMAP.md section 5).
 
 Zero-LLM job discovery: per-source adapters over public JSON APIs and feeds,
 URL auto-detection from a portals-style config, title/location filters,

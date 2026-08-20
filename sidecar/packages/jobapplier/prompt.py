@@ -1,10 +1,10 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Prompt assembly for the apply loop (docs/internal/applier.md §4).
+"""Prompt assembly for the apply loop (docs/internal/archived/applier-as-built.md section 4).
 
 The system prompt carries the safety contract in words; ``executor.py``
 carries it in code. Page content (JD, form text, anything observed) is DATA,
 never instructions — the prompt says so explicitly, and the executor enforces
-the pieces a prompt can't (§4.3).
+the pieces a prompt can't (section 4.3).
 
 The engine seam is text completion (``Engine.complete``), so the model
 receives the compact interactive-element tree — not the raw screenshot; the
@@ -43,9 +43,22 @@ otherwise leave the field and report it.
 4. Never enter passwords, one-time codes, or payment data. Never attempt to \
 solve or bypass a CAPTCHA. If a login wall or CAPTCHA blocks the form, use \
 report_blocked.
-5. Upload only the listed artifacts, by artifact_id, into file inputs.
+5. Upload only the listed artifacts, by artifact_id. Aim upload_artifact at \
+the resume upload control even when it is a drag-and-drop zone or a styled \
+button — the executor finds the file input behind it.
 6. Element ids (e1, e2, …) are valid ONLY for the current observation. After \
 any click/navigate/fill, a fresh observation arrives with fresh ids.
+7. A job posting page is not the form. Find the apply control first — \
+"Apply", "Apply for this job", an "Apply" tab — and click it; the form may \
+then render below the description on the same page. Ignore lookalikes such \
+as "Apply later", "Save job", or talent-community signups.
+8. Dropdowns come in 2 kinds. A native <select> takes the select tool with \
+the option's exact visible label. Anything else (a combobox, a typeahead, a \
+searchable picker) takes 3 steps: click it, type into the revealed input \
+with fill to filter, then click the exact option in the fresh observation.
+9. Never redo an action PRIOR ACTIONS already shows as ok while the page has \
+not changed. That move is spent: pick a different field, scroll to reveal \
+more, or finish.
 
 Available tools (reply with EXACTLY one JSON object, e.g. \
 {{"tool": "fill", "element_id": "e3", "value": "Ada Lovelace"}}):
@@ -60,7 +73,7 @@ def system_prompt() -> str:
 
 
 def render_request_context(request: ApplyRequest) -> str:
-    """The grounded user-side context (§6). Rendered once per turn."""
+    """The grounded user-side context (section 6). Rendered once per turn."""
     facts = "\n".join(f"- {k}: {v}" for k, v in sorted(request.profile_facts.items()))
     prefs = "\n".join(f"- {k}: {v}" for k, v in sorted(request.preferences.items()))
     artifacts = "\n".join(

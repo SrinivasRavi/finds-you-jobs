@@ -1,4 +1,4 @@
-"""Parent-pid orphan watchdog (architecture §4.4 step 4).
+"""Parent-pid orphan watchdog (architecture section 4.4 step 4).
 
 The sidecar is spawned by the Tauri shell. If the shell dies hard (crash, kill
 -9), the OS reparents the sidecar — on POSIX to pid 1 / a subreaper. The

@@ -1,6 +1,6 @@
 // TanStack Query hooks over the (sidecar-backed) client + SSE invalidation.
 // Server state lives in Query; the SSE bus invalidates the relevant keys so
-// feed deltas / operation progress flow into the UI (architecture §6:
+// feed deltas / operation progress flow into the UI (architecture section 6:
 // "TanStack Query, invalidated by SSE events").
 //
 // Job Board / Dev status page / main.tsx guard hooks, plus the applications/
@@ -18,7 +18,7 @@ import {
   type InfiniteData,
   type QueryClient,
 } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
@@ -222,11 +222,13 @@ export function useDeleteDiscoveryCredential() {
   });
 }
 /** One-shot logged-in LinkedIn job search (discovery-expansion #6). Invalidates
- *  the feed on success so the newly-found rows appear. */
+ *  the feed on success so the newly-found rows appear; the session query (which
+ *  carries the pagination cursor for the Next-page button) repaints via the
+ *  op's `linkedin` SSE events. `mode: "next"` continues the last Fresh search. */
 export function useLinkedinSearch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (limit?: number) => api.linkedinSearch(limit),
+    mutationFn: (mode: "fresh" | "next" = "fresh") => api.linkedinSearch(mode),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.jobs });
       qc.invalidateQueries({ queryKey: qk.board });
@@ -281,7 +283,7 @@ export function useDiscoveryAnalytics() {
     queryFn: () => api.getDiscoveryAnalytics(),
   });
 }
-/** The operations ledger — the Analytics table + cost source of truth (§10). */
+/** The operations ledger — the Analytics table + cost source of truth (section 10). */
 export function useLedger() {
   return useQuery({ queryKey: qk.ledger, queryFn: () => api.listLedger() });
 }
@@ -314,6 +316,28 @@ export function invalidateFeed(qc: QueryClient): void {
   qc.invalidateQueries({ queryKey: qk.jobs });
   qc.invalidateQueries({ queryKey: qk.board });
   qc.invalidateQueries({ queryKey: qk.trash });
+}
+
+/** Invalidate the referral-roster views at once: the find-referrals popup's
+ *  candidate list, the contact kanban, and the Tracker card's Referrals slot. */
+export function invalidateRoster(qc: QueryClient): void {
+  qc.invalidateQueries({ queryKey: qk.referralCandidates });
+  qc.invalidateQueries({ queryKey: qk.contacts });
+  qc.invalidateQueries({ queryKey: qk.applications });
+}
+
+/** Invalidate both contact rosters — the live kanban and the "Deleted Contacts"
+ *  recovery modal (an archive/restore moves a row between them). */
+export function invalidateContactLists(qc: QueryClient): void {
+  qc.invalidateQueries({ queryKey: qk.contacts });
+  qc.invalidateQueries({ queryKey: qk.archivedContacts });
+}
+
+/** Invalidate the Tracker's card list + the detail-modal Activity tab — every
+ *  mutation that writes an Activity event (FR-TR-03/04) needs both. */
+export function invalidateTracker(qc: QueryClient): void {
+  qc.invalidateQueries({ queryKey: qk.applications });
+  qc.invalidateQueries({ queryKey: qk.activity });
 }
 
 export function useSaveJob() {
@@ -587,10 +611,7 @@ export function useMoveApplication() {
     mutationFn: ({ id, stage }: { id: string; stage: Stage }) =>
       Promise.resolve(api.moveApplication(id, stage)),
     // A move writes an Activity event (FR-TR-03) → refresh the detail-modal tab.
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
-    },
+    onSuccess: () => invalidateTracker(qc),
   });
 }
 
@@ -610,10 +631,7 @@ export function useUpdateApplication() {
       Promise.resolve(api.updateApplication(id, patch)),
     // A notes edit / column move writes an Activity event (FR-TR-04) — refresh
     // the detail-modal Activity tab so it appears without a manual reload.
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
-    },
+    onSuccess: () => invalidateTracker(qc),
   });
 }
 
@@ -741,9 +759,9 @@ export function useRemoveDocument() {
   });
 }
 
-// ─── Apply Runs (the agentic Applier — applier.md §8/§9) ─────────────────────
+// ─── Apply Runs (the agentic Applier — applier-as-built.md section 8/section 9) ─────────────────────
 
-/** All Apply Runs for one application (§8.3 — the immutable attempt history). */
+/** All Apply Runs for one application (section 8.3 — the immutable attempt history). */
 export function useApplyRuns(applicationId: string | null) {
   return useQuery({
     queryKey: [...qk.applyRuns, applicationId],
@@ -754,7 +772,7 @@ export function useApplyRuns(applicationId: string | null) {
 
 /** One Apply Run's live snapshot for the companion panel. Poll-light: the run
  *  is refetched only when an `apply` SSE event for THIS run_id lands, or a
- *  terminal apply operation fires — never on a timer (§9.2). Seeds/keeps the
+ *  terminal apply operation fires — never on a timer (section 9.2). Seeds/keeps the
  *  panel honest whether it was open the whole time or reopened after the fact. */
 export function useApplyRun(runId: string | null) {
   const qc = useQueryClient();
@@ -785,8 +803,8 @@ export function useApplyRun(runId: string | null) {
   return query;
 }
 
-/** Start an Apply Run (§8.1) — no pre-confirm; the click IS the action.
- *  `retryOfRunId` starts a fresh run linked to the prior one (§8.3). Seeds the
+/** Start an Apply Run (section 8.1) — no pre-confirm; the click IS the action.
+ *  `retryOfRunId` starts a fresh run linked to the prior one (section 8.3). Seeds the
  *  new run into the cache so the companion binds instantly. */
 export function useStartApply() {
   const qc = useQueryClient();
@@ -801,7 +819,7 @@ export function useStartApply() {
   });
 }
 
-/** Cooperative cancel (§8.2) — lands the run as `interrupted`. */
+/** Cooperative cancel (section 8.2) — lands the run as `interrupted`. */
 export function useCancelApply() {
   const qc = useQueryClient();
   return useMutation({
@@ -813,7 +831,7 @@ export function useCancelApply() {
   });
 }
 
-/** The human's post-handoff attestation (§8.4). A `true` advances the card to
+/** The human's post-handoff attestation (section 8.4). A `true` advances the card to
  *  Applied — refresh applications + the Activity tab. */
 export function useAttestApply() {
   const qc = useQueryClient();
@@ -822,8 +840,7 @@ export function useAttestApply() {
       Promise.resolve(api.attestApplyRun(runId, submitted)),
     onSuccess: (run) => {
       qc.setQueryData([...qk.applyRun, run.id], run);
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
+      invalidateTracker(qc);
     },
   });
 }
@@ -863,14 +880,19 @@ export function useConnectLinkedIn() {
   });
 }
 
+/** Every endpoint that returns the authoritative session lands it the same way:
+ *  write it into the session cache, then refresh the referral quota — the caps
+ *  it counts against ride on that session. */
+function applyLinkedInSession(qc: QueryClient, session: LinkedInSessionState): void {
+  qc.setQueryData(qk.linkedinSession, session);
+  qc.invalidateQueries({ queryKey: qk.referralQuota });
+}
+
 function useLinkedInSessionMutation(fn: () => Promise<LinkedInSessionState> | LinkedInSessionState) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => Promise.resolve(fn()),
-    onSuccess: (session) => {
-      qc.setQueryData(qk.linkedinSession, session);
-      qc.invalidateQueries({ queryKey: qk.referralQuota });
-    },
+    onSuccess: (session) => applyLinkedInSession(qc, session),
   });
 }
 
@@ -886,14 +908,92 @@ export function useResumeLinkedIn() {
   return useLinkedInSessionMutation(() => api.resumeLinkedIn());
 }
 
-export function useSetLinkedInTier() {
+/** Refresh contact statuses from LinkedIn (FR-NW-15). Manual-only: the Sync
+ *  button is the one caller (maintainer decision, 2026-08-15) — the on-open
+ *  refresh and the 12 h schedule before it are both retired, so no LinkedIn
+ *  traffic happens unless the user presses Sync
+ *  (`docs/internal/linkedin-addon.md` section 5). */
+export function useSyncContacts() {
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.syncContacts()),
+    // No invalidation here: a 202 means the sync hasn't touched a contact yet.
+    // The SSE terminal handler (contact_sync → invalidateNetworkingLists) does
+    // the refetch when the op actually finishes.
+  });
+}
+
+/** Queue a `view_page` operation that shows a page on the browser surface
+ *  (2026-08-16). No invalidation: the queue panel tracks the op off the SSE
+ *  operation events. A mutation, not a bare api call, ON PURPOSE — the old
+ *  fire-and-forget swallowed its failure, so a click against a sidecar
+ *  without the route showed nothing anywhere; now the global
+ *  MutationErrorBanner nets it. */
+export function useViewInBrowser() {
+  return useMutation({
+    mutationFn: (args: { url: string; surface?: string; contactId?: string }) =>
+      api.viewInBrowser(args.url, args.surface, args.contactId),
+  });
+}
+
+/** True while a `contact_sync` operation is genuinely in flight (queued or
+ *  running). The POST above answers 202 the moment the sweep is enqueued, but
+ *  the sweep itself runs for a while in the background (paced read probes), so
+ *  the Sync button's busy state must follow the OPERATION, not the request:
+ *  SSE operation events drive this from enqueue to terminal, and a ledger read
+ *  seeds a sweep already in flight at mount (tab switch, reload, or a join via
+ *  `already_running`). Same tracking pattern as `useBrowserOp`
+ *  (BrowserOpPlan.tsx), scoped to the one kind. */
+export function useContactSyncInFlight(): boolean {
+  const [op, setOp] = useState<{ id: string; state: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listLedger()
+      .then((rows) => {
+        if (cancelled) return;
+        const live = rows.find(
+          (r) => r.kind === "contact_sync" && (r.state === "queued" || r.state === "running"),
+        );
+        // Seed only when no SSE event has spoken yet — an event-driven value
+        // (even a terminal one) is fresher than this snapshot.
+        if (live) setOp((cur) => cur ?? { id: live.id, state: live.state });
+      })
+      .catch(() => {
+        /* SSE still drives the state; a failed seed just means not busy */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return eventBus.subscribe((ev) => {
+      if (ev.type !== "operation") return;
+      const p = ev.payload;
+      if (p.kind !== "contact_sync") return;
+      setOp({ id: p.id, state: p.state });
+    });
+  }, []);
+
+  return op != null && (op.state === "queued" || op.state === "running");
+}
+
+/** Set the self-imposed LinkedIn rate-limit profile (2026-08-01): membership,
+ *  risk%, per-cap override, or reset. Membership/risk changes reset overrides
+ *  server-side; the returned session carries the recomputed caps. Invalidates
+ *  the referral quota so the popup counter reflects the new caps immediately. */
+export function useSetLinkedInRateLimits() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (tier: "new" | "seasoned") => Promise.resolve(api.setLinkedInTier(tier)),
-    onSuccess: (session) => {
-      qc.setQueryData(qk.linkedinSession, session);
-      qc.invalidateQueries({ queryKey: qk.referralQuota });
-    },
+    mutationFn: (body: {
+      membership_type?: string;
+      risk_pct?: number;
+      override_key?: string;
+      override_value?: number;
+      reset_overrides?: boolean;
+    }) => Promise.resolve(api.setLinkedInRateLimits(body)),
+    onSuccess: (session) => applyLinkedInSession(qc, session),
   });
 }
 
@@ -911,10 +1011,7 @@ export function useAddContact() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ContactInput) => Promise.resolve(api.addContact(input)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.archivedContacts });
-    },
+    onSuccess: () => invalidateContactLists(qc),
   });
 }
 
@@ -923,10 +1020,7 @@ export function useUpdateContact() {
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Partial<NetContact> & { archived?: boolean } }) =>
       Promise.resolve(api.updateContact(id, patch)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.archivedContacts });
-    },
+    onSuccess: () => invalidateContactLists(qc),
   });
 }
 
@@ -1054,30 +1148,18 @@ export function useSSEInvalidation(qc: QueryClient): void {
       () => qc.invalidateQueries({ queryKey: qk.scanProgress }),
       500,
     );
-    const invalidatePacket = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.applications });
-      qc.invalidateQueries({ queryKey: qk.activity });
-    }, THROTTLE_MS);
+    const invalidatePacket = makeTrailingThrottle(() => invalidateTracker(qc), THROTTLE_MS);
     const invalidateNetworkingLists = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.archivedContacts });
+      invalidateContactLists(qc);
       qc.invalidateQueries({ queryKey: qk.referralQuota });
       qc.invalidateQueries({ queryKey: qk.applications });
     }, THROTTLE_MS);
-    const invalidateReferralRoster = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.referralCandidates });
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.applications });
-    }, THROTTLE_MS);
+    const invalidateReferralRoster = makeTrailingThrottle(() => invalidateRoster(qc), THROTTLE_MS);
     // Per-candidate discover events (roster liveness, restored 2026-07-25):
     // same roster-scoped keys the pre-F-H4 bridge invalidated on `candidate`
     // events, but grouped through a wider trailing window so a "Find 10 more"
     // burst lands as ~2 refetches/second, not one per contact.
-    const invalidateRosterCandidates = makeTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: qk.referralCandidates });
-      qc.invalidateQueries({ queryKey: qk.contacts });
-      qc.invalidateQueries({ queryKey: qk.applications });
-    }, 500);
+    const invalidateRosterCandidates = makeTrailingThrottle(() => invalidateRoster(qc), 500);
     const invalidateApplications = makeTrailingThrottle(() => {
       qc.invalidateQueries({ queryKey: qk.applications });
     }, THROTTLE_MS);
@@ -1119,10 +1201,16 @@ export function useSSEInvalidation(qc: QueryClient): void {
           if (p.kind === "linkedin_login") {
             qc.invalidateQueries({ queryKey: qk.linkedinSession });
           }
+          // A finished sync also refreshes the session snapshot: it carries
+          // `contact_sync_last_at`, the "Synced Nm ago" stamp beside the
+          // manual-only Sync button in the Networking header.
+          if (p.kind === "contact_sync") {
+            qc.invalidateQueries({ queryKey: qk.linkedinSession });
+          }
         }
         // A terminal apply op settles the run and the card's Apply slot
         // (applyRunStatus) + writes an Activity event — refresh all three so the
-        // Tracker/companion repaint without a manual reload (applier.md §8.4).
+        // Tracker/companion repaint without a manual reload (applier-as-built.md section 8.4).
         // One event per run — no throttle needed.
         if (p.kind === "apply" && terminal) {
           qc.invalidateQueries({ queryKey: qk.applications });
@@ -1131,7 +1219,7 @@ export function useSSEInvalidation(qc: QueryClient): void {
           qc.invalidateQueries({ queryKey: qk.activity });
         }
       }
-      // Applier live-updates (applier.md §9.2): only phase-affecting events
+      // Applier live-updates (applier-as-built.md section 9.2): only phase-affecting events
       // change the card's Apply slot — the bound run's snapshot is re-read by
       // the companion's own scoped useApplyRun subscription, so the blanket
       // applyRun invalidation that doubled it up is gone (F-H4).

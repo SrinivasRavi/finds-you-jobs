@@ -1,4 +1,4 @@
-"""scan() — the Scraper's one bounded operation (ROADMAP §4).
+"""scan() — the Scraper's one bounded operation (ROADMAP section 4).
 
 Zero LLM calls. Sources are **fetched concurrently** by a bounded thread pool
 (they are independent, I/O-bound HTTP — a 300-source scan is sub-minute, not

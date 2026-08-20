@@ -1,4 +1,4 @@
-"""Covers: A3 scheduler (architecture §5.5, NFR-LONG-01).
+"""Covers: A3 scheduler (architecture section 5.5, NFR-LONG-01).
 
 Due-enqueue, boot catch-up (past-due enqueues on tick), and the double-enqueue
 guard (a schedule whose prior op is still queued/running is skipped). The runner

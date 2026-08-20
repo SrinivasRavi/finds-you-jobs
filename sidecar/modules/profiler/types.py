@@ -1,4 +1,4 @@
-"""Profiler module types — plain dataclasses (module convention, ROADMAP §4)."""
+"""Profiler module types — plain dataclasses (module convention, ROADMAP section 4)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Usage:
-    """Aggregate cost record for one bounded operation (ROADMAP §4)."""
+    """Aggregate cost record for one bounded operation (ROADMAP section 4)."""
 
     internal_calls: int = 0
     tokens_in: int | None = None

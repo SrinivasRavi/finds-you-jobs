@@ -11,18 +11,43 @@
 #   - The FREEMIUM promotional-action and auto-newsletter hooks that upstream
 #     ran on session start are intentionally NOT forked (they send from the
 #     user's account under remote control — incompatible with finds-you-jobs's
-#     no-telemetry / no-middleman vision). See README.md § "What we did NOT take".
+#     no-telemetry / no-middleman vision). See README.md section "What we did NOT take".
+#   - Broker-backed session mode (finds-you-jobs, 2026-08): instead of launching
+#     its OWN Chromium, an AccountSession can be given a `surface_provider` that
+#     hands back the core browser broker's persistent surface, and it runs the
+#     verbatim page-driving actions on that surface's single serialized lane
+#     (`run_browser`). Self-launch (`start`/`_start_persistent`) stays the
+#     default for the standalone/CLI path; the broker path never launches or
+#     tears down a browser here. See `provenance.md` and
+#     `docs/internal/plugin-architecture.md`.
+#   - Broker surface session seeding (finds-you-jobs, 2026-08, Phase 5): on the
+#     first lane bind, `run_browser` seeds the broker surface's context from the
+#     saved storage-state (`_seed_surface_session`) when it carries no `li_at`,
+#     because the vendor-agnostic broker launches the shared profile without
+#     `--use-mock-keychain` and so cannot decrypt cookies the one-time login
+#     wrote under Playwright's default OSCrypt key. The broker-backed twin of
+#     `_start_persistent`'s first-run migration. See `provenance.md`.
+#   - Voyager origin assertion (finds-you-jobs, 2026-08-14): every voyager call
+#     is an in-page `fetch` against the page's own origin, an invariant the
+#     self-launch path establishes by ending `start()` on the feed. A broker
+#     surface starts at `about:blank`, and the host's Browser tab can drive it
+#     anywhere between runs, so the voyager client re-asserts a linkedin.com
+#     origin before each fetch (`ensure_linkedin_origin`, called from
+#     `client._fetch`), navigating to the feed only when the page sits
+#     elsewhere. DOM-driving actions are untouched. See `provenance.md`.
 """Standalone LinkedIn browser session: launch Chromium, load saved cookies,
 navigate at a human pace. Chromium is fetched on first use, never bundled, and
 torn down after each run (NFR-MEM-02)."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import random
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, TypeVar
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -35,6 +60,16 @@ logger = logging.getLogger("voyager_py.session")
 LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/"
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 _AUTH_COOKIE_NAME = "li_at"
+
+# The core browser broker's surface this session drives when it runs
+# broker-backed (the Phase-3 integration): one safe path segment naming both the
+# surface and its per-slug profile dir under the broker's data root. The value
+# lives HERE, inside the GPL package, so core never names a vendor
+# (`docs/internal/plugin-architecture.md` section 8.1 rule 5) — core hands in
+# only a provider callable and is handed this slug back as a runtime argument.
+SURFACE_SLUG = "linkedin"
+
+T = TypeVar("T")
 
 # Page-load jitter between actions (upstream conf.MIN_DELAY / MAX_DELAY).
 MIN_DELAY = 5
@@ -138,6 +173,35 @@ _LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled", "--no-first-run
 _IGNORE_DEFAULT_ARGS = ["--enable-automation"]
 
 
+def _is_sandbox_launch_error(message: str) -> bool:
+    # Conservative: Chromium's sandbox-launch failures name the sandbox ("No
+    # usable sandbox!", "--no-sandbox") or the missing kernel facility ("Failed
+    # to move to new namespace…"). Anything else is not a sandbox problem and
+    # must not silently drop the sandbox.
+    msg = message.lower()
+    return "sandbox" in msg or "namespace" in msg
+
+
+def _sandboxed_launch(launch: Callable[[bool], object]):
+    """Launch with the Chromium sandbox ON (2026-08-02 headed dogfood: Playwright
+    disables it by default — the "--no-sandbox" banner — leaving LinkedIn's
+    pages rendering outside Chromium's exploit containment). Desktop macOS and
+    Windows always support the sandbox; the single warned retry with it off
+    exists only for Linux setups without unprivileged user namespaces, where
+    the sandboxed launch fails outright."""
+    try:
+        return launch(True)
+    except Exception as e:  # noqa: BLE001 — non-sandbox failures re-raise below
+        if not _is_sandbox_launch_error(str(e)):
+            raise
+        logger.warning(
+            "Chromium sandbox unavailable (%s) — retrying with "
+            "chromium_sandbox=False; expected only on Linux without "
+            "unprivileged user namespaces", e
+        )
+        return launch(False)
+
+
 def _launch_persistent(playwright, user_data_dir: str, *, headless: bool):
     kwargs = {
         "headless": headless,
@@ -145,12 +209,18 @@ def _launch_persistent(playwright, user_data_dir: str, *, headless: bool):
         "ignore_default_args": _IGNORE_DEFAULT_ARGS,
     }
     try:
-        return playwright.chromium.launch_persistent_context(
-            user_data_dir, channel="chrome", **kwargs
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch_persistent_context(
+                user_data_dir, channel="chrome", chromium_sandbox=sandbox, **kwargs
+            )
         )
     except Exception as e:  # noqa: BLE001 — no installed Chrome → bundled build
         logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return playwright.chromium.launch_persistent_context(user_data_dir, **kwargs)
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch_persistent_context(
+                user_data_dir, chromium_sandbox=sandbox, **kwargs
+            )
+        )
 
 
 def _launch_browser(playwright, *, headless: bool):
@@ -160,10 +230,16 @@ def _launch_browser(playwright, *, headless: bool):
         "ignore_default_args": _IGNORE_DEFAULT_ARGS,
     }
     try:
-        return playwright.chromium.launch(channel="chrome", **kwargs)
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch(
+                channel="chrome", chromium_sandbox=sandbox, **kwargs
+            )
+        )
     except Exception as e:  # noqa: BLE001
         logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return playwright.chromium.launch(**kwargs)
+        return _sandboxed_launch(
+            lambda sandbox: playwright.chromium.launch(chromium_sandbox=sandbox, **kwargs)
+        )
 
 
 def dismiss_comply_gate(page, timeout_ms: int = 5000) -> bool:
@@ -213,6 +289,8 @@ class AccountSession:
         storage_state_path: str | Path | None = None,
         headed: bool = False,
         user_data_dir: str | Path | None = None,
+        surface_provider: Callable[[str], Any] | None = None,
+        surface_slug: str = SURFACE_SLUG,
     ) -> None:
         self.storage_state_path = Path(storage_state_path) if storage_state_path else None
         self.headed = headed
@@ -221,6 +299,18 @@ class AccountSession:
         # user can reopen + log out of to end the app's session). The JSON
         # storage-state is still exported for the no-browser validate path.
         self.user_data_dir = Path(user_data_dir) if user_data_dir else None
+        # Broker-backed mode: when set, `surface_provider(surface_slug)` returns
+        # the core broker's ready `BrowserSurface` (duck-typed: it only needs
+        # `run_on_lane`). The session then never launches or owns a browser —
+        # `run_browser` runs each action on the surface's serialized lane, where
+        # `page`/`context` are the surface's own and Playwright is greenlet-bound
+        # to the surface thread. None → the legacy self-launch path is used.
+        self._surface_provider = surface_provider
+        self._surface_slug = surface_slug
+        self._surface: Any = None
+        # One-shot latch: seed the broker surface's context from the saved
+        # storage-state on the FIRST lane bind (see `_seed_surface_session`).
+        self._surface_seeded = False
         self.page = None
         self.context = None
         self.browser = None
@@ -291,8 +381,110 @@ class AccountSession:
         logger.info("voyager session ready")
 
     def ensure_browser(self) -> None:
+        if self.broker_backed:
+            # Broker-backed: the surface is persistent and always live, and
+            # `run_browser` binds `page` before any action runs — there is
+            # nothing to launch here. (Actions call this on the surface thread,
+            # inside a lane, where `page` is already the surface's own.)
+            return
         if not self.page or self.page.is_closed():
             self.start()
+
+    @property
+    def broker_backed(self) -> bool:
+        """True when this session drives the core broker's surface on its lane
+        rather than launching its own Chromium."""
+        return self._surface_provider is not None
+
+    def _acquire_surface(self) -> Any:
+        """The broker surface for this session's slug, fetched (and cached) once.
+        The provider returns a READY surface — the host resolves the surface and
+        awaits its launch OFF the serving loop before handing it back."""
+        if self._surface is None:
+            assert self._surface_provider is not None
+            self._surface = self._surface_provider(self._surface_slug)
+        return self._surface
+
+    def run_browser(self, action: Callable[[], T]) -> T:
+        """Run one page-driving `action()` where the browser actually lives.
+
+        Broker-backed: `action` is submitted to the surface's single serialized
+        lane (`run_on_lane`) and runs on the surface thread — the only thread
+        that may touch this Chrome's Playwright objects. Just before it runs, the
+        surface's own `page`/`context` are bound onto this session, so the
+        verbatim GPL actions (which drive `session.page`) operate on the surface
+        page unchanged. The future is awaited with `.result()`, which blocks THIS
+        worker thread (never the serving loop) and re-raises the action's own
+        exception (e.g. a `RateLimited`) so the worker's cap/backoff handling is
+        unchanged. "One account, one lane" stays a structural guarantee: the lane
+        serialises every action against this surface (section 5.4).
+
+        Legacy self-launch: ensure the browser is up, then run `action()` inline
+        on this thread, exactly as before.
+        """
+        if not self.broker_backed:
+            self.ensure_browser()
+            return action()
+
+        surface = self._acquire_surface()
+
+        def _on_surface(surface_session: Any) -> T:
+            self.page = surface_session.page
+            self.context = surface_session.context
+            self._seed_surface_session()
+            return action()
+
+        return surface.run_on_lane(_on_surface).result()
+
+    def _seed_surface_session(self) -> None:
+        """On the FIRST lane bind, seed the broker surface's context with the
+        saved LinkedIn cookies when it carries none yet — the broker-backed twin
+        of `_start_persistent`'s first-run migration. Runs on the surface thread
+        (inside the lane), the only thread that may touch this context.
+
+        Why it is needed: the core browser broker is vendor-agnostic and launches
+        the persistent profile under its OWN guardrailed identity, which drops
+        `--use-mock-keychain`. Cookies the one-time headed login wrote under
+        Playwright's default (mock-keychain) OSCrypt key are therefore
+        undecryptable to the surface, so `context.cookies()` comes back empty even
+        though the profile dir is shared (measured, 2026-08 Phase 5). The sealed
+        storage-state JSON holds the DECRYPTED cookie values, so seeding the
+        context from it restores the session with no dependency on the profile's
+        on-disk cookie encryption. Sealing (FYJ_SESSION_KEY) is read through the
+        same `_load_storage_state` the self-launch path uses.
+
+        Idempotent and non-destructive: it runs once per session and never
+        clobbers a context that already carries `li_at` (a matched-posture profile
+        that decrypted fine)."""
+        if self._surface_seeded:
+            return
+        self._surface_seeded = True
+        if self.context is None or not self.storage_state_path:
+            return
+        if any(c.get("name") == _AUTH_COOKIE_NAME for c in self.context.cookies()):
+            return
+        state = self._load_storage_state()
+        cookies = (state or {}).get("cookies")
+        if cookies:
+            self.context.add_cookies(cookies)
+            logger.info("seeded broker surface session from saved storage-state")
+
+    def ensure_linkedin_origin(self) -> None:
+        """Land the page on a linkedin.com origin before an in-page voyager
+        `fetch` runs (called by the voyager client's `_fetch`, the one choke
+        point every voyager call funnels through). The self-launch path holds
+        this invariant implicitly — `start()` ends on the feed — but a broker
+        surface starts at `about:blank`, and the host's Browser tab lets the
+        user drive it anywhere between runs, so the client re-asserts it per
+        fetch. On-origin the check is free; off-origin it spends the one feed
+        load a self-launch session start always spent. DOM-driving actions
+        (connect, note, DM) never come through here — they navigate themselves —
+        so fixture-paged flows stay wire-cold."""
+        if self.page is None:
+            return
+        if (self.page.url or "").startswith("https://www.linkedin.com"):
+            return
+        _goto_feed(self.page)
 
     def wait(self, min_delay: float = MIN_DELAY, max_delay: float = MAX_DELAY) -> None:
         random_sleep(min_delay, max_delay)
@@ -312,6 +504,15 @@ class AccountSession:
             save_state_file(self.storage_state_path, self.context.storage_state())
 
     def close(self) -> None:
+        if self.broker_backed:
+            # The surface is owned by the core broker and is persistent (it lives
+            # across many sessions and is what the app streams to the user). Never
+            # tear it down here — just drop our references to its page/context,
+            # which belong to the surface thread.
+            self.page = self.context = None
+            self._surface = None
+            logger.info("voyager session detached from broker surface")
+            return
         for closer in (
             lambda: self.context and self.context.close(),
             lambda: self.browser and self.browser.close(),
@@ -346,13 +547,92 @@ def goto_page(session: AccountSession, action, expected_url_pattern: str,
         raise RuntimeError(f"{error_message} → expected '{expected_url_pattern}' | got '{current}'")
 
 
-def human_type(locator, text: str, min_delay: int | None = None, max_delay: int | None = None):
-    """Type with randomized per-keystroke delay (upstream nav.human_type)."""
-    from .pacing import HUMAN_TYPE_MAX_DELAY_MS, HUMAN_TYPE_MIN_DELAY_MS
+# Presses are scheduled against a monotonic clock rather than by sleeping the
+# sampled duration outright, because every `keyboard.down`/`up` is an awaited
+# CDP round-trip. Measured on the real path: ~57 ms of transport per keystroke,
+# which sleeping naively would ADD to every sampled interval and push the whole
+# distribution well off its target.
 
-    lo = HUMAN_TYPE_MIN_DELAY_MS if min_delay is None else min_delay
-    hi = HUMAN_TYPE_MAX_DELAY_MS if max_delay is None else max_delay
-    locator.type(text, delay=random.randint(lo, hi))
+
+class _Timeline:
+    """Plays a millisecond event schedule out against a real clock."""
+
+    def __init__(self, clock, sleep):
+        self._clock = clock
+        self._sleep = sleep
+        self._origin = clock()
+
+    def wait_until(self, target_ms: float) -> None:
+        remaining = target_ms - (self._clock() - self._origin) * 1000.0
+        if remaining > 0:
+            self._sleep(remaining / 1000.0)
+
+
+def human_type(
+    locator,
+    text: str,
+    min_delay: int | None = None,
+    max_delay: int | None = None,
+    *,
+    persona=None,
+    rng=None,
+    sleep=time.sleep,
+    clock=time.monotonic,
+):
+    """Type `text` with a real per-keystroke keystroke-dynamics model.
+
+    Replaces the previous `locator.type(text, delay=<one draw>)`, whose `delay`
+    parameter applies the SAME pause between every keypress — one interval drawn
+    per message, then typed metronomically, so inter-key variance inside a
+    message was exactly zero and dwell was a flat ~93 ms. Both are
+    zero-training discriminators over a ~70-keystroke message
+    (`docs/internal/embedded-browser.md` section 15.3 / section 17.2).
+
+    Now: the target is focused through the locator, `typing_dynamics` samples an
+    interval and a hold per keystroke and lays them on one event timeline
+    (including keystroke ROLLOVER — the next key going down before the previous
+    comes up, which humans do on ~25% of transitions and strict `down → up →
+    down` never does), and this function plays that timeline against the clock.
+
+    Characters with no key definition (non-ASCII) fall back to
+    `locator.type(ch)` for that one character. `Input.insertText` and setting
+    `.value` are never used: both emit `input` with no key events at all, a
+    documented tell.
+
+    `min_delay`/`max_delay` are kept for the existing call sites and re-read as
+    a SPEED PERSONA (see `typing_dynamics.persona_for_legacy_bounds`) — the old
+    10-50 ms pair meant "type fast", not "draw uniformly from 10-50 ms", which
+    would be 240-1200 WPM.
+    """
+    from .typing_dynamics import persona_for_legacy_bounds, plan, schedule
+
+    persona = persona or persona_for_legacy_bounds(min_delay, max_delay)
+    locator.focus()
+    keyboard = locator.page.keyboard
+    timeline = _Timeline(clock, sleep)
+    held: list[str] = []
+    try:
+        for ev in schedule(plan(text, persona, rng)):
+            timeline.wait_until(ev.t_ms)
+            if ev.action == "type":
+                locator.type(ev.key)
+            elif ev.action == "down":
+                try:
+                    keyboard.down(ev.key)
+                except Exception:  # noqa: BLE001 — no key definition after all
+                    if ev.key != "Shift":
+                        locator.type(ev.key)
+                    continue
+                held.append(ev.key)
+            elif ev.key in held:  # only release what we actually pressed
+                keyboard.up(ev.key)
+                held.remove(ev.key)
+    finally:
+        # Never leave a key — least of all Shift — stuck down for the next
+        # action on this page.
+        for key in reversed(held):
+            with contextlib.suppress(Exception):
+                keyboard.up(key)
 
 
 def raise_if_unresponsive(fired: bool, label: str, deadline_s: float) -> None:

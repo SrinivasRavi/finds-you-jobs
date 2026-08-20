@@ -1,4 +1,4 @@
-"""The Operation Runner (architecture §5.3) — the app's core primitive.
+"""The Operation Runner (architecture section 5.3) — the app's core primitive.
 
 A durable `operations` queue + a thread pool + a per-kind concurrency policy.
 Every state change persists and publishes a typed SSE event; every completion

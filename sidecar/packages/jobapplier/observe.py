@@ -1,5 +1,6 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Typed observation seam over the Skyvern-derived core (docs/internal/applier.md §4.1).
+"""Typed observation seam over the Skyvern-derived core
+(docs/internal/archived/applier-as-built.md section 4.1).
 
 One ``observe(page)`` call produces one immutable ``Observation``: a viewport
 screenshot, a compact interactive-element tree rendered to HTML, and a flat list
@@ -9,7 +10,7 @@ current observation only.
 Element ids are per-observation and go stale the instant the next ``observe``
 runs (or the page navigates/rerenders). An action must reference an id from the
 CURRENT observation; the executor rejects stale references rather than guessing
-(§4.1). ``unique_id`` is the underlying Skyvern per-scan DOM id the executor
+(section 4.1). ``unique_id`` is the underlying Skyvern per-scan DOM id the executor
 resolves against; ``element_id`` is the opaque handle the model sees.
 
 Observation is frame-aware: the tree is walked across the main frame and its
@@ -52,11 +53,12 @@ class ObservedElement:
     text: str = ""
     value: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
+    options: tuple[str, ...] = ()  # visible <option> labels, for a <select>
 
 
 @dataclass(frozen=True)
 class Observation:
-    """An immutable snapshot of the page for one model turn (§4.1)."""
+    """An immutable snapshot of the page for one model turn (section 4.1)."""
 
     url: str
     title: str
@@ -99,6 +101,16 @@ def _build_label_map(element_tree: list[dict]) -> dict[str, str]:
 
 def _to_observed(node: dict, element_id: str, associated_label: str) -> ObservedElement:
     raw_attributes: dict[str, Any] = node.get("attributes", {}) or {}
+    # A <select> carries its option list on the scraped node; surface the visible
+    # option labels so the deterministic decider can match one (the model reads
+    # them from the rendered HTML instead). Empty for every other tag.
+    options: tuple[str, ...] = ()
+    if str(node.get("tagName", "")).lower() == "select":
+        options = tuple(
+            text
+            for opt in (node.get("options") or [])
+            if (text := str(opt.get("text") or opt.get("value") or "").strip())
+        )
     # The Skyvern id marker is exposed as ``unique_id`` on the dataclass, not as
     # a raw attribute the model reasons about.
     attributes = {key: value for key, value in raw_attributes.items() if key != SKYVERN_ID_ATTR}
@@ -124,6 +136,7 @@ def _to_observed(node: dict, element_id: str, associated_label: str) -> Observed
         text=str(node.get("text", "") or ""),
         value=raw_attributes.get("value"),
         attributes=attributes,
+        options=options,
     )
 
 

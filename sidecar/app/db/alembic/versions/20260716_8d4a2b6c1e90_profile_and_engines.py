@@ -1,7 +1,7 @@
-"""profile and engines — the A4 slice (database-design.md §3/§4/§6 slice).
+"""profile and engines — the A4 slice (database-design.md section 3/section 4/section 6 slice).
 
 Creates the profile + settings tables for the profile/engine-routing commit
-(`docs/internal/roadmap.md` §7.2 #4): master_profiles (with the FR-APP-01
+(`docs/internal/roadmap.md` section 7.2 #4): master_profiles (with the FR-APP-01
 `application_profile` record folded into the initial DDL), profile_entities
 (+ experience_skills / project_skills joins), and engine_settings. The
 artifacts table lands with the commit that introduces the applications schema

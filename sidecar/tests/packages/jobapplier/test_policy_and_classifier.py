@@ -1,5 +1,5 @@
 # finds-you-jobs — AGPL-3.0-only.
-"""URL policy (§4.3) and page-state classifier (§5.1) — pure logic."""
+"""URL policy (section 4.3) and page-state classifier (section 5.1) — pure logic."""
 
 from datetime import UTC, datetime
 
@@ -32,7 +32,7 @@ def test_policy_allows_public_http(url: str) -> None:
         "file:///etc/passwd",
         "javascript:alert(1)",
         "ftp://example.com/x",
-        "http://127.0.0.1:8843/api",  # the sidecar itself (§4.3)
+        "http://127.0.0.1:8843/api",  # the sidecar itself (section 4.3)
         "http://localhost/admin",
         "http://10.0.0.5/internal",
         "http://192.168.1.1/router",
@@ -75,10 +75,14 @@ def _el(
     )
 
 
-def _obs(elements: list[ObservedElement], html: str) -> Observation:
+def _obs(
+    elements: list[ObservedElement],
+    html: str,
+    title: str = "Acme — Staff Engineer",
+) -> Observation:
     return Observation(
         url="https://careers.example.com/jobs/1",
-        title="Acme — Staff Engineer",
+        title=title,
         screenshot_png=b"\x89PNG\r\n\x1a\n",
         elements=tuple(elements),
         element_tree_html=html,
@@ -101,7 +105,7 @@ def test_application_form_detected() -> None:
 
 
 def test_newsletter_form_is_not_an_application_form() -> None:
-    # §5.1: three generic fields + newsletter vocabulary is not an
+    # section 5.1: three generic fields + newsletter vocabulary is not an
     # application form.
     obs = _obs(
         [
@@ -149,7 +153,6 @@ def test_login_wall_needs_a_password_field() -> None:
 @pytest.mark.parametrize(
     ("html", "state"),
     [
-        ("<div>Please verify you are human (reCAPTCHA)</div>", PageState.CAPTCHA_OR_ANTI_BOT),
         ("<div>This position has been filled.</div>", PageState.POSTING_CLOSED),
         ("<div>Thank you for applying — application received.</div>", PageState.CONFIRMATION),
         ("<div>Email is required</div>", PageState.VALIDATION_ERROR),
@@ -157,6 +160,60 @@ def test_login_wall_needs_a_password_field() -> None:
 )
 def test_text_signal_states(html: str, state: PageState) -> None:
     assert state in classify(_obs([], html))
+
+
+def test_captcha_needs_a_rendered_challenge() -> None:
+    # A passive reCAPTCHA v3 badge (the word in the markup, no interactive
+    # challenge) must NOT wall the run — that false positive aborted 81% of
+    # measured forms. The word alone is not enough.
+    passive_badge = _obs(
+        [_el("e1", "div", text="protected by reCAPTCHA — Privacy · Terms")],
+        "<div>This site is protected by reCAPTCHA and Cloudflare.</div>",
+    )
+    assert PageState.CAPTCHA_OR_ANTI_BOT not in classify(passive_badge)
+
+    invisible_anchor = _obs(
+        [
+            _el(
+                "e1",
+                "iframe",
+                attrs={"src": "https://www.google.com/recaptcha/api2/anchor?size=invisible"},
+            )
+        ],
+        "<div>protected by reCAPTCHA</div>",
+    )
+    assert PageState.CAPTCHA_OR_ANTI_BOT not in classify(invisible_anchor)
+
+
+@pytest.mark.parametrize(
+    "obs",
+    [
+        # A reCAPTCHA challenge iframe (the bframe popup), not the badge.
+        _obs(
+            [
+                _el(
+                    "e1",
+                    "iframe",
+                    attrs={"src": "https://www.google.com/recaptcha/api2/bframe?hl=en"},
+                )
+            ],
+            "<div>reCAPTCHA</div>",
+        ),
+        # An interactive "I'm not a robot" control.
+        _obs(
+            [_el("e1", "div", text="I'm not a robot", attrs={"role": "checkbox"})],
+            "<div>reCAPTCHA verification</div>",
+        ),
+        # A Cloudflare interstitial page (title carries the signal).
+        _obs(
+            [],
+            "<div>Checking your browser before accessing. Cloudflare</div>",
+            title="Just a moment...",
+        ),
+    ],
+)
+def test_captcha_detected_on_a_real_challenge(obs: Observation) -> None:
+    assert PageState.CAPTCHA_OR_ANTI_BOT in classify(obs)
 
 
 def test_unknown_when_nothing_matches() -> None:

@@ -49,19 +49,20 @@ you from your own LinkedIn account.★
 onboarding: paste your resume, set your job preferences, pick an AI provider,
 and add your key. No terminal, no build steps.
 
-### [⬇ Download finds-you-jobs v0.5.6-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.6-beta)
+### [⬇ Download finds-you-jobs v0.5.7-beta](https://github.com/SrinivasRavi/finds-you-jobs/releases/tag/v0.5.7-beta)
 
 | Your computer | Download this file | On first launch |
 |---|---|---|
-| **Windows** 10/11 | `finds-you-jobs_0.5.3-beta_x64-setup.exe` | SmartScreen warns because the beta isn't code-signed yet: click **More info → Run anyway** |
-| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.3-beta_aarch64.dmg` | Gatekeeper blocks unsigned apps: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** |
-| **Mac** (Intel) | `finds-you-jobs_0.5.3-beta_x64.dmg` | same as above |
-| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.3-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
-| **Linux** (any distro, portable) | `finds-you-jobs_0.5.3-beta_amd64.AppImage` | `chmod +x` the file, then run it |
+| **Windows** 10/11 | `finds-you-jobs_0.5.7-beta_x64-setup.exe` | SmartScreen warns because the Windows build isn't code-signed yet: click **More info → Run anyway** |
+| **Mac** (Apple Silicon — M1 and later) | `finds-you-jobs_0.5.7-beta_aarch64.dmg` | Signed and notarized by Apple. Drag the app into **Applications** and open it — no warnings, no Terminal |
+| **Mac** (Intel) | `finds-you-jobs_0.5.7-beta_x64.dmg` | same as above |
+| **Linux** (Debian/Ubuntu) | `finds-you-jobs_0.5.7-beta_amd64.deb` | `sudo apt install ./finds-you-jobs_*.deb` |
+| **Linux** (any distro, portable) | `finds-you-jobs_0.5.7-beta_amd64.AppImage` | `chmod +x` the file, then run it |
 
-The one-time warnings exist only because the beta installers aren't code-signed
-yet (Apple's developer-identity review is pending; Windows signing follows
-after). Every release is built in public by
+The Windows warning is there only because the Windows build isn't code-signed
+yet; that's the next signing job. macOS is done: the `.dmg` files are signed
+with an Apple Developer ID and notarized by Apple, so they open like any other
+app. Every release is built in public by
 [GitHub Actions](.github/workflows/release.yml) from the source in this repo.
 All versions live on the
 [releases page](https://github.com/SrinivasRavi/finds-you-jobs/releases).
@@ -97,7 +98,9 @@ OS keychain under `finds-you-jobs` if you want to remove that as well.
 - Run from source: clone this repo, then `pnpm boot && pnpm dev` (toolchain: Node 20+ with pnpm 9, [uv](https://docs.astral.sh/uv/) for Python 3.13, and Rust/cargo — the first build compiles the desktop shell and takes a few minutes).
 - `pnpm test` · `pnpm lint` · `pnpm typecheck` — the gates.
 - `pnpm dev:web` — run the sidecar + UI in a browser (no desktop window) for quick iteration.
-- Third-party provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [UPSTREAMS.md](UPSTREAMS.md). Release process: [RELEASING.md](RELEASING.md). Contributing (DCO sign-off required): [CONTRIBUTING.md](CONTRIBUTING.md).
+- `FYJ_LINKEDIN_HEADED=1 pnpm dev` — a debugging switch: runs every LinkedIn operation in a visible browser window instead of headless, so you can open DevTools → Network in that window and inspect each request the app makes.
+- Maintainers: releases ship via `pnpm ship` — see [RELEASING.md](RELEASING.md) for the full checklist (it approves + publishes the beta release and updates the website).
+- Third-party provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [UPSTREAMS.md](UPSTREAMS.md). Contributing (DCO sign-off required): [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Discord
 Join the discord for job search discussions and beta testing - https://discord.gg/YsMxkwu7SY

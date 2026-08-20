@@ -16,10 +16,12 @@ import {
 import type { Application, ApplicationDocument, Job, Priority } from "../../api/types";
 import i18n from "../../i18n";
 import type { ResumeModalKind } from "../../popups/ResumeModal";
+import { Avatar } from "../../shell/Avatar";
+import { formatWhen } from "../../shell/datetime";
 import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
-import { initials, scoreTier, workLabel } from "../jobFormat";
+import { scoreTier, workLabel } from "../jobFormat";
 
 // Translation keys for the attached-document slots' human labels (the artifact
 // kind vocabulary).
@@ -42,16 +44,16 @@ async function downloadDocument(doc: ApplicationDocument): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-/** Activity timestamps read naturally — "7 July 2026, 00:20" (local time). */
+/** Activity timestamps read naturally — "7 July 2026, 00:20" (local time). The
+ *  date used to be pinned to "en-GB" in a 13-language app (duplication audit
+ *  D-F4); it now follows the shared locale rule. The clock stays a manual
+ *  24-hour HH:MM so the timeline column keeps its fixed width. */
 function formatActivityAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  const date = d.toLocaleDateString("en-GB", {
-    day: "numeric", month: "long", year: "numeric",
-  });
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${date}, ${hh}:${mm}`;
+  return `${formatWhen(iso, "longDate")}, ${hh}:${mm}`;
 }
 
 // ─── Attached documents (FR-TR manual-add) — the resume/cover the user actually
@@ -100,9 +102,7 @@ function JobDetail({ job }: { job: Job }) {
   return (
     <div className="space-y-3" data-testid="detail-job-info">
       <div className="flex items-start gap-3">
-        <span className="inline-grid h-10 w-10 shrink-0 place-items-center rounded-md bg-surface-3 font-mono text-[13px] font-semibold text-ink-2">
-          {initials(job.company)}
-        </span>
+        <Avatar name={job.company} size={10} shape="md" tone="raised" />
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-semibold leading-snug text-ink">{job.title}</div>
           <div className="truncate text-[12px] text-ink-3">{meta}</div>
@@ -111,7 +111,7 @@ function JobDetail({ job }: { job: Job }) {
           <span
             data-testid="detail-match-score"
             title={t("tracker.jobDetail.matchScoreTitle")}
-            className={`inline-grid h-10 w-10 shrink-0 place-items-center rounded-full border font-mono text-[13px] font-semibold ${tier?.ring} ${tier?.text}`}
+            className={`inline-grid h-10 w-10 shrink-0 place-items-center rounded-full border text-[13px] font-semibold ${tier?.ring} ${tier?.text}`}
           >
             {job.score.score_0_100}
           </span>
@@ -218,7 +218,7 @@ export function DetailModal({
                 ))}
               </select>
               <span
-                className="ml-auto font-mono text-[11px] text-ink-4"
+                className="ml-auto text-[11px] text-ink-4"
                 data-testid="app-ref"
                 title={t("tracker.detail.appRefTitle")}
               >
@@ -329,7 +329,7 @@ export function DetailModal({
                   />
                   <span className="flex-1">{e.label}</span>
                   {e.at ? (
-                    <span className="font-mono text-[10.5px] text-ink-4">
+                    <span className="text-[10.5px] text-ink-4">
                       {formatActivityAt(e.at)}
                     </span>
                   ) : null}

@@ -2,7 +2,7 @@
 
 The skill file (tailor-resume-skill.md, distilled from career-ops) is the system
 prompt; the per-run inputs arrive as clearly delimited blocks. Everything is
-in-context — the operation has no tools and no file access (ROADMAP §4).
+in-context — the operation has no tools and no file access (ROADMAP section 4).
 """
 
 from __future__ import annotations
