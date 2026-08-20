@@ -204,6 +204,28 @@ jobs:
             xcrun stapler staple "$DMG"
           fi
 
+      - name: Report whether the .dmg carries an icon layout
+        # Tauri positions the .dmg's icons by driving Finder over AppleScript,
+        # which can fail on a headless runner; when it does, the disk image has
+        # no .DS_Store, Finder auto-arranges alphabetically, and "Applications"
+        # sorts to the LEFT of the app — backwards from the drag-right gesture
+        # every Mac user knows. Reported, never fatal: this is cosmetic, and a
+        # cosmetic assertion is exactly what failed v0.5.7-beta's first run.
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          set -uo pipefail
+          DMG=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
+          MP=$(hdiutil attach -readonly -nobrowse -mountrandom /tmp "$DMG" \
+            | awk -F'\t' '/Apple_(HFS|APFS)/ {print $NF}' | tail -1)
+          if [ -f "$MP/.DS_Store" ]; then
+            echo "layout OK: the .dmg carries a .DS_Store, icons are positioned"
+          else
+            echo "LAYOUT MISSING: no .DS_Store — Finder will auto-arrange and put"
+            echo "Applications left of the app. bundle.macOS.dmg did not take."
+          fi
+          ls -la "$MP"
+          hdiutil detach "$MP" -quiet || true
+
       - name: Prove the macOS bundle is signed, notarized, and stapled
         # The build claiming success is not the bar — a notarization that
         # silently no-ops still produces a .dmg. The app checks are the same
@@ -242,11 +264,13 @@ jobs:
           shopt -s nullglob
           # Installers + Windows/Linux updater sigs: these filenames already
           # carry the version, so the VERSION→VERSION-beta rename is enough.
+          # Windows and Linux keep Tauri's names: `_amd64.deb` and
+          # `name-version-release.arch.rpm` are what Debian policy and RPM
+          # expect, so "fixing" them would be the actual mistake.
           for f in src-tauri/target/release/bundle/nsis/*.exe \
                    src-tauri/target/release/bundle/nsis/*.sig \
                    src-tauri/target/release/bundle/msi/*.msi \
                    src-tauri/target/release/bundle/msi/*.sig \
-                   src-tauri/target/release/bundle/dmg/*.dmg \
                    src-tauri/target/release/bundle/deb/*.deb \
                    src-tauri/target/release/bundle/appimage/*.AppImage \
                    src-tauri/target/release/bundle/appimage/*.sig \
@@ -254,19 +278,31 @@ jobs:
             base=$(basename "$f")
             cp "$f" "dist-beta/${base/${VERSION}/${VERSION}-beta}"
           done
-          # macOS updater bundle is named "<product>.app.tar.gz" — NO version and
-          # NO arch — so both Mac legs would collide on the release and the
-          # manifest couldn't tell aarch64 from x86_64. Re-name it (and its .sig)
-          # with version + this leg's arch so both stay distinct.
-          for f in src-tauri/target/release/bundle/macos/*.app.tar.gz; do
-            case "${{ matrix.label }}" in
-              macos-arm64) ARCH=aarch64 ;;
-              macos-x64)   ARCH=x64 ;;
-              *)           ARCH=unknown ;;
-            esac
-            cp "$f" "dist-beta/finds-you-jobs_${VERSION}-beta_${ARCH}.app.tar.gz"
-            cp "${f}.sig" "dist-beta/finds-you-jobs_${VERSION}-beta_${ARCH}.app.tar.gz.sig"
-          done
+          # macOS gets names a Mac user can read. Tauri ships
+          # `finds-you-jobs_0.5.7_aarch64.dmg`: "aarch64" is the compiler's word
+          # for the architecture and appears on no Apple surface, and underscores
+          # are not the convention for Mac downloads. Apple says arm64 and Intel,
+          # so the download says arm64 and intel.
+          #
+          # The .app.tar.gz updater bundle additionally arrives as bare
+          # "<product>.app.tar.gz" with NO version and NO arch, so both Mac legs
+          # would collide on the release and the manifest could not tell the two
+          # apart. Both artifacts are named here, together, from one ARCH.
+          case "${{ matrix.label }}" in
+            macos-arm64) ARCH=arm64 ;;
+            macos-x64)   ARCH=intel ;;
+            *)           ARCH="" ;;
+          esac
+          if [ -n "$ARCH" ]; then
+            STEM="finds-you-jobs-${VERSION}-beta-${ARCH}"
+            for f in src-tauri/target/release/bundle/dmg/*.dmg; do
+              cp "$f" "dist-beta/${STEM}.dmg"
+            done
+            for f in src-tauri/target/release/bundle/macos/*.app.tar.gz; do
+              cp "$f" "dist-beta/${STEM}.app.tar.gz"
+              cp "${f}.sig" "dist-beta/${STEM}.app.tar.gz.sig"
+            done
+          fi
           ls -la dist-beta
           [ -n "$(ls -A dist-beta)" ] # fail loudly if nothing was bundled
 

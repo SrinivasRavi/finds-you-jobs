@@ -32,9 +32,19 @@ const BASE = `https://github.com/SrinivasRavi/finds-you-jobs/releases/download/$
 // per OS is: macOS → .app.tar.gz, Windows → the NSIS -setup.exe, Linux →
 // .AppImage. (.dmg/.msi/.deb/.rpm are first-install installers, not update
 // packages.)
+// The platform KEYS below are Tauri's own updater identifiers and must not
+// change. What changed is the filenames they are read out of: the macOS
+// artifacts are named `-arm64` / `-intel` for the humans downloading them
+// (release.yml), not `aarch64` / `x64`.
 function platformFor(name) {
   if (name.endsWith(".app.tar.gz")) {
-    return name.includes("aarch64") ? "darwin-aarch64" : "darwin-x86_64";
+    if (name.includes("-arm64.")) return "darwin-aarch64";
+    if (name.includes("-intel.")) return "darwin-x86_64";
+    // Refuse to guess. The previous version defaulted an unrecognised macOS
+    // bundle to Intel, so a rename would have silently pointed every Apple
+    // Silicon install at the wrong binary instead of failing.
+    console.warn(`unrecognised macOS updater artifact, skipping: ${name}`);
+    return null;
   }
   if (name.endsWith("-setup.exe")) return "windows-x86_64";
   if (name.endsWith(".AppImage")) return "linux-x86_64";
