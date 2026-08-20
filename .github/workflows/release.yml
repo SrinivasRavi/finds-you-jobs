@@ -174,11 +174,47 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         run: pnpm run build
 
+      - name: Staple the notarization ticket to the .dmg
+        # Tauri notarizes and staples the .app, then wraps it in a .dmg it does
+        # NOT staple (v0.5.7-beta failed here, run 32344110704). The .dmg is the
+        # artifact the user downloads and the one macOS quarantines, so it wants
+        # its own ticket: without one, first launch needs a live network round
+        # trip to Apple, and an offline install shows the "damaged" dialog the
+        # whole signing effort exists to remove.
+        #
+        # Staple first: if Tauri's submission already covered the .dmg, Apple
+        # has the ticket and this is instant and free. Only if that misses do we
+        # submit the .dmg on its own, which is the slow path.
+        if: startsWith(matrix.os, 'macos')
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          DMG=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
+          if xcrun stapler staple "$DMG"; then
+            echo "stapled from Apple's existing record"
+          else
+            echo "no ticket for the .dmg yet — submitting it on its own"
+            xcrun notarytool submit "$DMG" \
+              --key "$RUNNER_TEMP/AuthKey.p8" \
+              --key-id "$APPLE_API_KEY" \
+              --issuer "$APPLE_API_ISSUER" \
+              --wait --timeout 30m
+            xcrun stapler staple "$DMG"
+          fi
+
       - name: Prove the macOS bundle is signed, notarized, and stapled
         # The build claiming success is not the bar — a notarization that
-        # silently no-ops still produces a .dmg. These 3 checks are the same
-        # ones the local proving run used (apple-signing.md section 7), so a
-        # regression fails the leg here instead of on a user's machine.
+        # silently no-ops still produces a .dmg. The app checks are the same
+        # ones the local proving run used (apple-signing.md section 7).
+        #
+        # Only assertions with observed evidence behind them are fatal. codesign
+        # and spctl both passed on the v0.5.7-beta run, and the step above now
+        # guarantees the .dmg staple, so those 3 fail the leg. Whether Tauri also
+        # staples the .app is reported but NOT enforced: over-asserting an
+        # unverified property is exactly what sank v0.5.7-beta, and the .app's
+        # ticket is moot once the .dmg carries one.
         if: startsWith(matrix.os, 'macos')
         run: |
           set -euo pipefail
@@ -188,6 +224,9 @@ jobs:
           spctl -a -t exec -vv "$APP" 2>&1 | tee /tmp/spctl.txt
           grep -q "Notarized Developer ID" /tmp/spctl.txt
           xcrun stapler validate "$DMG"
+          xcrun stapler validate "$APP" \
+            && echo "note: the .app carries its own ticket too" \
+            || echo "note: the .app has no staple of its own; the .dmg's ticket covers the download"
 
       - name: Collect installers + updater artifacts, stamp -beta into filenames
         # `-beta` is added HERE, to the distributed filenames only — the
