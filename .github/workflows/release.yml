@@ -367,8 +367,8 @@ jobs:
 
             | OS | Download | First-launch note |
             |---|---|---|
-            | macOS (Apple Silicon) | the `*_aarch64.dmg` | Drag into **Applications** and open it. No `xattr`, no warnings |
-            | macOS (Intel) | the `*_x64.dmg` | same as above |
+            | macOS (Apple Silicon) | the `*-arm64.dmg` | Drag into **Applications** and open it. No `xattr`, no warnings |
+            | macOS (Intel) | the `*-intel.dmg` | same as above |
             | Windows | the `*-setup.exe` (NSIS) — or the `.msi` if you prefer | SmartScreen: **More info → Run anyway** |
             | Linux | the `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` (Fedora) | `chmod +x` the AppImage |
 
