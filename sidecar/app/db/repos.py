@@ -67,18 +67,20 @@ def _empty_cost_totals() -> CostTotals:
     }
 
 
-def _accumulate_op(agg: CostTotals, op: Operation) -> None:
+def _accumulate(
+    agg: CostTotals, *, kind: str, state: str, usage: dict[str, Any] | None
+) -> None:
     """Fold one operation's usage into a running cost aggregate."""
-    usage = op.usage or {}
+    usage = usage or {}
     usd = float(usage.get("usd") or 0.0)
     agg["usd"] += usd
     agg["tokens_in"] += int(usage.get("tokens_in") or 0)
     agg["tokens_out"] += int(usage.get("tokens_out") or 0)
     agg["operations"] += 1
-    if op.state == "failed":
+    if state == "failed":
         agg["failed"] += 1
     by_kind = agg["by_kind"]
-    by_kind[op.kind] = float(by_kind.get(op.kind, 0.0)) + usd
+    by_kind[kind] = float(by_kind.get(kind, 0.0)) + usd
 
 
 def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
@@ -96,14 +98,6 @@ def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
     return merged
 
 
-def snapshot_matches(op: Operation, key: str, value: Any) -> bool:
-    """`op.input_snapshot[key] == value` — the ONE spelling of the ledger-scan
-    predicate (D-A13). Callers that already hold a batch of ops (the tracker's
-    hoisted per-card lookups) use it directly; callers that don't go through
-    `OperationsRepo.list_for_snapshot`."""
-    return (op.input_snapshot or {}).get(key) == value
-
-
 class OperationsRepo:
     """The runner's durable queue + the cost ledger."""
 
@@ -111,7 +105,18 @@ class OperationsRepo:
         self._s = session
 
     def create(self, kind: str, input_snapshot: dict[str, Any]) -> Operation:
-        op = Operation(kind=kind, state="queued", input_snapshot=input_snapshot)
+        """The one place the subject ids are lifted out of the snapshot, so no
+        call site has to remember to pass them twice. Empty string becomes NULL:
+        the retired `watch_company` kind wrote `job_id: ""`, and "" is not a
+        missing value the way NULL is."""
+        op = Operation(
+            kind=kind,
+            state="queued",
+            job_id=input_snapshot.get("job_id") or None,
+            contact_id=input_snapshot.get("contact_id") or None,
+            batch_id=input_snapshot.get("batch_id") or None,
+            input_snapshot=input_snapshot,
+        )
         self._s.add(op)
         self._s.flush()
         return op
@@ -163,10 +168,16 @@ class OperationsRepo:
     def live_cost_totals(self) -> CostTotals:
         """The cost aggregate over every operation still in the table (all states;
         in-flight rows carry no usage and contribute only to the op count). Added
-        to the pruned aggregate to yield the all-time totals."""
+        to the pruned aggregate to yield the all-time totals.
+
+        Reads 3 columns rather than building an ORM object per row, which is the
+        difference between 95 ms and 1.2 s at 100k operations. Still linear:
+        summing every row is inherently linear, and at 24 operations a day it
+        stays under a millisecond for years."""
         agg = _empty_cost_totals()
-        for op in self._s.scalars(select(Operation)):
-            _accumulate_op(agg, op)
+        stmt = select(Operation.kind, Operation.state, Operation.usage)
+        for kind, state, usage in self._s.execute(stmt):
+            _accumulate(agg, kind=kind, state=state, usage=usage)
         return agg
 
     def list_by_kind_states(self, kind: str, states: Collection[str]) -> list[Operation]:
@@ -175,36 +186,53 @@ class OperationsRepo:
         )
         return list(self._s.scalars(stmt))
 
-    def list_for_snapshot(
-        self, kind: str, states: Collection[str], *, key: str, value: Any
+    def list_for_job(
+        self, kind: str, states: Collection[str], job_id: str | None
     ) -> list[Operation]:
-        """Ops of `kind` in `states` whose `input_snapshot[key] == value` — the
-        "which ops belong to this job / batch / contact?" question every ledger
-        surface asks (D-A13). The snapshot is opaque JSON, so the match happens
-        in Python over the same bounded `list_by_kind_states` set the callers
-        already fetched by hand."""
-        return [
-            op
-            for op in self.list_by_kind_states(kind, states)
-            if snapshot_matches(op, key, value)
-        ]
+        """Ops of `kind` in `states` about one job, straight off the index.
+
+        `None` means the job-less ones (a reach-out sent from the contact modal
+        rather than from a role), which is what the Python match this replaced
+        did with a `None` value."""
+        subject = (
+            Operation.job_id.is_(None) if job_id is None else Operation.job_id == job_id
+        )
+        stmt = select(Operation).where(
+            Operation.kind == kind, Operation.state.in_(states), subject
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_for_batch(
+        self, kind: str, states: Collection[str], batch_id: str
+    ) -> list[Operation]:
+        """Ops of `kind` in `states` in one send batch, straight off the index."""
+        stmt = select(Operation).where(
+            Operation.kind == kind,
+            Operation.state.in_(states),
+            Operation.batch_id == batch_id,
+        )
+        return list(self._s.scalars(stmt))
+
+    def score_states_for_job(self, job_id: str) -> set[str]:
+        """The states of one job's `score` ops. One indexed read, for the routes
+        that only ever asked about one job."""
+        stmt = select(Operation.state).where(
+            Operation.kind == "score", Operation.job_id == job_id
+        )
+        return set(self._s.scalars(stmt))
 
     def score_states_by_job(self) -> dict[str, set[str]]:
-        """job_id → the set of its `score` operation states — the board's
-        Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02). A job with a failed
-        score op and no cached score resolves to `Score failed`, never a
-        perpetual Pending.
+        """job_id → the set of its `score` operation states, for the board's
+        Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02).
 
-        This scans every `score` row in the table. Ledger retention used to cap
-        that at 250 and no longer does (S-C22), so it now grows with the install:
-        measured at 1.06 s over 100k operations. Its callers on the event loop
-        (`get_job`, `update_job`) are S-C23."""
+        Two indexed columns, no rows built: this used to load every `score` row
+        through the ORM and unpack its JSON in Python (1.06 s at 100k rows)."""
         result: dict[str, set[str]] = {}
-        stmt = select(Operation).where(Operation.kind == "score")
-        for op in self._s.scalars(stmt):
-            job_id = (op.input_snapshot or {}).get("job_id")
-            if job_id:
-                result.setdefault(job_id, set()).add(op.state)
+        stmt = select(Operation.job_id, Operation.state).where(
+            Operation.kind == "score", Operation.job_id.is_not(None)
+        )
+        for job_id, state in self._s.execute(stmt):
+            result.setdefault(job_id, set()).add(state)
         return result
 
     def latest_by_kind(self, kind: str) -> Operation | None:

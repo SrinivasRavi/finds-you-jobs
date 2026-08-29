@@ -31,7 +31,6 @@ from sidecar.modules.scraper.types import ScanPrefs
 from .. import documents as docstore
 from ..db.base import now_utc
 from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
-from ..db.repos import snapshot_matches
 from ..events import heartbeat_stream
 from ..logging_setup import get_logger
 from ..observability import reconfigure_observability
@@ -520,7 +519,7 @@ async def update_job(
             job = repos.jobs.update(job_id, **fields)
         version = _current_profile_version(repos)
         score = repos.job_scores.get_cached(job_id, version)
-        op_states = repos.operations.score_states_by_job().get(job_id)
+        op_states = repos.operations.score_states_for_job(job_id)
         return dto.job_dto(job, score, score_op_states=op_states)
 
 
@@ -567,7 +566,7 @@ async def get_job(request: Request, job_id: str) -> dto.JobDTO:
         job = _found(repos.jobs.get(job_id), "job", job_id)
         version = _current_profile_version(repos)
         score = repos.job_scores.get_cached(job_id, version)
-        op_states = repos.operations.score_states_by_job().get(job_id)
+        op_states = repos.operations.score_states_for_job(job_id)
         return dto.job_dto(job, score, score_op_states=op_states)
 
 
@@ -852,10 +851,10 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         # send ops, whether a discover op is running, whether a roster was found for
         # the role, and the latest reach-out batch's outcomes.
         send_states = [
-            op.state for op in send_ops if snapshot_matches(op, "job_id", job_id)
+            op.state for op in send_ops if op.job_id == job_id
         ]
         discover_in_flight = any(
-            snapshot_matches(op, "job_id", job_id) for op in discover_ops
+            op.job_id == job_id for op in discover_ops
         )
         # Attached documents (manual cards) — the resume/cover the user submitted.
         attached_docs = [
@@ -1226,9 +1225,7 @@ _SCORE_LABELS = {"failed": "Score failed", "succeeded": "Scored"}
 
 
 def _ops_for_job(repos: Any, kind: str, job_id: str) -> list[Any]:
-    return repos.operations.list_for_snapshot(
-        kind, OP_ALL_STATES, key="job_id", value=job_id
-    )
+    return repos.operations.list_for_job(kind, OP_ALL_STATES, job_id)
 
 
 def _column_label(column: str) -> str:
@@ -1700,9 +1697,16 @@ async def cost_totals(request: Request) -> dto.CostTotalsDTO:
     running spend total stays honest as an install ages). Since 2026-08-24
     nothing prunes, so the aggregate sits at zero and the live sum carries every
     operation ever recorded; the addition stays because a future S-C22 deletion
-    policy has to be able to fold spend forward again."""
-    with _db(request).repos() as repos:
-        return dto.cost_totals_dto(repos.all_time_cost_totals())
+    policy has to be able to fold spend forward again.
+
+    Off the loop: summing every operation is inherently linear, so however cheap
+    the read gets it must not be the thing holding a 2 s health poll (S-C23)."""
+
+    def _assemble() -> dto.CostTotalsDTO:
+        with _db(request).repos() as repos:
+            return dto.cost_totals_dto(repos.all_time_cost_totals())
+
+    return await asyncio.to_thread(_assemble)
 
 
 @router.get("/api/operations/{operation_id}")
@@ -1974,8 +1978,8 @@ async def list_referral_candidates(
         company_confirm: list[dict[str, Any]] = []
         confirm_url_failed = False
         refusal_reason = ""
-        discover_ops = repos.operations.list_for_snapshot(
-            "discover", {"succeeded"}, key="job_id", value=job_id
+        discover_ops = repos.operations.list_for_job(
+            "discover", {"succeeded"}, job_id
         )
         if discover_ops:
             latest = max(discover_ops, key=lambda op: op.created_at)
@@ -2035,8 +2039,8 @@ async def discover_referrals(
         # is already queued/running, reuse it rather than launching a second live
         # LinkedIn scan. A confirm (URN/URL) always runs — it supersedes the boot.
         if not is_confirm:
-            for op in repos.operations.list_for_snapshot(
-                "discover", OP_ACTIVE_STATES, key="job_id", value=job_id
+            for op in repos.operations.list_for_job(
+                "discover", OP_ACTIVE_STATES, job_id
             ):
                 snap = op.input_snapshot or {}
                 if not (snap.get("company_urn") or snap.get("company_url")):
@@ -2102,12 +2106,10 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
         # must not enqueue a second real invite for a contact whose send for this
         # role is already queued or running. Skip those; the UI disables the button
         # and shows "Sending…" but this is the authoritative backstop.
-        active_sends = repos.operations.list_for_snapshot(
-            "send", OP_ACTIVE_STATES, key="job_id", value=payload.job_id
+        active_sends = repos.operations.list_for_job(
+            "send", OP_ACTIVE_STATES, payload.job_id
         )
-        inflight = {
-            (op.input_snapshot or {}).get("contact_id") for op in active_sends
-        }
+        inflight = {op.contact_id for op in active_sends}
     # One batch id ties every send of this reach-out together, so each send's
     # entrypoint can detect *batch settle* and move the card once (FR-NW-03).
     batch_id = uuid4().hex

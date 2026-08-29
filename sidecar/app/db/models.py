@@ -61,6 +61,16 @@ class Operation(Base):
     id: Mapped[str] = _pk()
     kind: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    # What this operation is about, promoted out of `input_snapshot` so it can be
+    # indexed instead of scanned (2026-08-29). Indexed, deliberately no foreign
+    # key: the ledger is history and history outlives its subjects. An FK would
+    # either block deleting a job or blank the record of what we spent on it,
+    # and an FK on this table is what made ledger retention fail silently for a
+    # month (S-C13).
+    job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    batch_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Everything else the kind needs. Opaque: read back whole, never queried in.
     input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     result_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -75,6 +85,9 @@ class Operation(Base):
         Index("ix_operations_state_created", "state", "created_at"),
         Index("ix_operations_kind_created", "kind", "created_at"),
         Index("ix_operations_finished", "finished_at"),
+        Index("ix_operations_job_kind", "job_id", "kind"),
+        Index("ix_operations_contact_kind", "contact_id", "kind"),
+        Index("ix_operations_batch", "batch_id"),
     )
 
 
@@ -96,6 +109,12 @@ class Schedule(Base):
 # ---------------------------------------------------------------------------
 # Jobs (database-design section 3)
 # ---------------------------------------------------------------------------
+
+
+# How many provider-reached scoring failures a job gets before it stops being
+# offered. Lives with the column it bounds, because the planner enforces it and
+# the board reads it to say "Score failed".
+SCORE_MAX_ATTEMPTS = 3
 
 
 class Job(Base):

@@ -723,8 +723,8 @@ def _maybe_move_on_batch_settle(
     if batch_id:
         siblings = [
             op
-            for op in repos.operations.list_for_snapshot(
-                "send", OP_ALL_STATES, key="batch_id", value=batch_id
+            for op in repos.operations.list_for_batch(
+                "send", OP_ALL_STATES, batch_id
             )
             if op.id != current_op_id
         ]
