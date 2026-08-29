@@ -27,6 +27,7 @@ from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -463,9 +464,19 @@ def test_contacts_roster_is_bounded_and_filtered_in_sql(
     assert len(deleted) == 3
     assert all(c["archived_at"] is not None for c in deleted)
 
-    # The cap itself: candidates included, 1200 + 5 live rows, 1000 returned.
-    capped = client.get("/api/contacts?include_candidates=true", headers=AUTH).json()
-    assert len(capped) == 1000
+    # 1,200 candidates + 5 kanban rows all come back. The cap was 1,000 for one
+    # release and nothing in the UI says "1,000 of 1,240", so a roster grown by
+    # discovery (about 10 candidates per company watched) silently dropped
+    # people — the same defect as the scoring window it shipped beside. It
+    # matches the board's 10,000 now.
+    everyone = client.get("/api/contacts?include_candidates=true", headers=AUTH).json()
+    assert len(everyone) == 1205
+
+    # The LIMIT is still applied AFTER the filters, which is the property that
+    # kept the Deleted view honest.
+    with _db(app).repos() as repos:
+        assert len(repos.contacts.list(include_candidates=True, limit=10)) == 10
+        assert len(repos.contacts.list(archived_only=True, limit=10)) == 3
 
 
 # ─── Repo batch helpers agree with their per-row equivalents ────────────────
@@ -552,3 +563,25 @@ def test_apply_runs_latest_batch_parity(repo_db: Database) -> None:
         single = repos.apply_runs.latest_for_application(ids["card1"])
         assert single is not None and single.id == ids["newest"]
         assert repos.apply_runs.latest_for_applications([]) == {}
+
+
+def test_a_slow_request_is_named_in_the_log(
+    app_client: tuple[FastAPI, TestClient], caplog: pytest.LogCaptureFixture
+) -> None:
+    """S-C26: a sidecar that is merely slow used to leave no evidence at all —
+    only a shell log saying it died. Every request is timed now, and one over
+    half the health window says which route and how long."""
+    import logging
+
+    from sidecar.app import main as main_module
+
+    _app, client = app_client
+    with (
+        caplog.at_level(logging.WARNING, logger="fyj.sidecar"),
+        patch.object(main_module, "SLOW_REQUEST_SECONDS", 0.0),
+    ):
+        client.get("/api/board", headers=AUTH)
+
+    slow = [r.getMessage() for r in caplog.records if "slow request" in r.getMessage()]
+    assert len(slow) == 1
+    assert "/api/board" in slow[0] and "GET" in slow[0]

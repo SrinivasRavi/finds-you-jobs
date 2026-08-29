@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -47,6 +48,10 @@ from .security import AppKeyUnavailable, migrate_plaintext_session, resolve_app_
 from .seed import seed_defaults
 from .watchdog import watch_parent
 
+# What the Tauri shell allows one /healthz answer (`src-tauri/src/sidecar.rs`).
+# Named here so the slow-request log can say what the budget was.
+HEALTH_WINDOW_SECONDS = 2.0
+
 # section 4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
 SHUTDOWN_DRAIN_SECONDS = 10.0
 # How often the idle browser-surface reaper looks. Well under the surface's own
@@ -65,11 +70,20 @@ SURFACE_REAP_INTERVAL_SECONDS = 60.0
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
-class _LogUnhandledMiddleware:
-    """Log any exception escaping a route to the flight recorder, then
-    RE-RAISE — the 500 response and propagation behavior stay exactly as
-    before (2026-07-24, "no unlogged failures"). Pure ASGI on purpose:
-    BaseHTTPMiddleware buffers response streams and breaks SSE."""
+# A request slower than this is recorded by name. Half the shell's 2 s health
+# timeout, so a request that will eventually cost a restart shows up in the log
+# well before it does. S-C26: without this there is no evidence a sidecar was
+# ever slow, only that it died.
+SLOW_REQUEST_SECONDS = 1.0
+
+
+class _RequestObserverMiddleware:
+    """Time every request, name the slow ones, and log any exception escaping a
+    route before RE-RAISING it (the 500 and its propagation are unchanged).
+
+    Pure ASGI on purpose: BaseHTTPMiddleware buffers response streams and breaks
+    SSE. `/api/events` is excluded from timing because an SSE stream is supposed
+    to stay open."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -78,6 +92,7 @@ class _LogUnhandledMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        started = time.perf_counter()
         try:
             await self.app(scope, receive, send)
         except Exception:
@@ -85,6 +100,15 @@ class _LogUnhandledMiddleware:
                 "unhandled error on %s %s", scope.get("method"), scope.get("path")
             )
             raise
+        finally:
+            elapsed = time.perf_counter() - started
+            path = scope.get("path") or ""
+            if elapsed >= SLOW_REQUEST_SECONDS and not path.startswith("/api/events"):
+                get_logger().warning(
+                    "slow request: %s %s took %.0f ms (health window is %.0f ms)",
+                    scope.get("method"), path, elapsed * 1000,
+                    HEALTH_WINDOW_SECONDS * 1000,
+                )
 
 
 def create_app(
@@ -336,7 +360,7 @@ def create_app(
     # uvicorn's stderr-only default left them with NO line in sidecar.log,
     # despite the recorder being documented as the net for failures. Log-and-
     # reraise only — the 500 response/propagation stays exactly as before.
-    app.add_middleware(_LogUnhandledMiddleware)
+    app.add_middleware(_RequestObserverMiddleware)
 
     @app.exception_handler(AppKeyUnavailable)
     async def _app_key_unavailable(

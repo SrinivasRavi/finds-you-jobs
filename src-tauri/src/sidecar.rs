@@ -24,6 +24,14 @@ const HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const RESTART_WINDOW: Duration = Duration::from_secs(30); // AM2
 const MAX_FAILURES: u32 = 3; // AM2
 const HEALTHY_RESET: Duration = Duration::from_secs(60); // AM2
+// Consecutive missed health polls tolerated while the sidecar process is still
+// ALIVE. A blocked event loop still holds its listening socket, so a slow query
+// and a crash look identical over HTTP; the process table knows the difference,
+// and `try_wait` is how we ask. At a 2 s poll with a 2 s timeout this is roughly
+// 20 s of unresponsiveness before we recycle a live process, against Kubernetes'
+// default of 3 consecutive liveness failures. A process that has actually EXITED
+// is restarted on the first poll, unchanged — that speed was the point.
+const BUSY_TOLERANCE: u32 = 5;
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10); // AM3
 // Startup grace: the sidecar prints its handshake BEFORE the Python lifespan
 // runs (migrations on first boot), and uvicorn only LISTENS after the lifespan
@@ -308,6 +316,7 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
     let mut failures: u32 = 0;
     let mut first_failure_at: Option<Instant> = None;
     let mut healthy_since: Option<Instant> = None;
+    let mut busy_polls: u32 = 0;
 
     // Startup grace for the initial spawn: the health loop below treats an
     // unanswered /healthz as a crash signal, which is only fair once the
@@ -349,6 +358,7 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
         };
 
         if health_ok(port) {
+            busy_polls = 0;
             match healthy_since {
                 None => healthy_since = Some(Instant::now()),
                 Some(since) if since.elapsed() >= HEALTHY_RESET => {
@@ -361,8 +371,25 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
             continue;
         }
 
-        // Unhealthy.
+        // Unhealthy. Alive or gone?
         healthy_since = None;
+        let exited = !matches!(child.try_wait(), Ok(None));
+        if !exited {
+            busy_polls += 1;
+            shell_log(&format!(
+                "busy: /healthz did not answer in {}s but the sidecar is alive \
+                 (busy poll {busy_polls}/{BUSY_TOLERANCE}) — see logs/sidecar.log \
+                 for the slow request",
+                HEALTH_POLL_INTERVAL.as_secs()
+            ));
+            emit_status(&app, &state, "reconnecting", port);
+            if busy_polls < BUSY_TOLERANCE {
+                continue;
+            }
+            shell_log("busy tolerance exhausted — treating the sidecar as wedged");
+        }
+        busy_polls = 0;
+
         match first_failure_at {
             Some(started) if started.elapsed() <= RESTART_WINDOW => {}
             _ => {
