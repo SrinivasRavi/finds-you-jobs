@@ -228,14 +228,18 @@ const JobRow = memo(function JobRow({
         {/* Every job carries at least a keyword score (the instant on-device
             floor), so there is no "Pending"/"Score failed" state — an AI
             failure falls back to a grey keyword score. The muted "scoring…"
-            only shows in the sub-second window before the first floor lands. */}
+            only shows in the sub-second window before the first floor lands.
+            An `unscorable` job's grey 0 means "no description captured", not
+            "rated 0", so it says so on hover (S-C24 D5). */}
         {job.score ? (
           <span
             data-keyword={job.score.scorer_impl === "scorer-deterministic"}
             title={
-              job.score.scorer_impl === "scorer-deterministic"
-                ? t("jobBoard.row.keywordScoreTitle")
-                : undefined
+              job.score_status === "unscorable"
+                ? t("jobBoard.row.unscorableTitle")
+                : job.score.scorer_impl === "scorer-deterministic"
+                  ? t("jobBoard.row.keywordScoreTitle")
+                  : undefined
             }
             className={
               "text-[15px] font-semibold " +

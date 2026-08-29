@@ -541,15 +541,24 @@ async def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO
 @router.post("/api/jobs/trash/empty")
 async def empty_trash(request: Request) -> dto.TombstoneResultDTO:
     """Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL and
-    hard-delete the rows immediately, bypassing the 7-day TTL."""
-    urls: list[str] = []
-    with _db(request).repos() as repos:
-        for job in repos.jobs.list(feed_state="removed", limit=10_000):
-            if not repos.tombstones.exists(job.canonical_url):
-                repos.tombstones.create(job.canonical_url, reason="empty_trash")
-            urls.append(job.canonical_url)
-            repos.jobs.delete(job.id)
-    return dto.TombstoneResultDTO(tombstoned=len(urls), canonical_urls=urls)
+    hard-delete the rows immediately, bypassing the 7-day TTL.
+
+    Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
+    costs an existence check, an insert, and a delete, so on the loop a big
+    empty could hold it past the shell's 2 s /healthz window and cost a sidecar
+    restart. One session inside the callable, same shape as `board`."""
+
+    def _empty() -> dto.TombstoneResultDTO:
+        urls: list[str] = []
+        with _db(request).repos() as repos:
+            for job in repos.jobs.list(feed_state="removed", limit=10_000):
+                if not repos.tombstones.exists(job.canonical_url):
+                    repos.tombstones.create(job.canonical_url, reason="empty_trash")
+                urls.append(job.canonical_url)
+                repos.jobs.delete(job.id)
+        return dto.TombstoneResultDTO(tombstoned=len(urls), canonical_urls=urls)
+
+    return await asyncio.to_thread(_empty)
 
 
 @router.get("/api/jobs/{job_id}")
@@ -560,6 +569,33 @@ async def get_job(request: Request, job_id: str) -> dto.JobDTO:
         score = repos.job_scores.get_cached(job_id, version)
         op_states = repos.operations.score_states_by_job().get(job_id)
         return dto.job_dto(job, score, score_op_states=op_states)
+
+
+# -- scoring retry ---------------------------------------------------------
+# Deliberately NOT under /api/jobs/: `GET /api/jobs/{job_id}` is registered
+# above and would swallow a single-segment sibling.
+
+
+@router.get("/api/scoring/retryable")
+async def scoring_retryable(request: Request) -> dto.ScoreRetryDTO:
+    """How many jobs are stuck with a spent scoring budget (S-C24). Counts
+    only, never writes."""
+    from ..scheduler.planner import SCORE_MAX_ATTEMPTS
+
+    with _db(request).repos() as repos:
+        return dto.ScoreRetryDTO(count=repos.jobs.count_score_exhausted(SCORE_MAX_ATTEMPTS))
+
+
+@router.post("/api/scoring/retry")
+async def scoring_retry(request: Request) -> dto.ScoreRetryDTO:
+    """Hand every job that spent its budget the budget back, so the next
+    scheduler tick re-plans it. This is the recovery path for a provider-wide
+    failure the per-job attempt cap can't tell apart from a bad job (an expired
+    key, an exhausted quota). It enqueues nothing itself: the tick does the
+    work, batched, off this request. Jobs with no usable description are
+    untouched — retrying one can't help until a scan fills the JD in (S-A6)."""
+    with _db(request).repos() as repos:
+        return dto.ScoreRetryDTO(reset=repos.jobs.reset_score_attempts())
 
 
 # -- profile ---------------------------------------------------------------
@@ -586,60 +622,15 @@ async def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.Pr
     _runner(request).submit("extract", {"profile_version": result.version})
     # Re-scoring on a resume edit (maintainer 2026-07-23): keyword mode is free,
     # so re-score the whole board now (off the event loop). AI mode costs
-    # tokens, so it does NOT auto-run — the frontend previews the cache misses
-    # and calls /api/jobs/rescore only if the user confirms; otherwise the
-    # prior scores stay visible (the board shows the latest available version).
-    # An unchanged save keeps its version (no bump), so nothing is stale and
-    # nothing re-scores.
+    # tokens, so it does NOT auto-run and there is no re-score action any more
+    # (maintainer 2026-08-28, S-C24): an existing AI score is version-agnostic,
+    # so the prior scores stay visible and no job is ever re-spent. An unchanged
+    # save keeps its version (no bump) either way.
     if changed and mode == "keyword":
         from ..registry.operations import rescore_all_keyword
 
         await asyncio.to_thread(rescore_all_keyword, _db(request))
     return result
-
-
-def _rescore_missing(repos: Any) -> tuple[list[str], int, int]:
-    """The AI re-score candidate set: active jobs MISSING an AI score at the
-    current profile version (cache misses), plus the active total and the
-    version. ONE helper for the preview and the run, so the prompt's N always
-    equals what a confirmed run enqueues."""
-    version = _current_profile_version(repos)
-    job_ids = [j.id for j in repos.jobs.list(feed_state="active")]
-    missing = repos.job_scores.job_ids_missing_llm_score(job_ids, version)
-    return missing, len(job_ids), version
-
-
-@router.get("/api/jobs/rescore/preview")
-async def rescore_preview(request: Request) -> dto.RescorePreviewDTO:
-    """The consent numbers behind every "Re-score with AI?" prompt (resume
-    edit, scoring-mode switch). Counts only — never enqueues, never spends.
-    A grey keyword score is not "cached" here; only a real AI score at the
-    current resume version is."""
-    with _db(request).repos() as repos:
-        missing, total, _version = _rescore_missing(repos)
-    return dto.RescorePreviewDTO(to_score=len(missing), cached=total - len(missing))
-
-
-@router.post("/api/jobs/rescore")
-async def rescore_board(request: Request) -> dict[str, int]:
-    """Re-score the active board against the CURRENT master resume — the action
-    behind every "Re-score with AI?" confirm (resume edit, scoring-mode
-    switch). Keyword mode refreshes the whole board inline (free). AI mode
-    enqueues one LLM score op per cache MISS only — a job already AI-scored at
-    the current resume version is never re-spent (maintainer 2026-07-23) — so
-    the call is idempotent and safe from any entry point."""
-    with _db(request).repos() as repos:
-        mode = scoring_mode(repos.preferences.get_or_create())
-        missing, total, version = _rescore_missing(repos)
-    if mode == "keyword":
-        from ..registry.operations import rescore_all_keyword
-
-        n = await asyncio.to_thread(rescore_all_keyword, _db(request))
-        return {"rescored": n}
-    runner = _runner(request)
-    for job_id in missing:
-        runner.submit("score", {"job_id": job_id, "profile_version": version})
-    return {"queued": len(missing), "skipped": total - len(missing)}
 
 
 @router.post("/api/profile/extract", status_code=202)
@@ -749,8 +740,8 @@ async def update_settings(
     # Switching Scoring to keyword mode scores the whole board right here —
     # ~0.5 ms/job, no LLM — so the change is visible on the next board fetch
     # instead of waiting for a scan. Off the event loop (async-first rule).
-    # Switching to AI mode enqueues NOTHING server-side: the frontend fetches
-    # /api/jobs/rescore/preview and asks before any token is spent.
+    # Switching to AI mode enqueues NOTHING server-side: the next scheduler tick
+    # picks up whatever still has no AI score (S-C24's eligibility read).
     after_mode = str(prefs_thresholds.get("scoring_mode") or "llm")
     if after_mode == "keyword" and before_mode != "keyword":
         from ..registry.operations import backfill_keyword_scores
@@ -1399,7 +1390,10 @@ async def run_schedule(request: Request, schedule_id: str) -> dto.ScheduleRunRes
         interval_minutes = sched.interval_minutes
 
     planned = plan_schedule(db, kind)
-    enqueued = [runner.submit(op_kind, snapshot) for op_kind, snapshot in planned]
+    # Batched for the same reason the scheduler's own tick is: submitting in a
+    # loop pumps the queue once per operation, and every pump used to re-read the
+    # whole queue. "Run now" on a full board is the interactive version of it.
+    enqueued = await asyncio.to_thread(runner.submit_many, planned)
 
     next_due = now_utc() + timedelta(minutes=interval_minutes)
     with db.repos() as repos:
@@ -1702,10 +1696,11 @@ async def list_operations(request: Request, limit: int = 100) -> list[dto.Operat
 async def cost_totals(request: Request) -> dto.CostTotalsDTO:
     """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
 
-    Live-ledger sum + the persisted pruned-ops aggregate, so the tiles show
-    lifetime spend that survives the ~250-op ledger retention — not just the
-    retained window (NFR-COST-02: the running spend total stays honest as an
-    install ages)."""
+    Live-ledger sum + the persisted pruned-ops aggregate (NFR-COST-02: the
+    running spend total stays honest as an install ages). Since 2026-08-24
+    nothing prunes, so the aggregate sits at zero and the live sum carries every
+    operation ever recorded; the addition stays because a future S-C22 deletion
+    policy has to be able to fold spend forward again."""
     with _db(request).repos() as repos:
         return dto.cost_totals_dto(repos.all_time_cost_totals())
 
@@ -1764,6 +1759,15 @@ def _contact_dto(repos: Any, contact: Any) -> dto.ContactDTO:
     return dto.contact_dto(contact, logs[-1] if logs else None)
 
 
+def _contact_dtos(repos: Any, contacts: list[Any]) -> list[dto.ContactDTO]:
+    """The same DTO as `_contact_dto`, for a whole roster, with ONE outreach-log
+    query for the page instead of one per contact (S-C8, the F-H2 batch
+    pattern). `test_hotpath_perf.py` pins both the flat query count and the
+    parity with the per-row build the create/update routes still use."""
+    latest = repos.outreach_logs.latest_for_contacts([c.id for c in contacts])
+    return [dto.contact_dto(c, latest.get(c.id)) for c in contacts]
+
+
 @router.get("/api/contacts")
 async def list_contacts(
     request: Request,
@@ -1774,15 +1778,28 @@ async def list_contacts(
     """The networking kanban roster (US-NW-01). Excludes archived and, by
     default, `candidate` rows (discovered-but-not-reached — off the kanban).
     `archived=true` flips it to the "Deleted Contacts" recovery view: only the
-    archived rows, so a user can restore a contact they removed."""
-    with _db(request).repos() as repos:
-        if archived:
-            rows = repos.contacts.list(company=company, include_archived=True)
-            return [_contact_dto(repos, c) for c in rows if c.archived_at is not None]
-        contacts = repos.contacts.list(company=company)
-        if not include_candidates:
-            contacts = [c for c in contacts if c.connection_status != "candidate"]
-        return [_contact_dto(repos, c) for c in contacts]
+    archived rows, so a user can restore a contact they removed.
+
+    Bounded, batched, and off the event loop (S-C8). It used to read every
+    contact row with no LIMIT and then run one outreach-log query per row, so a
+    roster grown by discovery (one `candidate` per person found, at 10 people a
+    company) cost 1 + N queries on the loop. Both filters now live in the repo
+    query so the cap bounds the population the caller actually wants."""
+
+    def _assemble() -> list[dto.ContactDTO]:
+        with _db(request).repos() as repos:
+            contacts = repos.contacts.list(
+                company=company,
+                archived_only=archived,
+                # The recovery view lists every deleted row, candidates
+                # included: the candidate filter only ever ran on the kanban
+                # branch, and dropping them here would hide a deleted contact
+                # from the one view that can restore it.
+                include_candidates=include_candidates or archived,
+            )
+            return _contact_dtos(repos, contacts)
+
+    return await asyncio.to_thread(_assemble)
 
 
 @router.post("/api/contacts", status_code=201)

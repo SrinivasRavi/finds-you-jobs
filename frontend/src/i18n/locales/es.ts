@@ -195,6 +195,8 @@ const es: DeepPartial<Messages> = {
       olderListing: "Publicación antigua",
       keywordScoreTitle:
         "Puntuado por palabras clave (gratis, en tu equipo) — gris, no es una puntuación de IA",
+      unscorableTitle:
+        "No se capturó ninguna descripción del puesto para este anuncio, así que no se puede puntuar con IA. El 0 gris significa datos ausentes, no mala coincidencia.",
     },
     empty: {
       filtered: "Ningún empleo coincide con estos filtros o la búsqueda.",
@@ -599,6 +601,10 @@ const es: DeepPartial<Messages> = {
       retried: "reintentada",
       retry: "Reintentar",
       retrying: "Reintentando…",
+      retryScoring_one: "Reintentar {{count}} puntuación fallida",
+      retryScoring_other: "Reintentar {{count}} puntuaciones fallidas",
+      retryScoringTitle:
+        "Estos empleos agotaron los 3 intentos de puntuación con IA contra un proveedor activo. Reintentar les devuelve el presupuesto y el siguiente ciclo del planificador vuelve a puntuarlos. Los empleos sin descripción se omiten: ahí un reintento no ayuda.",
       stop: "Detener",
       stopping: "Deteniendo…",
       restarted: "La app se reinició durante la generación.",
@@ -1158,23 +1164,6 @@ const es: DeepPartial<Messages> = {
       dismiss: "Descartar",
       more_one: "+{{count}} fallo anterior no mostrado",
       more_other: "+{{count}} fallos anteriores no mostrados",
-    },
-    rescore: {
-      title: "¿Volver a puntuar los empleos con IA?",
-      skipped_one: "({{count}} ya tiene puntuación de IA para este currículum — omitido.)",
-      skipped_other: "({{count}} ya tienen puntuación de IA para este currículum — omitidos.)",
-      bodyResumeEdit_one:
-        "Tu currículum cambió. ¿Volver a puntuar {{count}} empleo con IA?{{skipped}} Esto usa tu clave de LLM — una llamada por empleo. O conserva las puntuaciones actuales; puedes volver a puntuar cuando quieras editando tu currículum de nuevo.",
-      bodyResumeEdit_other:
-        "Tu currículum cambió. ¿Volver a puntuar {{count}} empleos con IA?{{skipped}} Esto usa tu clave de LLM — una llamada por empleo. O conserva las puntuaciones actuales; puedes volver a puntuar cuando quieras editando tu currículum de nuevo.",
-      bodyModeSwitch_one:
-        "¿Puntuar {{count}} empleo de tu tablón que aún no tiene puntuación de IA?{{skipped}} Esto usa tu clave de LLM — una llamada por empleo. Los empleos nuevos de futuros escaneos se puntúan con IA automáticamente en cualquier caso.",
-      bodyModeSwitch_other:
-        "¿Puntuar los {{count}} empleos de tu tablón que aún no tienen puntuación de IA?{{skipped}} Esto usa tu clave de LLM — una llamada por empleo. Los empleos nuevos de futuros escaneos se puntúan con IA automáticamente en cualquier caso.",
-      busy: "Volviendo a puntuar…",
-      confirm_one: "Volver a puntuar {{count}} empleo",
-      confirm_other: "Volver a puntuar {{count}} empleos",
-      keepScores: "Conservar puntuaciones",
     },
   },
 };

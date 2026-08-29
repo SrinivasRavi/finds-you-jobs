@@ -927,3 +927,123 @@ async def test_real_screencast_stays_live_through_a_long_lane_action(
         assert frames_during > 1
     finally:
         broker.shutdown()
+
+
+# --- idle reclamation -------------------------------------------------------
+# A surface costs an OS thread, a real Chrome, and that Chrome's memory. Nothing
+# used to reclaim one: an entry left `_surfaces` only on app shutdown or after
+# its Chrome had already crashed, so a single visit to the LinkedIn view kept a
+# browser alive for the rest of the session. These pin both halves — that idle
+# surfaces go, and that in-use ones never do.
+
+
+async def test_reap_idle_closes_a_surface_nobody_is_watching(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    surface = broker.surface("pane-idle")
+    await surface.wait_ready()
+    assert broker.live_slugs == frozenset({"pane-idle"})
+
+    # max_idle=0 makes "has been idle at all" the threshold, so the test never
+    # sleeps for a real timeout.
+    assert broker.reap_idle(max_idle=0.0) == ["pane-idle"]
+    assert broker.live_slugs == frozenset()
+    # The Chrome behind it is genuinely gone, not just forgotten by the map.
+    assert fake.context.closed == 1
+
+
+async def test_reap_idle_never_touches_a_watched_surface(broker: BrowserBroker) -> None:
+    """`idle_seconds` returns None while a viewer is attached, so the pane a
+    user is looking at isn't comparable to the threshold at all and can never be
+    closed out from under them however long the reaper runs."""
+    surface = broker.surface("pane-watched")
+    await surface.wait_ready()
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+
+    assert surface.idle_seconds is None
+    assert broker.reap_idle(max_idle=0.0) == []
+    assert broker.live_slugs == frozenset({"pane-watched"})
+
+    # Detaching starts the idle clock rather than back-dating it to the last
+    # submitted action, so closing a pane and reopening it costs no relaunch.
+    surface.detach(viewer)
+    idle = surface.idle_seconds
+    assert idle is not None and idle < 1.0
+    assert broker.reap_idle(max_idle=60.0) == []
+
+
+async def test_a_reaped_surface_relaunches_on_the_next_ask(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """Being wrong costs exactly one relaunch: `surface()` already launches
+    lazily and the profile dir persists."""
+    first = broker.surface("pane-again")
+    await first.wait_ready()
+    broker.reap_idle(max_idle=0.0)
+    assert broker.live_slugs == frozenset()
+
+    second = broker.surface("pane-again")
+    await second.wait_ready()
+    assert second is not first
+    assert broker.live_slugs == frozenset({"pane-again"})
+    assert len(fake.opened) == 2
+
+
+async def test_taking_a_surface_protects_it_from_the_next_reaper_tick(
+    broker: BrowserBroker,
+) -> None:
+    """The take-then-submit gap. A caller gets a surface and submits its first
+    action a beat later; a reaper tick landing in between used to see no viewer,
+    nothing in flight and an old timestamp, close the Chrome, and leave the
+    caller's submit failing with "browser surface is shut down". `surface()`
+    stamps activity under the same lock the reaper reads idleness through, so
+    the decision can't straddle the handover."""
+    surface = broker.surface("pane-taken")
+    await surface.wait_ready()
+    # Age it past the threshold. There is no public way to fake the clock, and
+    # sleeping 300s is not a test.
+    surface._last_activity -= 600.0  # noqa: SLF001
+    idle = surface.idle_seconds
+    assert idle is not None and idle > 300.0
+
+    assert broker.surface("pane-taken") is surface  # a caller takes it...
+    assert broker.reap_idle(max_idle=300.0) == []  # ...so this tick skips it
+    assert broker.live_slugs == frozenset({"pane-taken"})
+
+
+async def test_a_reaper_and_a_caller_never_share_a_profile_directory(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """Chrome holds a singleton lock on its profile directory, so a second
+    Chrome launched on a slug whose first one is still tearing down hangs. The
+    reaper used to drop the map entry and only then join, leaving exactly that
+    window open to a concurrent `surface()`. The slug's lifecycle lock closes
+    it: the relaunch waits for the teardown to finish."""
+    surface = broker.surface("pane-race")
+    await surface.wait_ready()
+
+    order: list[str] = []
+    real_shutdown = surface.shutdown
+    tearing_down = threading.Event()
+
+    def slow_shutdown(*args: Any, **kwargs: Any) -> None:
+        order.append("teardown-start")
+        tearing_down.set()
+        time.sleep(0.2)  # hold the window the race needs
+        real_shutdown(*args, **kwargs)
+        order.append("teardown-done")
+
+    surface.shutdown = slow_shutdown  # type: ignore[method-assign]
+
+    reaper = threading.Thread(target=lambda: broker.reap_idle(max_idle=0.0))
+    reaper.start()
+    assert tearing_down.wait(timeout=5.0)
+    replacement = broker.surface("pane-race")
+    order.append("relaunch")
+    reaper.join(timeout=5.0)
+
+    assert order == ["teardown-start", "teardown-done", "relaunch"]
+    assert replacement is not surface
+    await replacement.wait_ready()
+    assert len(fake.opened) == 2

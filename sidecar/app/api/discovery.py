@@ -498,81 +498,93 @@ def _analytics_bucket_id(source_key: str) -> str:
 async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
     """Aggregates existing records only (no migration): stored `jobs` ×
     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
-    scans' `result_ref.per_source` fetch/keep/error/latency numbers."""
-    with _db(request).repos() as repos:
-        jobs = repos.jobs.list_by_states(["active", "expired", "removed"])
-        saved_ids = repos.applications.job_ids()
-        profile = repos.profile.get_current()
-        pv = profile.version if profile is not None else 0
-        scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], pv)
-        scans = repos.operations.list_by_kind_states("scan", {"succeeded"})
+    scans' `result_ref.per_source` fetch/keep/error/latency numbers.
 
-        per: dict[str, dict] = {}
+    Off the event loop (S-C7): the fold walks every job the board can hold
+    (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
+    install could hold it past the shell's 2 s /healthz window and cost a
+    sidecar restart. `board` and `list_jobs` got this in the F-H2 pass; this
+    route is the one it missed."""
 
-        def _bucket(family: str) -> dict:
-            return per.setdefault(
-                family,
-                {
-                    "jobs": 0, "saved": 0, "scored": 0, "score_sum": 0.0,
-                    "fetched": 0, "kept": 0, "http_calls": 0,
-                    "latency_ms": 0, "errors": 0,
-                },
+    def _assemble() -> dto.DiscoveryAnalyticsDTO:
+        with _db(request).repos() as repos:
+            jobs = repos.jobs.list_by_states(["active", "expired", "removed"])
+            saved_ids = repos.applications.job_ids()
+            profile = repos.profile.get_current()
+            pv = profile.version if profile is not None else 0
+            scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], pv)
+            scans = repos.operations.list_by_kind_states("scan", {"succeeded"})
+
+            per: dict[str, dict] = {}
+
+            def _bucket(family: str) -> dict:
+                return per.setdefault(
+                    family,
+                    {
+                        "jobs": 0, "saved": 0, "scored": 0, "score_sum": 0.0,
+                        "fetched": 0, "kept": 0, "http_calls": 0,
+                        "latency_ms": 0, "errors": 0,
+                    },
+                )
+
+            for job in jobs:
+                b = _bucket(job.source_adapter or "unknown")
+                b["jobs"] += 1
+                if job.id in saved_ids:
+                    b["saved"] += 1
+                score = scores.get(job.id)
+                if score is not None:
+                    b["scored"] += 1
+                    b["score_sum"] += float(score.score_0_100)
+
+            scans = sorted(
+                scans, key=lambda o: o.started_at or o.created_at, reverse=True
             )
-
-        for job in jobs:
-            b = _bucket(job.source_adapter or "unknown")
-            b["jobs"] += 1
-            if job.id in saved_ids:
-                b["saved"] += 1
-            score = scores.get(job.id)
-            if score is not None:
-                b["scored"] += 1
-                b["score_sum"] += float(score.score_0_100)
-
-        scans = sorted(scans, key=lambda o: o.started_at or o.created_at, reverse=True)
-        recent = scans[:_RECENT_SCANS]
-        last_scan_at = None
-        for op in recent:
-            if last_scan_at is None:
-                last_scan_at = op.finished_at
-            per_source = ((op.result_ref or {}).get("per_source")) or {}
-            if not isinstance(per_source, dict):
-                continue
-            for key, r in per_source.items():
-                if not isinstance(r, dict):
+            recent = scans[:_RECENT_SCANS]
+            last_scan_at = None
+            for op in recent:
+                if last_scan_at is None:
+                    last_scan_at = op.finished_at
+                per_source = ((op.result_ref or {}).get("per_source")) or {}
+                if not isinstance(per_source, dict):
                     continue
-                b = _bucket(_analytics_bucket_id(str(key)))
-                b["fetched"] += int(r.get("fetched") or 0)
-                b["kept"] += int(r.get("kept") or 0)
-                b["http_calls"] += int(r.get("http_calls") or 0)
-                b["latency_ms"] += int(r.get("latency_ms") or 0)
-                b["errors"] += len(r.get("errors") or [])
+                for key, r in per_source.items():
+                    if not isinstance(r, dict):
+                        continue
+                    b = _bucket(_analytics_bucket_id(str(key)))
+                    b["fetched"] += int(r.get("fetched") or 0)
+                    b["kept"] += int(r.get("kept") or 0)
+                    b["http_calls"] += int(r.get("http_calls") or 0)
+                    b["latency_ms"] += int(r.get("latency_ms") or 0)
+                    b["errors"] += len(r.get("errors") or [])
 
-    rows = []
-    for family, b in per.items():
-        label, kind = _ANALYTICS_LABELS.get(
-            family, adapters.CATALOG.get(family, (family, "other"))
-        )
-        rows.append(
-            dto.DiscoverySourceStatsDTO(
-                id=family,
-                label=label,
-                kind=kind,
-                jobs=b["jobs"],
-                saved=b["saved"],
-                scored=b["scored"],
-                avg_score=(b["score_sum"] / b["scored"]) if b["scored"] else None,
-                fetched=b["fetched"],
-                kept=b["kept"],
-                http_calls=b["http_calls"],
-                latency_ms=b["latency_ms"],
-                errors=b["errors"],
+        rows = []
+        for family, b in per.items():
+            label, kind = _ANALYTICS_LABELS.get(
+                family, adapters.CATALOG.get(family, (family, "other"))
             )
+            rows.append(
+                dto.DiscoverySourceStatsDTO(
+                    id=family,
+                    label=label,
+                    kind=kind,
+                    jobs=b["jobs"],
+                    saved=b["saved"],
+                    scored=b["scored"],
+                    avg_score=(b["score_sum"] / b["scored"]) if b["scored"] else None,
+                    fetched=b["fetched"],
+                    kept=b["kept"],
+                    http_calls=b["http_calls"],
+                    latency_ms=b["latency_ms"],
+                    errors=b["errors"],
+                )
+            )
+        rows.sort(key=lambda r: (-r.jobs, r.id))
+        return dto.DiscoveryAnalyticsDTO(
+            sources=rows, scans=len(recent), last_scan_at=last_scan_at
         )
-    rows.sort(key=lambda r: (-r.jobs, r.id))
-    return dto.DiscoveryAnalyticsDTO(
-        sources=rows, scans=len(recent), last_scan_at=last_scan_at
-    )
+
+    return await asyncio.to_thread(_assemble)
 
 
 # -- BYO scraper keys (Apify / Brave) ----------------------------------------

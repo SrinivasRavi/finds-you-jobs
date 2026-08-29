@@ -195,6 +195,8 @@ const fr: DeepPartial<Messages> = {
       scoring: "évaluation…",
       olderListing: "Annonce plus ancienne",
       keywordScoreTitle: "Score par mots-clés (gratuit, sur l'appareil) — gris, pas un score IA",
+      unscorableTitle:
+        "Aucune description de poste n'a été récupérée pour cette offre, elle ne peut donc pas être évaluée par l'IA. Le 0 gris signifie données manquantes, pas mauvaise correspondance.",
     },
     empty: {
       filtered: "Aucune offre ne correspond à ces filtres ou à cette recherche.",
@@ -600,6 +602,10 @@ const fr: DeepPartial<Messages> = {
       retried: "réessayée",
       retry: "Réessayer",
       retrying: "Nouvel essai…",
+      retryScoring_one: "Réessayer {{count}} score en échec",
+      retryScoring_other: "Réessayer {{count}} scores en échec",
+      retryScoringTitle:
+        "Ces offres ont épuisé les 3 tentatives de score IA auprès d'un fournisseur joignable. Réessayer leur rend leur budget et le prochain cycle du planificateur les score à nouveau. Les offres sans description sont ignorées : un nouvel essai n'y change rien.",
       stop: "Arrêter",
       stopping: "Arrêt en cours…",
       restarted: "L'app a redémarré pendant la génération.",
@@ -1168,23 +1174,6 @@ const fr: DeepPartial<Messages> = {
       dismiss: "Fermer",
       more_one: "+{{count}} échec précédent non affiché",
       more_other: "+{{count}} échecs précédents non affichés",
-    },
-    rescore: {
-      title: "Réévaluer les offres avec l'IA ?",
-      skipped_one: "({{count}} offre a déjà un score IA pour ce CV — ignorée.)",
-      skipped_other: "({{count}} offres ont déjà un score IA pour ce CV — ignorées.)",
-      bodyResumeEdit_one:
-        "Votre CV a changé. Réévaluer {{count}} offre avec l'IA ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Ou gardez les scores actuels ; vous pourrez réévaluer à tout moment en modifiant à nouveau votre CV.",
-      bodyResumeEdit_other:
-        "Votre CV a changé. Réévaluer {{count}} offres avec l'IA ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Ou gardez les scores actuels ; vous pourrez réévaluer à tout moment en modifiant à nouveau votre CV.",
-      bodyModeSwitch_one:
-        "Votre tableau compte {{count}} offre sans score IA — l'évaluer maintenant ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Les nouvelles offres des prochains scans seront de toute façon évaluées par IA automatiquement.",
-      bodyModeSwitch_other:
-        "Votre tableau compte {{count}} offres sans score IA — les évaluer maintenant ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Les nouvelles offres des prochains scans seront de toute façon évaluées par IA automatiquement.",
-      busy: "Réévaluation…",
-      confirm_one: "Réévaluer {{count}} offre",
-      confirm_other: "Réévaluer {{count}} offres",
-      keepScores: "Garder les scores actuels",
     },
   },
 };

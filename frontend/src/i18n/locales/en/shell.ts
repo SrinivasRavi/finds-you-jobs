@@ -18,14 +18,6 @@ const shell = {
   backendStoppedFallback: "the backend stopped responding",
   sidecarFatalBanner:
     "Backend stopped: {{message}}. Nothing you do will save until you quit and reopen the app.",
-  // Auto-update banner (Layout.tsx) — shown only when "check on launch" is on
-  // and a newer release was found. Installing preserves all local data.
-  updateBanner: {
-    available: "A new version ({{version}}) is available.",
-    install: "Update now",
-    installing: "Downloading…",
-    dismiss: "Dismiss",
-  },
   work: {
     remote: "Remote",
     hybrid: "Hybrid",
@@ -61,25 +53,6 @@ const shell = {
     // Overflow line when a burst of failures exceeds the visible stack (F-L12).
     more_one: "+{{count}} earlier failure not shown",
     more_other: "+{{count}} earlier failures not shown",
-  },
-  rescore: {
-    title: "Re-score jobs with AI?",
-    // Interpolated into the body strings below (with a leading space) when
-    // some jobs already carry an AI score and are skipped.
-    skipped_one: "({{count}} already has an AI score for this resume — skipped.)",
-    skipped_other: "({{count}} already have an AI score for this resume — skipped.)",
-    bodyResumeEdit_one:
-      "Your resume changed. Re-score {{count}} job against it with AI?{{skipped}} This uses your LLM key — one call per job. Or keep the current scores; you can re-score anytime by editing your resume again.",
-    bodyResumeEdit_other:
-      "Your resume changed. Re-score {{count}} jobs against it with AI?{{skipped}} This uses your LLM key — one call per job. Or keep the current scores; you can re-score anytime by editing your resume again.",
-    bodyModeSwitch_one:
-      "Score the {{count}} job on your board that has no AI score yet?{{skipped}} This uses your LLM key — one call per job. New jobs from future scans are AI-scored automatically either way.",
-    bodyModeSwitch_other:
-      "Score the {{count}} jobs on your board that have no AI score yet?{{skipped}} This uses your LLM key — one call per job. New jobs from future scans are AI-scored automatically either way.",
-    busy: "Re-scoring…",
-    confirm_one: "Re-score {{count}} job",
-    confirm_other: "Re-score {{count}} jobs",
-    keepScores: "Keep current scores",
   },
 };
 

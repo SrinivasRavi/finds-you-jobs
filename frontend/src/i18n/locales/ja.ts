@@ -188,6 +188,8 @@ const ja: DeepPartial<Messages> = {
       scoring: "スコアリング中…",
       olderListing: "以前の掲載",
       keywordScoreTitle: "キーワードスコア(無料・端末内) — グレー表示、AIスコアではありません",
+      unscorableTitle:
+        "この求人は職務内容を取得できなかったため、AIスコアを付けられません。グレーの0はデータ不足であって、マッチ度が低いという意味ではありません。",
     },
     empty: {
       filtered: "このフィルターや検索に一致する求人はありません。",
@@ -586,6 +588,10 @@ const ja: DeepPartial<Messages> = {
       retried: "再試行済み",
       retry: "再試行",
       retrying: "再試行中…",
+      retryScoring_one: "失敗した{{count}}件のスコアを再試行",
+      retryScoring_other: "失敗した{{count}}件のスコアを再試行",
+      retryScoringTitle:
+        "これらの求人は、稼働中のプロバイダーに対してAIスコアリングを3回とも使い切りました。再試行すると試行枠が戻り、次のスケジューラー実行で再スコアされます。説明のない求人はスキップされます(再試行しても解決しません)。",
       stop: "停止",
       stopping: "停止中…",
       restarted: "生成中にアプリが再起動されました。",
@@ -1131,17 +1137,6 @@ const ja: DeepPartial<Messages> = {
       body: "変更を保存できませんでした — ローカルバックエンドとの通信でエラーが発生しました。",
       dismiss: "閉じる",
       more_other: "ほかに{{count}}件の以前の失敗が非表示です",
-    },
-    rescore: {
-      title: "AIで求人を再スコアリングしますか?",
-      skipped_other: "({{count}}件はこの職務経歴書のAIスコアが既にあるため、スキップします。)",
-      bodyResumeEdit_other:
-        "職務経歴書が変更されました。{{count}}件の求人をAIで再スコアリングしますか?{{skipped}} あなたのLLMキーを使用します — 求人1件につき1回の呼び出しです。現在のスコアを維持することもできます。職務経歴書を再度編集すれば、いつでも再スコアリングできます。",
-      bodyModeSwitch_other:
-        "ボード上のAIスコアがまだない{{count}}件の求人をスコアリングしますか?{{skipped}} あなたのLLMキーを使用します — 求人1件につき1回の呼び出しです。いずれの場合も、今後のスキャンで見つかる新しい求人は自動的にAIスコアリングされます。",
-      busy: "再スコアリング中…",
-      confirm_other: "{{count}}件を再スコアリング",
-      keepScores: "現在のスコアを維持",
     },
   },
 };

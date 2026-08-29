@@ -14,14 +14,13 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from .base import now_utc
 from .models import (
     APPLY_RUN_ACTIVE_STATUSES,
     OP_ACTIVE_STATES,
-    OP_TERMINAL_STATES,
     Application,
     ApplicationDocument,
     ApplicationEvent,
@@ -48,10 +47,11 @@ from .models import (
 # ---------------------------------------------------------------------------
 # Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07)
 # ---------------------------------------------------------------------------
-# Ledger retention prunes old terminal ops, so summing the live ledger alone
-# would silently forget pruned spend. Before pruning we fold the pruned ops'
-# usd/tokens into a persistent aggregate (UserPreferences.ui_state["cost_totals"]);
-# the all-time totals surface = live-ledger sum + this aggregate.
+# Summing the live ledger alone would silently forget the spend of any op that
+# got deleted, so the all-time totals surface = live-ledger sum + a persistent
+# aggregate (UserPreferences.ui_state["cost_totals"]). Nothing deletes an
+# operation today (S-C22), so the aggregate sits at zero and the live sum
+# carries everything; a deletion policy folds the doomed rows in here first.
 
 CostTotals = dict[str, Any]
 
@@ -135,38 +135,30 @@ class OperationsRepo:
         )
         return list(self._s.scalars(stmt))
 
+    def list_queued_for_dispatch(
+        self, *, priority_by_kind: dict[str, int], default_priority: int, limit: int
+    ) -> list[Operation]:
+        """Queued operations in dispatch order, most urgent first, capped.
+
+        The runner used to read EVERY queued row and sort in Python, so
+        enqueueing N operations cost n(n+1)/2 row loads. The cap is what fixes
+        that, and the ordering has to move into SQL for the cap to be safe: with
+        a date-ordered read, a `LIMIT` would hide an `apply` the user is watching
+        behind hundreds of bulk `score` rows. Sorted here, the first `limit` rows
+        are always the most urgent ones. `created_at, id` keeps it FIFO within a
+        priority band, matching the stable Python sort this replaced."""
+        priority = case(priority_by_kind, value=Operation.kind, else_=default_priority)
+        stmt = (
+            select(Operation)
+            .where(Operation.state == "queued")
+            .order_by(priority, Operation.created_at, Operation.id)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
     def list_recent(self, limit: int = 100) -> list[Operation]:
         stmt = select(Operation).order_by(Operation.created_at.desc()).limit(limit)
         return list(self._s.scalars(stmt))
-
-    def trim_to(self, keep: int) -> int:
-        """Delete all but the `keep` most-recent terminal operations — the P1
-        ledger retention (US-LOG-01 #2: ~5 pages). Only terminal rows are
-        pruned so an in-flight `queued`/`running` op is never dropped mid-flight.
-        Returns the number deleted."""
-        keep_ids = select(Operation.id).where(
-            Operation.state.in_(OP_TERMINAL_STATES)
-        ).order_by(Operation.created_at.desc()).limit(keep)
-        stmt = delete(Operation).where(
-            Operation.state.in_(OP_TERMINAL_STATES), Operation.id.not_in(keep_ids)
-        )
-        result = cast("CursorResult[Any]", self._s.execute(stmt))
-        return result.rowcount or 0
-
-    def sum_terminal_beyond(self, keep: int) -> CostTotals:
-        """The cost aggregate of the terminal ops `trim_to(keep)` would prune —
-        i.e. all-but-the-newest-`keep` terminal rows. Folded into the persistent
-        lifetime aggregate *before* pruning so all-time spend survives retention."""
-        stmt = (
-            select(Operation)
-            .where(Operation.state.in_(OP_TERMINAL_STATES))
-            .order_by(Operation.created_at.desc())
-            .offset(keep)
-        )
-        agg = _empty_cost_totals()
-        for op in self._s.scalars(stmt):
-            _accumulate_op(agg, op)
-        return agg
 
     def live_cost_totals(self) -> CostTotals:
         """The cost aggregate over every operation still in the table (all states;
@@ -201,8 +193,12 @@ class OperationsRepo:
         """job_id → the set of its `score` operation states — the board's
         Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02). A job with a failed
         score op and no cached score resolves to `Score failed`, never a
-        perpetual Pending. (Bounded by ledger retention; a pruned failure simply
-        re-reads as Pending, and the Remove→Add-back retry path re-scores.)"""
+        perpetual Pending.
+
+        This scans every `score` row in the table. Ledger retention used to cap
+        that at 250 and no longer does (S-C22), so it now grows with the install:
+        measured at 1.06 s over 100k operations. Its callers on the event loop
+        (`get_job`, `update_job`) are S-C23."""
         result: dict[str, set[str]] = {}
         stmt = select(Operation).where(Operation.kind == "score")
         for op in self._s.scalars(stmt):
@@ -432,6 +428,99 @@ class JobsRepo:
         stmt = stmt.order_by(Job.ingested_at.desc(), Job.id).limit(limit)
         return list(self._s.scalars(stmt))
 
+    def list_active_without_llm_score(
+        self, *, limit: int | None = None, max_attempts: int | None = None
+    ) -> list[Job]:
+        """Active jobs that can still earn an AI score, newest first.
+
+        The AI planner used to page the newest 1,000 active jobs and only THEN
+        filter that page down to the unscored, so on an install with more than
+        1,000 active jobs the oldest could never be planned at any tick — they
+        sat unscored with nothing to show for it. Doing the exclusion in SQL
+        makes a scored job leave the result set on its own, so every job is
+        eventually reached, and the read is O(unscored) instead of O(all
+        active). `limit=None` means no cap, which is the planner's default.
+
+        A keyword floor does NOT count: `scorer_impl` is matched so the LLM can
+        still upgrade a job the on-device floor already scored.
+
+        A job whose description is under `MIN_JD_CHARS` is excluded outright. It
+        can never earn an LLM score (`score_entrypoint` refuses it and writes a
+        0 without calling the engine — see that constant for why), so leaving it
+        in would re-plan the same job on every tick forever, each pass writing
+        another operation row. On the maintainer's install that's 248 jobs, so
+        it would be 248 pointless operations per tick. The predicate is on the
+        description rather than on the presence of a refusal row, which means a
+        later scan that fills the description in makes the job eligible again on
+        its own, with nothing to reset (S-A6).
+
+        `max_attempts` drops jobs that have already failed that many times
+        against a live provider (`Job.score_attempts`). A provider outage never
+        increments that counter, so an expired key costs no job an attempt and
+        the whole backlog returns on the next tick."""
+        from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
+        scored = (
+            select(JobScore.id)
+            .where(JobScore.job_id == Job.id, JobScore.scorer_impl == "scorer-llm")
+            .exists()
+        )
+        stmt = select(Job).where(
+            Job.feed_state == "active",
+            ~scored,
+            func.length(func.coalesce(Job.description, "")) >= MIN_JD_CHARS,
+        )
+        if max_attempts is not None:
+            stmt = stmt.where(Job.score_attempts < max_attempts)
+        stmt = stmt.order_by(Job.ingested_at.desc(), Job.id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return list(self._s.scalars(stmt))
+
+    def record_score_failure(self, job_id: str, error: str) -> None:
+        """One scoring attempt that REACHED the provider and failed. Only these
+        count: a circuit-open rejection never reached anything, so the job keeps
+        its budget and comes straight back to the pool."""
+        self._s.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(score_attempts=Job.score_attempts + 1, score_last_error=error[:2000])
+        )
+
+    def count_score_exhausted(self, max_attempts: int) -> int:
+        """Active jobs that have spent their whole AI-scoring budget and still
+        carry no LLM score — the ones no future tick will ever pick up. This is
+        what the ledger's Retry affordance counts, so the button appears only
+        when pressing it would actually do something. A job at 1 or 2 attempts
+        is NOT counted: it comes back on the next tick on its own."""
+        scored = (
+            select(JobScore.id)
+            .where(JobScore.job_id == Job.id, JobScore.scorer_impl == "scorer-llm")
+            .exists()
+        )
+        stmt = select(func.count()).select_from(Job).where(
+            Job.feed_state == "active",
+            ~scored,
+            Job.score_attempts >= max_attempts,
+        )
+        return int(self._s.scalar(stmt) or 0)
+
+    def reset_score_attempts(self) -> int:
+        """Give every exhausted job its budget back — what Retry does. Returns
+        the number of jobs reset. Jobs with no usable description are untouched:
+        they never spent an attempt (the planner skips them outright), so there
+        is nothing to give back and retrying can't help until a scan fills the
+        description in."""
+        result = cast(
+            "CursorResult[Any]",
+            self._s.execute(
+                update(Job)
+                .where(Job.score_attempts > 0)
+                .values(score_attempts=0, score_last_error=None)
+            ),
+        )
+        return int(result.rowcount or 0)
+
     def list_by_states(self, states: list[str], *, limit: int = 10_000) -> list[Job]:
         """All jobs in any of `states` (the board serves active + expired —
         FR-SYS-03: Expired rows stay on the board, greyed). No silent 200-row cap
@@ -605,22 +694,6 @@ class JobScoresRepo:
             JobScore.job_id.in_(job_ids), JobScore.scorer_impl == "scorer-llm"
         )
         return set(self._s.scalars(stmt))
-
-    def job_ids_missing_llm_score(
-        self, job_ids: list[str], profile_version: int
-    ) -> list[str]:
-        """AI-score cache MISSES at one version, input order preserved — the
-        set the re-score preview counts AND the re-score run enqueues (one
-        query for both, so the prompt's N always equals what actually runs)."""
-        if not job_ids:
-            return []
-        stmt = select(JobScore.job_id).where(
-            JobScore.job_id.in_(job_ids),
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == "scorer-llm",
-        )
-        hits = set(self._s.scalars(stmt))
-        return [job_id for job_id in job_ids if job_id not in hits]
 
     def create(self, **fields: Any) -> JobScore:
         score = JobScore(**fields)
@@ -1060,14 +1133,37 @@ class ContactsRepo:
         return self._s.scalars(stmt).first()
 
     def list(
-        self, *, company: str | None = None, include_archived: bool = False
+        self,
+        *,
+        company: str | None = None,
+        archived_only: bool = False,
+        include_candidates: bool = True,
+        limit: int = 10_000,
     ) -> list[Contact]:
+        """The kanban roster, most-recently-touched first and capped (S-C8).
+
+        Every filter the roster route applies is in SQL, because a LIMIT on top
+        of a Python filter bounds the wrong population: the "Deleted Contacts"
+        view could show nothing while archived rows existed past the cap, and a
+        big `candidate` pile (discovery writes one row per person found) could
+        eat the whole budget before a single kanban card was reached.
+
+        10,000, matching the board's `list_by_states`. The first cut capped at
+        1,000 and nothing in the UI says "1,000 of 1,240", so a discovery-grown
+        roster (about 10 candidate rows per company watched) would silently drop
+        people past 100 companies — the same class of defect as the scoring
+        window it shipped beside. The batched last-message query removed the
+        real cost of a big roster; this cap now bounds DTO building only."""
         stmt = select(Contact)
-        if not include_archived:
+        if archived_only:
+            stmt = stmt.where(Contact.archived_at.is_not(None))
+        else:
             stmt = stmt.where(Contact.archived_at.is_(None))
+        if not include_candidates:
+            stmt = stmt.where(Contact.connection_status != "candidate")
         if company:
             stmt = stmt.where(Contact.current_company == company)
-        stmt = stmt.order_by(Contact.last_touched_at.desc(), Contact.id)
+        stmt = stmt.order_by(Contact.last_touched_at.desc(), Contact.id).limit(limit)
         return list(self._s.scalars(stmt))
 
     def list_for_referrals(
@@ -1261,6 +1357,24 @@ class OutreachLogsRepo:
             .order_by(OutreachLog.created_at, OutreachLog.id)
         )
         return list(self._s.scalars(stmt))
+
+    def latest_for_contacts(self, contact_ids: list[str]) -> dict[str, OutreachLog]:
+        """contact_id → its newest OutreachLog — the roster's per-card "last
+        message" fallback done with one IN query instead of one `list_for_contact`
+        per contact (S-C8, the F-H2 batch pattern). Ordered the same way
+        `list_for_contact` is, so the row picked here is the row the per-contact
+        read's `logs[-1]` picks. Contacts with no logs are absent from the map."""
+        if not contact_ids:
+            return {}
+        stmt = select(OutreachLog).where(OutreachLog.contact_id.in_(contact_ids))
+        latest: dict[str, OutreachLog] = {}
+        for log in self._s.scalars(stmt):
+            current = latest.get(log.contact_id)
+            if current is None or (log.created_at, log.id) > (
+                current.created_at, current.id
+            ):
+                latest[log.contact_id] = log
+        return latest
 
     def count_sent_for_jobs(self, job_ids: list[str]) -> dict[str, int]:
         """Reaches actually sent per role (US-NW-09 per-role reached count) —
@@ -1487,15 +1601,6 @@ class Repos:
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)
         self.apply_runs = ApplyRunsRepo(session)
-
-    def prune_ledger(self, keep: int) -> int:
-        """Ledger retention that preserves all-time spend: fold the usd/tokens of
-        the terminal ops about to be pruned into the persistent lifetime aggregate
-        (`ui_state["cost_totals"]`), then delete them. One transaction, so a crash
-        mid-way never double-counts or loses a delta. Returns the number pruned."""
-        pruned = self.operations.sum_terminal_beyond(keep)
-        self.preferences.add_cost_totals(pruned)
-        return self.operations.trim_to(keep)
 
     def all_time_cost_totals(self) -> CostTotals:
         """Live-ledger sum + the pruned aggregate = every op ever recorded. The

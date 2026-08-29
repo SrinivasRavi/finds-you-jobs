@@ -117,10 +117,19 @@ class Job(Base):
     ingested_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
     feed_state: Mapped[str] = mapped_column(String, nullable=False, default="active")
     source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Scoring attempt memory. Counts ONLY failures where a call reached the
+    # provider, so a circuit-open rejection (provider refusing everybody) costs
+    # the job nothing and it returns to the pool unmarked. The planner stops at
+    # SCORE_MAX_ATTEMPTS. Every other scoring state is derived, never stored —
+    # see the a3d7e1f95c24 migration for why there is no status column.
+    score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_jobs_feedstate_ingested", "feed_state", "ingested_at"),
         Index("ix_jobs_company", "company"),
+        # The planner's eligibility read: active jobs still worth an attempt.
+        Index("ix_jobs_feedstate_attempts", "feed_state", "score_attempts"),
     )
 
 

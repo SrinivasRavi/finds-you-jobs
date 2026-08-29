@@ -38,10 +38,11 @@ from ..registry import (
 )
 from .circuit import EngineCircuitBreaker
 from .policy import (
+    DEFAULT_DISPATCH_PRIORITY,
     DEFAULT_POLICY,
+    DISPATCH_PRIORITY,
     ConcurrencyPolicy,
     can_start,
-    dispatch_priority,
     with_llm_limit,
 )
 
@@ -53,10 +54,23 @@ RESTART_NOTE = (
 PublishFn = Callable[[dict[str, Any]], None]
 OnSuccessFn = Callable[[str, str], None]  # (operation_id, kind) after a success
 
-# P1 ledger retention: keep the 250 most-recent terminal operations (~5 pages of
-# 50 in the Analytics ledger); older ones are pruned after each completion so the
-# operations table stays bounded on a long-lived install (US-LOG-01 #2).
-LEDGER_RETENTION = 250
+# Ledger retention used to fire here: every completed operation pruned the table
+# back to the 250 most-recent terminal rows. It doesn't any more (maintainer,
+# 2026-08-24: "never delete anything"). Nothing deletes an operation now, the
+# Analytics ledger reads the newest 1,000, and a deletion policy the user can
+# see and control is backlogged as S-C22 in `docs/internal/status.md`.
+# The mechanism went with it (maintainer, 2026-08-28): 60 lines of retention
+# code with zero callers and its own test suite is a cost paid on every future
+# refactor. What a rebuild owes is recorded in S-C22, including the FK-clearing
+# bug it has to solve again — other rows remember which operation produced them
+# and the app runs with `PRAGMA foreign_keys=ON`, so a delete that doesn't clear
+# those references first raises `IntegrityError` and silently prunes nothing.
+
+# How many queued rows one dispatch pass reads. The concurrency policy can never
+# have more than roughly 10 operations in flight (llm 4, every other group 1), so
+# this is 20x the ceiling: the pump always sees far more candidates than it could
+# start, and a deep queue costs a bounded read instead of a full-table one.
+DISPATCH_SCAN_LIMIT = 200
 
 
 class OperationRunner:
@@ -151,6 +165,26 @@ class OperationRunner:
         self._pump()
         return operation_id
 
+    def submit_many(self, items: list[tuple[str, dict[str, Any]]]) -> list[str]:
+        """Enqueue a batch and pump ONCE. Returns the ids, in order.
+
+        `submit` in a loop was quadratic: each call pumped, and each pump re-read
+        the whole queue. Measured at 3.21 s of blocked event loop for 1,000
+        operations, half a million rows loaded to start a handful. One
+        transaction for the inserts and one pump at the end removes the
+        multiplier; the dispatch read below removes the rest."""
+        if not items:
+            return []
+        created: list[tuple[str, str]] = []
+        with self._db.repos() as repos:
+            for kind, snapshot in items:
+                created.append((repos.operations.create(kind, snapshot).id, kind))
+        for operation_id, kind in created:
+            self._log.info("operation %s enqueued (kind=%s)", operation_id, kind)
+            self._publish(operation_id, kind, "queued")
+        self._pump()
+        return [operation_id for operation_id, _ in created]
+
     def cancel(self, operation_id: str) -> bool:
         """Cancel an operation. A still-`queued` op (any kind) is cancelled
         immediately.
@@ -223,12 +257,17 @@ class OperationRunner:
             if self._executor is None or self._closing:
                 return
             with self._db.repos() as repos:
-                queued = repos.operations.list_by_state("queued")
                 # Interactive kinds jump the bulk fan-out (policy.py
                 # DISPATCH_PRIORITY): an apply/tailor the user is watching must
-                # never sit behind dozens of queued scores. Stable sort keeps
-                # FIFO within a priority band.
-                queued.sort(key=lambda op: dispatch_priority(op.kind))
+                # never sit behind dozens of queued scores. Ordered and capped in
+                # SQL — reading every queued row to start at most a handful is
+                # what made enqueueing quadratic, and ordering there is what lets
+                # the cap be safe.
+                queued = repos.operations.list_queued_for_dispatch(
+                    priority_by_kind=DISPATCH_PRIORITY,
+                    default_priority=DEFAULT_DISPATCH_PRIORITY,
+                    limit=DISPATCH_SCAN_LIMIT,
+                )
                 running_kinds = list(self._running.values())
                 for op in queued:
                     if op.id in self._running:
@@ -398,15 +437,8 @@ class OperationRunner:
             with self._lock:
                 self._running.pop(operation_id, None)
                 self._cancels.pop(operation_id, None)
-            # Ledger retention (US-LOG-01 #2): keep ~5 pages of terminal ops;
-            # prune older so the DB stays bounded (in-flight rows never touched).
-            # `prune_ledger` folds the pruned ops' usd/tokens into the lifetime
-            # cost aggregate first, so all-time spend survives retention (FR-SET-07).
-            try:
-                with self._db.repos() as repos:
-                    repos.prune_ledger(LEDGER_RETENTION)
-            except Exception:  # noqa: BLE001 — retention must never fail an op
-                self._log.exception("ledger retention trim failed")
+            # No ledger retention here any more — see the note by
+            # DISPATCH_SCAN_LIMIT. A completed operation is kept forever.
             self._pump()
 
     def _forget_future(self, future: Future[None]) -> None:

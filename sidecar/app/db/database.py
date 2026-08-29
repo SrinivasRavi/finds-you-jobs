@@ -28,6 +28,18 @@ from .repos import Repos
 # an explicit one-way importer is the only sanctioned migration path.
 _APP_DIR_NAME = "finds-you-jobs"
 
+# Windows only. The NSIS installer runs in `currentUser` mode, which puts
+# $INSTDIR at %LOCALAPPDATA%\<productName> — the SAME path _APP_DIR_NAME would
+# give us, so the program would install itself on top of the user's database.
+# The bundle identifier is Tauri's own app-data convention (it is what
+# `app_data_dir()` returns, and where the webview already keeps its profile),
+# so moving here separates the two and, for free, makes the uninstaller's
+# "delete the application data" checkbox honest: it does
+# `RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`, which until now cleared webview
+# cookies and left the database behind. Must stay in step with
+# `identifier` in src-tauri/tauri.conf.json.
+_WINDOWS_APP_DIR_NAME = "com.finds-you-jobs.app"
+
 
 def resolve_data_dir(data_dir: str | os.PathLike[str] | None = None) -> Path:
     """The app-data directory. Precedence: arg > FYJ_DATA_DIR > platform default."""
@@ -46,7 +58,7 @@ def _platform_data_dir() -> Path:
     if sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA")
         root = Path(base) if base else home / "AppData" / "Local"
-        return root / _APP_DIR_NAME
+        return root / _WINDOWS_APP_DIR_NAME
     # Linux / other POSIX — XDG.
     xdg = os.environ.get("XDG_DATA_HOME")
     root = Path(xdg) if xdg else home / ".local" / "share"

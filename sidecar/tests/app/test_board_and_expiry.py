@@ -31,6 +31,15 @@ from sidecar.app.registry.persistence import age_expired_jobs
 TOKEN = "test-token-board"  # noqa: S105 — test fixture, not a real secret
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
+# Long enough to clear `MIN_JD_CHARS` (200). A shorter description makes the row
+# `unscorable`, which outranks every other score state, so any test about the
+# pending/failed derivation needs a real JD here.
+REALISTIC_JD = (
+    "Backend engineer role. You will build and operate Python services, design Post"
+    "greSQL schemas, run workloads on AWS, and review other engineers' work. Requirem"
+    "ents: strong Python, solid SQL, and production ownership experience."
+)
+
 
 @pytest.fixture
 def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
@@ -64,7 +73,9 @@ def test_board_marks_score_failed_when_score_op_failed(
 ) -> None:
     app, client = app_client
     with _db(app).repos() as repos:
-        job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="lever")
+        job = repos.jobs.create(
+            canonical_url="u1", title="A", description=REALISTIC_JD, source_adapter="lever"
+        )
         op = repos.operations.create("score", {"job_id": job.id})
         repos.operations.mark_failed(op.id, error="no connectivity")
         job_id = job.id
@@ -77,10 +88,34 @@ def test_board_marks_score_failed_when_score_op_failed(
 def test_board_pending_when_no_score_op(app_client: tuple[FastAPI, TestClient]) -> None:
     app, client = app_client
     with _db(app).repos() as repos:
-        job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="lever")
+        job = repos.jobs.create(
+            canonical_url="u1", title="A", description=REALISTIC_JD, source_adapter="lever"
+        )
         job_id = job.id
     rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
     assert rows[job_id]["scoreStatus"] == "pending"
+
+
+def test_board_marks_a_description_less_job_unscorable(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """S-C24 D5: a job with no usable description is terminal `unscorable`, and
+    that outranks both the failed op and the keyword floor's 0 — the board must
+    not read a missing-data 0 back as either a rating or a retryable failure
+    (S-A6: 248 of the maintainer's LinkedIn rows are exactly this)."""
+    app, client = app_client
+    with _db(app).repos() as repos:
+        job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="linkedin")
+        op = repos.operations.create("score", {"job_id": job.id})
+        repos.operations.mark_failed(op.id, error="job input is neither a URL…")
+        repos.job_scores.create(
+            job_id=job.id, profile_version=1, score_0_100=0,
+            scorer_impl="scorer-deterministic",
+        )
+        job_id = job.id
+
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    assert rows[job_id]["scoreStatus"] == "unscorable"
 
 
 # ---------------------------------------------------------------------------

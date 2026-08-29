@@ -195,6 +195,8 @@ const pt: DeepPartial<Messages> = {
       olderListing: "Anúncio antigo",
       keywordScoreTitle:
         "Pontuada por palavras-chave (grátis, no dispositivo) — cinza, não é pontuação de IA",
+      unscorableTitle:
+        "Nenhuma descrição da vaga foi capturada para este anúncio, por isso não pode ser pontuado por IA. O 0 cinza significa dados ausentes, não má correspondência.",
     },
     empty: {
       filtered: "Nenhuma vaga corresponde a esses filtros ou busca.",
@@ -599,6 +601,10 @@ const pt: DeepPartial<Messages> = {
       retried: "repetida",
       retry: "Tentar novamente",
       retrying: "Tentando novamente…",
+      retryScoring_one: "Repetir {{count}} pontuação falhada",
+      retryScoring_other: "Repetir {{count}} pontuações falhadas",
+      retryScoringTitle:
+        "Estas vagas gastaram as 3 tentativas de pontuação por IA contra um provedor ativo. Repetir devolve o orçamento delas e o próximo ciclo do agendador as pontua de novo. Vagas sem descrição são ignoradas: nelas repetir não adianta.",
       stop: "Parar",
       stopping: "Parando…",
       restarted: "O app reiniciou durante a geração.",
@@ -1159,23 +1165,6 @@ const pt: DeepPartial<Messages> = {
       dismiss: "Dispensar",
       more_one: "+{{count}} falha anterior não exibida",
       more_other: "+{{count}} falhas anteriores não exibidas",
-    },
-    rescore: {
-      title: "Pontuar vagas novamente com IA?",
-      skipped_one: "({{count}} já tem pontuação de IA para este currículo — pulada.)",
-      skipped_other: "({{count}} já têm pontuação de IA para este currículo — puladas.)",
-      bodyResumeEdit_one:
-        "Seu currículo mudou. Pontuar novamente {{count}} vaga com IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Ou mantenha as pontuações atuais; você pode pontuar novamente a qualquer momento editando seu currículo de novo.",
-      bodyResumeEdit_other:
-        "Seu currículo mudou. Pontuar novamente {{count}} vagas com IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Ou mantenha as pontuações atuais; você pode pontuar novamente a qualquer momento editando seu currículo de novo.",
-      bodyModeSwitch_one:
-        "Pontuar {{count}} vaga do seu quadro que ainda não tem pontuação de IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Vagas novas de varreduras futuras são pontuadas por IA automaticamente de qualquer forma.",
-      bodyModeSwitch_other:
-        "Pontuar as {{count}} vagas do seu quadro que ainda não têm pontuação de IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Vagas novas de varreduras futuras são pontuadas por IA automaticamente de qualquer forma.",
-      busy: "Pontuando novamente…",
-      confirm_one: "Pontuar {{count}} vaga novamente",
-      confirm_other: "Pontuar {{count}} vagas novamente",
-      keepScores: "Manter as pontuações atuais",
     },
   },
 };

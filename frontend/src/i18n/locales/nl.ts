@@ -204,6 +204,8 @@ const nl: DeepPartial<Messages> = {
       scoring: "scoren…",
       olderListing: "Oudere vacature",
       keywordScoreTitle: "Op trefwoorden gescoord (gratis, op het apparaat) — grijs, geen AI-score",
+      unscorableTitle:
+        "Voor deze vacature is geen functieomschrijving opgehaald, dus AI kan er geen score aan geven. De grijze 0 betekent ontbrekende data, geen slechte match.",
     },
     empty: {
       filtered: "Geen vacatures voldoen aan deze filters of zoekopdracht.",
@@ -613,6 +615,10 @@ const nl: DeepPartial<Messages> = {
       retried: "opnieuw geprobeerd",
       retry: "Opnieuw",
       retrying: "Opnieuw proberen…",
+      retryScoring_one: "{{count}} mislukte score opnieuw proberen",
+      retryScoring_other: "{{count}} mislukte scores opnieuw proberen",
+      retryScoringTitle:
+        "Deze vacatures hebben alle 3 de AI-scorepogingen bij een bereikbare provider verbruikt. Opnieuw proberen geeft hun budget terug en de volgende schedulerronde scoort ze opnieuw. Vacatures zonder omschrijving worden overgeslagen — daar helpt opnieuw proberen niet.",
       stop: "Stoppen",
       stopping: "Bezig met stoppen…",
       restarted: "App herstart tijdens het genereren.",
@@ -1175,25 +1181,6 @@ const nl: DeepPartial<Messages> = {
       dismiss: "Sluiten",
       more_one: "+{{count}} eerdere fout niet getoond",
       more_other: "+{{count}} eerdere fouten niet getoond",
-    },
-    rescore: {
-      title: "Vacatures opnieuw scoren met AI?",
-      // Interpolated into the body strings below (with a leading space) when
-      // some jobs already carry an AI score and are skipped.
-      skipped_one: "({{count}} heeft al een AI-score voor dit cv — overgeslagen.)",
-      skipped_other: "({{count}} hebben al een AI-score voor dit cv — overgeslagen.)",
-      bodyResumeEdit_one:
-        "Je cv is gewijzigd. Wil je {{count}} vacature er opnieuw met AI tegen scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Of houd de huidige scores aan; je kunt altijd opnieuw scoren door je cv nogmaals te bewerken.",
-      bodyResumeEdit_other:
-        "Je cv is gewijzigd. Wil je {{count}} vacatures er opnieuw met AI tegen scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Of houd de huidige scores aan; je kunt altijd opnieuw scoren door je cv nogmaals te bewerken.",
-      bodyModeSwitch_one:
-        "De {{count}} vacature op je board zonder AI-score nu scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Nieuwe vacatures uit toekomstige scans worden hoe dan ook automatisch met AI gescoord.",
-      bodyModeSwitch_other:
-        "De {{count}} vacatures op je board zonder AI-score nu scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Nieuwe vacatures uit toekomstige scans worden hoe dan ook automatisch met AI gescoord.",
-      busy: "Opnieuw scoren…",
-      confirm_one: "{{count}} vacature opnieuw scoren",
-      confirm_other: "{{count}} vacatures opnieuw scoren",
-      keepScores: "Huidige scores behouden",
     },
   },
 };

@@ -73,7 +73,9 @@ class JobDTO(BaseModel):
     score: JobScoreDTO | None = None
     # Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): `scored` (a real 0–100) /
     # `pending` (queued or not yet attempted) / `failed` (the score op errored and
-    # none is in flight — the `Score failed` pill, never a perpetual spinner).
+    # none is in flight — the `Score failed` pill, never a perpetual spinner) /
+    # `unscorable` (no usable description, so no tick will ever pick it up —
+    # S-C24 D5).
     score_status: str = Field(default="pending", serialization_alias="scoreStatus")
     # True when this row was inserted by the LATEST succeeded scan — the board's
     # "NEW" badge (maintainer 2026-07-23). Stamped by the board/list routes from
@@ -95,17 +97,6 @@ class BoardPageDTO(BaseModel):
     scan_status: str = Field(serialization_alias="scanStatus")
     last_scan_at: datetime | None = Field(default=None, serialization_alias="lastScanAt")
     scan_error: str | None = Field(default=None, serialization_alias="scanError")
-
-
-class RescorePreviewDTO(BaseModel):
-    """GET /api/jobs/rescore/preview — the AI re-score consent numbers: how
-    many active jobs miss an AI score at the current resume version (what a
-    confirmed run would enqueue) vs already carry one (never re-spent). Both
-    come from the same miss query the run uses, so the prompt's N always
-    equals what actually runs."""
-
-    to_score: int = Field(serialization_alias="toScore")
-    cached: int
 
 
 class ScanProgressDTO(BaseModel):
@@ -174,6 +165,17 @@ class TombstoneResultDTO(BaseModel):
 
     tombstoned: int
     canonical_urls: list[str]
+
+
+class ScoreRetryDTO(BaseModel):
+    """The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
+    many active jobs have spent the whole attempt budget with no AI score, so
+    the button hides when pressing it would do nothing; `reset` on the POST is
+    how many got their budget back. Jobs with no usable description are in
+    neither number — they never spent an attempt (S-A6)."""
+
+    count: int = 0
+    reset: int = 0
 
 
 class ScheduleDTO(BaseModel):
@@ -1059,9 +1061,10 @@ class ContactSyncAccepted(BaseModel):
 class CostTotalsDTO(BaseModel):
     """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
 
-    Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime totals
-    that survive ledger retention — not just the retained ~250 ops. `by_kind` maps
-    each operation kind to its all-time usd spend."""
+    Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime
+    totals that survive any deletion of an operation row. Nothing deletes one
+    today, so the aggregate is empty and the live sum carries it all. `by_kind`
+    maps each operation kind to its all-time usd spend."""
 
     usd: float
     tokens_in: int
@@ -1082,10 +1085,20 @@ def job_score_dto(score: JobScore | None) -> JobScoreDTO | None:
     )
 
 
-def derive_score_status(has_score: bool, op_states: set[str]) -> str:
-    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): a cached score
-    wins; else a queued/running score op means Pending; else a failed op with no
-    score means `Score failed`; else Pending (not yet attempted)."""
+def derive_score_status(has_score: bool, op_states: set[str], *, scorable: bool = True) -> str:
+    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02).
+
+    `unscorable` comes FIRST and outranks a cached score, because such a job
+    does carry one: the keyword floor writes a 0 with a missing-data reason
+    (`MIN_JD_CHARS`), and the AI path refuses it before reaching an engine, so
+    "scored" would read as a real rating of a job we know nothing about. It is
+    terminal until a later scan fills the description in (S-C24 D5, S-A6).
+
+    Then: a cached score wins; else a queued/running score op means Pending;
+    else a failed op with no score means `Score failed`; else Pending (not yet
+    attempted)."""
+    if not scorable:
+        return "unscorable"
     if has_score:
         return "scored"
     if op_states & OP_ACTIVE_STATES:
@@ -1121,9 +1134,18 @@ def derive_work_style(location: str, description: str) -> str:
 def job_dto(
     job: Job, score: JobScore | None = None, *, score_op_states: set[str] | None = None
 ) -> JobDTO:
+    from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
     dto = JobDTO.model_validate(job)
     dto.score = job_score_dto(score)
-    dto.score_status = derive_score_status(score is not None, score_op_states or set())
+    dto.score_status = derive_score_status(
+        score is not None,
+        score_op_states or set(),
+        # The same predicate the planner's eligibility read uses, so what the
+        # board calls unscorable is exactly what no tick will ever pick up
+        # (`JobsRepo.list_active_without_llm_score`).
+        scorable=len(job.description or "") >= MIN_JD_CHARS,
+    )
     dto.work_style = derive_work_style(job.location, job.description)
     return dto
 

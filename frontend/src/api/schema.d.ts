@@ -232,8 +232,59 @@ export interface paths {
          * Empty Trash
          * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL and
          *     hard-delete the rows immediately, bypassing the 7-day TTL.
+         *
+         *     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
+         *     costs an existence check, an insert, and a delete, so on the loop a big
+         *     empty could hold it past the shell's 2 s /healthz window and cost a sidecar
+         *     restart. One session inside the callable, same shape as `board`.
          */
         post: operations["empty_trash_api_jobs_trash_empty_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scoring/retryable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scoring Retryable
+         * @description How many jobs are stuck with a spent scoring budget (S-C24). Counts
+         *     only, never writes.
+         */
+        get: operations["scoring_retryable_api_scoring_retryable_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scoring/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scoring Retry
+         * @description Hand every job that spent its budget the budget back, so the next
+         *     scheduler tick re-plans it. This is the recovery path for a provider-wide
+         *     failure the per-job attempt cap can't tell apart from a bad job (an expired
+         *     key, an exhausted quota). It enqueues nothing itself: the tick does the
+         *     work, batched, off this request. Jobs with no usable description are
+         *     untouched — retrying one can't help until a scan fills the JD in (S-A6).
+         */
+        post: operations["scoring_retry_api_scoring_retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -252,54 +303,6 @@ export interface paths {
         put?: never;
         /** Upsert Profile */
         post: operations["upsert_profile_api_profile_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/rescore/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Rescore Preview
-         * @description The consent numbers behind every "Re-score with AI?" prompt (resume
-         *     edit, scoring-mode switch). Counts only — never enqueues, never spends.
-         *     A grey keyword score is not "cached" here; only a real AI score at the
-         *     current resume version is.
-         */
-        get: operations["rescore_preview_api_jobs_rescore_preview_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/rescore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rescore Board
-         * @description Re-score the active board against the CURRENT master resume — the action
-         *     behind every "Re-score with AI?" confirm (resume edit, scoring-mode
-         *     switch). Keyword mode refreshes the whole board inline (free). AI mode
-         *     enqueues one LLM score op per cache MISS only — a job already AI-scored at
-         *     the current resume version is never re-spent (maintainer 2026-07-23) — so
-         *     the call is idempotent and safe from any entry point.
-         */
-        post: operations["rescore_board_api_jobs_rescore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -742,10 +745,11 @@ export interface paths {
          * Cost Totals
          * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
          *
-         *     Live-ledger sum + the persisted pruned-ops aggregate, so the tiles show
-         *     lifetime spend that survives the ~250-op ledger retention — not just the
-         *     retained window (NFR-COST-02: the running spend total stays honest as an
-         *     install ages).
+         *     Live-ledger sum + the persisted pruned-ops aggregate (NFR-COST-02: the
+         *     running spend total stays honest as an install ages). Since 2026-08-24
+         *     nothing prunes, so the aggregate sits at zero and the live sum carries every
+         *     operation ever recorded; the addition stays because a future S-C22 deletion
+         *     policy has to be able to fold spend forward again.
          */
         get: operations["cost_totals_api_cost_totals_get"];
         put?: never;
@@ -807,6 +811,12 @@ export interface paths {
          *     default, `candidate` rows (discovered-but-not-reached — off the kanban).
          *     `archived=true` flips it to the "Deleted Contacts" recovery view: only the
          *     archived rows, so a user can restore a contact they removed.
+         *
+         *     Bounded, batched, and off the event loop (S-C8). It used to read every
+         *     contact row with no LIMIT and then run one outreach-log query per row, so a
+         *     roster grown by discovery (one `candidate` per person found, at 10 people a
+         *     company) cost 1 + N queries on the loop. Both filters now live in the repo
+         *     query so the cap bounds the population the caller actually wants.
          */
         get: operations["list_contacts_api_contacts_get"];
         put?: never;
@@ -1765,6 +1775,12 @@ export interface paths {
          * @description Aggregates existing records only (no migration): stored `jobs` ×
          *     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
          *     scans' `result_ref.per_source` fetch/keep/error/latency numbers.
+         *
+         *     Off the event loop (S-C7): the fold walks every job the board can hold
+         *     (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
+         *     install could hold it past the shell's 2 s /healthz window and cost a
+         *     sidecar restart. `board` and `list_jobs` got this in the F-H2 pass; this
+         *     route is the one it missed.
          */
         get: operations["discovery_analytics_api_discovery_analytics_get"];
         put?: never;
@@ -2378,9 +2394,10 @@ export interface components {
          * CostTotalsDTO
          * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
          *
-         *     Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime totals
-         *     that survive ledger retention — not just the retained ~250 ops. `by_kind` maps
-         *     each operation kind to its all-time usd spend.
+         *     Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime
+         *     totals that survive any deletion of an operation row. Nothing deletes one
+         *     today, so the aggregate is empty and the live sum carries it all. `by_kind`
+         *     maps each operation kind to its all-time usd spend.
          */
         CostTotalsDTO: {
             /** Usd */
@@ -3336,20 +3353,6 @@ export interface components {
             in_flight_contact_ids?: string[];
         };
         /**
-         * RescorePreviewDTO
-         * @description GET /api/jobs/rescore/preview — the AI re-score consent numbers: how
-         *     many active jobs miss an AI score at the current resume version (what a
-         *     confirmed run would enqueue) vs already carry one (never re-spent). Both
-         *     come from the same miss query the run uses, so the prompt's N always
-         *     equals what actually runs.
-         */
-        RescorePreviewDTO: {
-            /** Toscore */
-            toScore: number;
-            /** Cached */
-            cached: number;
-        };
-        /**
          * ScanProgressDTO
          * @description Board-level scan + scoring progress (observed-issue #2 backend). A small,
          *     schema-free read the board polls while a scan runs — derived entirely from
@@ -3410,6 +3413,26 @@ export interface components {
             enabled?: boolean | null;
             /** Interval Minutes */
             interval_minutes?: number | null;
+        };
+        /**
+         * ScoreRetryDTO
+         * @description The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
+         *     many active jobs have spent the whole attempt budget with no AI score, so
+         *     the button hides when pressing it would do nothing; `reset` on the POST is
+         *     how many got their budget back. Jobs with no usable description are in
+         *     neither number — they never spent an attempt (S-A6).
+         */
+        ScoreRetryDTO: {
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+            /**
+             * Reset
+             * @default 0
+             */
+            reset: number;
         };
         /** SettingsDTO */
         SettingsDTO: {
@@ -4040,6 +4063,46 @@ export interface operations {
             };
         };
     };
+    scoring_retryable_api_scoring_retryable_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScoreRetryDTO"];
+                };
+            };
+        };
+    };
+    scoring_retry_api_scoring_retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScoreRetryDTO"];
+                };
+            };
+        };
+    };
     get_profile_api_profile_get: {
         parameters: {
             query?: never;
@@ -4089,48 +4152,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rescore_preview_api_jobs_rescore_preview_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RescorePreviewDTO"];
-                };
-            };
-        };
-    };
-    rescore_board_api_jobs_rescore_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
                 };
             };
         };

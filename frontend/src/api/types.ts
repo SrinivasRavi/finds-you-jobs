@@ -40,7 +40,10 @@ export type BoardState = "active" | "trashed" | "expired";
 /** Score lifecycle for a board row (FR-JB-07 / NFR-OFFLINE-02):
  *  `scored` (real 0–100) / `pending` (queued or not yet attempted) /
  *  `failed` (the score op errored, none in flight — the `Score failed` pill). */
-export type ScoreStatus = "scored" | "pending" | "failed";
+/** `unscorable` = no usable description, so no scheduler tick will ever pick
+ *  the job up and its grey 0 is a missing-data marker, not a rating
+ *  (S-C24 D5 / S-A6). */
+export type ScoreStatus = "scored" | "pending" | "failed" | "unscorable";
 
 /**
  * Thrown by `previewJob` / `addJobByUrl` when the pasted URL was permanently
@@ -97,14 +100,6 @@ export interface Job {
   is_new: boolean;
   saved: boolean;
   board_state: BoardState;
-}
-
-/** GET /api/jobs/rescore/preview — the AI re-score consent numbers: cache
- *  misses a confirmed run would enqueue vs jobs already AI-scored at the
- *  current resume version (never re-spent). */
-export interface RescorePreview {
-  to_score: number;
-  cached: number;
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */
@@ -996,8 +991,8 @@ export interface DevResult {
 }
 
 /** All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
- *  Live-ledger sum + the pruned-ops aggregate, so the figures survive the ~250-op
- *  ledger retention and stay honest as an install ages. Mirrors CostTotalsDTO. */
+ *  Live-ledger sum + the pruned-ops aggregate, so the figures stay honest as an
+ *  install ages even if operations are deleted. Mirrors CostTotalsDTO. */
 export interface CostTotals {
   usd: number;
   tokens_in: number;

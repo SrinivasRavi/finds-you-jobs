@@ -17,8 +17,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
@@ -42,12 +43,16 @@ from .registry.operations import backfill_keyword_scores
 from .runner import OperationRunner
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
-from .security import migrate_plaintext_session
+from .security import AppKeyUnavailable, migrate_plaintext_session, resolve_app_key_once
 from .seed import seed_defaults
 from .watchdog import watch_parent
 
 # section 4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
 SHUTDOWN_DRAIN_SECONDS = 10.0
+# How often the idle browser-surface reaper looks. Well under the surface's own
+# IDLE_SHUTDOWN_SECONDS, so a surface is closed within roughly a minute of
+# crossing it rather than waiting a whole reap period.
+SURFACE_REAP_INTERVAL_SECONDS = 60.0
 
 # The webview loads from tauri://localhost (macOS/Linux) or
 # http://tauri.localhost (Windows/Android) in prod; the browser-dev path
@@ -117,6 +122,12 @@ def create_app(
         setup_flight_recorder()
         db = Database(db_url)
         seed_defaults(db)  # first-run portals config + (disabled) schedules
+        # Resolve the app key once, on a worker thread, before anything else can
+        # ask for it. `keyring` blocks and can raise a GUI prompt; the shell
+        # health-polls us on a 2s timeout and kills the process group on a single
+        # miss, so this must not be the event loop's first keychain call. Every
+        # later `get_app_key` is a cache hit.
+        await resolve_app_key_once(resolve_data_dir(data_dir))
         # NFR-SEC-01: seal a pre-encryption plaintext LinkedIn session file if one
         # exists (roundtrip-verified, atomic; no-op when absent/sealed — and it
         # never touches the OS keychain unless a file is present).
@@ -262,6 +273,22 @@ def create_app(
             scheduler_task = asyncio.create_task(scheduler.run_forever())
         app.state.scheduler = scheduler
 
+        # Close browser surfaces nobody is watching. A surface is an OS thread
+        # plus a real Chrome plus its resident memory, and nothing used to
+        # reclaim one, so a single visit to the LinkedIn view kept a browser
+        # alive for the whole session. `reap_idle` blocks (it joins each
+        # surface's thread), hence the worker thread; it is a no-op while a
+        # viewer is attached or an op is driving the lane.
+        async def _reap_idle_surfaces() -> None:
+            while True:
+                await asyncio.sleep(SURFACE_REAP_INTERVAL_SECONDS)
+                try:
+                    await asyncio.to_thread(browser.reap_idle)
+                except Exception:  # noqa: BLE001 — reclaiming must never kill boot
+                    log.exception("idle browser-surface reap failed")
+
+        reaper_task = asyncio.create_task(_reap_idle_surfaces())
+
         watchdog_task: asyncio.Task[None] | None = None
         if original_ppid is not None:
 
@@ -286,7 +313,7 @@ def create_app(
         finally:
             if scheduler is not None:
                 scheduler.stop()
-            for task in (scheduler_task, watchdog_task):
+            for task in (scheduler_task, watchdog_task, reaper_task):
                 if task is not None:
                     task.cancel()
                     try:
@@ -310,6 +337,18 @@ def create_app(
     # despite the recorder being documented as the net for failures. Log-and-
     # reraise only — the 500 response/propagation stays exactly as before.
     app.add_middleware(_LogUnhandledMiddleware)
+
+    @app.exception_handler(AppKeyUnavailable)
+    async def _app_key_unavailable(
+        _request: Request, exc: AppKeyUnavailable
+    ) -> JSONResponse:
+        """Say what happened instead of a bare 500. The message names the
+        keychain, the key file path, and the recovery, and it is the only thing
+        standing between the user and silently unreadable API keys — without
+        this handler it reached them as "Internal Server Error" and lived only
+        in `logs/sidecar.log`. 503, because the install is fine and the secret
+        store is what's unavailable; the frontend renders `detail` verbatim."""
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     app.state.token = token
     app.state.original_ppid = original_ppid

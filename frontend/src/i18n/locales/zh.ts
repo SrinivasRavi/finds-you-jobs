@@ -188,6 +188,8 @@ const zh: DeepPartial<Messages> = {
       scoring: "评分中…",
       olderListing: "较早的职位",
       keywordScoreTitle: "关键词评分（免费、本机运行）— 灰色，非 AI 评分",
+      unscorableTitle:
+        "该职位未能抓取到职位描述，因此无法进行 AI 评分。灰色的 0 表示数据缺失，而不是匹配度差。",
     },
     empty: {
       filtered: "没有符合当前筛选或搜索的职位。",
@@ -586,6 +588,10 @@ const zh: DeepPartial<Messages> = {
       retried: "已重试",
       retry: "重试",
       retrying: "重试中…",
+      retryScoring_one: "重试 {{count}} 个失败评分",
+      retryScoring_other: "重试 {{count}} 个失败评分",
+      retryScoringTitle:
+        "这些职位在提供方可用的情况下用完了全部 3 次 AI 评分尝试。重试会归还它们的尝试次数，下一次调度将重新评分。没有职位描述的会被跳过，重试对它们没有用。",
       stop: "停止",
       stopping: "正在停止…",
       restarted: "生成期间应用重启了。",
@@ -1131,17 +1137,6 @@ const zh: DeepPartial<Messages> = {
       body: "该更改未能保存——应用在与本地后端通信时出错。",
       dismiss: "关闭",
       more_other: "另有 {{count}} 个较早的失败未显示",
-    },
-    rescore: {
-      title: "用 AI 重新评分这些职位？",
-      skipped_other: "（{{count}} 个已有针对此简历的 AI 评分 — 已跳过。）",
-      bodyResumeEdit_other:
-        "你的简历已更改。用 AI 根据新简历重新为 {{count}} 个职位评分？{{skipped}} 这会使用你的 LLM 密钥 — 每个职位一次调用。也可以保留当前分数；之后再次编辑简历即可随时重新评分。",
-      bodyModeSwitch_other:
-        "为职位板上还没有 AI 评分的 {{count}} 个职位评分？{{skipped}} 这会使用你的 LLM 密钥 — 每个职位一次调用。无论如何，未来扫描到的新职位都会自动进行 AI 评分。",
-      busy: "重新评分中…",
-      confirm_other: "重新评分 {{count}} 个职位",
-      keepScores: "保留当前分数",
     },
   },
 };

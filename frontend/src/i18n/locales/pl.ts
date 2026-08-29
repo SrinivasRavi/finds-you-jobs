@@ -202,6 +202,8 @@ const pl: DeepPartial<Messages> = {
       olderListing: "Starsze ogłoszenie",
       keywordScoreTitle:
         "Ocenione wg słów kluczowych (darmowo, na urządzeniu) — szara, to nie ocena AI",
+      unscorableTitle:
+        "Dla tego ogłoszenia nie pobrano opisu stanowiska, więc SI nie może go ocenić. Szare 0 oznacza brak danych, a nie słabe dopasowanie.",
     },
     empty: {
       filtered: "Żadna oferta nie pasuje do tych filtrów lub wyszukiwania.",
@@ -613,6 +615,10 @@ const pl: DeepPartial<Messages> = {
       retried: "ponowiono",
       retry: "Ponów",
       retrying: "Ponawianie…",
+      retryScoring_one: "Ponów {{count}} nieudaną ocenę",
+      retryScoring_other: "Ponów {{count}} nieudanych ocen",
+      retryScoringTitle:
+        "Te oferty zużyły wszystkie 3 próby oceny przez SI wobec działającego dostawcy. Ponowienie zwraca im budżet, a następny cykl harmonogramu oceni je ponownie. Oferty bez opisu są pomijane — tam ponowienie nic nie da.",
       stop: "Zatrzymaj",
       stopping: "Zatrzymywanie…",
       restarted: "Aplikacja została uruchomiona ponownie w trakcie generowania.",
@@ -1200,37 +1206,6 @@ const pl: DeepPartial<Messages> = {
         more_few: "+{{count}} wcześniejsze błędy nie są pokazane",
         more_many: "+{{count}} wcześniejszych błędów nie jest pokazanych",
       },
-    },
-    rescore: {
-      title: "Ocenić oferty ponownie z użyciem AI?",
-      skipped_one: "({{count}} ma już ocenę AI dla tego CV — pominięto.)",
-      ...{
-        skipped_few: "({{count}} mają już ocenę AI dla tego CV — pominięto.)",
-        skipped_many: "({{count}} ma już ocenę AI dla tego CV — pominięto.)",
-      },
-      bodyResumeEdit_one:
-        "Twoje CV się zmieniło. Ocenić ponownie {{count}} ofertę względem niego z użyciem AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Możesz też zachować obecne oceny; ponowną ocenę uruchomisz w każdej chwili, edytując CV ponownie.",
-      ...{
-        bodyResumeEdit_few:
-          "Twoje CV się zmieniło. Ocenić ponownie {{count}} oferty względem niego z użyciem AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Możesz też zachować obecne oceny; ponowną ocenę uruchomisz w każdej chwili, edytując CV ponownie.",
-        bodyResumeEdit_many:
-          "Twoje CV się zmieniło. Ocenić ponownie {{count}} ofert względem niego z użyciem AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Możesz też zachować obecne oceny; ponowną ocenę uruchomisz w każdej chwili, edytując CV ponownie.",
-      },
-      bodyModeSwitch_one:
-        "Ocenić {{count}} ofertę na twojej tablicy, która nie ma jeszcze oceny AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Nowe oferty z przyszłych skanów i tak są oceniane przez AI automatycznie.",
-      ...{
-        bodyModeSwitch_few:
-          "Ocenić {{count}} oferty na twojej tablicy, które nie mają jeszcze oceny AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Nowe oferty z przyszłych skanów i tak są oceniane przez AI automatycznie.",
-        bodyModeSwitch_many:
-          "Ocenić {{count}} ofert na twojej tablicy, które nie mają jeszcze oceny AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Nowe oferty z przyszłych skanów i tak są oceniane przez AI automatycznie.",
-      },
-      busy: "Ponowne ocenianie…",
-      confirm_one: "Oceń ponownie {{count}} ofertę",
-      ...{
-        confirm_few: "Oceń ponownie {{count}} oferty",
-        confirm_many: "Oceń ponownie {{count}} ofert",
-      },
-      keepScores: "Zachowaj obecne oceny",
     },
   },
 };

@@ -194,6 +194,8 @@ const de: DeepPartial<Messages> = {
       scoring: "wird bewertet…",
       olderListing: "Ältere Anzeige",
       keywordScoreTitle: "Keyword-bewertet (gratis, auf dem Gerät) — grau, kein KI-Score",
+      unscorableTitle:
+        "Für dieses Inserat wurde keine Stellenbeschreibung erfasst, es lässt sich also nicht per KI bewerten. Die graue 0 heißt: Daten fehlen, nicht schlechte Passung.",
     },
     empty: {
       filtered: "Keine Jobs passen zu diesen Filtern oder zur Suche.",
@@ -596,6 +598,10 @@ const de: DeepPartial<Messages> = {
       retried: "wiederholt",
       retry: "Wiederholen",
       retrying: "Wird wiederholt…",
+      retryScoring_one: "{{count}} fehlgeschlagene Bewertung wiederholen",
+      retryScoring_other: "{{count}} fehlgeschlagene Bewertungen wiederholen",
+      retryScoringTitle:
+        "Diese Jobs haben alle 3 KI-Bewertungsversuche bei einem erreichbaren Anbieter verbraucht. Wiederholen gibt ihr Budget zurück, und der nächste Scheduler-Durchlauf bewertet sie neu. Jobs ohne Beschreibung werden übersprungen — dort hilft kein neuer Versuch.",
       stop: "Stopp",
       stopping: "Wird gestoppt…",
       restarted: "App wurde während der Generierung neu gestartet.",
@@ -1150,23 +1156,6 @@ const de: DeepPartial<Messages> = {
       dismiss: "Schließen",
       more_one: "+{{count}} früherer Fehlschlag nicht angezeigt",
       more_other: "+{{count}} frühere Fehlschläge nicht angezeigt",
-    },
-    rescore: {
-      title: "Jobs mit KI neu bewerten?",
-      skipped_one: "({{count}} hat für diesen Lebenslauf bereits einen KI-Score — übersprungen.)",
-      skipped_other: "({{count}} haben für diesen Lebenslauf bereits einen KI-Score — übersprungen.)",
-      bodyResumeEdit_one:
-        "Dein Lebenslauf hat sich geändert. {{count}} Job mit KI neu dagegen bewerten?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Oder behalte die aktuellen Scores; du kannst jederzeit neu bewerten, indem du deinen Lebenslauf erneut bearbeitest.",
-      bodyResumeEdit_other:
-        "Dein Lebenslauf hat sich geändert. {{count}} Jobs mit KI neu dagegen bewerten?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Oder behalte die aktuellen Scores; du kannst jederzeit neu bewerten, indem du deinen Lebenslauf erneut bearbeitest.",
-      bodyModeSwitch_one:
-        "Den {{count}} Job auf deinem Board bewerten, der noch keinen KI-Score hat?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Neue Jobs aus künftigen Scans werden so oder so automatisch KI-bewertet.",
-      bodyModeSwitch_other:
-        "Die {{count}} Jobs auf deinem Board bewerten, die noch keinen KI-Score haben?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Neue Jobs aus künftigen Scans werden so oder so automatisch KI-bewertet.",
-      busy: "Wird neu bewertet…",
-      confirm_one: "{{count}} Job neu bewerten",
-      confirm_other: "{{count}} Jobs neu bewerten",
-      keepScores: "Aktuelle Scores behalten",
     },
   },
 };
