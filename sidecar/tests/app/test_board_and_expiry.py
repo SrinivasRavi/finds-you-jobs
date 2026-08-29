@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from sidecar.app.db import Database
 from sidecar.app.db.base import now_utc
+from sidecar.app.db.models import SCORE_MAX_ATTEMPTS
 from sidecar.app.main import create_app
 from sidecar.app.registry.persistence import age_expired_jobs
 
@@ -68,9 +69,12 @@ def _job(repos: object, job_id: str):  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
-def test_board_marks_score_failed_when_score_op_failed(
+def test_board_marks_score_failed_only_once_the_budget_is_spent(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
+    """A failed score op with attempts left is NOT failed: the next tick retries
+    it. The pill used to say dead while the planner said pending, because it
+    read the ledger for a failed op instead of the job's own attempt count."""
     app, client = app_client
     with _db(app).repos() as repos:
         job = repos.jobs.create(
@@ -78,7 +82,15 @@ def test_board_marks_score_failed_when_score_op_failed(
         )
         op = repos.operations.create("score", {"job_id": job.id})
         repos.operations.mark_failed(op.id, error="no connectivity")
+        repos.jobs.record_score_failure(job.id, "no connectivity")
         job_id = job.id
+
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    assert rows[job_id]["scoreStatus"] == "pending"  # 2 attempts left
+
+    with _db(app).repos() as repos:
+        for _ in range(SCORE_MAX_ATTEMPTS - 1):
+            repos.jobs.record_score_failure(job_id, "no connectivity")
 
     rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
     assert rows[job_id]["scoreStatus"] == "failed"  # never a perpetual Pending

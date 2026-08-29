@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import Database
+from ..db.models import SCORE_MAX_ATTEMPTS
 from ..registry.persistence import scoring_mode
 
 # A score op IN FLIGHT at the current version. Only these — a job is never
@@ -27,12 +28,6 @@ from ..registry.persistence import scoring_mode
 # `Job.score_attempts` now, which counts only failures that actually reached the
 # provider, so a provider outage costs a job nothing.
 _IN_FLIGHT = {"queued", "running"}
-
-# How many provider-reached failures a job gets before the planner stops
-# offering it. Bounds the spend on a job that keeps failing against a live
-# provider; a job that can never be scored at all (no description) never gets
-# here, because the eligibility read excludes it outright.
-SCORE_MAX_ATTEMPTS = 3
 
 
 def plan_schedule(db: Database, kind: str) -> list[tuple[str, dict[str, Any]]]:

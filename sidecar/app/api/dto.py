@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..db.models import (
     OP_ACTIVE_STATES,
+    SCORE_MAX_ATTEMPTS,
     Application,
     Artifact,
     Contact,
@@ -1085,25 +1086,28 @@ def job_score_dto(score: JobScore | None) -> JobScoreDTO | None:
     )
 
 
-def derive_score_status(has_score: bool, op_states: set[str], *, scorable: bool = True) -> str:
-    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02).
+def derive_score_status(
+    has_score: bool, op_states: set[str], *, scorable: bool = True, attempts: int = 0
+) -> str:
+    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02), in precedence
+    order: `unscorable` (no usable description, so no tick will ever pick it up,
+    S-C24 D5), `scored`, `pending` while an op is in flight, `failed` once the
+    attempt budget is spent, `pending` otherwise.
 
-    `unscorable` comes FIRST and outranks a cached score, because such a job
-    does carry one: the keyword floor writes a 0 with a missing-data reason
-    (`MIN_JD_CHARS`), and the AI path refuses it before reaching an engine, so
-    "scored" would read as a real rating of a job we know nothing about. It is
-    terminal until a later scan fills the description in (S-C24 D5, S-A6).
+    `unscorable` outranks `scored` because such a job does carry a score: the
+    keyword floor writes a 0 with a missing-data reason, so "scored" would read
+    as a real rating of a job we know nothing about.
 
-    Then: a cached score wins; else a queued/running score op means Pending;
-    else a failed op with no score means `Score failed`; else Pending (not yet
-    attempted)."""
+    `failed` counts attempts rather than asking the ledger for a failed op,
+    because a failed op with budget left is not failed — the next tick retries
+    it, and the pill used to say dead while the system said pending."""
     if not scorable:
         return "unscorable"
     if has_score:
         return "scored"
     if op_states & OP_ACTIVE_STATES:
         return "pending"
-    if "failed" in op_states:
+    if attempts >= SCORE_MAX_ATTEMPTS:
         return "failed"
     return "pending"
 
@@ -1145,6 +1149,7 @@ def job_dto(
         # board calls unscorable is exactly what no tick will ever pick up
         # (`JobsRepo.list_active_without_llm_score`).
         scorable=len(job.description or "") >= MIN_JD_CHARS,
+        attempts=job.score_attempts,
     )
     dto.work_style = derive_work_style(job.location, job.description)
     return dto
