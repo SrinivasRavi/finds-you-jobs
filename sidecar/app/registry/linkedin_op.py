@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sidecar.modules.networker.types import NetworkerError
 from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
@@ -33,6 +33,9 @@ from ..events import make_event
 from . import networker_ops
 from .networker_ops import linkedin_feature_flags, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
+
+if TYPE_CHECKING:
+    from sidecar.modules.scraper.types import NormalizedJob, SourceReport
 
 # 60-day never-accepted auto-archive window (US-NW-11 / FR-NW-13).
 STALE_CONTACT_DAYS = 60
@@ -223,6 +226,29 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
 # ---------------------------------------------------------------------------
 
 
+
+def _fill_descriptions(jobs: list[NormalizedJob], report: SourceReport) -> None:
+    """Fetch the real JD for rows the logged-in search leaves empty (S-A6).
+
+    The search returns cards: title, company, location, url, no body. `scan()`
+    has an enrich phase for exactly this and the logged-in path never had one,
+    which is why 248 of 248 rows on the maintainer's install had a 0-char
+    description and could not be AI-scored at all. Same helper the guest adapter
+    uses, and it is an ANONYMOUS request that carries no session, so it costs the
+    LinkedIn account nothing; the bound is HTTP politeness, not account safety.
+    A failed fetch keeps the row and records why."""
+    from sidecar.modules.scraper.adapters import linkedin_guest
+    from sidecar.modules.scraper.http import Fetcher
+    from sidecar.modules.scraper.scraper import ENRICH_CAP
+
+    fetcher = Fetcher(usage=report.usage)
+    for job in [j for j in jobs if not j.description][:ENRICH_CAP]:
+        try:
+            job.description = linkedin_guest.fetch_detail(job, fetcher)
+        except Exception as exc:  # noqa: BLE001 — one bad row never fails a search
+            report.errors.append(f"enrich {job.canonical_url}: {exc}")
+
+
 def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """One-shot logged-in LinkedIn job search (discovery-expansion #6).
 
@@ -366,6 +392,9 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
         seen.add(job.canonical_url)
         deduped.append(job)
     report.kept = len(deduped)
+
+    if not dry_run:
+        _fill_descriptions(deduped, report)
 
     if not dry_run:
         with ctx.db.repos() as repos:

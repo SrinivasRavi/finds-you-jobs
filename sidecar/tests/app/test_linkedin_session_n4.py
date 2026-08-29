@@ -283,8 +283,28 @@ def _search_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
     )
 
 
+# The logged-in search fills each card's missing JD from LinkedIn's anonymous
+# per-posting endpoint (S-A6). No test may make that call for real.
+SEARCH_JD = (
+    "Backend Engineer at Acme. You will design and operate Python services on "
+    "AWS, own Postgres schemas, and review other engineers' work. Requirements: "
+    "5+ years of backend experience, strong SQL, and production ownership."
+)
+
+
 @pytest.fixture
-def search_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+def no_live_jd_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sidecar.modules.scraper.adapters import linkedin_guest
+
+    monkeypatch.setattr(
+        linkedin_guest, "fetch_detail", lambda job, fetcher: SEARCH_JD
+    )
+
+
+@pytest.fixture
+def search_client(
+    tmp_path: Path, no_live_jd_fetch: None
+) -> Iterator[tuple[FastAPI, TestClient]]:
     yield from _search_client(tmp_path)
 
 
@@ -366,6 +386,61 @@ def test_linkedin_search_persists_into_the_feed(search_client) -> None:
     )
 
 
+def test_linkedin_search_fills_the_missing_job_descriptions(search_client) -> None:
+    """S-A6: the logged-in search returns cards with no JD body, and this path
+    had no enrich phase, so 248 of 248 rows on the maintainer's install stored a
+    0-char description and could never be AI-scored. `scan()` had solved this
+    for every other adapter."""
+    from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
+    app, client = search_client
+    _connect(app, client)
+    _enable_job_search(client)
+    _set_prefs(client)
+
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    wait_for_state(app.state.db, resp.json()["id"], "succeeded")
+
+    jobs = client.get("/api/jobs", headers=AUTH).json()
+    landed = [j for j in jobs if j["canonical_url"].endswith(("/111", "/222"))]
+    assert len(landed) == 2
+    for job in landed:
+        assert job["description"] == SEARCH_JD
+        # Long enough to be planned rather than parked as unscorable.
+        assert len(job["description"]) >= MIN_JD_CHARS
+        assert job["scoreStatus"] != "unscorable"
+
+
+def test_linkedin_search_keeps_a_row_whose_jd_fetch_failed(
+    search_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A posting that is authwalled or gone must not lose its row: the card is
+    still a real listing, it just lands unscorable with the reason recorded."""
+    from sidecar.modules.scraper.adapters import linkedin_guest
+
+    def _boom(job, fetcher):  # type: ignore[no-untyped-def]
+        raise RuntimeError("403 from the guest endpoint")
+
+    monkeypatch.setattr(linkedin_guest, "fetch_detail", _boom)
+
+    app, client = search_client
+    _connect(app, client)
+    _enable_job_search(client)
+    _set_prefs(client)
+
+    resp = client.post("/api/linkedin/search", headers=AUTH)
+    wait_for_state(app.state.db, resp.json()["id"], "succeeded")
+
+    jobs = client.get("/api/jobs", headers=AUTH).json()
+    landed = [j for j in jobs if j["canonical_url"].endswith(("/111", "/222"))]
+    assert len(landed) == 2
+    assert all(j["scoreStatus"] == "unscorable" for j in landed)
+    with app.state.db.repos() as repos:
+        op = repos.operations.get(resp.json()["id"])
+        errors = (op.result_ref or {})["per_source"]["linkedin:search"]["errors"]
+    assert any("403 from the guest endpoint" in e for e in errors)
+
+
 def test_linkedin_search_carries_no_size_knob(search_client) -> None:
     """One page of 25 is the package invariant (`pacing.MAX_JOBS_PER_SEARCH`) —
     the route accepts no `limit` and the op snapshot carries only `mode`."""
@@ -434,7 +509,7 @@ def _paged_driver() -> FakeVoyagerDriver:
 
 @pytest.fixture
 def paged_search_client(
-    tmp_path: Path,
+    tmp_path: Path, no_live_jd_fetch: None
 ) -> Iterator[tuple[FastAPI, TestClient, FakeVoyagerDriver]]:
     driver = _paged_driver()
     for app, client in _make_client(tmp_path, lambda tier: driver):
