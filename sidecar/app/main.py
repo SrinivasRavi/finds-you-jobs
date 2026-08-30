@@ -237,8 +237,11 @@ def create_app(
                 backfill_keyword_scores(db)
             except Exception:  # noqa: BLE001 — the floor must never break the chain
                 log.exception("keyword floor after scan failed")
-            for op_kind, snapshot in plan_score_new(db):
-                runner.submit(op_kind, snapshot)
+            # One operation per job still (D4 dropped: a row is a runner slot,
+            # so collapsing them would serialise scoring), but inserted in one
+            # transaction with one pump. Measured at 1,000 jobs: 1,487 ms in a
+            # submit loop against 79 ms here.
+            runner.submit_many(plan_score_new(db))
 
         runner.on_success = _chain_scan_to_scores
         runner.start()  # boot recovery (NFR-LONG-02) + first pump
