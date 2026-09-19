@@ -47,7 +47,7 @@ from sidecar.packages.referral_outreach import PacingProfile, plan_for_membershi
 
 from ..db.base import now_utc
 from ..db.database import resolve_data_dir
-from ..db.models import OP_ACTIVE_STATES, OP_ALL_STATES
+from ..db.models import CONTACT_ENGAGED_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
@@ -886,9 +886,21 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         if result.sent and not dry_run:
             # Flip onto the kanban. A 1st-degree contact is already connected —
             # a DM lands them in Accepted; a cold connect-note lands them in Sent.
+            #
+            # S-N4: this used to write "accepted" unconditionally, erasing the
+            # fact that a contact had ever written back. A DM we just sent means
+            # ours is the last message, so anyone who has replied before belongs
+            # in `pending_their_response`, never back in `accepted`.
             if is_first_degree:
+                row = repos.contacts.get(contact_id)
+                payload = (row.profile_payload or {}) if row else {}
+                replied = bool(payload.get("first_replied_at"))
+                in_thread = bool(row and row.connection_status in CONTACT_ENGAGED_STATUSES)
                 repos.contacts.update(
-                    contact_id, connection_status="accepted",
+                    contact_id,
+                    connection_status=(
+                        "pending_their_response" if (replied or in_thread) else "accepted"
+                    ),
                     sent_at=now, accepted_at=now,
                 )
             else:

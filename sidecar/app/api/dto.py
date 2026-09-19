@@ -631,7 +631,8 @@ class ContactCreate(BaseModel):
     name: str = ""
     current_company: str = ""
     current_role: str = ""
-    # One of the live kanban columns (sent|accepted|engagement|converted).
+    # One of the live kanban columns (sent | accepted | pending_our_response |
+    # pending_their_response | converted).
     connection_status: str = "sent"
     audience_tag: str = "other"
 

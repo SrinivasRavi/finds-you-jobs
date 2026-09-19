@@ -46,7 +46,8 @@ import { type LinkedInPillState, type LinkedInPillTone, linkedInStatusPill } fro
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
   { id: "sent", label: "networking.columns.sent", dot: "bg-ink-3", empty: "networking.columnEmpty.sent" },
   { id: "accepted", label: "networking.columns.accepted", dot: "bg-accent", empty: "networking.columnEmpty.accepted" },
-  { id: "engagement", label: "networking.columns.engagement", dot: "bg-warn", empty: "networking.columnEmpty.engagement" },
+  { id: "pending_our_response", label: "networking.columns.pendingOurResponse", dot: "bg-warn", empty: "networking.columnEmpty.pendingOurResponse" },
+  { id: "pending_their_response", label: "networking.columns.pendingTheirResponse", dot: "bg-accent-2", empty: "networking.columnEmpty.pendingTheirResponse" },
   { id: "ghosted", label: "networking.columns.ghosted", dot: "bg-bad", empty: "networking.columnEmpty.ghosted" },
   { id: "converted", label: "networking.columns.converted", dot: "bg-good", empty: "networking.columnEmpty.converted" },
 ];
@@ -727,7 +728,12 @@ function AddContactModal({ onClose }: { onClose: () => void }) {
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none">
             <option value="sent">{t("networking.add.optionSent")}</option>
             <option value="accepted">{t("networking.add.optionAccepted")}</option>
-            <option value="engagement">{t("networking.add.optionEngagement")}</option>
+            <option value="pending_our_response">
+              {t("networking.add.optionPendingOurResponse")}
+            </option>
+            <option value="pending_their_response">
+              {t("networking.add.optionPendingTheirResponse")}
+            </option>
             <option value="converted">{t("networking.add.optionConverted")}</option>
           </select>
         </Field>

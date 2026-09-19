@@ -71,14 +71,16 @@ const networking = {
   columns: {
     sent: "Sent",
     accepted: "Accepted",
-    engagement: "Engagement",
+    pendingOurResponse: "Your reply owed",
+    pendingTheirResponse: "Waiting on them",
     ghosted: "Ghosted",
     converted: "Converted",
   },
   columnEmpty: {
     sent: "Awaiting accepts — keep sending.",
     accepted: "Accepted, awaiting first reply.",
-    engagement: "Active conversation — nudge as needed.",
+    pendingOurResponse: "They wrote last — your reply is owed.",
+    pendingTheirResponse: "You wrote last — waiting on them.",
     ghosted: "No activity for 7+ days.",
     converted: "They referred you or intro'd.",
   },
@@ -142,7 +144,18 @@ const networking = {
         contextBody:
           "Glad we're connected. I'm exploring new roles right now and would really value any pointers you could share about your team.",
       },
-      engagement: {
+      pendingTheirResponse: {
+        gentle: "Gentle nudge",
+        gentleBody:
+          "Just floating this back up in case it slipped past. No rush at all.",
+        check: "Check in",
+        checkBody:
+          "Checking in on my last note. Happy to send anything that would make this easier.",
+        offer: "Offer to make it easy",
+        offerBody:
+          "If it helps, I can send a short blurb and the job link you could forward as-is.",
+      },
+      pendingOurResponse: {
         direct: "Referral ask — direct",
         directBody:
           "Can you please refer me for a role at {{company}}? I'm a strong fit and happy to send over my resume and the specific opening.",
@@ -234,7 +247,8 @@ const networking = {
     initialColumn: "Initial column",
     optionSent: "Sent — invite is out",
     optionAccepted: "Accepted — already connected",
-    optionEngagement: "Engagement — actively chatting",
+    optionPendingOurResponse: "Your reply owed — they wrote last",
+    optionPendingTheirResponse: "Waiting on them — you wrote last",
     optionConverted: "Converted — referring me",
     cancel: "Cancel",
     submit: "Add contact",

@@ -126,36 +126,65 @@ def test_sent_to_accepted(db: Database) -> None:  # (a)
         assert _nn(repos.contacts.get(cid)).accepted_at is not None
 
 
-def test_sent_to_engagement(db: Database) -> None:  # (b)
+def test_sent_to_pending_our_response(db: Database) -> None:  # (b)
+    """They accepted AND wrote first: the reply is owed by us (S-N5)."""
     cid = _make_contact(db, status="sent", sent_at=now_utc())
     _inject(_probe(degree=1, is_first_degree=True, last_message_direction="them"))
     cs.contact_sync_entrypoint(_ctx(db))
-    assert _status(db, cid) == "engagement"
+    assert _status(db, cid) == "pending_our_response"
+    with db.repos() as repos:
+        assert (_nn(repos.contacts.get(cid)).profile_payload or {}).get("first_replied_at")
 
 
-def test_accepted_to_engagement(db: Database) -> None:  # (c)
+def test_accepted_to_pending_our_response(db: Database) -> None:  # (c)
     cid = _make_contact(db, status="accepted", accepted_at=now_utc())
     _inject(_probe(degree=1, is_first_degree=True, last_message_direction="them"))
     cs.contact_sync_entrypoint(_ctx(db))
-    assert _status(db, cid) == "engagement"
+    assert _status(db, cid) == "pending_our_response"
 
 
-def test_engagement_to_ghosted_honors_setting(db: Database) -> None:  # (d)
+def test_pending_their_response_to_ghosted_honors_setting(db: Database) -> None:  # (d)
     old = now_utc() - timedelta(days=20)
-    cid = _make_contact(db, status="engagement", accepted_at=old)
-    # last message 20 days ago; default engagement window is 14 → ghosted.
-    _inject(_probe(degree=1, is_first_degree=True, last_message_direction="them",
+    cid = _make_contact(db, status="pending_their_response", accepted_at=old)
+    # Ours was last and 20 days passed; default engagement window is 14 → ghosted.
+    _inject(_probe(degree=1, is_first_degree=True, last_message_direction="me",
                    last_message_at=old.timestamp()))
     cs.contact_sync_entrypoint(_ctx(db))
     assert _status(db, cid) == "ghosted"
 
 
-def test_engagement_stays_when_recent(db: Database) -> None:
-    cid = _make_contact(db, status="engagement", accepted_at=now_utc())
+def test_pending_our_response_never_ghosts(db: Database) -> None:
+    """The silence is ours, so the column holds as an honest to-do list (S-N5)."""
+    old = now_utc() - timedelta(days=120)
+    cid = _make_contact(db, status="pending_our_response", accepted_at=old)
+    _inject(_probe(degree=1, is_first_degree=True, last_message_direction="them",
+                   last_message_at=old.timestamp()))
+    cs.contact_sync_entrypoint(_ctx(db))
+    assert _status(db, cid) == "pending_our_response"
+
+
+def test_answering_moves_it_to_pending_their_response(db: Database) -> None:
+    cid = _make_contact(db, status="pending_our_response", accepted_at=now_utc())
+    _inject(_probe(degree=1, is_first_degree=True, last_message_direction="me",
+                   last_message_at=now_utc().timestamp()))
+    cs.contact_sync_entrypoint(_ctx(db))
+    assert _status(db, cid) == "pending_their_response"
+
+
+def test_they_write_again_moves_it_back(db: Database) -> None:
+    cid = _make_contact(db, status="pending_their_response", accepted_at=now_utc())
     _inject(_probe(degree=1, is_first_degree=True, last_message_direction="them",
                    last_message_at=now_utc().timestamp()))
     cs.contact_sync_entrypoint(_ctx(db))
-    assert _status(db, cid) == "engagement"
+    assert _status(db, cid) == "pending_our_response"
+
+
+def test_pending_their_response_stays_when_recent(db: Database) -> None:
+    cid = _make_contact(db, status="pending_their_response", accepted_at=now_utc())
+    _inject(_probe(degree=1, is_first_degree=True, last_message_direction="me",
+                   last_message_at=now_utc().timestamp()))
+    cs.contact_sync_entrypoint(_ctx(db))
+    assert _status(db, cid) == "pending_their_response"
 
 
 def test_sent_to_ghosted_honors_setting(db: Database) -> None:  # (d, sent path)
@@ -315,10 +344,10 @@ def _parse_reply_payload(last_sender: str) -> tuple[str | None, float | None]:
     return direction, ts
 
 
-def test_incoming_reply_payload_moves_accepted_to_engagement(db: Database) -> None:
+def test_incoming_reply_payload_moves_accepted_off_accepted(db: Database) -> None:
     """The full chain, wire-cold: an inbox payload where the CONTACT sent
     last → the inbox parsers read ("them", ts) → `decide_transition`
-    (accepted) says engagement → the sync entrypoint moves the card. This is
+    (accepted) says pending_our_response → the entrypoint moves the card. This is
     the exact live failure of 2026-08-14: the reply arrived, two full sweeps
     ran, the card never left Accepted."""
     direction, ts = _parse_reply_payload("target")
@@ -332,14 +361,14 @@ def test_incoming_reply_payload_moves_accepted_to_engagement(db: Database) -> No
            last_message_direction=direction, last_message_at=ts),
         sent_at=None, accepted_at=now, settings=_SETTINGS, now=now,
     )
-    assert decision.new_status == "engagement"
+    assert decision.new_status == "pending_our_response"
 
     cid = _make_contact(db, status="accepted", accepted_at=now)
     _inject(_probe(degree=1, is_first_degree=True,
                    last_message_direction=direction, last_message_at=ts))
     out = cs.contact_sync_entrypoint(_ctx(db))
-    assert _status(db, cid) == "engagement"
-    assert _nn(out.result_ref)["transitions"] == {"accepted->engagement": 1}
+    assert _status(db, cid) == "pending_our_response"
+    assert _nn(out.result_ref)["transitions"] == {"accepted->pending_our_response": 1}
     with db.repos() as repos:
         meta = (_nn(repos.contacts.get(cid)).profile_payload or {}).get("status_meta")
         assert _nn(meta)["source"] == "auto"
@@ -380,7 +409,7 @@ def test_sync_persists_incoming_thread_message_to_profile_payload(db: Database) 
                    last_message_text="Happy to refer you, send the link!",
                    last_message_from="Jane Doe"))
     cs.contact_sync_entrypoint(_ctx(db))
-    assert _status(db, cid) == "engagement"
+    assert _status(db, cid) == "pending_our_response"
     snap = _nn(_thread_snapshot(db, cid))
     assert snap["text"] == "Happy to refer you, send the link!"
     assert snap["direction"] == "them"
@@ -429,7 +458,7 @@ def test_contact_dto_prefers_the_thread_snapshot(db: Database) -> None:
     even when a later OutreachLog of ours exists."""
     from sidecar.app.api.routes import _contact_dto
 
-    cid = _make_contact(db, status="engagement", accepted_at=now_utc(),
+    cid = _make_contact(db, status="pending_our_response", accepted_at=now_utc(),
                         profile_payload={"last_thread_message": {
                             "text": "Happy to refer you!", "direction": "them",
                             "at": "2023-11-14T00:00:02+00:00",
@@ -567,7 +596,7 @@ def test_full_probe_caches_the_resolved_urn(db: Database) -> None:
 
 
 def test_accepted_row_with_cached_urn_probes_thread_only(db: Database) -> None:
-    """An accepted/engagement row with a cached urn rides the unmetered
+    """An accepted/in-thread row with a cached urn rides the unmetered
     thread-only pass (the driver call says so), still transitions on a reply,
     and keeps its stored degree (the probe answers degree None)."""
     cid = _make_contact(
@@ -584,7 +613,7 @@ def test_accepted_row_with_cached_urn_probes_thread_only(db: Database) -> None:
     out = cs.contact_sync_entrypoint(_ctx(db))
     batch_call = next(c for c in drv.calls if c[0] == "contact_sync_states")
     assert batch_call[3] == ("jane-doe",)  # the thread-only set the driver saw
-    assert _status(db, cid) == "engagement"  # the reply still moves the card
+    assert _status(db, cid) == "pending_our_response"  # the reply still moves the card
     with db.repos() as repos:
         row = _nn(repos.contacts.get(cid))
         assert row.connection_degree == 1  # stored degree stands (not blanked)

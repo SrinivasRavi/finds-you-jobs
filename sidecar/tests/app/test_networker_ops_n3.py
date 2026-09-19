@@ -883,3 +883,42 @@ def test_unrecognized_send_failure_routes_to_unknown(wired: Wired) -> None:
 
     failed = [e for e in events if e["payload"].get("phase") == "send_failed"]
     assert failed[0]["payload"]["diagnosis"] == "unknown"
+
+
+def test_answering_an_engaged_contact_never_demotes_them(wired: Wired) -> None:
+    """S-N4 — the send path wrote `accepted` unconditionally whenever a DM to a
+    1st-degree contact landed, erasing the fact that they had ever written
+    back. Answering now lands them in `pending_their_response`."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        raj = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/raj-io"))
+        cid = raj.id
+        repos.contacts.update(
+            cid,
+            connection_status="pending_our_response",
+            profile_payload={"first_replied_at": "2026-09-01T00:00:00+00:00"},
+        )
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        dm_result={"op": "send-dm", "ok": True, "sent": True, "status": "sent"},
+    )
+    ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Raj!"}))
+    with wired.db.repos() as repos:
+        assert _nn(repos.contacts.get(cid)).connection_status == "pending_their_response"
+
+
+def test_a_first_send_to_a_never_replied_contact_still_lands_accepted(wired: Wired) -> None:
+    """The S-N4 fix must not drag a contact who has never written back into a
+    thread column: with no reply on record, a DM still means Accepted."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/raj-io")).id
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        dm_result={"op": "send-dm", "ok": True, "sent": True, "status": "sent"},
+    )
+    ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Raj!"}))
+    with wired.db.repos() as repos:
+        assert _nn(repos.contacts.get(cid)).connection_status == "accepted"

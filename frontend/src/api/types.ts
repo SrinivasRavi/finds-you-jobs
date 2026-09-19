@@ -383,12 +383,15 @@ export type AudienceTag = "peer" | "hm" | "recruiter" | "leadership" | "other";
 /** Warmth split (US-REF-10): 1st-degree → warm DM; else cold connection-note. */
 export type Warmth = "warm" | "cold";
 /** Contact lifecycle. `candidate` = discovered, off the kanban; the rest are the
- *  kanban columns (US-NW-01). */
+ *  kanban columns (US-NW-01). The 2 pending_* columns split the old single
+ *  Engagement by who owes the next message (S-N5): `pending_our_response`
+ *  means theirs was last, `pending_their_response` means ours was. */
 export type ConnectionStatus =
   | "candidate"
   | "sent"
   | "accepted"
-  | "engagement"
+  | "pending_our_response"
+  | "pending_their_response"
   | "ghosted"
   | "converted";
 

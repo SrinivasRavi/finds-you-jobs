@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from .base import now_utc
 from .models import (
     APPLY_RUN_ACTIVE_STATUSES,
+    CONTACT_SYNCABLE_STATUSES,
     OP_ACTIVE_STATES,
     Application,
     ApplicationEvent,
@@ -1211,7 +1212,7 @@ class ContactsRepo:
     # FR-NW-15). `candidate` (off the kanban), `converted` (the user's sacred
     # referral record — never auto-touched), and `ghosted` (terminal for auto —
     # revival is a manual drag) are excluded, so sync traffic stays bounded.
-    _SYNCABLE_STATUSES = ("sent", "accepted", "engagement")
+    _SYNCABLE_STATUSES = CONTACT_SYNCABLE_STATUSES
 
     def list_syncable(self, *, limit: int) -> list[Contact]:
         """The next `limit` contacts due for a status-sync probe (US-NW-12).

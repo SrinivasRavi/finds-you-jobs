@@ -357,6 +357,22 @@ APPLY_RUN_ACTIVE_STATUSES: frozenset[str] = frozenset(
 )
 
 
+# The kanban columns a contact-sync sweep may move between (S-N5). `candidate`
+# is off the board; `converted` and `ghosted` are terminal, so neither syncs.
+CONTACT_SYNCABLE_STATUSES: tuple[str, ...] = (
+    "sent",
+    "accepted",
+    "pending_our_response",
+    "pending_their_response",
+)
+
+# The 2 columns that mean a real thread exists, split by who owes the next
+# message. Membership is what "they have written back" means on the board.
+CONTACT_ENGAGED_STATUSES: frozenset[str] = frozenset(
+    {"pending_our_response", "pending_their_response"}
+)
+
+
 class ApplyRun(Base):
     """One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1) — the
     first-class replacement for the prior repository's `applications.apply_state`
@@ -478,8 +494,9 @@ class Contact(Base):
     audience_tag: Mapped[str] = mapped_column(String, nullable=False, default="other")
     warmth: Mapped[str] = mapped_column(String, nullable=False, default="cold")  # warm | cold
     # Lifecycle. `candidate` = discovered but not yet reached (off the kanban);
-    # the kanban columns are sent | accepted | engagement | ghosted | converted
-    # (US-NW-01). Manual add-by-URL sets one of the live columns directly.
+    # the kanban columns are sent | accepted | pending_our_response |
+    # pending_their_response | ghosted | converted (US-NW-01, split S-N5).
+    # Manual add-by-URL sets one of the live columns directly.
     connection_status: Mapped[str] = mapped_column(String, nullable=False, default="candidate")
     profile_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     added_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)

@@ -57,6 +57,7 @@ from sidecar.modules.networker import ProbeResult, probe_batch
 from sidecar.modules.networker.types import NetworkerError
 
 from ..db.base import now_utc
+from ..db.models import CONTACT_ENGAGED_STATUSES
 from ..lifecycle import MANUAL_OVERRIDE_COOLDOWN_DAYS, resolve_lifecycle
 from ..logging_setup import get_logger
 from .exception_router import route_cause
@@ -78,6 +79,10 @@ class SyncDecision:
 
     new_status: str | None = None
     set_accepted_at: bool = False
+    # Stamp the sticky `profile_payload.first_replied_at` (S-N5). Once set,
+    # `accepted` ("connected, never replied") is unreachable for this contact,
+    # which is the invariant that keeps an answered thread from being demoted.
+    set_first_replied_at: bool = False
 
 
 def _days_since(ts: datetime | float | None, now: datetime) -> float | None:
@@ -100,42 +105,74 @@ def decide_transition(
     accepted_at: datetime | None,
     settings: dict[str, int],
     now: datetime,
+    has_replied: bool = False,
 ) -> SyncDecision:
-    """Pure transition rule (a–d). `current` is one of sent|accepted|engagement
-    (the only syncable columns). Returns a SyncDecision — never raises, never
-    moves out of converted/ghosted (those never reach here)."""
+    """Pure transition rule. `current` is one of the syncable columns:
+    sent | accepted | pending_our_response | pending_their_response. Returns a
+    SyncDecision — never raises, never moves out of converted/ghosted (those
+    never reach here).
+
+    The split (S-N5) is by whose message is last, the only fact that decides
+    what the user should do next. `pending_our_response` means the reply is
+    owed by us, so it never ghosts: that silence is ours, and the column stays
+    an honest to-do list. `pending_their_response` is the one that can ghost.
+    `has_replied` is the sticky `first_replied_at`, which makes `accepted`
+    unreachable once someone has written back."""
     engagement_ghosted = settings["engagement_ghosted_days"]
     sent_ghosted = settings["sent_ghosted_days"]
+    they_wrote_last = probe.last_message_direction == "them"
 
     if current == "sent":
         if probe.is_first_degree:
-            # Accepted. Engagement iff they've already replied (their msg last).
-            if probe.last_message_direction == "them":
-                return SyncDecision(new_status="engagement", set_accepted_at=True)  # (b)
-            return SyncDecision(new_status="accepted", set_accepted_at=True)  # (a)
+            if they_wrote_last:
+                return SyncDecision(
+                    new_status="pending_our_response",
+                    set_accepted_at=True,
+                    set_first_replied_at=True,
+                )
+            # Connected, and they have written before even if we answered since.
+            if has_replied:
+                return SyncDecision(
+                    new_status="pending_their_response", set_accepted_at=True
+                )
+            return SyncDecision(new_status="accepted", set_accepted_at=True)
         # Still pending — a never-accepted invite that stalls past the window ghosts.
         age = _days_since(sent_at, now)
         if age is not None and age > sent_ghosted:
-            return SyncDecision(new_status="ghosted")  # (d, sent path)
+            return SyncDecision(new_status="ghosted")
         return SyncDecision()
 
     if current == "accepted":
-        if probe.last_message_direction == "them":
-            return SyncDecision(new_status="engagement")  # (c)
+        if they_wrote_last:
+            return SyncDecision(
+                new_status="pending_our_response", set_first_replied_at=True
+            )
+        if has_replied:
+            # They replied at some point and ours is last: the wait is theirs.
+            return SyncDecision(new_status="pending_their_response")
         # Accepted but no reply either way — a stalled thread ghosts on the same
         # (longer) window as a never-accepted invite.
         reference = accepted_at or sent_at
         age = _days_since(reference, now)
         if age is not None and age > sent_ghosted:
-            return SyncDecision(new_status="ghosted")  # (d, accepted-never-replied)
+            return SyncDecision(new_status="ghosted")
         return SyncDecision()
 
-    if current == "engagement":
-        # No activity beyond the (shorter) engagement window → Ghosted.
+    if current == "pending_our_response":
+        if probe.last_message_direction == "me":
+            return SyncDecision(new_status="pending_their_response")
+        # Held on purpose: we owe the reply, so this never ages into Ghosted.
+        return SyncDecision()
+
+    if current == "pending_their_response":
+        if they_wrote_last:
+            return SyncDecision(
+                new_status="pending_our_response", set_first_replied_at=True
+            )
         activity = probe.last_message_at or accepted_at or sent_at
         age = _days_since(activity, now)
         if age is not None and age > engagement_ghosted:
-            return SyncDecision(new_status="ghosted")  # (d, engagement path)
+            return SyncDecision(new_status="ghosted")
         return SyncDecision()
 
     return SyncDecision()
@@ -237,7 +274,10 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             manual_frozen = _is_manual_frozen(contact, now)
             thread_only = bool(
                 cached_urn
-                and contact.connection_status in ("accepted", "engagement")
+                and (
+                    contact.connection_status == "accepted"
+                    or contact.connection_status in CONTACT_ENGAGED_STATUSES
+                )
             )
             if manual_frozen and not thread_only:
                 # Rotate (bump last_touched_at) without a probe — auto never
@@ -254,6 +294,9 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 "current": contact.connection_status,
                 "sent_at": contact.sent_at,
                 "accepted_at": contact.accepted_at,
+                "has_replied": bool(
+                    (contact.profile_payload or {}).get("first_replied_at")
+                ),
                 "urn": cached_urn,
                 "thread_only": thread_only,
                 # Frozen rows refresh their display snapshot only — the manual
@@ -336,7 +379,7 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             else decide_transition(
                 current, probe,
                 sent_at=entry["sent_at"], accepted_at=entry["accepted_at"],
-                settings=settings, now=now,
+                settings=settings, now=now, has_replied=entry["has_replied"],
             )
         )
         with ctx.db.repos() as repos:
@@ -381,6 +424,17 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 payload_changed = True
                 if decision.set_accepted_at and contact.accepted_at is None:
                     fields["accepted_at"] = now
+            # Sticky, and set whether or not the column moved: the stamp is what
+            # makes `accepted` unreachable once they have written back (S-N5).
+            if decision.set_first_replied_at and not payload.get("first_replied_at"):
+                stamp = (
+                    datetime.fromtimestamp(probe.last_message_at, tz=UTC).isoformat()
+                    if probe.last_message_at is not None
+                    else now.isoformat()
+                )
+                payload["first_replied_at"] = stamp
+                payload_changed = True
+            if decision.new_status and decision.new_status != current:
                 transitions[f"{current}->{decision.new_status}"] = (
                     transitions.get(f"{current}->{decision.new_status}", 0) + 1
                 )
