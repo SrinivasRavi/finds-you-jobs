@@ -133,14 +133,14 @@ def _catalog(portals_config: dict) -> list[dto.DiscoverySourceDTO]:
 
 
 @router.get("/api/discovery/sources")
-async def list_discovery_sources(request: Request) -> list[dto.DiscoverySourceDTO]:
+def list_discovery_sources(request: Request) -> list[dto.DiscoverySourceDTO]:
     with _db(request).repos() as repos:
         portals = _portals(repos)
     return _catalog(portals)
 
 
 @router.post("/api/discovery/sources")
-async def toggle_discovery_source(
+def toggle_discovery_source(
     request: Request, payload: dto.DiscoverySourceToggle
 ) -> list[dto.DiscoverySourceDTO]:
     ids = payload.ids if payload.ids is not None else ([payload.id] if payload.id else [])
@@ -419,7 +419,7 @@ async def watch_company(
 
 
 @router.get("/api/discovery/watchlist")
-async def list_watched_companies(request: Request) -> dto.WatchlistDTO:
+def list_watched_companies(request: Request) -> dto.WatchlistDTO:
     """The tracked-companies roster: user-added (`watched`) board rows from
     `portals_config.sources`. Rows added before the marker existed don't
     appear — they keep scanning; re-watching stamps them."""
@@ -441,7 +441,7 @@ async def list_watched_companies(request: Request) -> dto.WatchlistDTO:
 
 
 @router.delete("/api/discovery/watchlist")
-async def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
+def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
     """Remove a tracked company board (by its source URL). Only `watched`
     rows are removable here — the seeded registry isn't editable from the
     roster; source families are toggled in Settings → Discovery sources."""
@@ -500,6 +500,12 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
     scans' `result_ref.per_source` fetch/keep/error/latency numbers.
 
+    `scored` and `avg_score` exclude `unscorable` jobs (no usable
+    description — the board's own rule, dto.py `job_dto`), so a source with
+    no description-bearing rows reports no score rather than a 0-dragged
+    one. Every other count (`jobs`, `saved`, `fetched`, `kept`, ...) still
+    counts them: the source did return those rows.
+
     Off the event loop (S-C7): the fold walks every job the board can hold
     (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
     install could hold it past the shell's 2 s /healthz window and cost a
@@ -507,12 +513,11 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
     route is the one it missed."""
 
     def _assemble() -> dto.DiscoveryAnalyticsDTO:
+        from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
         with _db(request).repos() as repos:
             jobs = repos.jobs.list_by_states(["active", "expired", "removed"])
             saved_ids = repos.applications.job_ids()
-            profile = repos.profile.get_current()
-            pv = profile.version if profile is not None else 0
-            scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], pv)
             scans = repos.operations.list_by_kind_states("scan", {"succeeded"})
 
             per: dict[str, dict] = {}
@@ -529,13 +534,26 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
 
             for job in jobs:
                 b = _bucket(job.source_adapter or "unknown")
+                # Rows found and rows saved count regardless of scorability —
+                # the source really did return them, and the user really did
+                # save one. Only the score stats below need the exclusion.
                 b["jobs"] += 1
                 if job.id in saved_ids:
                     b["saved"] += 1
-                score = scores.get(job.id)
+                # A description-less job is `unscorable` on the board (dto.py
+                # `job_dto`, same MIN_JD_CHARS predicate): its keyword floor is
+                # a 0 written for missing data, not a judgement, so counting it
+                # here would drag a source's average toward zero for having no
+                # description rather than for scoring poorly (maintainer
+                # 2026-09-03 — 248 such rows on one install).
+                if len(job.description or "") < MIN_JD_CHARS:
+                    continue
+                # The rating the board would show: AI if it has one, else the
+                # keyword floor.
+                score = job.llm_score if job.llm_score is not None else job.keyword_score
                 if score is not None:
                     b["scored"] += 1
-                    b["score_sum"] += float(score.score_0_100)
+                    b["score_sum"] += float(score)
 
             scans = sorted(
                 scans, key=lambda o: o.started_at or o.created_at, reverse=True
@@ -641,12 +659,12 @@ def _seed_brave_source(repos) -> None:  # noqa: ANN001 — Repos
 
 
 @router.get("/api/discovery/credentials")
-async def list_discovery_credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
+def list_discovery_credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
     return _credentials(request)
 
 
 @router.post("/api/discovery/credentials")
-async def save_discovery_credential(
+def save_discovery_credential(
     request: Request, payload: dto.DiscoveryCredentialSave
 ) -> list[dto.DiscoveryCredentialDTO]:
     if payload.id not in CREDENTIALS:
@@ -671,7 +689,7 @@ async def save_discovery_credential(
 
 
 @router.delete("/api/discovery/credentials/{credential_id}")
-async def delete_discovery_credential(
+def delete_discovery_credential(
     request: Request, credential_id: str
 ) -> list[dto.DiscoveryCredentialDTO]:
     if credential_id not in CREDENTIALS:
