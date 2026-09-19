@@ -238,10 +238,14 @@ def test_scan_routes_search_adapters_through_search_seam() -> None:
         sources=[SourceEntry(board="linkedin")],
         prefs=ScanPrefs(title_allow=["backend engineer"], location_allow=["remote"]),
     )
-    detail_html = (
-        '<div class="show-more-less-html__markup relative">'
-        "<p>Design and run backend services.</p></div>"
+    # Long enough to clear scan()'s post-enrich MIN_JD_CHARS drop.
+    long_jd = (
+        "Design and run backend services end to end, working closely with "
+        "product and design across the whole stack every single day of the "
+        "working week, from planning through on-call, rain or shine, in "
+        "every timezone the team spans."
     )
+    detail_html = f'<div class="show-more-less-html__markup relative"><p>{long_jd}</p></div>'
     result = scan(
         config,
         prefs=ScanPrefs(
@@ -264,7 +268,7 @@ def test_scan_routes_search_adapters_through_search_seam() -> None:
     assert len(result.jobs) == 2
     assert all(j.source_adapter == "linkedin" for j in result.jobs)
     # …and both were enriched with the real JD text.
-    assert all(j.description == "Design and run backend services." for j in result.jobs)
+    assert all(j.description == long_jd for j in result.jobs)
 
 
 def test_registry_resolves_linkedin_board() -> None:

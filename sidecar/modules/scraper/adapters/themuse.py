@@ -21,6 +21,7 @@ from ..http import Fetcher, paced_pages
 from ..types import NormalizedJob, ScraperError
 
 ID = "themuse"
+INLINE_DESCRIPTION = True
 _CLAIM = "themuse.com"
 _HOSTS = {"themuse.com", "www.themuse.com"}
 _API = "https://www.themuse.com/api/public/jobs"

@@ -27,6 +27,7 @@ from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
 
 ID = "teamtailor"
+INLINE_DESCRIPTION = True
 
 _HOST_RE = re.compile(r"^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.teamtailor\.com$")
 

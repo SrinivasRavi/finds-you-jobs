@@ -27,8 +27,19 @@ def _fresh_fetcher(timeout_s: int = 20, usage: object = None) -> Fetcher:
     return Fetcher(usage=Usage())
 
 
+# Long enough to clear the scan's post-enrich MIN_JD_CHARS drop — these tests
+# exercise concurrency/dedup, not description content, so every fake job
+# needs a real-looking JD to survive to result.jobs at all.
+_JD = (
+    "We are hiring a backend engineer to design, build, and operate "
+    "production services end to end, working closely with product and "
+    "design across the whole stack every single day of the working week, "
+    "rain or shine."
+)
+
+
 def _job(url: str, title: str = "Backend Engineer") -> NormalizedJob:
-    return NormalizedJob(title=title, canonical_url=url, location="Remote")
+    return NormalizedJob(title=title, canonical_url=url, location="Remote", description=_JD)
 
 
 class _SleepAdapter:

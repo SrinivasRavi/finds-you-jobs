@@ -21,6 +21,7 @@ from ..types import NormalizedJob, ScraperError
 from .base import path_segments
 
 ID = "greenhouse"
+INLINE_DESCRIPTION = True
 
 _HOSTS = {
     "boards.greenhouse.io": "",

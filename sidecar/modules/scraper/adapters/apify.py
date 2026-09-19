@@ -38,6 +38,7 @@ from ..searchquery import SearchQuery, build_queries, select_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "apify"
+INLINE_DESCRIPTION = True
 _RUN_BASE = "https://api.apify.com/v2/acts"
 
 # One run-sync call = one actor invocation on the user's credit. Actors that

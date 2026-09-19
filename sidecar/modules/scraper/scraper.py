@@ -34,6 +34,12 @@ from .http import Fetcher
 from .quality import assess, is_structurally_broken
 from .types import NormalizedJob, ScanPrefs, ScanResult, ScraperError, SourceReport
 
+# Must agree with scorer.deterministic.MIN_JD_CHARS — the scorer floors any
+# job under this many description chars at a "missing-data" 0, so a row this
+# thin can never be scored; redefined here (not imported) so scraper and
+# scorer stay independent modules (the pre-architecture module-silo design).
+MIN_JD_CHARS = 200
+
 
 def _fresh_enough(job: NormalizedJob, prefs: ScanPrefs, now: datetime) -> bool:
     if prefs.max_age_days <= 0 or not job.posted_at:
@@ -113,19 +119,24 @@ def _is_disabled(entry: object, disabled: set[str]) -> bool:
     return adapter.ID in disabled or key in disabled
 
 
-# Per-source ceiling on JD detail fetches per scan (enrichment is one HTTP
-# call per JD-less row — the cap keeps a 200-row Workday tenant from turning
-# one scan into 200 detail requests). Rows past the cap keep their missing-JD
-# flag and score via the lenient path.
-ENRICH_CAP = 20
+# Per-source ceilings on JD detail fetches per scan (enrichment is one HTTP
+# call per JD-less row). Search-shaped sources (LinkedIn today) already bound
+# their own row count at query time (MAX_PAGES × query count, ~120 rows), so
+# every kept row is enriched — no further cap. Enumerate-shaped sources page a
+# whole company/board feed that can run into the thousands, so those stay
+# capped per source (maintainer-raised ceiling, was one shared ENRICH_CAP=20).
+SEARCH_ENRICH_CAP: int | None = None  # unbounded — the search itself bounds volume
+SCAN_ENRICH_CAP = 100  # per-source ceiling for enumerate-shaped (ATS/board) sources
 
 
 @dataclass
 class _EnrichBucket:
-    """One source's JD-less kept rows, awaiting `fetch_detail`."""
+    """One source's JD-less kept rows, awaiting `fetch_detail`. `cap` is
+    `SEARCH_ENRICH_CAP` or `SCAN_ENRICH_CAP`, picked by the source's shape."""
 
     adapter: object
     report: SourceReport
+    cap: int | None
     jobs: list[NormalizedJob] = field(default_factory=list)
 
 
@@ -136,9 +147,12 @@ def _enrich_source(
     fetcher_factory: Callable[..., Fetcher],
 ) -> None:
     """Fill JDs for one source's rows (worker-thread body). A failed detail
-    fetch records the error and keeps the row — enrichment never drops."""
+    fetch records the error and leaves the row's description empty; this
+    function itself never drops a row — scan()'s later drop phase discards
+    whatever still lacks a scorable description (item 7)."""
     fetcher = fetcher_factory(timeout_s=prefs.timeout_s, usage=bucket.report.usage)
-    for job in bucket.jobs[:ENRICH_CAP]:
+    jobs = bucket.jobs if bucket.cap is None else bucket.jobs[: bucket.cap]
+    for job in jobs:
         try:
             detail = bucket.adapter.fetch_detail(job, fetcher)  # type: ignore[attr-defined]
         except ScraperError as e:
@@ -227,6 +241,7 @@ def scan(
     result = ScanResult()
     seen: set[str] = set()
     enrich_buckets: dict[str, _EnrichBucket] = {}
+    kept_pairs: list[tuple[NormalizedJob, SourceReport]] = []
     for outcome in outcomes:
         report = _merge_report(result, outcome)
         if not outcome.fetched:
@@ -266,6 +281,8 @@ def scan(
             kept = kept[: prefs.per_source_cap]
 
         can_enrich = outcome.adapter is not None and hasattr(outcome.adapter, "fetch_detail")
+        is_search = outcome.adapter is not None and hasattr(outcome.adapter, "search")
+        cap = SEARCH_ENRICH_CAP if is_search else SCAN_ENRICH_CAP
         for job in kept:
             if job.canonical_url in seen:
                 continue
@@ -273,17 +290,19 @@ def scan(
             assess(job, now=now)
             result.jobs.append(job)
             report.kept += 1
+            kept_pairs.append((job, report))
             if can_enrich and not job.description:
                 bucket = enrich_buckets.setdefault(
-                    outcome.key, _EnrichBucket(outcome.adapter, report)
+                    outcome.key, _EnrichBucket(outcome.adapter, report, cap)
                 )
                 bucket.jobs.append(job)
 
     # -- enrich phase (JD-missing rows only; approved-plan #8) --------------
     # Kept rows with no JD get their real description fetched per adapter
     # (`fetch_detail`) so scoring runs normally — the optimal path. Bounded at
-    # ENRICH_CAP per source; a failed detail fetch keeps the row (the lenient
-    # alias+location match already admitted it) and records the error.
+    # SEARCH_ENRICH_CAP/SCAN_ENRICH_CAP per source; a failed detail fetch
+    # records the error and leaves the description empty — the drop phase
+    # below discards the row rather than keeping it as an unscorable husk.
     if enrich_buckets:
         buckets = list(enrich_buckets.values())
         if prefs.max_workers > 1 and len(buckets) > 1:
@@ -292,6 +311,18 @@ def scan(
         else:
             for bucket in buckets:
                 _enrich_source(bucket, prefs, now, fetcher_factory)
+
+    # -- drop phase (maintainer directive: a row we could not get a
+    # description for is discarded, not kept as a husk — best effort exhausted
+    # by the enrich phase above). Recorded per source, never tombstoned: a
+    # later scan may find the same URL with a real description.
+    kept_jobs: list[NormalizedJob] = []
+    for job, report in kept_pairs:
+        if len(job.description.strip()) < MIN_JD_CHARS:
+            report.dropped_no_description.append(job.canonical_url)
+            continue
+        kept_jobs.append(job)
+    result.jobs = kept_jobs
 
     # -- cross-posting annotation (content identity; after enrich so late-
     # arriving JDs participate). Within-scan only for now — the 90-day

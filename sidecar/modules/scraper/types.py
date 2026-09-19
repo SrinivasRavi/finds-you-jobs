@@ -140,12 +140,17 @@ class SourceReport:
 
     `fetched`/`kept` make filter/dedup attrition visible per source;
     errors carry verbatim messages — never swallowed (vision non-negotiable).
+    `dropped_no_description` lists the canonical URLs of kept rows discarded
+    after the enrich phase for still lacking a scorable description (never a
+    tombstone — a later scan may find the same URL with a real one); its
+    length is the count.
     """
 
     usage: Usage = field(default_factory=Usage)
     errors: list[str] = field(default_factory=list)
     fetched: int = 0
     kept: int = 0
+    dropped_no_description: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
