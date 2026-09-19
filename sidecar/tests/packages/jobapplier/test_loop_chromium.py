@@ -306,3 +306,115 @@ async def test_real_engine_spend_lands_in_the_run_cost(tmp_path: Path) -> None:
     assert result.usage.tokens_in == 120
     assert result.usage.tokens_out == 40
     assert result.usage.cost_usd == pytest.approx(0.25)
+
+
+# --- Human-in-the-loop Wait Tests ---
+
+async def test_captcha_wall_solved_in_time_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Set wait timeout high enough for the JS 3s timeout to trigger, but short enough for tests
+    monkeypatch.setattr("sidecar.packages.jobapplier.loop._CAPTCHA_WAIT_TIMEOUT_S", 10.0)
+    
+    script: list[FakeStep] = [
+        _action("fill", element_id="e1", value="Alice"),
+        _action("finish", reason="done"),
+    ]
+    engine = FakeApplyEngine(script)
+    req = _request(tmp_path, _fixture_url("captcha_then_form.html"))
+    result, events, _ = await _run(req, engine)
+
+    # Should have waited, then resumed and finished
+    assert result.status is ApplyStatus.READY_FOR_HUMAN
+    assert any(e.type is ApplyEventType.BLOCKER_FOUND and "captcha" in str(e.data) for e in events)
+
+async def test_captcha_wall_timeout_blocks_with_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Set wait timeout very short to trigger the timeout quickly
+    monkeypatch.setattr("sidecar.packages.jobapplier.loop._CAPTCHA_WAIT_TIMEOUT_S", 1.0)
+    
+    engine = FakeApplyEngine([])
+    req = _request(tmp_path, _fixture_url("captcha_wall.html"))
+    result, events, _ = await _run(req, engine)
+
+    assert result.status is ApplyStatus.BLOCKED
+    assert result.blockers[0].kind == "captcha"
+    assert "no action was detected" in result.blockers[0].detail
+
+async def test_login_wall_timeout_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sidecar.packages.jobapplier.loop._CAPTCHA_WAIT_TIMEOUT_S", 1.0)
+    
+    engine = FakeApplyEngine([])
+    req = _request(tmp_path, _fixture_url("login_wall.html"))
+    result, events, _ = await _run(req, engine)
+
+    assert result.status is ApplyStatus.BLOCKED
+    assert result.blockers[0].kind == "login_wall"
+    assert "no action was detected" in result.blockers[0].detail
+
+async def test_cancel_during_captcha_wait(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sidecar.packages.jobapplier.loop._CAPTCHA_WAIT_TIMEOUT_S", 10.0)
+    
+    engine = FakeApplyEngine([])
+    req = _request(tmp_path, _fixture_url("captcha_wall.html"))
+    
+    control = ApplyControl()
+    async def cancel_later():
+        await asyncio.sleep(1.0)
+        control.cancel()
+        
+    asyncio.create_task(cancel_later())
+    result, events, _ = await _run(req, engine, control=control)
+
+    assert result.status is ApplyStatus.INTERRUPTED
+    assert result.summary == "cancelled by the user"
+
+async def test_budget_exhaustion_during_captcha_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sidecar.packages.jobapplier.loop._CAPTCHA_WAIT_TIMEOUT_S", 10.0)
+    
+    engine = FakeApplyEngine([])
+    # The overall budget is 1 second, so the 10s captcha wait will be aborted by the budget logic
+    req = replace(_request(tmp_path, _fixture_url("captcha_wall.html")), deadline_s=1.0)
+    result, events, _ = await _run(req, engine)
+
+    assert result.status is ApplyStatus.TIMED_OUT
+    assert "budget ran out" in result.summary
+
+async def test_browser_crash_during_captcha_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sidecar.packages.jobapplier.loop._CAPTCHA_WAIT_TIMEOUT_S", 10.0)
+    
+    engine = FakeApplyEngine([])
+    req = _request(tmp_path, _fixture_url("captcha_wall.html"))
+    
+    # Custom _run to be able to close the page during the test
+    events: list[ApplyEvent] = []
+    import asyncio
+
+    from playwright.async_api import async_playwright
+
+    from sidecar.packages.jobapplier.executor import UrlPolicy
+    from sidecar.packages.jobapplier.loop import run_apply
+    from sidecar.packages.jobapplier.types import ApplyControl
+    
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        control = ApplyControl()
+        
+        async def close_page():
+            await asyncio.sleep(1.0)
+            await page.close()
+            
+        asyncio.create_task(close_page())
+        
+        result = await run_apply(
+            page, req, engine, events.append, control, policy=UrlPolicy(allow_local=True)
+        )
+        
+    assert result.status is ApplyStatus.BLOCKED
+    assert "browser closed while waiting" in result.summary

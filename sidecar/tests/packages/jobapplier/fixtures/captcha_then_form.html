@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Just a moment...</title>
+</head>
+<body id="main">
+    <h1>Verify you are human</h1>
+    <p>Please complete the CAPTCHA to prove you are a human.</p>
+    <iframe src="https://challenges.cloudflare.com/turnstile/v0/api.js"></iframe>
+
+    <script>
+        setTimeout(() => {
+            document.title = "Apply — Senior Widget Engineer at Globex";
+            document.getElementById("main").innerHTML = `
+                <h1>Apply for Senior Widget Engineer</h1>
+                <form id="application" action="#" method="post">
+                    <label for="full_name">Full name</label>
+                    <input id="full_name" name="full_name" type="text" required />
+
+                    <label for="email">Email address</label>
+                    <input id="email" name="email" type="email" required />
+                    <input type="file" name="resume" />
+
+                    <button type="submit">Submit application</button>
+                </form>
+            `;
+        }, 1000);
+    </script>
+</body>
+</html>

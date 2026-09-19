@@ -308,7 +308,8 @@ class _Run:
                     else "login_wall"
                 )
                 msg = (
-                    "Verification challenge / CAPTCHA detected — please solve it in the browser window"
+                    ("Verification challenge / CAPTCHA detected "
+                     "— please solve it in the browser window")
                     if challenge_kind == "captcha"
                     else "Login wall detected — please log in or pass through in the browser window"
                 )
@@ -334,20 +335,44 @@ class _Run:
                             PageState.CAPTCHA_OR_ANTI_BOT not in curr_states
                             and PageState.LOGIN_WALL not in curr_states
                         ):
-                            logger.info("[APPLIER] %s resolved by human! Resuming apply.", challenge_kind)
+                            logger.info(
+                                "[APPLIER] %s resolved by human! Resuming apply.",
+                                challenge_kind
+                            )
                             solved = True
                             identical_streak = 0
                             failure_streak = 0
+                            redundant_streak = 0
                             last_digest = ""
                             states = curr_states
                             break
+                    except PlaywrightError:
+                        logger.warning(
+                            "[APPLIER] browser error while waiting for %s resolution",
+                            challenge_kind,
+                            exc_info=True,
+                        )
+                        await self._screenshot(challenge_kind + "-error")
+                        return self._blocked(
+                            challenge_kind,
+                            f"browser closed while waiting for {challenge_kind} to be solved",
+                            obs,
+                        )
                     except Exception:
+                        logger.exception(
+                            "[APPLIER] unexpected error during %s wait",
+                            challenge_kind,
+                        )
                         break
                 if not solved:
+                    if self._control.cancelled or self._remaining() <= 0:
+                        continue
                     await self._screenshot(challenge_kind + "-unresolved")
                     return self._blocked(
                         challenge_kind,
-                        f"timed out waiting for {challenge_kind} to be solved by user",
+                        f"Waited 3 minutes for you to solve the {challenge_kind} in the browser, "
+                        f"but no action was detected. Next time, solve the challenge in the "
+                        f"browser window within 3 minutes of seeing this message.",
                         obs,
                     )
             if PageState.APPLICATION_FORM in states:
