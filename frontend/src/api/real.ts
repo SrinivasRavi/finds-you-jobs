@@ -49,6 +49,7 @@ import type {
   DiscoverySource,
   PromptSetting,
   ScheduleRow,
+  SchedulerStatus,
   WatchCompanyResult,
   WatchlistEntry,
   ReachOutInput,
@@ -757,7 +758,6 @@ export class RealApi {
       company: r.company,
       linkedin_url: r.linkedin_url,
       connection_status: r.connection_status,
-      ask_status: r.ask_status ?? null,
       audience_tag: r.audience_tag,
       last_message: r.last_message ?? null,
       last_message_at: r.last_message_at ?? null,
@@ -911,7 +911,6 @@ export class RealApi {
       version: d?.version ?? 1,
       application_profile:
         (d?.application_profile as Profile["application_profile"]) ?? null,
-      entities: { skills: [], experiences: [], projects: [], education: [] },
     };
   }
 
@@ -1294,6 +1293,25 @@ export class RealApi {
   async retryScoring(): Promise<number> {
     const d = (await this.json("POST", "/api/scoring/retry", {})) as ScoreRetryDTO;
     return d.reset;
+  }
+
+  /** Whether background work is running, and whether a degraded boot is why it
+   *  is not. The shell starts the backend without its scheduler after 3 runs in
+   *  a row end the same bad way (D27). */
+  async schedulerStatus(): Promise<SchedulerStatus> {
+    const d = await this.req<{ running: boolean; degradedBoot?: boolean }>(
+      "/api/system/scheduler",
+    );
+    return { running: d.running, degradedBoot: d.degradedBoot ?? false };
+  }
+
+  /** Turn background work back on after a degraded boot. Idempotent. */
+  async resumeScheduler(): Promise<SchedulerStatus> {
+    const d = (await this.json("POST", "/api/system/scheduler/resume", {})) as {
+      running: boolean;
+      degradedBoot?: boolean;
+    };
+    return { running: d.running, degradedBoot: d.degradedBoot ?? false };
   }
 
   /** Re-run a failed op with its original inputs (US-LOG-01 Retry). */

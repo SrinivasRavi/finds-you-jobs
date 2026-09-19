@@ -367,7 +367,6 @@ export interface NetworkingContact {
   company: string;
   linkedin_url: string;
   connection_status: string;
-  ask_status: string | null;
   audience_tag: string;
   last_message: string | null;
   last_message_at: string | null;
@@ -641,13 +640,6 @@ export interface Profile {
   version: number;
   /** Null until the first extraction has run. */
   application_profile: ApplicationProfile | null;
-  /** Extracted ProfileEntities used by the FR-TL-01 fabrication guard. */
-  entities: {
-    skills: string[];
-    experiences: string[];
-    projects: string[];
-    education: string[];
-  };
 }
 
 /** Extracted resume text from an onboarding upload, held in the wizard draft for
@@ -921,6 +913,13 @@ export interface Settings {
 // ─── /api/operations/{kind} + /api/operations/{id} ──────────────────────────
 
 export type OperationState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+/** Whether the 60 s tick loop that plans background work is running, and
+ *  whether a degraded boot is why it is not (D27). */
+export interface SchedulerStatus {
+  running: boolean;
+  degradedBoot: boolean;
+}
 
 export interface Operation {
   id: string;

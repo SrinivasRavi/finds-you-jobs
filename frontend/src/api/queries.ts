@@ -61,6 +61,7 @@ export const qk = {
   ledger: ["ledger"] as const,
   costTotals: ["costTotals"] as const,
   retryableScores: ["retryableScores"] as const,
+  schedulerStatus: ["schedulerStatus"] as const,
   spans: ["spans"] as const,
   contacts: ["contacts"] as const,
   archivedContacts: ["archivedContacts"] as const,
@@ -298,6 +299,24 @@ export function useCostTotals() {
 export function useRetryableScores() {
   return useQuery({ queryKey: qk.retryableScores, queryFn: () => api.retryableScoreCount() });
 }
+/** Whether background work is running, and whether a degraded boot is why it is
+ *  not (D27). Read once at mount: the answer only changes when the user presses
+ *  Resume, which invalidates it. */
+export function useSchedulerStatus() {
+  return useQuery({ queryKey: qk.schedulerStatus, queryFn: () => api.schedulerStatus() });
+}
+
+/** Turn background work back on after a degraded boot. */
+export function useResumeScheduler() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.resumeScheduler()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.schedulerStatus });
+    },
+  });
+}
+
 /** The Logfire spans for one operation — the Logs drill-down (US-SYS-05). Only
  *  fetched when a row is expanded (`enabled`). */
 export function useOperationSpans(id: string | null) {

@@ -28,6 +28,13 @@ test.beforeEach(async ({ request }) => {
     headers: { Authorization: `Bearer ${token}` },
     data: { resume_markdown: "# Tester\n\nSome experience." },
   });
+  // The Networking tab exists only while the master toggle is on (2026-09-03):
+  // with it off the tile is hidden and the route redirects, so a 3-tab
+  // alignment check has 2 tabs to look at.
+  await request.post(`${base}/api/settings`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { voyager_risk_marker_on: true },
+  });
 });
 
 async function box(page: Page, selector: string) {

@@ -104,10 +104,11 @@ export interface paths {
          *     feed is paginated, so a client-side filter over loaded pages would silently
          *     miss matches on unloaded pages.
          *
-         *     The whole assembly runs off the event loop (async-first rule / F-H2 — at a
-         *     few thousand jobs it could hold the loop past the shell's 2 s health window),
-         *     and the DTO build (three regexes over the full JD each) happens only for the
-         *     returned page, not every eligible row.
+         *     A plain `def` handler runs off the event loop in Starlette's threadpool
+         *     automatically (async-first rule / F-H2 — at a few thousand jobs this could
+         *     hold the loop past the shell's 2 s health window), and the DTO build (three
+         *     regexes over the full JD each) happens only for the returned page, not every
+         *     eligible row.
          */
         get: operations["board_api_board_get"];
         put?: never;
@@ -136,7 +137,8 @@ export interface paths {
          *     `new_job_ids` count; and the scoring split — `score_pending` is the live
          *     (queued/running) score-op count, `score_done` is how many of THIS scan's
          *     new jobs have reached a terminal (succeeded/failed) score. Off the event
-         *     loop (async-first rule), one session inside the callable.
+         *     loop (async-first rule): a plain `def` handler runs in Starlette's
+         *     threadpool automatically.
          */
         get: operations["scan_progress_api_scan_progress_get"];
         put?: never;
@@ -160,7 +162,8 @@ export interface paths {
          * Preview Job
          * @description Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
          *     fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
-         *     blocking probe runs off the event loop.
+         *     blocking probe runs off the event loop: a plain `def` handler runs in
+         *     Starlette's threadpool automatically.
          *
          *     Two DB short-circuits before the network probe: a **tombstoned** URL fails
          *     fast with the honest 409 (re-add is impossible); an **existing** URL (active
@@ -236,7 +239,8 @@ export interface paths {
          *     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
          *     costs an existence check, an insert, and a delete, so on the loop a big
          *     empty could hold it past the shell's 2 s /healthz window and cost a sidecar
-         *     restart. One session inside the callable, same shape as `board`.
+         *     restart. A plain `def` handler runs in Starlette's threadpool
+         *     automatically, same shape as `board`.
          */
         post: operations["empty_trash_api_jobs_trash_empty_post"];
         delete?: never;
@@ -456,7 +460,8 @@ export interface paths {
         /**
          * Detach Application Document
          * @description Detach the (application, kind) resume/cover file — the ✕ on the attached-
-         *     file chip. The content-addressed blob stays (it may back other cards).
+         *     file chip. The blob is unlinked too, once no row names it: before the table
+         *     merge nothing ever collected it and every detach leaked a file (S-C37).
          */
         delete: operations["detach_application_document_api_applications__application_id__documents__kind__delete"];
         options?: never;
@@ -750,6 +755,10 @@ export interface paths {
          *     nothing prunes, so the aggregate sits at zero and the live sum carries every
          *     operation ever recorded; the addition stays because a future S-C22 deletion
          *     policy has to be able to fold spend forward again.
+         *
+         *     Off the loop: summing every operation is inherently linear, so however cheap
+         *     the read gets it must not be the thing holding a 2 s health poll (S-C23) —
+         *     a plain `def` handler runs in Starlette's threadpool automatically.
          */
         get: operations["cost_totals_api_cost_totals_get"];
         put?: never;
@@ -812,7 +821,8 @@ export interface paths {
          *     `archived=true` flips it to the "Deleted Contacts" recovery view: only the
          *     archived rows, so a user can restore a contact they removed.
          *
-         *     Bounded, batched, and off the event loop (S-C8). It used to read every
+         *     Bounded, batched, and off the event loop (S-C8): a plain `def` handler
+         *     runs in Starlette's threadpool automatically. It used to read every
          *     contact row with no LIMIT and then run one outreach-log query per row, so a
          *     roster grown by discovery (one `candidate` per person found, at 10 people a
          *     company) cost 1 + N queries on the loop. Both filters now live in the repo
@@ -969,7 +979,8 @@ export interface paths {
          *     (maintainer 2026-08-02, closing the "divergent ledgers" item): the popup
          *     can never show head-room the send path will refuse. `OutreachLog` stays the
          *     per-send product history; it is no longer recounted as a quota source.
-         *     Zero LinkedIn traffic — a local file read, off the event loop.
+         *     Zero LinkedIn traffic — a local file read, off the event loop (a plain
+         *     `def` handler runs in Starlette's threadpool automatically).
          */
         get: operations["referrals_quota_api_referrals_quota_get"];
         put?: never;
@@ -1592,6 +1603,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/scheduler": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scheduler Status
+         * @description Whether background work is running, and whether this boot is why it isn't.
+         *
+         *     `degraded_boot` means the shell started us with no scheduler because the
+         *     last 3 runs all ended the same bad way. The banner reads this.
+         */
+        get: operations["scheduler_status_api_system_scheduler_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/scheduler/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Scheduler
+         * @description Turn background work back on after a degraded boot. Idempotent.
+         *
+         *     `async def` on purpose: starting the tick loop creates an asyncio task, and
+         *     a plain `def` handler runs in Starlette's threadpool where there is no
+         *     running loop to create it on. It touches no database, so nothing blocks.
+         */
+        post: operations["resume_scheduler_api_system_scheduler_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dev/operations/fail-running": {
         parameters: {
             query?: never;
@@ -1775,6 +1833,12 @@ export interface paths {
          * @description Aggregates existing records only (no migration): stored `jobs` ×
          *     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
          *     scans' `result_ref.per_source` fetch/keep/error/latency numbers.
+         *
+         *     `scored` and `avg_score` exclude `unscorable` jobs (no usable
+         *     description — the board's own rule, dto.py `job_dto`), so a source with
+         *     no description-bearing rows reports no score rather than a 0-dragged
+         *     one. Every other count (`jobs`, `saved`, `fetched`, `kept`, ...) still
+         *     counts them: the source did return those rows.
          *
          *     Off the event loop (S-C7): the fold walks every job the board can hold
          *     (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
@@ -1965,7 +2029,9 @@ export interface components {
          * ApplicationDocumentDTO
          * @description One document the user attached to a manually-logged application (the
          *     resume/cover letter they actually submitted). Downloaded verbatim from
-         *     `GET /api/documents/{document_id}`.
+         *     `GET /api/documents/{document_id}`. The wire names (`document_id`, `kind`)
+         *     predate the table merge and stay: `document_id` is now the row's own id, and
+         *     `kind` is its `doc_type`.
          */
         ApplicationDocumentDTO: {
             /** Document Id */
@@ -2944,8 +3010,6 @@ export interface components {
             linkedin_url: string;
             /** Connection Status */
             connection_status: string;
-            /** Ask Status */
-            ask_status?: string | null;
             /** Audience Tag */
             audience_tag: string;
             /** Last Message */
@@ -3149,11 +3213,6 @@ export interface components {
             application_profile?: {
                 [key: string]: unknown;
             } | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /**
              * Updated At
              * Format: date-time
@@ -3413,6 +3472,20 @@ export interface components {
             enabled?: boolean | null;
             /** Interval Minutes */
             interval_minutes?: number | null;
+        };
+        /**
+         * SchedulerStatus
+         * @description Whether the 60 s tick loop that plans background work is running, and
+         *     whether a degraded boot is the reason it is not.
+         */
+        SchedulerStatus: {
+            /** Running */
+            running: boolean;
+            /**
+             * Degradedboot
+             * @default false
+             */
+            degradedBoot: boolean;
         };
         /**
          * ScoreRetryDTO
@@ -5960,6 +6033,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrowserInstallResult"];
+                };
+            };
+        };
+    };
+    scheduler_status_api_system_scheduler_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatus"];
+                };
+            };
+        };
+    };
+    resume_scheduler_api_system_scheduler_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatus"];
                 };
             };
         };
