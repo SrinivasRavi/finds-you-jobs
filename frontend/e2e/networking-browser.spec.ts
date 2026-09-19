@@ -373,7 +373,7 @@ test("contact modal composer: stage suggestions, single-click send, and the watc
     return ((await res.json()) as { id: string }).id;
   };
   await seed("Ada Accepted", "Northline", "accepted");
-  const eveId = await seed("Eve Engaged", "Fixture Systems", "engagement");
+  const eveId = await seed("Eve Engaged", "Fixture Systems", "pending_our_response");
   const ghostedId = await seed("Gus Ghosted", "Northline", "sent");
   // `ghosted` isn't a creation column — move the card the kanban way.
   await request.patch(`${base}/api/contacts/${ghostedId}`, {
@@ -407,7 +407,8 @@ test("contact modal composer: stage suggestions, single-click send, and the watc
   await page.screenshot({ path: `${DIR}/compose-ghosted.png`, fullPage: true });
   await page.keyboard.press("Escape");
 
-  // Engagement → the referral ask, personalized with THEIR employer.
+  // They wrote last → the referral ask, personalized with THEIR employer (S-N5:
+  // our reply IS the moment to ask).
   await openCard("Eve Engaged");
   expect(await boxValue()).toContain(
     "Can you please refer me for a role at Fixture Systems?",
@@ -415,7 +416,7 @@ test("contact modal composer: stage suggestions, single-click send, and the watc
   // The dropdown swaps in another phrasing; the box refills.
   await page
     .getByTestId("contact-compose-template")
-    .selectOption("engagement-soft");
+    .selectOption("pending_our_response-soft");
   expect(await boxValue()).toContain("No pressure at all.");
 
   // The channel + irreversibility line sits beside the single Send button and

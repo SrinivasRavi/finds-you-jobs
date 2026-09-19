@@ -13,6 +13,7 @@
 // Settings (the connect flow lives there).
 
 import { useMemo, useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
@@ -51,6 +52,15 @@ const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string
   { id: "ghosted", label: "networking.columns.ghosted", dot: "bg-bad", empty: "networking.columnEmpty.ghosted" },
   { id: "converted", label: "networking.columns.converted", dot: "bg-good", empty: "networking.columnEmpty.converted" },
 ];
+
+// The card's "{{duration}} in {{status}}" line renders the COLUMN's label, not
+// the raw wire value: the split (S-N5) made that read "today in
+// pending_our_response". A status with no column (candidate) falls back to the
+// raw value, which is what the board already did everywhere.
+function statusLabel(status: ConnectionStatus, t: TFunction): string {
+  const column = COLUMNS.find((col) => col.id === status);
+  return column ? t(column.label) : status;
+}
 
 // The header's read-only session chip. Tone + which state a status means come
 // from the shared table (duplication audit D-F8); the classes and the copy stay
@@ -569,7 +579,7 @@ function ContactCard({
         <div className="text-[10.5px] text-ink-3">
           {t("networking.card.inStatus", {
             duration: days === 0 ? t("networking.card.today") : t("networking.card.days", { n: days }),
-            status: c.connection_status,
+            status: statusLabel(c.connection_status, t),
           })}
         </div>
       )}
