@@ -466,6 +466,9 @@ const ja: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "リファラルに戻る",
+    },
     linkedinPill: {
       connected: "LinkedIn接続済み",
       connecting: "接続中…",
@@ -1123,6 +1126,10 @@ const ja: DeepPartial<Messages> = {
     backendStoppedFallback: "バックエンドが応答しなくなりました",
     sidecarFatalBanner:
       "バックエンドが停止しました: {{message}}。アプリを終了して再起動するまで、操作は一切保存されません。",
+    degradedBoot:
+      "バックグラウンド処理は一時停止しています。アプリが3回続けて予期せず終了したため、このセッションは処理なしで開始しました。",
+    degradedBootResume: "バックグラウンド処理を再開",
+    degradedBootDismiss: "閉じる",
     work: {
       remote: "リモート",
       hybrid: "ハイブリッド",

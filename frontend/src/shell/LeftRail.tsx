@@ -1,12 +1,16 @@
 // LeftRail — ports assets/shell.js renderRail(). 76px fixed rail: brand mark,
 // top nav (Job board / Applications / Networking), bottom nav (Analytics),
-// Settings tile. Networking is always in the rail (the CRM carries no account
-// risk); the LinkedIn risk toggle gates only automated actions (FR-SET-03).
+// Settings tile. The Networking tile is hidden while the master networking
+// toggle is off (maintainer, 2026-09-03), reversing the earlier rule that kept
+// it always visible on the grounds that the CRM half carries no account risk.
+// Settings stays reachable, which is the only way back on.
 
-import { NavLink } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import logoUrl from "../assets/logo.png";
+import { useLinkedInSession } from "../api/queries";
 import { Icon } from "./icons";
 
 type IconName =
@@ -24,6 +28,7 @@ const TOP: RailItem[] = [
   { to: "/applications", label: "nav.applications", icon: "bookmark" },
   { to: "/networking", label: "nav.networking", icon: "share" },
 ];
+const NETWORKING_ROUTE = "/networking";
 const BOTTOM: RailItem[] = [
   // Logs folded into Analytics (US-LOG-01): one surface, cost left + ledger right.
   { to: "/analytics", label: "nav.analytics", icon: "barChart" },
@@ -72,12 +77,23 @@ function BrandMark() {
 }
 
 export function LeftRail() {
-  // Networking (the contact CRM + kanban) is always available — it carries no
-  // ToS risk. The risk toggle gates only the automated LinkedIn actions
-  // (discover/send), inside the surfaces (FR-SET-03 as-built 2026-07-09).
   // The LinkedIn view left the rail on 2026-08-16: it is a modal now, opened
   // from the Networking header's status button.
-  const top = TOP;
+  const session = useLinkedInSession();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  // Undefined while the first read is in flight. Treated as ON so the tile does
+  // not blink out and back on every cold start.
+  const networkingOn = session.data?.enabled !== false;
+  const top = networkingOn ? TOP : TOP.filter((it) => it.to !== NETWORKING_ROUTE);
+
+  // Turning the toggle off while standing on the surface would otherwise leave
+  // the user on a screen whose feature is gone and whose tile no longer exists.
+  useEffect(() => {
+    if (!networkingOn && pathname.startsWith(NETWORKING_ROUTE)) {
+      navigate("/jobs", { replace: true });
+    }
+  }, [networkingOn, pathname, navigate]);
 
   return (
     <nav

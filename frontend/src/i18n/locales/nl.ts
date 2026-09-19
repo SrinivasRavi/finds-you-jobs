@@ -493,6 +493,9 @@ const nl: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Terug naar referrals",
+    },
     linkedinPill: {
       connected: "LinkedIn verbonden",
       connecting: "Verbinden…",
@@ -1166,6 +1169,10 @@ const nl: DeepPartial<Messages> = {
     backendStoppedFallback: "de backend reageert niet meer",
     sidecarFatalBanner:
       "Backend gestopt: {{message}}. Niets wat je doet wordt opgeslagen totdat je de app afsluit en opnieuw opent.",
+    degradedBoot:
+      "Achtergrondwerk is gepauzeerd. De app is 3 keer op rij onverwacht afgesloten, dus deze sessie is zonder gestart.",
+    degradedBootResume: "Achtergrondwerk hervatten",
+    degradedBootDismiss: "Sluiten",
     work: {
       remote: "Remote",
       hybrid: "Hybride",

@@ -9,6 +9,7 @@ import { eventBus, type StreamState } from "../api/events";
 import i18n from "../i18n";
 import { LinkedInBrowserProvider } from "../surfaces/LinkedInBrowserProvider";
 import { LeftRail } from "./LeftRail";
+import { DegradedBootBanner } from "./DegradedBootBanner";
 import { MutationErrorBanner } from "./MutationErrorBanner";
 
 /** Listen for the Tauri shell's sidecar supervision events. The shell emitted
@@ -78,6 +79,10 @@ export function Layout() {
               {t("shell.streamReconnecting")}
             </div>
           ) : null}
+          {/* Background work paused by a degraded boot (D27). Below the fatal
+              and reconnect strips: those are about the backend being gone,
+              this is about it running with less than usual. */}
+          <DegradedBootBanner />
           <Outlet />
         </div>
         <MutationErrorBanner />

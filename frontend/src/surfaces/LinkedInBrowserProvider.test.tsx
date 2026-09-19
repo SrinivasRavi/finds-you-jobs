@@ -45,7 +45,17 @@ import { LinkedInBrowserProvider, useLinkedInBrowser } from "./LinkedInBrowserPr
 function Opener() {
   const { open, isOpen } = useLinkedInBrowser();
   return (
-    <button data-testid="opener" data-open={String(isOpen)} onClick={open}>
+    <button data-testid="opener" data-open={String(isOpen)} onClick={() => open()}>
+      open
+    </button>
+  );
+}
+
+/** An opener that arrives "from" another modal, so it hands over a way back. */
+function OpenerWithBack({ onBack }: { onBack: () => void }) {
+  const { open } = useLinkedInBrowser();
+  return (
+    <button data-testid="opener-with-back" onClick={() => open({ onBack })}>
       open
     </button>
   );
@@ -67,6 +77,29 @@ afterEach(() => {
 });
 
 describe("LinkedInBrowserProvider", () => {
+  it("offers no way back when opened directly", () => {
+    // Opened from the Networking header there is nowhere to return to, and a
+    // dead Back button is worse than none.
+    const { getByTestId, queryByTestId } = renderProvider();
+    fireEvent.click(getByTestId("opener"));
+    expect(queryByTestId("linkedin-modal-back")).toBeNull();
+  });
+
+  it("returns to the caller when opened from another modal", () => {
+    // The referrals popup closes itself to get here (the browser dialog
+    // replaces it rather than stacking), so Back has to reopen it.
+    const onBack = vi.fn();
+    const { getByTestId, queryByTestId } = render(
+      <LinkedInBrowserProvider>
+        <OpenerWithBack onBack={onBack} />
+      </LinkedInBrowserProvider>,
+    );
+    fireEvent.click(getByTestId("opener-with-back"));
+    fireEvent.click(getByTestId("linkedin-modal-back"));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(queryByTestId("linkedin-view")).toBeNull();
+  });
+
   it("mounts nothing until opened, then shows the surface + queue panel", () => {
     renderProvider();
     expect(screen.queryByTestId("linkedin-view")).toBeNull();

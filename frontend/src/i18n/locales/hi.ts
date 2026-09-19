@@ -473,6 +473,9 @@ const hi: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "रेफ़रल पर वापस जाएँ",
+    },
     linkedinPill: {
       connected: "LinkedIn जुड़ा है",
       connecting: "जुड़ रहा है…",
@@ -1140,6 +1143,10 @@ const hi: DeepPartial<Messages> = {
     backendStoppedFallback: "बैकएंड ने जवाब देना बंद कर दिया",
     sidecarFatalBanner:
       "बैकएंड रुक गया: {{message}}। ऐप बंद करके दोबारा खोलने तक कुछ भी सहेजा नहीं जाएगा।",
+    degradedBoot:
+      "बैकग्राउंड काम रुका हुआ है। ऐप लगातार 3 बार अप्रत्याशित रूप से बंद हुआ, इसलिए यह सत्र इसके बिना शुरू हुआ।",
+    degradedBootResume: "बैकग्राउंड काम फिर से शुरू करें",
+    degradedBootDismiss: "बंद करें",
     work: {
       remote: "रिमोट",
       hybrid: "हाइब्रिड",

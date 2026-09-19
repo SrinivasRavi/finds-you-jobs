@@ -17,6 +17,7 @@ import { useApplyRun, useAttestApply, useCancelApply, useStartApply } from "../a
 import type { ApplyRun, ApplyRunStatus } from "../api/types";
 import i18n from "../i18n";
 import { applyRunDisplay, type ApplyTone } from "../shell/applyRunDisplay";
+import { formatEngineError } from "../shell/formatError";
 import { Modal } from "../shell/Modal";
 
 type Tone = ApplyTone;
@@ -78,7 +79,7 @@ function seedFeed(run: ApplyRun): FeedItem[] {
       tone: "bad",
     });
   });
-  if (run.summary) items.push({ id: "seed-summary", text: run.summary, tone: "info" });
+  if (run.summary) items.push({ id: "seed-summary", text: formatEngineError(run.summary) || run.summary, tone: "info" });
   return items;
 }
 
@@ -451,7 +452,7 @@ export function ApplierPanel({
           <div className="border-t border-border bg-bad-wash px-5 py-3">
             <div className="text-[13px] font-semibold text-bad">
               {phase.label}
-              {run?.summary ? <span className="ml-1 font-normal text-ink-2">— {run.summary}</span> : null}
+              {run?.summary ? <span className="ml-1 font-normal text-ink-2">— {formatEngineError(run.summary, t)}</span> : null}
             </div>
             {run && run.blockers.length > 0 ? (
               <ul className="mt-1.5 space-y-1 text-[12px] text-ink-2">

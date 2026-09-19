@@ -495,6 +495,9 @@ const ar = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "العودة إلى الإحالات",
+    },
     linkedinPill: {
       connected: "LinkedIn متصل",
       connecting: "جارٍ الاتصال…",
@@ -1193,6 +1196,10 @@ const ar = {
     backendStoppedFallback: "توقف الخادم الخلفي عن الاستجابة",
     sidecarFatalBanner:
       "توقف الخادم الخلفي: {{message}}. لن يُحفظ أي شيء تفعله حتى تغلق التطبيق وتعيد فتحه.",
+    degradedBoot:
+      "العمل في الخلفية متوقف مؤقتًا. أُغلق التطبيق بشكل غير متوقع 3 مرات متتالية، لذلك بدأت هذه الجلسة بدونه.",
+    degradedBootResume: "استئناف العمل في الخلفية",
+    degradedBootDismiss: "إخفاء",
     work: {
       remote: "عن بُعد",
       hybrid: "هجين",

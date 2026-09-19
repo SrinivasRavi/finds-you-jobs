@@ -501,6 +501,9 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Назад к рекомендациям",
+    },
     linkedinPill: {
       connected: "LinkedIn подключён",
       connecting: "Подключение…",
@@ -1191,6 +1194,10 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     backendStoppedFallback: "бэкенд перестал отвечать",
     sidecarFatalBanner:
       "Бэкенд остановлен: {{message}}. Ничего не сохранится, пока вы не закроете и не откроете приложение заново.",
+    degradedBoot:
+      "Фоновая работа приостановлена. Приложение неожиданно закрылось 3 раза подряд, поэтому этот сеанс запущен без неё.",
+    degradedBootResume: "Возобновить фоновую работу",
+    degradedBootDismiss: "Скрыть",
     work: {
       remote: "Удалённо",
       hybrid: "Гибрид",

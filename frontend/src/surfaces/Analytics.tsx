@@ -27,6 +27,7 @@ import type {
   Span,
 } from "../api/types";
 import { formatWhen } from "../shell/datetime";
+import { formatEngineError } from "../shell/formatError";
 
 const STATE_CLS: Record<OperationState, string> = {
   succeeded: "bg-good-wash text-good",
@@ -341,7 +342,12 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
       }
       data-testid="log-error"
     >
-      {entry.error}
+      {formatEngineError(entry.error, t)}
+            {formatEngineError(entry.error, t) !== entry.error && (
+              <div className="mt-2 pt-2 border-t border-border/50 opacity-80 text-[10px] break-words whitespace-pre-wrap">
+                {entry.error}
+              </div>
+            )}
     </div>
   );
 }
@@ -530,7 +536,12 @@ function ExpandedBlocks({ entry }: { entry: LedgerEntry }) {
             className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 font-mono text-[11px] text-bad"
             data-testid="log-error-full"
           >
-            {entry.error}
+            {formatEngineError(entry.error, t)}
+            {formatEngineError(entry.error, t) !== entry.error && (
+              <div className="mt-2 pt-2 border-t border-border/50 opacity-80 text-[10px] break-words whitespace-pre-wrap">
+                {entry.error}
+              </div>
+            )}
           </div>
         </ExpandedBlock>
       ) : null}

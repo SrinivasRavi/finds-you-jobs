@@ -19,6 +19,9 @@ const networking = {
   // The LinkedIn browser modal (2026-08-16; a left-rail destination before).
   linkedinModal: {
     title: "LinkedIn",
+    // Only rendered when the modal was opened from another modal that closed
+    // itself to get here (today, the referrals popup).
+    back: "Back to referrals",
   },
   // The modal body when Referral Outreach is off (the toggle can flip while
   // the dialog is open; entry points are hidden otherwise).

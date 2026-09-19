@@ -227,6 +227,7 @@ const popups = {
     loadingRun: "Loading run…",
     noActivity: "No activity yet.",
     latestScreenshot: "Latest screenshot",
+    claudeSubscriptionError: "Claude Code CLI authentication failed. Please check if your Claude subscription is active and connected.",
     screenshotAlt: "Latest Applier evidence screenshot",
     noScreenshot: "No screenshot captured yet.",
     handoffTitle: "Form ready — review and submit in the application browser",

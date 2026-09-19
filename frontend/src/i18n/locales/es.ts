@@ -479,6 +479,9 @@ const es: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Volver a referencias",
+    },
     linkedinPill: {
       connected: "LinkedIn conectado",
       connecting: "Conectando…",
@@ -1149,6 +1152,10 @@ const es: DeepPartial<Messages> = {
     backendStoppedFallback: "el backend dejó de responder",
     sidecarFatalBanner:
       "Backend detenido: {{message}}. Nada de lo que hagas se guardará hasta que cierres y vuelvas a abrir la app.",
+    degradedBoot:
+      "El trabajo en segundo plano está en pausa. La aplicación se cerró de forma inesperada 3 veces seguidas, así que esta sesión se inició sin él.",
+    degradedBootResume: "Reanudar el trabajo en segundo plano",
+    degradedBootDismiss: "Descartar",
     work: {
       remote: "Remoto",
       hybrid: "Híbrido",

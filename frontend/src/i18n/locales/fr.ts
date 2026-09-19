@@ -480,6 +480,9 @@ const fr: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Retour aux recommandations",
+    },
     linkedinPill: {
       connected: "LinkedIn connecté",
       connecting: "Connexion…",
@@ -1159,6 +1162,10 @@ const fr: DeepPartial<Messages> = {
     backendStoppedFallback: "le backend ne répond plus",
     sidecarFatalBanner:
       "Backend arrêté : {{message}}. Rien de ce que vous faites ne sera enregistré tant que vous n'aurez pas quitté puis rouvert l'app.",
+    degradedBoot:
+      "Le travail en arrière-plan est en pause. L'application s'est fermée de façon inattendue 3 fois de suite, donc cette session a démarré sans lui.",
+    degradedBootResume: "Reprendre le travail en arrière-plan",
+    degradedBootDismiss: "Masquer",
     work: {
       remote: "Télétravail",
       hybrid: "Hybride",

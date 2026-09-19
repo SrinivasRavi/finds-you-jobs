@@ -466,6 +466,9 @@ const zh: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "返回推荐",
+    },
     linkedinPill: {
       connected: "LinkedIn 已连接",
       connecting: "连接中…",
@@ -1123,6 +1126,10 @@ const zh: DeepPartial<Messages> = {
     backendStoppedFallback: "后端已停止响应",
     sidecarFatalBanner:
       "后端已停止：{{message}}。在退出并重新打开应用之前，你的任何操作都不会被保存。",
+    degradedBoot:
+      "后台任务已暂停。应用连续 3 次意外关闭，因此本次会话未启动后台任务。",
+    degradedBootResume: "恢复后台任务",
+    degradedBootDismiss: "关闭",
     work: {
       remote: "远程",
       hybrid: "混合",
