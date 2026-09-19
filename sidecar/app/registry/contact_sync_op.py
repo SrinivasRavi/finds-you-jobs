@@ -59,6 +59,7 @@ from sidecar.modules.networker.types import NetworkerError
 from ..db.base import now_utc
 from ..lifecycle import MANUAL_OVERRIDE_COOLDOWN_DAYS, resolve_lifecycle
 from ..logging_setup import get_logger
+from .exception_router import route_cause
 from .networker_ops import DRIVER_FACTORY, _net_contact_from_row, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
 
@@ -275,7 +276,12 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             # kill the tick — log verbatim, rotate the whole batch, and SAY so in
             # the result_ref (`stopped: "batch_failed"`) instead of reporting a
             # clean zero that reads like "nothing to do".
-            log.warning("contact_sync: batch probe failed: %s", exc)
+            # S-C14: the router names it (coded label, or the unknown path's
+            # captured evidence plus one model label) before the batch rotates.
+            routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
+            log.warning(
+                "contact_sync: batch probe failed (%s): %s", routed.diagnosis, exc
+            )
             with ctx.db.repos() as repos:
                 for entry in eligible:
                     repos.contacts.update(entry["contact_id"], last_touched_at=now)

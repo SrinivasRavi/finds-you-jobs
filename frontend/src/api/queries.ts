@@ -875,6 +875,17 @@ export function useCancelApply() {
 
 /** The human's post-handoff attestation (section 8.4). A `true` advances the card to
  *  Applied — refresh applications + the Activity tab. */
+export function useSubmitApply() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => Promise.resolve(api.submitApplyRun(runId)),
+    onSuccess: (run) => {
+      qc.setQueryData([...qk.applyRun, run.id], run);
+      invalidateTracker(qc);
+    },
+  });
+}
+
 export function useAttestApply() {
   const qc = useQueryClient();
   return useMutation({

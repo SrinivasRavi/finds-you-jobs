@@ -98,6 +98,32 @@ def classify(exc: BaseException) -> str | None:
     return None
 
 
+def _chain(exc: BaseException) -> list[BaseException]:
+    """The exception and everything it was raised `from`, outermost first."""
+    links: list[BaseException] = []
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        links.append(cur)
+        cur = cur.__cause__
+    return links
+
+
+def route_cause(
+    exc: BaseException, *, surface: Any = None, engine: Any = None
+) -> RoutedException:
+    """Route the worker error behind a module-typed wrapper. The networker driver
+    re-raises `NetworkerError(...) from e`, so the recognizable state is the
+    `__cause__`; routing the wrapper itself would send every recognized state
+    down the unknown path and call the model on errors we already understand."""
+    links = _chain(exc)
+    for link in links:
+        if classify(link) is not None:
+            return route(link, surface=surface, engine=engine)
+    return route(links[-1], surface=surface, engine=engine)
+
+
 def route(
     exc: BaseException, *, surface: Any = None, engine: Any = None
 ) -> RoutedException:

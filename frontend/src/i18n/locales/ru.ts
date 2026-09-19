@@ -1159,7 +1159,13 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       filledFields_other: "Заполнено {{ok}} из {{count}} поля.",
       couldntComplete: "Не удалось завершить: {{blockers}}.",
       neverSubmits:
-        "В P1 finds-you-jobs никогда не отправляет за вас — проверьте всё и нажмите кнопку отправки на самом сайте.",
+        "finds-you-jobs никогда не отправляет сам — проверьте и отправьте сами в браузере или попросите один раз нажать «Отправить».",
+      submitForMe: "Отправить за меня",
+      confirmSubmit: "Да, отправить",
+      cancelSubmit: "Пока нет",
+      submitting: "Отправка…",
+      submitConfirmHint:
+        "Это один раз нажмёт кнопку «Отправить» самой формы на странице, которую вы только что проверили. Отменить нельзя.",
       iSubmitted: "Я отправил(а)",
       didntSubmit: "Не отправлял(а)",
       retrying: "Повтор…",

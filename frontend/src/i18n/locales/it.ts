@@ -1107,7 +1107,13 @@ const it: DeepPartial<Messages> = {
       filledFields_other: "Compilati {{ok}} campi su {{count}}.",
       couldntComplete: "Non completato: {{blockers}}.",
       neverSubmits:
-        "In P1 finds-you-jobs non invia mai al posto tuo — controlla tutto, poi clicca il pulsante Invia del sito stesso.",
+        "finds-you-jobs non invia mai da solo: controlla e invia tu nel browser, oppure chiedigli di premere Invia una volta per te.",
+      submitForMe: "Invialo per me",
+      confirmSubmit: "Sì, invia",
+      cancelSubmit: "Non ancora",
+      submitting: "Invio in corso…",
+      submitConfirmHint:
+        "Questo preme una volta il pulsante Invia del modulo, sulla pagina che hai appena controllato. Non è reversibile.",
       iSubmitted: "Ho inviato",
       didntSubmit: "Non ho inviato",
       retrying: "Nuovo tentativo…",

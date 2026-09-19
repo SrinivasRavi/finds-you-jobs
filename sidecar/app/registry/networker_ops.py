@@ -51,6 +51,7 @@ from ..db.models import OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
+from .exception_router import route_cause
 from .operations import OperationContext, OperationOutcome, llm_outcome
 from .presence_gate import PresenceAbsent, decide_presence
 
@@ -827,6 +828,10 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         )
     except NetworkerError as exc:
         SEND_PROGRESS.pop(op_id, None)
+        # S-C14: name the failure. A recognized worker state routes to its coded
+        # label; an unrecognized one hard-stops, captures evidence and asks the
+        # model for one label. The router never picks an action.
+        routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
         # A hard voyager failure (stale selector, subprocess crash, unparseable
         # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,
         # outreach_logs empty" dogfood bug. The audit row is a hard requirement for
@@ -854,6 +859,7 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 "id": ctx.operation_id, "phase": "send_failed",
                 "contact_id": contact_id, "job_id": job_id,
                 "sent": False, "reason": detail, "quota": None,
+                "diagnosis": routed.diagnosis,
             }))
         raise
 

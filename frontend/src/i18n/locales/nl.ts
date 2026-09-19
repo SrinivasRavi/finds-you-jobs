@@ -1130,7 +1130,13 @@ const nl: DeepPartial<Messages> = {
       filledFields_other: "{{ok}} van {{count}} velden ingevuld.",
       couldntComplete: "Kon niet afronden: {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs verstuurt in P1 nooit voor jou — controleer alles en klik dan zelf op de verstuurknop van de site.",
+        "finds-you-jobs verstuurt nooit uit zichzelf — controleer het en verstuur het zelf in de browser, of laat één keer op Verzenden klikken.",
+      submitForMe: "Verstuur het voor mij",
+      confirmSubmit: "Ja, versturen",
+      cancelSubmit: "Nog niet",
+      submitting: "Bezig met versturen…",
+      submitConfirmHint:
+        "Dit klikt één keer op de eigen Verzenden-knop van het formulier, op de pagina die je zojuist hebt bekeken. Dit kan niet ongedaan worden gemaakt.",
       iSubmitted: "Ik heb verstuurd",
       didntSubmit: "Niet verstuurd",
       retrying: "Opnieuw proberen…",

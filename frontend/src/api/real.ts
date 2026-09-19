@@ -885,6 +885,14 @@ export class RealApi {
 
   /** The human's word after the P1 handoff (section 8.4): `true` records a user-attested
    *  submission and advances the card to Applied; `false` leaves it in place. */
+  /** Ask the run's own live browser to click Submit once (S-A5). 409 when the
+   *  review window is over, because the page it needs is gone. */
+  async submitApplyRun(runId: string): Promise<ApplyRun> {
+    return toApplyRun(
+      (await this.json("POST", `/api/apply-runs/${runId}/submit`, {})) as ApplyRunDTO,
+    );
+  }
+
   async attestApplyRun(runId: string, submitted: boolean): Promise<ApplyRun> {
     return toApplyRun(
       (await this.json("POST", `/api/apply-runs/${runId}/attest`, { submitted })) as ApplyRunDTO,

@@ -1109,7 +1109,13 @@ const de: DeepPartial<Messages> = {
       filledFields_other: "{{ok}} von {{count}} Feldern ausgefüllt.",
       couldntComplete: "Nicht abgeschlossen: {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs sendet in P1 nie für dich ab — prüfe alles und klicke dann selbst auf den Absenden-Button der Seite.",
+        "finds-you-jobs sendet nie von selbst ab — prüfe alles und sende es dann selbst im Browser ab, oder lass den Absenden-Button einmal für dich klicken.",
+      submitForMe: "Für mich absenden",
+      confirmSubmit: "Ja, absenden",
+      cancelSubmit: "Noch nicht",
+      submitting: "Wird abgesendet…",
+      submitConfirmHint:
+        "Dies klickt einmal den Absenden-Button des Formulars auf der gerade geprüften Seite. Das lässt sich nicht rückgängig machen.",
       iSubmitted: "Ich habe abgesendet",
       didntSubmit: "Nicht abgesendet",
       retrying: "Wird wiederholt…",

@@ -2814,6 +2814,39 @@ def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
         return dto.apply_run_dto(_found(repos.apply_runs.get(run_id), "run", run_id))
 
 
+@router.post("/api/apply-runs/{run_id}/submit", status_code=202)
+def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
+    """Click the form's Submit once, because the USER asked (S-A5).
+
+    P1 keeps every irreversible action behind the human: the model's tool
+    vocabulary has no submit, and this route is the only thing that can reach
+    `submit_application`. It needs the run's own browser still open, which is
+    the review window after `ready_for_human`, so a run outside that window is
+    a 409 rather than a silent no-op. The click itself happens on the op's
+    thread; the outcome arrives on the `apply` SSE stream and on the run row.
+    """
+    from ..registry.apply_op import APPLY_CONTROL
+
+    with _db(request).repos() as repos:
+        run = _found(repos.apply_runs.get(run_id), "run", run_id)
+        if run.status != "ready_for_human":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"run is {run.status!r}; Submit needs the review window that "
+                    "follows ready_for_human"
+                ),
+            )
+        control = APPLY_CONTROL.get(run.operation_id or "")
+        if control is None:
+            raise HTTPException(
+                status_code=409,
+                detail="the run's browser is no longer open; submit in it yourself and attest",
+            )
+        control.request_submit()
+        return dto.apply_run_dto(run)
+
+
 @router.post("/api/apply-runs/{run_id}/attest")
 def attest_apply_run(
     request: Request, run_id: str, payload: dto.ApplyAttestRequest

@@ -31,6 +31,7 @@ from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
 from ..db.base import now_utc
 from ..events import make_event
 from . import networker_ops
+from .exception_router import route_cause
 from .networker_ops import linkedin_feature_flags, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
 
@@ -191,6 +192,9 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
             cancel_check=control.is_cancelled,
         )
     except NetworkerError as exc:
+        # S-C14: route it first, so an unrecognized login failure captures its
+        # evidence instead of collapsing into one verbatim string.
+        route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
         # Cancel / timeout / no-cookie — an expected domain outcome, not a crash.
         # Persist a disconnected session + surface it, then let the op record the
         # verbatim reason in the ledger (NFR-SIDE-04) by re-raising.

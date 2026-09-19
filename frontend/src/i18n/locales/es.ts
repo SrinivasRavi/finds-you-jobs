@@ -1117,7 +1117,13 @@ const es: DeepPartial<Messages> = {
       filledFields_other: "Rellenados {{ok}} de {{count}} campos.",
       couldntComplete: "No se pudo completar: {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs nunca envía por ti en P1 — revísalo y pulsa el botón Enviar del propio sitio.",
+        "finds-you-jobs nunca envía por su cuenta: revísalo y envíalo tú en el navegador, o pídele que pulse Enviar una vez por ti.",
+      submitForMe: "Enviarlo por mí",
+      confirmSubmit: "Sí, enviar",
+      cancelSubmit: "Todavía no",
+      submitting: "Enviando…",
+      submitConfirmHint:
+        "Esto pulsa una vez el botón Enviar del formulario, en la página que acabas de revisar. No se puede deshacer.",
       iSubmitted: "Lo envié",
       didntSubmit: "No lo envié",
       retrying: "Reintentando…",

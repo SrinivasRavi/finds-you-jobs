@@ -1091,7 +1091,13 @@ const zh: DeepPartial<Messages> = {
       filledFields_other: "已填写 {{ok}}/{{count}} 个字段。",
       couldntComplete: "未能完成：{{blockers}}。",
       neverSubmits:
-        "P1 阶段 finds-you-jobs 绝不会替你提交 — 请检查无误后，点击网站自己的提交按钮。",
+        "finds-you-jobs 从不自行提交——请检查后在浏览器中自行提交，或让它替你点击一次提交。",
+      submitForMe: "替我提交",
+      confirmSubmit: "是的，提交",
+      cancelSubmit: "暂时不用",
+      submitting: "提交中…",
+      submitConfirmHint:
+        "这会在你刚刚查看的页面上，点击表单自己的提交按钮一次。无法撤销。",
       iSubmitted: "我已提交",
       didntSubmit: "未提交",
       retrying: "重试中…",

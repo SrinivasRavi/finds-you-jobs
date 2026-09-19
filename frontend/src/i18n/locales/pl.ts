@@ -1155,7 +1155,13 @@ const pl: DeepPartial<Messages> = {
       },
       couldntComplete: "Nie udało się ukończyć: {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs w P1 nigdy nie wysyła za ciebie — sprawdź wszystko, a potem kliknij przycisk Wyślij na samej stronie.",
+        "finds-you-jobs nigdy nie wysyła sam — sprawdź i wyślij samodzielnie w przeglądarce albo poproś o jednokrotne kliknięcie Wyślij.",
+      submitForMe: "Wyślij za mnie",
+      confirmSubmit: "Tak, wyślij",
+      cancelSubmit: "Jeszcze nie",
+      submitting: "Wysyłanie…",
+      submitConfirmHint:
+        "To jednokrotnie kliknie przycisk Wyślij formularza na stronie, którą właśnie sprawdziłeś. Nie można tego cofnąć.",
       iSubmitted: "Wysłano",
       didntSubmit: "Nie wysłano",
       retrying: "Ponawianie…",

@@ -235,7 +235,13 @@ const popups = {
     filledFields_other: "Filled {{ok}} of {{count}} fields.",
     couldntComplete: "Couldn’t complete: {{blockers}}.",
     neverSubmits:
-      "finds-you-jobs never submits for you in P1 — check it over, then click the site’s own Submit.",
+      "finds-you-jobs never submits on its own — check it over, then submit it yourself in the browser, or ask it to click Submit once for you.",
+    submitForMe: "Submit it for me",
+    confirmSubmit: "Yes, submit it",
+    cancelSubmit: "Not yet",
+    submitting: "Submitting…",
+    submitConfirmHint:
+      "This clicks the form’s own Submit button once, on the page you just reviewed. It cannot be undone.",
     iSubmitted: "I submitted",
     didntSubmit: "Didn’t submit",
     retrying: "Retrying…",

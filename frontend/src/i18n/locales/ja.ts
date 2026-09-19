@@ -1091,7 +1091,13 @@ const ja: DeepPartial<Messages> = {
       filledFields_other: "{{count}}項目中{{ok}}項目を入力しました。",
       couldntComplete: "完了できませんでした: {{blockers}}。",
       neverSubmits:
-        "P1のfinds-you-jobsは決して代わりに提出しません — 内容を確認のうえ、サイト自身の提出ボタンを押してください。",
+        "finds-you-jobs が自動で送信することはありません。内容を確認してブラウザーでご自身で送信するか、送信ボタンを一度だけ押すよう指示してください。",
+      submitForMe: "代わりに送信",
+      confirmSubmit: "はい、送信します",
+      cancelSubmit: "まだです",
+      submitting: "送信中…",
+      submitConfirmHint:
+        "今確認したページで、フォームの送信ボタンを一度だけ押します。取り消しはできません。",
       iSubmitted: "提出しました",
       didntSubmit: "提出していません",
       retrying: "再試行中…",

@@ -1108,7 +1108,13 @@ const hi: DeepPartial<Messages> = {
       filledFields_other: "{{count}} में से {{ok}} फ़ील्ड भरीं।",
       couldntComplete: "पूरा नहीं हो सका: {{blockers}}।",
       neverSubmits:
-        "P1 में finds-you-jobs आपकी ओर से कभी सबमिट नहीं करता — जाँच लें, फिर साइट का अपना Submit दबाएँ।",
+        "finds-you-jobs खुद से कभी नहीं भेजता — जाँच लें और ब्राउज़र में खुद भेजें, या एक बार Submit दबाने को कहें।",
+      submitForMe: "मेरे लिए भेजें",
+      confirmSubmit: "हाँ, भेजें",
+      cancelSubmit: "अभी नहीं",
+      submitting: "भेजा जा रहा है…",
+      submitConfirmHint:
+        "यह उसी पृष्ठ पर फ़ॉर्म का अपना Submit बटन एक बार दबाता है जिसे आपने अभी देखा। इसे पूर्ववत नहीं किया जा सकता।",
       iSubmitted: "मैंने सबमिट किया",
       didntSubmit: "सबमिट नहीं किया",
       retrying: "फिर कोशिश हो रही है…",

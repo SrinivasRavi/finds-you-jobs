@@ -1467,6 +1467,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/apply-runs/{run_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Apply Run
+         * @description Click the form's Submit once, because the USER asked (S-A5).
+         *
+         *     P1 keeps every irreversible action behind the human: the model's tool
+         *     vocabulary has no submit, and this route is the only thing that can reach
+         *     `submit_application`. It needs the run's own browser still open, which is
+         *     the review window after `ready_for_human`, so a run outside that window is
+         *     a 409 rather than a silent no-op. The click itself happens on the op's
+         *     thread; the outcome arrives on the `apply` SSE stream and on the run row.
+         */
+        post: operations["submit_apply_run_api_apply_runs__run_id__submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/apply-runs/{run_id}/attest": {
         parameters: {
             query?: never;
@@ -5814,6 +5841,37 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_apply_run_api_apply_runs__run_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

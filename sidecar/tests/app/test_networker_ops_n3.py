@@ -828,3 +828,58 @@ def test_send_closes_its_driver_on_success_and_on_failure(wired: Wired) -> None:
             "contact_id": cid, "job_id": wired.job_id, "message": "Hi again.",
         }))
     assert len(fail_built) == 1 and fail_built[0].closed
+
+
+def _wrapped(upstream: BaseException, message: str) -> NetworkerError:
+    """What the driver actually raises: a typed wrapper `from` the worker error."""
+    err = NetworkerError("voyager", message)
+    err.__cause__ = upstream
+    return err
+
+
+def test_send_failure_is_routed_to_its_coded_label(wired: Wired) -> None:
+    """S-C14 — the exception router is live on the worker except path. A
+    recognized upstream state names its coded handler and the model is never
+    asked; the wrapper alone would have sent it down the unknown path."""
+    from sidecar.packages.referral_outreach import facade
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        raise_on="send_connection",
+        error=_wrapped(facade.RateLimited("429 from linkedin"), "429 from linkedin"),
+    )
+    events: list[dict] = []
+    with pytest.raises(NetworkerError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {
+            "contact_id": cid, "job_id": wired.job_id, "message": "Hi Sarah.",
+        }, events=events))
+
+    failed = [e for e in events if e["payload"].get("phase") == "send_failed"]
+    assert len(failed) == 1
+    assert failed[0]["payload"]["diagnosis"] == "rate_limited"
+
+
+def test_unrecognized_send_failure_routes_to_unknown(wired: Wired) -> None:
+    """S-C14 — a surprise takes the unknown path. With no engine configured the
+    label is `unknown` and the stop still stands; only the naming is missing."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        raise_on="send_connection",
+        error=_wrapped(RuntimeError("selector vanished"), "selector vanished"),
+    )
+    events: list[dict] = []
+    with pytest.raises(NetworkerError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {
+            "contact_id": cid, "job_id": wired.job_id, "message": "Hi Sarah.",
+        }, events=events))
+
+    failed = [e for e in events if e["payload"].get("phase") == "send_failed"]
+    assert failed[0]["payload"]["diagnosis"] == "unknown"

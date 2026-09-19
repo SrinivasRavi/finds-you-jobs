@@ -1127,7 +1127,13 @@ const fr: DeepPartial<Messages> = {
       filledFields_other: "Champs remplis : {{ok}} sur {{count}}.",
       couldntComplete: "Impossible de terminer : {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs ne soumet jamais à votre place en P1 — vérifiez tout, puis cliquez sur le bouton Soumettre du site lui-même.",
+        "finds-you-jobs n’envoie jamais de lui-même : vérifiez, puis envoyez vous-même dans le navigateur, ou demandez-lui de cliquer une fois sur Envoyer.",
+      submitForMe: "Envoyer à ma place",
+      confirmSubmit: "Oui, envoyer",
+      cancelSubmit: "Pas encore",
+      submitting: "Envoi…",
+      submitConfirmHint:
+        "Ceci clique une fois sur le bouton Envoyer du formulaire, sur la page que vous venez de vérifier. C’est irréversible.",
       iSubmitted: "J'ai soumis",
       didntSubmit: "Pas soumis",
       retrying: "Nouvel essai…",

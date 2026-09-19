@@ -45,6 +45,7 @@ from sidecar.packages.jobapplier import (
     classify,
     observe,
     run_apply,
+    submit_application,
 )
 from sidecar.packages.jobapplier.fake import FakeApplyEngine
 from sidecar.packages.jobapplier.loop import ApplyEngine
@@ -408,6 +409,43 @@ def _persist_event(ctx: OperationContext, run_id: str, event: ApplyEvent) -> Non
             repos.apply_runs.update(run_id, **fields)
 
 
+async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> None:
+    """Click Submit once, because the USER asked (S-A5). The agent cannot reach
+    this: `submit_application` sits outside the model's tool vocabulary and the
+    only caller is the request the human made from the review surface. The
+    outcome is recorded verbatim, including a failure, and the confirmation
+    poll below keeps running either way."""
+    outcome = await submit_application(page)
+    db = ctx.db
+    assert db is not None
+    with db.repos() as repos:
+        fields: dict[str, Any] = {"summary": outcome.note}
+        if outcome.final_url:
+            fields["final_url"] = outcome.final_url
+        if outcome.confirmed:
+            fields["status"] = "submitted"
+            fields["submit_evidence"] = "user_submitted"
+        repos.apply_runs.update(run_id, **fields)
+        if outcome.confirmed:
+            run = repos.apply_runs.get(run_id)
+            if run is not None:
+                advance_card_to_applied(repos, run.application_id, by="user_submitted")
+    if ctx.publish is not None:
+        ctx.publish(
+            make_event(
+                "apply",
+                {
+                    "run_id": run_id,
+                    "operation_id": ctx.operation_id,
+                    "event": "apply.user_submitted",
+                    "clicked": outcome.clicked,
+                    "confirmed": outcome.confirmed,
+                    "note": outcome.note,
+                },
+            )
+        )
+
+
 async def _review_window(
     ctx: OperationContext,
     run_id: str,
@@ -426,6 +464,9 @@ async def _review_window(
         waited += _REVIEW_POLL_S
         if page.is_closed():
             return result  # user closed after reviewing; run stays ready_for_human
+        if control.take_submit_request():
+            await _run_user_submit(ctx, run_id, page)
+            continue
         try:
             obs = await observe(page)
         except Exception:
