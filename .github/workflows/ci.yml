@@ -1,0 +1,157 @@
+name: CI
+
+# S-R1. main shipped with no test gates until 2026-09-20, and the frontend unit
+# suite had been failing locally for weeks with nothing to catch it.
+#
+# Gated here: pytest, ruff, pyright, tsc, vitest, cargo test, and that the
+# generated OpenAPI types are committed. NOT gated yet: the Playwright e2e pass
+# (needs a real sidecar and a browser per run, and its own port discipline) and
+# the 2 Rust lint gates noted on the `shell` job.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sidecar:
+    name: Sidecar (pytest, ruff, pyright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # No `python-version:` input — `.python-version` (3.13) is the source
+        # of truth and uv provisions it (see build-windows.yml).
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Install Chromium for the browser-backed tests
+        # The applier and submit suites drive real headless Chromium against
+        # local file:// fixtures. Zero network, but the browser must exist.
+        run: uv run playwright install --with-deps chromium
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: pyright
+        run: uv run pyright sidecar
+
+      - name: pytest
+        run: uv run pytest sidecar/tests -q
+
+  frontend:
+    name: Frontend (tsc, vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm
+        # No explicit `version:` — package.json's `packageManager` is the
+        # single source of truth and pnpm/action-setup errors if both are set.
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: tsc
+        run: cd frontend && pnpm typecheck
+
+      - name: vitest
+        run: cd frontend && pnpm test:unit
+
+  shell:
+    name: Tauri shell (cargo test)
+    # `cargo fmt --check` and `cargo clippy -D warnings` are NOT gates yet: the
+    # tree fails both today on code this workflow did not touch (2 rustfmt
+    # diffs in `lib.rs`, 1 clippy warning). Turning them on means a formatting
+    # pass of its own, which is S-R8 in backlog.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install the Linux webkit dependencies tauri links against
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: cargo test
+        run: cd src-tauri && cargo test
+
+  codegen:
+    name: Generated schema is committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          uv sync
+          cd frontend && pnpm install --frozen-lockfile
+
+      - name: Regenerate and diff
+        # `frontend/src/api/schema.d.ts` is committed and generated from the
+        # sidecar's OpenAPI. A route added without re-running codegen leaves
+        # the frontend typed against a schema that no longer exists.
+        run: |
+          node scripts/codegen.mjs
+          git diff --exit-code -- frontend/src/api/schema.d.ts
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Every commit carries Signed-off-by
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          missing=0
+          for sha in $(git rev-list "$base".."$head"); do
+            if ! git log -1 --format=%B "$sha" | grep -qi '^Signed-off-by: '; then
+              echo "::error::$sha has no Signed-off-by (use git commit -s)"
+              missing=1
+            fi
+          done
+          exit $missing
