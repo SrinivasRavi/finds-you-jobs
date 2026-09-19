@@ -175,7 +175,11 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
         repos.linkedin_session.update(status="connecting", paused_until=None, paused_reason="")
     _publish_linkedin(ctx, "connecting")
 
-    control = LOGIN_CONTROL.register(ctx.operation_id or "")
+    # Register and remove under ONE key (S-C11): an op with no id registered
+    # under "" and the removal, guarded on `operation_id is not None`, left
+    # that entry behind for the process lifetime.
+    control_key = ctx.operation_id or ""
+    control = LOGIN_CONTROL.register(control_key)
     driver = networker_ops.DRIVER_FACTORY(profile)
     try:
         # The --linger window (TEMPORARY, 2026-07-08) was retired 2026-07-09:
@@ -195,8 +199,7 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
         _publish_linkedin(ctx, "disconnected", error=str(exc))
         raise
     finally:
-        if ctx.operation_id is not None:
-            LOGIN_CONTROL.remove(ctx.operation_id)
+        LOGIN_CONTROL.remove(control_key)
         driver.close()
 
     now = now_utc()

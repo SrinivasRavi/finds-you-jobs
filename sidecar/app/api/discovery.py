@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException, Request
@@ -272,8 +272,24 @@ _WATCH_PROBE_TIMEOUT_S = 8
 # Confirmed slug-guess probes, keyed "<adapter>:<company-slug>" → board URL.
 # A rewatch after an unwatch re-ran the live probe every time (1-2 s of real
 # toggle latency — maintainer 2026-07-22); a board that answered once this
-# process is not re-probed. Process-lifetime, tiny (one URL per company).
-_GUESS_CACHE: dict[str, str] = {}
+# process is not re-probed. Bounded LRU: a long-lived process watching and
+# unwatching many companies grew it without limit (S-C10).
+_GUESS_CACHE_MAX = 512
+_GUESS_CACHE: OrderedDict[str, str] = OrderedDict()
+
+
+def _guess_cache_put(key: str, url: str) -> None:
+    _GUESS_CACHE[key] = url
+    _GUESS_CACHE.move_to_end(key)
+    while len(_GUESS_CACHE) > _GUESS_CACHE_MAX:
+        _GUESS_CACHE.popitem(last=False)
+
+
+def _guess_cache_get(key: str) -> str | None:
+    url = _GUESS_CACHE.get(key)
+    if url is not None:
+        _GUESS_CACHE.move_to_end(key)
+    return url
 
 
 @router.post("/api/discovery/watchlist")
@@ -320,9 +336,9 @@ async def watch_company(
             source_url = str(covering["url"])
             resolved = adapters.resolve(SourceEntry(url=source_url))
             if resolved is not None:
-                _GUESS_CACHE[cache_key] = source_url
+                _guess_cache_put(cache_key, source_url)
         else:
-            cached = _GUESS_CACHE.get(cache_key)
+            cached = _guess_cache_get(cache_key)
             if cached is not None:
                 cand_resolved = adapters.resolve(SourceEntry(url=cached))
                 if cand_resolved is not None:
@@ -340,7 +356,7 @@ async def watch_company(
                     cand_resolved = adapters.resolve(SourceEntry(url=cand))
                     if cand_resolved is not None:
                         source_url, resolved = cand, cand_resolved
-                        _GUESS_CACHE[cache_key] = cand
+                        _guess_cache_put(cache_key, cand)
                         break
     fail: str | None = None
     adapter_id = ""

@@ -671,3 +671,22 @@ def test_budget_refused_press_leaves_every_row_in_place(db: Database) -> None:
     assert ref["synced"] == 0
     assert ref["stopped"] == "cap_or_backoff"
     assert ref["unprobed"] == 1
+
+
+def test_sweep_closes_its_driver(db: Database) -> None:
+    """S-C12 — `probe_batch` owns the close; pin that the sweep's driver
+    actually comes back closed rather than trusting the shared-fake flag."""
+    _make_contact(db, status="sent", sent_at=now_utc())
+    built: list[FakeVoyagerDriver] = []
+
+    def factory(tier: Any) -> FakeVoyagerDriver:
+        drv = FakeVoyagerDriver(
+            contact_sync_result=_probe(degree=1, is_first_degree=True)
+        )
+        built.append(drv)
+        return drv
+
+    cs.DRIVER_FACTORY = factory
+    cs.contact_sync_entrypoint(_ctx(db))
+    assert built, "the sweep built no driver — the gate closed before the probe"
+    assert all(d.closed for d in built)

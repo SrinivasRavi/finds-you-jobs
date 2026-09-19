@@ -871,3 +871,27 @@ def test_watchlist_roster_lists_and_removes_watched_rows_only(
     assert len(after["preferences"]["portals_config"]["sources"]) == len(
         settings["preferences"]["portals_config"]["sources"]
     ) - 1
+
+
+def test_guess_cache_is_bounded_and_evicts_oldest_first() -> None:
+    """S-C10 — the slug-guess cache used to grow for the process lifetime."""
+    discovery_api._GUESS_CACHE.clear()
+    for i in range(discovery_api._GUESS_CACHE_MAX + 50):
+        discovery_api._guess_cache_put(f"greenhouse:co{i}", f"https://example/{i}")
+    assert len(discovery_api._GUESS_CACHE) == discovery_api._GUESS_CACHE_MAX
+    # The 50 oldest went; the newest stayed.
+    assert discovery_api._guess_cache_get("greenhouse:co0") is None
+    assert discovery_api._guess_cache_get("greenhouse:co49") is None
+    last = discovery_api._GUESS_CACHE_MAX + 49
+    assert discovery_api._guess_cache_get(f"greenhouse:co{last}") == f"https://example/{last}"
+
+
+def test_guess_cache_read_refreshes_recency() -> None:
+    """A key read back must not be the next one evicted."""
+    discovery_api._GUESS_CACHE.clear()
+    for i in range(discovery_api._GUESS_CACHE_MAX):
+        discovery_api._guess_cache_put(f"lever:co{i}", f"https://example/{i}")
+    assert discovery_api._guess_cache_get("lever:co0") == "https://example/0"
+    discovery_api._guess_cache_put("lever:fresh", "https://example/fresh")
+    assert discovery_api._guess_cache_get("lever:co0") == "https://example/0"
+    assert discovery_api._guess_cache_get("lever:co1") is None

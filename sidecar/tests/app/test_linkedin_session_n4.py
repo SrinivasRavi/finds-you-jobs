@@ -985,3 +985,34 @@ def test_live_send_progress_rides_the_ledger(app_client) -> None:
         networker_ops.SEND_PROGRESS.pop(row.id, None)
         with _app.state.db.repos() as repos:
             repos.operations.mark_failed(row.id, error="test cleanup")
+
+
+def test_login_op_without_an_operation_id_leaves_no_stranded_control(app_client) -> None:
+    """S-C11 — register used `operation_id or ""` while remove was guarded on
+    `operation_id is not None`, so an id-less run leaked its entry forever."""
+    from sidecar.app.registry.linkedin_op import LOGIN_CONTROL, login_entrypoint
+    from sidecar.app.registry.operations import OperationContext
+
+    _app, client = app_client
+    _enable_networking(client)
+    LOGIN_CONTROL._controls.clear()
+    ctx = OperationContext(
+        kind="linkedin_login", input_snapshot={}, db=_app.state.db, operation_id=None
+    )
+    login_entrypoint(ctx)
+    assert LOGIN_CONTROL._controls == {}
+
+
+def test_login_op_with_an_operation_id_also_cleans_up(app_client) -> None:
+    """The keyed path must keep working; both now remove the key they registered."""
+    from sidecar.app.registry.linkedin_op import LOGIN_CONTROL, login_entrypoint
+    from sidecar.app.registry.operations import OperationContext
+
+    _app, client = app_client
+    _enable_networking(client)
+    LOGIN_CONTROL._controls.clear()
+    ctx = OperationContext(
+        kind="linkedin_login", input_snapshot={}, db=_app.state.db, operation_id="op-keyed"
+    )
+    login_entrypoint(ctx)
+    assert LOGIN_CONTROL._controls == {}

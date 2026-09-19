@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -755,3 +756,75 @@ def test_never_accepted_before_cutoff(wired: Wired) -> None:
     with wired.db.repos() as repos:
         stale = repos.contacts.list_never_accepted_before(cutoff)
         assert [c.id for c in stale] == [old_id]
+
+
+def _counting_factory(built: list[FakeVoyagerDriver], **kwargs: Any):
+    """One FRESH driver per build. The shared fake these tests otherwise use
+    hides an unclosed driver, because a single close() anywhere flips the one
+    instance's flag for every build site (S-C12)."""
+
+    def factory(tier: Any) -> FakeVoyagerDriver:
+        drv = FakeVoyagerDriver(**kwargs)
+        built.append(drv)
+        return drv
+
+    return factory
+
+
+def test_typeahead_and_discover_close_every_driver_they_build(wired: Wired) -> None:
+    """S-C12 — ownership is "the module function closes the driver it is
+    given"; these 2 sites build one each, so both must come back closed."""
+    built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        built, resolve_result=_DOMAIN_HIT, discover_result=DISCOVER_ROWS
+    )
+    ops.discover_entrypoint(
+        _ctx(wired.db, "discover", {"company": "Northline", "job_id": wired.job_id})
+    )
+    assert len(built) == 2  # resolve + discover
+    assert all(d.closed for d in built)
+
+
+def test_pasted_company_url_closes_every_driver_it_builds(wired: Wired) -> None:
+    """S-C12 — the authoritative pasted-URL resolve is its own build site."""
+    built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        built, resolve_result=_URL_HIT, discover_result=DISCOVER_ROWS
+    )
+    ops.discover_entrypoint(_ctx(wired.db, "discover", {
+        "company": "Northline", "job_id": wired.job_id,
+        "company_url": "https://www.linkedin.com/company/northline-systems/",
+    }))
+    assert len(built) == 2  # pasted-url resolve + discover
+    assert all(d.closed for d in built)
+
+
+def test_send_closes_its_driver_on_success_and_on_failure(wired: Wired) -> None:
+    """S-C12 — the send path must close on success AND on a voyager failure.
+    Its build moved next to `net_send`, which is what closes it."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+
+    ok_built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        ok_built,
+        connection_result={"op": "send-connection", "ok": True, "sent": True, "status": "sent"},
+    )
+    ops.send_entrypoint(_ctx(wired.db, "send", {
+        "contact_id": cid, "job_id": wired.job_id, "message": "Hi Sarah.",
+    }))
+    assert len(ok_built) == 1 and ok_built[0].closed
+
+    fail_built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        fail_built,
+        raise_on="send_connection",
+        error=NetworkerError("voyager", "stale selector"),
+    )
+    with pytest.raises(NetworkerError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {
+            "contact_id": cid, "job_id": wired.job_id, "message": "Hi again.",
+        }))
+    assert len(fail_built) == 1 and fail_built[0].closed

@@ -787,7 +787,6 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile = resolve_pacing_profile(repos)
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
-    driver = DRIVER_FACTORY(profile)
 
     # The send announces itself (`sending`, with the routed channel), then
     # narrates REAL progress: the driver reports each completed step
@@ -817,6 +816,10 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 "contact_id": contact_id, "job_id": job_id, "step": step,
             }))
 
+    # Built here, not before the announce block: `net_send` closes the driver it
+    # is given (`modules/networker/networker.py`), so anything raising between a
+    # build and that call would leak it (S-C12).
+    driver = DRIVER_FACTORY(profile)
     try:
         result = net_send(
             message, net_contact, driver=driver, dry_run=dry_run,
