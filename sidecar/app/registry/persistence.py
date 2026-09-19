@@ -432,7 +432,7 @@ def evict_stale_trash(
         for job in repos.jobs.list_trashed_before(cutoff):
             if not repos.tombstones.exists(job.canonical_url):
                 repos.tombstones.create(job.canonical_url, reason="trash_ttl")
-            repos.jobs.delete(job.id)
+            delete_job_cascade(repos, job.id)
             tombstoned.append(job.id)
     return tombstoned
 
@@ -476,7 +476,7 @@ def age_expired_jobs(
         for job in repos.jobs.list_expired_before(delete_cutoff):
             if job.id in saved:
                 continue  # Saved rescues it — never auto-delete
-            repos.jobs.delete(job.id)  # no Tombstone — FR-SYS-03
+            delete_job_cascade(repos, job.id)  # no Tombstone — FR-SYS-03
             deleted.append(job.id)
 
         # Stage 1: grey out active jobs past the freshness window.
@@ -491,6 +491,17 @@ def age_expired_jobs(
 def _saved_job_ids(repos: Repos) -> set[str]:
     """Job ids rescued by a Saved application — never auto-expired/deleted."""
     return repos.applications.job_ids()
+
+
+def delete_job_cascade(repos: Repos, job_id: str) -> bool:
+    """The ONE job cascade; all 4 delete paths call it, so a new FK child
+    cannot wedge one path while another keeps working (S-C46). Referral
+    candidates hard-delete; outreach logs nullify, because the log is audit
+    data. Applications are not touched: `_saved_job_ids` rescues a saved job
+    before deletion, and trashing requires unsaving first."""
+    repos.referral_candidates.delete_for_job(job_id)
+    repos.outreach_logs.nullify_for_job(job_id)
+    return repos.jobs.delete(job_id)
 
 
 def delete_application_cascade(

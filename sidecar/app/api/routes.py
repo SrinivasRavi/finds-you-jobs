@@ -58,6 +58,7 @@ from ..registry.persistence import (
     SCORER_IMPL,
     SCORER_IMPL_DETERMINISTIC,
     delete_application_cascade,
+    delete_job_cascade,
     scoring_mode,
 )
 from ..runner import OperationRunner
@@ -522,7 +523,7 @@ def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO:
         canonical = job.canonical_url
         if not repos.tombstones.exists(canonical):
             repos.tombstones.create(canonical, reason="user_delete")
-        repos.jobs.delete(job_id)
+        delete_job_cascade(repos, job_id)
     return dto.TombstoneResultDTO(tombstoned=1, canonical_urls=[canonical])
 
 
@@ -542,7 +543,7 @@ def empty_trash(request: Request) -> dto.TombstoneResultDTO:
             if not repos.tombstones.exists(job.canonical_url):
                 repos.tombstones.create(job.canonical_url, reason="empty_trash")
             urls.append(job.canonical_url)
-            repos.jobs.delete(job.id)
+            delete_job_cascade(repos, job.id)
     return dto.TombstoneResultDTO(tombstoned=len(urls), canonical_urls=urls)
 
 

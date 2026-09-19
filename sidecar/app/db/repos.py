@@ -654,10 +654,11 @@ class JobsRepo:
         return touched
 
     def delete(self, job_id: str) -> bool:
-        """Hard-delete a job row. Its scores are columns on the row, so they go
-        with it and there is nothing to cascade. Used by the tombstone paths
-        (Empty Trash / Delete forever / TTL eviction) — the caller writes the
-        `Tombstone`."""
+        """Hard-delete a job row. Scores are columns and go with it, but
+        `referral_candidates`, `outreach_logs`, and `applications` hold FKs
+        to `jobs.id` — the caller MUST clean those first (use
+        `delete_job_cascade` in `persistence.py`). Used by the tombstone
+        paths (Empty Trash / Delete forever / TTL eviction)."""
         job = self._s.get(Job, job_id)
         if job is None:
             return False
@@ -1305,6 +1306,14 @@ class ReferralCandidatesRepo:
         self._s.flush()
         return assoc
 
+    def delete_for_job(self, job_id: str) -> int:
+        """Remove every referral-candidate row for a job (`foreign_keys=ON`
+        forbids orphans when the job is deleted). Returns the row count."""
+        result = self._s.execute(
+            delete(ReferralCandidate).where(ReferralCandidate.job_id == job_id)
+        )
+        return cast("CursorResult[Any]", result).rowcount
+
 
 class OutreachLogsRepo:
     """Per-message audit (database-design section 5)."""
@@ -1388,6 +1397,17 @@ class OutreachLogsRepo:
             else:
                 batches[job_id] = [log for log in logs if log.batch_id == newest.batch_id]
         return batches
+
+    def nullify_for_job(self, job_id: str) -> int:
+        """SET job_id = NULL on every outreach log for a deleted job
+        (`foreign_keys=ON`). Outreach history is audit data — we keep the
+        rows but sever the FK so the job row can go. Returns the row count."""
+        result = self._s.execute(
+            update(OutreachLog)
+            .where(OutreachLog.job_id == job_id)
+            .values(job_id=None)
+        )
+        return cast("CursorResult[Any]", result).rowcount
 
 
 class LinkedInSessionRepo:
