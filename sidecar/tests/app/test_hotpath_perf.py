@@ -22,6 +22,7 @@ The 2026-08-24 sweep adds the 3 routes that pass missed, same properties:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from collections.abc import Iterator
 from datetime import timedelta
@@ -36,6 +37,7 @@ from sqlalchemy import event
 
 from sidecar.app.api import dto as dto_module
 from sidecar.app.api import routes
+from sidecar.app.api import routes as routes_module
 from sidecar.app.db import Database
 from sidecar.app.db.base import now_utc
 from sidecar.app.db.models import Job
@@ -103,7 +105,7 @@ def _seed_cards(app: FastAPI, n: int, start: int = 0) -> None:
                 name=f"Person {i}",
                 current_company=f"Co {i}",
             )
-            repos.contact_job_assocs.upsert(contact.id, job.id)
+            repos.referral_candidates.upsert(contact.id, job.id)
             repos.outreach_logs.create(
                 contact.id,
                 job_id=job.id,
@@ -232,11 +234,13 @@ def test_board_search_and_order_parity_with_deferred_dto_build(
         )
         repos.jobs.update(old.id, ingested_at=base - timedelta(days=2))
         repos.jobs.update(new.id, ingested_at=base - timedelta(days=1))
-        repos.job_scores.create(
-            job_id=low.id, profile_version=1, score_0_100=10, breakdown_md="bd-low"
+        repos.jobs.set_score(
+            low.id, scorer_impl="scorer-llm", score_0_100=10,
+            reasons=[], breakdown_md="bd-low",
         )
-        repos.job_scores.create(
-            job_id=high.id, profile_version=1, score_0_100=90, breakdown_md="bd-high"
+        repos.jobs.set_score(
+            high.id, scorer_impl="scorer-llm", score_0_100=90,
+            reasons=[], breakdown_md="bd-high",
         )
         ids = {"low": low.id, "high": high.id, "old": old.id, "new": new.id}
 
@@ -276,30 +280,28 @@ def test_board_large_feed_answers_fast(
 
 
 def test_board_and_applications_assemble_off_loop(
-    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+    app_client: tuple[FastAPI, TestClient],
 ) -> None:
-    """The hot paths hand their whole assembly to `asyncio.to_thread`, so the
-    event loop is never held for the feed-sized work (async-first rule).
-    `/api/jobs` is bounded (200 rows) but follows the same pattern."""
+    """The hot paths never hold the event loop for feed-sized work.
+
+    They used to prove this by handing an inner `_assemble()` to
+    `asyncio.to_thread`. They are plain `def` handlers now (S-C35), which
+    Starlette runs in its own threadpool, so the guarantee is the framework's
+    and the assertion is about the handler's shape rather than about a call it
+    makes. Flipping one back to `async def` would silently put the whole
+    assembly on the loop, which is what this catches."""
     app, client = app_client
     _seed_jobs(app, 5)
 
-    offloaded: list[str] = []
-    real_to_thread = asyncio.to_thread
-
-    async def spying_to_thread(fn: Any, /, *args: Any, **kwargs: Any) -> Any:
-        offloaded.append(getattr(fn, "__qualname__", repr(fn)))
-        return await real_to_thread(fn, *args, **kwargs)
-
-    monkeypatch.setattr(asyncio, "to_thread", spying_to_thread)
     assert client.get("/api/board", headers=AUTH).status_code == 200
     assert client.get("/api/applications", headers=AUTH).status_code == 200
     assert client.get("/api/jobs", headers=AUTH).status_code == 200
     assert client.get("/api/scan/progress", headers=AUTH).status_code == 200
-    assert any(name.startswith("board.") for name in offloaded)
-    assert any(name.startswith("list_applications.") for name in offloaded)
-    assert any(name.startswith("list_jobs.") for name in offloaded)
-    assert any(name.startswith("scan_progress.") for name in offloaded)
+    for name in ("board", "list_applications", "list_jobs", "scan_progress"):
+        handler = getattr(routes_module, name)
+        assert not inspect.iscoroutinefunction(handler), (
+            f"{name} touches the database, so it must be a plain def handler"
+        )
 
 
 # ─── S-C6 / S-C7 / S-C8: the 3 routes the F-H2 pass missed ─────────────────
@@ -347,9 +349,13 @@ def _seed_contacts(
 def test_trash_analytics_and_contacts_run_off_loop(
     app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S-C6 / S-C7 / S-C8: each of the 3 hands its whole assembly to
-    `asyncio.to_thread`, so the shell's 2 s /healthz window can't be crossed by
-    Trash depth, job count, or roster size (async-first rule)."""
+    """S-C6 / S-C7 / S-C8: none of the 3 can cross the shell's 2 s /healthz
+    window with Trash depth, job count, or roster size.
+
+    2 of them are plain `def` now and get Starlette's threadpool for free;
+    `discovery_analytics` is still `async def` around an inner `_assemble()`
+    handed to `asyncio.to_thread`, so it is checked the way it actually
+    works."""
     app, client = app_client
     _seed_jobs(app, 5)
     _seed_trash(app, 5)
@@ -366,9 +372,12 @@ def test_trash_analytics_and_contacts_run_off_loop(
     assert client.get("/api/contacts", headers=AUTH).status_code == 200
     assert client.get("/api/discovery/analytics", headers=AUTH).status_code == 200
     assert client.post("/api/jobs/trash/empty", headers=AUTH).status_code == 200
-    assert any(name.startswith("list_contacts.") for name in offloaded)
     assert any(name.startswith("discovery_analytics.") for name in offloaded)
-    assert any(name.startswith("empty_trash.") for name in offloaded)
+    for name in ("list_contacts", "empty_trash"):
+        handler = getattr(routes_module, name)
+        assert not inspect.iscoroutinefunction(handler), (
+            f"{name} touches the database, so it must be a plain def handler"
+        )
 
 
 def test_empty_trash_keeps_its_semantics_at_depth(
@@ -544,9 +553,11 @@ def test_outreach_batch_helpers_parity(repo_db: Database) -> None:
 def test_apply_runs_latest_batch_parity(repo_db: Database) -> None:
     base = now_utc()
     with repo_db.repos() as repos:
-        job = repos.jobs.create(canonical_url="j1", title="A", source_adapter="lever")
-        card1 = repos.applications.create(job.id)
-        card2 = repos.applications.create(job.id)
+        job1 = repos.jobs.create(canonical_url="j1", title="A", source_adapter="lever")
+        job2 = repos.jobs.create(canonical_url="j2", title="B", source_adapter="lever")
+        # 2 cards on 2 jobs: `applications.job_id` is unique, one card per role.
+        card1 = repos.applications.create(job1.id)
+        card2 = repos.applications.create(job2.id)
         repos.apply_runs.create(card1.id, started_at=base - timedelta(minutes=2))
         newest = repos.apply_runs.create(
             card1.id, started_at=base - timedelta(minutes=1)

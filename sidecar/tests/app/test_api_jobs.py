@@ -271,7 +271,10 @@ def test_add_by_url_restores_trashed_job_keeping_score(
     job_id = created["id"]
     # Give it a cached score + move it to Trash.
     with app.state.db.repos() as repos:
-        repos.job_scores.upsert(job_id=job_id, profile_version=1, score_0_100=88)
+        repos.jobs.set_score(
+            job_id, scorer_impl="scorer-llm", score_0_100=88,
+            reasons=[], breakdown_md="",
+        )
         repos.jobs.set_trash_state(job_id, trashed=True)
 
     resp = client.post("/api/jobs", headers=AUTH, json=payload)
@@ -399,16 +402,15 @@ def test_ttl_tick_backfills_legacy_trash_without_stamp(
 
     app, client = app_client
     j = _add_job(client, "https://ex.co/legacy")
-    # Simulate legacy: feed_state removed but no source_meta stamp.
+    # Simulate legacy: feed_state removed but no trashed_at stamp.
     with app.state.db.repos() as repos:
-        repos.jobs.update(j["id"], feed_state="removed", source_meta=None)
+        repos.jobs.update(j["id"], feed_state="removed", trashed_at=None)
 
     assert evict_stale_trash(app.state.db) == []  # backfilled, not tombstoned
     with app.state.db.repos() as repos:
         job = repos.jobs.get(j["id"])
         assert job is not None
-        assert job.source_meta is not None
-        assert "trashed_at" in job.source_meta
+        assert job.trashed_at is not None
 
 
 def test_retry_operation_reenqueues_same_kind(

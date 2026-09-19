@@ -163,33 +163,29 @@ def _scan_new_ids(last_scan: Any) -> set[str]:
 
 
 @router.get("/api/jobs")
-async def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
-    # Bounded (200 rows), but assembled off the event loop anyway — consistent
-    # with the board/applications pattern (async-first rule / F-H2).
-    def _assemble() -> list[dto.JobDTO]:
-        with _db(request).repos() as repos:
-            jobs = repos.jobs.list(feed_state=feed_state or None)
-            scores = _display_scores(repos, [j.id for j in jobs])
-            score_op_states = repos.operations.score_states_by_job()
-            dtos = [
-                dto.job_dto(j, scores.get(j.id), score_op_states=score_op_states.get(j.id))
-                for j in jobs
-            ]
-            new_ids = _scan_new_ids(repos.operations.latest_succeeded_by_kind("scan"))
-        for d in dtos:
-            d.is_new = d.id in new_ids
-        _sort_board(dtos)
-        return dtos
-
-    return await asyncio.to_thread(_assemble)
+def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
+    # Bounded (200 rows); a plain `def` handler runs in Starlette's threadpool
+    # automatically — consistent with the board/applications pattern
+    # (async-first rule / F-H2).
+    with _db(request).repos() as repos:
+        jobs = repos.jobs.list(feed_state=feed_state or None)
+        score_op_states = repos.operations.score_states_by_job()
+        dtos = [
+            dto.job_dto(j, score_op_states=score_op_states.get(j.id))
+            for j in jobs
+        ]
+        new_ids = _scan_new_ids(repos.operations.latest_succeeded_by_kind("scan"))
+    for d in dtos:
+        d.is_new = d.id in new_ids
+    _sort_board(dtos)
+    return dtos
 
 
-def _display_scores(repos, job_ids: list[str]) -> dict:
-    """The score each job DISPLAYS — the latest one (highest version; AI over
-    keyword within a version), version-agnostic so a resume edit never blanks
-    the board and a stale score stays visible until a re-score lands (maintainer
-    2026-07-22). scorer_impl rides on the DTO so keyword scores render grey."""
-    return repos.job_scores.latest_scores(job_ids)
+def _display_score_value(job: Any) -> int:
+    """The number a board row sorts on: the AI rating if the job has one, else
+    the keyword floor, else -1 so unscored rows land last."""
+    value = job.llm_score if job.llm_score is not None else job.keyword_score
+    return -1 if value is None else value
 
 
 # Board-eligible feed states: active + expired (Expired stays on the board,
@@ -233,24 +229,27 @@ def _suppressed_by_excludes(state: Any, hard_excludes: dict, jobs: list[Any]) ->
     return suppressed
 
 
-def _board_search_haystack(job: Any, score: Any, deep: bool) -> str:
+def _board_search_haystack(job: Any, deep: bool) -> str:
     """FR-JB-13: the searchable text of one board row. Shallow (`list_q`) covers
     what the list row shows — title/company/location; deep (`text_q`) adds the
-    JD body and the match-score texts (reasons + breakdown). Reads the ORM row
-    (+ its display JobScore), not the DTO — the strings are identical, and it
-    lets the per-row DTO build (with its regex-derived workStyle) wait until
-    after search + pagination (F-H2)."""
+    JD body and the DISPLAYED rating's texts (reasons + breakdown). Reads the ORM
+    row, not the DTO — the strings are identical, and it lets the per-row DTO
+    build (with its regex-derived workStyle) wait until after search and
+    pagination (F-H2)."""
     parts = [job.title, job.company, job.location]
     if deep:
         parts += [job.salary or "", job.source_adapter, job.description]
-        if score is not None:
-            parts += [str(r) for r in score.reasons]
-            parts.append(score.breakdown_md)
+        if job.llm_score is not None:
+            parts += [str(r) for r in job.llm_reasons]
+            parts.append(job.llm_breakdown_md)
+        elif job.keyword_score is not None:
+            parts += [str(r) for r in job.keyword_reasons]
+            parts.append(job.keyword_breakdown_md)
     return "\n".join(parts).lower()
 
 
 @router.get("/api/board")
-async def board(
+def board(
     request: Request,
     page: int = 0,
     page_size: int = _BOARD_PAGE_SIZE,
@@ -264,86 +263,80 @@ async def board(
     feed is paginated, so a client-side filter over loaded pages would silently
     miss matches on unloaded pages.
 
-    The whole assembly runs off the event loop (async-first rule / F-H2 — at a
-    few thousand jobs it could hold the loop past the shell's 2 s health window),
-    and the DTO build (three regexes over the full JD each) happens only for the
-    returned page, not every eligible row."""
+    A plain `def` handler runs off the event loop in Starlette's threadpool
+    automatically (async-first rule / F-H2 — at a few thousand jobs this could
+    hold the loop past the shell's 2 s health window), and the DTO build (three
+    regexes over the full JD each) happens only for the returned page, not every
+    eligible row."""
     page = max(0, page)
     page_size = max(1, min(_BOARD_PAGE_SIZE, page_size))
 
-    def _assemble() -> dto.BoardPageDTO:
-        with _db(request).repos() as repos:
-            saved = _saved_job_ids(repos)
-            jobs = [
-                j
-                for j in repos.jobs.list_by_states(_BOARD_FEED_STATES)
-                if j.id not in saved
-            ]
-            # Personal hard excludes apply to already-discovered rows too —
-            # hidden (cached set), never deleted (maintainer 2026-07-22).
-            excludes = repos.preferences.get_or_create().hard_excludes or {}
-            suppressed = _suppressed_by_excludes(request.app.state, excludes, jobs)
-            if suppressed:
-                jobs = [j for j in jobs if j.id not in suppressed]
-            scores = _display_scores(repos, [j.id for j in jobs])
-            score_op_states = repos.operations.score_states_by_job()
-            # Scrape status/meta (FR-JB-10) — from the operations ledger, live via SSE.
-            scan_running = repos.operations.any_in_flight("scan")
-            last_scan = repos.operations.latest_succeeded_by_kind("scan")
-            latest_scan = repos.operations.latest_by_kind("scan")
-            new_ids = _scan_new_ids(last_scan)
-        # Sort + search over (job, score) rows — same key/haystack as the DTO
-        # path (FR-JB-01 / FR-JB-13); the DTO is built only for the window below.
-        rows = [(j, scores.get(j.id)) for j in jobs]
-        rows.sort(
-            key=lambda r: (
-                r[1].score_0_100 if r[1] is not None else -1,
-                r[0].ingested_at,
-            ),
-            reverse=True,
-        )
-        # `empty` means the scrape found nothing — judged before search filtering,
-        # so a search miss reads as a filter miss, not an empty scrape (FR-JB-13).
-        feed_empty = len(rows) == 0
-        needle = list_q.strip().lower()
-        if needle:
-            rows = [r for r in rows if needle in _board_search_haystack(*r, deep=False)]
-        needle = text_q.strip().lower()
-        if needle:
-            rows = [r for r in rows if needle in _board_search_haystack(*r, deep=True)]
-        total = len(rows)
-        window = [
-            dto.job_dto(j, s, score_op_states=score_op_states.get(j.id))
-            for j, s in rows[page * page_size : page * page_size + page_size]
+    with _db(request).repos() as repos:
+        saved = _saved_job_ids(repos)
+        jobs = [
+            j
+            for j in repos.jobs.list_by_states(_BOARD_FEED_STATES)
+            if j.id not in saved
         ]
-        for d in window:
-            d.is_new = d.id in new_ids
+        # Personal hard excludes apply to already-discovered rows too —
+        # hidden (cached set), never deleted (maintainer 2026-07-22).
+        excludes = repos.preferences.get_or_create().hard_excludes or {}
+        suppressed = _suppressed_by_excludes(request.app.state, excludes, jobs)
+        if suppressed:
+            jobs = [j for j in jobs if j.id not in suppressed]
+        score_op_states = repos.operations.score_states_by_job()
+        # Scrape status/meta (FR-JB-10) — from the operations ledger, live via SSE.
+        scan_running = repos.operations.any_in_flight("scan")
+        last_scan = repos.operations.latest_succeeded_by_kind("scan")
+        latest_scan = repos.operations.latest_by_kind("scan")
+        new_ids = _scan_new_ids(last_scan)
+    # Sort + search over the ORM rows — same key/haystack as the DTO path
+    # (FR-JB-01 / FR-JB-13); the DTO is built only for the window below.
+    rows = sorted(
+        jobs,
+        key=lambda j: (_display_score_value(j), j.ingested_at),
+        reverse=True,
+    )
+    # `empty` means the scrape found nothing — judged before search filtering,
+    # so a search miss reads as a filter miss, not an empty scrape (FR-JB-13).
+    feed_empty = len(rows) == 0
+    needle = list_q.strip().lower()
+    if needle:
+        rows = [j for j in rows if needle in _board_search_haystack(j, deep=False)]
+    needle = text_q.strip().lower()
+    if needle:
+        rows = [j for j in rows if needle in _board_search_haystack(j, deep=True)]
+    total = len(rows)
+    window = [
+        dto.job_dto(j, score_op_states=score_op_states.get(j.id))
+        for j in rows[page * page_size : page * page_size + page_size]
+    ]
+    for d in window:
+        d.is_new = d.id in new_ids
 
-        scan_error: str | None = None
-        if scan_running:
-            scan_status = "running"
-        elif latest_scan is not None and latest_scan.state == "failed":
-            scan_status = "error"
-            scan_error = latest_scan.error
-        elif feed_empty:
-            scan_status = "empty"
-        else:
-            scan_status = "idle"
-        return dto.BoardPageDTO(
-            jobs=window,
-            total=total,
-            page=page,
-            page_size=page_size,
-            scan_status=scan_status,
-            last_scan_at=last_scan.finished_at if last_scan is not None else None,
-            scan_error=scan_error,
-        )
-
-    return await asyncio.to_thread(_assemble)
+    scan_error: str | None = None
+    if scan_running:
+        scan_status = "running"
+    elif latest_scan is not None and latest_scan.state == "failed":
+        scan_status = "error"
+        scan_error = latest_scan.error
+    elif feed_empty:
+        scan_status = "empty"
+    else:
+        scan_status = "idle"
+    return dto.BoardPageDTO(
+        jobs=window,
+        total=total,
+        page=page,
+        page_size=page_size,
+        scan_status=scan_status,
+        last_scan_at=last_scan.finished_at if last_scan is not None else None,
+        scan_error=scan_error,
+    )
 
 
 @router.get("/api/scan/progress")
-async def scan_progress(request: Request) -> dto.ScanProgressDTO:
+def scan_progress(request: Request) -> dto.ScanProgressDTO:
     """Board-level scan + scoring progress (observed-issue #2): a small,
     schema-free read the board polls to show "scanning…" and "M of N scored".
 
@@ -353,37 +346,34 @@ async def scan_progress(request: Request) -> dto.ScanProgressDTO:
     `new_job_ids` count; and the scoring split — `score_pending` is the live
     (queued/running) score-op count, `score_done` is how many of THIS scan's
     new jobs have reached a terminal (succeeded/failed) score. Off the event
-    loop (async-first rule), one session inside the callable."""
-
-    def _assemble() -> dto.ScanProgressDTO:
-        with _db(request).repos() as repos:
-            scan_running = repos.operations.any_in_flight("scan")
-            last_scan = repos.operations.latest_succeeded_by_kind("scan")
-            new_ids = _scan_new_ids(last_scan)
-            score_pending = len(
-                repos.operations.list_by_kind_states("score", OP_ACTIVE_STATES)
-            )
-            # Batch-scoped "done": score ops for THIS scan's new jobs that have
-            # reached a terminal state and are not currently re-pending. The
-            # job_id lives in each score op's input_snapshot; score_states_by_job
-            # maps it to that job's set of score-op states in one pass.
-            score_states = repos.operations.score_states_by_job()
-            score_done = 0
-            for job_id in new_ids:
-                states = score_states.get(job_id, set())
-                if states & OP_ACTIVE_STATES:
-                    continue
-                if states & {"succeeded", "failed"}:
-                    score_done += 1
-            return dto.ScanProgressDTO(
-                scan_running=scan_running,
-                last_scan_at=last_scan.finished_at if last_scan is not None else None,
-                new_found=len(new_ids),
-                score_pending=score_pending,
-                score_done=score_done,
-            )
-
-    return await asyncio.to_thread(_assemble)
+    loop (async-first rule): a plain `def` handler runs in Starlette's
+    threadpool automatically."""
+    with _db(request).repos() as repos:
+        scan_running = repos.operations.any_in_flight("scan")
+        last_scan = repos.operations.latest_succeeded_by_kind("scan")
+        new_ids = _scan_new_ids(last_scan)
+        score_pending = len(
+            repos.operations.list_by_kind_states("score", OP_ACTIVE_STATES)
+        )
+        # Batch-scoped "done": score ops for THIS scan's new jobs that have
+        # reached a terminal state and are not currently re-pending. The
+        # job_id lives in each score op's input_snapshot; score_states_by_job
+        # maps it to that job's set of score-op states in one pass.
+        score_states = repos.operations.score_states_by_job()
+        score_done = 0
+        for job_id in new_ids:
+            states = score_states.get(job_id, set())
+            if states & OP_ACTIVE_STATES:
+                continue
+            if states & {"succeeded", "failed"}:
+                score_done += 1
+        return dto.ScanProgressDTO(
+            scan_running=scan_running,
+            last_scan_at=last_scan.finished_at if last_scan is not None else None,
+            new_found=len(new_ids),
+            score_pending=score_pending,
+            score_done=score_done,
+        )
 
 
 # Honest user-facing copy for a re-add of a permanently-deleted (tombstoned)
@@ -395,10 +385,11 @@ _TOMBSTONE_409_DETAIL = (
 
 
 @router.post("/api/jobs/preview")
-async def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.JobPreviewDTO:
+def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.JobPreviewDTO:
     """Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
     fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
-    blocking probe runs off the event loop.
+    blocking probe runs off the event loop: a plain `def` handler runs in
+    Starlette's threadpool automatically.
 
     Two DB short-circuits before the network probe: a **tombstoned** URL fails
     fast with the honest 409 (re-add is impossible); an **existing** URL (active
@@ -421,7 +412,7 @@ async def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.J
                 source_adapter=existing.source_adapter or "paste-url",
             )
     try:
-        job = await asyncio.to_thread(probe_url, payload.url, timeout_s=20)
+        job = probe_url(payload.url, timeout_s=20)
     except ScraperError as e:
         # Verbatim underlying message → the modal shows it; the user can still
         # fill fields by hand (rank-don't-gate escape hatch).
@@ -439,7 +430,7 @@ async def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.J
 
 
 @router.post("/api/jobs", status_code=201)
-async def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
+def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
     """Add-by-URL step 2 (US-JB-07) + programmatic ingest: persist one job with
     the same dedup/tombstone discipline as scan, then enqueue a score so the new
     row lands on the board with a fit rating."""
@@ -458,18 +449,18 @@ async def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
             if existing.feed_state != "removed":
                 return dto.job_dto(existing)  # already active — dedup, first-seen wins
             # Restore-from-Trash: un-trash + keep its score/history ("put it back
-            # to its prior state"). Re-score only when the CURRENT mode has no
-            # score at the current version — an AI-mode job carrying just the
-            # grey keyword floor re-enqueues its AI upgrade (the retry path,
-            # US-JB-06), while a good score of the active mode is preserved
-            # (no wasted spend).
+            # to its prior state"). Re-score only when the CURRENT mode's scorer
+            # has never produced a row for this job — an AI-mode job carrying
+            # just the grey keyword floor re-enqueues its AI upgrade (the retry
+            # path, US-JB-06), while a good score of the active mode is preserved
+            # (no wasted spend). Version-agnostic, matching the planner: pinning
+            # to the current version re-bought an AI score the job already had.
             job = repos.jobs.set_trash_state(existing.id, trashed=False)
-            version = _current_profile_version(repos)
             mode = scoring_mode(repos.preferences.get_or_create())
             impl = SCORER_IMPL if mode == "llm" else SCORER_IMPL_DETERMINISTIC
-            score = repos.job_scores.get_cached(job.id, version, impl)
-            result = dto.job_dto(job, score)
-            if score is None:
+            scored = job.llm_score if impl == SCORER_IMPL else job.keyword_score
+            result = dto.job_dto(job)
+            if scored is None:
                 profile = repos.profile.get_current()
                 if profile is not None:
                     enqueue_score = True
@@ -498,7 +489,7 @@ async def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
 
 
 @router.patch("/api/jobs/{job_id}")
-async def update_job(
+def update_job(
     request: Request, job_id: str, payload: dto.JobUpdate
 ) -> dto.JobDTO:
     """App-side job state (Trash — US-JB-11; Expired — FR-SYS-03). Moving into/out
@@ -517,14 +508,12 @@ async def update_job(
             job = repos.jobs.set_trash_state(job_id, trashed=False)
         else:
             job = repos.jobs.update(job_id, **fields)
-        version = _current_profile_version(repos)
-        score = repos.job_scores.get_cached(job_id, version)
         op_states = repos.operations.score_states_for_job(job_id)
-        return dto.job_dto(job, score, score_op_states=op_states)
+        return dto.job_dto(job, score_op_states=op_states)
 
 
 @router.post("/api/jobs/{job_id}/tombstone")
-async def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO:
+def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO:
     """Delete forever from Trash (US-JB-11): write a `Tombstone` for the job's
     canonical URL, then hard-delete the row. A tombstone is final — a future
     scan or Add-by-URL can never re-surface it (FR-SYS-04)."""
@@ -538,36 +527,31 @@ async def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO
 
 
 @router.post("/api/jobs/trash/empty")
-async def empty_trash(request: Request) -> dto.TombstoneResultDTO:
+def empty_trash(request: Request) -> dto.TombstoneResultDTO:
     """Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL and
     hard-delete the rows immediately, bypassing the 7-day TTL.
 
     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
     costs an existence check, an insert, and a delete, so on the loop a big
     empty could hold it past the shell's 2 s /healthz window and cost a sidecar
-    restart. One session inside the callable, same shape as `board`."""
-
-    def _empty() -> dto.TombstoneResultDTO:
-        urls: list[str] = []
-        with _db(request).repos() as repos:
-            for job in repos.jobs.list(feed_state="removed", limit=10_000):
-                if not repos.tombstones.exists(job.canonical_url):
-                    repos.tombstones.create(job.canonical_url, reason="empty_trash")
-                urls.append(job.canonical_url)
-                repos.jobs.delete(job.id)
-        return dto.TombstoneResultDTO(tombstoned=len(urls), canonical_urls=urls)
-
-    return await asyncio.to_thread(_empty)
+    restart. A plain `def` handler runs in Starlette's threadpool
+    automatically, same shape as `board`."""
+    urls: list[str] = []
+    with _db(request).repos() as repos:
+        for job in repos.jobs.list(feed_state="removed", limit=10_000):
+            if not repos.tombstones.exists(job.canonical_url):
+                repos.tombstones.create(job.canonical_url, reason="empty_trash")
+            urls.append(job.canonical_url)
+            repos.jobs.delete(job.id)
+    return dto.TombstoneResultDTO(tombstoned=len(urls), canonical_urls=urls)
 
 
 @router.get("/api/jobs/{job_id}")
-async def get_job(request: Request, job_id: str) -> dto.JobDTO:
+def get_job(request: Request, job_id: str) -> dto.JobDTO:
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
-        version = _current_profile_version(repos)
-        score = repos.job_scores.get_cached(job_id, version)
         op_states = repos.operations.score_states_for_job(job_id)
-        return dto.job_dto(job, score, score_op_states=op_states)
+        return dto.job_dto(job, score_op_states=op_states)
 
 
 # -- scoring retry ---------------------------------------------------------
@@ -576,7 +560,7 @@ async def get_job(request: Request, job_id: str) -> dto.JobDTO:
 
 
 @router.get("/api/scoring/retryable")
-async def scoring_retryable(request: Request) -> dto.ScoreRetryDTO:
+def scoring_retryable(request: Request) -> dto.ScoreRetryDTO:
     """How many jobs are stuck with a spent scoring budget (S-C24). Counts
     only, never writes."""
     from ..scheduler.planner import SCORE_MAX_ATTEMPTS
@@ -586,7 +570,7 @@ async def scoring_retryable(request: Request) -> dto.ScoreRetryDTO:
 
 
 @router.post("/api/scoring/retry")
-async def scoring_retry(request: Request) -> dto.ScoreRetryDTO:
+def scoring_retry(request: Request) -> dto.ScoreRetryDTO:
     """Hand every job that spent its budget the budget back, so the next
     scheduler tick re-plans it. This is the recovery path for a provider-wide
     failure the per-job attempt cap can't tell apart from a bad job (an expired
@@ -601,14 +585,14 @@ async def scoring_retry(request: Request) -> dto.ScoreRetryDTO:
 
 
 @router.get("/api/profile")
-async def get_profile(request: Request) -> dto.ProfileDTO | None:
+def get_profile(request: Request) -> dto.ProfileDTO | None:
     with _db(request).repos() as repos:
         profile = repos.profile.get_current()
         return dto.profile_dto(profile) if profile is not None else None
 
 
 @router.post("/api/profile")
-async def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileDTO:
+def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileDTO:
     with _db(request).repos() as repos:
         before = repos.profile.get_current()
         changed = before is None or before.resume_markdown != payload.resume_markdown
@@ -620,20 +604,20 @@ async def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.Pr
     # is load-bearing for every form fill).
     _runner(request).submit("extract", {"profile_version": result.version})
     # Re-scoring on a resume edit (maintainer 2026-07-23): keyword mode is free,
-    # so re-score the whole board now (off the event loop). AI mode costs
-    # tokens, so it does NOT auto-run and there is no re-score action any more
-    # (maintainer 2026-08-28, S-C24): an existing AI score is version-agnostic,
-    # so the prior scores stay visible and no job is ever re-spent. An unchanged
-    # save keeps its version (no bump) either way.
+    # so re-score the whole board now (off the event loop, via Starlette's
+    # threadpool). AI mode costs tokens, so it does NOT auto-run and there is no
+    # re-score action any more (maintainer 2026-08-28, S-C24): an existing AI
+    # score is version-agnostic, so the prior scores stay visible and no job is
+    # ever re-spent. An unchanged save keeps its version (no bump) either way.
     if changed and mode == "keyword":
         from ..registry.operations import rescore_all_keyword
 
-        await asyncio.to_thread(rescore_all_keyword, _db(request))
+        rescore_all_keyword(_db(request))
     return result
 
 
 @router.post("/api/profile/extract", status_code=202)
-async def extract_application_profile(request: Request) -> dto.OperationAccepted:
+def extract_application_profile(request: Request) -> dto.OperationAccepted:
     """Manually (re-)extract the application profile from the current master
     (the Settings "Re-extract" button — FR-APP-01)."""
     with _db(request).repos() as repos:
@@ -644,7 +628,7 @@ async def extract_application_profile(request: Request) -> dto.OperationAccepted
 
 
 @router.patch("/api/profile/application-profile")
-async def patch_application_profile(
+def patch_application_profile(
     request: Request, payload: dict[str, Any]
 ) -> dto.ProfileDTO:
     """Persist manual edits to the application profile (Settings editor).
@@ -679,7 +663,7 @@ def _settings_dto(repos: Any) -> dto.SettingsDTO:
 
 
 @router.get("/api/settings")
-async def get_settings(request: Request) -> dto.SettingsDTO:
+def get_settings(request: Request) -> dto.SettingsDTO:
     with _db(request).repos() as repos:
         return _settings_dto(repos)
 
@@ -723,7 +707,7 @@ def _thread_scan_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
 
 
 @router.post("/api/settings")
-async def update_settings(
+def update_settings(
     request: Request, payload: dto.PreferencesUpdate
 ) -> dto.SettingsDTO:
     fields = payload.model_dump(exclude_none=True)
@@ -738,14 +722,15 @@ async def update_settings(
         result = _settings_dto(repos)
     # Switching Scoring to keyword mode scores the whole board right here —
     # ~0.5 ms/job, no LLM — so the change is visible on the next board fetch
-    # instead of waiting for a scan. Off the event loop (async-first rule).
+    # instead of waiting for a scan. Off the event loop (async-first rule):
+    # a plain `def` handler runs in Starlette's threadpool automatically.
     # Switching to AI mode enqueues NOTHING server-side: the next scheduler tick
     # picks up whatever still has no AI score (S-C24's eligibility read).
     after_mode = str(prefs_thresholds.get("scoring_mode") or "llm")
     if after_mode == "keyword" and before_mode != "keyword":
         from ..registry.operations import backfill_keyword_scores
 
-        await asyncio.to_thread(backfill_keyword_scores, _db(request))
+        backfill_keyword_scores(_db(request))
     # Re-apply the routing map so a Settings change takes effect immediately.
     engines = _engines(request)
     if engines is not None and "engine_routing" in fields:
@@ -775,11 +760,11 @@ async def update_settings(
 
 
 @router.put("/api/settings")
-async def replace_settings(
+def replace_settings(
     request: Request, payload: dto.PreferencesUpdate
 ) -> dto.SettingsDTO:
     """PUT is an alias of POST for the settings map (idempotent update)."""
-    return await update_settings(request, payload)
+    return update_settings(request, payload)
 
 
 # -- applications (with derived packetState) --------------------------------
@@ -796,7 +781,6 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
     app_ids = [a.id for a in applications]
     job_ids = list({a.job_id for a in applications})
     # Card-invariant lookups — hoisted out of the per-card loop.
-    version = _current_profile_version(repos)
     score_op_states = repos.operations.score_states_by_job()
     send_ops = repos.operations.list_by_kind_states(
         "send", {"queued", "running", "failed", "succeeded"}
@@ -819,16 +803,12 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         ]
     )
     jobs_by_id = repos.jobs.get_many(job_ids)
-    scores = repos.job_scores.latest_for_jobs(job_ids, version)
     sent_counts = repos.outreach_logs.count_sent_for_jobs(job_ids)
     latest_batches = repos.outreach_logs.latest_batches_for_jobs(job_ids)
-    jobs_with_candidates = repos.contact_job_assocs.job_ids_with_contacts(job_ids)
-    links_by_app: dict[str, list[Any]] = {}
-    for link in repos.application_documents.list_for_applications(app_ids):
-        links_by_app.setdefault(link.application_id, []).append(link)
-    docs_by_id = repos.documents.get_many(
-        [link.document_id for links in links_by_app.values() for link in links]
-    )
+    jobs_with_candidates = repos.referral_candidates.job_ids_with_contacts(job_ids)
+    docs_by_app: dict[str, list[Any]] = {}
+    for doc in repos.documents.list_for_applications(app_ids):
+        docs_by_app.setdefault(doc.application_id, []).append(doc)
     latest_runs = repos.apply_runs.latest_for_applications(app_ids)
 
     results: list[dto.ApplicationDTO] = []
@@ -845,7 +825,7 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         job_dto_val = None
         if job is not None:
             job_dto_val = dto.job_dto(
-                job, scores.get(job_id), score_op_states=score_op_states.get(job_id)
+                job, score_op_states=score_op_states.get(job_id)
             )
         # Referral progress (FR-NW-01 canonical enum): landed-send count, in-flight
         # send ops, whether a discover op is running, whether a roster was found for
@@ -857,11 +837,7 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
             op.job_id == job_id for op in discover_ops
         )
         # Attached documents (manual cards) — the resume/cover the user submitted.
-        attached_docs = [
-            (link, docs_by_id[link.document_id])
-            for link in links_by_app.get(application.id, [])
-            if link.document_id in docs_by_id
-        ]
+        attached_docs = docs_by_app.get(application.id, [])
         results.append(
             dto.application_dto(
                 application,
@@ -886,27 +862,31 @@ def _application_dto(repos: Any, application: Any) -> dto.ApplicationDTO:
 
 
 @router.get("/api/applications")
-async def list_applications(
+def list_applications(
     request: Request, include_archived: bool = False
 ) -> list[dto.ApplicationDTO]:
-    # Assembly runs off the event loop (async-first rule / F-H2): the session is
-    # created AND used entirely inside the worker thread, never shared with it.
-    def _assemble() -> list[dto.ApplicationDTO]:
-        with _db(request).repos() as repos:
-            apps = repos.applications.list(include_archived=include_archived)
-            return _application_dtos(repos, apps)
-
-    return await asyncio.to_thread(_assemble)
+    # Assembly runs off the event loop (async-first rule / F-H2): a plain `def`
+    # handler runs in Starlette's threadpool automatically.
+    with _db(request).repos() as repos:
+        apps = repos.applications.list(include_archived=include_archived)
+        return _application_dtos(repos, apps)
 
 
 @router.post("/api/applications", status_code=201)
-async def create_application(
+def create_application(
     request: Request, payload: dto.ApplicationCreate
 ) -> dto.ApplicationDTO:
     db = _db(request)
     # 1. Create + commit the Application first (the worker must see it).
     with db.repos() as repos:
         _found(repos.jobs.get(payload.job_id), "job", payload.job_id)
+        # One card per role (`applications.job_id` is unique). Answered here so a
+        # double-click on Save reads as a clean conflict rather than surfacing
+        # the IntegrityError as a 500.
+        if payload.job_id in repos.applications.job_ids():
+            raise HTTPException(
+                status_code=409, detail="this job is already on the tracker"
+            )
         prefs = repos.preferences.get_or_create()
         # Priority assignment (FR-TR-09): an explicit value is a manual choice;
         # otherwise the z-band of the job's current score, or P0 if saved while
@@ -914,14 +894,12 @@ async def create_application(
         if payload.priority is not None:
             priority = payload.priority
         else:
-            version = _current_profile_version(repos)
-            score = repos.job_scores.get_cached(payload.job_id, version)
-            if score is None:
+            job = repos.jobs.get(payload.job_id)
+            value = _display_score_value(job) if job is not None else -1
+            if value < 0:
                 priority = "P0"
             else:
-                priority = zband_priority(
-                    (prefs.thresholds or {}).get(STATS_KEY), score.score_0_100
-                )
+                priority = zband_priority((prefs.thresholds or {}).get(STATS_KEY), value)
         app = repos.applications.create(
             payload.job_id,
             column=payload.column,
@@ -1048,13 +1026,14 @@ async def create_manual_application(
     if stored:
         with db.repos() as repos:
             for kind, sha, size, mime, filename in stored:
-                doc = repos.documents.get_or_create(
+                repos.documents.set(
+                    application_id,
+                    kind,
                     sha256=sha,
                     byte_size=size,
                     mime_type=mime,
                     original_filename=filename,
                 )
-                repos.application_documents.set(application_id, kind, doc.id)
 
     with db.repos() as repos:
         return _application_dto(repos, repos.applications.get(application_id))
@@ -1093,22 +1072,29 @@ async def attach_application_document(
 
     sha = await asyncio.to_thread(docstore.store_bytes, data, db.data_dir)
     with db.repos() as repos:
-        doc = repos.documents.get_or_create(
+        _, orphaned = repos.documents.set(
+            application_id,
+            kind,
             sha256=sha,
             byte_size=len(data),
             mime_type=docstore.mime_for_filename(filename),
             original_filename=filename,
         )
-        repos.application_documents.set(application_id, kind, doc.id)
-        return _application_dto(repos, repos.applications.get(application_id))
+        result = _application_dto(repos, repos.applications.get(application_id))
+    # Replacing a file leaves its blob unreferenced. Unlink after the commit, so
+    # a rolled-back write never deletes bytes a surviving row still names.
+    if orphaned is not None:
+        await asyncio.to_thread(docstore.delete_blob, orphaned, db.data_dir)
+    return result
 
 
 @router.delete("/api/applications/{application_id}/documents/{kind}")
-async def detach_application_document(
+def detach_application_document(
     request: Request, application_id: str, kind: str
 ) -> dto.ApplicationDTO:
     """Detach the (application, kind) resume/cover file — the ✕ on the attached-
-    file chip. The content-addressed blob stays (it may back other cards)."""
+    file chip. The blob is unlinked too, once no row names it: before the table
+    merge nothing ever collected it and every detach leaked a file (S-C37)."""
     if kind not in PACKET_KINDS:
         raise HTTPException(
             status_code=422, detail=f"kind must be one of {list(PACKET_KINDS)}"
@@ -1116,12 +1102,15 @@ async def detach_application_document(
     db = _db(request)
     with db.repos() as repos:
         _found(repos.applications.get(application_id), "application", application_id)
-        repos.application_documents.delete(application_id, kind)
-        return _application_dto(repos, repos.applications.get(application_id))
+        orphaned = repos.documents.delete(application_id, kind)
+        result = _application_dto(repos, repos.applications.get(application_id))
+    if orphaned is not None:
+        docstore.delete_blob(orphaned, db.data_dir)
+    return result
 
 
 @router.get("/api/documents/{document_id}")
-async def download_document(request: Request, document_id: str) -> FileResponse:
+def download_document(request: Request, document_id: str) -> FileResponse:
     """Serve an uploaded document verbatim (the resume/cover a user attached to a
     manual card). Content-addressed on disk; streamed with its original name."""
     db = _db(request)
@@ -1139,7 +1128,7 @@ async def download_document(request: Request, document_id: str) -> FileResponse:
 
 
 @router.post("/api/applications/{application_id}/packet", status_code=202)
-async def generate_packet(
+def generate_packet(
     request: Request, application_id: str, payload: dto.PacketRequest
 ) -> dto.ApplicationDTO:
     """Manual/regenerate packet build (US-TL-02) — supersedes prior artifacts."""
@@ -1161,7 +1150,7 @@ async def generate_packet(
 
 
 @router.patch("/api/applications/{application_id}/artifacts/{kind}")
-async def patch_artifact(
+def patch_artifact(
     request: Request, application_id: str, kind: str, payload: dto.ArtifactPatch
 ) -> dto.ApplicationDTO:
     """Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
@@ -1215,7 +1204,7 @@ async def patch_artifact(
 
 
 @router.get("/api/applications/{application_id}")
-async def get_application(request: Request, application_id: str) -> dto.ApplicationDTO:
+def get_application(request: Request, application_id: str) -> dto.ApplicationDTO:
     with _db(request).repos() as repos:
         app = _found(repos.applications.get(application_id), "application", application_id)
         return _application_dto(repos, app)
@@ -1250,7 +1239,7 @@ def _event_label(kind: str, detail: dict[str, Any]) -> str:
 
 
 @router.get("/api/applications/{application_id}/activity")
-async def application_activity(
+def application_activity(
     request: Request, application_id: str
 ) -> list[dto.ActivityEntryDTO]:
     """Real Activity log for one application (US-TR-03 / FR-TR-03) — composed from
@@ -1305,7 +1294,7 @@ async def application_activity(
 
 
 @router.patch("/api/applications/{application_id}")
-async def update_application(
+def update_application(
     request: Request, application_id: str, payload: dto.ApplicationUpdate
 ) -> dto.ApplicationDTO:
     """Move/annotate/archive a card. Column moves, notes edits, and
@@ -1337,29 +1326,33 @@ async def update_application(
 
 
 @router.delete("/api/applications/{application_id}", status_code=204)
-async def delete_application(request: Request, application_id: str) -> None:
+def delete_application(request: Request, application_id: str) -> None:
     """Remove a card (unsave / return-to-board — US-JB / US-TR-07)."""
     with _db(request).repos() as repos:
         _found(repos.applications.get(application_id), "application", application_id)
-        _deleted, run_ids = delete_application_cascade(repos, application_id)
+        _deleted, run_ids, orphaned = delete_application_cascade(repos, application_id)
     # F-M8: the runs' on-disk artifacts (frozen PDF + step PNGs) go with the
-    # rows. Best-effort + path-guarded; off-loop (rmtree blocks).
+    # rows, and so do the uploaded blobs nothing names any more (S-C37).
+    # Best-effort + path-guarded; off-loop via Starlette's threadpool (rmtree
+    # and unlink block).
     if run_ids:
-        await asyncio.to_thread(purge_run_dirs, run_ids)
+        purge_run_dirs(run_ids)
+    for sha in orphaned:
+        docstore.delete_blob(sha, _db(request).data_dir)
 
 
 # -- schedules -------------------------------------------------------------
 
 
 @router.get("/api/schedules")
-async def list_schedules(request: Request) -> list[dto.ScheduleDTO]:
+def list_schedules(request: Request) -> list[dto.ScheduleDTO]:
     """The recurring-enqueue rules (scan / score_new). Seeded disabled (section 7 seed)."""
     with _db(request).repos() as repos:
         return [dto.schedule_dto(s) for s in repos.schedules.list_all()]
 
 
 @router.patch("/api/schedules/{schedule_id}")
-async def update_schedule(
+def update_schedule(
     request: Request, schedule_id: str, payload: dto.ScheduleUpdate
 ) -> dto.ScheduleDTO:
     """Enable/disable a schedule or change its cadence. Enabling a seeded-
@@ -1375,7 +1368,7 @@ async def update_schedule(
 
 
 @router.post("/api/schedules/{schedule_id}/run", status_code=202)
-async def run_schedule(request: Request, schedule_id: str) -> dto.ScheduleRunResult:
+def run_schedule(request: Request, schedule_id: str) -> dto.ScheduleRunResult:
     """Run a schedule now, regardless of enabled/due — the explicit user trigger
     (score_new fans out to a `score` op per unscored job; scan enqueues one scan).
     Idempotent for score_new: the planner skips already-scored + pending jobs."""
@@ -1390,7 +1383,7 @@ async def run_schedule(request: Request, schedule_id: str) -> dto.ScheduleRunRes
     # Batched for the same reason the scheduler's own tick is: submitting in a
     # loop pumps the queue once per operation, and every pump used to re-read the
     # whole queue. "Run now" on a full board is the interactive version of it.
-    enqueued = await asyncio.to_thread(runner.submit_many, planned)
+    enqueued = runner.submit_many(planned)
 
     next_due = now_utc() + timedelta(minutes=interval_minutes)
     with db.repos() as repos:
@@ -1408,7 +1401,7 @@ async def run_schedule(request: Request, schedule_id: str) -> dto.ScheduleRunRes
 
 
 @router.post("/api/operations/{kind}", status_code=202)
-async def create_operation(
+def create_operation(
     request: Request,
     kind: str,
     input_snapshot: Annotated[dict[str, Any] | None, Body()] = None,
@@ -1452,7 +1445,7 @@ async def create_operation(
 
 
 @router.post("/api/operations/{operation_id}/retry", status_code=202)
-async def retry_operation(request: Request, operation_id: str) -> dto.OperationAccepted:
+def retry_operation(request: Request, operation_id: str) -> dto.OperationAccepted:
     """Re-enqueue a failed operation with its original input snapshot — the Logs
     "App restarted while generating — retry?" affordance (US-LOG-01). Same kind,
     same inputs; a fresh operation id (the failed row stays as the audit record).
@@ -1478,7 +1471,7 @@ async def retry_operation(request: Request, operation_id: str) -> dto.OperationA
 
 
 @router.post("/api/operations/{operation_id}/cancel", status_code=202)
-async def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccepted:
+def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccepted:
     """Cancel an operation (F-M7): a still-`queued` op (any kind) is cancelled
     outright; a `running` one is accepted ONLY for the kinds that cooperatively
     poll the cancel token (score/tailor/cover — `CANCELLABLE_RUNNING_KINDS`),
@@ -1674,7 +1667,7 @@ def _ledger_subjects(repos: Any, ops: list[Any]) -> dict[str, dto.OperationSubje
 
 
 @router.get("/api/operations")
-async def list_operations(request: Request, limit: int = 100) -> list[dto.OperationDTO]:
+def list_operations(request: Request, limit: int = 100) -> list[dto.OperationDTO]:
     """Recent operations — the ledger the Logs/Analytics surfaces read (section 10),
     each row carrying its batched-resolved human subject (US-LOG-01)."""
     with _db(request).repos() as repos:
@@ -1690,7 +1683,7 @@ async def list_operations(request: Request, limit: int = 100) -> list[dto.Operat
 
 
 @router.get("/api/cost/totals")
-async def cost_totals(request: Request) -> dto.CostTotalsDTO:
+def cost_totals(request: Request) -> dto.CostTotalsDTO:
     """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
 
     Live-ledger sum + the persisted pruned-ops aggregate (NFR-COST-02: the
@@ -1700,17 +1693,14 @@ async def cost_totals(request: Request) -> dto.CostTotalsDTO:
     policy has to be able to fold spend forward again.
 
     Off the loop: summing every operation is inherently linear, so however cheap
-    the read gets it must not be the thing holding a 2 s health poll (S-C23)."""
-
-    def _assemble() -> dto.CostTotalsDTO:
-        with _db(request).repos() as repos:
-            return dto.cost_totals_dto(repos.all_time_cost_totals())
-
-    return await asyncio.to_thread(_assemble)
+    the read gets it must not be the thing holding a 2 s health poll (S-C23) —
+    a plain `def` handler runs in Starlette's threadpool automatically."""
+    with _db(request).repos() as repos:
+        return dto.cost_totals_dto(repos.all_time_cost_totals())
 
 
 @router.get("/api/operations/{operation_id}")
-async def get_operation(request: Request, operation_id: str) -> dto.OperationDTO:
+def get_operation(request: Request, operation_id: str) -> dto.OperationDTO:
     with _db(request).repos() as repos:
         op = _found(repos.operations.get(operation_id), "operation", operation_id)
         return dto.operation_dto(op, _ledger_subjects(repos, [op]).get(op.id))
@@ -1719,7 +1709,7 @@ async def get_operation(request: Request, operation_id: str) -> dto.OperationDTO
 # -- applications: networking tab -------------------------------------------
 
 @router.get("/api/applications/{application_id}/networking")
-async def application_networking(
+def application_networking(
     request: Request, application_id: str
 ) -> list[dto.NetworkingContactDTO]:
     """The referral contacts linked to this role + their statuses — the detail
@@ -1731,7 +1721,7 @@ async def application_networking(
         for log in repos.outreach_logs.list_for_job(app.job_id):
             last_by_contact[log.contact_id] = log  # list is created_at-ordered
         out: list[dto.NetworkingContactDTO] = []
-        for assoc in repos.contact_job_assocs.list_for_job(app.job_id):
+        for assoc in repos.referral_candidates.list_for_job(app.job_id):
             contact = repos.contacts.get(assoc.contact_id)
             if contact is None:
                 continue
@@ -1744,7 +1734,6 @@ async def application_networking(
                     company=contact.current_company,
                     linkedin_url=contact.linkedin_url,
                     connection_status=contact.connection_status,
-                    ask_status=assoc.status,
                     audience_tag=contact.audience_tag,
                     last_message=log.body_sent if log is not None else None,
                     last_message_at=(log.sent_at or log.created_at) if log is not None else None,
@@ -1773,7 +1762,7 @@ def _contact_dtos(repos: Any, contacts: list[Any]) -> list[dto.ContactDTO]:
 
 
 @router.get("/api/contacts")
-async def list_contacts(
+def list_contacts(
     request: Request,
     company: str | None = None,
     include_candidates: bool = False,
@@ -1784,30 +1773,27 @@ async def list_contacts(
     `archived=true` flips it to the "Deleted Contacts" recovery view: only the
     archived rows, so a user can restore a contact they removed.
 
-    Bounded, batched, and off the event loop (S-C8). It used to read every
+    Bounded, batched, and off the event loop (S-C8): a plain `def` handler
+    runs in Starlette's threadpool automatically. It used to read every
     contact row with no LIMIT and then run one outreach-log query per row, so a
     roster grown by discovery (one `candidate` per person found, at 10 people a
     company) cost 1 + N queries on the loop. Both filters now live in the repo
     query so the cap bounds the population the caller actually wants."""
-
-    def _assemble() -> list[dto.ContactDTO]:
-        with _db(request).repos() as repos:
-            contacts = repos.contacts.list(
-                company=company,
-                archived_only=archived,
-                # The recovery view lists every deleted row, candidates
-                # included: the candidate filter only ever ran on the kanban
-                # branch, and dropping them here would hide a deleted contact
-                # from the one view that can restore it.
-                include_candidates=include_candidates or archived,
-            )
-            return _contact_dtos(repos, contacts)
-
-    return await asyncio.to_thread(_assemble)
+    with _db(request).repos() as repos:
+        contacts = repos.contacts.list(
+            company=company,
+            archived_only=archived,
+            # The recovery view lists every deleted row, candidates
+            # included: the candidate filter only ever ran on the kanban
+            # branch, and dropping them here would hide a deleted contact
+            # from the one view that can restore it.
+            include_candidates=include_candidates or archived,
+        )
+        return _contact_dtos(repos, contacts)
 
 
 @router.post("/api/contacts", status_code=201)
-async def create_contact(request: Request, payload: dto.ContactCreate) -> dto.ContactDTO:
+def create_contact(request: Request, payload: dto.ContactCreate) -> dto.ContactDTO:
     """Manual add-a-contact by URL/name (US-NW-02) — the rank-don't-gate escape
     hatch. Always available regardless of LinkedIn state. Dedups on linkedin_url.
 
@@ -1844,7 +1830,7 @@ async def create_contact(request: Request, payload: dto.ContactCreate) -> dto.Co
 
 
 @router.patch("/api/contacts/{contact_id}")
-async def update_contact(
+def update_contact(
     request: Request, contact_id: str, payload: dto.ContactUpdate
 ) -> dto.ContactDTO:
     """Move a contact between kanban columns (US-NW-07) / archive / re-tag."""
@@ -1922,7 +1908,7 @@ def _require_job_search_opt_in(repos: Any) -> None:
 
 
 @router.get("/api/jobs/{job_id}/referrals/candidates")
-async def list_referral_candidates(
+def list_referral_candidates(
     request: Request, job_id: str
 ) -> dto.ReferralCandidatesDTO:
     """The find-referrals popup candidate list for one role (US-NW-09). Contacts
@@ -1941,7 +1927,7 @@ async def list_referral_candidates(
         )
         if resolved is not None and resolved.company_name:
             company_names.add(resolved.company_name)
-        assoc_ids = {a.contact_id for a in repos.contact_job_assocs.list_for_job(job_id)}
+        assoc_ids = {a.contact_id for a in repos.referral_candidates.list_for_job(job_id)}
         contacts = repos.contacts.list_for_referrals(
             company_names=company_names, contact_ids=assoc_ids
         )
@@ -1962,7 +1948,7 @@ async def list_referral_candidates(
         } - {""})
         # Persisted selection (FR-NW-01): restores which contacts the user picked
         # so a reopened `pending` popup shows the selection, not just the roster.
-        selected_ids = repos.contact_job_assocs.selected_contact_ids(job_id)
+        selected_ids = repos.referral_candidates.selected_contact_ids(job_id)
         candidates = [
             dto.referral_candidate_dto(
                 c,
@@ -2012,7 +1998,7 @@ async def list_referral_candidates(
 
 
 @router.post("/api/jobs/{job_id}/referrals/discover", status_code=202)
-async def discover_referrals(
+def discover_referrals(
     request: Request,
     job_id: str,
     payload: dto.DiscoverReferralsRequest | None = None,
@@ -2064,7 +2050,7 @@ async def discover_referrals(
 
 
 @router.post("/api/contacts/{contact_id}/draft", status_code=202)
-async def draft_referral(
+def draft_referral(
     request: Request, contact_id: str, job_id: Annotated[str | None, Body(embed=True)] = None
 ) -> dto.OperationAccepted:
     """Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate).
@@ -2078,7 +2064,7 @@ async def draft_referral(
 
 
 @router.post("/api/referrals/reach-out", status_code=202)
-async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.ReachOutResult:
+def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.ReachOutResult:
     """Batch reach-out (US-NW-09). Enqueues one single-flight `send` op per
     selected contact — each carrying its own per-audience message. The per-action
     confirmation lives in the UI; the send path runs only when the master toggle
@@ -2095,11 +2081,11 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
         # picks from an earlier batch stay selected so the user can retry them.
         if payload.job_id:
             for c in payload.contacts:
-                assoc = repos.contact_job_assocs.get(c.contact_id, payload.job_id)
+                assoc = repos.referral_candidates.get(c.contact_id, payload.job_id)
                 if assoc is not None:
                     assoc.selected = True
                 else:
-                    repos.contact_job_assocs.upsert(
+                    repos.referral_candidates.upsert(
                         c.contact_id, payload.job_id, selected=True
                     )
         # Idempotency guard (US-NW-09): a repeated "Send now" (double-click / retry)
@@ -2137,14 +2123,15 @@ async def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.Reach
 
 
 @router.get("/api/referrals/quota")
-async def referrals_quota(request: Request) -> dto.QuotaDTO:
+def referrals_quota(request: Request) -> dto.QuotaDTO:
     """Rolling outreach quota for the popup counter (US-NW-09/10).
 
     Used-counts AND caps both come from the package's enforcing ledger
     (maintainer 2026-08-02, closing the "divergent ledgers" item): the popup
     can never show head-room the send path will refuse. `OutreachLog` stays the
     per-send product history; it is no longer recounted as a quota source.
-    Zero LinkedIn traffic — a local file read, off the event loop."""
+    Zero LinkedIn traffic — a local file read, off the event loop (a plain
+    `def` handler runs in Starlette's threadpool automatically)."""
     with _db(request).repos() as repos:
         session = repos.linkedin_session.get()
         prefs = repos.preferences.get_or_create()
@@ -2152,12 +2139,12 @@ async def referrals_quota(request: Request) -> dto.QuotaDTO:
         connected = bool(prefs.voyager_risk_marker_on) and (
             session is not None and session.status == "valid"
         )
-    quota = await asyncio.to_thread(networker_ops.linkedin_quota_snapshot, profile)
+    quota = networker_ops.linkedin_quota_snapshot(profile)
     return dto.quota_dto(connected=connected, quota=quota)
 
 
 @router.post("/api/networking/contact-sync", status_code=202)
-async def networking_contact_sync(request: Request) -> dto.ContactSyncAccepted:
+def networking_contact_sync(request: Request) -> dto.ContactSyncAccepted:
     """Refresh LinkedIn contact statuses for the Networking kanban (US-NW-12 /
     FR-NW-15). **Manual-only**: the Sync button is the one caller (maintainer
     decision, 2026-08-15).
@@ -2193,9 +2180,10 @@ def _linkedin_session_base(repos: Any) -> tuple[dto.LinkedInSessionDTO, Any]:
 
     Built INSIDE the caller's repos context (ORM rows detach on exit). The
     caller then fills `rate_limits` via
-    `asyncio.to_thread(networker_ops.linkedin_caps_snapshot, profile)` — the
-    snapshot reads the pacing-ledger file, which must not block the event loop
-    (async-first rule)."""
+    `networker_ops.linkedin_caps_snapshot(profile)` — the snapshot reads the
+    pacing-ledger file, which must not block the event loop (async-first
+    rule); a plain `def` handler runs off it in Starlette's threadpool
+    automatically."""
     session = repos.linkedin_session.get()
     prefs = repos.preferences.get_or_create()
     profile = networker_ops.resolve_pacing_profile(repos, session=session)
@@ -2244,25 +2232,25 @@ def _is_real_sweep(ref: dict[str, Any]) -> bool:
     return not ref.get("stopped")
 
 
-async def _linkedin_session_response(request: Request) -> dto.LinkedInSessionDTO:
+def _linkedin_session_response(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         base, profile = _linkedin_session_base(repos)
     base.rate_limits = dto.rate_limits_dto(
-        await asyncio.to_thread(networker_ops.linkedin_caps_snapshot, profile)
+        networker_ops.linkedin_caps_snapshot(profile)
     )
     return base
 
 
 @router.get("/api/linkedin/session")
-async def linkedin_session(request: Request) -> dto.LinkedInSessionDTO:
+def linkedin_session(request: Request) -> dto.LinkedInSessionDTO:
     """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
     Reads the persisted session (fast — local only); the popup send path
     unlocks only when enabled AND status == 'valid'."""
-    return await _linkedin_session_response(request)
+    return _linkedin_session_response(request)
 
 
 @router.post("/api/linkedin/connect", status_code=202)
-async def linkedin_connect(
+def linkedin_connect(
     request: Request, payload: dto.LinkedInConnectRequest | None = None
 ) -> dto.OperationAccepted:
     """Start the headed-login session capture (US-SET-06 as-built). Enqueues the
@@ -2292,7 +2280,7 @@ async def linkedin_connect(
 
 
 @router.post("/api/linkedin/search", status_code=202)
-async def linkedin_search(
+def linkedin_search(
     request: Request, payload: dto.LinkedInSearchRequest | None = None
 ) -> dto.OperationAccepted:
     """Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
@@ -2328,8 +2316,8 @@ async def linkedin_search(
     # Self-imposed pages/hour throttle: refuse when the hourly budget is spent
     # (both modes — every search fetches a page). The worker enforces this too;
     # the route surfaces it as a clean 429 rather than a 0-result search. Ledger
-    # file read → off the event loop.
-    snapshot = await asyncio.to_thread(networker_ops.linkedin_caps_snapshot, profile)
+    # file read → off the event loop (Starlette's threadpool).
+    snapshot = networker_ops.linkedin_caps_snapshot(profile)
     if snapshot["job_search_hour_remaining"] <= 0:
         raise HTTPException(
             status_code=429,
@@ -2341,14 +2329,14 @@ async def linkedin_search(
 
 
 @router.post("/api/linkedin/cancel", status_code=202)
-async def linkedin_cancel() -> dict[str, Any]:
+def linkedin_cancel() -> dict[str, Any]:
     """Cancel an in-flight headed login (the Cancel button). Closes the browser."""
     cancelled = LOGIN_CONTROL.cancel_all()
     return {"status": "cancelling", "cancelled": cancelled}
 
 
 @router.post("/api/linkedin/disconnect")
-async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
+def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
     """Disconnect: cancel any in-flight login, clear the session row, and delete
     BOTH on-disk session stores — the sealed storage-state JSON and the
     persistent Chromium profile (US-SET-06 Disconnect). Before 2026-07-12 the
@@ -2366,10 +2354,10 @@ async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
     except OSError as exc:
         get_logger().warning("linkedin disconnect: could not delete session file: %s", exc)
     try:
-        # Off the loop (async-first rule): a populated Chromium profile is
-        # hundreds of MB across thousands of files — seconds of filesystem
-        # work that must not starve /healthz.
-        await asyncio.to_thread(shutil.rmtree, linkedin_profile_dir())
+        # Off the loop (async-first rule, via Starlette's threadpool): a
+        # populated Chromium profile is hundreds of MB across thousands of
+        # files — seconds of filesystem work that must not starve /healthz.
+        shutil.rmtree(linkedin_profile_dir())
     except FileNotFoundError:
         pass
     except OSError as exc:
@@ -2381,38 +2369,35 @@ async def linkedin_disconnect(request: Request) -> dto.LinkedInSessionDTO:
         )
         # A pagination cursor without its session is meaningless — drop it.
         repos.linkedin_search_cursor.clear()
-    return await _linkedin_session_response(request)
+    return _linkedin_session_response(request)
 
 
 @router.post("/api/linkedin/validate")
-async def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
+def linkedin_validate(request: Request) -> dto.LinkedInSessionDTO:
     """Re-check the saved session LOCALLY (li_at presence/expiry) — **never hits
     LinkedIn** (US-SET-06 Validate). Flips status to valid / expired / never_set
     and stamps `last_validated_at`."""
     with _db(request).repos() as repos:
         profile = networker_ops.resolve_pacing_profile(repos)
-    # Off the loop (async-first rule): session_status is local-only, but the
-    # first call lazily imports playwright.sync_api — up to ~1 s on a cold
-    # packaged build.
-    def _local_status() -> dict:
-        driver = networker_ops.DRIVER_FACTORY(profile)
-        try:
-            return driver.session_status()
-        finally:
-            driver.close()
-
-    info = await asyncio.to_thread(_local_status)
+    # Off the loop (async-first rule, via Starlette's threadpool):
+    # session_status is local-only, but the first call lazily imports
+    # playwright.sync_api — up to ~1 s on a cold packaged build.
+    driver = networker_ops.DRIVER_FACTORY(profile)
+    try:
+        info = driver.session_status()
+    finally:
+        driver.close()
     status = info.get("status", "never_set")
     with _db(request).repos() as repos:
         fields: dict[str, Any] = {"status": status, "last_validated_at": now_utc()}
         if status != "valid":
             fields["connected_as"] = ""
         repos.linkedin_session.update(**fields)
-    return await _linkedin_session_response(request)
+    return _linkedin_session_response(request)
 
 
 @router.post("/api/linkedin/resume")
-async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
+def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     """Clear the voyager-owned backoff pause (Settings → Networking manual resume,
     FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates.
 
@@ -2422,28 +2407,26 @@ async def linkedin_resume(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         _require_any_linkedin_feature(repos)
         profile = networker_ops.resolve_pacing_profile(repos)
-    # Off the loop (async-first rule): same first-call playwright import cost
-    # as validate, plus the pacing-ledger file writes.
-    def _resume_and_status() -> dict:
-        driver = networker_ops.DRIVER_FACTORY(profile)
-        try:
-            driver.resume()
-            return driver.session_status()
-        finally:
-            driver.close()
-
-    info = await asyncio.to_thread(_resume_and_status)
+    # Off the loop (async-first rule, via Starlette's threadpool): same
+    # first-call playwright import cost as validate, plus the pacing-ledger
+    # file writes.
+    driver = networker_ops.DRIVER_FACTORY(profile)
+    try:
+        driver.resume()
+        info = driver.session_status()
+    finally:
+        driver.close()
     status = info.get("status", "never_set")
     with _db(request).repos() as repos:
         repos.linkedin_session.update(
             status=status, paused_until=None, paused_reason="",
             last_validated_at=now_utc(),
         )
-    return await _linkedin_session_response(request)
+    return _linkedin_session_response(request)
 
 
 @router.post("/api/linkedin/rate-limits")
-async def linkedin_set_rate_limits(
+def linkedin_set_rate_limits(
     request: Request, payload: dto.LinkedInRateLimitsRequest
 ) -> dto.LinkedInSessionDTO:
     """Set the self-imposed LinkedIn rate-limit profile (maintainer directive
@@ -2498,11 +2481,11 @@ async def linkedin_set_rate_limits(
                 detail="provide membership_type/risk_pct, an override, or reset_overrides",
             )
         repos.linkedin_session.update(**fields)
-    return await _linkedin_session_response(request)
+    return _linkedin_session_response(request)
 
 
 @router.post("/api/browser/view", status_code=202)
-async def view_browser_page(
+def view_browser_page(
     request: Request, payload: dto.BrowserViewRequest
 ) -> dto.OperationAccepted:
     """Queue a `view_page` operation that shows `url` on a watch-only broker
@@ -2554,7 +2537,7 @@ def _require_dev_mode() -> None:
 
 
 @router.post("/api/dev/linkedin/mark-session-valid")
-async def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
+def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
     """Set `LinkedInSession.status = "valid"` so session-gated UI can be
     exercised without a real LinkedIn login.
 
@@ -2618,7 +2601,7 @@ async def dev_navigate_browser_surface(
 
 
 @router.post("/api/dev/linkedin/seed-search-cursor")
-async def dev_seed_linkedin_search_cursor(request: Request) -> dict[str, Any]:
+def dev_seed_linkedin_search_cursor(request: Request) -> dict[str, Any]:
     """Write a live (non-expired, non-exhausted) job-search pagination cursor
     so the Next-page button can be exercised without a real LinkedIn search —
     which needs a real logged-in session a test must never use. Same honesty
@@ -2635,7 +2618,7 @@ async def dev_seed_linkedin_search_cursor(request: Request) -> dict[str, Any]:
 
 
 @router.post("/api/dev/linkedin/expire-cookie")
-async def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
+def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
     """Expire the `li_at` cookie in the saved session **without** touching the
     session row — so the app still believes it's connected, and the *next* real
     LinkedIn action fails on auth. Lets the maintainer test how an in-flight
@@ -2696,7 +2679,7 @@ async def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
 
 
 @router.post("/api/applications/{application_id}/apply", status_code=202)
-async def start_apply(
+def start_apply(
     request: Request,
     application_id: str,
     payload: dto.ApplyStartRequest | None = None,
@@ -2766,7 +2749,7 @@ async def start_apply(
 
 
 @router.get("/api/applications/{application_id}/apply-runs")
-async def list_apply_runs(
+def list_apply_runs(
     request: Request, application_id: str
 ) -> list[dto.ApplyRunDTO]:
     with _db(request).repos() as repos:
@@ -2778,7 +2761,7 @@ async def list_apply_runs(
 
 
 @router.get("/api/apply-runs/{run_id}")
-async def get_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
+def get_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
     """The run snapshot — a reopened companion fetches this instead of
     depending on having seen every prior SSE event (section 9.2)."""
     with _db(request).repos() as repos:
@@ -2787,7 +2770,7 @@ async def get_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
 
 
 @router.get("/api/apply-runs/{run_id}/screenshots/{index}")
-async def get_apply_run_screenshot(
+def get_apply_run_screenshot(
     request: Request, run_id: str, index: int
 ) -> FileResponse:
     """Serve one evidence PNG by index. Paths come from the run row only —
@@ -2798,14 +2781,13 @@ async def get_apply_run_screenshot(
     if not (0 <= index < len(shots)):
         raise HTTPException(status_code=404, detail="no such screenshot")
     path = Path(shots[index])
-    exists = await asyncio.to_thread(path.is_file)
-    if not exists:
+    if not path.is_file():
         raise HTTPException(status_code=404, detail="screenshot file missing")
     return FileResponse(path, media_type="image/png")
 
 
 @router.post("/api/apply-runs/{run_id}/cancel")
-async def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
+def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
     """Cooperative cancel (section 8.2). The loop notices between steps and lands the
     run as `interrupted`; an already-terminal run is returned unchanged."""
     from ..registry.apply_op import APPLY_CONTROL
@@ -2832,7 +2814,7 @@ async def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
 
 
 @router.post("/api/apply-runs/{run_id}/attest")
-async def attest_apply_run(
+def attest_apply_run(
     request: Request, run_id: str, payload: dto.ApplyAttestRequest
 ) -> dto.ApplyRunDTO:
     """The human's word after the P1 handoff (section 8.4): 'I submitted' records a
@@ -2865,7 +2847,7 @@ def _prompts_data_dir(request: Request) -> Path:
 
 
 @router.get("/api/settings/prompts")
-async def list_prompts(request: Request) -> list[dto.PromptDTO]:
+def list_prompts(request: Request) -> list[dto.PromptDTO]:
     """Every editable prompt with its default + current override (US-SET-12)."""
     from ..prompt_overrides import list_prompts as _list
 
@@ -2873,7 +2855,7 @@ async def list_prompts(request: Request) -> list[dto.PromptDTO]:
 
 
 @router.put("/api/settings/prompts/{kind}")
-async def set_prompt(
+def set_prompt(
     request: Request, kind: str, payload: dto.PromptUpdate
 ) -> dto.PromptDTO:
     """Save an override for `kind` (404 unknown kind, 422 empty markdown)."""
@@ -2898,7 +2880,7 @@ async def set_prompt(
 
 
 @router.delete("/api/settings/prompts/{kind}")
-async def reset_prompt(request: Request, kind: str) -> dto.PromptDTO:
+def reset_prompt(request: Request, kind: str) -> dto.PromptDTO:
     """Reset `kind` to its shipped default (delete the override file)."""
     from ..prompt_overrides import PROMPT_KINDS, default_md, reset
 
@@ -2914,7 +2896,7 @@ async def reset_prompt(request: Request, kind: str) -> dto.PromptDTO:
 
 
 @router.get("/api/operations/{operation_id}/spans")
-async def get_operation_spans(request: Request, operation_id: str) -> list[dto.SpanDTO]:
+def get_operation_spans(request: Request, operation_id: str) -> list[dto.SpanDTO]:
     """The Logfire spans for one operation — the Logs drill-down (US-SYS-05 / A6).
 
     Reads the local `logfire.sqlite` span store (never the app schema). Returns
@@ -2925,9 +2907,7 @@ async def get_operation_spans(request: Request, operation_id: str) -> list[dto.S
     obs = getattr(request.app.state, "observability", None)
     if obs is None or getattr(obs, "span_db_path", None) is None:
         return []
-    rows = await asyncio.to_thread(
-        read_spans_for_operation, obs.span_db_path, operation_id
-    )
+    rows = read_spans_for_operation(obs.span_db_path, operation_id)
     return [dto.SpanDTO(**row) for row in rows]
 
 
@@ -2937,7 +2917,7 @@ def downloads_dir() -> Path:
 
 
 @router.post("/api/export/pdf")
-async def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
+def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
     """Render markdown → PDF into ~/Downloads (US-RES-03 slice, 2026-07-12).
 
     The webview can neither print nor download, so "Export to PDF" posts here;
@@ -2949,24 +2929,25 @@ async def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
         raise HTTPException(status_code=422, detail="nothing to export — the document is empty")
     stem = re.sub(r"[^\w\- ]+", "", payload.filename).strip().replace(" ", "-") or "document"
     target_dir = downloads_dir()
-    await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / f"{stem}.pdf"
     n = 1
-    while await asyncio.to_thread(path.exists) and n < 100:
+    while path.exists() and n < 100:
         path = target_dir / f"{stem}-{n}.pdf"
         n += 1
     try:
         # Sync Playwright refuses to start inside a running asyncio loop (the
-        # exact 503 users saw) and would block the loop anyway — render in a
-        # worker thread, like the engine-verify probes.
-        await asyncio.to_thread(render_resume_pdf, payload.markdown, str(path))
+        # exact 503 users saw) and would block the loop anyway — a plain `def`
+        # handler renders in Starlette's threadpool, like the engine-verify
+        # probes.
+        render_resume_pdf(payload.markdown, str(path))
     except PdfRenderError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     return dto.ExportPdfResult(path=str(path))
 
 
 @router.post("/api/system/install-browser", status_code=202)
-async def install_browser(request: Request) -> dto.BrowserInstallResult:
+def install_browser(request: Request) -> dto.BrowserInstallResult:
     """Download Playwright's Chromium (never bundled — section 4.5). Coarse progress is
     published on the SSE stream as `browser_install` events. Idempotent: a second
     call while one is running returns `already_running`."""
@@ -2978,8 +2959,38 @@ async def install_browser(request: Request) -> dto.BrowserInstallResult:
     return dto.BrowserInstallResult(status=status)
 
 
+@router.get("/api/system/scheduler")
+def scheduler_status(request: Request) -> dto.SchedulerStatus:
+    """Whether background work is running, and whether this boot is why it isn't.
+
+    `degraded_boot` means the shell started us with no scheduler because the
+    last 3 runs all ended the same bad way. The banner reads this."""
+    state = request.app.state
+    return dto.SchedulerStatus(
+        running=getattr(state, "scheduler", None) is not None,
+        degraded_boot=bool(getattr(state, "degraded_boot", False)),
+    )
+
+
+@router.post("/api/system/scheduler/resume")
+async def resume_scheduler(request: Request) -> dto.SchedulerStatus:
+    """Turn background work back on after a degraded boot. Idempotent.
+
+    `async def` on purpose: starting the tick loop creates an asyncio task, and
+    a plain `def` handler runs in Starlette's threadpool where there is no
+    running loop to create it on. It touches no database, so nothing blocks."""
+    start = getattr(request.app.state, "start_scheduler", None)
+    if start is None:
+        raise HTTPException(status_code=409, detail="no scheduler on this app")
+    start()
+    return dto.SchedulerStatus(
+        running=getattr(request.app.state, "scheduler", None) is not None,
+        degraded_boot=bool(getattr(request.app.state, "degraded_boot", False)),
+    )
+
+
 @router.post("/api/dev/operations/fail-running")
-async def dev_fail_running(request: Request) -> dict[str, Any]:
+def dev_fail_running(request: Request) -> dict[str, Any]:
     """Mark every currently-`running` operation failed with the boot-recovery
     note — simulates the app crashing mid-generation so the Logs 'App restarted
     while generating — Retry' path (US-LOG-01) can be exercised on demand."""
@@ -3002,7 +3013,7 @@ async def dev_fail_running(request: Request) -> dict[str, Any]:
 
 
 @router.post("/api/dev/operations/seed-queued", status_code=201)
-async def dev_seed_queued_operation(request: Request) -> dict[str, Any]:
+def dev_seed_queued_operation(request: Request) -> dict[str, Any]:
     """Create a `queued` operation ROW directly — without pumping the runner —
     so it STAYS queued until something else submits work. Lets the Logs Stop
     control (F-M7) be exercised deterministically in e2e (the generic enqueue
@@ -3022,7 +3033,7 @@ async def dev_seed_queued_operation(request: Request) -> dict[str, Any]:
 
 
 @router.post("/api/dev/seed-application", status_code=201)
-async def dev_seed_application(request: Request) -> dict[str, Any]:
+def dev_seed_application(request: Request) -> dict[str, Any]:
     """Create a sample Job + Saved Application so the Tracker has a card to drive
     (drag, generate, apply) without a live scrape/score. Dev-only."""
     import uuid

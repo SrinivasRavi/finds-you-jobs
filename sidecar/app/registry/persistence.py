@@ -312,6 +312,10 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
             "http_calls": r.usage.internal_calls,
             "latency_ms": r.usage.latency_ms,
             "errors": list(r.errors),
+            # The URLs discarded for having no scorable description (D23). They
+            # are recorded rather than counted so a source that silently
+            # produces husks can be opened and looked at.
+            "dropped_no_description": list(r.dropped_no_description),
         }
         for key, r in result.per_source.items()
     }
@@ -328,6 +332,9 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
             "new_job_ids": new_job_ids,
             "sources": len(result.per_source),
             "errors": sum(len(r.errors) for r in result.per_source.values()),
+            "dropped_no_description": sum(
+                len(r.dropped_no_description) for r in result.per_source.values()
+            ),
         },
         "per_source": per_source,
     }
@@ -412,32 +419,21 @@ def evict_stale_trash(
 
     "Let it go stale = not meant to be" — a job left in Trash past `ttl_days`
     is tombstoned (its `canonical_url` suppressed from future scrapes, per
-    FR-SYS-04) and removed, exactly as if the user emptied Trash. Legacy rows
-    with no `trashed_at` stamp are lazily backfilled and skipped this tick, so
-    the clock only ever starts once. Returns the tombstoned job ids."""
+    FR-SYS-04) and removed, exactly as if the user emptied Trash. Rows that
+    entered Trash before the stamp existed are lazily stamped and skipped this
+    tick, so the clock only ever starts once. Returns the tombstoned job ids."""
     if db is None:
         return []
     now = now or now_utc()
     cutoff = now - timedelta(days=ttl_days)
     tombstoned: list[str] = []
     with db.repos() as repos:
-        for job in repos.jobs.list(feed_state="removed", limit=10_000):
-            meta = job.source_meta or {}
-            stamp = meta.get("trashed_at")
-            if stamp is None:
-                # Trashed before the TTL bookkeeping existed — start its clock now.
-                repos.jobs.update(job.id, source_meta={**meta, "trashed_at": now.isoformat()})
-                continue
-            try:
-                trashed_at = datetime.fromisoformat(stamp)
-            except (TypeError, ValueError):
-                repos.jobs.update(job.id, source_meta={**meta, "trashed_at": now.isoformat()})
-                continue
-            if trashed_at <= cutoff:
-                if not repos.tombstones.exists(job.canonical_url):
-                    repos.tombstones.create(job.canonical_url, reason="trash_ttl")
-                repos.jobs.delete(job.id)
-                tombstoned.append(job.id)
+        repos.jobs.stamp_missing_lifecycle_dates(now=now)
+        for job in repos.jobs.list_trashed_before(cutoff):
+            if not repos.tombstones.exists(job.canonical_url):
+                repos.tombstones.create(job.canonical_url, reason="trash_ttl")
+            repos.jobs.delete(job.id)
+            tombstoned.append(job.id)
     return tombstoned
 
 
@@ -453,14 +449,14 @@ def age_expired_jobs(
     Two stages, both **skipping any job that has an Application** (Saving rescues
     it — the Saved/Tracker side is never auto-expired):
 
-    1. **active → expired** once a job is older than `expire_after_days`. The age
-       clock reads `source_meta["feed_since"]` when present (set by an explicit
-       un-expire, which resets the timer), else `ingested_at`.
-    2. **expired → hard-delete** once it has sat in Expired for `delete_after_days`
-       (measured from `source_meta["expired_at"]`). The delete writes **no
+    1. **active → expired** once a job is older than `expire_after_days`,
+       measured from `feed_since` (which starts at `ingested_at` and is reset by
+       an explicit un-expire).
+    2. **expired → hard-delete** once it has sat in Expired for
+       `delete_after_days`, measured from `expired_at`. The delete writes **no
        tombstone** — a later scrape may re-surface the same posting.
 
-    Legacy Expired rows with no `expired_at` stamp are lazily backfilled and
+    Rows that entered Expired before the stamp existed are lazily stamped and
     skipped this tick, so their 30-day clock only ever starts once. Returns
     `{"expired": [...ids], "deleted": [...ids]}`."""
     if db is None:
@@ -471,33 +467,24 @@ def age_expired_jobs(
     expired: list[str] = []
     deleted: list[str] = []
     with db.repos() as repos:
+        repos.jobs.stamp_missing_lifecycle_dates(now=now)
         # The applications table lands with the tracker commit; until then no
         # job can be Saved, so nothing is rescued from aging.
         saved: set[str] = _saved_job_ids(repos)
 
         # Stage 2 first: hard-delete stale Expired rows (no tombstone).
-        for job in repos.jobs.list_by_states(["expired"]):
+        for job in repos.jobs.list_expired_before(delete_cutoff):
             if job.id in saved:
                 continue  # Saved rescues it — never auto-delete
-            meta = job.source_meta or {}
-            stamp = meta.get("expired_at")
-            entered = _parse_iso(stamp)
-            if entered is None:
-                repos.jobs.update(job.id, source_meta={**meta, "expired_at": now.isoformat()})
-                continue
-            if entered <= delete_cutoff:
-                repos.jobs.delete(job.id)  # no Tombstone — FR-SYS-03
-                deleted.append(job.id)
+            repos.jobs.delete(job.id)  # no Tombstone — FR-SYS-03
+            deleted.append(job.id)
 
         # Stage 1: grey out active jobs past the freshness window.
-        for job in repos.jobs.list_by_states(["active"]):
+        for job in repos.jobs.list_active_before(expire_cutoff):
             if job.id in saved:
                 continue
-            meta = job.source_meta or {}
-            reference = _parse_iso(meta.get("feed_since")) or job.ingested_at
-            if reference is not None and reference <= expire_cutoff:
-                repos.jobs.set_expired(job.id, now=now)
-                expired.append(job.id)
+            repos.jobs.set_expired(job.id, now=now)
+            expired.append(job.id)
     return {"expired": expired, "deleted": deleted}
 
 
@@ -506,23 +493,26 @@ def _saved_job_ids(repos: Repos) -> set[str]:
     return repos.applications.job_ids()
 
 
-def delete_application_cascade(repos: Repos, application_id: str) -> tuple[bool, list[str]]:
+def delete_application_cascade(
+    repos: Repos, application_id: str
+) -> tuple[bool, list[str], list[str]]:
     """Delete one application row and every FK child (`foreign_keys=ON`):
-    events, uploaded-document links (manual cards — 2026-07-24 bug class), and
-    apply runs — an archived manual card used to IntegrityError here and wedge
-    the whole retention pass. Artifacts cascade via the ORM relationship.
+    events, uploaded documents (manual cards — 2026-07-24 bug class), and apply
+    runs — an archived manual card used to IntegrityError here and wedge the
+    whole retention pass. Artifacts cascade via the ORM relationship.
 
     The ONE implementation of the cascade (D-A3): the unsave route and the
     retention pass both call it, so a new FK child can never wedge one path
-    while the other keeps working. Returns `(deleted, apply_run_ids)` — the
-    runs' on-disk dirs are the caller's to purge (`purge_run_dirs`), because
-    the two callers do it in different contexts (off-loop vs sync).
+    while the other keeps working. Returns `(deleted, apply_run_ids,
+    orphaned_document_hashes)` — both sets of on-disk bytes are the caller's to
+    purge, because the two callers do it in different contexts (off-loop vs
+    sync).
     """
     run_ids = [r.id for r in repos.apply_runs.list_for_application(application_id)]
     repos.application_events.delete_for_application(application_id)
-    repos.application_documents.delete_for_application(application_id)
+    orphaned = repos.documents.delete_for_application(application_id)
     repos.apply_runs.delete_for_application(application_id)
-    return repos.applications.delete(application_id), run_ids
+    return repos.applications.delete(application_id), run_ids, orphaned
 
 
 def purge_archived_applications(
@@ -534,31 +524,29 @@ def purge_archived_applications(
     application ids."""
     if db is None:
         return []
+    from .. import documents
     from .apply_op import purge_run_dirs
 
     now = now or now_utc()
     cutoff = now - timedelta(days=retention_days)
     purged: list[str] = []
     run_ids: list[str] = []
+    orphaned: list[str] = []
     with db.repos() as repos:
         for app in repos.applications.list_archived_before(cutoff):
-            deleted, app_run_ids = delete_application_cascade(repos, app.id)
+            deleted, app_run_ids, app_orphans = delete_application_cascade(repos, app.id)
             run_ids += app_run_ids
+            orphaned += app_orphans
             if deleted:
                 purged.append(app.id)
-    # F-M8: the runs' on-disk artifact dirs go with the rows (best-effort,
-    # path-guarded). Sync context — retention runs on a runner worker thread.
+    # F-M8: the runs' on-disk artifact dirs go with the rows, and so do the
+    # uploaded blobs no surviving row names (S-C37 — a purge used to leak both
+    # the row and the file). Best-effort, path-guarded. Sync context: retention
+    # runs on a runner worker thread.
     purge_run_dirs(run_ids)
+    for sha in orphaned:
+        documents.delete_blob(sha, db.data_dir)
     return purged
-
-
-def _parse_iso(value: Any) -> datetime | None:
-    if not isinstance(value, str):
-        return value if isinstance(value, datetime) else None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
 
 
 def compose_job_text(job: Any) -> str:

@@ -5,7 +5,7 @@ runner as three bounded ops (US-REF-01/03/04, FR-REF-*):
 
 - `discover` — zero-LLM; delegates to the voyager subprocess driver, then
   upserts each candidate as a `Contact` row (status `candidate`, off the kanban
-  until reached) + a per-job `ContactJobAssoc`. Streams `networker` SSE events
+  until reached) + a per-job `ReferralCandidate`. Streams `networker` SSE events
   for the find-referrals popup's live list.
 - `draft`   — the one LLM op; routed engine (like tailor/cover). Grounds one
   per-audience referral draft in the master profile. Returned in `result_ref`
@@ -605,8 +605,8 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
             # off the kanban until reached); an already-known contact keeps its
             # live status because upsert_by_url never overwrites connection_status.
             if job_id:
-                repos.contact_job_assocs.upsert(
-                    row.id, job_id, audience_tag=c.audience.value, status="pending"
+                repos.referral_candidates.upsert(
+                    row.id, job_id, audience_tag=c.audience.value
                 )
             contact_ids.append(row.id)
             if ctx.publish is not None:
@@ -887,8 +887,8 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                     contact_id, connection_status="sent", sent_at=now,
                 )
             if job_id:
-                repos.contact_job_assocs.upsert(
-                    contact_id, job_id, audience_tag=audience_tag, status="pending"
+                repos.referral_candidates.upsert(
+                    contact_id, job_id, audience_tag=audience_tag
                 )
         # Batch-settle card move (FR-NW-03): advance Saved → Seeking Referral once,
         # when the whole reach-out batch has settled with ≥1 sent — not on the

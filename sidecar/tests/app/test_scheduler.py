@@ -137,7 +137,7 @@ def test_plan_score_new_reaches_past_the_newest_1000_active_jobs(
     """
     from sqlalchemy import insert
 
-    from sidecar.app.db.models import Job, JobScore
+    from sidecar.app.db.models import Job
     from sidecar.app.scheduler.planner import plan_score_new
 
     db = migrated_db
@@ -159,20 +159,11 @@ def test_plan_score_new_reaches_past_the_newest_1000_active_jobs(
             }
             for i in range(unscored_count + scored_count)
         ]
-        repos.session.execute(insert(Job), rows)
         # Every job EXCEPT the oldest `unscored_count` already has an AI score.
-        repos.session.execute(
-            insert(JobScore),
-            [
-                {
-                    "id": f"score-{i:05d}", "job_id": f"job-{i:05d}",
-                    "profile_version": 1, "score_0_100": 80,
-                    "scorer_impl": "scorer-llm", "reasons": [], "breakdown_md": "",
-                    "scored_at": base,
-                }
-                for i in range(unscored_count, unscored_count + scored_count)
-            ],
-        )
+        for i, row in enumerate(rows):
+            if i >= unscored_count:
+                row["llm_score"] = 80
+        repos.session.execute(insert(Job), rows)
 
     planned = plan_score_new(db)
     assert len(planned) == unscored_count

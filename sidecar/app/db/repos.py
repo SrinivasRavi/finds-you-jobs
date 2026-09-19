@@ -22,24 +22,21 @@ from .models import (
     APPLY_RUN_ACTIVE_STATUSES,
     OP_ACTIVE_STATES,
     Application,
-    ApplicationDocument,
     ApplicationEvent,
     ApplyRun,
     Artifact,
     CompanyResolution,
     Contact,
-    ContactJobAssoc,
     Document,
     EngineSettings,
     Job,
-    JobScore,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
     Operation,
     OutreachLog,
+    ReferralCandidate,
     Schedule,
-    Sequence,
     Tombstone,
     UserPreferences,
 )
@@ -483,23 +480,18 @@ class JobsRepo:
         its own, with nothing to reset (S-A6).
 
         `max_attempts` drops jobs that have already failed that many times
-        against a live provider (`Job.score_attempts`). A provider outage never
-        increments that counter, so an expired key costs no job an attempt and
-        the whole backlog returns on the next tick."""
+        against a live provider (`Job.llm_score_attempts`). A provider outage
+        never increments that counter, so an expired key costs no job an attempt
+        and the whole backlog returns on the next tick."""
         from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
-        scored = (
-            select(JobScore.id)
-            .where(JobScore.job_id == Job.id, JobScore.scorer_impl == "scorer-llm")
-            .exists()
-        )
         stmt = select(Job).where(
             Job.feed_state == "active",
-            ~scored,
+            Job.llm_score.is_(None),
             func.length(func.coalesce(Job.description, "")) >= MIN_JD_CHARS,
         )
         if max_attempts is not None:
-            stmt = stmt.where(Job.score_attempts < max_attempts)
+            stmt = stmt.where(Job.llm_score_attempts < max_attempts)
         stmt = stmt.order_by(Job.ingested_at.desc(), Job.id)
         if limit is not None:
             stmt = stmt.limit(limit)
@@ -512,7 +504,10 @@ class JobsRepo:
         self._s.execute(
             update(Job)
             .where(Job.id == job_id)
-            .values(score_attempts=Job.score_attempts + 1, score_last_error=error[:2000])
+            .values(
+                llm_score_attempts=Job.llm_score_attempts + 1,
+                llm_score_last_error=error[:2000],
+            )
         )
 
     def count_score_exhausted(self, max_attempts: int) -> int:
@@ -521,15 +516,10 @@ class JobsRepo:
         what the ledger's Retry affordance counts, so the button appears only
         when pressing it would actually do something. A job at 1 or 2 attempts
         is NOT counted: it comes back on the next tick on its own."""
-        scored = (
-            select(JobScore.id)
-            .where(JobScore.job_id == Job.id, JobScore.scorer_impl == "scorer-llm")
-            .exists()
-        )
         stmt = select(func.count()).select_from(Job).where(
             Job.feed_state == "active",
-            ~scored,
-            Job.score_attempts >= max_attempts,
+            Job.llm_score.is_(None),
+            Job.llm_score_attempts >= max_attempts,
         )
         return int(self._s.scalar(stmt) or 0)
 
@@ -543,8 +533,8 @@ class JobsRepo:
             "CursorResult[Any]",
             self._s.execute(
                 update(Job)
-                .where(Job.score_attempts > 0)
-                .values(score_attempts=0, score_last_error=None)
+                .where(Job.llm_score_attempts > 0)
+                .values(llm_score_attempts=0, llm_score_last_error=None)
             ),
         )
         return int(result.rowcount or 0)
@@ -588,169 +578,124 @@ class JobsRepo:
     ) -> Job:
         """Move a job into/out of Trash (US-JB-11 / FR-JB-12).
 
-        Trashing records `trashed_at` in `source_meta` so the 7-day TTL tick
-        (FR-SYS-03/FR-SYS-04) can age it out; restoring clears that bookkeeping
-        and returns the row to the active feed — its score/history are untouched.
-        `source_meta` is otherwise unused for scanned/pasted jobs, so overloading
-        it here needs no schema change."""
+        Trashing stamps `trashed_at` so the 7-day TTL tick (FR-SYS-03/FR-SYS-04)
+        can age it out; restoring clears the stamp and returns the row to the
+        active feed — its score/history are untouched."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        meta = dict(job.source_meta or {})
         if trashed:
             job.feed_state = "removed"
-            meta["trashed_at"] = (now or now_utc()).isoformat()
+            job.trashed_at = now or now_utc()
         else:
             job.feed_state = "active"
-            meta.pop("trashed_at", None)
-        job.source_meta = meta or None
+            job.trashed_at = None
         return job
 
     def set_expired(self, job_id: str, *, now: datetime | None = None) -> Job:
         """Age a feed job into `Expired` (FR-SYS-03) — greyed, labelled "Older
-        listing", still on the board. Stamps `expired_at` in `source_meta` (the
-        same JSON-overload pattern as `trashed_at`) so the 30-day hard-delete
-        clock can start. No score/history change."""
+        listing", still on the board. Stamps `expired_at` so the 30-day
+        hard-delete clock can start. No score/history change."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        meta = dict(job.source_meta or {})
-        meta["expired_at"] = (now or now_utc()).isoformat()
+        job.expired_at = now or now_utc()
         job.feed_state = "expired"
-        job.source_meta = meta
         return job
 
     def unexpire(self, job_id: str, *, now: datetime | None = None) -> Job:
         """Explicit un-expire (FR-SYS-03): restore an Expired job to the active
-        feed and **reset the 14-day timer** by stamping `feed_since` (the aging
-        clock reads `feed_since` when present, else `ingested_at`, so the sort
-        order — recency — is preserved)."""
+        feed and **reset the 14-day timer** by restamping `feed_since`, which is
+        the aging clock (it starts at `ingested_at` and only an un-expire moves
+        it), so the board's recency sort is preserved."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        meta = dict(job.source_meta or {})
-        meta.pop("expired_at", None)
-        meta["feed_since"] = (now or now_utc()).isoformat()
+        job.expired_at = None
+        job.feed_since = now or now_utc()
         job.feed_state = "active"
-        job.source_meta = meta or None
         return job
 
+    def list_trashed_before(self, cutoff: datetime) -> list[Job]:
+        """Trashed rows whose TTL has run out. A row with no `trashed_at` is
+        excluded and lazily stamped by the caller, so its clock starts once."""
+        stmt = select(Job).where(
+            Job.feed_state == "removed", Job.trashed_at.is_not(None), Job.trashed_at <= cutoff
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_expired_before(self, cutoff: datetime) -> list[Job]:
+        """Expired rows past the hard-delete cutoff (same null rule as above)."""
+        stmt = select(Job).where(
+            Job.feed_state == "expired", Job.expired_at.is_not(None), Job.expired_at <= cutoff
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_active_before(self, cutoff: datetime) -> list[Job]:
+        """Active rows whose freshness window has run out."""
+        stmt = select(Job).where(Job.feed_state == "active", Job.feed_since <= cutoff)
+        return list(self._s.scalars(stmt))
+
+    def stamp_missing_lifecycle_dates(self, *, now: datetime | None = None) -> int:
+        """Start the clock on rows that entered a state before it was stamped.
+        Returns how many were touched; 0 on every install past the backfill."""
+        stamp = now or now_utc()
+        touched = 0
+        for state, column in (("removed", Job.trashed_at), ("expired", Job.expired_at)):
+            result = cast(
+                "CursorResult[Any]",
+                self._s.execute(
+                    update(Job)
+                    .where(Job.feed_state == state, column.is_(None))
+                    .values({column: stamp})
+                ),
+            )
+            touched += int(result.rowcount or 0)
+        return touched
+
     def delete(self, job_id: str) -> bool:
-        """Hard-delete a job row + its cached scores (foreign_keys=ON forbids
-        orphaned `JobScore` rows). Used by the tombstone paths (Empty Trash /
-        Delete forever / TTL eviction) — the caller writes the `Tombstone`."""
+        """Hard-delete a job row. Its scores are columns on the row, so they go
+        with it and there is nothing to cascade. Used by the tombstone paths
+        (Empty Trash / Delete forever / TTL eviction) — the caller writes the
+        `Tombstone`."""
         job = self._s.get(Job, job_id)
         if job is None:
             return False
-        self._s.execute(delete(JobScore).where(JobScore.job_id == job_id))
         self._s.delete(job)
         return True
 
-
-class JobScoresRepo:
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get_cached(
-        self, job_id: str, profile_version: int, scorer_impl: str = "scorer-llm"
-    ) -> JobScore | None:
-        stmt = select(JobScore).where(
-            JobScore.job_id == job_id,
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == scorer_impl,
-        )
-        return self._s.scalars(stmt).first()
-
-    def latest_for_jobs(
-        self, job_ids: list[str], profile_version: int, scorer_impl: str = "scorer-llm"
-    ) -> dict[str, JobScore]:
-        """The cached score per job for one `(profile_version, scorer_impl)` —
-        the board join (FR-JB-01 sort)."""
-        if not job_ids:
-            return {}
-        stmt = select(JobScore).where(
-            JobScore.job_id.in_(job_ids),
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == scorer_impl,
-        )
-        return {row.job_id: row for row in self._s.scalars(stmt)}
-
-    def scored_job_ids(
-        self, profile_version: int, scorer_impl: str = "scorer-llm"
-    ) -> set[str]:
-        stmt = select(JobScore.job_id).where(
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == scorer_impl,
-        )
-        return set(self._s.scalars(stmt))
-
-    def latest_scores(self, job_ids: list[str]) -> dict[str, JobScore]:
-        """The score each job DISPLAYS — version-agnostic (maintainer
-        2026-07-22): the row from the HIGHEST profile version, and within that
-        version an AI (`scorer-llm`) score outranks a keyword one. This keeps a
-        score visible after a resume edit even when the user declines an AI
-        re-score (the older-version score stays shown), and shows the fresh
-        score once a re-score lands."""
-        if not job_ids:
-            return {}
-        stmt = select(JobScore).where(JobScore.job_id.in_(job_ids))
-        best: dict[str, JobScore] = {}
-        for row in self._s.scalars(stmt):
-            cur = best.get(row.job_id)
-            if cur is None or (row.profile_version, row.scorer_impl == "scorer-llm") > (
-                cur.profile_version,
-                cur.scorer_impl == "scorer-llm",
-            ):
-                best[row.job_id] = row
-        return best
-
-    def job_ids_with_any_score(self, job_ids: list[str]) -> set[str]:
-        """Jobs that carry ANY score (any version/impl) — the keyword floor
-        skips these so a stale score is never clobbered."""
-        if not job_ids:
-            return set()
-        stmt = select(JobScore.job_id).where(JobScore.job_id.in_(job_ids))
-        return set(self._s.scalars(stmt))
-
-    def job_ids_with_llm_score(self, job_ids: list[str]) -> set[str]:
-        """Jobs with an AI score at ANY version — the AI planner skips these so
-        a resume edit never auto-spends tokens re-scoring them (that path is the
-        explicit 'Re-score all' prompt)."""
-        if not job_ids:
-            return set()
-        stmt = select(JobScore.job_id).where(
-            JobScore.job_id.in_(job_ids), JobScore.scorer_impl == "scorer-llm"
-        )
-        return set(self._s.scalars(stmt))
-
-    def create(self, **fields: Any) -> JobScore:
-        score = JobScore(**fields)
-        self._s.add(score)
-        self._s.flush()
-        return score
-
-    def upsert(
+    def set_score(
         self,
-        *,
         job_id: str,
-        profile_version: int,
-        scorer_impl: str = "scorer-llm",
-        **fields: Any,
-    ) -> JobScore:
-        """Cache write: refresh the row for a `(job, version, impl)` triple, or
-        create it. A recompute of the same cache key never duplicates."""
-        existing = self.get_cached(job_id, profile_version, scorer_impl)
-        if existing is not None:
-            for key, value in fields.items():
-                setattr(existing, key, value)
-            self._s.flush()
-            return existing
-        return self.create(
-            job_id=job_id,
-            profile_version=profile_version,
-            scorer_impl=scorer_impl,
-            **fields,
+        *,
+        scorer_impl: str,
+        score_0_100: int,
+        reasons: list[Any],
+        breakdown_md: str,
+    ) -> bool:
+        """Write one scorer's rating onto the job. Returns True when this is the
+        FIRST rating that scorer has produced for this job, which is what the
+        priority distribution counts: a recompute must not double count."""
+        job = self._s.get(Job, job_id)
+        if job is None:
+            raise KeyError(f"job {job_id!r} not found")
+        prefix = "llm" if scorer_impl == "scorer-llm" else "keyword"
+        is_new = getattr(job, f"{prefix}_score") is None
+        setattr(job, f"{prefix}_score", score_0_100)
+        setattr(job, f"{prefix}_reasons", list(reasons))
+        setattr(job, f"{prefix}_breakdown_md", breakdown_md)
+        self._s.flush()
+        return is_new
+
+    def ids_without_any_score(self, job_ids: list[str]) -> set[str]:
+        """Of these jobs, the ones no scorer has rated — what the keyword floor
+        fills so no board row is ever stuck on Pending."""
+        if not job_ids:
+            return set()
+        stmt = select(Job.id).where(
+            Job.id.in_(job_ids), Job.llm_score.is_(None), Job.keyword_score.is_(None)
         )
+        return set(self._s.scalars(stmt))
 
 
 class TombstonesRepo:
@@ -878,8 +823,9 @@ class ArtifactsRepo:
 
 
 class DocumentsRepo:
-    """The content-addressed `documents` index (FR-TR manual-add). The blob on
-    disk is owned by `app.documents`; this repo owns the dedup row."""
+    """Uploaded documents attached to cards (FR-TR manual-add). One row per
+    attachment; the blob on disk is content-addressed and owned by
+    `app.documents`, so identical bytes on 2 cards are 2 rows and 1 file."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -887,27 +833,56 @@ class DocumentsRepo:
     def get(self, document_id: str) -> Document | None:
         return self._s.get(Document, document_id)
 
-    def get_many(self, document_ids: list[str]) -> dict[str, Document]:
-        """id → Document for a batch of attachment links (F-H2)."""
-        if not document_ids:
-            return {}
-        stmt = select(Document).where(Document.id.in_(document_ids))
-        return {doc.id: doc for doc in self._s.scalars(stmt)}
+    def list_for_application(self, application_id: str) -> list[Document]:
+        stmt = (
+            select(Document)
+            .where(Document.application_id == application_id)
+            .order_by(Document.doc_type, Document.created_at)
+        )
+        return list(self._s.scalars(stmt))
 
-    def get_by_sha256(self, sha256: str) -> Document | None:
-        return self._s.scalars(
-            select(Document).where(Document.sha256 == sha256)
+    def list_for_applications(self, application_ids: list[str]) -> list[Document]:
+        """`list_for_application` over many cards in one IN query (F-H2). Same
+        (doc_type, created_at) order, so per-card grouping preserves the order."""
+        if not application_ids:
+            return []
+        stmt = (
+            select(Document)
+            .where(Document.application_id.in_(application_ids))
+            .order_by(Document.doc_type, Document.created_at)
+        )
+        return list(self._s.scalars(stmt))
+
+    def set(
+        self,
+        application_id: str,
+        doc_type: str,
+        *,
+        sha256: str,
+        byte_size: int,
+        mime_type: str,
+        original_filename: str,
+    ) -> tuple[Document, str | None]:
+        """Fill this card's `doc_type` slot, replacing whatever was there — one
+        resume and one cover per card. Returns the row and the sha256 of the
+        blob the replacement orphaned, if any, so the caller can unlink it."""
+        existing = self._s.scalars(
+            select(Document).where(
+                Document.application_id == application_id,
+                Document.doc_type == doc_type,
+            )
         ).first()
-
-    def get_or_create(
-        self, *, sha256: str, byte_size: int, mime_type: str, original_filename: str
-    ) -> Document:
-        """The row for these bytes — dedup by sha256, so identical uploads share
-        one row (and one blob). A re-upload keeps the first-seen filename."""
-        existing = self.get_by_sha256(sha256)
         if existing is not None:
-            return existing
+            replaced = existing.sha256
+            existing.sha256 = sha256
+            existing.byte_size = byte_size
+            existing.mime_type = mime_type
+            existing.original_filename = original_filename
+            self._s.flush()
+            return existing, self._orphaned(replaced)
         doc = Document(
+            application_id=application_id,
+            doc_type=doc_type,
             sha256=sha256,
             byte_size=byte_size,
             mime_type=mime_type,
@@ -915,79 +890,46 @@ class DocumentsRepo:
         )
         self._s.add(doc)
         self._s.flush()
-        return doc
+        return doc, None
 
-
-class ApplicationDocumentsRepo:
-    """Links uploaded documents to applications as resume/cover (FR-TR manual-add)."""
-
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def list_for_application(self, application_id: str) -> list[ApplicationDocument]:
-        stmt = (
-            select(ApplicationDocument)
-            .where(ApplicationDocument.application_id == application_id)
-            .order_by(ApplicationDocument.kind, ApplicationDocument.created_at)
-        )
-        return list(self._s.scalars(stmt))
-
-    def list_for_applications(
-        self, application_ids: list[str]
-    ) -> list[ApplicationDocument]:
-        """`list_for_application` over many cards in one IN query (F-H2). Same
-        (kind, created_at) order, so per-card grouping preserves the per-card order."""
-        if not application_ids:
-            return []
-        stmt = (
-            select(ApplicationDocument)
-            .where(ApplicationDocument.application_id.in_(application_ids))
-            .order_by(ApplicationDocument.kind, ApplicationDocument.created_at)
-        )
-        return list(self._s.scalars(stmt))
-
-    def set(self, application_id: str, kind: str, document_id: str) -> ApplicationDocument:
-        """Attach `document_id` as this application's `kind` slot, replacing any
-        prior link for that (application, kind) — one resume + one cover per card."""
-        existing = self._s.scalars(
-            select(ApplicationDocument).where(
-                ApplicationDocument.application_id == application_id,
-                ApplicationDocument.kind == kind,
+    def delete(self, application_id: str, doc_type: str) -> str | None:
+        """Detach this card's `doc_type` document (the ✕ in the editor). Returns
+        the sha256 whose blob is now unreferenced, or None if another card still
+        uses those bytes or nothing was attached."""
+        row = self._s.scalars(
+            select(Document).where(
+                Document.application_id == application_id,
+                Document.doc_type == doc_type,
             )
         ).first()
-        if existing is not None:
-            existing.document_id = document_id
-            self._s.flush()
-            return existing
-        link = ApplicationDocument(
-            application_id=application_id, kind=kind, document_id=document_id
-        )
-        self._s.add(link)
+        if row is None:
+            return None
+        sha = row.sha256
+        self._s.delete(row)
         self._s.flush()
-        return link
+        return self._orphaned(sha)
 
-    def delete(self, application_id: str, kind: str) -> bool:
-        """Detach the (application, kind) document link (the resume/cover ✕ in
-        the editor). The content-addressed `Document` row and blob stay — one
-        blob may back many links. Returns whether a link was removed."""
-        result = self._s.execute(
-            delete(ApplicationDocument).where(
-                ApplicationDocument.application_id == application_id,
-                ApplicationDocument.kind == kind,
-            )
-        )
-        return cast("CursorResult[Any]", result).rowcount > 0
+    def delete_for_application(self, application_id: str) -> list[str]:
+        """Remove a purged card's documents. Returns every sha256 left with no
+        row pointing at it, so the caller unlinks exactly those blobs. Before the
+        table merge nothing collected these at all and each purge leaked a row
+        and a file permanently (S-C37)."""
+        rows = self.list_for_application(application_id)
+        if not rows:
+            return []
+        shas = {row.sha256 for row in rows}
+        for row in rows:
+            self._s.delete(row)
+        self._s.flush()
+        return [sha for sha in sorted(shas) if self._orphaned(sha) is not None]
 
-    def delete_for_application(self, application_id: str) -> int:
-        """Remove an application's document LINKS when the card is purged
-        (`foreign_keys=ON` forbids orphans). The content-addressed `Document`
-        rows and blobs stay — one blob may back many links."""
-        result = self._s.execute(
-            delete(ApplicationDocument).where(
-                ApplicationDocument.application_id == application_id
-            )
-        )
-        return cast("CursorResult[Any]", result).rowcount
+    def _orphaned(self, sha256: str) -> str | None:
+        """`sha256` if no row references it any more, else None. The reference
+        count that the 2-table shape had no way to compute."""
+        still = self._s.scalars(
+            select(Document.id).where(Document.sha256 == sha256).limit(1)
+        ).first()
+        return None if still is not None else sha256
 
 
 class ApplicationEventsRepo:
@@ -1301,27 +1243,28 @@ class ContactsRepo:
         contact = self._s.get(Contact, contact_id)
         if contact is None:
             return False
-        self._s.execute(delete(ContactJobAssoc).where(ContactJobAssoc.contact_id == contact_id))
+        self._s.execute(delete(ReferralCandidate).where(ReferralCandidate.contact_id == contact_id))
         self._s.execute(delete(OutreachLog).where(OutreachLog.contact_id == contact_id))
         self._s.delete(contact)
         return True
 
 
-class ContactJobAssocsRepo:
-    """Per-role referral asks (US-REF-05): a contact ↔ job link."""
+class ReferralCandidatesRepo:
+    """People put forward as referral candidates for a role (US-REF-05). One row
+    per (person, job): someone asked about 3 jobs is 1 contact and 3 rows."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def get(self, contact_id: str, job_id: str) -> ContactJobAssoc | None:
-        stmt = select(ContactJobAssoc).where(
-            ContactJobAssoc.contact_id == contact_id,
-            ContactJobAssoc.job_id == job_id,
+    def get(self, contact_id: str, job_id: str) -> ReferralCandidate | None:
+        stmt = select(ReferralCandidate).where(
+            ReferralCandidate.contact_id == contact_id,
+            ReferralCandidate.job_id == job_id,
         )
         return self._s.scalars(stmt).first()
 
-    def list_for_job(self, job_id: str) -> list[ContactJobAssoc]:
-        stmt = select(ContactJobAssoc).where(ContactJobAssoc.job_id == job_id)
+    def list_for_job(self, job_id: str) -> list[ReferralCandidate]:
+        stmt = select(ReferralCandidate).where(ReferralCandidate.job_id == job_id)
         return list(self._s.scalars(stmt))
 
     def job_ids_with_contacts(self, job_ids: list[str]) -> set[str]:
@@ -1331,33 +1274,33 @@ class ContactJobAssocsRepo:
         if not job_ids:
             return set()
         stmt = (
-            select(ContactJobAssoc.job_id)
-            .where(ContactJobAssoc.job_id.in_(job_ids))
+            select(ReferralCandidate.job_id)
+            .where(ReferralCandidate.job_id.in_(job_ids))
             .distinct()
         )
         return set(self._s.scalars(stmt))
 
-    def list_for_contact(self, contact_id: str) -> list[ContactJobAssoc]:
-        stmt = select(ContactJobAssoc).where(ContactJobAssoc.contact_id == contact_id)
+    def list_for_contact(self, contact_id: str) -> list[ReferralCandidate]:
+        stmt = select(ReferralCandidate).where(ReferralCandidate.contact_id == contact_id)
         return list(self._s.scalars(stmt))
 
     def selected_contact_ids(self, job_id: str) -> set[str]:
         """The contacts currently selected for this role (FR-NW-01) — restores the
         find-referrals popup selection when a `pending` popup is reopened."""
-        stmt = select(ContactJobAssoc.contact_id).where(
-            ContactJobAssoc.job_id == job_id, ContactJobAssoc.selected.is_(True)
+        stmt = select(ReferralCandidate.contact_id).where(
+            ReferralCandidate.job_id == job_id, ReferralCandidate.selected.is_(True)
         )
         return set(self._s.scalars(stmt))
 
     def upsert(
         self, contact_id: str, job_id: str, **fields: Any
-    ) -> ContactJobAssoc:
+    ) -> ReferralCandidate:
         existing = self.get(contact_id, job_id)
         if existing is not None:
             for key, value in fields.items():
                 setattr(existing, key, value)
             return existing
-        assoc = ContactJobAssoc(contact_id=contact_id, job_id=job_id, **fields)
+        assoc = ReferralCandidate(contact_id=contact_id, job_id=job_id, **fields)
         self._s.add(assoc)
         self._s.flush()
         return assoc
@@ -1445,30 +1388,6 @@ class OutreachLogsRepo:
             else:
                 batches[job_id] = [log for log in logs if log.batch_id == newest.batch_id]
         return batches
-
-
-class SequencesRepo:
-    """Audience playbooks (US-PLB-*). P1 seeds these from the bundled module
-    playbook files; the editor writes them back."""
-
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self, sequence_id: str) -> Sequence | None:
-        return self._s.get(Sequence, sequence_id)
-
-    def list(self) -> list[Sequence]:
-        return list(self._s.scalars(select(Sequence).order_by(Sequence.name)))
-
-    def get_by_audience(self, audience: str) -> Sequence | None:
-        stmt = select(Sequence).where(Sequence.audience == audience)
-        return self._s.scalars(stmt).first()
-
-    def create(self, name: str, audience: str, **fields: Any) -> Sequence:
-        seq = Sequence(name=name, audience=audience, **fields)
-        self._s.add(seq)
-        self._s.flush()
-        return seq
 
 
 class LinkedInSessionRepo:
@@ -1614,18 +1533,15 @@ class Repos:
         self.engine_settings = EngineSettingsRepo(session)
         self.schedules = SchedulesRepo(session)
         self.jobs = JobsRepo(session)
-        self.job_scores = JobScoresRepo(session)
         self.tombstones = TombstonesRepo(session)
         self.applications = ApplicationsRepo(session)
         self.artifacts = ArtifactsRepo(session)
         self.documents = DocumentsRepo(session)
-        self.application_documents = ApplicationDocumentsRepo(session)
         self.application_events = ApplicationEventsRepo(session)
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)
-        self.contact_job_assocs = ContactJobAssocsRepo(session)
+        self.referral_candidates = ReferralCandidatesRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
-        self.sequences = SequencesRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)
         self.apply_runs = ApplyRunsRepo(session)

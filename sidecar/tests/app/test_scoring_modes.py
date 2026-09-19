@@ -94,15 +94,16 @@ def _ctx(db: Database, job_id: str, engine: Any | None) -> OperationContext:
 
 
 def _scores(db: Database, job_id: str) -> dict[str, int]:
+    """Every scorer's rating on this job, keyed by impl — the columns read back
+    under the enum names the rest of the suite already speaks."""
     with db.repos() as repos:
-        profile = repos.profile.get_current()
-        assert profile is not None
-        version = profile.version
+        job = repos.jobs.get(job_id)
+        assert job is not None
         out = {}
-        for impl in (SCORER_IMPL, SCORER_IMPL_DETERMINISTIC):
-            row = repos.job_scores.get_cached(job_id, version, impl)
-            if row is not None:
-                out[impl] = row.score_0_100
+        if job.llm_score is not None:
+            out[SCORER_IMPL] = job.llm_score
+        if job.keyword_score is not None:
+            out[SCORER_IMPL_DETERMINISTIC] = job.keyword_score
         return out
 
 
@@ -209,31 +210,35 @@ def test_backfill_scores_only_unscored_jobs(migrated_db: Database) -> None:
     assert SCORER_IMPL_DETERMINISTIC in _scores(db, b)
 
 
-def test_display_shows_latest_version_and_stale_survives_a_resume_edit(
+def test_ai_score_survives_a_resume_edit_and_its_keyword_sweep(
     migrated_db: Database,
 ) -> None:
-    """A resume edit bumps the profile version but does NOT blank the board:
-    the score from the highest available version is displayed, so a job scored
-    at v1 keeps that score at v2 until a re-score lands (maintainer 2026-07-23)."""
+    """A resume edit never blanks the board, and the keyword sweep it fires can
+    never bury the AI score. The 2 ratings are separate columns and the display
+    rule prefers the AI one outright, so the defect that showed 26 where the AI
+    had said 82 on 36 jobs is not expressible any more (S-C34)."""
+    from sidecar.app.api import dto as dto_mod
+
     db = migrated_db
     job_id = _seed(db)
-    score_entrypoint(_ctx(db, job_id, engine=_OkEngine()))  # AI score at v1
+    score_entrypoint(_ctx(db, job_id, engine=_OkEngine()))
     with db.repos() as repos:
-        v1 = repos.profile.get_current().version  # type: ignore[union-attr]
-        disp = repos.job_scores.latest_scores([job_id])[job_id]
-        assert disp.profile_version == v1 and disp.scorer_impl == SCORER_IMPL
-        # Edit the resume → v2. No re-score yet.
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        ai_score = job.llm_score
+        assert ai_score == 77
+        assert dto_mod.job_score_dto(job).scorer_impl == SCORER_IMPL  # type: ignore[union-attr]
         repos.profile.upsert("# Test Candidate\n\nBackend engineer. Now with Go.")
-        v2 = repos.profile.get_current().version  # type: ignore[union-attr]
-        assert v2 == v1 + 1
-        still = repos.job_scores.latest_scores([job_id])[job_id]
-        assert still.profile_version == v1  # stale v1 AI score still shown
-    # A keyword re-score at v2 now wins (latest version).
+    # The sweep writes a keyword rating into its own column. The AI one shows.
     rescore_all_keyword(db)
     with db.repos() as repos:
-        after = repos.job_scores.latest_scores([job_id])[job_id]
-        assert after.profile_version == v2
-        assert after.scorer_impl == SCORER_IMPL_DETERMINISTIC
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        assert job.keyword_score is not None
+        shown = dto_mod.job_score_dto(job)
+        assert shown is not None
+        assert shown.scorer_impl == SCORER_IMPL
+        assert shown.score_0_100 == ai_score
 
 
 def test_llm_planner_does_not_auto_rescore_after_a_resume_edit(
@@ -270,7 +275,9 @@ def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) 
         # that no keyword re-score is forced.)
         client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME + "\nGo."})
         with db.repos() as repos:
-            assert repos.job_scores.latest_scores([job_id]) == {}
+            job = repos.jobs.get(job_id)
+            assert job is not None
+            assert job.llm_score is None and job.keyword_score is None
 
         # Switch to keyword mode, edit again → the board is re-scored for free.
         client.post(
@@ -279,10 +286,10 @@ def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) 
         client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME + "\nRust."})
         with db.repos() as repos:
             v_new = repos.profile.get_current().version  # type: ignore[union-attr]
-            disp = repos.job_scores.latest_scores([job_id])[job_id]
+            job = repos.jobs.get(job_id)
+            assert job is not None
             assert v_new > v0
-            assert disp.profile_version == v_new
-            assert disp.scorer_impl == SCORER_IMPL_DETERMINISTIC
+            assert job.keyword_score is not None and job.llm_score is None
 
         # Back in AI mode, the route that used to re-score the board is gone
         # (405: the path now resolves to GET/PATCH `/api/jobs/{job_id}`).
@@ -498,7 +505,7 @@ def test_a_provider_outage_costs_no_job_an_attempt(migrated_db: Database) -> Non
     _settle_ops(db)
 
     with db.repos() as repos:
-        assert repos.jobs.get(job_id).score_attempts == 0  # type: ignore[union-attr]
+        assert repos.jobs.get(job_id).llm_score_attempts == 0  # type: ignore[union-attr]
     assert job_id in {snap["job_id"] for _k, snap in plan_score_new(db)}
 
 
@@ -518,8 +525,8 @@ def test_a_real_provider_failure_spends_an_attempt_and_stops_at_the_cap(
         with db.repos() as repos:
             job = repos.jobs.get(job_id)
             assert job is not None
-            assert job.score_attempts == expected
-            assert "429" in (job.score_last_error or "")
+            assert job.llm_score_attempts == expected
+            assert "429" in (job.llm_score_last_error or "")
         planned = {snap["job_id"] for _k, snap in plan_score_new(db)}
         # Re-planned while budget remains — the old code never re-planned at all.
         assert (job_id in planned) is (expected < SCORE_MAX_ATTEMPTS)
@@ -563,6 +570,6 @@ def test_retry_route_counts_only_stuck_jobs_and_hands_the_budget_back(tmp_path) 
         assert client.get("/api/scoring/retryable", headers=AUTH).json()["count"] == 0
         assert _score_ops_for(db, stuck) == 0  # the tick enqueues, not the route
         with db.repos() as repos:
-            assert repos.jobs.get(thin).score_attempts == 0  # type: ignore[union-attr]
+            assert repos.jobs.get(thin).llm_score_attempts == 0  # type: ignore[union-attr]
         assert stuck in {snap["job_id"] for _k, snap in plan_score_new(db)}
         assert thin not in {snap["job_id"] for _k, snap in plan_score_new(db)}

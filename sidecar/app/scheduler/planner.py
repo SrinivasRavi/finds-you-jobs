@@ -60,10 +60,8 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
       attempt and all 800 come back on the next tick once the provider does.
     """
     with db.repos() as repos:
-        profile = repos.profile.get_current()
-        if profile is None:
+        if repos.profile.get_current() is None:
             return []
-        version = profile.version
 
         prefs = repos.preferences.get_or_create()
         thresholds = prefs.thresholds or {}
@@ -73,22 +71,22 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
             raw = thresholds.get("score_new_batch", 0)
             limit = int(raw or 0)
 
-        # Jobs whose LLM score is in flight at THIS version, so an in-flight op
-        # is never double-enqueued. Built BEFORE the job read so the read can
-        # ask for enough rows to survive this filter.
-        attempted: set[str] = set()
-        for op in repos.operations.list_by_kind_states("score", _IN_FLIGHT):
-            snap = op.input_snapshot
-            if isinstance(snap, dict) and snap.get("profile_version") == version:
-                jid = snap.get("job_id")
-                if jid is not None:
-                    attempted.add(jid)
+        # Jobs whose LLM score is already in flight, so an in-flight op is never
+        # double-enqueued. Reads `Operation.job_id`, a real column, rather than
+        # reaching into `input_snapshot`; the profile-version half of this filter
+        # went with the version dimension itself (S-C31). Built BEFORE the job
+        # read so the read can ask for enough rows to survive this filter.
+        attempted = {
+            op.job_id
+            for op in repos.operations.list_by_kind_states("score", _IN_FLIGHT)
+            if op.job_id is not None
+        }
 
-        # The "already AI-scored" exclusion happens in SQL (a job with a score at
-        # ANY version is done — a resume edit never auto-spends tokens re-scoring
-        # it; that path is the explicit "Re-score all" prompt). Paging active jobs
-        # and filtering afterwards meant an install with more than 1,000 active
-        # jobs could never reach the oldest unscored ones.
+        # The "already AI-scored" exclusion happens in SQL (`jobs.llm_score IS
+        # NOT NULL`): a resume edit never auto-spends tokens re-scoring a job
+        # that has one. Paging active jobs and filtering afterwards meant an
+        # install with more than 1,000 active jobs could never reach the oldest
+        # unscored ones.
         #
         # `limit` 0 means uncapped, which is the default: enqueueing is cheap and
         # how much the user spends scoring is their call, not a cap we impose.
@@ -103,7 +101,7 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
         for job in jobs:
             if job.id in attempted:
                 continue
-            planned.append(("score", {"job_id": job.id, "profile_version": version}))
+            planned.append(("score", {"job_id": job.id}))
             if limit and len(planned) >= limit:
                 break
     return planned

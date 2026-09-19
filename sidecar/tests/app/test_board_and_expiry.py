@@ -120,9 +120,9 @@ def test_board_marks_a_description_less_job_unscorable(
         job = repos.jobs.create(canonical_url="u1", title="A", source_adapter="linkedin")
         op = repos.operations.create("score", {"job_id": job.id})
         repos.operations.mark_failed(op.id, error="job input is neither a URL…")
-        repos.job_scores.create(
-            job_id=job.id, profile_version=1, score_0_100=0,
-            scorer_impl="scorer-deterministic",
+        repos.jobs.set_score(
+            job.id, scorer_impl="scorer-deterministic",
+            score_0_100=0, reasons=[], breakdown_md="",
         )
         job_id = job.id
 
@@ -239,9 +239,9 @@ def _seed_search_jobs(app: FastAPI) -> dict[str, str]:
             description="Own the deployment pipeline.",
             source_adapter="greenhouse",
         )
-        repos.job_scores.create(
-            job_id=j2.id,
-            profile_version=1,
+        repos.jobs.set_score(
+            j2.id,
+            scorer_impl="scorer-llm",
             score_0_100=77,
             reasons=["Strong infra match"],
             breakdown_md="Deep kubernetes experience matches the JD.",
@@ -382,11 +382,11 @@ def test_active_greys_to_expired_at_14_days(migrated_db: Database) -> None:
     with db.repos() as repos:
         fresh = repos.jobs.create(
             canonical_url="fresh", title="F", source_adapter="lever",
-            ingested_at=now - timedelta(days=10),
+            ingested_at=now - timedelta(days=10), feed_since=now - timedelta(days=10),
         )
         old = repos.jobs.create(
             canonical_url="old", title="O", source_adapter="lever",
-            ingested_at=now - timedelta(days=20),
+            ingested_at=now - timedelta(days=20), feed_since=now - timedelta(days=20),
         )
         fresh_id, old_id = fresh.id, old.id
 
@@ -394,7 +394,7 @@ def test_active_greys_to_expired_at_14_days(migrated_db: Database) -> None:
     assert result["expired"] == [old_id]
     with db.repos() as repos:
         assert _job(repos, old_id).feed_state == "expired"
-        assert (_job(repos, old_id).source_meta or {}).get("expired_at") is not None
+        assert _job(repos, old_id).expired_at is not None
         assert _job(repos, fresh_id).feed_state == "active"  # under 14 days
 
 
@@ -406,9 +406,7 @@ def test_expired_hard_deleted_at_30_days_without_tombstone(
     with db.repos() as repos:
         job = repos.jobs.create(canonical_url="stale", title="S", source_adapter="lever")
         repos.jobs.update(
-            job.id,
-            feed_state="expired",
-            source_meta={"expired_at": (now - timedelta(days=31)).isoformat()},
+            job.id, feed_state="expired", expired_at=now - timedelta(days=31),
         )
         job_id, url = job.id, job.canonical_url
 
@@ -427,13 +425,13 @@ def test_expired_legacy_row_without_stamp_backfilled_not_deleted(
     now = now_utc()
     with db.repos() as repos:
         job = repos.jobs.create(canonical_url="legacy", title="L", source_adapter="lever")
-        repos.jobs.update(job.id, feed_state="expired", source_meta=None)
+        repos.jobs.update(job.id, feed_state="expired", expired_at=None)
         job_id = job.id
     result = age_expired_jobs(db, now=now)
     assert result["deleted"] == []  # clock starts now, not deleted this tick
     with db.repos() as repos:
         assert repos.jobs.get(job_id) is not None
-        assert (_job(repos, job_id).source_meta or {}).get("expired_at") is not None
+        assert _job(repos, job_id).expired_at is not None
 
 
 def test_unexpire_resets_the_14_day_timer(migrated_db: Database) -> None:
@@ -469,7 +467,7 @@ def test_expire_window_is_configurable(migrated_db: Database) -> None:
     with db.repos() as repos:
         job = repos.jobs.create(
             canonical_url="cfg", title="C", source_adapter="lever",
-            ingested_at=now - timedelta(days=10),
+            ingested_at=now - timedelta(days=10), feed_since=now - timedelta(days=10),
         )
         job_id = job.id
     assert age_expired_jobs(db, now=now)["expired"] == []  # default 14 keeps it
@@ -491,7 +489,7 @@ def test_daily_tick_uses_the_configured_expire_window(migrated_db: Database) -> 
         repos.preferences.update(ui_state={"lifecycle": {"expire_listing_days": 7}})
         job = repos.jobs.create(
             canonical_url="tick", title="T", source_adapter="lever",
-            ingested_at=now - timedelta(days=10),
+            ingested_at=now - timedelta(days=10), feed_since=now - timedelta(days=10),
         )
         job_id = job.id
     outcome = cleanup_trash_entrypoint(

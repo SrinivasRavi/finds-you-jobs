@@ -227,26 +227,42 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
 
-def _fill_descriptions(jobs: list[NormalizedJob], report: SourceReport) -> None:
-    """Fetch the real JD for rows the logged-in search leaves empty (S-A6).
+def _fill_descriptions(
+    jobs: list[NormalizedJob], report: SourceReport
+) -> list[NormalizedJob]:
+    """Fetch the real JD for rows the logged-in search leaves empty (S-A6), and
+    return only the rows that ended up with a scorable one.
 
     The search returns cards: title, company, location, url, no body. `scan()`
     has an enrich phase for exactly this and the logged-in path never had one,
     which is why 248 of 248 rows on the maintainer's install had a 0-char
     description and could not be AI-scored at all. Same helper the guest adapter
     uses, and it is an ANONYMOUS request that carries no session, so it costs the
-    LinkedIn account nothing; the bound is HTTP politeness, not account safety.
-    A failed fetch keeps the row and records why."""
+    LinkedIn account nothing; the bound is HTTP politeness, not account safety,
+    which is why every row is filled rather than the first 20 (D24).
+
+    A row still under the scorer's floor is dropped with its URL recorded (D23):
+    keeping it would put a permanently unrankable husk on the board. No
+    tombstone, so a later search can find the same posting with a real body."""
     from sidecar.modules.scraper.adapters import linkedin_guest
     from sidecar.modules.scraper.http import Fetcher
-    from sidecar.modules.scraper.scraper import ENRICH_CAP
+    from sidecar.modules.scraper.scraper import MIN_JD_CHARS, SEARCH_ENRICH_CAP
 
     fetcher = Fetcher(usage=report.usage)
-    for job in [j for j in jobs if not j.description][:ENRICH_CAP]:
+    empty = [j for j in jobs if not j.description]
+    for job in empty if SEARCH_ENRICH_CAP is None else empty[:SEARCH_ENRICH_CAP]:
         try:
             job.description = linkedin_guest.fetch_detail(job, fetcher)
         except Exception as exc:  # noqa: BLE001 — one bad row never fails a search
             report.errors.append(f"enrich {job.canonical_url}: {exc}")
+
+    kept: list[NormalizedJob] = []
+    for job in jobs:
+        if len(job.description.strip()) < MIN_JD_CHARS:
+            report.dropped_no_description.append(job.canonical_url)
+        else:
+            kept.append(job)
+    return kept
 
 
 def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
@@ -394,7 +410,8 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
     report.kept = len(deduped)
 
     if not dry_run:
-        _fill_descriptions(deduped, report)
+        deduped = _fill_descriptions(deduped, report)
+        report.kept = len(deduped)
 
     if not dry_run:
         with ctx.db.repos() as repos:

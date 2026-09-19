@@ -17,13 +17,11 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
-    Column,
     ForeignKey,
     Index,
     Integer,
     LargeBinary,
     String,
-    Table,
     Text,
     UniqueConstraint,
 )
@@ -86,7 +84,6 @@ class Operation(Base):
         Index("ix_operations_kind_created", "kind", "created_at"),
         Index("ix_operations_finished", "finished_at"),
         Index("ix_operations_job_kind", "job_id", "kind"),
-        Index("ix_operations_contact_kind", "contact_id", "kind"),
         Index("ix_operations_batch", "batch_id"),
     )
 
@@ -136,41 +133,48 @@ class Job(Base):
     ingested_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
     feed_state: Mapped[str] = mapped_column(String, nullable=False, default="active")
     source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # Scoring attempt memory. Counts ONLY failures where a call reached the
-    # provider, so a circuit-open rejection (provider refusing everybody) costs
-    # the job nothing and it returns to the pool unmarked. The planner stops at
-    # SCORE_MAX_ATTEMPTS. Every other scoring state is derived, never stored —
-    # see the a3d7e1f95c24 migration for why there is no status column.
-    score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # The 3 lifecycle clocks the daily maintenance tick reads (e7b1c95d2a48).
+    # `feed_since` is when this row's freshness window started — `ingested_at`
+    # for a scanned job, reset by an explicit un-expire — so it is never null.
+    # The other 2 stamp the entry into their state and are null outside it.
+    expired_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    trashed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    feed_since: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc
+    )
+
+    # The 2 fit ratings, one per scorer, as columns rather than a `job_scores`
+    # table (d2f7a91b8c46). `<x>_score IS NULL` means that scorer has not run.
+    # The board shows `llm_score ?? keyword_score`, a rule with no ranking in it
+    # and therefore no way to write it wrong; the version-ranked pick it replaces
+    # showed a keyword number over a higher AI one on 36 jobs (S-C34). Reasons is
+    # the summary list, breakdown_md the long-form working; both display-only.
+    llm_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llm_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    llm_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    keyword_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    keyword_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    keyword_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # AI-scoring attempt memory, and the prefix says so. Counts ONLY failures
+    # where a call reached the provider, so a circuit-open rejection (provider
+    # refusing everybody) costs the job nothing and it returns to the pool
+    # unmarked. The planner stops at SCORE_MAX_ATTEMPTS. Every other scoring
+    # state is derived, never stored — see a3d7e1f95c24 for why there is no
+    # status column. The keyword scorer never fails and never touches these.
+    llm_score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    llm_score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_jobs_feedstate_ingested", "feed_state", "ingested_at"),
-        Index("ix_jobs_company", "company"),
         # The planner's eligibility read: active jobs still worth an attempt.
-        Index("ix_jobs_feedstate_attempts", "feed_state", "score_attempts"),
-    )
-
-
-class JobScore(Base):
-    """The cached fit score for one `(job, profile_version, scorer_impl)`."""
-
-    __tablename__ = "job_scores"
-
-    id: Mapped[str] = _pk()
-    job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
-    profile_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    score_0_100: Mapped[int] = mapped_column(Integer, nullable=False)
-    reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    scorer_impl: Mapped[str] = mapped_column(String, nullable=False, default="scorer-llm")
-    operation_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("operations.id"), nullable=True
-    )
-    scored_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
-
-    __table_args__ = (
-        UniqueConstraint("job_id", "profile_version", "scorer_impl", name="uq_jobscore_cachekey"),
+        Index("ix_jobs_feedstate_attempts", "feed_state", "llm_score_attempts"),
+        # One per maintenance-tick query (persistence.evict_stale_trash and
+        # age_expired_jobs), each reading one state on one date column.
+        Index("ix_jobs_feedstate_expired", "feed_state", "expired_at"),
+        Index("ix_jobs_feedstate_trashed", "feed_state", "trashed_at"),
+        Index("ix_jobs_feedstate_since", "feed_state", "feed_since"),
     )
 
 
@@ -181,7 +185,6 @@ class Tombstone(Base):
 
     id: Mapped[str] = _pk()
     canonical_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    tombstoned_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
     reason: Mapped[str] = mapped_column(String, nullable=False, default="manual")
 
 
@@ -201,46 +204,15 @@ class MasterProfile(Base):
     # instead of regex-scraping the markdown. Nullable — absent means not yet
     # extracted.
     application_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
     )
 
-    entities: Mapped[list[ProfileEntity]] = relationship(
-        back_populates="profile", cascade="all, delete-orphan"
-    )
 
-
-# Join tables per the no-graph-DB decision (section 4): entity↔entity links live in SQL.
-experience_skills = Table(
-    "experience_skills",
-    Base.metadata,
-    Column("experience_id", String, ForeignKey("profile_entities.id"), primary_key=True),
-    Column("skill_id", String, ForeignKey("profile_entities.id"), primary_key=True),
-)
-
-project_skills = Table(
-    "project_skills",
-    Base.metadata,
-    Column("project_id", String, ForeignKey("profile_entities.id"), primary_key=True),
-    Column("skill_id", String, ForeignKey("profile_entities.id"), primary_key=True),
-)
-
-
-class ProfileEntity(Base):
-    """Extracted profile entity backing the FR-TL-01 fabrication guard."""
-
-    __tablename__ = "profile_entities"
-
-    id: Mapped[str] = _pk()
-    profile_id: Mapped[str] = mapped_column(
-        String, ForeignKey("master_profiles.id"), nullable=False
-    )
-    entity_type: Mapped[str] = mapped_column(String, nullable=False)
-    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    user_curated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    profile: Mapped[MasterProfile] = relationship(back_populates="entities")
+# `profile_entities` + its `experience_skills` / `project_skills` join tables were
+# dropped 2026-09-01: 3 tables, no writer, no reader, empty on every install. The
+# FR-TL-01 fabrication guard they were meant to ground is not built; when it is,
+# it brings its own storage back in the same change.
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +232,9 @@ class Application(Base):
     __tablename__ = "applications"
 
     id: Mapped[str] = _pk()
+    # Unique: one card per role. Enforced as a unique INDEX (d2f7a91b8c46), which
+    # constrains identically and costs no recreate of a table 4 others point at.
+    # It is also the index `job_id` never had.
     job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
     column: Mapped[str] = mapped_column(String, nullable=False, default="saved")
     priority: Mapped[str] = mapped_column(String, nullable=False, default="P0")
@@ -284,6 +259,8 @@ class Application(Base):
     artifacts: Mapped[list[Artifact]] = relationship(
         back_populates="application", cascade="all, delete-orphan"
     )
+
+    __table_args__ = (Index("uq_applications_job", "job_id", unique=True),)
 
 
 class Artifact(Base):
@@ -337,47 +314,38 @@ class ApplicationEvent(Base):
 
 
 class Document(Base):
-    """A content-addressed uploaded file (a resume/cover letter the user
-    actually submitted for a manually-logged application, FR-TR manual-add).
+    """An uploaded file attached to a card as its resume or cover letter (a
+    document the user actually submitted for a manually-logged application,
+    FR-TR manual-add).
 
-    The blob is stored once on disk at `<data_dir>/documents/<sha256>`; this row
-    is its index + dedup key. Re-uploading identical bytes resolves to the SAME
-    row (the `sha256` unique constraint), so no duplicate storage. Rows are
-    referenced from `application_documents` — one blob may back many links."""
+    The blob is stored once on disk at `<data_dir>/documents/<sha256>`, so the
+    filename IS the hash and identical bytes are written once however many cards
+    use them. This row is per attachment, not per blob: the `documents` +
+    `application_documents` pair it replaces (d2f7a91b8c46) modelled a
+    many-to-many that never occurred in practice and made detaching leak the row
+    and the file, because no reference count existed to make the delete safe.
+    Row dedup is gone; blob dedup, the part that saves disk, is untouched."""
 
     __tablename__ = "documents"
-
-    id: Mapped[str] = _pk()
-    # SHA-256 hex of the raw bytes — the dedup key AND the on-disk filename.
-    sha256: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    mime_type: Mapped[str] = mapped_column(String, nullable=False, default="")
-    original_filename: Mapped[str] = mapped_column(String, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
-
-
-class ApplicationDocument(Base):
-    """Links an uploaded `Document` to an application as its resume or cover
-    letter (FR-TR manual-add). `kind` mirrors the artifact vocabulary
-    (`tailored_resume` | `cover_letter`) so the Tracker card can slot it beside
-    the generated variants. One document per (application, kind)."""
-
-    __tablename__ = "application_documents"
 
     id: Mapped[str] = _pk()
     application_id: Mapped[str] = mapped_column(
         String, ForeignKey("applications.id"), nullable=False
     )
-    document_id: Mapped[str] = mapped_column(
-        String, ForeignKey("documents.id"), nullable=False
-    )
-    # tailored_resume | cover_letter
-    kind: Mapped[str] = mapped_column(String, nullable=False)
+    # tailored_resume | cover_letter — mirrors the artifact vocabulary so the
+    # Tracker card can slot it beside the generated variants.
+    doc_type: Mapped[str] = mapped_column(String, nullable=False)
+    # SHA-256 hex of the raw bytes — the on-disk filename. NOT unique: the same
+    # file on 2 cards is 2 rows and still 1 blob.
+    sha256: Mapped[str] = mapped_column(String, nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    mime_type: Mapped[str] = mapped_column(String, nullable=False, default="")
+    original_filename: Mapped[str] = mapped_column(String, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
 
     __table_args__ = (
-        UniqueConstraint("application_id", "kind", name="uq_appdoc_kind"),
-        Index("ix_appdoc_application", "application_id"),
+        UniqueConstraint("application_id", "doc_type", name="uq_documents_card_type"),
+        Index("ix_documents_application", "application_id"),
     )
 
 
@@ -413,7 +381,6 @@ class ApplyRun(Base):
     source_url: Mapped[str] = mapped_column(String, nullable=False, default="")
     final_url: Mapped[str] = mapped_column(String, nullable=False, default="")
     resume_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    cover_artifact_id: Mapped[str | None] = mapped_column(String, nullable=True)
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Redacted JSON evidence (labels/kinds/paths — never raw form values section 9.1):
     # blockers [{kind, detail, field_label}], fields [{label, action, ok, note}],
@@ -549,20 +516,23 @@ class CompanyResolution(Base):
     company_vanity: Mapped[str] = mapped_column(String, nullable=False, default="")
     industry: Mapped[str] = mapped_column(String, nullable=False, default="")
     source: Mapped[str] = mapped_column(String, nullable=False, default="user")
-    resolved_at: Mapped[datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
-    )
 
 
-class ContactJobAssoc(Base):
-    """A contact ↔ job link: one referral ask per role (US-REF-05).
+class ReferralCandidate(Base):
+    """One person put forward as a referral candidate for one role (US-REF-05).
 
-    The per-role ask status is distinct from the person-level connection status
-    on `Contact` (a contact reused across roles has one connection but many asks).
-    `audience_tag` is copied here at add-time so a job-scoped view keeps its own
-    tag even if the person's role later changes."""
+    `Contact` holds the person once, reusable across every role at their
+    employer; this row holds the per-role fact, so someone asked about 3 jobs is
+    1 contact and 3 rows. The per-role ask status is deliberately distinct from
+    the person-level connection status on `Contact`. `audience_tag` is copied
+    here at add-time so a job-scoped view keeps its own tag even if the person's
+    role later changes.
 
-    __tablename__ = "contact_job_assocs"
+    Never rendered as itself: it drives the Find referrals candidate list, the
+    checkbox state that survives closing the popup, and whether a Tracker card
+    shows a referrals affordance at all."""
+
+    __tablename__ = "referral_candidates"
 
     id: Mapped[str] = _pk()
     contact_id: Mapped[str] = mapped_column(
@@ -570,8 +540,6 @@ class ContactJobAssoc(Base):
     )
     job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
     audience_tag: Mapped[str] = mapped_column(String, nullable=False, default="other")
-    # pending / accepted / replied / converted / ignored (database-design section 5).
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     # The user's current find-referrals selection for this role (FR-NW-01). Set at
     # reach-out time; persisted so a `pending` popup restores the selection on
     # reopen (candidates + who was picked) after a partial/cap-stopped batch.
@@ -579,53 +547,15 @@ class ContactJobAssoc(Base):
     added_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
 
     __table_args__ = (
-        UniqueConstraint("contact_id", "job_id", name="uq_contactjob"),
-        Index("ix_contactjob_job", "job_id"),
+        UniqueConstraint("contact_id", "job_id", name="uq_referral_candidate"),
+        Index("ix_referral_candidate_job", "job_id"),
     )
 
 
-class Sequence(Base):
-    """An audience playbook (US-PLB-*): the ordered outreach steps for one
-    audience. P1 seeds these from the Networker's bundled playbook files; the
-    editable Playbook Editor (US-PLB-01..05) writes them back. `is_default`
-    marks a canonical seeded playbook (Reset-to-default target)."""
-
-    __tablename__ = "sequences"
-
-    id: Mapped[str] = _pk()
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    # peer | hm | recruiter | leadership | other
-    audience: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
-
-    steps: Mapped[list[SequenceStep]] = relationship(
-        back_populates="sequence", cascade="all, delete-orphan"
-    )
-
-
-class SequenceStep(Base):
-    """One step of a playbook (US-PLB-02/03/05)."""
-
-    __tablename__ = "sequence_steps"
-
-    id: Mapped[str] = _pk()
-    sequence_id: Mapped[str] = mapped_column(
-        String, ForeignKey("sequences.id"), nullable=False
-    )
-    order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    title: Mapped[str] = mapped_column(String, nullable=False, default="")
-    # linkedin_connect / linkedin_dm / email (email = manual-send-only P1, section 17a).
-    channel: Mapped[str] = mapped_column(String, nullable=False, default="linkedin_dm")
-    body_template: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    delay_days_from_previous: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # manual | after_previous_days
-    trigger: Mapped[str] = mapped_column(String, nullable=False, default="manual")
-
-    sequence: Mapped[Sequence] = relationship(back_populates="steps")
-
-    __table_args__ = (Index("ix_seqstep_sequence", "sequence_id", "order_index"),)
+# `sequences` + `sequence_steps` were dropped 2026-09-03 (e7b1c95d2a48): empty on
+# every install, no writer, no seeder, and the Playbook Editor they backed was
+# never built. The contact modal's stage-aware composer covers the need with
+# templates in code. See status.md S-N11 for what a rebuild owes.
 
 
 class OutreachLog(Base):
@@ -642,12 +572,6 @@ class OutreachLog(Base):
         String, ForeignKey("contacts.id"), nullable=False
     )
     job_id: Mapped[str | None] = mapped_column(String, ForeignKey("jobs.id"), nullable=True)
-    sequence_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("sequences.id"), nullable=True
-    )
-    step_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("sequence_steps.id"), nullable=True
-    )
     channel: Mapped[str] = mapped_column(String, nullable=False)  # connection_note | dm
     # The reach-out batch this send belongs to (FR-NW-01/03). One batch id ties
     # every send of a single "Reach out (N)" together, so `referralsState` derives
@@ -685,10 +609,6 @@ class LinkedInSession(Base):
     # while a headed `login` op is in flight; `backing_off` after the Referral
     # Outreach package reports a rate-limit pause (FR-NW-05) — cleared by resume.
     status: Mapped[str] = mapped_column(String, nullable=False, default="never_set")
-    # RETIRED 2026-08-02 (pre-dates the membership × risk% basis below; the
-    # New/Seasoned selector is gone). Kept only because the column shipped
-    # before this branch; nothing reads or writes it. Drop in a future migration.
-    account_tier: Mapped[str] = mapped_column(String, nullable=False, default="new")
     # Self-imposed rate-limit basis (maintainer directive 2026-08-01, replacing
     # the New/Seasoned tier — that gradation now lives in `risk_pct`).
     # `membership_type` ∈ free | premium | sales_navigator | recruiter_lite picks

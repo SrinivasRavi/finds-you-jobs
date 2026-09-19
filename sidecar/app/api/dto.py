@@ -21,7 +21,6 @@ from ..db.models import (
     Contact,
     EngineSettings,
     Job,
-    JobScore,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
@@ -229,7 +228,9 @@ class ArtifactDTO(BaseModel):
 class ApplicationDocumentDTO(BaseModel):
     """One document the user attached to a manually-logged application (the
     resume/cover letter they actually submitted). Downloaded verbatim from
-    `GET /api/documents/{document_id}`."""
+    `GET /api/documents/{document_id}`. The wire names (`document_id`, `kind`)
+    predate the table merge and stay: `document_id` is now the row's own id, and
+    `kind` is its `doc_type`."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -406,7 +407,6 @@ class ProfileDTO(BaseModel):
     # Structured form-fill facts (FR-APP-01) — extracted by the `extract` op at
     # save, user-editable in Settings; null until extracted.
     application_profile: dict[str, Any] | None = None
-    created_at: datetime
     updated_at: datetime
 
 
@@ -584,7 +584,6 @@ class NetworkingContactDTO(BaseModel):
     company: str
     linkedin_url: str
     connection_status: str
-    ask_status: str | None = None
     audience_tag: str
     last_message: str | None = None
     last_message_at: datetime | None = None
@@ -967,6 +966,16 @@ class BrowserInstallResult(BaseModel):
     status: str  # "started" | "already_running"
 
 
+class SchedulerStatus(BaseModel):
+    """Whether the 60 s tick loop that plans background work is running, and
+    whether a degraded boot is the reason it is not."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    running: bool
+    degraded_boot: bool = Field(default=False, serialization_alias="degradedBoot")
+
+
 class EngineVerifyRequest(BaseModel):
     """A provider-appropriate verify probe (FR-SET-06). `key` is sent for a
     verify-only check and is never persisted by this call."""
@@ -1075,15 +1084,30 @@ class CostTotalsDTO(BaseModel):
     by_kind: dict[str, float]
 
 
-def job_score_dto(score: JobScore | None) -> JobScoreDTO | None:
-    if score is None:
-        return None
-    return JobScoreDTO(
-        score_0_100=score.score_0_100,
-        reasons=list(score.reasons),
-        breakdown_md=score.breakdown_md,
-        scorer_impl=score.scorer_impl,
-    )
+def job_score_dto(job: Job) -> JobScoreDTO | None:
+    """The rating a job DISPLAYS: the AI one if it has it, otherwise the keyword
+    floor, otherwise nothing. The whole rule, and there is no ranking in it to
+    get backwards. It replaced a version-ranked pick over a `job_scores` table
+    that showed a keyword number over a higher AI one on 36 jobs (S-C34).
+
+    `scorer_impl` stays on the wire under its old values so the frontend's grey
+    styling keeps working; nothing stores that string any more, so renaming it
+    to `keyword` is now a frontend change with no data migration behind it."""
+    if job.llm_score is not None:
+        return JobScoreDTO(
+            score_0_100=job.llm_score,
+            reasons=list(job.llm_reasons),
+            breakdown_md=job.llm_breakdown_md,
+            scorer_impl="scorer-llm",
+        )
+    if job.keyword_score is not None:
+        return JobScoreDTO(
+            score_0_100=job.keyword_score,
+            reasons=list(job.keyword_reasons),
+            breakdown_md=job.keyword_breakdown_md,
+            scorer_impl="scorer-deterministic",
+        )
+    return None
 
 
 def derive_score_status(
@@ -1135,21 +1159,21 @@ def derive_work_style(location: str, description: str) -> str:
     return ""
 
 
-def job_dto(
-    job: Job, score: JobScore | None = None, *, score_op_states: set[str] | None = None
-) -> JobDTO:
+def job_dto(job: Job, *, score_op_states: set[str] | None = None) -> JobDTO:
+    """The board/tracker view of one job. The rating rides on the job row, so
+    there is no score to pass in and no second query to forget."""
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
     dto = JobDTO.model_validate(job)
-    dto.score = job_score_dto(score)
+    dto.score = job_score_dto(job)
     dto.score_status = derive_score_status(
-        score is not None,
+        dto.score is not None,
         score_op_states or set(),
         # The same predicate the planner's eligibility read uses, so what the
         # board calls unscorable is exactly what no tick will ever pick up
         # (`JobsRepo.list_active_without_llm_score`).
         scorable=len(job.description or "") >= MIN_JD_CHARS,
-        attempts=job.score_attempts,
+        attempts=job.llm_score_attempts,
     )
     dto.work_style = derive_work_style(job.location, job.description)
     return dto
@@ -1204,7 +1228,7 @@ def application_dto(
     has_candidates: bool = False,
     latest_batch_outcomes: list[str] | None = None,
     latest_apply_run: Any | None = None,
-    documents: list[tuple[Any, Any]] | None = None,
+    documents: list[Any] | None = None,
 ) -> ApplicationDTO:
     # Built explicitly (not model_validate) so we never lazy-load the ORM
     # relationship and packetState stays purely derived.
@@ -1248,12 +1272,12 @@ def application_dto(
         documents=[
             ApplicationDocumentDTO(
                 document_id=doc.id,
-                kind=link.kind,
+                kind=doc.doc_type,
                 original_filename=doc.original_filename,
                 mime_type=doc.mime_type,
                 byte_size=doc.byte_size,
             )
-            for link, doc in (documents or [])
+            for doc in (documents or [])
         ],
     )
 

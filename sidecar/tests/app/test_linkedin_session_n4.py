@@ -411,11 +411,17 @@ def test_linkedin_search_fills_the_missing_job_descriptions(search_client) -> No
         assert job["scoreStatus"] != "unscorable"
 
 
-def test_linkedin_search_keeps_a_row_whose_jd_fetch_failed(
+def test_linkedin_search_drops_a_row_whose_jd_fetch_failed(
     search_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A posting that is authwalled or gone must not lose its row: the card is
-    still a real listing, it just lands unscorable with the reason recorded."""
+    """A posting that is authwalled or gone is dropped, not kept (D23).
+
+    It used to land on the board as an unscorable husk: a row that can never be
+    ranked, never explains itself, and dilutes its source's analytics. Both the
+    verbatim fetch error and the discarded URL are recorded on the scan
+    operation, so the row's absence is explained rather than silent. No
+    tombstone is written, so a later search can find the same posting once the
+    description is reachable."""
     from sidecar.modules.scraper.adapters import linkedin_guest
 
     def _boom(job, fetcher):  # type: ignore[no-untyped-def]
@@ -432,13 +438,13 @@ def test_linkedin_search_keeps_a_row_whose_jd_fetch_failed(
     wait_for_state(app.state.db, resp.json()["id"], "succeeded")
 
     jobs = client.get("/api/jobs", headers=AUTH).json()
-    landed = [j for j in jobs if j["canonical_url"].endswith(("/111", "/222"))]
-    assert len(landed) == 2
-    assert all(j["scoreStatus"] == "unscorable" for j in landed)
+    assert [j for j in jobs if j["canonical_url"].endswith(("/111", "/222"))] == []
     with app.state.db.repos() as repos:
         op = repos.operations.get(resp.json()["id"])
-        errors = (op.result_ref or {})["per_source"]["linkedin:search"]["errors"]
-    assert any("403 from the guest endpoint" in e for e in errors)
+        report = (op.result_ref or {})["per_source"]["linkedin:search"]
+        assert repos.tombstones.exists("https://www.linkedin.com/jobs/view/111") is False
+    assert any("403 from the guest endpoint" in e for e in report["errors"])
+    assert len(report["dropped_no_description"]) == 2
 
 
 def test_linkedin_search_carries_no_size_knob(search_client) -> None:

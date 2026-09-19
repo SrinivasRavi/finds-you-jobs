@@ -6,7 +6,7 @@
   US-REF-04 — send via voyager (fake driver — no live LinkedIn) + audit log
   US-NW-09  — reach-out flips contact onto kanban + moves Saved → Seeking Referral
   US-NW-11  — never-accepted-after-cutoff query
-  FR-REF-*  — persistence into Contact / ContactJobAssoc / OutreachLog
+  FR-REF-*  — persistence into Contact / ReferralCandidate / OutreachLog
 
 ZERO live LinkedIn traffic: every discover/send goes through FakeVoyagerDriver
 (the `DRIVER_FACTORY` seam), every draft through FakeEngine. The wire stays cold.
@@ -142,7 +142,7 @@ def test_discover_persists_candidates_tagged_and_off_kanban(wired: Wired) -> Non
         assert by_url["https://www.linkedin.com/in/raj-io"].warmth == "warm"
         assert by_url["https://www.linkedin.com/in/sarah-tan"].warmth == "cold"
         # per-job assoc created (US-REF-05)
-        assocs = repos.contact_job_assocs.list_for_job(wired.job_id)
+        assocs = repos.referral_candidates.list_for_job(wired.job_id)
         assert len(assocs) == 3
     # SSE live-update events for the popup (candidate + discovered)
     phases = [e["payload"]["phase"] for e in events]
@@ -422,7 +422,7 @@ def test_candidates_listable_when_resolved_name_differs_from_raw_company(wired: 
         )
         assert [c.linkedin_url for c in by_name] == ["https://www.linkedin.com/in/kim-lee"]
         # …and by the job association, regardless of how the employer is spelled.
-        assoc_ids = {a.contact_id for a in repos.contact_job_assocs.list_for_job(wired.job_id)}
+        assoc_ids = {a.contact_id for a in repos.referral_candidates.list_for_job(wired.job_id)}
         by_assoc = repos.contacts.list_for_referrals(company_names=set(), contact_ids=assoc_ids)
         assert [c.linkedin_url for c in by_assoc] == ["https://www.linkedin.com/in/kim-lee"]
 

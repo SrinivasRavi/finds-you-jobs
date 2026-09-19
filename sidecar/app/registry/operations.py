@@ -240,32 +240,26 @@ def _persist_score(
     ctx: OperationContext,
     *,
     job_id: str,
-    profile_version: int,
     score_0_100: int,
     reasons: list[str],
     breakdown_md: str,
     scorer_impl: str,
     feed_priority_stats: bool,
-) -> str | None:
-    """Upsert one `JobScore` row; optionally feed the running priority
-    distribution (FR-TR-09) exactly once per *new* score of that impl — a
-    recompute of an existing cache key must not double count."""
+) -> None:
+    """Write one scorer's rating onto the job; optionally feed the running
+    priority distribution (FR-TR-09) exactly once per *new* rating of that
+    scorer — a recompute must not double count."""
     if ctx.db is None:
-        return None
+        return
     from ..priority import STATS_KEY, welford_update
 
     with ctx.db.repos() as repos:
-        is_new_score = (
-            repos.job_scores.get_cached(job_id, profile_version, scorer_impl) is None
-        )
-        row = repos.job_scores.upsert(
-            job_id=job_id,
-            profile_version=profile_version,
+        is_new_score = repos.jobs.set_score(
+            job_id,
+            scorer_impl=scorer_impl,
             score_0_100=score_0_100,
             reasons=reasons,
             breakdown_md=breakdown_md,
-            scorer_impl=scorer_impl,
-            operation_id=ctx.operation_id,
         )
         if feed_priority_stats and is_new_score:
             prefs = repos.preferences.get_or_create()
@@ -274,22 +268,20 @@ def _persist_score(
                 thresholds.get(STATS_KEY), float(score_0_100)
             )
             repos.preferences.update(thresholds=thresholds)
-        return row.id
 
 
 def _ensure_keyword_floor(
     ctx: OperationContext,
     *,
     job_id: str | None,
-    profile_version: int,
     master_md: str,
     job_text: str,
 ) -> None:
-    """Guarantee a keyword score exists for this (job, version) — idempotent:
-    a no-op if the floor is already there (the usual case, since the post-scan
-    and boot floor passes run first). Pure offline compute (~0.5 ms, no
-    network). Best-effort: a compute error is logged, never raised — the floor
-    is a safety net, not the caller's operation."""
+    """Guarantee this job carries a keyword rating — idempotent: a no-op if the
+    floor is already there (the usual case, since the post-scan and boot floor
+    passes run first). Pure offline compute (~0.5 ms, no network). Best-effort:
+    a compute error is logged, never raised — the floor is a safety net, not the
+    caller's operation."""
     from sidecar.modules.scorer.deterministic import score_deterministic
 
     from .persistence import SCORER_IMPL_DETERMINISTIC
@@ -297,14 +289,14 @@ def _ensure_keyword_floor(
     if ctx.db is None or job_id is None:
         return
     with ctx.db.repos() as repos:
-        if repos.job_scores.get_cached(job_id, profile_version, SCORER_IMPL_DETERMINISTIC):
+        job = repos.jobs.get(job_id)
+        if job is None or job.keyword_score is not None:
             return
     try:
         det = score_deterministic(master_md, job_text)
         _persist_score(
             ctx,
             job_id=job_id,
-            profile_version=profile_version,
             score_0_100=det.score,
             reasons=list(det.reasons),
             breakdown_md=det.breakdown_md,
@@ -363,12 +355,10 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
     if mode == "keyword":
         det = score_deterministic(master_md, job_text)
-        score_id = None
         if job_id is not None:
-            score_id = _persist_score(
+            _persist_score(
                 ctx,
                 job_id=job_id,
-                profile_version=profile_version,
                 score_0_100=det.score,
                 reasons=list(det.reasons),
                 breakdown_md=det.breakdown_md,
@@ -381,7 +371,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 feed_priority_stats=len(job_text.strip()) >= MIN_JD_CHARS,
             )
         return OperationOutcome(
-            result_ref={"score": det.score, "job_id": job_id, "score_id": score_id},
+            result_ref={"score": det.score, "job_id": job_id},
             usage=None,
             engine="on-device",
             model="keyword",
@@ -404,11 +394,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         # The keyword floor is the fallback; guarantee it exists (idempotent)
         # then re-raise so the op stays failed.
         _ensure_keyword_floor(
-            ctx,
-            job_id=job_id,
-            profile_version=profile_version,
-            master_md=master_md,
-            job_text=job_text,
+            ctx, job_id=job_id, master_md=master_md, job_text=job_text
         )
         # Spend one of this job's attempts — but ONLY because the call reached
         # the provider. A `ProviderCircuitOpen` rejection is the runner refusing
@@ -424,12 +410,10 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 repos.jobs.record_score_failure(job_id, f"{type(exc).__name__}: {exc}")
         raise
 
-    score_id = None
     if job_id is not None:
-        score_id = _persist_score(
+        _persist_score(
             ctx,
             job_id=job_id,
-            profile_version=profile_version,
             score_0_100=result.score,
             reasons=list(result.reasons),
             breakdown_md=result.breakdown_md,
@@ -437,7 +421,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             feed_priority_stats=True,
         )
     return llm_outcome(
-        {"score": result.score, "job_id": job_id, "score_id": score_id},
+        {"score": result.score, "job_id": job_id},
         usage=result.usage,
         resolved=resolved,
     )
@@ -447,14 +431,12 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
     """The ONE keyword sweep over the active board (~0.5 ms/job, no LLM) —
     both policies below share this walker so their loop bodies can't drift:
 
-    - `refresh=False` — the FLOOR: only jobs with NO score at ANY version get
-      a keyword row. A stale score from a prior resume version is left
-      untouched (declining an AI re-score keeps it visible — maintainer
-      2026-07-22); nothing is ever deleted or overwritten.
-    - `refresh=True` — a fresh keyword row at the CURRENT profile version for
-      every active job, so the board reflects a new resume. (The scorer is
-      deterministic: same inputs recompute to the same row, so "overwrite"
-      semantics are never needed beyond writing at the newest version.)
+    - `refresh=False` — the FLOOR: only jobs NO scorer has rated get a keyword
+      rating, so no board row is ever stuck on Pending. A job that already has
+      one is left alone; nothing is ever overwritten.
+    - `refresh=True` — recompute every active job's keyword rating against the
+      new resume. It can never bury an AI score: the 2 live in separate columns
+      and the board prefers the AI one outright.
     """
     from sidecar.modules.scorer.deterministic import score_deterministic
 
@@ -464,11 +446,11 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
         profile = repos.profile.get_current()
         if profile is None:
             return 0
-        master_md, version = profile.resume_markdown, profile.version
+        master_md = profile.resume_markdown
         jobs = repos.jobs.list(feed_state="active")
         if not refresh:
-            already = repos.job_scores.job_ids_with_any_score([j.id for j in jobs])
-            jobs = [j for j in jobs if j.id not in already]
+            unscored = repos.jobs.ids_without_any_score([j.id for j in jobs])
+            jobs = [j for j in jobs if j.id in unscored]
         todo = [(j.id, compose_job_text(j)) for j in jobs]
 
     done = 0
@@ -476,13 +458,12 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
         try:
             det = score_deterministic(master_md, job_text)
             with db.repos() as repos:
-                repos.job_scores.upsert(
-                    job_id=job_id,
-                    profile_version=version,
+                repos.jobs.set_score(
+                    job_id,
+                    scorer_impl=SCORER_IMPL_DETERMINISTIC,
                     score_0_100=det.score,
                     reasons=list(det.reasons),
                     breakdown_md=det.breakdown_md,
-                    scorer_impl=SCORER_IMPL_DETERMINISTIC,
                 )
             done += 1
         except Exception:  # noqa: BLE001 — one bad job never aborts the sweep

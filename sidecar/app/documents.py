@@ -77,11 +77,23 @@ def blob_path(sha256: str, data_dir: Path | None = None) -> Path:
 
 def store_bytes(data: bytes, data_dir: Path | None = None) -> str:
     """Write `data` to its content-addressed blob (no-op if already present) and
-    return its sha256. Dedup happens here (existing blob = skip write) and again
-    at the DB row (unique sha256), so identical bytes never duplicate."""
+    return its sha256. Identical bytes uploaded twice write one file: the dedup
+    lives here, on disk, and never depended on the DB row."""
     digest = sha256_hex(data)
     path = blob_path(digest, data_dir)
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
     return digest
+
+
+def delete_blob(sha256: str, data_dir: Path | None = None) -> bool:
+    """Unlink a blob no row points at any more. The caller establishes that
+    (`DocumentsRepo` returns the orphaned hashes); this only removes the file.
+    Missing is fine — the goal is that it is gone."""
+    path = blob_path(sha256, data_dir)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
