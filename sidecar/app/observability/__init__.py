@@ -8,6 +8,8 @@ Public surface:
 - `record_span_success` / `record_span_failure` — set the US-SYS-05 attribute
   list (engine / model / cost / latency / outcome) on that span.
 - `read_spans_for_operation` — the Logs drill-down read path.
+- `monitor_loop_lag` — a lifespan background task that reports event-loop
+  blockage no request span would ever see.
 
 The runner is the only writer of operation spans; everything else reads. Modules
 stay framework-free (the one-way rule) — the engine call is represented as
@@ -23,6 +25,7 @@ from typing import Any
 
 import logfire
 
+from .loop_lag import LOOP_LAG_INTERVAL_SECONDS, LOOP_LAG_THRESHOLD_SECONDS, monitor_loop_lag
 from .setup import (
     DEFAULT_RETENTION_DAYS,
     SPAN_DB_NAME,
@@ -34,9 +37,12 @@ from .sqlite_exporter import prune_spans, read_spans_for_operation, span_count
 
 __all__ = [
     "DEFAULT_RETENTION_DAYS",
+    "LOOP_LAG_INTERVAL_SECONDS",
+    "LOOP_LAG_THRESHOLD_SECONDS",
     "SPAN_DB_NAME",
     "ObservabilityHandle",
     "configure_observability",
+    "monitor_loop_lag",
     "operation_span",
     "prune_spans",
     "read_spans_for_operation",

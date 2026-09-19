@@ -36,7 +36,7 @@ from .db.migrate import upgrade_to_head
 from .db.models import OP_ACTIVE_STATES
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub, register_sse_schemas
 from .logging_setup import get_logger, setup_flight_recorder
-from .observability import ObservabilityHandle, configure_observability
+from .observability import ObservabilityHandle, configure_observability, monitor_loop_lag
 from .observability.config import observability_config
 from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
@@ -70,16 +70,27 @@ SURFACE_REAP_INTERVAL_SECONDS = 60.0
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
-# A request slower than this is recorded by name. Half the shell's 2 s health
-# timeout, so a request that will eventually cost a restart shows up in the log
-# well before it does. S-C26: without this there is no evidence a sidecar was
-# ever slow, only that it died.
+# A request slower than this is recorded by name at WARNING. Half the shell's
+# 2 s health timeout, so a request that will eventually cost a restart shows up
+# in the log well before it does. S-C26: without this there is no evidence a
+# sidecar was ever slow, only that it died.
 SLOW_REQUEST_SECONDS = 1.0
+
+# A softer, INFO-level bar at a tenth of the warning above: on the maintainer's
+# own database every GET answers under 22 ms, so a 1 s bar alone would never
+# fire and could not catch a regression while it's still cheap to notice. One
+# route (`/api/operations`, ~100k rows) is expected to cross this on its own
+# eventually — hearing about that is information, not noise.
+SLOW_REQUEST_INFO_SECONDS = SLOW_REQUEST_SECONDS / 10
 
 
 class _RequestObserverMiddleware:
     """Time every request, name the slow ones, and log any exception escaping a
     route before RE-RAISING it (the 500 and its propagation are unchanged).
+
+    Two bars: INFO at SLOW_REQUEST_INFO_SECONDS (this route got slow), WARNING
+    at SLOW_REQUEST_SECONDS (this will cost a restart) — only the higher one
+    that's crossed logs, so a genuinely slow request logs once, not twice.
 
     Pure ASGI on purpose: BaseHTTPMiddleware buffers response streams and breaks
     SSE. `/api/events` is excluded from timing because an SSE stream is supposed
@@ -103,12 +114,18 @@ class _RequestObserverMiddleware:
         finally:
             elapsed = time.perf_counter() - started
             path = scope.get("path") or ""
-            if elapsed >= SLOW_REQUEST_SECONDS and not path.startswith("/api/events"):
-                get_logger().warning(
-                    "slow request: %s %s took %.0f ms (health window is %.0f ms)",
-                    scope.get("method"), path, elapsed * 1000,
-                    HEALTH_WINDOW_SECONDS * 1000,
-                )
+            if not path.startswith("/api/events"):
+                if elapsed >= SLOW_REQUEST_SECONDS:
+                    get_logger().warning(
+                        "slow request: %s %s took %.0f ms (health window is %.0f ms)",
+                        scope.get("method"), path, elapsed * 1000,
+                        HEALTH_WINDOW_SECONDS * 1000,
+                    )
+                elif elapsed >= SLOW_REQUEST_INFO_SECONDS:
+                    get_logger().info(
+                        "slow request: %s %s took %.0f ms",
+                        scope.get("method"), path, elapsed * 1000,
+                    )
 
 
 def create_app(
@@ -288,17 +305,36 @@ def create_app(
             browser, asyncio.get_running_loop()
         )
 
-        scheduler: Scheduler | None = None
-        scheduler_task: asyncio.Task[None] | None = None
-        if enable_scheduler:
+        # A degraded boot: the shell saw 3 consecutive runs end the same bad way
+        # and started us with no scheduler, so the window opens and nothing
+        # queues itself into whatever killed them. The user turns it back on
+        # from the banner, which is `POST /api/system/scheduler/resume`.
+        degraded_boot = os.environ.get("FYJ_SCHEDULER_OFF") == "1"
+        if degraded_boot:
+            log.warning("degraded boot: the shell asked for no scheduler this run")
+        app.state.degraded_boot = degraded_boot
+
+        def start_scheduler() -> bool:
+            """Start the tick loop, or say it was already running. The resume
+            button calls this, so the path a degraded boot takes back to normal
+            is the same one boot takes."""
+            if app.state.scheduler is not None:
+                return False
             scheduler = Scheduler(
                 db,
                 runner,
                 planner=lambda kind: plan_schedule(db, kind),
                 publish=hub.publish,
             )
-            scheduler_task = asyncio.create_task(scheduler.run_forever())
-        app.state.scheduler = scheduler
+            app.state.scheduler = scheduler
+            app.state.scheduler_task = asyncio.create_task(scheduler.run_forever())
+            return True
+
+        app.state.scheduler = None
+        app.state.scheduler_task = None
+        app.state.start_scheduler = start_scheduler
+        if enable_scheduler and not degraded_boot:
+            start_scheduler()
 
         # Close browser surfaces nobody is watching. A surface is an OS thread
         # plus a real Chrome plus its resident memory, and nothing used to
@@ -315,6 +351,12 @@ def create_app(
                     log.exception("idle browser-surface reap failed")
 
         reaper_task = asyncio.create_task(_reap_idle_surfaces())
+
+        # The request timer above only ever sees requests; a stall with no
+        # request in flight (or the request that reports slow being the
+        # head-of-line victim, not the culprit) would otherwise leave no
+        # trace at all. This samples the loop itself.
+        loop_lag_task = asyncio.create_task(monitor_loop_lag())
 
         watchdog_task: asyncio.Task[None] | None = None
         if original_ppid is not None:
@@ -338,9 +380,14 @@ def create_app(
         try:
             yield
         finally:
-            if scheduler is not None:
-                scheduler.stop()
-            for task in (scheduler_task, watchdog_task, reaper_task):
+            if app.state.scheduler is not None:
+                app.state.scheduler.stop()
+            for task in (
+                app.state.scheduler_task,
+                watchdog_task,
+                reaper_task,
+                loop_lag_task,
+            ):
                 if task is not None:
                     task.cancel()
                     try:

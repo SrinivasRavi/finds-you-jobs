@@ -208,6 +208,9 @@ pub fn run() {
             // Pin the shell.log directory before the first log line — packaged
             // installs use the OS app-log dir, dev keeps repo-local logs/ (F-L5).
             init_shell_log(app.handle());
+            // Must follow init_shell_log (it resolves the directory the history
+            // lives in) and precede the spawn (it decides how the spawn starts).
+            sidecar::record_boot(app.handle());
 
             let state: State<AppState> = app.state();
             let inner = state.inner.clone();
