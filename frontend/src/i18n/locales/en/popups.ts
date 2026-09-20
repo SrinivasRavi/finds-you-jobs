@@ -110,7 +110,7 @@ const popups = {
       "DMs to 1st-degree connections have their own budget and never count against invites.",
     dmCounter: "DMs (last 24h): <strong>{{dmSent}}/{{dmLimit}}</strong>",
     manualModeQuota: "Manual mode — track against your own LinkedIn limits",
-    dailyLimitReached: "Daily limit reached. New requests queue until tomorrow.",
+    dailyLimitReached: "Daily limit reached. Nothing is queued; sending resumes tomorrow.",
     closeToLimit_one: "Close to your daily limit — {{count}} request left today.",
     closeToLimit_other: "Close to your daily limit — {{count}} requests left today.",
     bannerNotConnected:

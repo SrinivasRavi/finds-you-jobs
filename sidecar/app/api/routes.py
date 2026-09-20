@@ -14,7 +14,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
@@ -2236,10 +2236,31 @@ def _is_real_sweep(ref: dict[str, Any]) -> bool:
 def _linkedin_session_response(request: Request) -> dto.LinkedInSessionDTO:
     with _db(request).repos() as repos:
         base, profile = _linkedin_session_base(repos)
-    base.rate_limits = dto.rate_limits_dto(
-        networker_ops.linkedin_caps_snapshot(profile)
-    )
+    snapshot = networker_ops.linkedin_caps_snapshot(profile)
+    base.rate_limits = dto.rate_limits_dto(snapshot)
+    _overlay_backoff(base, snapshot)
     return base
+
+
+def _overlay_backoff(base: dto.LinkedInSessionDTO, snapshot: dict[str, Any]) -> None:
+    """Report the pacing ledger's pause, which is the thing that enforces it.
+
+    The `linkedin_sessions.backing_off` row is a mirror, and only the send path
+    ever wrote it, so a rate limit hit during discover or contact sync paused
+    every meter while the header still read "LinkedIn connected" and Settings
+    offered no Resume. Reading the ledger here covers every op, including ones
+    not written yet. A never-connected session is left alone: a pause is a
+    statement about the account's traffic, not an invitation to connect."""
+    if not snapshot.get("paused") or base.status == "never_set":
+        return
+    base.status = "backing_off"
+    paused_until = float(snapshot.get("paused_until") or 0.0)
+    if paused_until:
+        base.paused_until = datetime.fromtimestamp(paused_until, tz=UTC)
+    base.paused_reason = (
+        str(snapshot.get("paused_reason") or "") or base.paused_reason
+        or "LinkedIn rate-limit backoff"
+    )
 
 
 @router.get("/api/linkedin/session")

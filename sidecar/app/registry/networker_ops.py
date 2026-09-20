@@ -295,12 +295,20 @@ def linkedin_caps_snapshot(profile: PacingProfile) -> dict:
     # Live hourly job-search budget — read from the enforcing ledger, not recomputed.
     pacer = Pacer(effective, state_dir=linkedin_state_dir())
     js = pacer.usage("job_search_pages")
+    # The backoff, read from the same ledger that enforces it. It is carried here
+    # rather than mirrored onto `linkedin_sessions` because the pause blocks every
+    # meter, reads included, while only the SEND path ever wrote the mirror — so a
+    # 429 during discover or contact sync paused the account with the header still
+    # reading "LinkedIn connected" and no Resume button anywhere (2026-09-20).
     return {
         "membership_type": profile.membership,
         "risk_pct": profile.risk_pct,
         "memberships": list(MEMBERSHIPS),
         "caps": caps,
         "job_search_hour_remaining": int(js.get("hour_remaining") or 0),
+        "paused": pacer.is_paused(),
+        "paused_until": float(pacer.state.paused_until or 0.0),
+        "paused_reason": pacer.state.paused_reason or "",
     }
 
 
@@ -826,7 +834,16 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
             message, net_contact, driver=driver, dry_run=dry_run,
             on_step=_publish_step,
         )
-    except NetworkerError as exc:
+    except (NetworkerError, OSError, RuntimeError) as exc:
+        # Only `NetworkerError` was caught until 2026-09-20, and the driver wraps
+        # nothing but `VoyagerError` (`modules/networker/driver.py`). So a browser
+        # that failed to launch (`BrowserLaunchError`, a RuntimeError), a browser
+        # that stopped answering (`BrowserUnresponsiveError`, an OSError), an
+        # exhausted 5xx retry (OSError) and a navigation guard (a bare
+        # RuntimeError) all escaped this block: no OutreachLog row, no
+        # `send_failed` event, and the referrals row spun on "Sending" until the
+        # modal was closed. `route_cause` already walks `__cause__` and clamps an
+        # unrecognized one to `unknown`, so the body below needs no change.
         SEND_PROGRESS.pop(op_id, None)
         # S-C14: name the failure. A recognized worker state routes to its coded
         # label; an unrecognized one hard-stops, captures evidence and asks the
