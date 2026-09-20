@@ -24,22 +24,22 @@ const HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const RESTART_WINDOW: Duration = Duration::from_secs(30); // AM2
 const MAX_FAILURES: u32 = 3; // AM2
 const HEALTHY_RESET: Duration = Duration::from_secs(60); // AM2
-// Consecutive missed health polls tolerated while the sidecar process is still
-// ALIVE. A blocked event loop still holds its listening socket, so a slow query
-// and a crash look identical over HTTP; the process table knows the difference,
-// and `try_wait` is how we ask. At a 2 s poll with a 2 s timeout this is roughly
-// 20 s of unresponsiveness before we recycle a live process, against Kubernetes'
-// default of 3 consecutive liveness failures. A process that has actually EXITED
-// is restarted on the first poll, unchanged — that speed was the point.
+                                                         // Consecutive missed health polls tolerated while the sidecar process is still
+                                                         // ALIVE. A blocked event loop still holds its listening socket, so a slow query
+                                                         // and a crash look identical over HTTP; the process table knows the difference,
+                                                         // and `try_wait` is how we ask. At a 2 s poll with a 2 s timeout this is roughly
+                                                         // 20 s of unresponsiveness before we recycle a live process, against Kubernetes'
+                                                         // default of 3 consecutive liveness failures. A process that has actually EXITED
+                                                         // is restarted on the first poll, unchanged — that speed was the point.
 const BUSY_TOLERANCE: u32 = 5;
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10); // AM3
-// Startup grace: the sidecar prints its handshake BEFORE the Python lifespan
-// runs (migrations on first boot), and uvicorn only LISTENS after the lifespan
-// finishes — on a cold Windows laptop with antivirus scanning every .py file
-// that is tens of seconds. "Not listening yet" right after a (re)spawn is a
-// boot phase, not a crash: counting it killed healthy booting sidecars in a
-// 2.5 s loop on three real Windows installs (2026-07-19). A dead PROCESS is
-// still detected immediately via try_wait inside the grace.
+                                                          // Startup grace: the sidecar prints its handshake BEFORE the Python lifespan
+                                                          // runs (migrations on first boot), and uvicorn only LISTENS after the lifespan
+                                                          // finishes — on a cold Windows laptop with antivirus scanning every .py file
+                                                          // that is tens of seconds. "Not listening yet" right after a (re)spawn is a
+                                                          // boot phase, not a crash: counting it killed healthy booting sidecars in a
+                                                          // 2.5 s loop on three real Windows installs (2026-07-19). A dead PROCESS is
+                                                          // still detected immediately via try_wait inside the grace.
 const STARTUP_GRACE: Duration = Duration::from_secs(180);
 
 // Boot outcomes: the last few starts, so a crash LOOP is distinguishable from a
@@ -175,7 +175,7 @@ pub fn spawn_once(cwd: &Path, app: &AppHandle) -> std::io::Result<(Child, Sideca
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| Error::new(ErrorKind::Other, "sidecar stdout not piped"))?;
+        .ok_or_else(|| Error::other("sidecar stdout not piped"))?;
 
     let (tx, rx) = mpsc::channel::<SidecarInfo>();
     thread::spawn(move || {
@@ -340,7 +340,11 @@ pub fn record_boot(app: &AppHandle) -> bool {
         .iter()
         .rev()
         .take(DEGRADED_AFTER)
-        .filter_map(|r| r.get("outcome").and_then(|o| o.as_str()).map(str::to_string))
+        .filter_map(|r| {
+            r.get("outcome")
+                .and_then(|o| o.as_str())
+                .map(str::to_string)
+        })
         .collect();
     let degraded = is_degraded(&recent);
 
@@ -392,10 +396,7 @@ fn emit_status(app: &AppHandle, state: &Arc<Mutex<Inner>>, status: &str, port: u
 }
 
 fn emit_fatal(app: &AppHandle, message: &str) {
-    let _ = app.emit(
-        "sidecar://fatal",
-        serde_json::json!({ "message": message }),
-    );
+    let _ = app.emit("sidecar://fatal", serde_json::json!({ "message": message }));
 }
 
 /// Block until the sidecar answers /healthz once after a (re)spawn, or the
@@ -505,7 +506,9 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
             }
         }
         failures += 1;
-        shell_log(&format!("unhealthy: /healthz failed (failure {failures}/{MAX_FAILURES})"));
+        shell_log(&format!(
+            "unhealthy: /healthz failed (failure {failures}/{MAX_FAILURES})"
+        ));
         emit_status(&app, &state, "reconnecting", port);
 
         if failures >= MAX_FAILURES {

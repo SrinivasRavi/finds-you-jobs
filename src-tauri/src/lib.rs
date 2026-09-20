@@ -36,7 +36,9 @@ fn open_external(url: String) -> Result<(), String> {
         .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = std::process::Command::new("xdg-open").arg(&url).spawn();
-    result.map(|_| ()).map_err(|e| format!("could not open browser: {e}"))
+    result
+        .map(|_| ())
+        .map_err(|e| format!("could not open browser: {e}"))
 }
 
 /// Strict validation for untrusted outbound URLs (F-H1): absolute http(s) with
@@ -50,8 +52,7 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
     if raw.chars().any(|c| c.is_ascii_control() || c == ' ') {
         return Err("refusing to open URL with whitespace or control characters".to_string());
     }
-    let parsed =
-        url::Url::parse(raw).map_err(|e| format!("refusing to open invalid URL: {e}"))?;
+    let parsed = url::Url::parse(raw).map_err(|e| format!("refusing to open invalid URL: {e}"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(format!("refusing to open non-http(s) URL: {raw}"));
     }
@@ -59,7 +60,9 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
         return Err(format!("refusing to open URL without a host: {raw}"));
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(format!("refusing to open URL with embedded credentials: {raw}"));
+        return Err(format!(
+            "refusing to open URL with embedded credentials: {raw}"
+        ));
     }
     Ok(parsed.to_string())
 }
@@ -101,7 +104,9 @@ fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
     let result = std::process::Command::new("x-terminal-emulator")
         .args(["-e", login_cmd])
         .spawn();
-    result.map(|_| ()).map_err(|e| format!("could not open terminal: {e}"))
+    result
+        .map(|_| ())
+        .map_err(|e| format!("could not open terminal: {e}"))
 }
 
 /// Set the macOS dock / app-switcher icon at runtime to the finds-you-jobs logo.
@@ -315,7 +320,10 @@ mod tests {
         // Raw double quotes never survive serialization (percent-encoded), so
         // the spawned argument can't confuse any downstream quoting.
         let quoted = validate_external_url("https://x.example/a\"b?c=\"d").unwrap();
-        assert!(!quoted.contains('"'), "serialized URL still has a raw quote: {quoted}");
+        assert!(
+            !quoted.contains('"'),
+            "serialized URL still has a raw quote: {quoted}"
+        );
         let caret = validate_external_url("https://x.example/a^b|c").unwrap();
         assert!(caret.starts_with("https://x.example/"));
     }
