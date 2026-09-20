@@ -142,7 +142,7 @@ async def test_login_seals_into_broker_profile_and_headless_surface_reads_it_bac
 
     # Sealed at rest (NFR-SEC-01): the artifact exists, is encrypted, and carries
     # no readable cookie name/value. And the no-browser validator reads it back.
-    raw = storage_state.read_text()
+    raw = storage_state.read_text(encoding="utf-8")
     assert "fyj_sealed" in raw
     assert "li_at" not in raw and "FAKE_FIXTURE_TOKEN" not in raw
     assert inspect_storage_state(storage_state)["has_auth_cookie"] is True
@@ -220,8 +220,12 @@ def test_singleton_lock_refuses_a_second_open_while_the_profile_is_held(
             pytest.skip(f"real Chrome channel unavailable: {exc}")
 
         # While one Chrome holds the profile, a second open on it is refused.
+        # POSIX says so in words ("Failed to create a ProcessSingleton"); on
+        # Windows the process just exits 21, which is that same verdict as a
+        # number — CHROME_RESULT_CODE_PROFILE_IN_USE, the 17th code after
+        # content::RESULT_CODE_LAST_CODE (frozen at 5 by a static_assert).
         try:
-            with pytest.raises(PlaywrightError, match="ProcessSingleton"):
+            with pytest.raises(PlaywrightError, match=r"ProcessSingleton|exitCode=21"):
                 _open_chrome()
         finally:
             held.close()

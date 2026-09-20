@@ -168,8 +168,8 @@ def test_capture_records_the_read_once_and_the_cache_after(tmp_path, monkeypatch
     cap2.write()
     files = sorted(capture_dir.glob("contact-sync-probe-*.json"))
     assert len(files) == 2
-    doc1 = json.loads(files[0].read_text())
-    doc2 = json.loads(files[1].read_text())
+    doc1 = json.loads(files[0].read_text(encoding="utf-8"))
+    doc2 = json.loads(files[1].read_text(encoding="utf-8"))
     inbox1 = doc1["messaging"]["inbox"]
     assert inbox1["cached"] is False
     assert inbox1["status"] == 200 and inbox1["ok"] is True
@@ -181,7 +181,7 @@ def test_capture_records_the_read_once_and_the_cache_after(tmp_path, monkeypatch
     assert inbox2["cached"] is True and inbox2["status"] == 200
     assert doc2["payload"] is None  # cached probes don't duplicate the payload
     # Zero identities, zero message bodies, anywhere.
-    blob = files[0].read_text()
+    blob = files[0].read_text(encoding="utf-8")
     assert TARGET_MEMBER not in blob and SELF_MEMBER not in blob
     assert "98765" not in blob and "31337" not in blob
     assert "happy to chat" not in blob
@@ -214,7 +214,8 @@ def test_inbox_429_raises_ratelimited_and_captures(tmp_path, monkeypatch):
     with pytest.raises(RateLimited):
         api.inbox_last_messages(capture=cap)
     cap.write()
-    doc = json.loads(next(iter(capture_dir.glob("contact-sync-probe-*.json"))).read_text())
+    probe = next(iter(capture_dir.glob("contact-sync-probe-*.json")))
+    doc = json.loads(probe.read_text(encoding="utf-8"))
     inbox = doc["messaging"]["inbox"]
     assert inbox["status"] == 429 and inbox["error"] == "RateLimited"
 
@@ -231,7 +232,8 @@ def test_inbox_500_degrades_to_empty_map_cached_for_the_sweep(tmp_path, monkeypa
     cap.write()
     assert api.inbox_last_messages() == {}  # cached — no second request
     assert len(_graphql_fetches(api)) == 1
-    doc = json.loads(next(iter(capture_dir.glob("contact-sync-probe-*.json"))).read_text())
+    probe = next(iter(capture_dir.glob("contact-sync-probe-*.json")))
+    doc = json.loads(probe.read_text(encoding="utf-8"))
     inbox = doc["messaging"]["inbox"]
     assert inbox["status"] == 500 and inbox["ok"] is False
     assert inbox["error"] == "http_500"
@@ -247,6 +249,7 @@ def test_me_failure_skips_the_inbox_read_honestly(tmp_path, monkeypatch):
     assert api.inbox_last_messages(capture=cap) == {}
     cap.write()
     assert _graphql_fetches(api) == []
-    doc = json.loads(next(iter(capture_dir.glob("contact-sync-probe-*.json"))).read_text())
+    probe = next(iter(capture_dir.glob("contact-sync-probe-*.json")))
+    doc = json.loads(probe.read_text(encoding="utf-8"))
     inbox = doc["messaging"]["inbox"]
     assert inbox["skipped"] == "no_mailbox_urn" and inbox["status"] is None

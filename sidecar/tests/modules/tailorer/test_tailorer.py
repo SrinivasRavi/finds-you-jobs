@@ -20,7 +20,7 @@ from sidecar.modules.tailorer.tailorer import dry_run_prompt, tailor
 from sidecar.modules.tailorer.types import TailorError, Usage
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
-MASTER = (FIXTURES / "master-resumes" / "master_resume_1.md").read_text()
+MASTER = (FIXTURES / "master-resumes" / "master_resume_1.md").read_text(encoding="utf-8")
 JD_PATH = FIXTURES / "jds" / "text" / "J01-glean-backend-bangalore.md"
 
 
@@ -73,8 +73,8 @@ def test_prompt_omits_empty_optional_blocks():
 
 
 def test_writing_samples_skip_readme(tmp_path: Path):
-    (tmp_path / "README.md").write_text("skip me")
-    (tmp_path / "cover-letter.md").write_text("my past letter")
+    (tmp_path / "README.md").write_text("skip me", encoding="utf-8")
+    (tmp_path / "cover-letter.md").write_text("my past letter", encoding="utf-8")
     samples = load_writing_samples(tmp_path)
     assert [name for name, _ in samples] == ["cover-letter.md"]
 

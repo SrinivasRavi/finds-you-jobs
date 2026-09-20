@@ -87,12 +87,12 @@ _UPSTREAM_PIN = "a7a9101af255d72ee5df7fbf1dfd1d7fd5fd8a1a"
 
 
 def test_gpl_license_text_is_present() -> None:
-    license_text = (_PKG / "upstream" / "LICENSE").read_text()
+    license_text = (_PKG / "upstream" / "LICENSE").read_text(encoding="utf-8")
     assert "GNU GENERAL PUBLIC LICENSE" in license_text
 
 
 def test_provenance_records_pin_and_direct_import_posture() -> None:
-    prov = (_PKG / "provenance.md").read_text()
+    prov = (_PKG / "provenance.md").read_text(encoding="utf-8")
     assert _UPSTREAM_PIN in prov
     assert "GPL-3.0-only" in prov
     # The retirement of the subprocess firewall is recorded.
@@ -102,7 +102,7 @@ def test_provenance_records_pin_and_direct_import_posture() -> None:
 
 def test_upstream_files_carry_spdx_gpl_headers() -> None:
     for path in (_PKG / "upstream").glob("*.py"):
-        head = path.read_text()[:400]
+        head = path.read_text(encoding="utf-8")[:400]
         assert "SPDX-License-Identifier: GPL-3.0-only" in head, path.name
 
 

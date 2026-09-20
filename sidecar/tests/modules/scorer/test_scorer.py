@@ -48,7 +48,8 @@ def test_skill_file_loads_and_carries_contract_and_guards():
 def test_skill_html_comments_are_stripped_from_prompt():
     skill = load_skill()
     assert "<!--" not in skill and "-->" not in skill
-    assert "Distilled from career-ops" in SKILL_PATH.read_text()  # provenance stays in file
+    # provenance stays in file
+    assert "Distilled from career-ops" in SKILL_PATH.read_text(encoding="utf-8")
 
 
 def test_prompt_includes_blocks_in_order():

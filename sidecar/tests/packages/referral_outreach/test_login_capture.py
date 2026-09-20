@@ -72,7 +72,7 @@ def test_capture_login_detects_cookie_and_saves_state(fixture_login_url, tmp_pat
     assert result["cookie_count"] >= 1
     assert state_path.exists()
 
-    saved = json.loads(state_path.read_text())
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
     names = {c["name"] for c in saved["cookies"]}
     assert "li_at" in names
 
@@ -132,7 +132,7 @@ def test_capture_login_seals_state_when_key_set(
         headed=False,
     )
     assert result["connected"] is True
-    raw = state_path.read_text()
+    raw = state_path.read_text(encoding="utf-8")
     assert "fyj_sealed" in raw
     assert "li_at" not in raw and "FAKE_FIXTURE_TOKEN" not in raw  # no plaintext secret
     info = inspect_storage_state(state_path)

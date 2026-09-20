@@ -44,7 +44,7 @@ class FakeFetcher(Fetcher):
                 if isinstance(payload, Exception):
                     raise payload
                 if isinstance(payload, str):
-                    return (PAYLOADS / payload).read_text()
+                    return (PAYLOADS / payload).read_text(encoding="utf-8")
                 return payload
         raise ScraperError("fetch", f"FakeFetcher has no route for {url}")
 

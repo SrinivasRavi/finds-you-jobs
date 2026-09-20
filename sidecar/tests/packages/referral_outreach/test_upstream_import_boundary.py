@@ -59,7 +59,7 @@ def test_core_never_imports_referral_upstream() -> None:
     offenders = [
         f"{path.relative_to(SIDECAR.parent)}:{lineno} imports {target}"
         for path in _core_py_files()
-        for lineno, target in _forbidden_imports(path.read_text(), str(path))
+        for lineno, target in _forbidden_imports(path.read_text(encoding="utf-8"), str(path))
     ]
     assert not offenders, (
         "core must reach the referral upstream only through the F-P10 facade "

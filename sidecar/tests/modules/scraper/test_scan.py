@@ -299,7 +299,8 @@ def test_cli_dry_run_prints_claims_no_network(capsys, tmp_path):
     portals = tmp_path / "portals.toml"
     portals.write_text(
         '[[sources]]\nurl = "https://boards.greenhouse.io/gleanwork"\n'
-        '[[sources]]\nurl = "https://unknown.example.com/x"\n'
+        '[[sources]]\nurl = "https://unknown.example.com/x"\n',
+        encoding="utf-8",
     )
     assert main(["--portals", str(portals), "--dry-run"]) == 0
     out = capsys.readouterr().out

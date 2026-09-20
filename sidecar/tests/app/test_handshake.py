@@ -52,14 +52,14 @@ def test_dev_handshake_file_is_owner_only(tmp_path, monkeypatch) -> None:
     target = tmp_path / "handshake.json"
     monkeypatch.setenv("FYJ_WRITE_HANDSHAKE", str(target))
     _maybe_write_dev_handshake(4321, "tok-abc")
-    assert json.loads(target.read_text()) == {"port": 4321, "token": "tok-abc"}
+    assert json.loads(target.read_text(encoding="utf-8")) == {"port": 4321, "token": "tok-abc"}
     if os.name != "nt":
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
         # A pre-existing loose file gets clamped on rewrite.
         os.chmod(target, 0o644)
         _maybe_write_dev_handshake(4322, "tok-def")
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
-        assert json.loads(target.read_text())["port"] == 4322
+        assert json.loads(target.read_text(encoding="utf-8"))["port"] == 4322
 
 
 def test_dev_handshake_noop_without_env(tmp_path, monkeypatch) -> None:

@@ -629,7 +629,7 @@ def test_purge_run_dirs_is_guarded_and_best_effort(
     (base / "r1" / "screenshots").mkdir(parents=True)
     (base / "r1" / "resume.pdf").write_bytes(b"%PDF-")
     outside = tmp_path / "outside.txt"
-    outside.write_text("keep me")
+    outside.write_text("keep me", encoding="utf-8")
 
     # Missing dirs and escape attempts must neither raise nor touch anything
     # outside the base; the real dir goes.
@@ -649,7 +649,7 @@ def test_card_delete_removes_run_dirs_from_disk(app_client, tmp_path: Path) -> N
         run_id = repos.apply_runs.create(app_id, status="ready_for_human").id
     run_dir = tmp_path / "data" / "apply_runs" / run_id
     (run_dir / "screenshots").mkdir(parents=True)
-    (run_dir / "resume.pdf").write_text("frozen")
+    (run_dir / "resume.pdf").write_text("frozen", encoding="utf-8")
 
     resp = client.delete(f"/api/applications/{app_id}", headers=AUTH)
     assert resp.status_code == 204
@@ -705,7 +705,7 @@ def test_retention_purge_removes_run_dirs_from_disk(
         app_id = card.id
     run_dir = tmp_path / "apply_runs" / run_id
     run_dir.mkdir(parents=True)
-    (run_dir / "resume.pdf").write_text("frozen")
+    (run_dir / "resume.pdf").write_text("frozen", encoding="utf-8")
 
     purged = purge_archived_applications(migrated_db, retention_days=30)
     assert app_id in purged

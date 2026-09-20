@@ -95,7 +95,7 @@ def test_override_store_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     set_override("score", "# Custom scoring")
     assert get_override("score") == "# Custom scoring"
     # The override lives as a plain file under <data_dir>/prompts/.
-    assert (tmp_path / "prompts" / "score.md").read_text() == "# Custom scoring"
+    assert (tmp_path / "prompts" / "score.md").read_text(encoding="utf-8") == "# Custom scoring"
     reset("score")
     assert get_override("score") is None
     # Reset is idempotent (no error when the file is already gone).
