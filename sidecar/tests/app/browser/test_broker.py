@@ -334,6 +334,10 @@ async def test_frames_with_no_viewer_are_acked_and_dropped(
     fake.emit(31)
     fake.emit(32)
     assert await _until(lambda: fake.cdp.acked == [31, 32])
+    # Settle BEFORE attaching. The ack runs on the surface thread and `_offer`
+    # is a later hop onto this loop, so attaching on the ack alone can put a
+    # viewer in place in time to catch a frame captured before it existed.
+    await asyncio.sleep(0.05)
     # Nothing was held back for a later viewer: an attach starts clean.
     viewer = Viewer()
     surface.set_viewer(viewer)

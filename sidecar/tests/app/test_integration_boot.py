@@ -55,6 +55,19 @@ def _read_handshake(proc: subprocess.Popen[str]) -> tuple[int, str]:
     return port, token
 
 
+def _wait_until_serving(base: str, within: float = 10.0) -> None:
+    """The handshake is printed before uvicorn accepts connections, so a caller
+    that posts straight after it can be refused. Poll the open route instead of
+    sleeping a guessed interval."""
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                return
+        except httpx.HTTPError:
+            time.sleep(0.1)
+
+
 @pytest.fixture
 def sidecar(tmp_path: Path) -> Iterator[tuple[str, str]]:
     proc = subprocess.Popen(
@@ -67,14 +80,7 @@ def sidecar(tmp_path: Path) -> Iterator[tuple[str, str]]:
     try:
         port, token = _read_handshake(proc)
         base = f"http://127.0.0.1:{port}"
-        # Wait for the port to actually accept connections.
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            try:
-                if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
-                    break
-            except httpx.HTTPError:
-                time.sleep(0.1)
+        _wait_until_serving(base)
         yield base, token
     finally:
         proc.terminate()
@@ -125,7 +131,7 @@ def test_shutdown_exits_process_live(tmp_path: Path) -> None:
     try:
         port, token = _read_handshake(proc)
         base = f"http://127.0.0.1:{port}"
-        time.sleep(0.5)
+        _wait_until_serving(base)
         resp = httpx.post(
             f"{base}/shutdown",
             headers={"Authorization": f"Bearer {token}"},
