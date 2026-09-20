@@ -139,6 +139,9 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --check
 
+      - name: Create dummy dist for tauri-build
+        run: mkdir -p dist/fyj-sidecar
+
       - name: cargo clippy
         # Every leg: the `cfg(target_os)` blocks only lint where they compile.
         working-directory: src-tauri
@@ -208,6 +211,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync
+          pnpm install --frozen-lockfile
           cd frontend && pnpm install --frozen-lockfile
 
       - name: Regenerate and diff
