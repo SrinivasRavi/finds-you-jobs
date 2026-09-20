@@ -6,9 +6,12 @@ Outreach commits, alongside the helpers they cover.
 
 from __future__ import annotations
 
+import getpass
 import json
+import os
 import sqlite3
 import stat
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -76,6 +79,20 @@ def test_env_override_is_read_ahead_of_the_cache(
     assert get_session_key(tmp_path, use_keyring=False) == override != minted
 
 
+def _acl_entries(path: Path) -> list[str]:
+    """The account grants `icacls` reports for `path`, one per line. Windows
+    only; the header/footer lines it prints are dropped."""
+    icacls = os.path.join(
+        os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe"
+    )
+    proc = subprocess.run(  # noqa: S603
+        [icacls, str(path)], capture_output=True, text=True, check=False, timeout=15
+    )
+    assert proc.returncode == 0, proc.stderr
+    head, _, rest = proc.stdout.partition(str(path))
+    return [ln.strip() for ln in rest.splitlines() if ln.strip() and ":" in ln]
+
+
 def test_key_file_fallback_creates_owner_only_and_is_stable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -83,14 +100,65 @@ def test_key_file_fallback_creates_owner_only_and_is_stable(
     first = get_session_key(tmp_path, use_keyring=False)
     path = tmp_path / KEY_FILE_NAME
     assert path.exists()
-    mode = stat.S_IMODE(path.stat().st_mode)
-    assert mode == 0o600
+    if os.name == "nt":
+        # Windows has no mode bits — `stat` reports 0o666 whatever `os.open`
+        # was given, so the guarantee is the ACL `_harden_owner_only` sets:
+        # inheritance dropped, one grant, to the account running the app.
+        entries = _acl_entries(path)
+        assert entries, "icacls listed no ACL entries for the key file"
+        account = (os.environ.get("USERNAME") or getpass.getuser()).lower()
+        assert all(account in e.lower() for e in entries), entries
+    else:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     # Stable across calls — the same key comes back, no rotation. Cleared first,
     # so this reads the file again instead of proving only that a dict works.
     clear_key_cache()
     assert get_session_key(tmp_path, use_keyring=False) == first
     # And it is a usable Fernet key.
     Fernet(first.encode())
+
+
+def test_windows_key_file_gets_an_explicit_owner_only_acl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows half of "owner-only" is an `icacls` grant, and this machine
+    may not be Windows — so pin the command we would run there."""
+    monkeypatch.delenv(SESSION_KEY_ENV, raising=False)
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setenv("USERNAME", "ada")
+    monkeypatch.setenv("USERDOMAIN", "LOVELACE")
+    calls: list[list[str]] = []
+
+    def _fake_run(argv, **kwargs):  # noqa: ANN001, ANN202
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    get_session_key(tmp_path, use_keyring=False)
+
+    assert len(calls) == 1, calls
+    argv = calls[0]
+    assert argv[0].lower().endswith("icacls.exe")
+    assert argv[1] == str(tmp_path / KEY_FILE_NAME)
+    # Inheritance dropped, then exactly one grant, to the running account.
+    assert argv[2:] == ["/inheritance:r", "/grant:r", "LOVELACE\\ada:F"]
+
+
+def test_a_failed_acl_call_never_breaks_key_minting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hardening is best effort: the key is already written when it runs, and
+    losing the app key is far worse than a permissive ACL."""
+    monkeypatch.delenv(SESSION_KEY_ENV, raising=False)
+    monkeypatch.setattr(os, "name", "nt")
+
+    def _boom(argv, **kwargs):  # noqa: ANN001, ANN202
+        raise OSError("icacls is missing")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    key = get_session_key(tmp_path, use_keyring=False)
+    assert (tmp_path / KEY_FILE_NAME).exists()
+    Fernet(key.encode())
 
 
 def test_resolution_is_cached_so_the_store_is_consulted_once(
