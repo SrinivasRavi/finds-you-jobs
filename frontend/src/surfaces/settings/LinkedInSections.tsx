@@ -145,6 +145,16 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
                       reason: session.paused_reason,
                     })
                   : t("settingsPage.session.backoffNotice")}
+                <div className="mt-1 font-medium">{t("settingsPage.session.wallNotice")}</div>
+              </div>
+            )}
+
+            {status === "expired" && (
+              <div
+                className="mt-3 rounded-md border border-bad-2 bg-bad-wash p-2.5 text-[11.5px] text-bad"
+                data-testid="linkedin-expired-notice"
+              >
+                <div className="font-medium">{t("settingsPage.session.wallNotice")}</div>
               </div>
             )}
 

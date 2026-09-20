@@ -434,7 +434,7 @@ class AccountSession:
             self._seed_surface_session()
             return action()
 
-        return surface.run_on_lane(_on_surface).result()
+        return surface.run_on_lane(_on_surface).result(timeout=45.0)
 
     def _seed_surface_session(self) -> None:
         """On the FIRST lane bind, seed the broker surface's context with the

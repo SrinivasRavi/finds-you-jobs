@@ -263,6 +263,8 @@ const settingsPage = {
       "Outreach is paused after a LinkedIn rate-limit signal. Fix the underlying issue, then Resume to send again.",
     backoffNoticeReason:
       'Outreach is paused after a LinkedIn rate-limit signal: "{{reason}}" Fix the underlying issue, then Resume to send again.',
+    wallNotice:
+      "Clear any restriction or auth wall in your own LinkedIn session (outside this app) first.",
     connect: "Connect LinkedIn",
     connectingHint: "A browser window opened — finish logging in there…",
     validating: "Validating…",

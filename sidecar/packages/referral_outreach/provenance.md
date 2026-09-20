@@ -598,6 +598,14 @@ host's plan i18n keys.
 step order on the fixture path; the host-side entrypoint test asserts the
 published `send_step` events verbatim.
 
+### Failure-mode audit fixes (2026-09-20)
+
+**Files:** `upstream/actions.py`, `upstream/session.py` (both GPL-3.0-only; headers updated).
+
+**What changed and why.**
+- `actions.py`: `_goto_profile` checks if the landed path starts with `/checkpoint`, `/authwall`, or `/uas/login` and raises `AuthenticationError` (a `VoyagerError`), catching login walls early instead of throwing the generic "no Connect affordance found" `SkipProfile` error.
+- `session.py`: `run_browser` adds a `timeout=45.0` to `surface.run_on_lane(...).result()` so a dead browser doesn't hang the worker thread indefinitely.
+
 ## Upstream
 
 - **Project:** OpenOutreach — <https://github.com/eracle/OpenOutreach>
