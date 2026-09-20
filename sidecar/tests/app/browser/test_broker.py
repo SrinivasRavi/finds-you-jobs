@@ -196,6 +196,18 @@ async def _until(predicate: Callable[[], bool], within: float = 3.0) -> bool:
     return predicate()
 
 
+def _queued(viewer: Viewer) -> bytes | None:
+    """The queued frame's bytes, without consuming it. The slot holds 1, and
+    nothing can interleave between the get and the put back: `_offer` reaches
+    this loop by `call_soon_threadsafe`, and there is no await in here."""
+    try:
+        frame = viewer.queue.get_nowait()
+    except asyncio.QueueEmpty:
+        return None
+    viewer.queue.put_nowait(frame)
+    return frame.jpeg
+
+
 @pytest.fixture
 def fake() -> FakeBrowser:
     return FakeBrowser()
@@ -304,7 +316,12 @@ async def test_full_viewer_queue_keeps_the_newest_frame(
     fake.emit(22, data=b"second")
 
     assert await _until(lambda: fake.cdp.acked == [21, 22])
-    assert await _until(viewer.queue.full)
+    # Not `queue.full`: the slot is ALREADY full from frame 21, so it cannot
+    # tell delivery apart from the frame it is meant to replace. The ack fires
+    # on the surface thread while `_offer` is a separate hop onto this loop, so
+    # an acked frame is not yet a queued one (this read `first` on macOS CI).
+    assert await _until(lambda: _queued(viewer) == b"second")
+    assert viewer.queue.full()
     assert viewer.queue.get_nowait().jpeg == b"second"
 
 
