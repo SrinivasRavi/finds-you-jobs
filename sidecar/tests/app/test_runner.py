@@ -646,7 +646,10 @@ def _open_circuit_then(migrated_db: Database, probe_mode: dict) -> OperationRunn
 def test_cancelled_probe_releases_the_lease_for_a_new_probe(migrated_db: Database) -> None:
     """A half-open probe the user cancels lands `cancelled` with no provider
     verdict — the lease is abandoned, so the next op after cooldown becomes a
-    fresh probe instead of every op being rejected until restart."""
+    fresh probe instead of every op being rejected until restart.
+
+    Pins the ordering too: the retry is submitted the moment the row reads
+    `cancelled`, so the lease must already be released by then."""
     db = migrated_db
     probe_mode = {"value": "engine_fail"}
     runner = _open_circuit_then(db, probe_mode)
@@ -666,7 +669,10 @@ def test_cancelled_probe_releases_the_lease_for_a_new_probe(migrated_db: Databas
 
 def test_probe_failing_with_non_engine_error_releases_the_lease(migrated_db: Database) -> None:
     """A probe that dies of module drift (non-EngineError) never fed the breaker
-    and must not keep the lease either — the next op gets a fresh probe."""
+    and must not keep the lease either — the next op gets a fresh probe.
+
+    Submitted the instant the row reads `failed`, so this pins the same
+    lease-before-state ordering the cancelled case does."""
     db = migrated_db
     probe_mode = {"value": "engine_fail"}
     runner = _open_circuit_then(db, probe_mode)

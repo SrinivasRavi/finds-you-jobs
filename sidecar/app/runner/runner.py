@@ -347,6 +347,9 @@ class OperationRunner:
                     # an outcome, not an error: no failure log, no breaker
                     # feedback, the row + event say `cancelled` (F-M7).
                     message = "cancelled by the user"
+                    if probe_engine is not None:
+                        self._circuit.abandon_probe(probe_engine)
+                        probe_engine = None  # lease abandoned (no verdict)
                     try:
                         record_span_failure(span, message)
                     except Exception:  # noqa: BLE001 — the span is additive; row + event must land
@@ -366,6 +369,9 @@ class OperationRunner:
                     if resolved is not None and isinstance(exc, EngineError):
                         self._circuit.record_failure(resolved.name, str(exc))
                         probe_engine = None  # lease transferred (probe verdict: still down)
+                    elif probe_engine is not None:
+                        self._circuit.abandon_probe(probe_engine)
+                        probe_engine = None  # lease abandoned (no verdict)
                     try:
                         record_span_failure(span, message, exc)
                     except Exception:  # noqa: BLE001 — the span is additive; row + event must land
@@ -454,11 +460,11 @@ class OperationRunner:
                             )
         finally:
             if probe_engine is not None:
-                # Every terminal path that did NOT settle the lease via
-                # record_success/record_failure lands here: user cancellation
-                # (CompletionCancelled), non-EngineError failures (parse
-                # drift, pre-engine bugs), and exceptions escaping the outcome
-                # handlers. The circuit stays open; a NEW probe is admitted.
+                # Backstop only: every ordinary terminal path settles the
+                # lease itself, BEFORE the row goes terminal, so a caller that
+                # sees `succeeded`/`failed`/`cancelled` and submits again is
+                # never rejected by a lease this op still holds. What reaches
+                # here is an exception escaping the outcome handlers.
                 self._circuit.abandon_probe(probe_engine)
             with self._lock:
                 self._running.pop(operation_id, None)
