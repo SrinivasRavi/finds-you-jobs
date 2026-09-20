@@ -16,11 +16,12 @@
 // networking.spec.ts asserts its absence.
 //
 // SAFETY: the surface's frozen origin is really linkedin.com, so every test
-// that mounts the modal REQUIRES the e2e stack to be started with
-// `VITE_LINKEDIN_ORIGIN=http://127.0.0.1:<port>/` pointing at the loopback
+// that mounts the modal needs `VITE_LINKEDIN_ORIGIN` pointed at the loopback
 // fixture this spec serves — the surface then auto-opens and navigates the
-// FIXTURE only. Without that override those tests skip; they never let a test
-// stack touch linkedin.com. Zero model calls, zero account use throughout.
+// FIXTURE only. `playwright.config.ts` defaults it, so these run on a plain
+// `npx playwright test`; the skip below stays as the backstop that keeps a
+// non-loopback override from ever reaching linkedin.com. Zero model calls,
+// zero account use throughout.
 
 import { createServer, type Server } from "node:http";
 import { readFileSync } from "node:fs";
