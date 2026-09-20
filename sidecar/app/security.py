@@ -124,9 +124,10 @@ def _harden_owner_only(path: Path) -> None:
 
     The 0o600 handed to `os.open` there sets only the read-only attribute, so
     the file inherits the data dir's ACL and `stat` reports 0o666 whatever we
-    asked for. `icacls` (present in every Windows install) drops that
-    inheritance and grants the running account alone. Best effort: the key is
-    already on disk by now, so a failure is logged, never fatal."""
+    asked for. `icacls` drops that inheritance and grants the running account.
+    SYSTEM and Administrators survive where they hold explicit ACEs of their
+    own, which is the POSIX bar too: 0600 never shut out root. Best effort, as
+    the key is already on disk by now, so a failure is logged, never fatal."""
     if os.name != "nt":
         return
     user = os.environ.get("USERNAME") or getpass.getuser()
@@ -170,7 +171,7 @@ def _write_key_file(data_dir: Path, key: str) -> None:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(key)
     _harden_owner_only(path)
-    logger.info("created app-managed key at %s (owner-only)", path)
+    logger.info("created app-managed key at %s (restricted to this account)", path)
 
 
 def _has_sealed_secret(data_dir: Path) -> bool:
