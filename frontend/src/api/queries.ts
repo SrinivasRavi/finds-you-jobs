@@ -60,6 +60,8 @@ export const qk = {
   prompts: ["prompts"] as const,
   ledger: ["ledger"] as const,
   costTotals: ["costTotals"] as const,
+  retryableScores: ["retryableScores"] as const,
+  schedulerStatus: ["schedulerStatus"] as const,
   spans: ["spans"] as const,
   contacts: ["contacts"] as const,
   archivedContacts: ["archivedContacts"] as const,
@@ -292,6 +294,29 @@ export function useLedger() {
 export function useCostTotals() {
   return useQuery({ queryKey: qk.costTotals, queryFn: () => api.getCostTotals() });
 }
+/** How many jobs are stuck with a spent AI-scoring budget (S-C24). Drives the
+ *  ledger's Retry-scoring button, which stays hidden at 0. */
+export function useRetryableScores() {
+  return useQuery({ queryKey: qk.retryableScores, queryFn: () => api.retryableScoreCount() });
+}
+/** Whether background work is running, and whether a degraded boot is why it is
+ *  not (D27). Read once at mount: the answer only changes when the user presses
+ *  Resume, which invalidates it. */
+export function useSchedulerStatus() {
+  return useQuery({ queryKey: qk.schedulerStatus, queryFn: () => api.schedulerStatus() });
+}
+
+/** Turn background work back on after a degraded boot. */
+export function useResumeScheduler() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.resumeScheduler()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.schedulerStatus });
+    },
+  });
+}
+
 /** The Logfire spans for one operation — the Logs drill-down (US-SYS-05). Only
  *  fetched when a row is expanded (`enabled`). */
 export function useOperationSpans(id: string | null) {
@@ -548,6 +573,23 @@ export function useRetryOperation() {
       qc.invalidateQueries({ queryKey: qk.ledger });
       qc.invalidateQueries({ queryKey: qk.applications });
       qc.invalidateQueries({ queryKey: qk.jobs });
+    },
+  });
+}
+
+/** Hand every stuck job its AI-scoring budget back (S-C24). The recovery path
+ *  for a provider-wide failure — an expired key, an exhausted quota — that the
+ *  per-job attempt cap can't tell apart from a job that simply won't score.
+ *  The next scheduler tick does the re-scoring, batched. */
+export function useRetryScoring() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.retryScoring()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.retryableScores });
+      qc.invalidateQueries({ queryKey: qk.ledger });
+      qc.invalidateQueries({ queryKey: qk.jobs });
+      qc.invalidateQueries({ queryKey: qk.board });
     },
   });
 }
@@ -833,6 +875,17 @@ export function useCancelApply() {
 
 /** The human's post-handoff attestation (section 8.4). A `true` advances the card to
  *  Applied — refresh applications + the Activity tab. */
+export function useSubmitApply() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => Promise.resolve(api.submitApplyRun(runId)),
+    onSuccess: (run) => {
+      qc.setQueryData([...qk.applyRun, run.id], run);
+      invalidateTracker(qc);
+    },
+  });
+}
+
 export function useAttestApply() {
   const qc = useQueryClient();
   return useMutation({

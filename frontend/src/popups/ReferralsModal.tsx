@@ -87,12 +87,16 @@ export function ReferralsModal({
   company,
   applicationId,
   onClose,
+  onReopen,
 }: {
   jobId: string;
   jobTitle: string;
   company: string;
   applicationId?: string | null;
   onClose: () => void;
+  /** Reopens THIS popup after the LinkedIn view is dismissed with Back. The
+   *  parent owns the popup's open state, so it owns the way back. */
+  onReopen?: () => void;
 }) {
   const { t } = useTranslation();
   const session = useLinkedInSession();
@@ -362,9 +366,9 @@ export function ReferralsModal({
         });
       }
       onClose();
-      linkedinBrowser.open();
+      linkedinBrowser.open({ onBack: onReopen });
     },
-    [candidates, sendingIds, viewInBrowser, linkedinBrowser, onClose],
+    [candidates, sendingIds, viewInBrowser, linkedinBrowser, onClose, onReopen],
   );
 
   async function doReachOut(contactId: string) {

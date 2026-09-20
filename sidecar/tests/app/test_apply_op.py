@@ -215,6 +215,12 @@ def test_attest_didnt_submit_leaves_card(app_client) -> None:
     assert kept["status"] == "ready_for_human"
     card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
     assert card["column"] == "saved"
+    # The other half of the ledger-honesty pair: `ready_for_human` IS P1 success,
+    # so it must still read succeeded. Without this the blocked fix could quietly
+    # start failing every run.
+    op = client.get(f"/api/operations/{kept['operation_id']}", headers=AUTH).json()
+    assert op["state"] == "succeeded"
+    assert not op["error"]
 
 
 def test_apply_cannot_be_enqueued_generically(app_client) -> None:
@@ -266,6 +272,15 @@ def test_closed_posting_blocks_with_zero_model_calls(app_client) -> None:
     assert final["status"] == "blocked"
     assert final["blockers"][0]["kind"] == "posting_closed"
     assert final["usage"]["calls"] == 0
+
+    # And the LEDGER agrees with the panel. Until 2026-09-20 `_finalize`
+    # returned an OperationOutcome for every terminal status, so a blocked run
+    # read "Succeeded" in Analytics while the panel beside it read "Blocked",
+    # and the failed-operation count under-reported by one. The reason carried
+    # is the first blocker, verbatim, which is the line the panel shows.
+    op = client.get(f"/api/operations/{final['operation_id']}", headers=AUTH).json()
+    assert op["state"] == "failed"
+    assert "posting_closed" in op["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -695,3 +710,139 @@ def test_retention_purge_removes_run_dirs_from_disk(
     purged = purge_archived_applications(migrated_db, retention_days=30)
     assert app_id in purged
     assert not run_dir.exists()
+
+
+# --- S-A5: the user's own Submit click -------------------------------------
+
+
+def _wait_status(client: TestClient, run_id: str, want: str, timeout: float = 60.0) -> dict:
+    deadline = time.monotonic() + timeout
+    run: dict = {}
+    while time.monotonic() < deadline:
+        run = client.get(f"/api/apply-runs/{run_id}", headers=AUTH).json()
+        if run["status"] == want:
+            return run
+        time.sleep(0.25)
+    raise AssertionError(f"run {run_id} never reached {want!r}: {run}")
+
+
+async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> None:
+    """S-A5 — the submit executor was landed and reachable by nothing. The
+    review window now runs it on the run's own live page when, and only when,
+    the user asked. Driven directly here rather than through a full apply run,
+    because the run's own timing is not what is under test."""
+    from playwright.async_api import async_playwright
+
+    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.operations import OperationContext
+
+    app, client = app_client
+    _job_id, app_id = _seed_card(client)
+    db = app.state.db
+    with db.repos() as repos:
+        run_id = repos.apply_runs.create(app_id, status="ready_for_human").id
+
+    events: list[dict] = []
+    ctx = OperationContext(
+        kind="apply", input_snapshot={}, db=db, operation_id="op-submit",
+        publish=events.append,
+    )
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        try:
+            await page.goto((FIXTURES / "submit_form.html").as_uri())
+            await _run_user_submit(ctx, run_id, page)
+        finally:
+            await browser.close()
+
+    with db.repos() as repos:
+        row = repos.apply_runs.get(run_id)
+        assert row is not None
+        assert row.status == "submitted"
+        assert row.submit_evidence == "user_submitted"
+        assert "Submit application" in row.summary
+        assert "confirmation detected" in row.summary
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] == "applied"
+
+    payloads = [e["payload"] for e in events]
+    assert any(p.get("event") == "apply.user_submitted" and p["confirmed"] for p in payloads)
+
+
+async def test_user_submit_records_an_honest_failure(app_client) -> None:
+    """A page with no submit control must not advance the card or claim a send."""
+    from playwright.async_api import async_playwright
+
+    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.operations import OperationContext
+
+    app, client = app_client
+    _job_id, app_id = _seed_card(client)
+    db = app.state.db
+    with db.repos() as repos:
+        run_id = repos.apply_runs.create(app_id, status="ready_for_human").id
+
+    ctx = OperationContext(kind="apply", input_snapshot={}, db=db, operation_id="op-x")
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        try:
+            await page.goto((FIXTURES / "jd.html").as_uri())
+            await _run_user_submit(ctx, run_id, page)
+        finally:
+            await browser.close()
+
+    with db.repos() as repos:
+        row = repos.apply_runs.get(run_id)
+        assert row is not None
+        assert row.status == "ready_for_human"  # never claimed
+        assert row.submit_evidence != "user_submitted"
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] != "applied"
+
+
+def test_user_submit_is_409_once_the_browser_is_gone(app_client) -> None:
+    """No review window means no live page; say so instead of a silent no-op."""
+    _app, client = app_client
+    _job_id, app_id = _seed_card(client)
+    run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
+        "dev": {
+            "engine_script": [_action("finish", reason="filled")],
+            "allow_local": True, "headed": False, "review_wait_s": 0,
+        }
+    }).json()
+    _wait_terminal(client, run["id"])
+    resp = client.post(f"/api/apply-runs/{run['id']}/submit", headers=AUTH)
+    assert resp.status_code == 409
+    assert "no longer open" in resp.json()["detail"]
+
+
+def test_user_submit_is_409_on_a_run_past_the_handoff(app_client) -> None:
+    """An attested run is done; Submit must not re-click a second application."""
+    _app, client = app_client
+    _job_id, app_id = _seed_card(client)
+    run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
+        "dev": {
+            "engine_script": [_action("finish", reason="filled")],
+            "allow_local": True, "headed": False, "review_wait_s": 0,
+        }
+    }).json()
+    _wait_terminal(client, run["id"])
+    client.post(f"/api/apply-runs/{run['id']}/attest", headers=AUTH, json={"submitted": True})
+    resp = client.post(f"/api/apply-runs/{run['id']}/submit", headers=AUTH)
+    assert resp.status_code == 409
+    assert "review window" in resp.json()["detail"]
+
+
+def test_submit_request_is_consumed_once() -> None:
+    """One click submits at most once: a slow confirmation cannot be re-clicked
+    into a second application."""
+    from sidecar.packages.jobapplier.types import ApplyControl
+
+    control = ApplyControl()
+    assert control.take_submit_request() is False
+    control.request_submit()
+    assert control.submit_requested is True
+    assert control.take_submit_request() is True
+    assert control.take_submit_request() is False

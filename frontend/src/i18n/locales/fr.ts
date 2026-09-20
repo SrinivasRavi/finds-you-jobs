@@ -195,6 +195,8 @@ const fr: DeepPartial<Messages> = {
       scoring: "évaluation…",
       olderListing: "Annonce plus ancienne",
       keywordScoreTitle: "Score par mots-clés (gratuit, sur l'appareil) — gris, pas un score IA",
+      unscorableTitle:
+        "Aucune description de poste n'a été récupérée pour cette offre, elle ne peut donc pas être évaluée par l'IA. Le 0 gris signifie données manquantes, pas mauvaise correspondance.",
     },
     empty: {
       filtered: "Aucune offre ne correspond à ces filtres ou à cette recherche.",
@@ -478,6 +480,9 @@ const fr: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Retour aux recommandations",
+    },
     linkedinPill: {
       connected: "LinkedIn connecté",
       connecting: "Connexion…",
@@ -504,14 +509,16 @@ const fr: DeepPartial<Messages> = {
     columns: {
       sent: "Envoyé",
       accepted: "Accepté",
-      engagement: "Échange",
+      pendingOurResponse: "À vous de répondre",
+      pendingTheirResponse: "En attente d’eux",
       ghosted: "Ghosté",
       converted: "Converti",
     },
     columnEmpty: {
       sent: "En attente d'acceptations — continuez d'envoyer.",
       accepted: "Accepté, en attente d'une première réponse.",
-      engagement: "Conversation active — relancez au besoin.",
+      pendingOurResponse: "Ils ont écrit en dernier — votre réponse est attendue.",
+      pendingTheirResponse: "Vous avez écrit en dernier — en attente d’eux.",
       ghosted: "Aucune activité depuis 7 jours ou plus.",
       converted: "Ils vous ont recommandé ou présenté.",
     },
@@ -544,7 +551,8 @@ const fr: DeepPartial<Messages> = {
       initialColumn: "Colonne initiale",
       optionSent: "Envoyé — l'invitation est partie",
       optionAccepted: "Accepté — déjà en relation",
-      optionEngagement: "Échange — conversation en cours",
+      optionPendingOurResponse: "À vous de répondre — ils ont écrit en dernier",
+      optionPendingTheirResponse: "En attente d’eux — vous avez écrit en dernier",
       optionConverted: "Converti — me recommande",
       cancel: "Annuler",
       submit: "Ajouter le contact",
@@ -600,6 +608,10 @@ const fr: DeepPartial<Messages> = {
       retried: "réessayée",
       retry: "Réessayer",
       retrying: "Nouvel essai…",
+      retryScoring_one: "Réessayer {{count}} score en échec",
+      retryScoring_other: "Réessayer {{count}} scores en échec",
+      retryScoringTitle:
+        "Ces offres ont épuisé les 3 tentatives de score IA auprès d'un fournisseur joignable. Réessayer leur rend leur budget et le prochain cycle du planificateur les score à nouveau. Les offres sans description sont ignorées : un nouvel essai n'y change rien.",
       stop: "Arrêter",
       stopping: "Arrêt en cours…",
       restarted: "L'app a redémarré pendant la génération.",
@@ -1118,7 +1130,13 @@ const fr: DeepPartial<Messages> = {
       filledFields_other: "Champs remplis : {{ok}} sur {{count}}.",
       couldntComplete: "Impossible de terminer : {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs ne soumet jamais à votre place en P1 — vérifiez tout, puis cliquez sur le bouton Soumettre du site lui-même.",
+        "finds-you-jobs n’envoie jamais de lui-même : vérifiez, puis envoyez vous-même dans le navigateur, ou demandez-lui de cliquer une fois sur Envoyer.",
+      submitForMe: "Envoyer à ma place",
+      confirmSubmit: "Oui, envoyer",
+      cancelSubmit: "Pas encore",
+      submitting: "Envoi…",
+      submitConfirmHint:
+        "Ceci clique une fois sur le bouton Envoyer du formulaire, sur la page que vous venez de vérifier. C’est irréversible.",
       iSubmitted: "J'ai soumis",
       didntSubmit: "Pas soumis",
       retrying: "Nouvel essai…",
@@ -1153,6 +1171,10 @@ const fr: DeepPartial<Messages> = {
     backendStoppedFallback: "le backend ne répond plus",
     sidecarFatalBanner:
       "Backend arrêté : {{message}}. Rien de ce que vous faites ne sera enregistré tant que vous n'aurez pas quitté puis rouvert l'app.",
+    degradedBoot:
+      "Le travail en arrière-plan est en pause. L'application s'est fermée de façon inattendue 3 fois de suite, donc cette session a démarré sans lui.",
+    degradedBootResume: "Reprendre le travail en arrière-plan",
+    degradedBootDismiss: "Masquer",
     work: {
       remote: "Télétravail",
       hybrid: "Hybride",
@@ -1168,23 +1190,6 @@ const fr: DeepPartial<Messages> = {
       dismiss: "Fermer",
       more_one: "+{{count}} échec précédent non affiché",
       more_other: "+{{count}} échecs précédents non affichés",
-    },
-    rescore: {
-      title: "Réévaluer les offres avec l'IA ?",
-      skipped_one: "({{count}} offre a déjà un score IA pour ce CV — ignorée.)",
-      skipped_other: "({{count}} offres ont déjà un score IA pour ce CV — ignorées.)",
-      bodyResumeEdit_one:
-        "Votre CV a changé. Réévaluer {{count}} offre avec l'IA ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Ou gardez les scores actuels ; vous pourrez réévaluer à tout moment en modifiant à nouveau votre CV.",
-      bodyResumeEdit_other:
-        "Votre CV a changé. Réévaluer {{count}} offres avec l'IA ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Ou gardez les scores actuels ; vous pourrez réévaluer à tout moment en modifiant à nouveau votre CV.",
-      bodyModeSwitch_one:
-        "Votre tableau compte {{count}} offre sans score IA — l'évaluer maintenant ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Les nouvelles offres des prochains scans seront de toute façon évaluées par IA automatiquement.",
-      bodyModeSwitch_other:
-        "Votre tableau compte {{count}} offres sans score IA — les évaluer maintenant ?{{skipped}} Cela utilise votre clé LLM — un appel par offre. Les nouvelles offres des prochains scans seront de toute façon évaluées par IA automatiquement.",
-      busy: "Réévaluation…",
-      confirm_one: "Réévaluer {{count}} offre",
-      confirm_other: "Réévaluer {{count}} offres",
-      keepScores: "Garder les scores actuels",
     },
   },
 };

@@ -15,12 +15,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..db.models import (
     OP_ACTIVE_STATES,
+    SCORE_MAX_ATTEMPTS,
     Application,
     Artifact,
     Contact,
     EngineSettings,
     Job,
-    JobScore,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
@@ -73,7 +73,9 @@ class JobDTO(BaseModel):
     score: JobScoreDTO | None = None
     # Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): `scored` (a real 0–100) /
     # `pending` (queued or not yet attempted) / `failed` (the score op errored and
-    # none is in flight — the `Score failed` pill, never a perpetual spinner).
+    # none is in flight — the `Score failed` pill, never a perpetual spinner) /
+    # `unscorable` (no usable description, so no tick will ever pick it up —
+    # S-C24 D5).
     score_status: str = Field(default="pending", serialization_alias="scoreStatus")
     # True when this row was inserted by the LATEST succeeded scan — the board's
     # "NEW" badge (maintainer 2026-07-23). Stamped by the board/list routes from
@@ -95,17 +97,6 @@ class BoardPageDTO(BaseModel):
     scan_status: str = Field(serialization_alias="scanStatus")
     last_scan_at: datetime | None = Field(default=None, serialization_alias="lastScanAt")
     scan_error: str | None = Field(default=None, serialization_alias="scanError")
-
-
-class RescorePreviewDTO(BaseModel):
-    """GET /api/jobs/rescore/preview — the AI re-score consent numbers: how
-    many active jobs miss an AI score at the current resume version (what a
-    confirmed run would enqueue) vs already carry one (never re-spent). Both
-    come from the same miss query the run uses, so the prompt's N always
-    equals what actually runs."""
-
-    to_score: int = Field(serialization_alias="toScore")
-    cached: int
 
 
 class ScanProgressDTO(BaseModel):
@@ -176,6 +167,17 @@ class TombstoneResultDTO(BaseModel):
     canonical_urls: list[str]
 
 
+class ScoreRetryDTO(BaseModel):
+    """The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
+    many active jobs have spent the whole attempt budget with no AI score, so
+    the button hides when pressing it would do nothing; `reset` on the POST is
+    how many got their budget back. Jobs with no usable description are in
+    neither number — they never spent an attempt (S-A6)."""
+
+    count: int = 0
+    reset: int = 0
+
+
 class ScheduleDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -226,7 +228,9 @@ class ArtifactDTO(BaseModel):
 class ApplicationDocumentDTO(BaseModel):
     """One document the user attached to a manually-logged application (the
     resume/cover letter they actually submitted). Downloaded verbatim from
-    `GET /api/documents/{document_id}`."""
+    `GET /api/documents/{document_id}`. The wire names (`document_id`, `kind`)
+    predate the table merge and stay: `document_id` is now the row's own id, and
+    `kind` is its `doc_type`."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -403,7 +407,6 @@ class ProfileDTO(BaseModel):
     # Structured form-fill facts (FR-APP-01) — extracted by the `extract` op at
     # save, user-editable in Settings; null until extracted.
     application_profile: dict[str, Any] | None = None
-    created_at: datetime
     updated_at: datetime
 
 
@@ -581,7 +584,6 @@ class NetworkingContactDTO(BaseModel):
     company: str
     linkedin_url: str
     connection_status: str
-    ask_status: str | None = None
     audience_tag: str
     last_message: str | None = None
     last_message_at: datetime | None = None
@@ -629,7 +631,8 @@ class ContactCreate(BaseModel):
     name: str = ""
     current_company: str = ""
     current_role: str = ""
-    # One of the live kanban columns (sent|accepted|engagement|converted).
+    # One of the live kanban columns (sent | accepted | pending_our_response |
+    # pending_their_response | converted).
     connection_status: str = "sent"
     audience_tag: str = "other"
 
@@ -964,6 +967,16 @@ class BrowserInstallResult(BaseModel):
     status: str  # "started" | "already_running"
 
 
+class SchedulerStatus(BaseModel):
+    """Whether the 60 s tick loop that plans background work is running, and
+    whether a degraded boot is the reason it is not."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    running: bool
+    degraded_boot: bool = Field(default=False, serialization_alias="degradedBoot")
+
+
 class EngineVerifyRequest(BaseModel):
     """A provider-appropriate verify probe (FR-SET-06). `key` is sent for a
     verify-only check and is never persisted by this call."""
@@ -1059,9 +1072,10 @@ class ContactSyncAccepted(BaseModel):
 class CostTotalsDTO(BaseModel):
     """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
 
-    Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime totals
-    that survive ledger retention — not just the retained ~250 ops. `by_kind` maps
-    each operation kind to its all-time usd spend."""
+    Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime
+    totals that survive any deletion of an operation row. Nothing deletes one
+    today, so the aggregate is empty and the live sum carries it all. `by_kind`
+    maps each operation kind to its all-time usd spend."""
 
     usd: float
     tokens_in: int
@@ -1071,26 +1085,54 @@ class CostTotalsDTO(BaseModel):
     by_kind: dict[str, float]
 
 
-def job_score_dto(score: JobScore | None) -> JobScoreDTO | None:
-    if score is None:
-        return None
-    return JobScoreDTO(
-        score_0_100=score.score_0_100,
-        reasons=list(score.reasons),
-        breakdown_md=score.breakdown_md,
-        scorer_impl=score.scorer_impl,
-    )
+def job_score_dto(job: Job) -> JobScoreDTO | None:
+    """The rating a job DISPLAYS: the AI one if it has it, otherwise the keyword
+    floor, otherwise nothing. The whole rule, and there is no ranking in it to
+    get backwards. It replaced a version-ranked pick over a `job_scores` table
+    that showed a keyword number over a higher AI one on 36 jobs (S-C34).
+
+    `scorer_impl` stays on the wire under its old values so the frontend's grey
+    styling keeps working; nothing stores that string any more, so renaming it
+    to `keyword` is now a frontend change with no data migration behind it."""
+    if job.llm_score is not None:
+        return JobScoreDTO(
+            score_0_100=job.llm_score,
+            reasons=list(job.llm_reasons),
+            breakdown_md=job.llm_breakdown_md,
+            scorer_impl="scorer-llm",
+        )
+    if job.keyword_score is not None:
+        return JobScoreDTO(
+            score_0_100=job.keyword_score,
+            reasons=list(job.keyword_reasons),
+            breakdown_md=job.keyword_breakdown_md,
+            scorer_impl="scorer-deterministic",
+        )
+    return None
 
 
-def derive_score_status(has_score: bool, op_states: set[str]) -> str:
-    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): a cached score
-    wins; else a queued/running score op means Pending; else a failed op with no
-    score means `Score failed`; else Pending (not yet attempted)."""
+def derive_score_status(
+    has_score: bool, op_states: set[str], *, scorable: bool = True, attempts: int = 0
+) -> str:
+    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02), in precedence
+    order: `unscorable` (no usable description, so no tick will ever pick it up,
+    S-C24 D5), `scored`, `pending` while an op is in flight, `failed` once the
+    attempt budget is spent, `pending` otherwise.
+
+    `unscorable` outranks `scored` because such a job does carry a score: the
+    keyword floor writes a 0 with a missing-data reason, so "scored" would read
+    as a real rating of a job we know nothing about.
+
+    `failed` counts attempts rather than asking the ledger for a failed op,
+    because a failed op with budget left is not failed — the next tick retries
+    it, and the pill used to say dead while the system said pending."""
+    if not scorable:
+        return "unscorable"
     if has_score:
         return "scored"
     if op_states & OP_ACTIVE_STATES:
         return "pending"
-    if "failed" in op_states:
+    if attempts >= SCORE_MAX_ATTEMPTS:
         return "failed"
     return "pending"
 
@@ -1118,12 +1160,22 @@ def derive_work_style(location: str, description: str) -> str:
     return ""
 
 
-def job_dto(
-    job: Job, score: JobScore | None = None, *, score_op_states: set[str] | None = None
-) -> JobDTO:
+def job_dto(job: Job, *, score_op_states: set[str] | None = None) -> JobDTO:
+    """The board/tracker view of one job. The rating rides on the job row, so
+    there is no score to pass in and no second query to forget."""
+    from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
     dto = JobDTO.model_validate(job)
-    dto.score = job_score_dto(score)
-    dto.score_status = derive_score_status(score is not None, score_op_states or set())
+    dto.score = job_score_dto(job)
+    dto.score_status = derive_score_status(
+        dto.score is not None,
+        score_op_states or set(),
+        # The same predicate the planner's eligibility read uses, so what the
+        # board calls unscorable is exactly what no tick will ever pick up
+        # (`JobsRepo.list_active_without_llm_score`).
+        scorable=len(job.description or "") >= MIN_JD_CHARS,
+        attempts=job.llm_score_attempts,
+    )
     dto.work_style = derive_work_style(job.location, job.description)
     return dto
 
@@ -1177,7 +1229,7 @@ def application_dto(
     has_candidates: bool = False,
     latest_batch_outcomes: list[str] | None = None,
     latest_apply_run: Any | None = None,
-    documents: list[tuple[Any, Any]] | None = None,
+    documents: list[Any] | None = None,
 ) -> ApplicationDTO:
     # Built explicitly (not model_validate) so we never lazy-load the ORM
     # relationship and packetState stays purely derived.
@@ -1221,12 +1273,12 @@ def application_dto(
         documents=[
             ApplicationDocumentDTO(
                 document_id=doc.id,
-                kind=link.kind,
+                kind=doc.doc_type,
                 original_filename=doc.original_filename,
                 mime_type=doc.mime_type,
                 byte_size=doc.byte_size,
             )
-            for link, doc in (documents or [])
+            for doc in (documents or [])
         ],
     )
 

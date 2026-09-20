@@ -16,6 +16,7 @@ from ..types import NormalizedJob, ScraperError
 from .base import first_path_segment
 
 ID = "ashby"
+INLINE_DESCRIPTION = True
 
 _HOST = "jobs.ashbyhq.com"
 

@@ -1,0 +1,245 @@
+name: CI
+
+# S-R1. main shipped with no test gates until 2026-09-20, and the frontend unit
+# suite had been failing locally for weeks with nothing to catch it.
+#
+# Every job that can behave differently per platform runs on all 3 platforms
+# `release.yml` ships binaries for (S-R9, 2026-09-20). The tree has 11 runtime
+# platform branches in Python and 13 `cfg(target_os)` blocks in Rust; a
+# Linux-only run never compiled the Windows Rust at all, and one pacing branch
+# carried the comment "exercised on Windows CI only" while no Windows CI
+# existed. Public repo, so GitHub-hosted runners cost nothing but wall clock.
+#
+# NOT gated yet: the applier's real-employer submit (a human decision, S-A5)
+# and any test that touches a live LinkedIn account.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sidecar:
+    name: Sidecar (pytest, pyright) — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirrors release.yml's shipping matrix, minus the Intel mac: the
+        # Python and Node legs are architecture-independent, and the Rust one
+        # below is what an Intel build would actually exercise.
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # No `python-version:` input — `.python-version` (3.13) is the source
+        # of truth and uv provisions it (see build-windows.yml).
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Install Chromium for the browser-backed tests
+        # The applier and submit suites drive real headless Chromium against
+        # local file:// fixtures. Zero network, but the browser must exist.
+        # `--with-deps` installs apt packages, so it is the Linux leg only.
+        run: uv run playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
+
+      - name: ruff
+        # Style only, and it cannot differ by platform — one leg is the check.
+        if: runner.os == 'Linux'
+        run: uv run ruff check .
+
+      - name: pyright
+        # Every leg: pyright narrows `sys.platform` and `os.name` to the host,
+        # so a Linux-only run never typechecks the `nt` branches in
+        # `watchdog.py`, `claude_engine.py` or `cli_engines.py`.
+        run: uv run pyright sidecar
+
+      - name: pytest
+        run: uv run pytest sidecar/tests -q
+
+  frontend:
+    name: Frontend (vitest) — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm
+        # No explicit `version:` — package.json's `packageManager` is the
+        # single source of truth and pnpm/action-setup errors if both are set.
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: tsc
+        # Types are platform-free; the path-handling risk is in the runtime.
+        if: runner.os == 'Linux'
+        working-directory: frontend
+        run: pnpm typecheck
+
+      - name: vitest
+        working-directory: frontend
+        run: pnpm test:unit
+
+  shell:
+    name: Tauri shell (cargo) — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install the Linux webkit dependencies tauri links against
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: cargo fmt
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Create dummy dist for tauri-build
+        run: mkdir -p dist/fyj-sidecar
+
+      - name: cargo clippy
+        # Every leg: the `cfg(target_os)` blocks only lint where they compile.
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+  e2e:
+    name: Playwright e2e
+    # Linux only: this drives the real sidecar plus vite through dev-web, and
+    # what it covers is UI behaviour, not platform plumbing. It is here at all
+    # because 4 LinkedIn-modal specs used to skip themselves silently.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: |
+          uv sync
+          cd frontend && pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: playwright
+        working-directory: frontend
+        # A port of its own, so nothing assumes 1420 is free.
+        env:
+          FYJ_WEB_PORT: "14211"
+        run: npx playwright test
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: frontend/e2e/_screenshots/
+          if-no-files-found: ignore
+
+  codegen:
+    name: Generated schema is committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          uv sync
+          pnpm install --frozen-lockfile
+          cd frontend && pnpm install --frozen-lockfile
+
+      - name: Regenerate and diff
+        # `frontend/src/api/schema.d.ts` is committed and generated from the
+        # sidecar's OpenAPI. A route added without re-running codegen leaves
+        # the frontend typed against a schema that no longer exists.
+        run: |
+          node scripts/codegen.mjs
+          git diff --exit-code -- frontend/src/api/schema.d.ts
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Every commit carries Signed-off-by
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          missing=0
+          for sha in $(git rev-list "$base".."$head"); do
+            if ! git log -1 --format=%B "$sha" | grep -qi '^Signed-off-by: '; then
+              echo "::error::$sha has no Signed-off-by (use git commit -s)"
+              missing=1
+            fi
+          done
+          exit $missing

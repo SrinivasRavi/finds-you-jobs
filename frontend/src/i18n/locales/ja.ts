@@ -188,6 +188,8 @@ const ja: DeepPartial<Messages> = {
       scoring: "スコアリング中…",
       olderListing: "以前の掲載",
       keywordScoreTitle: "キーワードスコア(無料・端末内) — グレー表示、AIスコアではありません",
+      unscorableTitle:
+        "この求人は職務内容を取得できなかったため、AIスコアを付けられません。グレーの0はデータ不足であって、マッチ度が低いという意味ではありません。",
     },
     empty: {
       filtered: "このフィルターや検索に一致する求人はありません。",
@@ -464,6 +466,9 @@ const ja: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "リファラルに戻る",
+    },
     linkedinPill: {
       connected: "LinkedIn接続済み",
       connecting: "接続中…",
@@ -490,14 +495,16 @@ const ja: DeepPartial<Messages> = {
     columns: {
       sent: "送信済み",
       accepted: "承認済み",
-      engagement: "やり取り中",
+      pendingOurResponse: "返信が必要",
+      pendingTheirResponse: "先方待ち",
       ghosted: "音信不通",
       converted: "リファラル獲得",
     },
     columnEmpty: {
       sent: "承認待ちです — 送信を続けましょう。",
       accepted: "承認済み、最初の返信待ちです。",
-      engagement: "会話が進行中 — 必要に応じてフォローしましょう。",
+      pendingOurResponse: "相手が最後に書いています。返信が必要です。",
+      pendingTheirResponse: "こちらが最後に書いています。先方の返信待ちです。",
       ghosted: "7日以上動きがありません。",
       converted: "リファラルや紹介をしてくれた人です。",
     },
@@ -530,7 +537,8 @@ const ja: DeepPartial<Messages> = {
       initialColumn: "最初の列",
       optionSent: "送信済み — リクエストを送った",
       optionAccepted: "承認済み — すでにつながっている",
-      optionEngagement: "やり取り中 — 会話が進行中",
+      optionPendingOurResponse: "返信が必要 — 相手が最後に書いた",
+      optionPendingTheirResponse: "先方待ち — こちらが最後に書いた",
       optionConverted: "リファラル獲得 — 紹介してくれている",
       cancel: "キャンセル",
       submit: "コンタクトを追加",
@@ -586,6 +594,10 @@ const ja: DeepPartial<Messages> = {
       retried: "再試行済み",
       retry: "再試行",
       retrying: "再試行中…",
+      retryScoring_one: "失敗した{{count}}件のスコアを再試行",
+      retryScoring_other: "失敗した{{count}}件のスコアを再試行",
+      retryScoringTitle:
+        "これらの求人は、稼働中のプロバイダーに対してAIスコアリングを3回とも使い切りました。再試行すると試行枠が戻り、次のスケジューラー実行で再スコアされます。説明のない求人はスキップされます(再試行しても解決しません)。",
       stop: "停止",
       stopping: "停止中…",
       restarted: "生成中にアプリが再起動されました。",
@@ -1082,7 +1094,13 @@ const ja: DeepPartial<Messages> = {
       filledFields_other: "{{count}}項目中{{ok}}項目を入力しました。",
       couldntComplete: "完了できませんでした: {{blockers}}。",
       neverSubmits:
-        "P1のfinds-you-jobsは決して代わりに提出しません — 内容を確認のうえ、サイト自身の提出ボタンを押してください。",
+        "finds-you-jobs が自動で送信することはありません。内容を確認してブラウザーでご自身で送信するか、送信ボタンを一度だけ押すよう指示してください。",
+      submitForMe: "代わりに送信",
+      confirmSubmit: "はい、送信します",
+      cancelSubmit: "まだです",
+      submitting: "送信中…",
+      submitConfirmHint:
+        "今確認したページで、フォームの送信ボタンを一度だけ押します。取り消しはできません。",
       iSubmitted: "提出しました",
       didntSubmit: "提出していません",
       retrying: "再試行中…",
@@ -1117,6 +1135,10 @@ const ja: DeepPartial<Messages> = {
     backendStoppedFallback: "バックエンドが応答しなくなりました",
     sidecarFatalBanner:
       "バックエンドが停止しました: {{message}}。アプリを終了して再起動するまで、操作は一切保存されません。",
+    degradedBoot:
+      "バックグラウンド処理は一時停止しています。アプリが3回続けて予期せず終了したため、このセッションは処理なしで開始しました。",
+    degradedBootResume: "バックグラウンド処理を再開",
+    degradedBootDismiss: "閉じる",
     work: {
       remote: "リモート",
       hybrid: "ハイブリッド",
@@ -1131,17 +1153,6 @@ const ja: DeepPartial<Messages> = {
       body: "変更を保存できませんでした — ローカルバックエンドとの通信でエラーが発生しました。",
       dismiss: "閉じる",
       more_other: "ほかに{{count}}件の以前の失敗が非表示です",
-    },
-    rescore: {
-      title: "AIで求人を再スコアリングしますか?",
-      skipped_other: "({{count}}件はこの職務経歴書のAIスコアが既にあるため、スキップします。)",
-      bodyResumeEdit_other:
-        "職務経歴書が変更されました。{{count}}件の求人をAIで再スコアリングしますか?{{skipped}} あなたのLLMキーを使用します — 求人1件につき1回の呼び出しです。現在のスコアを維持することもできます。職務経歴書を再度編集すれば、いつでも再スコアリングできます。",
-      bodyModeSwitch_other:
-        "ボード上のAIスコアがまだない{{count}}件の求人をスコアリングしますか?{{skipped}} あなたのLLMキーを使用します — 求人1件につき1回の呼び出しです。いずれの場合も、今後のスキャンで見つかる新しい求人は自動的にAIスコアリングされます。",
-      busy: "再スコアリング中…",
-      confirm_other: "{{count}}件を再スコアリング",
-      keepScores: "現在のスコアを維持",
     },
   },
 };

@@ -194,6 +194,8 @@ const de: DeepPartial<Messages> = {
       scoring: "wird bewertet…",
       olderListing: "Ältere Anzeige",
       keywordScoreTitle: "Keyword-bewertet (gratis, auf dem Gerät) — grau, kein KI-Score",
+      unscorableTitle:
+        "Für dieses Inserat wurde keine Stellenbeschreibung erfasst, es lässt sich also nicht per KI bewerten. Die graue 0 heißt: Daten fehlen, nicht schlechte Passung.",
     },
     empty: {
       filtered: "Keine Jobs passen zu diesen Filtern oder zur Suche.",
@@ -474,6 +476,9 @@ const de: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Zurück zu Empfehlungen",
+    },
     linkedinPill: {
       connected: "LinkedIn verbunden",
       connecting: "Wird verbunden…",
@@ -500,14 +505,16 @@ const de: DeepPartial<Messages> = {
     columns: {
       sent: "Gesendet",
       accepted: "Angenommen",
-      engagement: "Austausch",
+      pendingOurResponse: "Antwort offen",
+      pendingTheirResponse: "Warten auf sie",
       ghosted: "Geghostet",
       converted: "Konvertiert",
     },
     columnEmpty: {
       sent: "Warten auf Annahme — weiter senden.",
       accepted: "Angenommen, wartet auf erste Antwort.",
-      engagement: "Aktives Gespräch — bei Bedarf nachhaken.",
+      pendingOurResponse: "Sie haben zuletzt geschrieben — deine Antwort steht aus.",
+      pendingTheirResponse: "Du hast zuletzt geschrieben — warten auf sie.",
       ghosted: "Seit 7+ Tagen keine Aktivität.",
       converted: "Hat dich empfohlen oder vorgestellt.",
     },
@@ -540,7 +547,8 @@ const de: DeepPartial<Messages> = {
       initialColumn: "Startspalte",
       optionSent: "Gesendet — Einladung ist raus",
       optionAccepted: "Angenommen — bereits vernetzt",
-      optionEngagement: "Austausch — aktiv im Gespräch",
+      optionPendingOurResponse: "Antwort offen — sie haben zuletzt geschrieben",
+      optionPendingTheirResponse: "Warten auf sie — du hast zuletzt geschrieben",
       optionConverted: "Konvertiert — empfiehlt mich",
       cancel: "Abbrechen",
       submit: "Kontakt hinzufügen",
@@ -596,6 +604,10 @@ const de: DeepPartial<Messages> = {
       retried: "wiederholt",
       retry: "Wiederholen",
       retrying: "Wird wiederholt…",
+      retryScoring_one: "{{count}} fehlgeschlagene Bewertung wiederholen",
+      retryScoring_other: "{{count}} fehlgeschlagene Bewertungen wiederholen",
+      retryScoringTitle:
+        "Diese Jobs haben alle 3 KI-Bewertungsversuche bei einem erreichbaren Anbieter verbraucht. Wiederholen gibt ihr Budget zurück, und der nächste Scheduler-Durchlauf bewertet sie neu. Jobs ohne Beschreibung werden übersprungen — dort hilft kein neuer Versuch.",
       stop: "Stopp",
       stopping: "Wird gestoppt…",
       restarted: "App wurde während der Generierung neu gestartet.",
@@ -1100,7 +1112,13 @@ const de: DeepPartial<Messages> = {
       filledFields_other: "{{ok}} von {{count}} Feldern ausgefüllt.",
       couldntComplete: "Nicht abgeschlossen: {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs sendet in P1 nie für dich ab — prüfe alles und klicke dann selbst auf den Absenden-Button der Seite.",
+        "finds-you-jobs sendet nie von selbst ab — prüfe alles und sende es dann selbst im Browser ab, oder lass den Absenden-Button einmal für dich klicken.",
+      submitForMe: "Für mich absenden",
+      confirmSubmit: "Ja, absenden",
+      cancelSubmit: "Noch nicht",
+      submitting: "Wird abgesendet…",
+      submitConfirmHint:
+        "Dies klickt einmal den Absenden-Button des Formulars auf der gerade geprüften Seite. Das lässt sich nicht rückgängig machen.",
       iSubmitted: "Ich habe abgesendet",
       didntSubmit: "Nicht abgesendet",
       retrying: "Wird wiederholt…",
@@ -1135,6 +1153,10 @@ const de: DeepPartial<Messages> = {
     backendStoppedFallback: "das Backend reagiert nicht mehr",
     sidecarFatalBanner:
       "Backend gestoppt: {{message}}. Nichts wird gespeichert, bis du die App beendest und neu öffnest.",
+    degradedBoot:
+      "Hintergrundarbeit ist pausiert. Die App wurde 3-mal hintereinander unerwartet beendet, daher startete diese Sitzung ohne sie.",
+    degradedBootResume: "Hintergrundarbeit fortsetzen",
+    degradedBootDismiss: "Ausblenden",
     work: {
       remote: "Remote",
       hybrid: "Hybrid",
@@ -1150,23 +1172,6 @@ const de: DeepPartial<Messages> = {
       dismiss: "Schließen",
       more_one: "+{{count}} früherer Fehlschlag nicht angezeigt",
       more_other: "+{{count}} frühere Fehlschläge nicht angezeigt",
-    },
-    rescore: {
-      title: "Jobs mit KI neu bewerten?",
-      skipped_one: "({{count}} hat für diesen Lebenslauf bereits einen KI-Score — übersprungen.)",
-      skipped_other: "({{count}} haben für diesen Lebenslauf bereits einen KI-Score — übersprungen.)",
-      bodyResumeEdit_one:
-        "Dein Lebenslauf hat sich geändert. {{count}} Job mit KI neu dagegen bewerten?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Oder behalte die aktuellen Scores; du kannst jederzeit neu bewerten, indem du deinen Lebenslauf erneut bearbeitest.",
-      bodyResumeEdit_other:
-        "Dein Lebenslauf hat sich geändert. {{count}} Jobs mit KI neu dagegen bewerten?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Oder behalte die aktuellen Scores; du kannst jederzeit neu bewerten, indem du deinen Lebenslauf erneut bearbeitest.",
-      bodyModeSwitch_one:
-        "Den {{count}} Job auf deinem Board bewerten, der noch keinen KI-Score hat?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Neue Jobs aus künftigen Scans werden so oder so automatisch KI-bewertet.",
-      bodyModeSwitch_other:
-        "Die {{count}} Jobs auf deinem Board bewerten, die noch keinen KI-Score haben?{{skipped}} Das nutzt deinen LLM-Schlüssel — ein Aufruf pro Job. Neue Jobs aus künftigen Scans werden so oder so automatisch KI-bewertet.",
-      busy: "Wird neu bewertet…",
-      confirm_one: "{{count}} Job neu bewerten",
-      confirm_other: "{{count}} Jobs neu bewerten",
-      keepScores: "Aktuelle Scores behalten",
     },
   },
 };

@@ -74,16 +74,15 @@ bump the version in the six version strings (tauri.conf.json, both Cargo, both
 package.json, pyproject.toml + the sidecar `main.py` string) and commit. The
 pinned install tag (section 2) is bumped by the script itself. The site repo is expected
 at `~/dev/findsyoujobs-site`
-(override `FYJ_SITE_DIR`). The Ed25519 secret `TAURI_SIGNING_PRIVATE_KEY` must be
-set on the repo or the build fails by design (see `docs/internal/distribution.md` section 9).
+(override `FYJ_SITE_DIR`).
 
-**Auto-update:** from v0.5.5-beta on, the app self-updates (Settings › About ›
-Check for updates) against the signed `latest.json` published to the fixed `latest`
-tag. `scripts/build-updater-manifest.mjs` builds that manifest in the release job.
-CI-green is necessary, not sufficient — after a release, confirm `latest.json` has
-an entry for **all four** targets (`darwin-aarch64`, `darwin-x86_64`,
-`windows-x86_64`, `linux-x86_64`); the macOS `.app.tar.gz` is re-named per-arch in
-the collect step precisely because Tauri emits it version/arch-less.
+**Updates are manual.** Settings › About › Check for updates asks the GitHub
+releases API whether a newer tag exists and opens that release page in the
+browser; the app never downloads or installs over itself. So a release needs no
+updater keypair, no `.sig` artifacts, and no `latest.json`. What it does need is
+that the release page carries a download for every OS, since that page is now
+the only way anyone gets a new version. `docs/internal/auto-update.md` holds the
+design for bringing unattended updates back.
 
 ## 5. Release notes must state honestly
 

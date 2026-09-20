@@ -13,10 +13,17 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../api";
 import { eventBus, type SSEEvent } from "../api/events";
-import { useApplyRun, useAttestApply, useCancelApply, useStartApply } from "../api/queries";
+import {
+  useApplyRun,
+  useAttestApply,
+  useCancelApply,
+  useStartApply,
+  useSubmitApply,
+} from "../api/queries";
 import type { ApplyRun, ApplyRunStatus } from "../api/types";
 import i18n from "../i18n";
 import { applyRunDisplay, type ApplyTone } from "../shell/applyRunDisplay";
+import { formatEngineError } from "../shell/formatError";
 import { Modal } from "../shell/Modal";
 
 type Tone = ApplyTone;
@@ -78,7 +85,7 @@ function seedFeed(run: ApplyRun): FeedItem[] {
       tone: "bad",
     });
   });
-  if (run.summary) items.push({ id: "seed-summary", text: run.summary, tone: "info" });
+  if (run.summary) items.push({ id: "seed-summary", text: formatEngineError(run.summary) || run.summary, tone: "info" });
   return items;
 }
 
@@ -183,7 +190,11 @@ export function ApplierPanel({
   const run = runQ.data;
   const cancel = useCancelApply();
   const attest = useAttestApply();
+  const submit = useSubmitApply();
   const startApply = useStartApply();
+  // Two-step, because the click is irreversible: P1 puts a confirmation in
+  // front of every submit (vision.md, "the user owns their job hunt").
+  const [confirmingSubmit, setConfirmingSubmit] = useState(false);
 
   const status: ApplyRunStatus = run?.status ?? "running";
   const phase = phaseInfo(status, run?.phase ?? "");
@@ -425,12 +436,52 @@ export function ApplierPanel({
                   })
                 : " " + t("popups.applier.neverSubmits")}
             </div>
+            {confirmingSubmit ? (
+              <div
+                className="mt-3 rounded-md border border-warn bg-surface px-3 py-2"
+                data-testid="applier-submit-confirm"
+              >
+                <div className="text-[12px] text-ink-2">
+                  {t("popups.applier.submitConfirmHint")}
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    data-testid="applier-submit-confirm-btn"
+                    disabled={submit.isPending}
+                    onClick={() => {
+                      submit.mutate(runId);
+                      setConfirmingSubmit(false);
+                    }}
+                    className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {submit.isPending
+                      ? t("popups.applier.submitting")
+                      : t("popups.applier.confirmSubmit")}
+                  </button>
+                  <button
+                    data-testid="applier-submit-cancel-btn"
+                    onClick={() => setConfirmingSubmit(false)}
+                    className="inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
+                  >
+                    {t("popups.applier.cancelSubmit")}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="mt-3 flex items-center gap-2">
+              <button
+                data-testid="applier-submit-btn"
+                disabled={submit.isPending || confirmingSubmit}
+                onClick={() => setConfirmingSubmit(true)}
+                className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t("popups.applier.submitForMe")}
+              </button>
               <button
                 data-testid="applier-attest-submitted-btn"
                 disabled={attest.isPending}
                 onClick={() => attest.mutate({ runId, submitted: true })}
-                className="inline-flex h-[30px] items-center rounded-md border border-accent bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {t("popups.applier.iSubmitted")}
               </button>
@@ -451,7 +502,7 @@ export function ApplierPanel({
           <div className="border-t border-border bg-bad-wash px-5 py-3">
             <div className="text-[13px] font-semibold text-bad">
               {phase.label}
-              {run?.summary ? <span className="ml-1 font-normal text-ink-2">— {run.summary}</span> : null}
+              {run?.summary ? <span className="ml-1 font-normal text-ink-2">— {formatEngineError(run.summary, t)}</span> : null}
             </div>
             {run && run.blockers.length > 0 ? (
               <ul className="mt-1.5 space-y-1 text-[12px] text-ink-2">

@@ -239,6 +239,17 @@ describe("LinkedIn status button", () => {
     }
   });
 
+  it("a rate-limit backoff reads as backing off, whichever op tripped it", () => {
+    // The backoff used to be mirrored onto the session row by the SEND path
+    // alone, so a 429 during discover or contact sync left this button reading
+    // "connected". The sidecar now derives the status from the pacing ledger
+    // that enforces the pause, so the button only has to render what it is told.
+    h.session = { enabled: true, status: "backing_off" };
+    renderNetworking();
+    const btn = screen.getByTestId("linkedin-state-pill");
+    expect(btn.textContent).toBe("networking.linkedinPill.backingOff");
+  });
+
   it("a live op wins the button's face: pulse + in-progress label, opens the modal", () => {
     h.session = { enabled: true, status: "valid" };
     h.browserOps = {

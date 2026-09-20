@@ -526,6 +526,7 @@ export function Tracker() {
                 company={a.job.company}
                 applicationId={a.id}
                 onClose={() => setReferralsAppId(null)}
+                onReopen={() => setReferralsAppId(a.id)}
               />
             );
           })()

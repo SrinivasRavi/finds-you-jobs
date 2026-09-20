@@ -1,7 +1,9 @@
 """Recruitee adapter — public per-tenant offers API (no auth, no key).
 
 Claims `<slug>.recruitee.com`. One request per tenant:
-`GET https://<slug>.recruitee.com/api/offers/`. Per-tenant subdomains are the
+`GET https://<slug>.recruitee.com/api/offers/`, which carries the JD in the
+same response — `description` and `requirements` are both HTML strings,
+concatenated and stripped to plain text. Per-tenant subdomains are the
 variable part, so the host is validated by an anchored regex rather than a
 static allowlist (the SSRF stance career-ops uses for the same source).
 
@@ -16,10 +18,12 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from ..config import SourceEntry
+from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
 
 ID = "recruitee"
+INLINE_DESCRIPTION = True
 
 _HOST_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\.recruitee\.com$")
 
@@ -73,13 +77,15 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
     for raw in payload["offers"]:
         if not isinstance(raw, dict):
             continue
+        description = str(raw.get("description") or "")
+        requirements = str(raw.get("requirements") or "")
         jobs.append(
             NormalizedJob(
                 title=str(raw.get("title") or ""),
                 canonical_url=str(raw.get("careers_url") or raw.get("url") or ""),
                 company=entry.company or slug,
                 location=_location(raw),
-                description="",  # offers list carries no clean plain-text body
+                description=strip_html(f"{description}\n{requirements}"),
                 posted_at=_iso_date(raw.get("published_at") or raw.get("created_at")),
                 source_adapter=ID,
             )

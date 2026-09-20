@@ -66,16 +66,23 @@ test("networking kanban renders seeded contacts and drag persists", async ({
 
   await page.goto("/networking");
   await expect(page.getByTestId("networking-kanban")).toBeVisible({ timeout: 15_000 });
-  for (const col of ["Sent", "Accepted", "Engagement", "Ghosted", "Converted"]) {
+  for (const col of [
+    "Sent",
+    "Accepted",
+    "Your reply owed",
+    "Waiting on them",
+    "Ghosted",
+    "Converted",
+  ]) {
     await expect(page.getByText(col, { exact: true })).toBeVisible();
   }
   await expect(page.getByText("Ada Lovelace")).toBeVisible();
   await expect(page.getByText("Grace Hopper")).toBeVisible();
   await page.screenshot({ path: `${DIR}/networking-kanban.png`, fullPage: true });
 
-  // Drag Ada from Sent into Engagement — the move persists via PATCH
+  // Drag Ada from Sent into "Your reply owed" — the move persists via PATCH
   // /api/contacts (US-NW-07: drag-based column moves, no status dropdown).
-  const engagementCol = page.locator('[data-status="engagement"]');
+  const engagementCol = page.locator('[data-status="pending_our_response"]');
   const card = page.locator(`[data-contact-id="${seeded[0]}"]`);
   await card.dragTo(engagementCol);
   await expect(engagementCol.locator(`[data-contact-id="${seeded[0]}"]`)).toBeVisible({
@@ -85,7 +92,7 @@ test("networking kanban renders seeded contacts and drag persists", async ({
     await request.get(`${base}/api/contacts`, { headers: auth })
   ).json();
   const ada = contacts.find((c: { id: string }) => c.id === seeded[0]);
-  expect(ada.connection_status).toBe("engagement");
+  expect(ada.connection_status).toBe("pending_our_response");
   await page.screenshot({ path: `${DIR}/networking-drag-moved.png`, fullPage: true });
 
   // Contact detail modal off the card (US-NW-03) — archive + LinkedIn link,
@@ -121,7 +128,7 @@ test("card and modal attribute the real last message; reach-out-by-url is gone",
     data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
   });
   for (const [n, status] of [
-    ["Reba Replied", "engagement"],
+    ["Reba Replied", "pending_our_response"],
     ["Owen Outbound", "accepted"],
   ] as const) {
     await request.post(`${base}/api/contacts`, {

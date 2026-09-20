@@ -202,6 +202,8 @@ const pl: DeepPartial<Messages> = {
       olderListing: "Starsze ogłoszenie",
       keywordScoreTitle:
         "Ocenione wg słów kluczowych (darmowo, na urządzeniu) — szara, to nie ocena AI",
+      unscorableTitle:
+        "Dla tego ogłoszenia nie pobrano opisu stanowiska, więc SI nie może go ocenić. Szare 0 oznacza brak danych, a nie słabe dopasowanie.",
     },
     empty: {
       filtered: "Żadna oferta nie pasuje do tych filtrów lub wyszukiwania.",
@@ -490,6 +492,9 @@ const pl: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Powrót do poleceń",
+    },
     linkedinPill: {
       connected: "LinkedIn połączony",
       connecting: "Łączenie…",
@@ -517,14 +522,16 @@ const pl: DeepPartial<Messages> = {
     columns: {
       sent: "Wysłane",
       accepted: "Zaakceptowane",
-      engagement: "Rozmowa",
+      pendingOurResponse: "Twoja odpowiedź",
+      pendingTheirResponse: "Czekamy na nich",
       ghosted: "Cisza",
       converted: "Polecili",
     },
     columnEmpty: {
       sent: "Czekamy na akceptacje — wysyłaj dalej.",
       accepted: "Zaakceptowane, czekamy na pierwszą odpowiedź.",
-      engagement: "Aktywna rozmowa — przypominaj się w razie potrzeby.",
+      pendingOurResponse: "Oni napisali ostatni — czekają na twoją odpowiedź.",
+      pendingTheirResponse: "Ty napisałeś ostatni — czekamy na nich.",
       ghosted: "Brak aktywności od ponad 7 dni.",
       converted: "Polecili cię lub przedstawili.",
     },
@@ -557,7 +564,8 @@ const pl: DeepPartial<Messages> = {
       initialColumn: "Kolumna początkowa",
       optionSent: "Wysłane — zaproszenie w drodze",
       optionAccepted: "Zaakceptowane — kontakt już nawiązany",
-      optionEngagement: "Rozmowa — aktywna wymiana wiadomości",
+      optionPendingOurResponse: "Twoja odpowiedź — oni napisali ostatni",
+      optionPendingTheirResponse: "Czekamy na nich — ty napisałeś ostatni",
       optionConverted: "Polecili — poleca mnie",
       cancel: "Anuluj",
       submit: "Dodaj kontakt",
@@ -613,6 +621,10 @@ const pl: DeepPartial<Messages> = {
       retried: "ponowiono",
       retry: "Ponów",
       retrying: "Ponawianie…",
+      retryScoring_one: "Ponów {{count}} nieudaną ocenę",
+      retryScoring_other: "Ponów {{count}} nieudanych ocen",
+      retryScoringTitle:
+        "Te oferty zużyły wszystkie 3 próby oceny przez SI wobec działającego dostawcy. Ponowienie zwraca im budżet, a następny cykl harmonogramu oceni je ponownie. Oferty bez opisu są pomijane — tam ponowienie nic nie da.",
       stop: "Zatrzymaj",
       stopping: "Zatrzymywanie…",
       restarted: "Aplikacja została uruchomiona ponownie w trakcie generowania.",
@@ -1146,7 +1158,13 @@ const pl: DeepPartial<Messages> = {
       },
       couldntComplete: "Nie udało się ukończyć: {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs w P1 nigdy nie wysyła za ciebie — sprawdź wszystko, a potem kliknij przycisk Wyślij na samej stronie.",
+        "finds-you-jobs nigdy nie wysyła sam — sprawdź i wyślij samodzielnie w przeglądarce albo poproś o jednokrotne kliknięcie Wyślij.",
+      submitForMe: "Wyślij za mnie",
+      confirmSubmit: "Tak, wyślij",
+      cancelSubmit: "Jeszcze nie",
+      submitting: "Wysyłanie…",
+      submitConfirmHint:
+        "To jednokrotnie kliknie przycisk Wyślij formularza na stronie, którą właśnie sprawdziłeś. Nie można tego cofnąć.",
       iSubmitted: "Wysłano",
       didntSubmit: "Nie wysłano",
       retrying: "Ponawianie…",
@@ -1182,6 +1200,10 @@ const pl: DeepPartial<Messages> = {
     backendStoppedFallback: "backend przestał odpowiadać",
     sidecarFatalBanner:
       "Backend zatrzymany: {{message}}. Nic się nie zapisze, dopóki nie zamkniesz i nie otworzysz aplikacji ponownie.",
+    degradedBoot:
+      "Praca w tle jest wstrzymana. Aplikacja zamknęła się nieoczekiwanie 3 razy z rzędu, więc ta sesja uruchomiła się bez niej.",
+    degradedBootResume: "Wznów pracę w tle",
+    degradedBootDismiss: "Zamknij",
     work: {
       remote: "Zdalna",
       hybrid: "Hybrydowa",
@@ -1200,37 +1222,6 @@ const pl: DeepPartial<Messages> = {
         more_few: "+{{count}} wcześniejsze błędy nie są pokazane",
         more_many: "+{{count}} wcześniejszych błędów nie jest pokazanych",
       },
-    },
-    rescore: {
-      title: "Ocenić oferty ponownie z użyciem AI?",
-      skipped_one: "({{count}} ma już ocenę AI dla tego CV — pominięto.)",
-      ...{
-        skipped_few: "({{count}} mają już ocenę AI dla tego CV — pominięto.)",
-        skipped_many: "({{count}} ma już ocenę AI dla tego CV — pominięto.)",
-      },
-      bodyResumeEdit_one:
-        "Twoje CV się zmieniło. Ocenić ponownie {{count}} ofertę względem niego z użyciem AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Możesz też zachować obecne oceny; ponowną ocenę uruchomisz w każdej chwili, edytując CV ponownie.",
-      ...{
-        bodyResumeEdit_few:
-          "Twoje CV się zmieniło. Ocenić ponownie {{count}} oferty względem niego z użyciem AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Możesz też zachować obecne oceny; ponowną ocenę uruchomisz w każdej chwili, edytując CV ponownie.",
-        bodyResumeEdit_many:
-          "Twoje CV się zmieniło. Ocenić ponownie {{count}} ofert względem niego z użyciem AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Możesz też zachować obecne oceny; ponowną ocenę uruchomisz w każdej chwili, edytując CV ponownie.",
-      },
-      bodyModeSwitch_one:
-        "Ocenić {{count}} ofertę na twojej tablicy, która nie ma jeszcze oceny AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Nowe oferty z przyszłych skanów i tak są oceniane przez AI automatycznie.",
-      ...{
-        bodyModeSwitch_few:
-          "Ocenić {{count}} oferty na twojej tablicy, które nie mają jeszcze oceny AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Nowe oferty z przyszłych skanów i tak są oceniane przez AI automatycznie.",
-        bodyModeSwitch_many:
-          "Ocenić {{count}} ofert na twojej tablicy, które nie mają jeszcze oceny AI?{{skipped}} To korzysta z twojego klucza LLM — jedno wywołanie na ofertę. Nowe oferty z przyszłych skanów i tak są oceniane przez AI automatycznie.",
-      },
-      busy: "Ponowne ocenianie…",
-      confirm_one: "Oceń ponownie {{count}} ofertę",
-      ...{
-        confirm_few: "Oceń ponownie {{count}} oferty",
-        confirm_many: "Oceń ponownie {{count}} ofert",
-      },
-      keepScores: "Zachowaj obecne oceny",
     },
   },
 };

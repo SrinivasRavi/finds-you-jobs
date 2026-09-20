@@ -403,6 +403,11 @@ def _goto_profile(session: AccountSession, public_identifier: str) -> None:
             expected_url_pattern=f"/in/{public_identifier}",
             error_message="Failed to navigate to the target profile",
         )
+    from urllib.parse import urlparse
+    path = urlparse(session.page.url).path
+    if path.startswith(("/checkpoint", "/authwall", "/uas/login")):
+        from .errors import AuthenticationError
+        raise AuthenticationError("session expired, reconnect in Settings")
     _reload_past_404_shell(session, public_identifier)
     # Read the page the way a person does before acting on it. This is the only
     # place the LinkedIn path emits wheel events at all — the one input channel

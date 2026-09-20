@@ -9,10 +9,8 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { api } from "../api/index";
 import { useSettings, useUpdateSettings } from "../api/queries";
-import type { RescorePreview, Settings as SettingsT } from "../api/types";
-import { RescoreAiDialog } from "../shell/RescoreAiDialog";
+import type { Settings as SettingsT } from "../api/types";
 import { AboutSection } from "./settings/AboutSection";
 import { AIProvidersPanel } from "./settings/AIProvidersPanel";
 import { AppearanceSection } from "./settings/AppearanceSection";
@@ -33,10 +31,6 @@ export function Settings() {
   const update = useUpdateSettings();
   const [cat, setCat] = useState<SettingsCat>("providers");
   const [ack, setAck] = useState(false);
-  // Switching Scoring keyword → AI: the server never spends on its own, so
-  // preview the cache misses and ask before any token goes out (maintainer
-  // 2026-07-23). Jobs already AI-scored at the current resume are skipped.
-  const [rescoreAsk, setRescoreAsk] = useState<RescorePreview | null>(null);
 
   // Stable callbacks (update.mutate is referentially stable in TanStack Query
   // v5) so the memoized pane sections only re-render when `settings` changes.
@@ -46,26 +40,6 @@ export function Settings() {
       updateMutate(p);
     },
     [updateMutate],
-  );
-
-  const scoringMode = settings?.scoring_mode;
-  const pickScoringMode = useCallback(
-    (mode: SettingsT["scoring_mode"]) => {
-      const was = scoringMode;
-      updateMutate(
-        { scoring_mode: mode },
-        {
-          onSuccess: () => {
-            if (mode === "llm" && was === "keyword") {
-              void api.rescorePreview().then((preview) => {
-                if (preview.to_score > 0) setRescoreAsk(preview);
-              });
-            }
-          },
-        },
-      );
-    },
-    [scoringMode, updateMutate],
   );
 
   if (!settings) return null;
@@ -110,7 +84,7 @@ export function Settings() {
           {/* Scoring: a scanned job is scored before anything else happens to it.
               Every scanned job is scored; the choice is HOW. AI failures fall
               back to a grey keyword score (retry in Logs). */}
-          <ScoringSection settings={settings} patch={patch} onPickMode={pickScoringMode} />
+          <ScoringSection settings={settings} patch={patch} />
 
           {/* Automation on Save — split defaults (FR-SET-02): Resume ON, Cover ON.
               After Scoring in the workflow (maintainer 2026-07-23). */}
@@ -191,13 +165,6 @@ export function Settings() {
         </div>
         </div>
       </main>
-      {rescoreAsk !== null ? (
-        <RescoreAiDialog
-          preview={rescoreAsk}
-          reason="mode-switch"
-          onClose={() => setRescoreAsk(null)}
-        />
-      ) : null}
     </>
   );
 }

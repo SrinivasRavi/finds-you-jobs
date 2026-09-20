@@ -195,6 +195,8 @@ const pt: DeepPartial<Messages> = {
       olderListing: "Anúncio antigo",
       keywordScoreTitle:
         "Pontuada por palavras-chave (grátis, no dispositivo) — cinza, não é pontuação de IA",
+      unscorableTitle:
+        "Nenhuma descrição da vaga foi capturada para este anúncio, por isso não pode ser pontuado por IA. O 0 cinza significa dados ausentes, não má correspondência.",
     },
     empty: {
       filtered: "Nenhuma vaga corresponde a esses filtros ou busca.",
@@ -477,6 +479,9 @@ const pt: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Voltar para indicações",
+    },
     linkedinPill: {
       connected: "LinkedIn conectado",
       connecting: "Conectando…",
@@ -503,14 +508,16 @@ const pt: DeepPartial<Messages> = {
     columns: {
       sent: "Enviados",
       accepted: "Aceitos",
-      engagement: "Engajamento",
+      pendingOurResponse: "Sua resposta pendente",
+      pendingTheirResponse: "Aguardando eles",
       ghosted: "Sem resposta",
       converted: "Convertidos",
     },
     columnEmpty: {
       sent: "Aguardando aceites — continue enviando.",
       accepted: "Aceito, aguardando a primeira resposta.",
-      engagement: "Conversa ativa — dê um toque quando precisar.",
+      pendingOurResponse: "Eles escreveram por último — sua resposta está pendente.",
+      pendingTheirResponse: "Você escreveu por último — aguardando eles.",
       ghosted: "Sem atividade há 7+ dias.",
       converted: "Indicou você ou fez uma apresentação.",
     },
@@ -543,7 +550,8 @@ const pt: DeepPartial<Messages> = {
       initialColumn: "Coluna inicial",
       optionSent: "Enviados — convite já enviado",
       optionAccepted: "Aceitos — já conectados",
-      optionEngagement: "Engajamento — conversando ativamente",
+      optionPendingOurResponse: "Sua resposta pendente — eles escreveram por último",
+      optionPendingTheirResponse: "Aguardando eles — você escreveu por último",
       optionConverted: "Convertidos — está me indicando",
       cancel: "Cancelar",
       submit: "Adicionar contato",
@@ -599,6 +607,10 @@ const pt: DeepPartial<Messages> = {
       retried: "repetida",
       retry: "Tentar novamente",
       retrying: "Tentando novamente…",
+      retryScoring_one: "Repetir {{count}} pontuação falhada",
+      retryScoring_other: "Repetir {{count}} pontuações falhadas",
+      retryScoringTitle:
+        "Estas vagas gastaram as 3 tentativas de pontuação por IA contra um provedor ativo. Repetir devolve o orçamento delas e o próximo ciclo do agendador as pontua de novo. Vagas sem descrição são ignoradas: nelas repetir não adianta.",
       stop: "Parar",
       stopping: "Parando…",
       restarted: "O app reiniciou durante a geração.",
@@ -1109,7 +1121,13 @@ const pt: DeepPartial<Messages> = {
       filledFields_other: "Preenchidos {{ok}} de {{count}} campos.",
       couldntComplete: "Não foi possível concluir: {{blockers}}.",
       neverSubmits:
-        "O finds-you-jobs nunca envia por você no P1 — confira tudo e clique no botão Enviar do próprio site.",
+        "o finds-you-jobs nunca envia sozinho — confira e envie você mesmo no navegador, ou peça que ele clique em Enviar uma vez por você.",
+      submitForMe: "Enviar por mim",
+      confirmSubmit: "Sim, enviar",
+      cancelSubmit: "Ainda não",
+      submitting: "Enviando…",
+      submitConfirmHint:
+        "Isto clica uma vez no botão Enviar do próprio formulário, na página que você acabou de revisar. Não dá para desfazer.",
       iSubmitted: "Eu enviei",
       didntSubmit: "Não enviei",
       retrying: "Tentando novamente…",
@@ -1144,6 +1162,10 @@ const pt: DeepPartial<Messages> = {
     backendStoppedFallback: "o backend parou de responder",
     sidecarFatalBanner:
       "Backend parado: {{message}}. Nada do que você fizer será salvo até fechar e reabrir o app.",
+    degradedBoot:
+      "O trabalho em segundo plano está pausado. O app fechou de forma inesperada 3 vezes seguidas, então esta sessão começou sem ele.",
+    degradedBootResume: "Retomar o trabalho em segundo plano",
+    degradedBootDismiss: "Dispensar",
     work: {
       remote: "Remoto",
       hybrid: "Híbrido",
@@ -1159,23 +1181,6 @@ const pt: DeepPartial<Messages> = {
       dismiss: "Dispensar",
       more_one: "+{{count}} falha anterior não exibida",
       more_other: "+{{count}} falhas anteriores não exibidas",
-    },
-    rescore: {
-      title: "Pontuar vagas novamente com IA?",
-      skipped_one: "({{count}} já tem pontuação de IA para este currículo — pulada.)",
-      skipped_other: "({{count}} já têm pontuação de IA para este currículo — puladas.)",
-      bodyResumeEdit_one:
-        "Seu currículo mudou. Pontuar novamente {{count}} vaga com IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Ou mantenha as pontuações atuais; você pode pontuar novamente a qualquer momento editando seu currículo de novo.",
-      bodyResumeEdit_other:
-        "Seu currículo mudou. Pontuar novamente {{count}} vagas com IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Ou mantenha as pontuações atuais; você pode pontuar novamente a qualquer momento editando seu currículo de novo.",
-      bodyModeSwitch_one:
-        "Pontuar {{count}} vaga do seu quadro que ainda não tem pontuação de IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Vagas novas de varreduras futuras são pontuadas por IA automaticamente de qualquer forma.",
-      bodyModeSwitch_other:
-        "Pontuar as {{count}} vagas do seu quadro que ainda não têm pontuação de IA?{{skipped}} Isto usa sua chave de LLM — uma chamada por vaga. Vagas novas de varreduras futuras são pontuadas por IA automaticamente de qualquer forma.",
-      busy: "Pontuando novamente…",
-      confirm_one: "Pontuar {{count}} vaga novamente",
-      confirm_other: "Pontuar {{count}} vagas novamente",
-      keepScores: "Manter as pontuações atuais",
     },
   },
 };

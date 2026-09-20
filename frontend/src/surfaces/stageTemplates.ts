@@ -38,10 +38,18 @@ const STAGE_VARIANTS: Partial<
   Record<ConnectionStatus, { variant: string; company?: boolean }[]>
 > = {
   accepted: [{ variant: "gentle" }, { variant: "direct" }, { variant: "context" }],
-  engagement: [
+  // They wrote last, so our reply IS the moment to ask (S-N5).
+  pending_our_response: [
     { variant: "direct", company: true },
     { variant: "soft", company: true },
     { variant: "advice", company: true },
+  ],
+  // Ours was last, so the fitting move is a nudge, warmer than the ghosted set
+  // because this person has already written back at least once.
+  pending_their_response: [
+    { variant: "gentle" },
+    { variant: "check" },
+    { variant: "offer" },
   ],
   ghosted: [{ variant: "gentle" }, { variant: "direct" }, { variant: "reconnect" }],
 };
@@ -55,13 +63,15 @@ export function stageTemplateOptions(
 ): StageTemplateOption[] {
   const variants = STAGE_VARIANTS[stage];
   if (!variants) return [];
+  // The status is snake_case on the wire; the i18n namespace is camelCase.
+  const ns = stage.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
   const firstName = firstNameOf(contact.name);
   const greeting = firstName
     ? t("networking.compose.greeting", { firstName })
     : t("networking.compose.greetingNoName");
   const company = contact.current_company.trim();
   return variants.map(({ variant, company: personalized }) => {
-    const base = `networking.compose.templates.${stage}.${variant}`;
+    const base = `networking.compose.templates.${ns}.${variant}`;
     const body =
       personalized && !company
         ? t(`${base}BodyNoCompany`)

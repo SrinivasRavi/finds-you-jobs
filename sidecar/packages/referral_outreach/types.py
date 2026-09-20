@@ -140,34 +140,3 @@ class ResumeResult:
     detail: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Typed errors — safe messages only, never secrets
-# ---------------------------------------------------------------------------
-
-
-class ReferralError(Exception):
-    """Base for facade errors. `message` is UI-safe (no cookies/tokens/state)."""
-
-
-class AuthenticationError(ReferralError):
-    """The session is not authenticated (no valid `li_at`)."""
-
-
-class SessionExpired(ReferralError):
-    """A previously valid session has expired."""
-
-
-class RateLimited(ReferralError):
-    """LinkedIn rate-limited the account; a backoff is now in effect."""
-
-
-class InviteCapReached(ReferralError):
-    """The configured rolling invite cap is exhausted for now."""
-
-
-class ProfileUnavailable(ReferralError):
-    """The target profile could not be loaded."""
-
-
-class BrowserFailure(ReferralError):
-    """The local browser automation failed (crash, timeout, disconnect)."""

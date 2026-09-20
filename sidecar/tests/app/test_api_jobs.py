@@ -104,8 +104,20 @@ def test_run_score_new_fans_out_per_unscored_job(app_client: tuple[FastAPI, Test
     app, client = app_client
     with app.state.db.repos() as repos:
         repos.profile.upsert("# Master\n\nBackend engineer.")
-        repos.jobs.create(canonical_url="https://ex.co/a", title="A", source_adapter="lever")
-        repos.jobs.create(canonical_url="https://ex.co/b", title="B", source_adapter="lever")
+        # Descriptions must clear MIN_JD_CHARS or the planner skips them as too
+        # thin to score, which is the real floor and not a test artefact.
+        jd = (
+            "Backend engineer role building and operating Python services on AWS. "
+            "You will design schemas, own services end to end through on-call, and "
+            "review other engineers' work. Requirements: strong Python, solid SQL, "
+            "and a track record of shipping production software."
+        )
+        repos.jobs.create(
+            canonical_url="https://ex.co/a", title="A", description=jd, source_adapter="lever"
+        )
+        repos.jobs.create(
+            canonical_url="https://ex.co/b", title="B", description=jd, source_adapter="lever"
+        )
     sched = next(
         s for s in client.get("/api/schedules", headers=AUTH).json() if s["kind"] == "score_new"
     )
@@ -146,7 +158,12 @@ def _fake_probe_ok(_url: str, *_a: object, **_k: object) -> NormalizedJob:
         canonical_url="https://job-boards.greenhouse.io/acme/jobs/42",
         company="Acme",
         location="Remote",
-        description="Build distributed systems in Go and Rust.",
+        description=(
+            "Build distributed systems in Go and Rust. You will own services end to end, "
+            "from design review through on-call, design the data model, and mentor other "
+            "engineers. Requirements: strong systems background, production ownership, and "
+            "a track record of shipping reliable software at scale."
+        ),
         posted_at="2026-07-01",
         source_adapter="greenhouse",
     )
@@ -254,7 +271,10 @@ def test_add_by_url_restores_trashed_job_keeping_score(
     job_id = created["id"]
     # Give it a cached score + move it to Trash.
     with app.state.db.repos() as repos:
-        repos.job_scores.upsert(job_id=job_id, profile_version=1, score_0_100=88)
+        repos.jobs.set_score(
+            job_id, scorer_impl="scorer-llm", score_0_100=88,
+            reasons=[], breakdown_md="",
+        )
         repos.jobs.set_trash_state(job_id, trashed=True)
 
     resp = client.post("/api/jobs", headers=AUTH, json=payload)
@@ -382,16 +402,15 @@ def test_ttl_tick_backfills_legacy_trash_without_stamp(
 
     app, client = app_client
     j = _add_job(client, "https://ex.co/legacy")
-    # Simulate legacy: feed_state removed but no source_meta stamp.
+    # Simulate legacy: feed_state removed but no trashed_at stamp.
     with app.state.db.repos() as repos:
-        repos.jobs.update(j["id"], feed_state="removed", source_meta=None)
+        repos.jobs.update(j["id"], feed_state="removed", trashed_at=None)
 
     assert evict_stale_trash(app.state.db) == []  # backfilled, not tombstoned
     with app.state.db.repos() as repos:
         job = repos.jobs.get(j["id"])
         assert job is not None
-        assert job.source_meta is not None
-        assert "trashed_at" in job.source_meta
+        assert job.trashed_at is not None
 
 
 def test_retry_operation_reenqueues_same_kind(

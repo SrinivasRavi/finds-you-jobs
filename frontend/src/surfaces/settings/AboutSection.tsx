@@ -1,7 +1,8 @@
-// About & Updates pane — version, in-app software update, support (GitHub
-// Sponsors), community (Discord + #prompts-and-configs), and the AGPL/source
-// links. The update controls drive tauri-plugin-updater via shell/updater.ts
-// and degrade to an "unavailable" note in the browser-dev path.
+// About & Updates pane — version, the update check, support (GitHub Sponsors),
+// community (Discord + #prompts-and-configs), and the AGPL/source links. The
+// check asks GitHub whether a newer release exists (shell/updater.ts) and opens
+// that release page in the browser; the app never installs over itself. Degrades
+// to an "unavailable" note in the browser-dev path.
 
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -9,8 +10,8 @@ import { useTranslation } from "react-i18next";
 import { Icon } from "../../shell/icons";
 import { useAppVersion } from "../../shell/appVersion";
 import { openExternal } from "../../shell/openExternal";
-import { checkForUpdate, updaterAvailable, useAutoUpdateCheck } from "../../shell/updater";
-import { Section, Toggle } from "./shared";
+import { checkForUpdate, updaterAvailable } from "../../shell/updater";
+import { Section } from "./shared";
 
 // Outbound links. Kept here (and mirrored in README.md / the marketing site for
 // the Discord invite) so there's one obvious place to change them.
@@ -23,8 +24,7 @@ type UpdateState =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "uptodate" }
-  | { kind: "available"; version: string }
-  | { kind: "downloading"; percent: number | null }
+  | { kind: "available"; version: string; url: string }
   | { kind: "error" };
 
 function LinkButton({
@@ -61,7 +61,6 @@ function LinkButton({
 export const AboutSection = memo(function AboutSection() {
   const { t } = useTranslation();
   const version = useAppVersion();
-  const [autoCheck, setAutoCheck] = useAutoUpdateCheck();
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
   const canUpdate = updaterAvailable();
 
@@ -71,26 +70,9 @@ export const AboutSection = memo(function AboutSection() {
       const result = await checkForUpdate();
       setState(
         result.available
-          ? { kind: "available", version: result.version }
+          ? { kind: "available", version: result.version, url: result.url }
           : { kind: "uptodate" },
       );
-    } catch {
-      setState({ kind: "error" });
-    }
-  }
-
-  async function onInstall() {
-    setState({ kind: "downloading", percent: null });
-    try {
-      const result = await checkForUpdate();
-      if (!result.available) {
-        setState({ kind: "uptodate" });
-        return;
-      }
-      await result.install((fraction) =>
-        setState({ kind: "downloading", percent: fraction == null ? null : Math.round(fraction * 100) }),
-      );
-      // On success the app relaunches; this line rarely runs.
     } catch {
       setState({ kind: "error" });
     }
@@ -112,7 +94,7 @@ export const AboutSection = memo(function AboutSection() {
               <button
                 type="button"
                 data-testid="about-check-updates"
-                disabled={state.kind === "checking" || state.kind === "downloading"}
+                disabled={state.kind === "checking"}
                 onClick={onCheck}
                 className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] font-medium text-ink-2 transition-colors hover:bg-surface-3 disabled:opacity-50"
               >
@@ -135,12 +117,6 @@ export const AboutSection = memo(function AboutSection() {
                 <span className="text-ink-3">{t("settingsPage.about.upToDate")}</span>
               ) : state.kind === "error" ? (
                 <span className="text-bad">{t("settingsPage.about.checkError")}</span>
-              ) : state.kind === "downloading" ? (
-                <span className="text-ink-3">
-                  {state.percent == null
-                    ? t("settingsPage.about.downloadingIndeterminate")
-                    : t("settingsPage.about.downloading", { percent: state.percent })}
-                </span>
               ) : state.kind === "available" ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="text-ink-2">
@@ -150,24 +126,14 @@ export const AboutSection = memo(function AboutSection() {
                     testid="about-install-update"
                     icon="download"
                     primary
-                    onClick={onInstall}
+                    onClick={() => openExternal(state.url)}
                   >
                     {t("settingsPage.about.downloadInstall")}
                   </LinkButton>
-                  <span className="text-[11px] text-ink-4">{t("settingsPage.about.restartNote")}</span>
                 </div>
               ) : null}
             </div>
           ) : null}
-
-          {/* Check-on-launch preference */}
-          <div className="flex items-start gap-3 border-t border-border pt-3">
-            <div className="flex-1">
-              <div className="text-[13px] font-medium text-ink">{t("settingsPage.about.autoCheckLabel")}</div>
-              <div className="text-[11.5px] text-ink-3">{t("settingsPage.about.autoCheckHint")}</div>
-            </div>
-            <Toggle testid="about-auto-check-toggle" on={autoCheck} onChange={setAutoCheck} />
-          </div>
 
           {/* Data-preservation reassurance */}
           <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[11.5px] leading-relaxed text-ink-3">

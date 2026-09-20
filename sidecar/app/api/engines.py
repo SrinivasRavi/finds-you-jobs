@@ -256,13 +256,13 @@ async def verify_engine(
 
 
 @router.get("/api/engines")
-async def list_engines(request: Request) -> list[dto.EngineSettingDTO]:
+def list_engines(request: Request) -> list[dto.EngineSettingDTO]:
     with _db(request).repos() as repos:
         return [dto.engine_setting_dto(e) for e in repos.engine_settings.list()]
 
 
 @router.post("/api/engines", status_code=201)
-async def save_engine(
+def save_engine(
     request: Request, payload: dto.EngineSettingUpsert
 ) -> dto.EngineSettingDTO:
     if payload.provider not in PROVIDERS:
@@ -300,7 +300,7 @@ async def save_engine(
 
 
 @router.delete("/api/engines/{provider}", status_code=204)
-async def delete_engine(request: Request, provider: str) -> None:
+def delete_engine(request: Request, provider: str) -> None:
     with _db(request).repos() as repos:
         removed = repos.engine_settings.delete_by_engine(provider)
     if not removed:

@@ -1,106 +1,89 @@
-// In-app software update — a thin wrapper over tauri-plugin-updater.
+// Update check — "is a newer release out?", and nothing more.
 //
-// The check + download + install all run natively in the Rust core (not the
-// webview), so there is no CSP or network config to manage on this side; the
-// single allowed update endpoint is declared in tauri.conf.json's
-// `plugins.updater` and every downloaded update is Ed25519-verified against the
-// baked-in public key before it is applied. Everything here degrades gracefully
-// in the browser-dev path (no Tauri): `updaterAvailable()` is false and the
-// About panel shows the update controls as unavailable rather than erroring.
+// finds-you-jobs does not install its own updates. This is one HTTP GET against
+// the GitHub releases API; a newer tag surfaces a link that opens the release
+// page in the user's browser, where they download the installer exactly the way
+// they got the app in the first place. That leaves a single trust chain: the OS
+// verifies our Developer ID signature when the download is opened, and nothing
+// here ever writes over the running binary.
 //
-// Data safety: an update replaces the application binary only. The user's
-// profile, applications, resumes, and keys live in the OS data dir
-// (resolve_data_dir), untouched by an update.
+// The unattended path (download → verify → swap → relaunch) is deliberately
+// absent, along with the Ed25519 updater keypair, the signed .sig artifacts and
+// the latest.json manifest that only existed to serve it. See
+// docs/internal/auto-update.md for what it takes to bring it back.
+//
+// The check is manual only: Settings › About, on a button press. There is no
+// launch-time check and no preference for one, so the app makes NO outbound
+// request the user did not just ask for (vision: no silent network calls). The
+// next version's single toggle is "auto update to the latest version", which
+// governs installing, and it arrives with that feature.
+//
+// Everything degrades in the browser-dev path (no Tauri): `updaterAvailable()`
+// is false and the About panel shows the controls as unavailable, which also
+// keeps the e2e run from making outbound calls.
 
-import { useSyncExternalStore } from "react";
+import { rawAppVersion } from "./appVersion";
+
+const REPO = "SrinivasRavi/finds-you-jobs";
+const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
+/** Fallback target when a release carries no html_url of its own. */
+const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
 
 function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** True only inside the packaged desktop app, where the updater plugin exists. */
+/** True only inside the packaged desktop app, where a version check is meaningful. */
 export function updaterAvailable(): boolean {
   return inTauri();
 }
 
-export type UpdateHandle = {
-  version: string;
-  /** Release notes from the manifest, if any. */
-  notes?: string;
-  /** Download + install, then relaunch. `onProgress` gets 0..1, or null when
-   *  the total size is unknown. Resolves just before the app relaunches. */
-  install: (onProgress?: (fraction: number | null) => void) => Promise<void>;
-};
+export type CheckResult =
+  | { available: false }
+  | {
+      available: true;
+      /** Numeric-plus-suffix version as tagged, e.g. "0.5.8-beta". */
+      version: string;
+      /** Release page to open in the user's browser. */
+      url: string;
+    };
 
-export type CheckResult = { available: false } | ({ available: true } & UpdateHandle);
+/** `[major, minor, patch]`, or null for anything that isn't a release tag —
+ *  which is how the legacy fixed `latest` manifest tag gets skipped. */
+function parseVersion(tag: string): [number, number, number] | null {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(tag.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
 
-/** Ask the configured endpoint whether a newer signed release exists. */
+function isNewer(candidate: string, current: string): boolean {
+  const a = parseVersion(candidate);
+  const b = parseVersion(current);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] > b[i];
+  }
+  return false;
+}
+
+type ReleaseRow = { tag_name?: string; draft?: boolean; html_url?: string };
+
+/** Ask GitHub whether a release newer than the running build exists. Throws on
+ *  a network or API failure so callers can tell "no update" from "couldn't ask". */
 export async function checkForUpdate(): Promise<CheckResult> {
-  const { check } = await import("@tauri-apps/plugin-updater");
-  const update = await check();
-  if (!update) return { available: false };
-  return {
-    available: true,
-    version: update.version,
-    notes: update.body || undefined,
-    install: async (onProgress) => {
-      let total = 0;
-      let received = 0;
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          total = event.data.contentLength ?? 0;
-          received = 0;
-        } else if (event.event === "Progress") {
-          received += event.data.chunkLength;
-          onProgress?.(total > 0 ? received / total : null);
-        } else if (event.event === "Finished") {
-          onProgress?.(1);
-        }
-      });
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
-    },
-  };
-}
+  const current = await rawAppVersion();
+  const response = await fetch(RELEASES_API, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (!response.ok) throw new Error(`release check failed: ${response.status}`);
+  const rows = (await response.json()) as ReleaseRow[];
 
-// --- "Check on launch" preference (client-only, default off) -----------------
-// Kept in localStorage rather than the sidecar settings so it needs no schema
-// migration and works before the backend is even ready. Off by default: an
-// update check is an outbound request to GitHub, and finds-you-jobs makes no
-// silent network calls the user did not turn on (vision: no telemetry, control
-// over what leaves the machine).
-
-const AUTO_KEY = "fyj-auto-update-check";
-const autoListeners = new Set<() => void>();
-
-function readAuto(): boolean {
-  try {
-    return localStorage.getItem(AUTO_KEY) === "1";
-  } catch {
-    return false;
+  let best: { version: string; url: string } | null = null;
+  for (const row of rows) {
+    if (row.draft || !row.tag_name) continue;
+    if (!isNewer(row.tag_name, current)) continue;
+    if (best && !isNewer(row.tag_name, best.version)) continue;
+    best = { version: row.tag_name.replace(/^v/, ""), url: row.html_url ?? RELEASES_PAGE };
   }
+  return best ? { available: true, ...best } : { available: false };
 }
 
-export function setAutoUpdateCheck(on: boolean): void {
-  try {
-    localStorage.setItem(AUTO_KEY, on ? "1" : "0");
-  } catch {
-    /* ignore — a private-mode / disabled storage just means it won't persist */
-  }
-  for (const fn of autoListeners) fn();
-}
-
-function subscribeAuto(fn: () => void): () => void {
-  autoListeners.add(fn);
-  return () => autoListeners.delete(fn);
-}
-
-/** `[enabled, setEnabled]` for the "check for updates on launch" toggle. */
-export function useAutoUpdateCheck(): [boolean, (on: boolean) => void] {
-  const on = useSyncExternalStore(subscribeAuto, readAuto, () => false);
-  return [on, setAutoUpdateCheck];
-}
-
-export function autoUpdateCheckEnabled(): boolean {
-  return readAuto();
-}

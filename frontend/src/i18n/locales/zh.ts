@@ -188,6 +188,8 @@ const zh: DeepPartial<Messages> = {
       scoring: "评分中…",
       olderListing: "较早的职位",
       keywordScoreTitle: "关键词评分（免费、本机运行）— 灰色，非 AI 评分",
+      unscorableTitle:
+        "该职位未能抓取到职位描述，因此无法进行 AI 评分。灰色的 0 表示数据缺失，而不是匹配度差。",
     },
     empty: {
       filtered: "没有符合当前筛选或搜索的职位。",
@@ -464,6 +466,9 @@ const zh: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "返回推荐",
+    },
     linkedinPill: {
       connected: "LinkedIn 已连接",
       connecting: "连接中…",
@@ -490,14 +495,16 @@ const zh: DeepPartial<Messages> = {
     columns: {
       sent: "已发送",
       accepted: "已接受",
-      engagement: "互动中",
+      pendingOurResponse: "待你回复",
+      pendingTheirResponse: "等待对方",
       ghosted: "已失联",
       converted: "已转化",
     },
     columnEmpty: {
       sent: "等待对方接受 — 继续发送。",
       accepted: "已接受，等待第一条回复。",
-      engagement: "对话进行中 — 适时跟进。",
+      pendingOurResponse: "对方最后发言——该你回复了。",
+      pendingTheirResponse: "你最后发言——正在等待对方。",
       ghosted: "7 天以上无动静。",
       converted: "对方已内推或引荐了你。",
     },
@@ -530,7 +537,8 @@ const zh: DeepPartial<Messages> = {
       initialColumn: "初始列",
       optionSent: "已发送 — 邀请已发出",
       optionAccepted: "已接受 — 已经建立联系",
-      optionEngagement: "互动中 — 正在交流",
+      optionPendingOurResponse: "待你回复 — 对方最后发言",
+      optionPendingTheirResponse: "等待对方 — 你最后发言",
       optionConverted: "已转化 — 正在内推我",
       cancel: "取消",
       submit: "添加联系人",
@@ -586,6 +594,10 @@ const zh: DeepPartial<Messages> = {
       retried: "已重试",
       retry: "重试",
       retrying: "重试中…",
+      retryScoring_one: "重试 {{count}} 个失败评分",
+      retryScoring_other: "重试 {{count}} 个失败评分",
+      retryScoringTitle:
+        "这些职位在提供方可用的情况下用完了全部 3 次 AI 评分尝试。重试会归还它们的尝试次数，下一次调度将重新评分。没有职位描述的会被跳过，重试对它们没有用。",
       stop: "停止",
       stopping: "正在停止…",
       restarted: "生成期间应用重启了。",
@@ -1082,7 +1094,13 @@ const zh: DeepPartial<Messages> = {
       filledFields_other: "已填写 {{ok}}/{{count}} 个字段。",
       couldntComplete: "未能完成：{{blockers}}。",
       neverSubmits:
-        "P1 阶段 finds-you-jobs 绝不会替你提交 — 请检查无误后，点击网站自己的提交按钮。",
+        "finds-you-jobs 从不自行提交——请检查后在浏览器中自行提交，或让它替你点击一次提交。",
+      submitForMe: "替我提交",
+      confirmSubmit: "是的，提交",
+      cancelSubmit: "暂时不用",
+      submitting: "提交中…",
+      submitConfirmHint:
+        "这会在你刚刚查看的页面上，点击表单自己的提交按钮一次。无法撤销。",
       iSubmitted: "我已提交",
       didntSubmit: "未提交",
       retrying: "重试中…",
@@ -1117,6 +1135,10 @@ const zh: DeepPartial<Messages> = {
     backendStoppedFallback: "后端已停止响应",
     sidecarFatalBanner:
       "后端已停止：{{message}}。在退出并重新打开应用之前，你的任何操作都不会被保存。",
+    degradedBoot:
+      "后台任务已暂停。应用连续 3 次意外关闭，因此本次会话未启动后台任务。",
+    degradedBootResume: "恢复后台任务",
+    degradedBootDismiss: "关闭",
     work: {
       remote: "远程",
       hybrid: "混合",
@@ -1131,17 +1153,6 @@ const zh: DeepPartial<Messages> = {
       body: "该更改未能保存——应用在与本地后端通信时出错。",
       dismiss: "关闭",
       more_other: "另有 {{count}} 个较早的失败未显示",
-    },
-    rescore: {
-      title: "用 AI 重新评分这些职位？",
-      skipped_other: "（{{count}} 个已有针对此简历的 AI 评分 — 已跳过。）",
-      bodyResumeEdit_other:
-        "你的简历已更改。用 AI 根据新简历重新为 {{count}} 个职位评分？{{skipped}} 这会使用你的 LLM 密钥 — 每个职位一次调用。也可以保留当前分数；之后再次编辑简历即可随时重新评分。",
-      bodyModeSwitch_other:
-        "为职位板上还没有 AI 评分的 {{count}} 个职位评分？{{skipped}} 这会使用你的 LLM 密钥 — 每个职位一次调用。无论如何，未来扫描到的新职位都会自动进行 AI 评分。",
-      busy: "重新评分中…",
-      confirm_other: "重新评分 {{count}} 个职位",
-      keepScores: "保留当前分数",
     },
   },
 };

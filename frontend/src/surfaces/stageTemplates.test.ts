@@ -28,7 +28,12 @@ const SARAH = { name: "Sarah Tan", current_company: "Northline" };
 
 describe("stageTemplateOptions", () => {
   it("exposes 3 distinct options for each mapped stage", () => {
-    for (const stage of ["accepted", "engagement", "ghosted"] as ConnectionStatus[]) {
+    for (const stage of [
+      "accepted",
+      "pending_our_response",
+      "pending_their_response",
+      "ghosted",
+    ] as ConnectionStatus[]) {
       const options = stageTemplateOptions(stage, SARAH, t);
       expect(options).toHaveLength(3);
       expect(new Set(options.map((o) => o.id)).size).toBe(3);
@@ -48,9 +53,9 @@ describe("stageTemplateOptions", () => {
     }
   });
 
-  it("engagement is a referral ask personalized with the contact's employer", () => {
-    const options = stageTemplateOptions("engagement", SARAH, t);
-    // Every engagement option asks about a referral at THEIR company.
+  it("their-reply-owed is a referral ask personalized with the contact's employer", () => {
+    const options = stageTemplateOptions("pending_our_response", SARAH, t);
+    // They wrote last, so our reply is the moment to ask (S-N5).
     for (const o of options) {
       expect(o.body).toContain("Northline");
       expect(o.body.toLowerCase()).toContain("refer");
@@ -59,8 +64,12 @@ describe("stageTemplateOptions", () => {
     expect(options[0]!.body).toContain("Can you please refer me for a role at Northline?");
   });
 
-  it("engagement degrades gracefully when the employer is blank", () => {
-    const options = stageTemplateOptions("engagement", { ...SARAH, current_company: " " }, t);
+  it("the referral ask degrades gracefully when the employer is blank", () => {
+    const options = stageTemplateOptions(
+      "pending_our_response",
+      { ...SARAH, current_company: " " },
+      t,
+    );
     for (const o of options) {
       expect(o.body).toContain("your company");
       expect(o.body).not.toContain("{{company}}");
@@ -91,7 +100,12 @@ describe("stageTemplateOptions", () => {
   });
 
   it("never leaves an uninterpolated placeholder in any option of any stage", () => {
-    for (const stage of ["accepted", "engagement", "ghosted"] as ConnectionStatus[]) {
+    for (const stage of [
+      "accepted",
+      "pending_our_response",
+      "pending_their_response",
+      "ghosted",
+    ] as ConnectionStatus[]) {
       for (const contact of [SARAH, { name: "", current_company: "" }]) {
         for (const o of stageTemplateOptions(stage, contact, t)) {
           expect(o.body).not.toMatch(/\{\{|\}\}/);

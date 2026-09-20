@@ -16,6 +16,7 @@ from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
 
 ID = "remotive"
+INLINE_DESCRIPTION = True
 _CLAIM = "remotive.com"
 _HOSTS = {"remotive.com", "www.remotive.com", "remotive.io"}
 _API = "https://remotive.com/api/remote-jobs"

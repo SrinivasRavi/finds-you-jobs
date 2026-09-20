@@ -22,6 +22,7 @@ from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
 
 ID = "arbeitnow"
+INLINE_DESCRIPTION = True
 _CLAIM = "arbeitnow.com"
 _HOSTS = {"arbeitnow.com", "www.arbeitnow.com"}
 _API = "https://www.arbeitnow.com/api/job-board-api"

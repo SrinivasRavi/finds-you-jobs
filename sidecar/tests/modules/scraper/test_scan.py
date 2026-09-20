@@ -16,6 +16,15 @@ from sidecar.modules.scraper.types import ScanPrefs, ScraperError
 
 from .fakes import routed
 
+# Long enough to clear the scan's post-enrich MIN_JD_CHARS drop — these fixture
+# payloads exercise filter/dedup/error behavior, not description content, so
+# every surviving job needs a real-looking JD or the drop phase removes it.
+_JD = (
+    "We build reliable systems for our users every day, working closely "
+    "with product and design across the whole stack from planning to "
+    "on-call, end to end, every single week without exception, rain or shine."
+)
+
 GH_PAYLOAD = {
     "jobs": [
         {
@@ -23,6 +32,7 @@ GH_PAYLOAD = {
             "title": "Backend Engineer",
             "location": {"name": "Pune, India"},
             "first_published": "2026-07-01T00:00:00-04:00",
+            "content": _JD,
         },
         {
             "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/1",
@@ -77,6 +87,7 @@ def test_scan_dedups_across_sources_first_wins():
                 "absolute_url": "https://example.com/jobs/same",
                 "title": "Software Engineer",
                 "location": {"name": "Remote, India"},
+                "content": _JD,
             }
         ]
     }
@@ -103,6 +114,7 @@ def test_scan_failing_source_never_kills_the_scan():
                 "absolute_url": "https://example.com/jobs/9",
                 "title": "Engineer",
                 "location": {"name": "Mumbai, India"},
+                "content": _JD,
             }
         ]
     }
@@ -129,6 +141,7 @@ def test_scan_contains_unexpected_exception_from_one_source():
                 "absolute_url": "https://example.com/jobs/9",
                 "title": "Engineer",
                 "location": {"name": "Mumbai, India"},
+                "content": _JD,
             }
         ]
     }
@@ -159,6 +172,7 @@ def test_scan_per_source_cap_opt_in():
                 "absolute_url": f"https://example.com/jobs/{i}",
                 "title": "Engineer",
                 "location": {"name": "Remote"},
+                "content": _JD,
             }
             for i in range(10)
         ]
@@ -183,6 +197,7 @@ def test_scan_freshness_window():
                 "absolute_url": "https://example.com/jobs/undated",
                 "title": "Engineer",
                 "location": {"name": "Remote"},
+                "content": _JD,
             },
         ]
     }
@@ -193,6 +208,68 @@ def test_scan_freshness_window():
     # old row aged out; undated row kept (source gave no date; quality flags it)
     assert [j.canonical_url for j in result.jobs] == ["https://example.com/jobs/undated"]
     assert "no-posted-date" in result.jobs[0].trust_flags
+
+
+# ---------------------------------------------------------------------------
+# Drop and log (item 7) — a kept row that never got a scorable description
+# is discarded, not delivered as an unscorable husk, and the drop is logged
+# per source rather than silently vanished.
+# ---------------------------------------------------------------------------
+
+
+def test_scan_drops_rows_that_never_got_a_scorable_description():
+    payload = {
+        "jobs": [
+            {
+                "absolute_url": "https://example.com/jobs/thin",
+                "title": "Engineer",
+                "location": {"name": "Remote"},
+                "content": "Too short.",
+            },
+            {
+                "absolute_url": "https://example.com/jobs/full",
+                "title": "Engineer",
+                "location": {"name": "Remote"},
+                "content": _JD,
+            },
+        ]
+    }
+    config = _config(SourceEntry(url="https://boards.greenhouse.io/acme"))
+    result = scan(config, ScanPrefs(), fetcher_factory=routed({"/boards/acme/jobs": payload}))
+    assert [j.canonical_url for j in result.jobs] == ["https://example.com/jobs/full"]
+    report = result.per_source["greenhouse:acme"]
+    assert report.dropped_no_description == ["https://example.com/jobs/thin"]
+    assert report.kept == 2  # filter/dedup attrition is unaffected by the content drop
+
+
+def test_scan_drop_is_not_a_tombstone():
+    """A dropped URL isn't blocked from a later scan — the same URL with a
+    real description now is kept normally (no persisted block-list)."""
+    thin = {
+        "jobs": [
+            {
+                "absolute_url": "https://example.com/jobs/x",
+                "title": "Engineer",
+                "location": {"name": "Remote"},
+                "content": "Too short.",
+            }
+        ]
+    }
+    full = {
+        "jobs": [
+            {
+                "absolute_url": "https://example.com/jobs/x",
+                "title": "Engineer",
+                "location": {"name": "Remote"},
+                "content": _JD,
+            }
+        ]
+    }
+    config = _config(SourceEntry(url="https://boards.greenhouse.io/acme"))
+    first = scan(config, ScanPrefs(), fetcher_factory=routed({"/boards/acme/jobs": thin}))
+    assert first.jobs == []
+    second = scan(config, ScanPrefs(), fetcher_factory=routed({"/boards/acme/jobs": full}))
+    assert [j.canonical_url for j in second.jobs] == ["https://example.com/jobs/x"]
 
 
 def test_jsonl_row_shape_matches_contract():
@@ -282,6 +359,7 @@ def test_disabled_family_is_skipped_before_any_fetch():
                 "url": "https://remoteok.com/remote-jobs/1",
                 "company": "Acme",
                 "location": "Remote",
+                "description": _JD,
             }]}
         ),
     )
@@ -308,6 +386,7 @@ def test_disabled_full_source_key_skips_only_that_entry():
                             "absolute_url": "https://example.com/jobs/a",
                             "title": "Software Engineer",
                             "location": {"name": "Remote"},
+                            "content": _JD,
                         }
                     ]
                 }

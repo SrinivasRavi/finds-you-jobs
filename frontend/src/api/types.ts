@@ -40,7 +40,10 @@ export type BoardState = "active" | "trashed" | "expired";
 /** Score lifecycle for a board row (FR-JB-07 / NFR-OFFLINE-02):
  *  `scored` (real 0–100) / `pending` (queued or not yet attempted) /
  *  `failed` (the score op errored, none in flight — the `Score failed` pill). */
-export type ScoreStatus = "scored" | "pending" | "failed";
+/** `unscorable` = no usable description, so no scheduler tick will ever pick
+ *  the job up and its grey 0 is a missing-data marker, not a rating
+ *  (S-C24 D5 / S-A6). */
+export type ScoreStatus = "scored" | "pending" | "failed" | "unscorable";
 
 /**
  * Thrown by `previewJob` / `addJobByUrl` when the pasted URL was permanently
@@ -97,14 +100,6 @@ export interface Job {
   is_new: boolean;
   saved: boolean;
   board_state: BoardState;
-}
-
-/** GET /api/jobs/rescore/preview — the AI re-score consent numbers: cache
- *  misses a confirmed run would enqueue vs jobs already AI-scored at the
- *  current resume version (never re-spent). */
-export interface RescorePreview {
-  to_score: number;
-  cached: number;
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */
@@ -372,7 +367,6 @@ export interface NetworkingContact {
   company: string;
   linkedin_url: string;
   connection_status: string;
-  ask_status: string | null;
   audience_tag: string;
   last_message: string | null;
   last_message_at: string | null;
@@ -389,12 +383,15 @@ export type AudienceTag = "peer" | "hm" | "recruiter" | "leadership" | "other";
 /** Warmth split (US-REF-10): 1st-degree → warm DM; else cold connection-note. */
 export type Warmth = "warm" | "cold";
 /** Contact lifecycle. `candidate` = discovered, off the kanban; the rest are the
- *  kanban columns (US-NW-01). */
+ *  kanban columns (US-NW-01). The 2 pending_* columns split the old single
+ *  Engagement by who owes the next message (S-N5): `pending_our_response`
+ *  means theirs was last, `pending_their_response` means ours was. */
 export type ConnectionStatus =
   | "candidate"
   | "sent"
   | "accepted"
-  | "engagement"
+  | "pending_our_response"
+  | "pending_their_response"
   | "ghosted"
   | "converted";
 
@@ -646,13 +643,6 @@ export interface Profile {
   version: number;
   /** Null until the first extraction has run. */
   application_profile: ApplicationProfile | null;
-  /** Extracted ProfileEntities used by the FR-TL-01 fabrication guard. */
-  entities: {
-    skills: string[];
-    experiences: string[];
-    projects: string[];
-    education: string[];
-  };
 }
 
 /** Extracted resume text from an onboarding upload, held in the wizard draft for
@@ -927,6 +917,13 @@ export interface Settings {
 
 export type OperationState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
+/** Whether the 60 s tick loop that plans background work is running, and
+ *  whether a degraded boot is why it is not (D27). */
+export interface SchedulerStatus {
+  running: boolean;
+  degradedBoot: boolean;
+}
+
 export interface Operation {
   id: string;
   kind: OperationKind;
@@ -996,8 +993,8 @@ export interface DevResult {
 }
 
 /** All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
- *  Live-ledger sum + the pruned-ops aggregate, so the figures survive the ~250-op
- *  ledger retention and stay honest as an install ages. Mirrors CostTotalsDTO. */
+ *  Live-ledger sum + the pruned-ops aggregate, so the figures stay honest as an
+ *  install ages even if operations are deleted. Mirrors CostTotalsDTO. */
 export interface CostTotals {
   usd: number;
   tokens_in: number;

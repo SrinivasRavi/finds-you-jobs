@@ -20,10 +20,8 @@
 # version files + commit on main BEFORE running this — the script publishes
 # what's committed, it does not commit for you.
 #
-# Requires: clean, committed tree on `main`; `gh` authenticated; and the Ed25519
-# updater secret TAURI_SIGNING_PRIVATE_KEY set on the repo (else the release
-# build fails by design). The site repo is expected at ~/dev/findsyoujobs-site
-# (override with FYJ_SITE_DIR).
+# Requires: clean, committed tree on `main` and `gh` authenticated. The site repo
+# is expected at ~/dev/findsyoujobs-site (override with FYJ_SITE_DIR).
 
 set -euo pipefail
 

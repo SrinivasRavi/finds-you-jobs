@@ -6,7 +6,7 @@
   US-REF-04 — send via voyager (fake driver — no live LinkedIn) + audit log
   US-NW-09  — reach-out flips contact onto kanban + moves Saved → Seeking Referral
   US-NW-11  — never-accepted-after-cutoff query
-  FR-REF-*  — persistence into Contact / ContactJobAssoc / OutreachLog
+  FR-REF-*  — persistence into Contact / ReferralCandidate / OutreachLog
 
 ZERO live LinkedIn traffic: every discover/send goes through FakeVoyagerDriver
 (the `DRIVER_FACTORY` seam), every draft through FakeEngine. The wire stays cold.
@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -142,7 +143,7 @@ def test_discover_persists_candidates_tagged_and_off_kanban(wired: Wired) -> Non
         assert by_url["https://www.linkedin.com/in/raj-io"].warmth == "warm"
         assert by_url["https://www.linkedin.com/in/sarah-tan"].warmth == "cold"
         # per-job assoc created (US-REF-05)
-        assocs = repos.contact_job_assocs.list_for_job(wired.job_id)
+        assocs = repos.referral_candidates.list_for_job(wired.job_id)
         assert len(assocs) == 3
     # SSE live-update events for the popup (candidate + discovered)
     phases = [e["payload"]["phase"] for e in events]
@@ -422,7 +423,7 @@ def test_candidates_listable_when_resolved_name_differs_from_raw_company(wired: 
         )
         assert [c.linkedin_url for c in by_name] == ["https://www.linkedin.com/in/kim-lee"]
         # …and by the job association, regardless of how the employer is spelled.
-        assoc_ids = {a.contact_id for a in repos.contact_job_assocs.list_for_job(wired.job_id)}
+        assoc_ids = {a.contact_id for a in repos.referral_candidates.list_for_job(wired.job_id)}
         by_assoc = repos.contacts.list_for_referrals(company_names=set(), contact_ids=assoc_ids)
         assert [c.linkedin_url for c in by_assoc] == ["https://www.linkedin.com/in/kim-lee"]
 
@@ -755,3 +756,169 @@ def test_never_accepted_before_cutoff(wired: Wired) -> None:
     with wired.db.repos() as repos:
         stale = repos.contacts.list_never_accepted_before(cutoff)
         assert [c.id for c in stale] == [old_id]
+
+
+def _counting_factory(built: list[FakeVoyagerDriver], **kwargs: Any):
+    """One FRESH driver per build. The shared fake these tests otherwise use
+    hides an unclosed driver, because a single close() anywhere flips the one
+    instance's flag for every build site (S-C12)."""
+
+    def factory(tier: Any) -> FakeVoyagerDriver:
+        drv = FakeVoyagerDriver(**kwargs)
+        built.append(drv)
+        return drv
+
+    return factory
+
+
+def test_typeahead_and_discover_close_every_driver_they_build(wired: Wired) -> None:
+    """S-C12 — ownership is "the module function closes the driver it is
+    given"; these 2 sites build one each, so both must come back closed."""
+    built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        built, resolve_result=_DOMAIN_HIT, discover_result=DISCOVER_ROWS
+    )
+    ops.discover_entrypoint(
+        _ctx(wired.db, "discover", {"company": "Northline", "job_id": wired.job_id})
+    )
+    assert len(built) == 2  # resolve + discover
+    assert all(d.closed for d in built)
+
+
+def test_pasted_company_url_closes_every_driver_it_builds(wired: Wired) -> None:
+    """S-C12 — the authoritative pasted-URL resolve is its own build site."""
+    built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        built, resolve_result=_URL_HIT, discover_result=DISCOVER_ROWS
+    )
+    ops.discover_entrypoint(_ctx(wired.db, "discover", {
+        "company": "Northline", "job_id": wired.job_id,
+        "company_url": "https://www.linkedin.com/company/northline-systems/",
+    }))
+    assert len(built) == 2  # pasted-url resolve + discover
+    assert all(d.closed for d in built)
+
+
+def test_send_closes_its_driver_on_success_and_on_failure(wired: Wired) -> None:
+    """S-C12 — the send path must close on success AND on a voyager failure.
+    Its build moved next to `net_send`, which is what closes it."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+
+    ok_built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        ok_built,
+        connection_result={"op": "send-connection", "ok": True, "sent": True, "status": "sent"},
+    )
+    ops.send_entrypoint(_ctx(wired.db, "send", {
+        "contact_id": cid, "job_id": wired.job_id, "message": "Hi Sarah.",
+    }))
+    assert len(ok_built) == 1 and ok_built[0].closed
+
+    fail_built: list[FakeVoyagerDriver] = []
+    ops.DRIVER_FACTORY = _counting_factory(
+        fail_built,
+        raise_on="send_connection",
+        error=NetworkerError("voyager", "stale selector"),
+    )
+    with pytest.raises(NetworkerError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {
+            "contact_id": cid, "job_id": wired.job_id, "message": "Hi again.",
+        }))
+    assert len(fail_built) == 1 and fail_built[0].closed
+
+
+def _wrapped(upstream: BaseException, message: str) -> NetworkerError:
+    """What the driver actually raises: a typed wrapper `from` the worker error."""
+    err = NetworkerError("voyager", message)
+    err.__cause__ = upstream
+    return err
+
+
+def test_send_failure_is_routed_to_its_coded_label(wired: Wired) -> None:
+    """S-C14 — the exception router is live on the worker except path. A
+    recognized upstream state names its coded handler and the model is never
+    asked; the wrapper alone would have sent it down the unknown path."""
+    from sidecar.packages.referral_outreach import facade
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        raise_on="send_connection",
+        error=_wrapped(facade.RateLimited("429 from linkedin"), "429 from linkedin"),
+    )
+    events: list[dict] = []
+    with pytest.raises(NetworkerError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {
+            "contact_id": cid, "job_id": wired.job_id, "message": "Hi Sarah.",
+        }, events=events))
+
+    failed = [e for e in events if e["payload"].get("phase") == "send_failed"]
+    assert len(failed) == 1
+    assert failed[0]["payload"]["diagnosis"] == "rate_limited"
+
+
+def test_unrecognized_send_failure_routes_to_unknown(wired: Wired) -> None:
+    """S-C14 — a surprise takes the unknown path. With no engine configured the
+    label is `unknown` and the stop still stands; only the naming is missing."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        raise_on="send_connection",
+        error=_wrapped(RuntimeError("selector vanished"), "selector vanished"),
+    )
+    events: list[dict] = []
+    with pytest.raises(NetworkerError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {
+            "contact_id": cid, "job_id": wired.job_id, "message": "Hi Sarah.",
+        }, events=events))
+
+    failed = [e for e in events if e["payload"].get("phase") == "send_failed"]
+    assert failed[0]["payload"]["diagnosis"] == "unknown"
+
+
+def test_answering_an_engaged_contact_never_demotes_them(wired: Wired) -> None:
+    """S-N4 — the send path wrote `accepted` unconditionally whenever a DM to a
+    1st-degree contact landed, erasing the fact that they had ever written
+    back. Answering now lands them in `pending_their_response`."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        raj = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/raj-io"))
+        cid = raj.id
+        repos.contacts.update(
+            cid,
+            connection_status="pending_our_response",
+            profile_payload={"first_replied_at": "2026-09-01T00:00:00+00:00"},
+        )
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        dm_result={"op": "send-dm", "ok": True, "sent": True, "status": "sent"},
+    )
+    ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Raj!"}))
+    with wired.db.repos() as repos:
+        assert _nn(repos.contacts.get(cid)).connection_status == "pending_their_response"
+
+
+def test_a_first_send_to_a_never_replied_contact_still_lands_accepted(wired: Wired) -> None:
+    """The S-N4 fix must not drag a contact who has never written back into a
+    thread column: with no reply on record, a DM still means Accepted."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/raj-io")).id
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        dm_result={"op": "send-dm", "ok": True, "sent": True, "status": "sent"},
+    )
+    ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Raj!"}))
+    with wired.db.repos() as repos:
+        assert _nn(repos.contacts.get(cid)).connection_status == "accepted"

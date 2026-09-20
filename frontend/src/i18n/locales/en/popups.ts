@@ -110,7 +110,7 @@ const popups = {
       "DMs to 1st-degree connections have their own budget and never count against invites.",
     dmCounter: "DMs (last 24h): <strong>{{dmSent}}/{{dmLimit}}</strong>",
     manualModeQuota: "Manual mode — track against your own LinkedIn limits",
-    dailyLimitReached: "Daily limit reached. New requests queue until tomorrow.",
+    dailyLimitReached: "Daily limit reached. Nothing is queued; sending resumes tomorrow.",
     closeToLimit_one: "Close to your daily limit — {{count}} request left today.",
     closeToLimit_other: "Close to your daily limit — {{count}} requests left today.",
     bannerNotConnected:
@@ -227,6 +227,7 @@ const popups = {
     loadingRun: "Loading run…",
     noActivity: "No activity yet.",
     latestScreenshot: "Latest screenshot",
+    claudeSubscriptionError: "Claude Code CLI authentication failed. Please check if your Claude subscription is active and connected.",
     screenshotAlt: "Latest Applier evidence screenshot",
     noScreenshot: "No screenshot captured yet.",
     handoffTitle: "Form ready — review and submit in the application browser",
@@ -234,7 +235,13 @@ const popups = {
     filledFields_other: "Filled {{ok}} of {{count}} fields.",
     couldntComplete: "Couldn’t complete: {{blockers}}.",
     neverSubmits:
-      "finds-you-jobs never submits for you in P1 — check it over, then click the site’s own Submit.",
+      "finds-you-jobs never submits on its own — check it over, then submit it yourself in the browser, or ask it to click Submit once for you.",
+    submitForMe: "Submit it for me",
+    confirmSubmit: "Yes, submit it",
+    cancelSubmit: "Not yet",
+    submitting: "Submitting…",
+    submitConfirmHint:
+      "This clicks the form’s own Submit button once, on the page you just reviewed. It cannot be undone.",
     iSubmitted: "I submitted",
     didntSubmit: "Didn’t submit",
     retrying: "Retrying…",

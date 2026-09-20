@@ -1,16 +1,17 @@
 """JD enrichment (approved-plan #8) — fetch_detail fills missing JDs in-scan.
 
 JD available → nothing happens. JD missing → the adapter's `fetch_detail`
-pulls the real JD (LinkedIn guest posting endpoint, Workday CxS detail) so
-the job scores normally. Enrichment failure/impossibility keeps the row —
-the lenient alias+location match already admitted it.
+pulls the real JD (LinkedIn guest posting endpoint, Workday CxS detail,
+BambooHR per-job detail) so the job scores normally. A JD still missing (or
+still too thin to score) after enrichment gets its row dropped, not kept as
+a husk (item 7) — the failed/impossible enrichment's error is still recorded.
 """
 
 from __future__ import annotations
 
 from sidecar.modules.scraper.adapters import linkedin_guest, workday
 from sidecar.modules.scraper.config import PortalsConfig, SourceEntry
-from sidecar.modules.scraper.scraper import ENRICH_CAP, scan
+from sidecar.modules.scraper.scraper import SCAN_ENRICH_CAP, scan
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScraperError
 
 from .fakes import routed
@@ -19,6 +20,14 @@ _DETAIL_HTML = (
     '<div class="show-more-less-html__markup">'
     "<p>Own the <b>backend</b> platform.</p></div>"
 )
+
+# Long enough to clear scan()'s post-enrich MIN_JD_CHARS drop.
+_LONG_JD = (
+    "We build reliable systems for our users every day, working closely "
+    "with product and design across the whole stack from planning to "
+    "on-call, end to end, every single week without exception, rain or shine."
+)
+_LONG_JD_HTML = f'<div class="show-more-less-html__markup"><p>{_LONG_JD}</p></div>'
 
 
 def test_linkedin_fetch_detail_parses_guest_posting():
@@ -58,7 +67,7 @@ def test_workday_fetch_detail_reads_cxs_job_posting_info():
     )
 
 
-def test_scan_enrichment_failure_keeps_row_and_records_error():
+def test_scan_enrichment_failure_drops_row_but_records_error_and_drop():
     config = PortalsConfig(sources=[SourceEntry(board="linkedin")])
     result = scan(
         config,
@@ -71,14 +80,15 @@ def test_scan_enrichment_failure_keeps_row_and_records_error():
         ),
     )
     report = result.per_source["linkedin:linkedin"]
-    assert result.jobs, "rows survive a failed enrichment"
-    assert all(j.description == "" for j in result.jobs)
+    assert result.jobs == []  # no row got a scorable description
+    assert report.dropped_no_description  # every JD-less row is logged, not vanished
     assert any("enrich" in e and "429 slow down" in e for e in report.errors)
 
 
 def test_scan_enrichment_contains_unexpected_exception():
     """F-H6 — a non-ScraperError out of fetch_detail is contained per row,
-    keeping the row and the rest of the scan."""
+    keeping the rest of the scan running; the row itself still gets dropped
+    for lacking a scorable description."""
     config = PortalsConfig(sources=[SourceEntry(board="linkedin")])
     result = scan(
         config,
@@ -91,16 +101,21 @@ def test_scan_enrichment_contains_unexpected_exception():
         ),
     )
     report = result.per_source["linkedin:linkedin"]
-    assert result.jobs, "rows survive a crashed enrichment"
+    assert result.jobs == []
+    assert report.dropped_no_description
     assert any("unexpected TypeError: adapter bug" in e for e in report.errors)
 
 
-def test_enrich_cap_bounds_detail_fetches():
+def test_search_enrich_cap_is_unbounded_for_linkedin():
+    """SEARCH_ENRICH_CAP is unbounded — a search-shaped source already bounds
+    its own row count at query time, so every kept row gets enriched."""
     calls = {"n": 0}
 
     def _detail(url: str, body: object) -> str:
         calls["n"] += 1
-        return _DETAIL_HTML
+        return _LONG_JD_HTML
+
+    row_count = 30  # comfortably above the old shared ENRICH_CAP of 20
 
     def _cards(url: str, body: object) -> str:
         if "start=0" not in url:
@@ -108,7 +123,7 @@ def test_enrich_cap_bounds_detail_fetches():
         rows = "".join(
             f'<li ><div class="base-card" data-entity-urn="urn:li:jobPosting:{i}">'
             f'<h3 class="base-search-card__title">Backend Engineer {i}</h3></div></li>'
-            for i in range(ENRICH_CAP + 10)
+            for i in range(row_count)
         )
         return f"<ul>{rows}</ul>"
 
@@ -122,7 +137,39 @@ def test_enrich_cap_bounds_detail_fetches():
             }
         ),
     )
-    assert len(result.jobs) == ENRICH_CAP + 10
-    assert calls["n"] == ENRICH_CAP
-    enriched = [j for j in result.jobs if j.description]
-    assert len(enriched) == ENRICH_CAP
+    assert calls["n"] == row_count
+    assert len(result.jobs) == row_count
+    assert all(j.description for j in result.jobs)
+
+
+def test_scan_enrich_cap_bounds_enumerate_shaped_source():
+    """SCAN_ENRICH_CAP bounds enrichment for enumerate-shaped (ATS/board)
+    sources — unlike search-shaped LinkedIn, a company feed can run into the
+    thousands. Rows past the cap keep no JD, so the drop phase removes them."""
+    calls = {"n": 0}
+
+    def _detail(url: str, body: object) -> dict:
+        calls["n"] += 1
+        return {"jobOpening": {"description": _LONG_JD_HTML}}
+
+    row_count = SCAN_ENRICH_CAP + 10
+    listing = {
+        "result": [
+            {
+                "id": str(i),
+                "jobOpeningName": f"Engineer {i}",
+                "location": {"city": "Pune", "state": "MH"},
+            }
+            for i in range(row_count)
+        ]
+    }
+    result = scan(
+        PortalsConfig(sources=[SourceEntry(url="https://acme.bamboohr.com/careers")]),
+        ScanPrefs(),
+        fetcher_factory=routed(
+            {"acme.bamboohr.com/careers/list": listing, "/detail": _detail}
+        ),
+    )
+    assert calls["n"] == SCAN_ENRICH_CAP
+    assert len(result.jobs) == SCAN_ENRICH_CAP
+    assert "bamboohr:acme" in result.per_source

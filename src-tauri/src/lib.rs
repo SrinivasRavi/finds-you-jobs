@@ -36,7 +36,9 @@ fn open_external(url: String) -> Result<(), String> {
         .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = std::process::Command::new("xdg-open").arg(&url).spawn();
-    result.map(|_| ()).map_err(|e| format!("could not open browser: {e}"))
+    result
+        .map(|_| ())
+        .map_err(|e| format!("could not open browser: {e}"))
 }
 
 /// Strict validation for untrusted outbound URLs (F-H1): absolute http(s) with
@@ -50,8 +52,7 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
     if raw.chars().any(|c| c.is_ascii_control() || c == ' ') {
         return Err("refusing to open URL with whitespace or control characters".to_string());
     }
-    let parsed =
-        url::Url::parse(raw).map_err(|e| format!("refusing to open invalid URL: {e}"))?;
+    let parsed = url::Url::parse(raw).map_err(|e| format!("refusing to open invalid URL: {e}"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(format!("refusing to open non-http(s) URL: {raw}"));
     }
@@ -59,7 +60,9 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
         return Err(format!("refusing to open URL without a host: {raw}"));
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(format!("refusing to open URL with embedded credentials: {raw}"));
+        return Err(format!(
+            "refusing to open URL with embedded credentials: {raw}"
+        ));
     }
     Ok(parsed.to_string())
 }
@@ -101,7 +104,9 @@ fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
     let result = std::process::Command::new("x-terminal-emulator")
         .args(["-e", login_cmd])
         .spawn();
-    result.map(|_| ()).map_err(|e| format!("could not open terminal: {e}"))
+    result
+        .map(|_| ())
+        .map_err(|e| format!("could not open terminal: {e}"))
 }
 
 /// Set the macOS dock / app-switcher icon at runtime to the finds-you-jobs logo.
@@ -200,17 +205,6 @@ pub fn run() {
             open_login_terminal,
         ])
         .setup(|app| {
-            // In-app software update (desktop only): the updater checks the
-            // pinned endpoint, verifies the Ed25519 signature, and installs;
-            // the process plugin relaunches afterward. Registered here (not in
-            // the builder chain) so it's cleanly gated off any mobile target.
-            #[cfg(desktop)]
-            {
-                app.handle()
-                    .plugin(tauri_plugin_updater::Builder::new().build())?;
-                app.handle().plugin(tauri_plugin_process::init())?;
-            }
-
             // Dev-mode dock icon: the unbundled `tauri dev` binary has no
             // .app bundle to source an icon from, so set it explicitly on macOS.
             #[cfg(target_os = "macos")]
@@ -219,6 +213,9 @@ pub fn run() {
             // Pin the shell.log directory before the first log line — packaged
             // installs use the OS app-log dir, dev keeps repo-local logs/ (F-L5).
             init_shell_log(app.handle());
+            // Must follow init_shell_log (it resolves the directory the history
+            // lives in) and precede the spawn (it decides how the spawn starts).
+            sidecar::record_boot(app.handle());
 
             let state: State<AppState> = app.state();
             let inner = state.inner.clone();
@@ -323,7 +320,10 @@ mod tests {
         // Raw double quotes never survive serialization (percent-encoded), so
         // the spawned argument can't confuse any downstream quoting.
         let quoted = validate_external_url("https://x.example/a\"b?c=\"d").unwrap();
-        assert!(!quoted.contains('"'), "serialized URL still has a raw quote: {quoted}");
+        assert!(
+            !quoted.contains('"'),
+            "serialized URL still has a raw quote: {quoted}"
+        );
         let caret = validate_external_url("https://x.example/a^b|c").unwrap();
         assert!(caret.starts_with("https://x.example/"));
     }
