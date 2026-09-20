@@ -215,6 +215,12 @@ def test_attest_didnt_submit_leaves_card(app_client) -> None:
     assert kept["status"] == "ready_for_human"
     card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
     assert card["column"] == "saved"
+    # The other half of the ledger-honesty pair: `ready_for_human` IS P1 success,
+    # so it must still read succeeded. Without this the blocked fix could quietly
+    # start failing every run.
+    op = client.get(f"/api/operations/{kept['operation_id']}", headers=AUTH).json()
+    assert op["state"] == "succeeded"
+    assert not op["error"]
 
 
 def test_apply_cannot_be_enqueued_generically(app_client) -> None:
@@ -266,6 +272,15 @@ def test_closed_posting_blocks_with_zero_model_calls(app_client) -> None:
     assert final["status"] == "blocked"
     assert final["blockers"][0]["kind"] == "posting_closed"
     assert final["usage"]["calls"] == 0
+
+    # And the LEDGER agrees with the panel. Until 2026-09-20 `_finalize`
+    # returned an OperationOutcome for every terminal status, so a blocked run
+    # read "Succeeded" in Analytics while the panel beside it read "Blocked",
+    # and the failed-operation count under-reported by one. The reason carried
+    # is the first blocker, verbatim, which is the line the panel shows.
+    op = client.get(f"/api/operations/{final['operation_id']}", headers=AUTH).json()
+    assert op["state"] == "failed"
+    assert "posting_closed" in op["error"]
 
 
 # ---------------------------------------------------------------------------

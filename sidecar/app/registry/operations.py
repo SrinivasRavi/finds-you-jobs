@@ -59,6 +59,13 @@ class OperationOutcome:
     usage: dict[str, Any] | None = None
     engine: str | None = None
     model: str | None = None
+    # Set when the entrypoint ran to completion and the answer is that the thing
+    # the user asked for did not happen: the verbatim reason, which the runner
+    # records as a FAILED operation rather than a succeeded one. An entrypoint
+    # that crashes still raises, and the runner captures that the same way; this
+    # is for a failure the entrypoint already understands, where raising would
+    # throw away the usage and the result pointer it also has to report.
+    error: str | None = None
 
 
 Entrypoint = Callable[[OperationContext], OperationOutcome]

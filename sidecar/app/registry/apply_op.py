@@ -50,6 +50,7 @@ from sidecar.packages.jobapplier import (
 from sidecar.packages.jobapplier.fake import FakeApplyEngine
 from sidecar.packages.jobapplier.loop import ApplyEngine
 
+from ...modules._shared.completion_retry import CompletionCancelled
 from ..db import Repos
 from ..db.base import now_utc
 from ..db.database import Database, resolve_data_dir
@@ -213,7 +214,14 @@ async def _apply_async(
             ctx, application_id, run_id, control
         )
         if control.cancelled:
-            return _finalize_cancel(ctx, run_id)
+            # CompletionCancelled, not a returned outcome: the runner already
+            # maps it onto the `cancelled` operation state. Returning normally
+            # here marked a user's own Stop as "Succeeded" in the ledger, the
+            # same misreport a `blocked` run had (2026-09-20). The row finalize
+            # runs first so the durable run lands `interrupted` either way; the
+            # handler below re-enters it, which is a guarded no-op.
+            _finalize_cancel(ctx, run_id)
+            raise CompletionCancelled("cancelled by the user")
 
         with db.repos() as repos:
             profile = repos.profile.get_current()
@@ -574,11 +582,12 @@ def advance_card_to_applied(repos: Repos, application_id: str, *, by: str) -> No
     )
 
 
-def _finalize_cancel(ctx: OperationContext, run_id: str) -> OperationOutcome:
+def _finalize_cancel(ctx: OperationContext, run_id: str) -> None:
+    """Land the durable run `interrupted`. Guarded to ACTIVE rows upstream, so
+    calling it twice on one run is a no-op."""
     db = ctx.db
     assert db is not None
     finalize_run_interrupted(db, run_id, "cancelled by the user")
-    return OperationOutcome(result_ref={"run_id": run_id, "status": "interrupted"})
 
 
 def _finalize(
@@ -628,4 +637,20 @@ def _finalize(
     return OperationOutcome(
         result_ref={"run_id": run_id, "status": result.status.value},
         usage=usage,
+        # A run that ended anywhere but `ready_for_human` did not do what the
+        # user asked, and the ledger has to say so. It used to return normally
+        # from every terminal status, so a `blocked` run read "Succeeded" in
+        # Analytics while the panel beside it read "Blocked" (2026-09-20). The
+        # reason is the first blocker, verbatim, which is the same line the
+        # panel shows; the usage above still rides along, so a failed run keeps
+        # its cost in the dashboard.
+        error=None if status in ("ready_for_human", "submitted") else _failure_reason(result),
     )
+
+
+def _failure_reason(result: ApplyResult) -> str:
+    """The verbatim line for a run that did not reach a human-reviewable form."""
+    for blocker in result.blockers:
+        detail = blocker.detail or blocker.kind
+        return f"{blocker.kind}: {detail}" if blocker.detail else blocker.kind
+    return result.summary or f"apply run ended {result.status.value}"

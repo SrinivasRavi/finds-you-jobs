@@ -395,6 +395,32 @@ class OperationRunner:
                     if resolved is not None:
                         self._circuit.record_success(resolved.name)
                         probe_engine = None  # lease transferred (probe verdict: healthy)
+                    if outcome.error:
+                        # The entrypoint ran to completion and reports that what
+                        # the user asked for did not happen (an apply run that
+                        # ended `blocked`, say). It is a failed operation, and it
+                        # keeps the usage it already spent, which is why this is
+                        # not simply raised. The engine answered, so the breaker
+                        # above is left as recorded.
+                        try:
+                            record_span_failure(span, outcome.error)
+                        except Exception:  # noqa: BLE001 — the span is additive; the row must land
+                            self._log.exception(
+                                "span recording failed for operation %s (%s)", operation_id, kind
+                            )
+                        with self._db.repos() as repos:
+                            repos.operations.mark_failed(
+                                operation_id,
+                                error=outcome.error,
+                                usage=outcome.usage,
+                                engine=outcome.engine,
+                                model=outcome.model,
+                            )
+                        self._log.info(
+                            "operation %s (%s) → failed: %s", operation_id, kind, outcome.error
+                        )
+                        self._publish(operation_id, kind, "failed", error=outcome.error)
+                        return
                     try:
                         record_span_success(span, outcome)
                     except Exception:  # noqa: BLE001 — the span is additive; state + chain must run
