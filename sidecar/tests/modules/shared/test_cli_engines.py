@@ -311,4 +311,4 @@ def test_run_cli_child_runs_in_its_own_process_group() -> None:
     # timeout can never take out the app's own group.
     proc = run_cli(["/bin/sh", "-c", "ps -o pgid= -p $$"], timeout=10)
     assert proc.returncode == 0
-    assert int(proc.stdout.strip()) != os.getpgrp()
+    assert int(proc.stdout.strip()) != getattr(os, "getpgrp")()
