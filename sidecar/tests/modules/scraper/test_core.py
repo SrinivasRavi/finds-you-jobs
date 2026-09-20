@@ -241,7 +241,8 @@ min = 100000
 currency = "USD"
 [scan]
 max_age_days = 30
-"""
+""",
+        encoding="utf-8",
     )
     config = load_portals(p)
     assert config.sources[0].url.endswith("/gleanwork")
@@ -271,7 +272,8 @@ def test_content_by_title_rule_without_scope_is_rejected(tmp_path):
 board = "remoteok"
 [[filters.content.by_title_keyword]]
 block = ["on-site"]
-"""
+""",
+        encoding="utf-8",
     )
     with pytest.raises(ScraperError) as ei:
         load_portals(bad)
@@ -284,7 +286,7 @@ def test_portals_config_errors_are_typed_and_verbatim(tmp_path):
     assert "[portals-config]" in str(ei.value)
 
     bad = tmp_path / "bad.toml"
-    bad.write_text("[[sources]]\nname_only = true\n")
+    bad.write_text("[[sources]]\nname_only = true\n", encoding="utf-8")
     with pytest.raises(ScraperError) as ei:
         load_portals(bad)
     assert "needs `url` or `board`" in str(ei.value)

@@ -30,7 +30,7 @@ from sidecar.modules.scraper.types import ScanPrefs, ScraperError
 
 from .fakes import PAYLOADS, FakeFetcher, routed
 
-_LINKEDIN_HTML = (PAYLOADS / "linkedin_guest.html").read_text()
+_LINKEDIN_HTML = (PAYLOADS / "linkedin_guest.html").read_text(encoding="utf-8")
 
 # ---------------------------------------------------------------------------
 # Query construction
