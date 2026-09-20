@@ -3,7 +3,7 @@
 One symmetric Fernet key per install seals every locally stored secret (BYOK
 API keys and the LinkedIn session storage-state). There is exactly ONE store
 per machine: the OS keychain via `keyring` (macOS Keychain, Windows Credential
-Manager, Linux Secret Service). The 0600 key file is not a parallel store, it
+Manager, Linux Secret Service). The owner-only key file is not a parallel store, it
 is what a machine with no working keychain falls back to, and without it a
 Linux box lacking a Secret Service could not save an API key at all.
 
@@ -12,7 +12,7 @@ Resolution (`get_app_key`), in order, resolved ONCE per data dir and cached:
 1. env `FYJ_SESSION_KEY` — explicit override, read on every call so tests stay
    isolated from each other
 2. the OS keychain
-3. an existing 0600 key file
+3. an existing owner-only key file
 4. nothing anywhere: if this install has ever sealed a secret, RAISE
    (`AppKeyUnavailable`); otherwise it is a fresh profile, so mint a key and
    store it
@@ -29,9 +29,10 @@ exists for tests that swap a data dir's backing store underneath it.
 
 Threat-model honesty (F-L2): on the key-FILE fallback the key sits beside the
 ciphertext it protects, so an attacker with read access to the data dir gets
-both — that path is obfuscation with a 0600 permission bar, not encryption
-against them. Note also that 0600 is a Unix guarantee; `os.open` mode bits do
-not map onto Windows ACLs, which is one more reason the keychain stays primary.
+both — that path is obfuscation with an owner-only permission bar, not
+encryption against them. `os.open` mode bits do not map onto Windows ACLs, so
+there the bar is an explicit `icacls` grant instead (`_harden_owner_only`);
+the keychain stays primary on every platform regardless.
 
 The LinkedIn session-file seal/read/write helpers interoperate with
 `referral_outreach/upstream/secure_store.py` (the GPL side) via the shared
@@ -41,9 +42,11 @@ sides never import each other, only agree on that format and the key env var.
 
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -106,9 +109,9 @@ def _keyring_put(key: str) -> bool:
 
 
 def _read_key_file(data_dir: Path) -> str | None:
-    """The existing 0600 key file, or None. Never creates one — minting is the
-    resolver's decision to make, and only after `_has_sealed_secret` says this
-    is genuinely a new profile."""
+    """The existing owner-only key file, or None. Never creates one — minting
+    is the resolver's decision to make, and only after `_has_sealed_secret`
+    says this is genuinely a new profile."""
     try:
         key = (data_dir / KEY_FILE_NAME).read_text(encoding="utf-8").strip()
     except OSError:
@@ -116,21 +119,58 @@ def _read_key_file(data_dir: Path) -> str | None:
     return key or None
 
 
+def _harden_owner_only(path: Path) -> None:
+    """Make the key file owner-only on Windows, which has no POSIX mode bits.
+
+    The 0o600 handed to `os.open` there sets only the read-only attribute, so
+    the file inherits the data dir's ACL and `stat` reports 0o666 whatever we
+    asked for. `icacls` (present in every Windows install) drops that
+    inheritance and grants the running account alone. Best effort: the key is
+    already on disk by now, so a failure is logged, never fatal."""
+    if os.name != "nt":
+        return
+    user = os.environ.get("USERNAME") or getpass.getuser()
+    domain = os.environ.get("USERDOMAIN")
+    account = f"{domain}\\{user}" if domain else user
+    # Absolute path, like the taskkill call in claude_engine.py (S607).
+    icacls = os.path.join(
+        os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe"
+    )
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [icacls, str(path), "/inheritance:r", "/grant:r", f"{account}:F"],
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("could not restrict %s to its owner (%s)", path, exc)
+        return
+    if proc.returncode != 0:
+        logger.warning(
+            "could not restrict %s to its owner (icacls exit %d)", path, proc.returncode
+        )
+
+
 def _write_key_file(data_dir: Path, key: str) -> None:
-    """App-managed key file, owner-only perms (0600) — the NFR-SEC-01 fallback.
+    """App-managed key file, owner-only — the NFR-SEC-01 fallback.
 
     Honest guarantee (F-L2): this key lives in the SAME data dir as the
     ciphertext it seals, so against an attacker who can read the user's files
-    it is obfuscation plus a 0600 permission bar, not real encryption — they
-    can read the key exactly as the app does. True at-rest secrecy on this
-    path exists only with the OS keychain (or the env override); the file
-    fallback keeps secrets out of casual greps/backups, no more."""
+    it is obfuscation plus an owner-only permission bar, not real encryption —
+    they can read the key exactly as the app does. True at-rest secrecy on
+    this path exists only with the OS keychain (or the env override); the file
+    fallback keeps secrets out of casual greps/backups, no more.
+
+    Owner-only means 0600 on POSIX and an explicit ACL on Windows, which
+    ignores the mode entirely (`_harden_owner_only`)."""
     data_dir.mkdir(parents=True, exist_ok=True)
     path = data_dir / KEY_FILE_NAME
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(key)
-    logger.info("created app-managed key at %s (0600)", path)
+    _harden_owner_only(path)
+    logger.info("created app-managed key at %s (owner-only)", path)
 
 
 def _has_sealed_secret(data_dir: Path) -> bool:
