@@ -102,16 +102,24 @@ def test_key_file_fallback_creates_owner_only_and_is_stable(
     assert path.exists()
     if os.name == "nt":
         # Windows has no mode bits — `stat` reports 0o666 whatever `os.open`
-        # was given, so the guarantee is the ACL: this account, plus whichever
-        # of SYSTEM and Administrators carry an explicit ACE, the same two that
-        # outrank 0600 on POSIX. What must never appear is anyone else.
+        # was given, so the bar is the ACL, and it is parity with 0600 rather
+        # than a single ACE: 0600 never shut out root either. What must never
+        # appear is a principal that is somebody ELSE — `BUILTIN\Users` and
+        # `Everyone` above all. See `_harden_owner_only` for why.
         entries = _acl_entries(path)
         assert entries, "icacls listed no ACL entries for the key file"
         account = (os.environ.get("USERNAME") or getpass.getuser()).lower()
-        allowed = (account, r"nt authority\system", r"builtin\administrators")
-        assert all(
-            any(who in e.lower() for who in allowed) for e in entries
-        ), entries
+        allowed = (
+            account,
+            # Windows' root, and an Administrator can take ownership anyway.
+            r"nt authority\system",
+            r"builtin\administrators",
+            # Owner-scoped pseudo-SIDs (S-1-3-4, S-1-3-0). Both resolve to the
+            # owner, so neither can hand a 3rd party anything.
+            "owner rights",
+            "creator owner",
+        )
+        assert all(any(who in e.lower() for who in allowed) for e in entries), entries
     else:
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     # Stable across calls — the same key comes back, no rotation. Cleared first,
