@@ -155,20 +155,16 @@ jobs:
         run: ./scripts/sign-sidecar-macos.sh
 
       - name: Build the app (codegen + frontend + tauri bundle)
-        # Signing the updater artifacts needs the Ed25519 private key at build
-        # time. With bundle.createUpdaterArtifacts:true the build FAILS if the
-        # key is absent — deliberately: better a loud failure than a release
-        # whose updates no client can verify. Set the two secrets (see
-        # distribution.md section 9) before pushing to `release`. Empty password is
-        # fine if the key was generated without one.
-        #
         # The Apple vars drive codesign + notarize + staple on the macOS legs.
         # APPLE_SIGNING_IDENTITY arrives from the keychain-import step above.
         # Tauri reads all of these only on macOS, so the empty values the other
         # legs see are inert.
+        #
+        # There is no second, updater-only signing key here any more. The app
+        # checks GitHub for a newer release and links the user to it; it never
+        # downloads or installs over itself, so the Ed25519 keypair that guarded
+        # that step has nothing left to guard (docs/internal/auto-update.md).
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
@@ -250,30 +246,22 @@ jobs:
             && echo "note: the .app carries its own ticket too" \
             || echo "note: the .app has no staple of its own; the .dmg's ticket covers the download"
 
-      - name: Collect installers + updater artifacts, stamp -beta into filenames
+      - name: Collect installers, stamp -beta into filenames
         # `-beta` is added HERE, to the distributed filenames only — the
         # embedded version must stay numeric for MSI (see header comment).
-        # Alongside the first-install installers we also collect the updater
-        # packages (macOS .app.tar.gz, and the .sig for each updater target) so
-        # the release job can build latest.json. The same VERSION→VERSION-beta
-        # rename keeps each artifact paired with its .sig by name.
         shell: bash
         run: |
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           mkdir -p dist-beta
           shopt -s nullglob
-          # Installers + Windows/Linux updater sigs: these filenames already
-          # carry the version, so the VERSION→VERSION-beta rename is enough.
-          # Windows and Linux keep Tauri's names: `_amd64.deb` and
-          # `name-version-release.arch.rpm` are what Debian policy and RPM
+          # These filenames already carry the version, so the VERSION→VERSION-beta
+          # rename is enough. Windows and Linux keep Tauri's names: `_amd64.deb`
+          # and `name-version-release.arch.rpm` are what Debian policy and RPM
           # expect, so "fixing" them would be the actual mistake.
           for f in src-tauri/target/release/bundle/nsis/*.exe \
-                   src-tauri/target/release/bundle/nsis/*.sig \
                    src-tauri/target/release/bundle/msi/*.msi \
-                   src-tauri/target/release/bundle/msi/*.sig \
                    src-tauri/target/release/bundle/deb/*.deb \
                    src-tauri/target/release/bundle/appimage/*.AppImage \
-                   src-tauri/target/release/bundle/appimage/*.sig \
                    src-tauri/target/release/bundle/rpm/*.rpm; do
             base=$(basename "$f")
             cp "$f" "dist-beta/${base/${VERSION}/${VERSION}-beta}"
@@ -283,11 +271,6 @@ jobs:
           # for the architecture and appears on no Apple surface, and underscores
           # are not the convention for Mac downloads. Apple says arm64 and Intel,
           # so the download says arm64 and intel.
-          #
-          # The .app.tar.gz updater bundle additionally arrives as bare
-          # "<product>.app.tar.gz" with NO version and NO arch, so both Mac legs
-          # would collide on the release and the manifest could not tell the two
-          # apart. Both artifacts are named here, together, from one ARCH.
           case "${{ matrix.label }}" in
             macos-arm64) ARCH=arm64 ;;
             macos-x64)   ARCH=intel ;;
@@ -297,10 +280,6 @@ jobs:
             STEM="finds-you-jobs-${VERSION}-beta-${ARCH}"
             for f in src-tauri/target/release/bundle/dmg/*.dmg; do
               cp "$f" "dist-beta/${STEM}.dmg"
-            done
-            for f in src-tauri/target/release/bundle/macos/*.app.tar.gz; do
-              cp "$f" "dist-beta/${STEM}.app.tar.gz"
-              cp "${f}.sig" "dist-beta/${STEM}.app.tar.gz.sig"
             done
           fi
           ls -la dist-beta
@@ -341,18 +320,6 @@ jobs:
           ls -la dist
           [ -n "$(ls -A dist)" ]
 
-      - name: Build the auto-update manifest (latest.json)
-        # Reads the .sig files + updater artifacts in dist/, emits latest.json,
-        # then moves the .sig files out so they don't clutter the user-facing
-        # release (their contents are already embedded in the manifest).
-        run: |
-          node scripts/build-updater-manifest.mjs \
-            dist \
-            "${{ steps.ver.outputs.version }}" \
-            "v${{ steps.ver.outputs.version }}-beta" \
-            latest.json
-          mkdir -p _sigs && mv dist/*.sig _sigs/ 2>/dev/null || true
-
       - name: Create/update the versioned GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -367,28 +334,14 @@ jobs:
 
             | OS | Download | First-launch note |
             |---|---|---|
-            | macOS (Apple Silicon) | the `*_aarch64.dmg` | Drag into **Applications** and open it. No `xattr`, no warnings |
-            | macOS (Intel) | the `*_x64.dmg` | same as above |
+            | macOS (Apple Silicon) | the `*-arm64.dmg` | Drag into **Applications** and open it. No `xattr`, no warnings |
+            | macOS (Intel) | the `*-intel.dmg` | same as above |
             | Windows | the `*-setup.exe` (NSIS) — or the `.msi` if you prefer | SmartScreen: **More info → Run anyway** |
             | Linux | the `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` (Fedora) | `chmod +x` the AppImage |
 
-            Already on a build with in-app updates? Settings › About › **Check
-            for updates** pulls this release directly. Your data is preserved.
+            Installing over an existing copy keeps your data. Your profile,
+            saved jobs, applications, resumes, and API keys live outside the app
+            and are untouched.
 
             The app is fully local: your data stays on your machine, and LLM
             calls go directly to the provider whose key you bring.
-
-      - name: Publish the auto-update manifest to the fixed `latest` tag
-        # The app's updater endpoint points at this stable URL
-        # (releases/download/latest/latest.json). Kept a pre-release so it never
-        # steals the "Latest" badge from the real versioned releases; direct-tag
-        # download works regardless of that flag.
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: latest
-          name: Auto-update manifest
-          prerelease: true
-          files: latest.json
-          body: |
-            Machine-readable manifest the in-app updater polls. **Don't download
-            this** — get the app from the versioned releases on the Releases page.

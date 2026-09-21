@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sidecar.modules.networker.types import NetworkerError
 from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
@@ -31,8 +31,12 @@ from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
 from ..db.base import now_utc
 from ..events import make_event
 from . import networker_ops
+from .exception_router import route_cause
 from .networker_ops import linkedin_feature_flags, resolve_pacing_profile
 from .operations import OperationContext, OperationOutcome
+
+if TYPE_CHECKING:
+    from sidecar.modules.scraper.types import NormalizedJob, SourceReport
 
 # 60-day never-accepted auto-archive window (US-NW-11 / FR-NW-13).
 STALE_CONTACT_DAYS = 60
@@ -172,7 +176,11 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
         repos.linkedin_session.update(status="connecting", paused_until=None, paused_reason="")
     _publish_linkedin(ctx, "connecting")
 
-    control = LOGIN_CONTROL.register(ctx.operation_id or "")
+    # Register and remove under ONE key (S-C11): an op with no id registered
+    # under "" and the removal, guarded on `operation_id is not None`, left
+    # that entry behind for the process lifetime.
+    control_key = ctx.operation_id or ""
+    control = LOGIN_CONTROL.register(control_key)
     driver = networker_ops.DRIVER_FACTORY(profile)
     try:
         # The --linger window (TEMPORARY, 2026-07-08) was retired 2026-07-09:
@@ -184,6 +192,9 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
             cancel_check=control.is_cancelled,
         )
     except NetworkerError as exc:
+        # S-C14: route it first, so an unrecognized login failure captures its
+        # evidence instead of collapsing into one verbatim string.
+        route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
         # Cancel / timeout / no-cookie — an expected domain outcome, not a crash.
         # Persist a disconnected session + surface it, then let the op record the
         # verbatim reason in the ledger (NFR-SIDE-04) by re-raising.
@@ -192,8 +203,7 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
         _publish_linkedin(ctx, "disconnected", error=str(exc))
         raise
     finally:
-        if ctx.operation_id is not None:
-            LOGIN_CONTROL.remove(ctx.operation_id)
+        LOGIN_CONTROL.remove(control_key)
         driver.close()
 
     now = now_utc()
@@ -221,6 +231,45 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
 # ---------------------------------------------------------------------------
 # archive_stale_contacts (US-NW-11 / FR-NW-13 scheduler tick)
 # ---------------------------------------------------------------------------
+
+
+
+def _fill_descriptions(
+    jobs: list[NormalizedJob], report: SourceReport
+) -> list[NormalizedJob]:
+    """Fetch the real JD for rows the logged-in search leaves empty (S-A6), and
+    return only the rows that ended up with a scorable one.
+
+    The search returns cards: title, company, location, url, no body. `scan()`
+    has an enrich phase for exactly this and the logged-in path never had one,
+    which is why 248 of 248 rows on the maintainer's install had a 0-char
+    description and could not be AI-scored at all. Same helper the guest adapter
+    uses, and it is an ANONYMOUS request that carries no session, so it costs the
+    LinkedIn account nothing; the bound is HTTP politeness, not account safety,
+    which is why every row is filled rather than the first 20 (D24).
+
+    A row still under the scorer's floor is dropped with its URL recorded (D23):
+    keeping it would put a permanently unrankable husk on the board. No
+    tombstone, so a later search can find the same posting with a real body."""
+    from sidecar.modules.scraper.adapters import linkedin_guest
+    from sidecar.modules.scraper.http import Fetcher
+    from sidecar.modules.scraper.scraper import MIN_JD_CHARS, SEARCH_ENRICH_CAP
+
+    fetcher = Fetcher(usage=report.usage)
+    empty = [j for j in jobs if not j.description]
+    for job in empty if SEARCH_ENRICH_CAP is None else empty[:SEARCH_ENRICH_CAP]:
+        try:
+            job.description = linkedin_guest.fetch_detail(job, fetcher)
+        except Exception as exc:  # noqa: BLE001 — one bad row never fails a search
+            report.errors.append(f"enrich {job.canonical_url}: {exc}")
+
+    kept: list[NormalizedJob] = []
+    for job in jobs:
+        if len(job.description.strip()) < MIN_JD_CHARS:
+            report.dropped_no_description.append(job.canonical_url)
+        else:
+            kept.append(job)
+    return kept
 
 
 def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
@@ -366,6 +415,10 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
         seen.add(job.canonical_url)
         deduped.append(job)
     report.kept = len(deduped)
+
+    if not dry_run:
+        deduped = _fill_descriptions(deduped, report)
+        report.kept = len(deduped)
 
     if not dry_run:
         with ctx.db.repos() as repos:

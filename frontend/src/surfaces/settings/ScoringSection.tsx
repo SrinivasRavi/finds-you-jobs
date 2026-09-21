@@ -2,8 +2,8 @@
 // to it. Every scanned job is scored; the choice is HOW. AI failures fall back
 // to a grey keyword score (retry in Logs). (Extracted from Settings.tsx
 // 2026-07-25, F-M6 monolith split — pure moves, zero behavior change.)
-// Memoized: `settings` is the query-stable object; `patch`/`onPickMode` are
-// root useCallbacks.
+// Memoized: `settings` is the query-stable object; `patch` is a root
+// useCallback.
 
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
@@ -56,11 +56,9 @@ function ScoreBatchCapControl({
 export const ScoringSection = memo(function ScoringSection({
   settings,
   patch,
-  onPickMode,
 }: {
   settings: SettingsT;
   patch: (p: Partial<SettingsT>) => void;
-  onPickMode: (mode: SettingsT["scoring_mode"]) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -88,7 +86,7 @@ export const ScoringSection = memo(function ScoringSection({
                 type="button"
                 data-testid={`scoring-mode-${mode}`}
                 data-on={settings.scoring_mode === mode}
-                onClick={() => onPickMode(mode)}
+                onClick={() => patch({ scoring_mode: mode })}
                 className={
                   "rounded-md border px-3 py-2 text-left text-[12.5px] " +
                   (settings.scoring_mode === mode

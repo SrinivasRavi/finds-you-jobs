@@ -105,6 +105,26 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
   await expect(page.getByTestId("applier-cost-line")).toBeVisible();
   await page.screenshot({ path: `${DIR}/panel-ready-for-human.png`, fullPage: true });
 
+  // S-A5: "Submit it for me" is offered, and it is two-step. P1 puts a
+  // confirmation in front of every irreversible action, so the first click
+  // only reveals the confirm; nothing is sent until the second.
+  const submitBtn = page.getByTestId("applier-submit-btn");
+  await expect(submitBtn).toBeVisible();
+  await expect(page.getByTestId("applier-submit-confirm")).toHaveCount(0);
+  await submitBtn.click();
+  const confirm = page.getByTestId("applier-submit-confirm");
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText("cannot be undone");
+  await page.screenshot({ path: `${DIR}/submit-confirm.png`, fullPage: true });
+
+  // Backing out sends nothing and leaves the run exactly where it was.
+  await page.getByTestId("applier-submit-cancel-btn").click();
+  await expect(page.getByTestId("applier-submit-confirm")).toHaveCount(0);
+  const stillReady = await (
+    await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })
+  ).json();
+  expect(stillReady.status).toBe("ready_for_human");
+
   // Attest: "I submitted" → the card advances to Applied (section 8.4).
   await page.getByTestId("applier-attest-submitted-btn").click();
   await expect(async () => {

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException, Request
@@ -133,14 +133,14 @@ def _catalog(portals_config: dict) -> list[dto.DiscoverySourceDTO]:
 
 
 @router.get("/api/discovery/sources")
-async def list_discovery_sources(request: Request) -> list[dto.DiscoverySourceDTO]:
+def list_discovery_sources(request: Request) -> list[dto.DiscoverySourceDTO]:
     with _db(request).repos() as repos:
         portals = _portals(repos)
     return _catalog(portals)
 
 
 @router.post("/api/discovery/sources")
-async def toggle_discovery_source(
+def toggle_discovery_source(
     request: Request, payload: dto.DiscoverySourceToggle
 ) -> list[dto.DiscoverySourceDTO]:
     ids = payload.ids if payload.ids is not None else ([payload.id] if payload.id else [])
@@ -272,8 +272,24 @@ _WATCH_PROBE_TIMEOUT_S = 8
 # Confirmed slug-guess probes, keyed "<adapter>:<company-slug>" → board URL.
 # A rewatch after an unwatch re-ran the live probe every time (1-2 s of real
 # toggle latency — maintainer 2026-07-22); a board that answered once this
-# process is not re-probed. Process-lifetime, tiny (one URL per company).
-_GUESS_CACHE: dict[str, str] = {}
+# process is not re-probed. Bounded LRU: a long-lived process watching and
+# unwatching many companies grew it without limit (S-C10).
+_GUESS_CACHE_MAX = 512
+_GUESS_CACHE: OrderedDict[str, str] = OrderedDict()
+
+
+def _guess_cache_put(key: str, url: str) -> None:
+    _GUESS_CACHE[key] = url
+    _GUESS_CACHE.move_to_end(key)
+    while len(_GUESS_CACHE) > _GUESS_CACHE_MAX:
+        _GUESS_CACHE.popitem(last=False)
+
+
+def _guess_cache_get(key: str) -> str | None:
+    url = _GUESS_CACHE.get(key)
+    if url is not None:
+        _GUESS_CACHE.move_to_end(key)
+    return url
 
 
 @router.post("/api/discovery/watchlist")
@@ -320,9 +336,9 @@ async def watch_company(
             source_url = str(covering["url"])
             resolved = adapters.resolve(SourceEntry(url=source_url))
             if resolved is not None:
-                _GUESS_CACHE[cache_key] = source_url
+                _guess_cache_put(cache_key, source_url)
         else:
-            cached = _GUESS_CACHE.get(cache_key)
+            cached = _guess_cache_get(cache_key)
             if cached is not None:
                 cand_resolved = adapters.resolve(SourceEntry(url=cached))
                 if cand_resolved is not None:
@@ -340,7 +356,7 @@ async def watch_company(
                     cand_resolved = adapters.resolve(SourceEntry(url=cand))
                     if cand_resolved is not None:
                         source_url, resolved = cand, cand_resolved
-                        _GUESS_CACHE[cache_key] = cand
+                        _guess_cache_put(cache_key, cand)
                         break
     fail: str | None = None
     adapter_id = ""
@@ -419,7 +435,7 @@ async def watch_company(
 
 
 @router.get("/api/discovery/watchlist")
-async def list_watched_companies(request: Request) -> dto.WatchlistDTO:
+def list_watched_companies(request: Request) -> dto.WatchlistDTO:
     """The tracked-companies roster: user-added (`watched`) board rows from
     `portals_config.sources`. Rows added before the marker existed don't
     appear — they keep scanning; re-watching stamps them."""
@@ -441,7 +457,7 @@ async def list_watched_companies(request: Request) -> dto.WatchlistDTO:
 
 
 @router.delete("/api/discovery/watchlist")
-async def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
+def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
     """Remove a tracked company board (by its source URL). Only `watched`
     rows are removable here — the seeded registry isn't editable from the
     roster; source families are toggled in Settings → Discovery sources."""
@@ -498,81 +514,111 @@ def _analytics_bucket_id(source_key: str) -> str:
 async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
     """Aggregates existing records only (no migration): stored `jobs` ×
     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
-    scans' `result_ref.per_source` fetch/keep/error/latency numbers."""
-    with _db(request).repos() as repos:
-        jobs = repos.jobs.list_by_states(["active", "expired", "removed"])
-        saved_ids = repos.applications.job_ids()
-        profile = repos.profile.get_current()
-        pv = profile.version if profile is not None else 0
-        scores = repos.job_scores.latest_for_jobs([j.id for j in jobs], pv)
-        scans = repos.operations.list_by_kind_states("scan", {"succeeded"})
+    scans' `result_ref.per_source` fetch/keep/error/latency numbers.
 
-        per: dict[str, dict] = {}
+    `scored` and `avg_score` exclude `unscorable` jobs (no usable
+    description — the board's own rule, dto.py `job_dto`), so a source with
+    no description-bearing rows reports no score rather than a 0-dragged
+    one. Every other count (`jobs`, `saved`, `fetched`, `kept`, ...) still
+    counts them: the source did return those rows.
 
-        def _bucket(family: str) -> dict:
-            return per.setdefault(
-                family,
-                {
-                    "jobs": 0, "saved": 0, "scored": 0, "score_sum": 0.0,
-                    "fetched": 0, "kept": 0, "http_calls": 0,
-                    "latency_ms": 0, "errors": 0,
-                },
-            )
+    Off the event loop (S-C7): the fold walks every job the board can hold
+    (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
+    install could hold it past the shell's 2 s /healthz window and cost a
+    sidecar restart. `board` and `list_jobs` got this in the F-H2 pass; this
+    route is the one it missed."""
 
-        for job in jobs:
-            b = _bucket(job.source_adapter or "unknown")
-            b["jobs"] += 1
-            if job.id in saved_ids:
-                b["saved"] += 1
-            score = scores.get(job.id)
-            if score is not None:
-                b["scored"] += 1
-                b["score_sum"] += float(score.score_0_100)
+    def _assemble() -> dto.DiscoveryAnalyticsDTO:
+        from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
-        scans = sorted(scans, key=lambda o: o.started_at or o.created_at, reverse=True)
-        recent = scans[:_RECENT_SCANS]
-        last_scan_at = None
-        for op in recent:
-            if last_scan_at is None:
-                last_scan_at = op.finished_at
-            per_source = ((op.result_ref or {}).get("per_source")) or {}
-            if not isinstance(per_source, dict):
-                continue
-            for key, r in per_source.items():
-                if not isinstance(r, dict):
+        with _db(request).repos() as repos:
+            jobs = repos.jobs.list_by_states(["active", "expired", "removed"])
+            saved_ids = repos.applications.job_ids()
+            scans = repos.operations.list_by_kind_states("scan", {"succeeded"})
+
+            per: dict[str, dict] = {}
+
+            def _bucket(family: str) -> dict:
+                return per.setdefault(
+                    family,
+                    {
+                        "jobs": 0, "saved": 0, "scored": 0, "score_sum": 0.0,
+                        "fetched": 0, "kept": 0, "http_calls": 0,
+                        "latency_ms": 0, "errors": 0,
+                    },
+                )
+
+            for job in jobs:
+                b = _bucket(job.source_adapter or "unknown")
+                # Rows found and rows saved count regardless of scorability —
+                # the source really did return them, and the user really did
+                # save one. Only the score stats below need the exclusion.
+                b["jobs"] += 1
+                if job.id in saved_ids:
+                    b["saved"] += 1
+                # A description-less job is `unscorable` on the board (dto.py
+                # `job_dto`, same MIN_JD_CHARS predicate): its keyword floor is
+                # a 0 written for missing data, not a judgement, so counting it
+                # here would drag a source's average toward zero for having no
+                # description rather than for scoring poorly (maintainer
+                # 2026-09-03 — 248 such rows on one install).
+                if len(job.description or "") < MIN_JD_CHARS:
                     continue
-                b = _bucket(_analytics_bucket_id(str(key)))
-                b["fetched"] += int(r.get("fetched") or 0)
-                b["kept"] += int(r.get("kept") or 0)
-                b["http_calls"] += int(r.get("http_calls") or 0)
-                b["latency_ms"] += int(r.get("latency_ms") or 0)
-                b["errors"] += len(r.get("errors") or [])
+                # The rating the board would show: AI if it has one, else the
+                # keyword floor.
+                score = job.llm_score if job.llm_score is not None else job.keyword_score
+                if score is not None:
+                    b["scored"] += 1
+                    b["score_sum"] += float(score)
 
-    rows = []
-    for family, b in per.items():
-        label, kind = _ANALYTICS_LABELS.get(
-            family, adapters.CATALOG.get(family, (family, "other"))
-        )
-        rows.append(
-            dto.DiscoverySourceStatsDTO(
-                id=family,
-                label=label,
-                kind=kind,
-                jobs=b["jobs"],
-                saved=b["saved"],
-                scored=b["scored"],
-                avg_score=(b["score_sum"] / b["scored"]) if b["scored"] else None,
-                fetched=b["fetched"],
-                kept=b["kept"],
-                http_calls=b["http_calls"],
-                latency_ms=b["latency_ms"],
-                errors=b["errors"],
+            scans = sorted(
+                scans, key=lambda o: o.started_at or o.created_at, reverse=True
             )
+            recent = scans[:_RECENT_SCANS]
+            last_scan_at = None
+            for op in recent:
+                if last_scan_at is None:
+                    last_scan_at = op.finished_at
+                per_source = ((op.result_ref or {}).get("per_source")) or {}
+                if not isinstance(per_source, dict):
+                    continue
+                for key, r in per_source.items():
+                    if not isinstance(r, dict):
+                        continue
+                    b = _bucket(_analytics_bucket_id(str(key)))
+                    b["fetched"] += int(r.get("fetched") or 0)
+                    b["kept"] += int(r.get("kept") or 0)
+                    b["http_calls"] += int(r.get("http_calls") or 0)
+                    b["latency_ms"] += int(r.get("latency_ms") or 0)
+                    b["errors"] += len(r.get("errors") or [])
+
+        rows = []
+        for family, b in per.items():
+            label, kind = _ANALYTICS_LABELS.get(
+                family, adapters.CATALOG.get(family, (family, "other"))
+            )
+            rows.append(
+                dto.DiscoverySourceStatsDTO(
+                    id=family,
+                    label=label,
+                    kind=kind,
+                    jobs=b["jobs"],
+                    saved=b["saved"],
+                    scored=b["scored"],
+                    avg_score=(b["score_sum"] / b["scored"]) if b["scored"] else None,
+                    fetched=b["fetched"],
+                    kept=b["kept"],
+                    http_calls=b["http_calls"],
+                    latency_ms=b["latency_ms"],
+                    errors=b["errors"],
+                )
+            )
+        rows.sort(key=lambda r: (-r.jobs, r.id))
+        return dto.DiscoveryAnalyticsDTO(
+            sources=rows, scans=len(recent), last_scan_at=last_scan_at
         )
-    rows.sort(key=lambda r: (-r.jobs, r.id))
-    return dto.DiscoveryAnalyticsDTO(
-        sources=rows, scans=len(recent), last_scan_at=last_scan_at
-    )
+
+    return await asyncio.to_thread(_assemble)
 
 
 # -- BYO scraper keys (Apify / Brave) ----------------------------------------
@@ -629,12 +675,12 @@ def _seed_brave_source(repos) -> None:  # noqa: ANN001 — Repos
 
 
 @router.get("/api/discovery/credentials")
-async def list_discovery_credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
+def list_discovery_credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
     return _credentials(request)
 
 
 @router.post("/api/discovery/credentials")
-async def save_discovery_credential(
+def save_discovery_credential(
     request: Request, payload: dto.DiscoveryCredentialSave
 ) -> list[dto.DiscoveryCredentialDTO]:
     if payload.id not in CREDENTIALS:
@@ -659,7 +705,7 @@ async def save_discovery_credential(
 
 
 @router.delete("/api/discovery/credentials/{credential_id}")
-async def delete_discovery_credential(
+def delete_discovery_credential(
     request: Request, credential_id: str
 ) -> list[dto.DiscoveryCredentialDTO]:
     if credential_id not in CREDENTIALS:

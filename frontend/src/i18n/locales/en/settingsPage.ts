@@ -17,17 +17,11 @@ const settingsPage = {
     checking: "Checking for updates…",
     upToDate: "You're on the latest version.",
     updateAvailable: "Version {{version}} is available.",
-    downloadInstall: "Download & install",
-    downloading: "Downloading… {{percent}}%",
-    downloadingIndeterminate: "Downloading…",
-    restartNote: "The app will restart to finish updating.",
+    downloadInstall: "Open the download page",
     checkError: "Couldn't check for updates. Check your connection and try again.",
     unavailableInBrowser: "Updates are managed by the desktop app.",
-    autoCheckLabel: "Check for updates when the app starts",
-    autoCheckHint:
-      "Off by default. When on, finds-you-jobs quietly checks for a newer release at launch — the only automatic network call it makes — and always asks before anything installs.",
     dataSafe:
-      "Updating never touches your data. Your profile, saved jobs, applications, resumes, and API keys stay on your machine — an update only replaces the app itself.",
+      "Installing a newer version never touches your data. Your profile, saved jobs, applications, resumes, and API keys stay on your machine; a new version only replaces the app itself.",
     // Support
     supportTitle: "Support finds-you-jobs",
     supportBody:
@@ -269,6 +263,8 @@ const settingsPage = {
       "Outreach is paused after a LinkedIn rate-limit signal. Fix the underlying issue, then Resume to send again.",
     backoffNoticeReason:
       'Outreach is paused after a LinkedIn rate-limit signal: "{{reason}}" Fix the underlying issue, then Resume to send again.',
+    wallNotice:
+      "Clear any restriction or auth wall in your own LinkedIn session (outside this app) first.",
     connect: "Connect LinkedIn",
     connectingHint: "A browser window opened — finish logging in there…",
     validating: "Validating…",

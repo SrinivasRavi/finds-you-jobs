@@ -13,12 +13,14 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
@@ -34,7 +36,7 @@ from .db.migrate import upgrade_to_head
 from .db.models import OP_ACTIVE_STATES
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub, register_sse_schemas
 from .logging_setup import get_logger, setup_flight_recorder
-from .observability import ObservabilityHandle, configure_observability
+from .observability import ObservabilityHandle, configure_observability, monitor_loop_lag
 from .observability.config import observability_config
 from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
@@ -42,12 +44,20 @@ from .registry.operations import backfill_keyword_scores
 from .runner import OperationRunner
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
-from .security import migrate_plaintext_session
+from .security import AppKeyUnavailable, migrate_plaintext_session, resolve_app_key_once
 from .seed import seed_defaults
 from .watchdog import watch_parent
 
+# What the Tauri shell allows one /healthz answer (`src-tauri/src/sidecar.rs`).
+# Named here so the slow-request log can say what the budget was.
+HEALTH_WINDOW_SECONDS = 2.0
+
 # section 4.4 step 3: drain in-flight operations for up to 10 s before force-exit.
 SHUTDOWN_DRAIN_SECONDS = 10.0
+# How often the idle browser-surface reaper looks. Well under the surface's own
+# IDLE_SHUTDOWN_SECONDS, so a surface is closed within roughly a minute of
+# crossing it rather than waiting a whole reap period.
+SURFACE_REAP_INTERVAL_SECONDS = 60.0
 
 # The webview loads from tauri://localhost (macOS/Linux) or
 # http://tauri.localhost (Windows/Android) in prod; the browser-dev path
@@ -60,11 +70,31 @@ SHUTDOWN_DRAIN_SECONDS = 10.0
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
-class _LogUnhandledMiddleware:
-    """Log any exception escaping a route to the flight recorder, then
-    RE-RAISE — the 500 response and propagation behavior stay exactly as
-    before (2026-07-24, "no unlogged failures"). Pure ASGI on purpose:
-    BaseHTTPMiddleware buffers response streams and breaks SSE."""
+# A request slower than this is recorded by name at WARNING. Half the shell's
+# 2 s health timeout, so a request that will eventually cost a restart shows up
+# in the log well before it does. S-C26: without this there is no evidence a
+# sidecar was ever slow, only that it died.
+SLOW_REQUEST_SECONDS = 1.0
+
+# A softer, INFO-level bar at a tenth of the warning above: on the maintainer's
+# own database every GET answers under 22 ms, so a 1 s bar alone would never
+# fire and could not catch a regression while it's still cheap to notice. One
+# route (`/api/operations`, ~100k rows) is expected to cross this on its own
+# eventually — hearing about that is information, not noise.
+SLOW_REQUEST_INFO_SECONDS = SLOW_REQUEST_SECONDS / 10
+
+
+class _RequestObserverMiddleware:
+    """Time every request, name the slow ones, and log any exception escaping a
+    route before RE-RAISING it (the 500 and its propagation are unchanged).
+
+    Two bars: INFO at SLOW_REQUEST_INFO_SECONDS (this route got slow), WARNING
+    at SLOW_REQUEST_SECONDS (this will cost a restart) — only the higher one
+    that's crossed logs, so a genuinely slow request logs once, not twice.
+
+    Pure ASGI on purpose: BaseHTTPMiddleware buffers response streams and breaks
+    SSE. `/api/events` is excluded from timing because an SSE stream is supposed
+    to stay open."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -73,6 +103,7 @@ class _LogUnhandledMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        started = time.perf_counter()
         try:
             await self.app(scope, receive, send)
         except Exception:
@@ -80,6 +111,21 @@ class _LogUnhandledMiddleware:
                 "unhandled error on %s %s", scope.get("method"), scope.get("path")
             )
             raise
+        finally:
+            elapsed = time.perf_counter() - started
+            path = scope.get("path") or ""
+            if not path.startswith("/api/events"):
+                if elapsed >= SLOW_REQUEST_SECONDS:
+                    get_logger().warning(
+                        "slow request: %s %s took %.0f ms (health window is %.0f ms)",
+                        scope.get("method"), path, elapsed * 1000,
+                        HEALTH_WINDOW_SECONDS * 1000,
+                    )
+                elif elapsed >= SLOW_REQUEST_INFO_SECONDS:
+                    get_logger().info(
+                        "slow request: %s %s took %.0f ms",
+                        scope.get("method"), path, elapsed * 1000,
+                    )
 
 
 def create_app(
@@ -117,6 +163,12 @@ def create_app(
         setup_flight_recorder()
         db = Database(db_url)
         seed_defaults(db)  # first-run portals config + (disabled) schedules
+        # Resolve the app key once, on a worker thread, before anything else can
+        # ask for it. `keyring` blocks and can raise a GUI prompt; the shell
+        # health-polls us on a 2s timeout and kills the process group on a single
+        # miss, so this must not be the event loop's first keychain call. Every
+        # later `get_app_key` is a cache hit.
+        await resolve_app_key_once(resolve_data_dir(data_dir))
         # NFR-SEC-01: seal a pre-encryption plaintext LinkedIn session file if one
         # exists (roundtrip-verified, atomic; no-op when absent/sealed — and it
         # never touches the OS keychain unless a file is present).
@@ -202,8 +254,11 @@ def create_app(
                 backfill_keyword_scores(db)
             except Exception:  # noqa: BLE001 — the floor must never break the chain
                 log.exception("keyword floor after scan failed")
-            for op_kind, snapshot in plan_score_new(db):
-                runner.submit(op_kind, snapshot)
+            # One operation per job still (D4 dropped: a row is a runner slot,
+            # so collapsing them would serialise scoring), but inserted in one
+            # transaction with one pump. Measured at 1,000 jobs: 1,487 ms in a
+            # submit loop against 79 ms here.
+            runner.submit_many(plan_score_new(db))
 
         runner.on_success = _chain_scan_to_scores
         runner.start()  # boot recovery (NFR-LONG-02) + first pump
@@ -250,17 +305,58 @@ def create_app(
             browser, asyncio.get_running_loop()
         )
 
-        scheduler: Scheduler | None = None
-        scheduler_task: asyncio.Task[None] | None = None
-        if enable_scheduler:
+        # A degraded boot: the shell saw 3 consecutive runs end the same bad way
+        # and started us with no scheduler, so the window opens and nothing
+        # queues itself into whatever killed them. The user turns it back on
+        # from the banner, which is `POST /api/system/scheduler/resume`.
+        degraded_boot = os.environ.get("FYJ_SCHEDULER_OFF") == "1"
+        if degraded_boot:
+            log.warning("degraded boot: the shell asked for no scheduler this run")
+        app.state.degraded_boot = degraded_boot
+
+        def start_scheduler() -> bool:
+            """Start the tick loop, or say it was already running. The resume
+            button calls this, so the path a degraded boot takes back to normal
+            is the same one boot takes."""
+            if app.state.scheduler is not None:
+                return False
             scheduler = Scheduler(
                 db,
                 runner,
                 planner=lambda kind: plan_schedule(db, kind),
                 publish=hub.publish,
             )
-            scheduler_task = asyncio.create_task(scheduler.run_forever())
-        app.state.scheduler = scheduler
+            app.state.scheduler = scheduler
+            app.state.scheduler_task = asyncio.create_task(scheduler.run_forever())
+            return True
+
+        app.state.scheduler = None
+        app.state.scheduler_task = None
+        app.state.start_scheduler = start_scheduler
+        if enable_scheduler and not degraded_boot:
+            start_scheduler()
+
+        # Close browser surfaces nobody is watching. A surface is an OS thread
+        # plus a real Chrome plus its resident memory, and nothing used to
+        # reclaim one, so a single visit to the LinkedIn view kept a browser
+        # alive for the whole session. `reap_idle` blocks (it joins each
+        # surface's thread), hence the worker thread; it is a no-op while a
+        # viewer is attached or an op is driving the lane.
+        async def _reap_idle_surfaces() -> None:
+            while True:
+                await asyncio.sleep(SURFACE_REAP_INTERVAL_SECONDS)
+                try:
+                    await asyncio.to_thread(browser.reap_idle)
+                except Exception:  # noqa: BLE001 — reclaiming must never kill boot
+                    log.exception("idle browser-surface reap failed")
+
+        reaper_task = asyncio.create_task(_reap_idle_surfaces())
+
+        # The request timer above only ever sees requests; a stall with no
+        # request in flight (or the request that reports slow being the
+        # head-of-line victim, not the culprit) would otherwise leave no
+        # trace at all. This samples the loop itself.
+        loop_lag_task = asyncio.create_task(monitor_loop_lag())
 
         watchdog_task: asyncio.Task[None] | None = None
         if original_ppid is not None:
@@ -284,9 +380,14 @@ def create_app(
         try:
             yield
         finally:
-            if scheduler is not None:
-                scheduler.stop()
-            for task in (scheduler_task, watchdog_task):
+            if app.state.scheduler is not None:
+                app.state.scheduler.stop()
+            for task in (
+                app.state.scheduler_task,
+                watchdog_task,
+                reaper_task,
+                loop_lag_task,
+            ):
                 if task is not None:
                     task.cancel()
                     try:
@@ -309,7 +410,19 @@ def create_app(
     # uvicorn's stderr-only default left them with NO line in sidecar.log,
     # despite the recorder being documented as the net for failures. Log-and-
     # reraise only — the 500 response/propagation stays exactly as before.
-    app.add_middleware(_LogUnhandledMiddleware)
+    app.add_middleware(_RequestObserverMiddleware)
+
+    @app.exception_handler(AppKeyUnavailable)
+    async def _app_key_unavailable(
+        _request: Request, exc: AppKeyUnavailable
+    ) -> JSONResponse:
+        """Say what happened instead of a bare 500. The message names the
+        keychain, the key file path, and the recovery, and it is the only thing
+        standing between the user and silently unreadable API keys — without
+        this handler it reached them as "Internal Server Error" and lived only
+        in `logs/sidecar.log`. 503, because the install is fine and the secret
+        store is what's unavailable; the frontend renders `detail` verbatim."""
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     app.state.token = token
     app.state.original_ppid = original_ppid

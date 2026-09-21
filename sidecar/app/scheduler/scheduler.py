@@ -75,8 +75,11 @@ class Scheduler:
 
             planned = self._planner(kind)
             next_due = now + timedelta(minutes=interval_minutes)
-            for op_kind, snapshot in planned:
-                operation_id = self._runner.submit(op_kind, snapshot)
+            # One batch, one dispatch pass. Submitting in a loop pumped the queue
+            # once per operation, and each pump re-read every queued row, so a
+            # `score_new` fan-out cost quadratic work on the serving loop.
+            operation_ids = self._runner.submit_many(planned)
+            for (op_kind, _snapshot), operation_id in zip(planned, operation_ids, strict=True):
                 last_op_id = operation_id
                 self._log.info(
                     "scheduler: schedule %s (%s) enqueued %s op %s",
@@ -94,7 +97,12 @@ class Scheduler:
         """Boot catch-up (NFR-LONG-01) then tick every `interval` until stopped."""
         self._stopped = False
         self._log.info("scheduler: boot catch-up")
-        self._safe_tick()
+        # Every tick runs on a worker thread. This is a task on the serving loop
+        # and the whole tick below it is synchronous DB work, so a slow one used
+        # to block `/healthz`; the shell polls it on a 2 s timeout and restarts
+        # the sidecar on a miss. The boot catch-up is the worst case, since it
+        # plans the entire backlog at once.
+        await asyncio.to_thread(self._safe_tick)
         while not self._stopped:
             try:
                 await asyncio.sleep(self._interval)
@@ -102,7 +110,7 @@ class Scheduler:
                 break
             if self._stopped:
                 break
-            self._safe_tick()
+            await asyncio.to_thread(self._safe_tick)
 
     def stop(self) -> None:
         self._stopped = True

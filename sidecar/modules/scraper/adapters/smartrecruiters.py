@@ -3,9 +3,10 @@
 Claims `careers.smartrecruiters.com/<slug>` / `jobs.smartrecruiters.com/<slug>`.
 Postings come from `api.smartrecruiters.com/v1/companies/<slug>/postings`, which
 caps at 100 rows/page, so this adapter pages with a bounded loop (unlike the
-single-request ATS adapters) — still zero-token, still no per-job fetch. The
-`ref` on each posting is the API URL; we rewrite it to the public
-`jobs.smartrecruiters.com/<slug>/postings/<id>` careers URL.
+single-request ATS adapters). The `ref` on each posting is the API URL; we
+rewrite it to the public `jobs.smartrecruiters.com/<slug>/postings/<id>`
+careers URL — the list payload carries no JD body, so `fetch_detail` fills it
+per row from the single-posting API (approved-plan #8).
 
 Ported from career-ops `providers/smartrecruiters.mjs` (MIT) — see
 THIRD_PARTY_NOTICES.md.
@@ -16,9 +17,10 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from ..config import SourceEntry
+from ..htmltext import strip_html
 from ..http import Fetcher, paced_pages
 from ..types import NormalizedJob, ScraperError
-from .base import first_path_segment
+from .base import first_path_segment, path_segments
 
 ID = "smartrecruiters"
 
@@ -79,6 +81,33 @@ def detect(entry: SourceEntry) -> str:
     return _slug(entry.url) if entry.url else ""
 
 
+def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
+    """The posting's JD from the single-posting API (approved-plan #8) —
+    `GET api.smartrecruiters.com/v1/companies/{slug}/postings/{id}` →
+    `jobAd.sections`, a dict of named sections each `{title, text}`; text is
+    HTML, concatenated in payload order. "" when the URL or shape is
+    unexpected."""
+    if urlsplit(job.canonical_url).netloc.lower() not in _CAREERS_HOSTS:
+        return ""
+    segments = path_segments(job.canonical_url)
+    if len(segments) < 3 or segments[1] != "postings":
+        return ""
+    slug, posting_id = segments[0], segments[2]
+    payload = fetcher.get_json(f"https://{_API_HOST}/v1/companies/{slug}/postings/{posting_id}")
+    if not isinstance(payload, dict):
+        return ""
+    ad = payload.get("jobAd")
+    sections = ad.get("sections") if isinstance(ad, dict) else None
+    if not isinstance(sections, dict):
+        return ""
+    parts = [
+        strip_html(str(section["text"]))
+        for section in sections.values()
+        if isinstance(section, dict) and section.get("text")
+    ]
+    return "\n\n".join(parts)
+
+
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
     slug = _slug(entry.url)
     if not slug:
@@ -99,7 +128,7 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
                     canonical_url=_public_url(raw, slug),
                     company=entry.company or slug,
                     location=_location(raw),
-                    description="",  # not in the list payload; per-job fetch avoided
+                    description="",  # not in the list payload; fetch_detail fills it
                     posted_at=str(raw.get("releasedDate") or raw.get("createdOn") or ""),
                     source_adapter=ID,
                 )

@@ -143,7 +143,7 @@ def test_capture_failure_writes_screenshot_html_and_readme(browser, tmp_path):
     # README warning about local personal data lives once at the debug root.
     readme = storage_state.parent / "debug" / "README.md"
     assert readme.exists()
-    assert "personal data" in readme.read_text()
+    assert "personal data" in readme.read_text(encoding="utf-8")
 
 
 

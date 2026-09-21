@@ -17,7 +17,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "job_search_response.json"
 
 
 def test_parses_real_capture_in_element_order() -> None:
-    data = json.loads(FIXTURE.read_text())
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
     out = parse_job_search_response(data)
 
     assert out["total"] == data["data"]["paging"]["total"]

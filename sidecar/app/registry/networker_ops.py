@@ -5,7 +5,7 @@ runner as three bounded ops (US-REF-01/03/04, FR-REF-*):
 
 - `discover` — zero-LLM; delegates to the voyager subprocess driver, then
   upserts each candidate as a `Contact` row (status `candidate`, off the kanban
-  until reached) + a per-job `ContactJobAssoc`. Streams `networker` SSE events
+  until reached) + a per-job `ReferralCandidate`. Streams `networker` SSE events
   for the find-referrals popup's live list.
 - `draft`   — the one LLM op; routed engine (like tailor/cover). Grounds one
   per-audience referral draft in the master profile. Returned in `result_ref`
@@ -47,10 +47,11 @@ from sidecar.packages.referral_outreach import PacingProfile, plan_for_membershi
 
 from ..db.base import now_utc
 from ..db.database import resolve_data_dir
-from ..db.models import OP_ACTIVE_STATES, OP_ALL_STATES
+from ..db.models import CONTACT_ENGAGED_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import make_event
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
+from .exception_router import route_cause
 from .operations import OperationContext, OperationOutcome, llm_outcome
 from .presence_gate import PresenceAbsent, decide_presence
 
@@ -294,12 +295,20 @@ def linkedin_caps_snapshot(profile: PacingProfile) -> dict:
     # Live hourly job-search budget — read from the enforcing ledger, not recomputed.
     pacer = Pacer(effective, state_dir=linkedin_state_dir())
     js = pacer.usage("job_search_pages")
+    # The backoff, read from the same ledger that enforces it. It is carried here
+    # rather than mirrored onto `linkedin_sessions` because the pause blocks every
+    # meter, reads included, while only the SEND path ever wrote the mirror — so a
+    # 429 during discover or contact sync paused the account with the header still
+    # reading "LinkedIn connected" and no Resume button anywhere (2026-09-20).
     return {
         "membership_type": profile.membership,
         "risk_pct": profile.risk_pct,
         "memberships": list(MEMBERSHIPS),
         "caps": caps,
         "job_search_hour_remaining": int(js.get("hour_remaining") or 0),
+        "paused": pacer.is_paused(),
+        "paused_until": float(pacer.state.paused_until or 0.0),
+        "paused_reason": pacer.state.paused_reason or "",
     }
 
 
@@ -605,8 +614,8 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
             # off the kanban until reached); an already-known contact keeps its
             # live status because upsert_by_url never overwrites connection_status.
             if job_id:
-                repos.contact_job_assocs.upsert(
-                    row.id, job_id, audience_tag=c.audience.value, status="pending"
+                repos.referral_candidates.upsert(
+                    row.id, job_id, audience_tag=c.audience.value
                 )
             contact_ids.append(row.id)
             if ctx.publish is not None:
@@ -723,8 +732,8 @@ def _maybe_move_on_batch_settle(
     if batch_id:
         siblings = [
             op
-            for op in repos.operations.list_for_snapshot(
-                "send", OP_ALL_STATES, key="batch_id", value=batch_id
+            for op in repos.operations.list_for_batch(
+                "send", OP_ALL_STATES, batch_id
             )
             if op.id != current_op_id
         ]
@@ -787,7 +796,6 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile = resolve_pacing_profile(repos)
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
-    driver = DRIVER_FACTORY(profile)
 
     # The send announces itself (`sending`, with the routed channel), then
     # narrates REAL progress: the driver reports each completed step
@@ -817,13 +825,30 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 "contact_id": contact_id, "job_id": job_id, "step": step,
             }))
 
+    # Built here, not before the announce block: `net_send` closes the driver it
+    # is given (`modules/networker/networker.py`), so anything raising between a
+    # build and that call would leak it (S-C12).
+    driver = DRIVER_FACTORY(profile)
     try:
         result = net_send(
             message, net_contact, driver=driver, dry_run=dry_run,
             on_step=_publish_step,
         )
-    except NetworkerError as exc:
+    except (NetworkerError, OSError, RuntimeError) as exc:
+        # Only `NetworkerError` was caught until 2026-09-20, and the driver wraps
+        # nothing but `VoyagerError` (`modules/networker/driver.py`). So a browser
+        # that failed to launch (`BrowserLaunchError`, a RuntimeError), a browser
+        # that stopped answering (`BrowserUnresponsiveError`, an OSError), an
+        # exhausted 5xx retry (OSError) and a navigation guard (a bare
+        # RuntimeError) all escaped this block: no OutreachLog row, no
+        # `send_failed` event, and the referrals row spun on "Sending" until the
+        # modal was closed. `route_cause` already walks `__cause__` and clamps an
+        # unrecognized one to `unknown`, so the body below needs no change.
         SEND_PROGRESS.pop(op_id, None)
+        # S-C14: name the failure. A recognized worker state routes to its coded
+        # label; an unrecognized one hard-stops, captures evidence and asks the
+        # model for one label. The router never picks an action.
+        routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
         # A hard voyager failure (stale selector, subprocess crash, unparseable
         # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,
         # outreach_logs empty" dogfood bug. The audit row is a hard requirement for
@@ -851,6 +876,7 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 "id": ctx.operation_id, "phase": "send_failed",
                 "contact_id": contact_id, "job_id": job_id,
                 "sent": False, "reason": detail, "quota": None,
+                "diagnosis": routed.diagnosis,
             }))
         raise
 
@@ -877,9 +903,21 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         if result.sent and not dry_run:
             # Flip onto the kanban. A 1st-degree contact is already connected —
             # a DM lands them in Accepted; a cold connect-note lands them in Sent.
+            #
+            # S-N4: this used to write "accepted" unconditionally, erasing the
+            # fact that a contact had ever written back. A DM we just sent means
+            # ours is the last message, so anyone who has replied before belongs
+            # in `pending_their_response`, never back in `accepted`.
             if is_first_degree:
+                row = repos.contacts.get(contact_id)
+                payload = (row.profile_payload or {}) if row else {}
+                replied = bool(payload.get("first_replied_at"))
+                in_thread = bool(row and row.connection_status in CONTACT_ENGAGED_STATUSES)
                 repos.contacts.update(
-                    contact_id, connection_status="accepted",
+                    contact_id,
+                    connection_status=(
+                        "pending_their_response" if (replied or in_thread) else "accepted"
+                    ),
                     sent_at=now, accepted_at=now,
                 )
             else:
@@ -887,8 +925,8 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
                     contact_id, connection_status="sent", sent_at=now,
                 )
             if job_id:
-                repos.contact_job_assocs.upsert(
-                    contact_id, job_id, audience_tag=audience_tag, status="pending"
+                repos.referral_candidates.upsert(
+                    contact_id, job_id, audience_tag=audience_tag
                 )
         # Batch-settle card move (FR-NW-03): advance Saved → Seeking Referral once,
         # when the whole reach-out batch has settled with ≥1 sent — not on the

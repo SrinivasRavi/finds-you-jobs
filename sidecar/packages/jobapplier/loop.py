@@ -70,9 +70,8 @@ _MAX_CONSECUTIVE_FAILURES = 4  # failed/disallowed actions in a row
 _REDUNDANT_ACTIONS = 3  # verified re-fills of an already-settled field in a row
 _HARD_WALLS = {
     PageState.POSTING_CLOSED: "posting_closed",
-    PageState.CAPTCHA_OR_ANTI_BOT: "captcha",
-    PageState.LOGIN_WALL: "login_wall",
 }
+_CAPTCHA_WAIT_TIMEOUT_S = 180.0  # 3 minutes for human to solve captcha
 _MUTATING_TOOLS = {"click", "navigate", "fill", "select", "check", "upload_artifact"}
 _FIELD_TOOLS = {"fill", "select", "check", "upload_artifact"}
 
@@ -301,6 +300,80 @@ class _Run:
                     await self._screenshot(kind)
                     return self._blocked(
                         kind, f"stopped at {wall_state.value} — {kind}", obs
+                    )
+            if PageState.CAPTCHA_OR_ANTI_BOT in states or PageState.LOGIN_WALL in states:
+                challenge_kind = (
+                    "captcha"
+                    if PageState.CAPTCHA_OR_ANTI_BOT in states
+                    else "login_wall"
+                )
+                msg = (
+                    ("Verification challenge / CAPTCHA detected "
+                     "— please solve it in the browser window")
+                    if challenge_kind == "captcha"
+                    else "Login wall detected — please log in or pass through in the browser window"
+                )
+                logger.info("[APPLIER] %s. Waiting for human to solve...", msg)
+                self._emit(
+                    ApplyEvent(
+                        ApplyEventType.BLOCKER_FOUND,
+                        {"kind": challenge_kind, "detail": msg},
+                    )
+                )
+                await self._screenshot(challenge_kind)
+                # Wait for user to solve challenge
+                start_wait = time.monotonic()
+                solved = False
+                while time.monotonic() - start_wait < _CAPTCHA_WAIT_TIMEOUT_S:
+                    if self._control.cancelled or self._remaining() <= 0:
+                        break
+                    await asyncio.sleep(2.0)
+                    try:
+                        obs = await self._observe()
+                        curr_states = classify(obs)
+                        if (
+                            PageState.CAPTCHA_OR_ANTI_BOT not in curr_states
+                            and PageState.LOGIN_WALL not in curr_states
+                        ):
+                            logger.info(
+                                "[APPLIER] %s resolved by human! Resuming apply.",
+                                challenge_kind
+                            )
+                            solved = True
+                            identical_streak = 0
+                            failure_streak = 0
+                            redundant_streak = 0
+                            last_digest = ""
+                            states = curr_states
+                            break
+                    except PlaywrightError:
+                        logger.warning(
+                            "[APPLIER] browser error while waiting for %s resolution",
+                            challenge_kind,
+                            exc_info=True,
+                        )
+                        await self._screenshot(challenge_kind + "-error")
+                        return self._blocked(
+                            challenge_kind,
+                            f"browser closed while waiting for {challenge_kind} to be solved",
+                            obs,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[APPLIER] unexpected error during %s wait",
+                            challenge_kind,
+                        )
+                        break
+                if not solved:
+                    if self._control.cancelled or self._remaining() <= 0:
+                        continue
+                    await self._screenshot(challenge_kind + "-unresolved")
+                    return self._blocked(
+                        challenge_kind,
+                        f"Waited 3 minutes for you to solve the {challenge_kind} in the browser, "
+                        f"but no action was detected. Next time, solve the challenge in the "
+                        f"browser window within 3 minutes of seeing this message.",
+                        obs,
                     )
             if PageState.APPLICATION_FORM in states:
                 self._form_seen = True

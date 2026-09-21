@@ -14,7 +14,9 @@ import {
   useDiscoveryAnalytics,
   useLedger,
   useOperationSpans,
+  useRetryableScores,
   useRetryOperation,
+  useRetryScoring,
 } from "../api/queries";
 import type {
   CostTotals,
@@ -25,6 +27,7 @@ import type {
   Span,
 } from "../api/types";
 import { formatWhen } from "../shell/datetime";
+import { formatEngineError } from "../shell/formatError";
 
 const STATE_CLS: Record<OperationState, string> = {
   succeeded: "bg-good-wash text-good",
@@ -67,7 +70,9 @@ function groupOf(kind: string): string {
   return KIND_TO_GROUP[kind] ?? "system";
 }
 
-const PAGE_SIZE = 50; // US-LOG-01 #2 — client pagination; retention keeps ~5 pages.
+// US-LOG-01 #2 — client pagination over the newest 1000 operations, so at most
+// 20 pages and only one page is ever in the DOM.
+const PAGE_SIZE = 50;
 
 function num(v: unknown): number | null {
   return typeof v === "number" ? v : null;
@@ -85,9 +90,9 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-// All-time totals (FR-SET-07 / US-LOG-01 #2). Read from /api/cost/totals — live
-// ledger + the pruned-ops aggregate — so the tiles survive the ~250-op ledger
-// retention. Falls back to zeros while the query loads.
+// All-time totals (FR-SET-07 / US-LOG-01 #2). Read from /api/cost/totals (live
+// ledger + the pruned-ops aggregate), so the tiles count every operation ever
+// run while the table below lists the newest 1000. Zeros while the query loads.
 function CostPanel({ totals }: { totals: CostTotals | undefined }) {
   const { t } = useTranslation();
   const total = totals?.usd ?? 0;
@@ -235,6 +240,31 @@ function RetryButton({ entry }: { entry: LedgerEntry }) {
   );
 }
 
+/** Retry for jobs, not for one row (S-C24). A per-row Retry re-runs one score
+ *  op; this hands the whole stuck set its attempt budget back, which is what a
+ *  provider-wide failure needs — an expired key fails every queued job at once,
+ *  and there is no single row to press. Hidden when nothing is stuck, so it
+ *  never offers a no-op. */
+function RetryScoringButton() {
+  const { t } = useTranslation();
+  const { data: stuck = 0 } = useRetryableScores();
+  const retry = useRetryScoring();
+  if (stuck === 0) return null;
+  return (
+    <button
+      onClick={() => retry.mutate()}
+      disabled={retry.isPending}
+      data-testid="retry-scoring"
+      title={t("analytics.ledger.retryScoringTitle")}
+      className="ml-auto h-7 rounded-full border border-accent bg-accent px-2.5 text-[11.5px] font-medium text-white hover:bg-accent-ink disabled:opacity-60"
+    >
+      {retry.isPending
+        ? t("analytics.ledger.retrying")
+        : t("analytics.ledger.retryScoring", { count: stuck })}
+    </button>
+  );
+}
+
 // Mirrors the backend's CANCELLABLE_RUNNING_KINDS (registry/operations.py):
 // the only kinds that poll the cancel token while RUNNING. Queued ops of any
 // kind can always be cancelled server-side. This is a render heuristic, not a
@@ -312,7 +342,12 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
       }
       data-testid="log-error"
     >
-      {entry.error}
+      {formatEngineError(entry.error, t)}
+            {formatEngineError(entry.error, t) !== entry.error && (
+              <div className="mt-2 pt-2 border-t border-border/50 opacity-80 text-[10px] break-words whitespace-pre-wrap">
+                {entry.error}
+              </div>
+            )}
     </div>
   );
 }
@@ -501,7 +536,12 @@ function ExpandedBlocks({ entry }: { entry: LedgerEntry }) {
             className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-2 p-3 font-mono text-[11px] text-bad"
             data-testid="log-error-full"
           >
-            {entry.error}
+            {formatEngineError(entry.error, t)}
+            {formatEngineError(entry.error, t) !== entry.error && (
+              <div className="mt-2 pt-2 border-t border-border/50 opacity-80 text-[10px] break-words whitespace-pre-wrap">
+                {entry.error}
+              </div>
+            )}
           </div>
         </ExpandedBlock>
       ) : null}
@@ -652,6 +692,7 @@ export function Analytics() {
                 {t(c.label)}
               </button>
             ))}
+            <RetryScoringButton />
           </div>
           {/* table-fixed + wrapping cells: the ledger must FIT the window —
               no horizontal scrolling at the app's default widths (maintainer
@@ -748,7 +789,7 @@ export function Analytics() {
               </tbody>
             </table>
           </div>
-          {/* Pager (US-LOG-01 #2). Retention keeps ~5 pages; older auto-deleted. */}
+          {/* Pager (US-LOG-01 #2). Up to 20 pages; nothing is auto-deleted. */}
           <div
             className="mt-3 flex items-center justify-between text-[11.5px] text-ink-3"
             data-testid="logs-pager"

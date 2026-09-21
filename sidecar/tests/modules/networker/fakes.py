@@ -31,7 +31,7 @@ class FakeVoyagerDriver:
         session_status_result: dict | None = None,
         resume_result: dict | None = None,
         raise_on: str | None = None,
-        error: NetworkerError | None = None,
+        error: Exception | None = None,
     ) -> None:
         self._discover = discover_result or {"op": "discover", "ok": True, "contacts": []}
         # Default resolution auto-picks (a domain-website match) so orchestration

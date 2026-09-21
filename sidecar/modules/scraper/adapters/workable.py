@@ -19,6 +19,7 @@ from ..types import NormalizedJob, ScraperError
 from .base import first_path_segment
 
 ID = "workable"
+INLINE_DESCRIPTION = True
 
 _HOST = "apply.workable.com"
 _RESERVED = {"api", "j"}

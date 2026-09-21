@@ -13,6 +13,7 @@
 // Settings (the connect flow lives there).
 
 import { useMemo, useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
@@ -46,10 +47,20 @@ import { type LinkedInPillState, type LinkedInPillTone, linkedInStatusPill } fro
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
   { id: "sent", label: "networking.columns.sent", dot: "bg-ink-3", empty: "networking.columnEmpty.sent" },
   { id: "accepted", label: "networking.columns.accepted", dot: "bg-accent", empty: "networking.columnEmpty.accepted" },
-  { id: "engagement", label: "networking.columns.engagement", dot: "bg-warn", empty: "networking.columnEmpty.engagement" },
+  { id: "pending_our_response", label: "networking.columns.pendingOurResponse", dot: "bg-warn", empty: "networking.columnEmpty.pendingOurResponse" },
+  { id: "pending_their_response", label: "networking.columns.pendingTheirResponse", dot: "bg-accent-2", empty: "networking.columnEmpty.pendingTheirResponse" },
   { id: "ghosted", label: "networking.columns.ghosted", dot: "bg-bad", empty: "networking.columnEmpty.ghosted" },
   { id: "converted", label: "networking.columns.converted", dot: "bg-good", empty: "networking.columnEmpty.converted" },
 ];
+
+// The card's "{{duration}} in {{status}}" line renders the COLUMN's label, not
+// the raw wire value: the split (S-N5) made that read "today in
+// pending_our_response". A status with no column (candidate) falls back to the
+// raw value, which is what the board already did everywhere.
+function statusLabel(status: ConnectionStatus, t: TFunction): string {
+  const column = COLUMNS.find((col) => col.id === status);
+  return column ? t(column.label) : status;
+}
 
 // The header's read-only session chip. Tone + which state a status means come
 // from the shared table (duplication audit D-F8); the classes and the copy stay
@@ -568,7 +579,7 @@ function ContactCard({
         <div className="text-[10.5px] text-ink-3">
           {t("networking.card.inStatus", {
             duration: days === 0 ? t("networking.card.today") : t("networking.card.days", { n: days }),
-            status: c.connection_status,
+            status: statusLabel(c.connection_status, t),
           })}
         </div>
       )}
@@ -727,7 +738,12 @@ function AddContactModal({ onClose }: { onClose: () => void }) {
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink focus:border-accent focus:outline-none">
             <option value="sent">{t("networking.add.optionSent")}</option>
             <option value="accepted">{t("networking.add.optionAccepted")}</option>
-            <option value="engagement">{t("networking.add.optionEngagement")}</option>
+            <option value="pending_our_response">
+              {t("networking.add.optionPendingOurResponse")}
+            </option>
+            <option value="pending_their_response">
+              {t("networking.add.optionPendingTheirResponse")}
+            </option>
             <option value="converted">{t("networking.add.optionConverted")}</option>
           </select>
         </Field>

@@ -40,6 +40,7 @@ import base64
 import queue
 import re
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import Future
 from pathlib import Path
@@ -72,6 +73,15 @@ SHUTDOWN_TIMEOUT_SECONDS = 5.0
 # geometry never arrives — and then we error rather than lay a page out at a
 # generic size that would betray the surface (Our Finding on real display).
 GEOMETRY_TIMEOUT_SECONDS = 10.0
+# How long a surface may sit with no viewer watching and no work in flight
+# before the broker closes it. A surface costs an OS thread, a real Chrome, and
+# that Chrome's resident memory; nothing used to reclaim one, so opening the
+# LinkedIn view kept a browser alive for the rest of the session even after the
+# modal was closed. Reopening relaunches lazily through `surface()`, and the
+# profile dir persists, so the only cost of being wrong is one relaunch.
+# Generous on purpose: a watched surface is never idle at all, and any op still
+# driving the lane holds it open, so this only elapses when nobody wants it.
+IDLE_SHUTDOWN_SECONDS = 300.0
 
 # A slug names a surface AND a directory under the data dir, so it stays a
 # single safe path segment.
@@ -185,6 +195,13 @@ class BrowserSurface:
         # applied; the first navigation waits on it, fail-closed.
         self._geometry_ready = threading.Event()
         self._error: BaseException | None = None
+        # Idle accounting, read by the broker's reaper. `_inflight` counts work
+        # submitted but not yet finished, so a single long action (a slow page
+        # load, a paced profile read) holds the surface open even though nothing
+        # new is being submitted meanwhile.
+        self._last_activity = time.monotonic()
+        self._inflight = 0
+        self._activity_lock = threading.Lock()
         self._commands: queue.SimpleQueue[
             tuple[Future[Any], Callable[[SurfaceSession], Any]]
         ] = queue.SimpleQueue()
@@ -309,11 +326,14 @@ class BrowserSurface:
             except queue.Empty:
                 return
             if not future.set_running_or_notify_cancel():
+                self._finished_one()
                 continue
             try:
                 future.set_result(action(session))
             except Exception as exc:  # noqa: BLE001 — travels to the caller
                 future.set_exception(exc)
+            finally:
+                self._finished_one()
 
     def _watch_url(self, session: SurfaceSession) -> None:
         """Emit the committed main-frame URL to the viewer WHENEVER it changes,
@@ -439,6 +459,12 @@ class BrowserSurface:
         if self._viewer is not viewer:
             return
         self._viewer = None
+        # Start the idle clock HERE, not from the last submitted action. A
+        # viewer can watch a static page for an hour without submitting
+        # anything, and reaping the instant they close the pane would make a
+        # close-then-reopen cost a Chrome relaunch.
+        with self._activity_lock:
+            self._last_activity = time.monotonic()
 
     @property
     def has_viewer(self) -> bool:
@@ -626,8 +652,46 @@ class BrowserSurface:
                 BrowserLaunchError(f"browser surface {self.slug!r} is shut down")
             )
             return future
+        with self._activity_lock:
+            self._last_activity = time.monotonic()
+            self._inflight += 1
         self._commands.put((future, action))
         return future
+
+    def touch(self) -> None:
+        """Mark the surface as just taken, without queueing anything. The broker
+        calls this the moment it hands a surface to a caller: a caller typically
+        submits its first action a beat later, and without a stamp here that gap
+        is reapable — the reaper would see no viewer, nothing in flight, and an
+        old timestamp, and close the Chrome out from under a caller who has
+        already been handed it."""
+        with self._activity_lock:
+            self._last_activity = time.monotonic()
+
+    def _finished_one(self) -> None:
+        """One queued action resolved, on the surface thread. Stamps activity at
+        COMPLETION as well as submission, so a long action leaves the surface
+        looking freshly used rather than 6 minutes stale."""
+        with self._activity_lock:
+            self._last_activity = time.monotonic()
+            self._inflight = max(0, self._inflight - 1)
+
+    @property
+    def idle_seconds(self) -> float | None:
+        """How long this surface has been of use to nobody, or **None** while a
+        viewer is watching or submitted work is still in flight.
+
+        None rather than 0.0 deliberately: 0.0 meant "in use" in the first cut
+        of this, and `0.0 >= max_idle` is true when the reaper is asked for a
+        0-second threshold, so a pane the user was watching got closed out from
+        under them. An in-use surface must not be comparable to a threshold at
+        all."""
+        if self.has_viewer:
+            return None
+        with self._activity_lock:
+            if self._inflight > 0:
+                return None
+            return time.monotonic() - self._last_activity
 
     # -- cross-thread ------------------------------------------------------
 
@@ -674,6 +738,12 @@ class BrowserBroker:
         self._ua_lock = threading.Lock()
         self._surfaces: dict[str, BrowserSurface] = {}
         self._lock = threading.Lock()
+        # Per-slug launch/teardown locks. Bounded by the number of slugs ever
+        # asked for (2 today: "linkedin" and the dev surface), so they are kept
+        # rather than reaped — a lock is 40 bytes and dropping one would
+        # reintroduce exactly the race it exists to close.
+        self._slug_locks: dict[str, threading.Lock] = {}
+        self._log = get_logger()
 
     def _guardrailed_launch_kwargs(self) -> dict[str, Any]:
         """The launch config for a real surface. Called on a surface thread: the
@@ -692,6 +762,18 @@ class BrowserBroker:
             raise ValueError(f"invalid browser surface name: {slug!r}")
         return self._root / slug / "profile"
 
+    def _lifecycle_lock(self, slug: str) -> threading.Lock:
+        """One lock per slug covering LAUNCH and TEARDOWN, held only across
+        those. Chrome takes a singleton lock on its profile directory, so
+        launching a second Chrome on a slug whose first one is still tearing
+        down hangs the new launch. `self._lock` can't serialize that: it guards
+        the map and must never be held across a thread join."""
+        with self._lock:
+            existing = self._slug_locks.get(slug)
+            if existing is None:
+                existing = self._slug_locks[slug] = threading.Lock()
+            return existing
+
     def surface(self, slug: str) -> BrowserSurface:
         """The surface for `slug`, launching it on first ask. A surface whose
         thread has died (a crashed Chrome) is a corpse: it is evicted and a
@@ -702,21 +784,34 @@ class BrowserBroker:
         with self._lock:
             existing = self._surfaces.get(slug)
             if existing is not None and not existing.is_dead:
+                # Stamped HERE, under the same lock `reap_idle` reads idle
+                # through, so a reaper can never decide against a surface that
+                # has already been handed out.
+                existing.touch()
                 return existing
-            # No surface yet, or a dead one to replace. Its thread has already
-            # torn its own Chrome down, so there is nothing to join here; drop it
-            # and launch fresh. Chrome still comes up lazily, on this call.
-            surface = BrowserSurface(
-                slug,
-                profile_dir,
-                self._loop,
-                self._guardrailed_launch_kwargs,
-                opener=self._opener,
-                geometry_timeout=self._geometry_timeout,
-            )
-            self._surfaces[slug] = surface
-        surface.start()
-        return surface
+        # No surface yet, or a dead one to replace. Take the slug's lifecycle
+        # lock: if a reaper is closing this slug right now, this blocks until
+        # its Chrome has really gone and the profile directory is free.
+        with self._lifecycle_lock(slug):
+            with self._lock:
+                existing = self._surfaces.get(slug)
+                if existing is not None and not existing.is_dead:
+                    existing.touch()
+                    return existing
+                # A dead surface's thread has already torn its own Chrome down,
+                # so there is nothing to join here. Chrome comes up lazily, on
+                # `start()` below.
+                surface = BrowserSurface(
+                    slug,
+                    profile_dir,
+                    self._loop,
+                    self._guardrailed_launch_kwargs,
+                    opener=self._opener,
+                    geometry_timeout=self._geometry_timeout,
+                )
+                self._surfaces[slug] = surface
+            surface.start()
+            return surface
 
     def live_surface(self, slug: str) -> BrowserSurface | None:
         """The surface for `slug` if one is already live, else None — a PEEK that
@@ -735,6 +830,46 @@ class BrowserBroker:
     def live_slugs(self) -> frozenset[str]:
         with self._lock:
             return frozenset(self._surfaces)
+
+    def reap_idle(self, max_idle: float = IDLE_SHUTDOWN_SECONDS) -> list[str]:
+        """Close every surface nobody is watching and nothing is driving.
+        Returns the slugs closed.
+
+        Until this existed the map only ever grew: an entry left it on app
+        shutdown or when its Chrome had already crashed, so one visit to the
+        LinkedIn view kept a browser and its thread alive for the rest of the
+        session. `idle_seconds` returns **None** while a viewer is attached or
+        work is in flight, so an in-use surface is never comparable to the
+        threshold at all, however long the reaper runs. Blocking (each
+        `shutdown` joins a thread): call it off the event loop.
+
+        Two steps on purpose. The map lock picks candidates and is dropped; each
+        close then takes that slug's lifecycle lock, re-checks under it, and
+        only then removes the entry and joins. Removing the entry before the
+        join would let a concurrent `surface(slug)` launch a second Chrome on a
+        profile directory the first one still holds a singleton lock on."""
+        closed: list[str] = []
+        with self._lock:
+            candidates = [
+                (slug, surface)
+                for slug, surface in self._surfaces.items()
+                if (idle := surface.idle_seconds) is not None and idle >= max_idle
+            ]
+        for slug, surface in candidates:
+            with self._lifecycle_lock(slug):
+                with self._lock:
+                    if self._surfaces.get(slug) is not surface:
+                        continue  # replaced under us; leave the new one alone
+                    idle = surface.idle_seconds
+                    if idle is None or idle < max_idle:
+                        continue  # taken in the gap (`surface()` stamps it)
+                    del self._surfaces[slug]
+                self._log.info(
+                    "closing idle browser surface %r after %.0fs", slug, idle
+                )
+                surface.shutdown()
+                closed.append(slug)
+        return closed
 
     def shutdown(self, timeout: float = SHUTDOWN_TIMEOUT_SECONDS) -> None:
         """Tear every surface down. Idempotent."""

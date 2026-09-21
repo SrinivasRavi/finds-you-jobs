@@ -1,7 +1,7 @@
 // Discovery sources + BYO scraper keys (extracted from Settings.tsx 2026-07-25,
 // F-M6 monolith split — pure moves, zero behavior change). Both sections take
 // no props (they read their own queries), so memo() is trivially honest: root
-// Settings state changes (ack, rescore dialog) no longer re-render them.
+// Settings state changes (the LinkedIn ack) no longer re-render them.
 
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";

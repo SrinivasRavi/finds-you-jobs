@@ -301,7 +301,7 @@ def test_run_cli_timeout_kills_the_whole_process_group(tmp_path) -> None:  # noq
         run_cli(cmd, timeout=1.0)
     # Returned promptly — no post-kill communicate() wedge.
     assert time.monotonic() - started < 10
-    grandchild = int(pidfile.read_text().strip())
+    grandchild = int(pidfile.read_text(encoding="utf-8").strip())
     assert _wait_until_dead(grandchild), "grandchild survived the group kill"
 
 
@@ -311,4 +311,6 @@ def test_run_cli_child_runs_in_its_own_process_group() -> None:
     # timeout can never take out the app's own group.
     proc = run_cli(["/bin/sh", "-c", "ps -o pgid= -p $$"], timeout=10)
     assert proc.returncode == 0
-    assert int(proc.stdout.strip()) != os.getpgrp()
+    # pyright narrows `os` to the checking host, so the POSIX-only call needs
+    # the ignore on the Windows leg; the skipif above is the runtime half.
+    assert int(proc.stdout.strip()) != os.getpgrp()  # pyright: ignore[reportAttributeAccessIssue]

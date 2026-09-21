@@ -415,7 +415,8 @@ def test_ledger_from_before_the_new_meters_still_loads(tmp_path):
     import json as _json
 
     (tmp_path / Pacer.STATE_FILENAME).write_text(
-        _json.dumps({"invites": [1.0, 2.0], "dms": [3.0], "paused_until": 0.0})
+        _json.dumps({"invites": [1.0, 2.0], "dms": [3.0], "paused_until": 0.0}),
+        encoding="utf-8",
     )
     pacer = Pacer(resolve_profile(None), state_dir=tmp_path)
     assert pacer.state.invites == [1.0, 2.0]

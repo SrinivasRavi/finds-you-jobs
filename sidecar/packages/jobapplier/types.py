@@ -185,18 +185,35 @@ ApplyEventSink = Callable[[ApplyEvent], None]
 
 
 class ApplyControl:
-    """Cooperative cancellation. The loop polls ``cancelled`` between steps;
-    the browser closing is detected separately and maps to INTERRUPTED."""
+    """Cooperative cancellation, plus the human's one Submit request. The loop
+    polls ``cancelled`` between steps; the browser closing is detected
+    separately and maps to INTERRUPTED. ``submit_requested`` is set ONLY by the
+    user's own click, never by the model: the tool vocabulary has no submit,
+    and the review window is the only place that reads it (section 8.4)."""
 
     def __init__(self) -> None:
         self._cancelled = False
+        self._submit_requested = False
 
     def cancel(self) -> None:
         self._cancelled = True
 
+    def request_submit(self) -> None:
+        self._submit_requested = True
+
+    def take_submit_request(self) -> bool:
+        """Consume the request. One click submits at most once, so a slow
+        confirmation can never be re-clicked into a second application."""
+        requested, self._submit_requested = self._submit_requested, False
+        return requested
+
     @property
     def cancelled(self) -> bool:
         return self._cancelled
+
+    @property
+    def submit_requested(self) -> bool:
+        return self._submit_requested
 
 
 # ---------------------------------------------------------------------------

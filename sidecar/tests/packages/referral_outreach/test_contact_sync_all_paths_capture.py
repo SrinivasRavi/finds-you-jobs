@@ -69,7 +69,7 @@ def _stub_profile(monkeypatch, urn: str | None, degree: int | None = 1) -> None:
 def _one_capture(capture_dir) -> dict:
     files = sorted(capture_dir.glob("contact-sync-probe-*.json"))
     assert len(files) == 1
-    return json.loads(files[0].read_text())
+    return json.loads(files[0].read_text(encoding="utf-8"))
 
 
 def test_reply_reads_them_with_every_stage_captured(tmp_path, monkeypatch):
@@ -144,8 +144,8 @@ def test_two_contact_sweep_fires_one_messaging_request(tmp_path, monkeypatch):
     assert len(graphql_calls) == 1
     files = sorted(capture_dir.glob("contact-sync-probe-*.json"))
     assert len(files) == 2
-    doc1 = json.loads(files[0].read_text())
-    doc2 = json.loads(files[1].read_text())
+    doc1 = json.loads(files[0].read_text(encoding="utf-8"))
+    doc2 = json.loads(files[1].read_text(encoding="utf-8"))
     assert doc1["messaging"]["inbox"]["cached"] is False
     assert doc2["messaging"]["inbox"]["cached"] is True
     assert doc2["payload"] is None  # the shape rides only on the fetching probe

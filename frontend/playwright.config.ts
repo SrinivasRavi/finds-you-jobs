@@ -24,6 +24,19 @@ export const E2E_DATA_DIR = join(
 // reuseExistingServer would attach the tests to the developer's live session.
 const WEB_PORT = Number(process.env.FYJ_WEB_PORT ?? 1420);
 
+// The LinkedIn surface's frozen origin is really linkedin.com, so the 4 specs
+// that mount it skip themselves unless this points at the loopback fixture
+// networking-browser.spec.ts serves. It used to be the caller's job to set it,
+// which meant a plain `npx playwright test` reported green while never opening
+// the modal. Default it here instead: the fixture port tracks FYJ_WEB_PORT so
+// 2 stacks on different ports never fight over it, and an explicit override
+// still wins. Nothing in the suite may name the real origin.
+// Set rather than `??=`: an exported-but-empty value is not an override, and
+// `??=` would keep it, which skips the specs again for the same reason.
+if (!process.env.VITE_LINKEDIN_ORIGIN) {
+  process.env.VITE_LINKEDIN_ORIGIN = `http://127.0.0.1:${WEB_PORT + 1000}/`;
+}
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./e2e/_results",
@@ -58,6 +71,9 @@ export default defineConfig({
       FYJ_DATA_DIR: process.env.FYJ_DATA_DIR ?? E2E_DATA_DIR,
       FYJ_APPLY_DEV: "1",
       FYJ_FAKE_LLM: "1",
+      // vite bakes VITE_* at serve time, so the spawned dev-web needs the
+      // fixture origin the specs above default.
+      VITE_LINKEDIN_ORIGIN: process.env.VITE_LINKEDIN_ORIGIN!,
     },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

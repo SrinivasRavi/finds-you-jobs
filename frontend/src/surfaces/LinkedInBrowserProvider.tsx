@@ -36,8 +36,13 @@ export const LINKEDIN_ORIGIN: string =
   "https://www.linkedin.com/";
 
 interface LinkedInBrowserValue {
-  /** Open the LinkedIn browser modal (in place, over the current surface). */
-  open: () => void;
+  /** Open the LinkedIn browser modal (in place, over the current surface).
+   *  `onBack` is supplied by a caller that closed its own modal to get here
+   *  (the referrals popup); it puts a Back control in the header that returns
+   *  the user where they came from instead of dropping them on the surface
+   *  underneath. Callers opening the modal directly pass nothing and get no
+   *  Back control, because there is nowhere to go back to. */
+  open: (opts?: { onBack?: () => void }) => void;
   close: () => void;
   isOpen: boolean;
   /** The session-long op feed — the pill's busy state + the queue panel. */
@@ -56,11 +61,20 @@ export function useLinkedInBrowser(): LinkedInBrowserValue {
 
 export function LinkedInBrowserProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
+  // Held in a ref-like state slot rather than passed through the modal's props
+  // from the caller, because the caller has unmounted by the time it matters.
+  const [onBack, setOnBack] = useState<(() => void) | null>(null);
   const ops = useBrowserOps();
   const value = useMemo<LinkedInBrowserValue>(
     () => ({
-      open: () => setIsOpen(true),
-      close: () => setIsOpen(false),
+      open: (opts) => {
+        setOnBack(() => opts?.onBack ?? null);
+        setIsOpen(true);
+      },
+      close: () => {
+        setOnBack(null);
+        setIsOpen(false);
+      },
       isOpen,
       ops,
     }),
@@ -72,7 +86,24 @@ export function LinkedInBrowserProvider({ children }: { children: ReactNode }) {
       {/* Mounted only while open: the screencast socket attaches on mount and
           detaches cleanly on close; the surface, its Chrome, and any running
           op all outlive the dialog (broker detach is identity-checked). */}
-      {isOpen && <LinkedInBrowserModal ops={ops} onClose={() => setIsOpen(false)} />}
+      {isOpen && (
+        <LinkedInBrowserModal
+          ops={ops}
+          onClose={() => {
+            setOnBack(null);
+            setIsOpen(false);
+          }}
+          onBack={
+            onBack
+              ? () => {
+                  setIsOpen(false);
+                  setOnBack(null);
+                  onBack();
+                }
+              : undefined
+          }
+        />
+      )}
     </LinkedInBrowserContext.Provider>
   );
 }
@@ -95,9 +126,11 @@ const HEADER_PILL_LABEL: Record<string, string> = {
 function LinkedInBrowserModal({
   ops,
   onClose,
+  onBack,
 }: {
   ops: BrowserOps;
   onClose: () => void;
+  onBack?: () => void;
 }) {
   const { t } = useTranslation();
   const session = useLinkedInSession();
@@ -110,15 +143,27 @@ function LinkedInBrowserModal({
       onClose={onClose}
       width={1840}
       headerExtra={
-        pill ? (
+        <>
+          {onBack ? (
+            <button
+              type="button"
+              data-testid="linkedin-modal-back"
+              className="inline-flex h-[22px] items-center gap-1 rounded-full border border-border px-2 text-[11.5px] text-ink-2 hover:bg-surface-3"
+              onClick={onBack}
+            >
+              {t("networking.linkedinModal.back")}
+            </button>
+          ) : null}
+          {pill ? (
           <span
             data-testid="linkedin-modal-status"
             className={`inline-flex h-[22px] items-center gap-[5px] whitespace-nowrap rounded-full border px-2 text-[11.5px] font-medium ${HEADER_PILL_CLS[pill.tone]}`}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
-            {t(HEADER_PILL_LABEL[pill.state])}
-          </span>
-        ) : null
+              {t(HEADER_PILL_LABEL[pill.state])}
+            </span>
+          ) : null}
+        </>
       }
     >
       {enabled ? (

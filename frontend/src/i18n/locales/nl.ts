@@ -204,6 +204,8 @@ const nl: DeepPartial<Messages> = {
       scoring: "scoren…",
       olderListing: "Oudere vacature",
       keywordScoreTitle: "Op trefwoorden gescoord (gratis, op het apparaat) — grijs, geen AI-score",
+      unscorableTitle:
+        "Voor deze vacature is geen functieomschrijving opgehaald, dus AI kan er geen score aan geven. De grijze 0 betekent ontbrekende data, geen slechte match.",
     },
     empty: {
       filtered: "Geen vacatures voldoen aan deze filters of zoekopdracht.",
@@ -491,6 +493,9 @@ const nl: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "Terug naar referrals",
+    },
     linkedinPill: {
       connected: "LinkedIn verbonden",
       connecting: "Verbinden…",
@@ -517,14 +522,16 @@ const nl: DeepPartial<Messages> = {
     columns: {
       sent: "Verstuurd",
       accepted: "Geaccepteerd",
-      engagement: "In gesprek",
+      pendingOurResponse: "Jouw antwoord open",
+      pendingTheirResponse: "Wachten op hen",
       ghosted: "Geghost",
       converted: "Geconverteerd",
     },
     columnEmpty: {
       sent: "Wachten op acceptaties — blijf versturen.",
       accepted: "Geaccepteerd, wacht op het eerste antwoord.",
-      engagement: "Actief gesprek — stuur zo nodig een herinnering.",
+      pendingOurResponse: "Zij schreven als laatste — jouw antwoord staat open.",
+      pendingTheirResponse: "Jij schreef als laatste — wachten op hen.",
       ghosted: "Geen activiteit sinds 7+ dagen.",
       converted: "Ze hebben je doorverwezen of geïntroduceerd.",
     },
@@ -557,7 +564,8 @@ const nl: DeepPartial<Messages> = {
       initialColumn: "Beginkolom",
       optionSent: "Verstuurd — uitnodiging is onderweg",
       optionAccepted: "Geaccepteerd — al verbonden",
-      optionEngagement: "In gesprek — actief aan het chatten",
+      optionPendingOurResponse: "Jouw antwoord open — zij schreven als laatste",
+      optionPendingTheirResponse: "Wachten op hen — jij schreef als laatste",
       optionConverted: "Geconverteerd — verwijst me door",
       cancel: "Annuleren",
       submit: "Contact toevoegen",
@@ -613,6 +621,10 @@ const nl: DeepPartial<Messages> = {
       retried: "opnieuw geprobeerd",
       retry: "Opnieuw",
       retrying: "Opnieuw proberen…",
+      retryScoring_one: "{{count}} mislukte score opnieuw proberen",
+      retryScoring_other: "{{count}} mislukte scores opnieuw proberen",
+      retryScoringTitle:
+        "Deze vacatures hebben alle 3 de AI-scorepogingen bij een bereikbare provider verbruikt. Opnieuw proberen geeft hun budget terug en de volgende schedulerronde scoort ze opnieuw. Vacatures zonder omschrijving worden overgeslagen — daar helpt opnieuw proberen niet.",
       stop: "Stoppen",
       stopping: "Bezig met stoppen…",
       restarted: "App herstart tijdens het genereren.",
@@ -1121,7 +1133,13 @@ const nl: DeepPartial<Messages> = {
       filledFields_other: "{{ok}} van {{count}} velden ingevuld.",
       couldntComplete: "Kon niet afronden: {{blockers}}.",
       neverSubmits:
-        "finds-you-jobs verstuurt in P1 nooit voor jou — controleer alles en klik dan zelf op de verstuurknop van de site.",
+        "finds-you-jobs verstuurt nooit uit zichzelf — controleer het en verstuur het zelf in de browser, of laat één keer op Verzenden klikken.",
+      submitForMe: "Verstuur het voor mij",
+      confirmSubmit: "Ja, versturen",
+      cancelSubmit: "Nog niet",
+      submitting: "Bezig met versturen…",
+      submitConfirmHint:
+        "Dit klikt één keer op de eigen Verzenden-knop van het formulier, op de pagina die je zojuist hebt bekeken. Dit kan niet ongedaan worden gemaakt.",
       iSubmitted: "Ik heb verstuurd",
       didntSubmit: "Niet verstuurd",
       retrying: "Opnieuw proberen…",
@@ -1160,6 +1178,10 @@ const nl: DeepPartial<Messages> = {
     backendStoppedFallback: "de backend reageert niet meer",
     sidecarFatalBanner:
       "Backend gestopt: {{message}}. Niets wat je doet wordt opgeslagen totdat je de app afsluit en opnieuw opent.",
+    degradedBoot:
+      "Achtergrondwerk is gepauzeerd. De app is 3 keer op rij onverwacht afgesloten, dus deze sessie is zonder gestart.",
+    degradedBootResume: "Achtergrondwerk hervatten",
+    degradedBootDismiss: "Sluiten",
     work: {
       remote: "Remote",
       hybrid: "Hybride",
@@ -1175,25 +1197,6 @@ const nl: DeepPartial<Messages> = {
       dismiss: "Sluiten",
       more_one: "+{{count}} eerdere fout niet getoond",
       more_other: "+{{count}} eerdere fouten niet getoond",
-    },
-    rescore: {
-      title: "Vacatures opnieuw scoren met AI?",
-      // Interpolated into the body strings below (with a leading space) when
-      // some jobs already carry an AI score and are skipped.
-      skipped_one: "({{count}} heeft al een AI-score voor dit cv — overgeslagen.)",
-      skipped_other: "({{count}} hebben al een AI-score voor dit cv — overgeslagen.)",
-      bodyResumeEdit_one:
-        "Je cv is gewijzigd. Wil je {{count}} vacature er opnieuw met AI tegen scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Of houd de huidige scores aan; je kunt altijd opnieuw scoren door je cv nogmaals te bewerken.",
-      bodyResumeEdit_other:
-        "Je cv is gewijzigd. Wil je {{count}} vacatures er opnieuw met AI tegen scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Of houd de huidige scores aan; je kunt altijd opnieuw scoren door je cv nogmaals te bewerken.",
-      bodyModeSwitch_one:
-        "De {{count}} vacature op je board zonder AI-score nu scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Nieuwe vacatures uit toekomstige scans worden hoe dan ook automatisch met AI gescoord.",
-      bodyModeSwitch_other:
-        "De {{count}} vacatures op je board zonder AI-score nu scoren?{{skipped}} Dit gebruikt je LLM-sleutel — één aanroep per vacature. Nieuwe vacatures uit toekomstige scans worden hoe dan ook automatisch met AI gescoord.",
-      busy: "Opnieuw scoren…",
-      confirm_one: "{{count}} vacature opnieuw scoren",
-      confirm_other: "{{count}} vacatures opnieuw scoren",
-      keepScores: "Huidige scores behouden",
     },
   },
 };

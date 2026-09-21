@@ -26,6 +26,7 @@ from ..searchquery import build_queries, select_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "brave"
+INLINE_DESCRIPTION = True
 _BASE = "https://api.search.brave.com/res/v1/web/search"
 
 # ATS hosts whose public job URLs we can parse/apply against. Deliberately the

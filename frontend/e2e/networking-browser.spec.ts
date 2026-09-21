@@ -16,11 +16,12 @@
 // networking.spec.ts asserts its absence.
 //
 // SAFETY: the surface's frozen origin is really linkedin.com, so every test
-// that mounts the modal REQUIRES the e2e stack to be started with
-// `VITE_LINKEDIN_ORIGIN=http://127.0.0.1:<port>/` pointing at the loopback
+// that mounts the modal needs `VITE_LINKEDIN_ORIGIN` pointed at the loopback
 // fixture this spec serves — the surface then auto-opens and navigates the
-// FIXTURE only. Without that override those tests skip; they never let a test
-// stack touch linkedin.com. Zero model calls, zero account use throughout.
+// FIXTURE only. `playwright.config.ts` defaults it, so these run on a plain
+// `npx playwright test`; the skip below stays as the backstop that keeps a
+// non-loopback override from ever reaching linkedin.com. Zero model calls,
+// zero account use throughout.
 
 import { createServer, type Server } from "node:http";
 import { readFileSync } from "node:fs";
@@ -373,7 +374,7 @@ test("contact modal composer: stage suggestions, single-click send, and the watc
     return ((await res.json()) as { id: string }).id;
   };
   await seed("Ada Accepted", "Northline", "accepted");
-  const eveId = await seed("Eve Engaged", "Fixture Systems", "engagement");
+  const eveId = await seed("Eve Engaged", "Fixture Systems", "pending_our_response");
   const ghostedId = await seed("Gus Ghosted", "Northline", "sent");
   // `ghosted` isn't a creation column — move the card the kanban way.
   await request.patch(`${base}/api/contacts/${ghostedId}`, {
@@ -407,7 +408,8 @@ test("contact modal composer: stage suggestions, single-click send, and the watc
   await page.screenshot({ path: `${DIR}/compose-ghosted.png`, fullPage: true });
   await page.keyboard.press("Escape");
 
-  // Engagement → the referral ask, personalized with THEIR employer.
+  // They wrote last → the referral ask, personalized with THEIR employer (S-N5:
+  // our reply IS the moment to ask).
   await openCard("Eve Engaged");
   expect(await boxValue()).toContain(
     "Can you please refer me for a role at Fixture Systems?",
@@ -415,7 +417,7 @@ test("contact modal composer: stage suggestions, single-click send, and the watc
   // The dropdown swaps in another phrasing; the box refills.
   await page
     .getByTestId("contact-compose-template")
-    .selectOption("engagement-soft");
+    .selectOption("pending_our_response-soft");
   expect(await boxValue()).toContain("No pressure at all.");
 
   // The channel + irreversibility line sits beside the single Send button and

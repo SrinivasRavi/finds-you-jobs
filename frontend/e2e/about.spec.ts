@@ -1,8 +1,7 @@
 // Covers: the Settings › About & Updates pane. Runs in a real browser (no
-// Tauri), so the updater is unavailable — the pane must degrade gracefully
+// Tauri), so the update check is unavailable — the pane must degrade gracefully
 // (version still shows, update controls show the "desktop app" note, no crash)
-// and the support/community/source links + the check-on-launch toggle render.
-// The toggle is localStorage-backed, so its state must survive a reload.
+// and the support/community/source links render.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -30,9 +29,7 @@ test.beforeEach(async ({ request }) => {
   });
 });
 
-test("about pane shows version, support/community links, and a persistent update toggle", async ({
-  page,
-}) => {
+test("about pane shows version and the support/community/source links", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
 
@@ -46,7 +43,8 @@ test("about pane shows version, support/community links, and a persistent update
   await expect(version).toHaveText(/^v\d+\.\d+\.\d+/);
 
   // Update controls degrade in the browser: the "desktop app" note shows and
-  // the manual check button is absent (it would error without the plugin).
+  // the manual check button is absent, which also keeps the e2e run from
+  // making an outbound call to GitHub.
   await expect(page.getByTestId("about-update-unavailable")).toBeVisible();
   await expect(page.getByTestId("about-check-updates")).toHaveCount(0);
 
@@ -58,20 +56,9 @@ test("about pane shows version, support/community links, and a persistent update
   // The #prompts-and-configs invitation copy is present.
   await expect(page.getByText("#prompts-and-configs")).toBeVisible();
 
+  // No launch-check preference exists any more: the check is manual only, so
+  // the app makes no outbound request the user did not just ask for.
+  await expect(page.getByTestId("about-auto-check-toggle")).toHaveCount(0);
+
   await page.screenshot({ path: `${DIR}/about-pane.png`, fullPage: true });
-
-  // The check-on-launch toggle defaults off, flips on, and persists (localStorage).
-  const toggle = page.getByTestId("about-auto-check-toggle");
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
-
-  await page.reload();
-  await page.getByTestId("settings-nav-about").click();
-  await expect(page.getByTestId("about-auto-check-toggle")).toHaveAttribute("aria-checked", "true");
-  await page.screenshot({ path: `${DIR}/about-auto-check-on.png`, fullPage: true });
-
-  // Leave the setting clean for any later run.
-  await page.getByTestId("about-auto-check-toggle").click();
-  await expect(page.getByTestId("about-auto-check-toggle")).toHaveAttribute("aria-checked", "false");
 });

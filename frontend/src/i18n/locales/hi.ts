@@ -193,6 +193,8 @@ const hi: DeepPartial<Messages> = {
       scoring: "स्कोर हो रहा है…",
       olderListing: "पुरानी लिस्टिंग",
       keywordScoreTitle: "कीवर्ड स्कोर (मुफ़्त, ऑन-डिवाइस) — ग्रे, यह AI स्कोर नहीं है",
+      unscorableTitle:
+        "इस लिस्टिंग के लिए कोई जॉब डिस्क्रिप्शन कैप्चर नहीं हुआ, इसलिए इसे AI स्कोर नहीं दिया जा सकता। ग्रे 0 का मतलब है डेटा गायब है, खराब मैच नहीं।",
     },
     empty: {
       filtered: "इन फ़िल्टरों या खोज से कोई जॉब मेल नहीं खाती।",
@@ -471,6 +473,9 @@ const hi: DeepPartial<Messages> = {
     },
   },
   networking: {
+    linkedinModal: {
+      back: "रेफ़रल पर वापस जाएँ",
+    },
     linkedinPill: {
       connected: "LinkedIn जुड़ा है",
       connecting: "जुड़ रहा है…",
@@ -497,14 +502,16 @@ const hi: DeepPartial<Messages> = {
     columns: {
       sent: "भेजा गया",
       accepted: "स्वीकृत",
-      engagement: "बातचीत",
+      pendingOurResponse: "आपका जवाब बाकी",
+      pendingTheirResponse: "उनका इंतज़ार",
       ghosted: "घोस्टेड",
       converted: "कन्वर्टेड",
     },
     columnEmpty: {
       sent: "स्वीकृति की प्रतीक्षा — भेजते रहें।",
       accepted: "स्वीकृत, पहले जवाब की प्रतीक्षा।",
-      engagement: "सक्रिय बातचीत — ज़रूरत पर याद दिलाएँ।",
+      pendingOurResponse: "उन्होंने आख़िरी संदेश भेजा — आपका जवाब बाकी है।",
+      pendingTheirResponse: "आपने आख़िरी संदेश भेजा — उनका इंतज़ार है।",
       ghosted: "7+ दिनों से कोई गतिविधि नहीं।",
       converted: "उन्होंने रेफ़र किया या परिचय कराया।",
     },
@@ -537,7 +544,8 @@ const hi: DeepPartial<Messages> = {
       initialColumn: "प्रारंभिक कॉलम",
       optionSent: "भेजा गया — निमंत्रण भेजा जा चुका है",
       optionAccepted: "स्वीकृत — पहले से जुड़े हैं",
-      optionEngagement: "बातचीत — सक्रिय रूप से बात हो रही है",
+      optionPendingOurResponse: "आपका जवाब बाकी — उन्होंने आख़िरी भेजा",
+      optionPendingTheirResponse: "उनका इंतज़ार — आपने आख़िरी भेजा",
       optionConverted: "कन्वर्टेड — मुझे रेफ़र कर रहे हैं",
       cancel: "रद्द करें",
       submit: "संपर्क जोड़ें",
@@ -593,6 +601,10 @@ const hi: DeepPartial<Messages> = {
       retried: "दोबारा चला",
       retry: "फिर कोशिश करें",
       retrying: "फिर कोशिश हो रही है…",
+      retryScoring_one: "{{count}} विफल स्कोर फिर से आज़माएँ",
+      retryScoring_other: "{{count}} विफल स्कोर फिर से आज़माएँ",
+      retryScoringTitle:
+        "इन जॉब्स ने चालू प्रोवाइडर के साथ तीनों AI स्कोरिंग प्रयास खर्च कर दिए। फिर से आज़माने पर इनका बजट लौट आता है और अगला शेड्यूलर टिक इन्हें दोबारा स्कोर करता है। बिना डिस्क्रिप्शन वाली जॉब्स छोड़ दी जाती हैं — वहाँ रीट्राई से कुछ नहीं होगा।",
       stop: "रोकें",
       stopping: "रोका जा रहा है…",
       restarted: "जनरेशन के दौरान ऐप रीस्टार्ट हुआ।",
@@ -1099,7 +1111,13 @@ const hi: DeepPartial<Messages> = {
       filledFields_other: "{{count}} में से {{ok}} फ़ील्ड भरीं।",
       couldntComplete: "पूरा नहीं हो सका: {{blockers}}।",
       neverSubmits:
-        "P1 में finds-you-jobs आपकी ओर से कभी सबमिट नहीं करता — जाँच लें, फिर साइट का अपना Submit दबाएँ।",
+        "finds-you-jobs खुद से कभी नहीं भेजता — जाँच लें और ब्राउज़र में खुद भेजें, या एक बार Submit दबाने को कहें।",
+      submitForMe: "मेरे लिए भेजें",
+      confirmSubmit: "हाँ, भेजें",
+      cancelSubmit: "अभी नहीं",
+      submitting: "भेजा जा रहा है…",
+      submitConfirmHint:
+        "यह उसी पृष्ठ पर फ़ॉर्म का अपना Submit बटन एक बार दबाता है जिसे आपने अभी देखा। इसे पूर्ववत नहीं किया जा सकता।",
       iSubmitted: "मैंने सबमिट किया",
       didntSubmit: "सबमिट नहीं किया",
       retrying: "फिर कोशिश हो रही है…",
@@ -1134,6 +1152,10 @@ const hi: DeepPartial<Messages> = {
     backendStoppedFallback: "बैकएंड ने जवाब देना बंद कर दिया",
     sidecarFatalBanner:
       "बैकएंड रुक गया: {{message}}। ऐप बंद करके दोबारा खोलने तक कुछ भी सहेजा नहीं जाएगा।",
+    degradedBoot:
+      "बैकग्राउंड काम रुका हुआ है। ऐप लगातार 3 बार अप्रत्याशित रूप से बंद हुआ, इसलिए यह सत्र इसके बिना शुरू हुआ।",
+    degradedBootResume: "बैकग्राउंड काम फिर से शुरू करें",
+    degradedBootDismiss: "बंद करें",
     work: {
       remote: "रिमोट",
       hybrid: "हाइब्रिड",
@@ -1149,23 +1171,6 @@ const hi: DeepPartial<Messages> = {
       dismiss: "हटाएँ",
       more_one: "+{{count}} पहले की विफलता नहीं दिखाई गई",
       more_other: "+{{count}} पहले की विफलताएँ नहीं दिखाई गईं",
-    },
-    rescore: {
-      title: "जॉब्स AI से दोबारा स्कोर करें?",
-      skipped_one: "({{count}} के पास इस रेज़्यूमे का AI स्कोर पहले से है — छोड़ा गया।)",
-      skipped_other: "({{count}} के पास इस रेज़्यूमे का AI स्कोर पहले से है — छोड़े गए।)",
-      bodyResumeEdit_one:
-        "आपका रेज़्यूमे बदला है। {{count}} जॉब को इसके आधार पर AI से दोबारा स्कोर करें?{{skipped}} इसमें आपकी LLM कुंजी लगती है — प्रति जॉब एक कॉल। या वर्तमान स्कोर रखें; रेज़्यूमे फिर संपादित कर कभी भी दोबारा स्कोर कर सकते हैं।",
-      bodyResumeEdit_other:
-        "आपका रेज़्यूमे बदला है। {{count}} जॉब्स को इसके आधार पर AI से दोबारा स्कोर करें?{{skipped}} इसमें आपकी LLM कुंजी लगती है — प्रति जॉब एक कॉल। या वर्तमान स्कोर रखें; रेज़्यूमे फिर संपादित कर कभी भी दोबारा स्कोर कर सकते हैं।",
-      bodyModeSwitch_one:
-        "आपके बोर्ड की वह {{count}} जॉब स्कोर करें जिसका अभी AI स्कोर नहीं है?{{skipped}} इसमें आपकी LLM कुंजी लगती है — प्रति जॉब एक कॉल। आगे के स्कैनों की नई जॉब्स दोनों स्थितियों में अपने आप AI-स्कोर होती हैं।",
-      bodyModeSwitch_other:
-        "आपके बोर्ड की वे {{count}} जॉब्स स्कोर करें जिनका अभी AI स्कोर नहीं है?{{skipped}} इसमें आपकी LLM कुंजी लगती है — प्रति जॉब एक कॉल। आगे के स्कैनों की नई जॉब्स दोनों स्थितियों में अपने आप AI-स्कोर होती हैं।",
-      busy: "दोबारा स्कोर हो रहा है…",
-      confirm_one: "{{count}} जॉब दोबारा स्कोर करें",
-      confirm_other: "{{count}} जॉब्स दोबारा स्कोर करें",
-      keepScores: "वर्तमान स्कोर रखें",
     },
   },
 };

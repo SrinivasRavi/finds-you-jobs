@@ -63,7 +63,8 @@ async def test_a_page_with_only_decoys_finds_nothing(tmp_path: Path) -> None:
     page_file.write_text(
         "<html><body><button type='button'>Apply Later</button>"
         "<a href='#'>Save job</a><button type='button'>Cancel</button>"
-        "</body></html>"
+        "</body></html>",
+        encoding="utf-8",
     )
 
     outcome = await _submit(page_file.as_uri())
@@ -85,7 +86,8 @@ async def test_no_confirmation_within_the_window_is_stated_not_assumed(
         "<html><body><form onsubmit='return false'>"
         "<input name='a' value='x'>"
         "<button type='submit'>Submit application</button>"
-        "</form></body></html>"
+        "</form></body></html>",
+        encoding="utf-8",
     )
 
     outcome = await _submit(page_file.as_uri())

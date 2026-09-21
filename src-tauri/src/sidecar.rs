@@ -24,15 +24,38 @@ const HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const RESTART_WINDOW: Duration = Duration::from_secs(30); // AM2
 const MAX_FAILURES: u32 = 3; // AM2
 const HEALTHY_RESET: Duration = Duration::from_secs(60); // AM2
+                                                         // Consecutive missed health polls tolerated while the sidecar process is still
+                                                         // ALIVE. A blocked event loop still holds its listening socket, so a slow query
+                                                         // and a crash look identical over HTTP; the process table knows the difference,
+                                                         // and `try_wait` is how we ask. At a 2 s poll with a 2 s timeout this is roughly
+                                                         // 20 s of unresponsiveness before we recycle a live process, against Kubernetes'
+                                                         // default of 3 consecutive liveness failures. A process that has actually EXITED
+                                                         // is restarted on the first poll, unchanged — that speed was the point.
+const BUSY_TOLERANCE: u32 = 5;
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10); // AM3
-// Startup grace: the sidecar prints its handshake BEFORE the Python lifespan
-// runs (migrations on first boot), and uvicorn only LISTENS after the lifespan
-// finishes — on a cold Windows laptop with antivirus scanning every .py file
-// that is tens of seconds. "Not listening yet" right after a (re)spawn is a
-// boot phase, not a crash: counting it killed healthy booting sidecars in a
-// 2.5 s loop on three real Windows installs (2026-07-19). A dead PROCESS is
-// still detected immediately via try_wait inside the grace.
+                                                          // Startup grace: the sidecar prints its handshake BEFORE the Python lifespan
+                                                          // runs (migrations on first boot), and uvicorn only LISTENS after the lifespan
+                                                          // finishes — on a cold Windows laptop with antivirus scanning every .py file
+                                                          // that is tens of seconds. "Not listening yet" right after a (re)spawn is a
+                                                          // boot phase, not a crash: counting it killed healthy booting sidecars in a
+                                                          // 2.5 s loop on three real Windows installs (2026-07-19). A dead PROCESS is
+                                                          // still detected immediately via try_wait inside the grace.
 const STARTUP_GRACE: Duration = Duration::from_secs(180);
+
+// Boot outcomes: the last few starts, so a crash LOOP is distinguishable from a
+// crash. The shell already knows when it started, which version it is, and how
+// the previous run ended; none of that survived the process before now. After
+// this many consecutive identical bad endings the next boot runs with the
+// scheduler off, so the window opens and nothing queues itself into the same wall.
+const BOOT_HISTORY_LEN: usize = 5;
+const DEGRADED_AFTER: usize = 3;
+
+// The 3 ways a run can end, from the shell's point of view. `unknown` is the
+// honest answer for a hard kill, and it is what a record keeps unless something
+// overwrites it, so it can never be mistaken for a clean exit.
+const OUTCOME_RUNNING: &str = "unknown";
+const OUTCOME_CLEAN: &str = "clean";
+const OUTCOME_GAVE_UP: &str = "gave_up";
 
 /// PROD sidecar binary (PyInstaller onedir), resolved against the packaged
 /// app's resource dir at spawn time — resolve_prod_sidecar_bin() below.
@@ -122,6 +145,12 @@ pub fn spawn_once(cwd: &Path, app: &AppHandle) -> std::io::Result<(Child, Sideca
     if cfg!(debug_assertions) {
         cmd.env("FYJ_DEV", "1");
     }
+    // A degraded boot starts the sidecar without its scheduler, so the window
+    // opens and no background work queues itself into whatever killed the last
+    // 3 runs. The sidecar reports this to the UI, which offers the way back.
+    if DEGRADED_BOOT.get().copied().unwrap_or(false) {
+        cmd.env("FYJ_SCHEDULER_OFF", "1");
+    }
     // Put the child in its own process group so we can kill the whole tree.
     #[cfg(unix)]
     {
@@ -146,7 +175,7 @@ pub fn spawn_once(cwd: &Path, app: &AppHandle) -> std::io::Result<(Child, Sideca
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| Error::new(ErrorKind::Other, "sidecar stdout not piped"))?;
+        .ok_or_else(|| Error::other("sidecar stdout not piped"))?;
 
     let (tx, rx) = mpsc::channel::<SidecarInfo>();
     thread::spawn(move || {
@@ -265,6 +294,96 @@ pub fn shell_log(msg: &str) {
     }
 }
 
+static DEGRADED_BOOT: OnceLock<bool> = OnceLock::new();
+
+fn boot_history_path() -> PathBuf {
+    SHELL_LOG_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| dev_cwd().join("logs"))
+        .join("boot_history.json")
+}
+
+fn read_boot_history() -> Vec<serde_json::Value> {
+    std::fs::read_to_string(boot_history_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+}
+
+fn write_boot_history(records: &[serde_json::Value]) {
+    let path = boot_history_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(&records) {
+        let _ = std::fs::write(path, text);
+    }
+}
+
+/// Whether the most recent outcomes (newest first) mean this boot starts
+/// degraded: enough of them to judge, none of them clean, and all the same.
+/// "All the same" is what separates a repeating fault from bad luck.
+fn is_degraded(recent: &[String]) -> bool {
+    recent.len() == DEGRADED_AFTER
+        && recent.iter().all(|o| o != OUTCOME_CLEAN)
+        && recent.windows(2).all(|w| w[0] == w[1])
+}
+
+/// Append this boot to the history and answer whether it should start degraded.
+/// Degraded means the last `DEGRADED_AFTER` runs all ended the same bad way, so
+/// starting the scheduler again would only walk into the same wall.
+pub fn record_boot(app: &AppHandle) -> bool {
+    let mut records = read_boot_history();
+    let recent: Vec<String> = records
+        .iter()
+        .rev()
+        .take(DEGRADED_AFTER)
+        .filter_map(|r| {
+            r.get("outcome")
+                .and_then(|o| o.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    let degraded = is_degraded(&recent);
+
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    records.push(serde_json::json!({
+        "at": at,
+        "version": app.package_info().version.to_string(),
+        "outcome": OUTCOME_RUNNING,
+        "degraded": degraded,
+    }));
+    if records.len() > BOOT_HISTORY_LEN {
+        records.drain(..records.len() - BOOT_HISTORY_LEN);
+    }
+    write_boot_history(&records);
+    let _ = DEGRADED_BOOT.set(degraded);
+    if degraded {
+        shell_log(&format!(
+            "degraded boot: the last {DEGRADED_AFTER} runs all ended '{}' — starting with the scheduler off",
+            recent.first().map(String::as_str).unwrap_or(OUTCOME_RUNNING)
+        ));
+    }
+    degraded
+}
+
+/// Stamp how THIS run ended onto its own record. Anything that never reaches
+/// here stays `unknown`, which is what a hard kill honestly is.
+pub fn close_boot_record(outcome: &str) {
+    let mut records = read_boot_history();
+    if let Some(last) = records.last_mut() {
+        if let Some(obj) = last.as_object_mut() {
+            obj.insert("outcome".into(), serde_json::json!(outcome));
+        }
+    }
+    write_boot_history(&records);
+}
+
 fn emit_status(app: &AppHandle, state: &Arc<Mutex<Inner>>, status: &str, port: u16) {
     {
         let mut s = state.lock().unwrap();
@@ -277,10 +396,7 @@ fn emit_status(app: &AppHandle, state: &Arc<Mutex<Inner>>, status: &str, port: u
 }
 
 fn emit_fatal(app: &AppHandle, message: &str) {
-    let _ = app.emit(
-        "sidecar://fatal",
-        serde_json::json!({ "message": message }),
-    );
+    let _ = app.emit("sidecar://fatal", serde_json::json!({ "message": message }));
 }
 
 /// Block until the sidecar answers /healthz once after a (re)spawn, or the
@@ -308,6 +424,7 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
     let mut failures: u32 = 0;
     let mut first_failure_at: Option<Instant> = None;
     let mut healthy_since: Option<Instant> = None;
+    let mut busy_polls: u32 = 0;
 
     // Startup grace for the initial spawn: the health loop below treats an
     // unanswered /healthz as a crash signal, which is only fair once the
@@ -349,6 +466,7 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
         };
 
         if health_ok(port) {
+            busy_polls = 0;
             match healthy_since {
                 None => healthy_since = Some(Instant::now()),
                 Some(since) if since.elapsed() >= HEALTHY_RESET => {
@@ -361,8 +479,25 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
             continue;
         }
 
-        // Unhealthy.
+        // Unhealthy. Alive or gone?
         healthy_since = None;
+        let exited = !matches!(child.try_wait(), Ok(None));
+        if !exited {
+            busy_polls += 1;
+            shell_log(&format!(
+                "busy: /healthz did not answer in {}s but the sidecar is alive \
+                 (busy poll {busy_polls}/{BUSY_TOLERANCE}) — see logs/sidecar.log \
+                 for the slow request",
+                HEALTH_POLL_INTERVAL.as_secs()
+            ));
+            emit_status(&app, &state, "reconnecting", port);
+            if busy_polls < BUSY_TOLERANCE {
+                continue;
+            }
+            shell_log("busy tolerance exhausted — treating the sidecar as wedged");
+        }
+        busy_polls = 0;
+
         match first_failure_at {
             Some(started) if started.elapsed() <= RESTART_WINDOW => {}
             _ => {
@@ -371,11 +506,14 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
             }
         }
         failures += 1;
-        shell_log(&format!("unhealthy: /healthz failed (failure {failures}/{MAX_FAILURES})"));
+        shell_log(&format!(
+            "unhealthy: /healthz failed (failure {failures}/{MAX_FAILURES})"
+        ));
         emit_status(&app, &state, "reconnecting", port);
 
         if failures >= MAX_FAILURES {
             shell_log("fatal: restart cap hit — giving up and killing the sidecar");
+            close_boot_record(OUTCOME_GAVE_UP);
             emit_fatal(
                 &app,
                 "backend crashed repeatedly (3 failures within 30s) — giving up",
@@ -428,6 +566,7 @@ pub fn shutdown(state: &Arc<Mutex<Inner>>) {
     // console Ctrl-C, quit menu. Its presence in shell.log separates "user
     // quit" from "something died" when reading a report from a real install.
     shell_log("quit requested (window closed / console Ctrl-C / quit) — draining sidecar");
+    close_boot_record(OUTCOME_CLEAN);
     let (pid, info) = {
         let mut s = state.lock().unwrap();
         s.stopping = true;
@@ -447,5 +586,52 @@ pub fn shutdown(state: &Arc<Mutex<Inner>>) {
 
     if let Some(pid) = pid {
         kill_group(pid);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_degraded, OUTCOME_CLEAN, OUTCOME_GAVE_UP, OUTCOME_RUNNING};
+
+    fn outcomes(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_string()).collect()
+    }
+
+    #[test]
+    fn three_identical_bad_endings_degrade_the_next_boot() {
+        assert!(is_degraded(&outcomes(&[
+            OUTCOME_GAVE_UP,
+            OUTCOME_GAVE_UP,
+            OUTCOME_GAVE_UP
+        ])));
+        assert!(is_degraded(&outcomes(&[
+            OUTCOME_RUNNING,
+            OUTCOME_RUNNING,
+            OUTCOME_RUNNING
+        ])));
+    }
+
+    #[test]
+    fn one_clean_run_clears_it() {
+        assert!(!is_degraded(&outcomes(&[
+            OUTCOME_CLEAN,
+            OUTCOME_GAVE_UP,
+            OUTCOME_GAVE_UP
+        ])));
+    }
+
+    #[test]
+    fn different_failures_are_bad_luck_not_a_loop() {
+        assert!(!is_degraded(&outcomes(&[
+            OUTCOME_GAVE_UP,
+            OUTCOME_RUNNING,
+            OUTCOME_GAVE_UP
+        ])));
+    }
+
+    #[test]
+    fn too_little_history_never_degrades() {
+        assert!(!is_degraded(&outcomes(&[])));
+        assert!(!is_degraded(&outcomes(&[OUTCOME_GAVE_UP, OUTCOME_GAVE_UP])));
     }
 }

@@ -49,6 +49,7 @@ import type {
   DiscoverySource,
   PromptSetting,
   ScheduleRow,
+  SchedulerStatus,
   WatchCompanyResult,
   WatchlistEntry,
   ReachOutInput,
@@ -65,7 +66,6 @@ import type {
   OnboardingPrefsInput,
   OperationKind,
   Profile,
-  RescorePreview,
   ScanProgress,
   Settings,
   Warmth,
@@ -90,8 +90,8 @@ type ReferralCandidatesDTO = components["schemas"]["ReferralCandidatesDTO"];
 type QuotaDTO = components["schemas"]["QuotaDTO"];
 type LinkedInSessionDTO = components["schemas"]["LinkedInSessionDTO"];
 type ApplyRunDTO = components["schemas"]["ApplyRunDTO"];
-type RescorePreviewDTO = components["schemas"]["RescorePreviewDTO"];
 type ScanProgressDTO = components["schemas"]["ScanProgressDTO"];
+type ScoreRetryDTO = components["schemas"]["ScoreRetryDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
@@ -758,7 +758,6 @@ export class RealApi {
       company: r.company,
       linkedin_url: r.linkedin_url,
       connection_status: r.connection_status,
-      ask_status: r.ask_status ?? null,
       audience_tag: r.audience_tag,
       last_message: r.last_message ?? null,
       last_message_at: r.last_message_at ?? null,
@@ -886,6 +885,14 @@ export class RealApi {
 
   /** The human's word after the P1 handoff (section 8.4): `true` records a user-attested
    *  submission and advances the card to Applied; `false` leaves it in place. */
+  /** Ask the run's own live browser to click Submit once (S-A5). 409 when the
+   *  review window is over, because the page it needs is gone. */
+  async submitApplyRun(runId: string): Promise<ApplyRun> {
+    return toApplyRun(
+      (await this.json("POST", `/api/apply-runs/${runId}/submit`, {})) as ApplyRunDTO,
+    );
+  }
+
   async attestApplyRun(runId: string, submitted: boolean): Promise<ApplyRun> {
     return toApplyRun(
       (await this.json("POST", `/api/apply-runs/${runId}/attest`, { submitted })) as ApplyRunDTO,
@@ -912,7 +919,6 @@ export class RealApi {
       version: d?.version ?? 1,
       application_profile:
         (d?.application_profile as Profile["application_profile"]) ?? null,
-      entities: { skills: [], experiences: [], projects: [], education: [] },
     };
   }
 
@@ -931,22 +937,6 @@ export class RealApi {
   async updateProfile(master_md: string): Promise<Profile> {
     await this.json("POST", "/api/profile", { resume_markdown: master_md });
     return this.getProfile();
-  }
-
-  /** The AI re-score consent numbers behind every "Re-score with AI?" prompt:
-   *  cache misses at the current resume version (what a confirmed run
-   *  enqueues) vs already-AI-scored jobs (skipped, never re-spent). */
-  async rescorePreview(): Promise<RescorePreview> {
-    const d = await this.req<RescorePreviewDTO>("/api/jobs/rescore/preview");
-    return { to_score: d.toScore, cached: d.cached };
-  }
-
-  /** Re-score the active board against the current master resume (the AI-mode
-   *  confirm after a resume edit or a switch to AI scoring). The server fills
-   *  cache MISSES only — jobs already AI-scored at the current version are
-   *  skipped. Keyword mode re-scores server-side already at save time. */
-  async rescoreBoard(): Promise<void> {
-    await this.json("POST", "/api/jobs/rescore", {});
   }
 
   /** First-launch guard (FR-OB-01): a `MasterProfile` row exists ⟺ onboarded.
@@ -1248,14 +1238,20 @@ export class RealApi {
   }
 
   // ── operations / ledger ────────────────────────────────────────────────
+  /** The newest 1000 operations — 20 pages of 50 in the Analytics ledger
+   *  (maintainer, 2026-08-24: "display top 1000"). Nothing prunes the table any
+   *  more, so this bound is the only thing keeping the response finite. Measured
+   *  against a 100k-row ledger: 501 KB and 97 ms, versus 100 KB and 79 ms at the
+   *  old 200 — the cost is the table-wide sort, not the row count, and the
+   *  surface renders one 50-row page at a time. */
   async listLedger(): Promise<LedgerEntry[]> {
-    const ops = await this.req<OperationDTO[]>("/api/operations?limit=200");
+    const ops = await this.req<OperationDTO[]>("/api/operations?limit=1000");
     return ops.map(toLedgerEntry);
   }
 
   /** All-time cost totals (FR-SET-07 / US-LOG-01 #2) — live ledger + the pruned
-   *  aggregate, so the Analytics tiles show lifetime spend, not the retained
-   *  window. */
+   *  aggregate. Nothing is pruned today, so the aggregate is empty and the live
+   *  sum carries every operation ever recorded. */
   async getCostTotals(): Promise<CostTotals> {
     const d = await this.req<CostTotalsDTO>("/api/cost/totals");
     return {
@@ -1290,6 +1286,40 @@ export class RealApi {
       if (e instanceof ApiError && e.status === 404) return [];
       throw e;
     }
+  }
+
+  /** How many jobs have spent their whole AI-scoring budget with no score
+   *  (S-C24). 0 means the ledger's Retry-scoring button stays hidden. */
+  async retryableScoreCount(): Promise<number> {
+    const d = await this.req<ScoreRetryDTO>("/api/scoring/retryable");
+    return d.count;
+  }
+
+  /** Give every stuck job its scoring budget back, so the next scheduler tick
+   *  re-plans it. Returns how many were reset. Enqueues nothing here: the tick
+   *  does the work, batched and off the request. */
+  async retryScoring(): Promise<number> {
+    const d = (await this.json("POST", "/api/scoring/retry", {})) as ScoreRetryDTO;
+    return d.reset;
+  }
+
+  /** Whether background work is running, and whether a degraded boot is why it
+   *  is not. The shell starts the backend without its scheduler after 3 runs in
+   *  a row end the same bad way (D27). */
+  async schedulerStatus(): Promise<SchedulerStatus> {
+    const d = await this.req<{ running: boolean; degradedBoot?: boolean }>(
+      "/api/system/scheduler",
+    );
+    return { running: d.running, degradedBoot: d.degradedBoot ?? false };
+  }
+
+  /** Turn background work back on after a degraded boot. Idempotent. */
+  async resumeScheduler(): Promise<SchedulerStatus> {
+    const d = (await this.json("POST", "/api/system/scheduler/resume", {})) as {
+      running: boolean;
+      degradedBoot?: boolean;
+    };
+    return { running: d.running, degradedBoot: d.degradedBoot ?? false };
   }
 
   /** Re-run a failed op with its original inputs (US-LOG-01 Retry). */

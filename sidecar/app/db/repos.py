@@ -14,33 +14,30 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from .base import now_utc
 from .models import (
     APPLY_RUN_ACTIVE_STATUSES,
+    CONTACT_SYNCABLE_STATUSES,
     OP_ACTIVE_STATES,
-    OP_TERMINAL_STATES,
     Application,
-    ApplicationDocument,
     ApplicationEvent,
     ApplyRun,
     Artifact,
     CompanyResolution,
     Contact,
-    ContactJobAssoc,
     Document,
     EngineSettings,
     Job,
-    JobScore,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
     Operation,
     OutreachLog,
+    ReferralCandidate,
     Schedule,
-    Sequence,
     Tombstone,
     UserPreferences,
 )
@@ -48,10 +45,11 @@ from .models import (
 # ---------------------------------------------------------------------------
 # Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07)
 # ---------------------------------------------------------------------------
-# Ledger retention prunes old terminal ops, so summing the live ledger alone
-# would silently forget pruned spend. Before pruning we fold the pruned ops'
-# usd/tokens into a persistent aggregate (UserPreferences.ui_state["cost_totals"]);
-# the all-time totals surface = live-ledger sum + this aggregate.
+# Summing the live ledger alone would silently forget the spend of any op that
+# got deleted, so the all-time totals surface = live-ledger sum + a persistent
+# aggregate (UserPreferences.ui_state["cost_totals"]). Nothing deletes an
+# operation today (S-C22), so the aggregate sits at zero and the live sum
+# carries everything; a deletion policy folds the doomed rows in here first.
 
 CostTotals = dict[str, Any]
 
@@ -67,18 +65,20 @@ def _empty_cost_totals() -> CostTotals:
     }
 
 
-def _accumulate_op(agg: CostTotals, op: Operation) -> None:
+def _accumulate(
+    agg: CostTotals, *, kind: str, state: str, usage: dict[str, Any] | None
+) -> None:
     """Fold one operation's usage into a running cost aggregate."""
-    usage = op.usage or {}
+    usage = usage or {}
     usd = float(usage.get("usd") or 0.0)
     agg["usd"] += usd
     agg["tokens_in"] += int(usage.get("tokens_in") or 0)
     agg["tokens_out"] += int(usage.get("tokens_out") or 0)
     agg["operations"] += 1
-    if op.state == "failed":
+    if state == "failed":
         agg["failed"] += 1
     by_kind = agg["by_kind"]
-    by_kind[op.kind] = float(by_kind.get(op.kind, 0.0)) + usd
+    by_kind[kind] = float(by_kind.get(kind, 0.0)) + usd
 
 
 def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
@@ -96,14 +96,6 @@ def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
     return merged
 
 
-def snapshot_matches(op: Operation, key: str, value: Any) -> bool:
-    """`op.input_snapshot[key] == value` — the ONE spelling of the ledger-scan
-    predicate (D-A13). Callers that already hold a batch of ops (the tracker's
-    hoisted per-card lookups) use it directly; callers that don't go through
-    `OperationsRepo.list_for_snapshot`."""
-    return (op.input_snapshot or {}).get(key) == value
-
-
 class OperationsRepo:
     """The runner's durable queue + the cost ledger."""
 
@@ -111,7 +103,18 @@ class OperationsRepo:
         self._s = session
 
     def create(self, kind: str, input_snapshot: dict[str, Any]) -> Operation:
-        op = Operation(kind=kind, state="queued", input_snapshot=input_snapshot)
+        """The one place the subject ids are lifted out of the snapshot, so no
+        call site has to remember to pass them twice. Empty string becomes NULL:
+        the retired `watch_company` kind wrote `job_id: ""`, and "" is not a
+        missing value the way NULL is."""
+        op = Operation(
+            kind=kind,
+            state="queued",
+            job_id=input_snapshot.get("job_id") or None,
+            contact_id=input_snapshot.get("contact_id") or None,
+            batch_id=input_snapshot.get("batch_id") or None,
+            input_snapshot=input_snapshot,
+        )
         self._s.add(op)
         self._s.flush()
         return op
@@ -135,46 +138,44 @@ class OperationsRepo:
         )
         return list(self._s.scalars(stmt))
 
+    def list_queued_for_dispatch(
+        self, *, priority_by_kind: dict[str, int], default_priority: int, limit: int
+    ) -> list[Operation]:
+        """Queued operations in dispatch order, most urgent first, capped.
+
+        The runner used to read EVERY queued row and sort in Python, so
+        enqueueing N operations cost n(n+1)/2 row loads. The cap is what fixes
+        that, and the ordering has to move into SQL for the cap to be safe: with
+        a date-ordered read, a `LIMIT` would hide an `apply` the user is watching
+        behind hundreds of bulk `score` rows. Sorted here, the first `limit` rows
+        are always the most urgent ones. `created_at, id` keeps it FIFO within a
+        priority band, matching the stable Python sort this replaced."""
+        priority = case(priority_by_kind, value=Operation.kind, else_=default_priority)
+        stmt = (
+            select(Operation)
+            .where(Operation.state == "queued")
+            .order_by(priority, Operation.created_at, Operation.id)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
     def list_recent(self, limit: int = 100) -> list[Operation]:
         stmt = select(Operation).order_by(Operation.created_at.desc()).limit(limit)
         return list(self._s.scalars(stmt))
 
-    def trim_to(self, keep: int) -> int:
-        """Delete all but the `keep` most-recent terminal operations — the P1
-        ledger retention (US-LOG-01 #2: ~5 pages). Only terminal rows are
-        pruned so an in-flight `queued`/`running` op is never dropped mid-flight.
-        Returns the number deleted."""
-        keep_ids = select(Operation.id).where(
-            Operation.state.in_(OP_TERMINAL_STATES)
-        ).order_by(Operation.created_at.desc()).limit(keep)
-        stmt = delete(Operation).where(
-            Operation.state.in_(OP_TERMINAL_STATES), Operation.id.not_in(keep_ids)
-        )
-        result = cast("CursorResult[Any]", self._s.execute(stmt))
-        return result.rowcount or 0
-
-    def sum_terminal_beyond(self, keep: int) -> CostTotals:
-        """The cost aggregate of the terminal ops `trim_to(keep)` would prune —
-        i.e. all-but-the-newest-`keep` terminal rows. Folded into the persistent
-        lifetime aggregate *before* pruning so all-time spend survives retention."""
-        stmt = (
-            select(Operation)
-            .where(Operation.state.in_(OP_TERMINAL_STATES))
-            .order_by(Operation.created_at.desc())
-            .offset(keep)
-        )
-        agg = _empty_cost_totals()
-        for op in self._s.scalars(stmt):
-            _accumulate_op(agg, op)
-        return agg
-
     def live_cost_totals(self) -> CostTotals:
         """The cost aggregate over every operation still in the table (all states;
         in-flight rows carry no usage and contribute only to the op count). Added
-        to the pruned aggregate to yield the all-time totals."""
+        to the pruned aggregate to yield the all-time totals.
+
+        Reads 3 columns rather than building an ORM object per row, which is the
+        difference between 95 ms and 1.2 s at 100k operations. Still linear:
+        summing every row is inherently linear, and at 24 operations a day it
+        stays under a millisecond for years."""
         agg = _empty_cost_totals()
-        for op in self._s.scalars(select(Operation)):
-            _accumulate_op(agg, op)
+        stmt = select(Operation.kind, Operation.state, Operation.usage)
+        for kind, state, usage in self._s.execute(stmt):
+            _accumulate(agg, kind=kind, state=state, usage=usage)
         return agg
 
     def list_by_kind_states(self, kind: str, states: Collection[str]) -> list[Operation]:
@@ -183,32 +184,53 @@ class OperationsRepo:
         )
         return list(self._s.scalars(stmt))
 
-    def list_for_snapshot(
-        self, kind: str, states: Collection[str], *, key: str, value: Any
+    def list_for_job(
+        self, kind: str, states: Collection[str], job_id: str | None
     ) -> list[Operation]:
-        """Ops of `kind` in `states` whose `input_snapshot[key] == value` — the
-        "which ops belong to this job / batch / contact?" question every ledger
-        surface asks (D-A13). The snapshot is opaque JSON, so the match happens
-        in Python over the same bounded `list_by_kind_states` set the callers
-        already fetched by hand."""
-        return [
-            op
-            for op in self.list_by_kind_states(kind, states)
-            if snapshot_matches(op, key, value)
-        ]
+        """Ops of `kind` in `states` about one job, straight off the index.
+
+        `None` means the job-less ones (a reach-out sent from the contact modal
+        rather than from a role), which is what the Python match this replaced
+        did with a `None` value."""
+        subject = (
+            Operation.job_id.is_(None) if job_id is None else Operation.job_id == job_id
+        )
+        stmt = select(Operation).where(
+            Operation.kind == kind, Operation.state.in_(states), subject
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_for_batch(
+        self, kind: str, states: Collection[str], batch_id: str
+    ) -> list[Operation]:
+        """Ops of `kind` in `states` in one send batch, straight off the index."""
+        stmt = select(Operation).where(
+            Operation.kind == kind,
+            Operation.state.in_(states),
+            Operation.batch_id == batch_id,
+        )
+        return list(self._s.scalars(stmt))
+
+    def score_states_for_job(self, job_id: str) -> set[str]:
+        """The states of one job's `score` ops. One indexed read, for the routes
+        that only ever asked about one job."""
+        stmt = select(Operation.state).where(
+            Operation.kind == "score", Operation.job_id == job_id
+        )
+        return set(self._s.scalars(stmt))
 
     def score_states_by_job(self) -> dict[str, set[str]]:
-        """job_id → the set of its `score` operation states — the board's
-        Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02). A job with a failed
-        score op and no cached score resolves to `Score failed`, never a
-        perpetual Pending. (Bounded by ledger retention; a pruned failure simply
-        re-reads as Pending, and the Remove→Add-back retry path re-scores.)"""
+        """job_id → the set of its `score` operation states, for the board's
+        Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02).
+
+        Two indexed columns, no rows built: this used to load every `score` row
+        through the ORM and unpack its JSON in Python (1.06 s at 100k rows)."""
         result: dict[str, set[str]] = {}
-        stmt = select(Operation).where(Operation.kind == "score")
-        for op in self._s.scalars(stmt):
-            job_id = (op.input_snapshot or {}).get("job_id")
-            if job_id:
-                result.setdefault(job_id, set()).add(op.state)
+        stmt = select(Operation.job_id, Operation.state).where(
+            Operation.kind == "score", Operation.job_id.is_not(None)
+        )
+        for job_id, state in self._s.execute(stmt):
+            result.setdefault(job_id, set()).add(state)
         return result
 
     def latest_by_kind(self, kind: str) -> Operation | None:
@@ -432,6 +454,92 @@ class JobsRepo:
         stmt = stmt.order_by(Job.ingested_at.desc(), Job.id).limit(limit)
         return list(self._s.scalars(stmt))
 
+    def list_active_without_llm_score(
+        self, *, limit: int | None = None, max_attempts: int | None = None
+    ) -> list[Job]:
+        """Active jobs that can still earn an AI score, newest first.
+
+        The AI planner used to page the newest 1,000 active jobs and only THEN
+        filter that page down to the unscored, so on an install with more than
+        1,000 active jobs the oldest could never be planned at any tick — they
+        sat unscored with nothing to show for it. Doing the exclusion in SQL
+        makes a scored job leave the result set on its own, so every job is
+        eventually reached, and the read is O(unscored) instead of O(all
+        active). `limit=None` means no cap, which is the planner's default.
+
+        A keyword floor does NOT count: `scorer_impl` is matched so the LLM can
+        still upgrade a job the on-device floor already scored.
+
+        A job whose description is under `MIN_JD_CHARS` is excluded outright. It
+        can never earn an LLM score (`score_entrypoint` refuses it and writes a
+        0 without calling the engine — see that constant for why), so leaving it
+        in would re-plan the same job on every tick forever, each pass writing
+        another operation row. On the maintainer's install that's 248 jobs, so
+        it would be 248 pointless operations per tick. The predicate is on the
+        description rather than on the presence of a refusal row, which means a
+        later scan that fills the description in makes the job eligible again on
+        its own, with nothing to reset (S-A6).
+
+        `max_attempts` drops jobs that have already failed that many times
+        against a live provider (`Job.llm_score_attempts`). A provider outage
+        never increments that counter, so an expired key costs no job an attempt
+        and the whole backlog returns on the next tick."""
+        from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
+        stmt = select(Job).where(
+            Job.feed_state == "active",
+            Job.llm_score.is_(None),
+            func.length(func.coalesce(Job.description, "")) >= MIN_JD_CHARS,
+        )
+        if max_attempts is not None:
+            stmt = stmt.where(Job.llm_score_attempts < max_attempts)
+        stmt = stmt.order_by(Job.ingested_at.desc(), Job.id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return list(self._s.scalars(stmt))
+
+    def record_score_failure(self, job_id: str, error: str) -> None:
+        """One scoring attempt that REACHED the provider and failed. Only these
+        count: a circuit-open rejection never reached anything, so the job keeps
+        its budget and comes straight back to the pool."""
+        self._s.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(
+                llm_score_attempts=Job.llm_score_attempts + 1,
+                llm_score_last_error=error[:2000],
+            )
+        )
+
+    def count_score_exhausted(self, max_attempts: int) -> int:
+        """Active jobs that have spent their whole AI-scoring budget and still
+        carry no LLM score — the ones no future tick will ever pick up. This is
+        what the ledger's Retry affordance counts, so the button appears only
+        when pressing it would actually do something. A job at 1 or 2 attempts
+        is NOT counted: it comes back on the next tick on its own."""
+        stmt = select(func.count()).select_from(Job).where(
+            Job.feed_state == "active",
+            Job.llm_score.is_(None),
+            Job.llm_score_attempts >= max_attempts,
+        )
+        return int(self._s.scalar(stmt) or 0)
+
+    def reset_score_attempts(self) -> int:
+        """Give every exhausted job its budget back — what Retry does. Returns
+        the number of jobs reset. Jobs with no usable description are untouched:
+        they never spent an attempt (the planner skips them outright), so there
+        is nothing to give back and retrying can't help until a scan fills the
+        description in."""
+        result = cast(
+            "CursorResult[Any]",
+            self._s.execute(
+                update(Job)
+                .where(Job.llm_score_attempts > 0)
+                .values(llm_score_attempts=0, llm_score_last_error=None)
+            ),
+        )
+        return int(result.rowcount or 0)
+
     def list_by_states(self, states: list[str], *, limit: int = 10_000) -> list[Job]:
         """All jobs in any of `states` (the board serves active + expired —
         FR-SYS-03: Expired rows stay on the board, greyed). No silent 200-row cap
@@ -471,185 +579,125 @@ class JobsRepo:
     ) -> Job:
         """Move a job into/out of Trash (US-JB-11 / FR-JB-12).
 
-        Trashing records `trashed_at` in `source_meta` so the 7-day TTL tick
-        (FR-SYS-03/FR-SYS-04) can age it out; restoring clears that bookkeeping
-        and returns the row to the active feed — its score/history are untouched.
-        `source_meta` is otherwise unused for scanned/pasted jobs, so overloading
-        it here needs no schema change."""
+        Trashing stamps `trashed_at` so the 7-day TTL tick (FR-SYS-03/FR-SYS-04)
+        can age it out; restoring clears the stamp and returns the row to the
+        active feed — its score/history are untouched."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        meta = dict(job.source_meta or {})
         if trashed:
             job.feed_state = "removed"
-            meta["trashed_at"] = (now or now_utc()).isoformat()
+            job.trashed_at = now or now_utc()
         else:
             job.feed_state = "active"
-            meta.pop("trashed_at", None)
-        job.source_meta = meta or None
+            job.trashed_at = None
         return job
 
     def set_expired(self, job_id: str, *, now: datetime | None = None) -> Job:
         """Age a feed job into `Expired` (FR-SYS-03) — greyed, labelled "Older
-        listing", still on the board. Stamps `expired_at` in `source_meta` (the
-        same JSON-overload pattern as `trashed_at`) so the 30-day hard-delete
-        clock can start. No score/history change."""
+        listing", still on the board. Stamps `expired_at` so the 30-day
+        hard-delete clock can start. No score/history change."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        meta = dict(job.source_meta or {})
-        meta["expired_at"] = (now or now_utc()).isoformat()
+        job.expired_at = now or now_utc()
         job.feed_state = "expired"
-        job.source_meta = meta
         return job
 
     def unexpire(self, job_id: str, *, now: datetime | None = None) -> Job:
         """Explicit un-expire (FR-SYS-03): restore an Expired job to the active
-        feed and **reset the 14-day timer** by stamping `feed_since` (the aging
-        clock reads `feed_since` when present, else `ingested_at`, so the sort
-        order — recency — is preserved)."""
+        feed and **reset the 14-day timer** by restamping `feed_since`, which is
+        the aging clock (it starts at `ingested_at` and only an un-expire moves
+        it), so the board's recency sort is preserved."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        meta = dict(job.source_meta or {})
-        meta.pop("expired_at", None)
-        meta["feed_since"] = (now or now_utc()).isoformat()
+        job.expired_at = None
+        job.feed_since = now or now_utc()
         job.feed_state = "active"
-        job.source_meta = meta or None
         return job
 
+    def list_trashed_before(self, cutoff: datetime) -> list[Job]:
+        """Trashed rows whose TTL has run out. A row with no `trashed_at` is
+        excluded and lazily stamped by the caller, so its clock starts once."""
+        stmt = select(Job).where(
+            Job.feed_state == "removed", Job.trashed_at.is_not(None), Job.trashed_at <= cutoff
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_expired_before(self, cutoff: datetime) -> list[Job]:
+        """Expired rows past the hard-delete cutoff (same null rule as above)."""
+        stmt = select(Job).where(
+            Job.feed_state == "expired", Job.expired_at.is_not(None), Job.expired_at <= cutoff
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_active_before(self, cutoff: datetime) -> list[Job]:
+        """Active rows whose freshness window has run out."""
+        stmt = select(Job).where(Job.feed_state == "active", Job.feed_since <= cutoff)
+        return list(self._s.scalars(stmt))
+
+    def stamp_missing_lifecycle_dates(self, *, now: datetime | None = None) -> int:
+        """Start the clock on rows that entered a state before it was stamped.
+        Returns how many were touched; 0 on every install past the backfill."""
+        stamp = now or now_utc()
+        touched = 0
+        for state, column in (("removed", Job.trashed_at), ("expired", Job.expired_at)):
+            result = cast(
+                "CursorResult[Any]",
+                self._s.execute(
+                    update(Job)
+                    .where(Job.feed_state == state, column.is_(None))
+                    .values({column: stamp})
+                ),
+            )
+            touched += int(result.rowcount or 0)
+        return touched
+
     def delete(self, job_id: str) -> bool:
-        """Hard-delete a job row + its cached scores (foreign_keys=ON forbids
-        orphaned `JobScore` rows). Used by the tombstone paths (Empty Trash /
-        Delete forever / TTL eviction) — the caller writes the `Tombstone`."""
+        """Hard-delete a job row. Scores are columns and go with it, but
+        `referral_candidates`, `outreach_logs`, and `applications` hold FKs
+        to `jobs.id` — the caller MUST clean those first (use
+        `delete_job_cascade` in `persistence.py`). Used by the tombstone
+        paths (Empty Trash / Delete forever / TTL eviction)."""
         job = self._s.get(Job, job_id)
         if job is None:
             return False
-        self._s.execute(delete(JobScore).where(JobScore.job_id == job_id))
         self._s.delete(job)
         return True
 
-
-class JobScoresRepo:
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get_cached(
-        self, job_id: str, profile_version: int, scorer_impl: str = "scorer-llm"
-    ) -> JobScore | None:
-        stmt = select(JobScore).where(
-            JobScore.job_id == job_id,
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == scorer_impl,
-        )
-        return self._s.scalars(stmt).first()
-
-    def latest_for_jobs(
-        self, job_ids: list[str], profile_version: int, scorer_impl: str = "scorer-llm"
-    ) -> dict[str, JobScore]:
-        """The cached score per job for one `(profile_version, scorer_impl)` —
-        the board join (FR-JB-01 sort)."""
-        if not job_ids:
-            return {}
-        stmt = select(JobScore).where(
-            JobScore.job_id.in_(job_ids),
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == scorer_impl,
-        )
-        return {row.job_id: row for row in self._s.scalars(stmt)}
-
-    def scored_job_ids(
-        self, profile_version: int, scorer_impl: str = "scorer-llm"
-    ) -> set[str]:
-        stmt = select(JobScore.job_id).where(
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == scorer_impl,
-        )
-        return set(self._s.scalars(stmt))
-
-    def latest_scores(self, job_ids: list[str]) -> dict[str, JobScore]:
-        """The score each job DISPLAYS — version-agnostic (maintainer
-        2026-07-22): the row from the HIGHEST profile version, and within that
-        version an AI (`scorer-llm`) score outranks a keyword one. This keeps a
-        score visible after a resume edit even when the user declines an AI
-        re-score (the older-version score stays shown), and shows the fresh
-        score once a re-score lands."""
-        if not job_ids:
-            return {}
-        stmt = select(JobScore).where(JobScore.job_id.in_(job_ids))
-        best: dict[str, JobScore] = {}
-        for row in self._s.scalars(stmt):
-            cur = best.get(row.job_id)
-            if cur is None or (row.profile_version, row.scorer_impl == "scorer-llm") > (
-                cur.profile_version,
-                cur.scorer_impl == "scorer-llm",
-            ):
-                best[row.job_id] = row
-        return best
-
-    def job_ids_with_any_score(self, job_ids: list[str]) -> set[str]:
-        """Jobs that carry ANY score (any version/impl) — the keyword floor
-        skips these so a stale score is never clobbered."""
-        if not job_ids:
-            return set()
-        stmt = select(JobScore.job_id).where(JobScore.job_id.in_(job_ids))
-        return set(self._s.scalars(stmt))
-
-    def job_ids_with_llm_score(self, job_ids: list[str]) -> set[str]:
-        """Jobs with an AI score at ANY version — the AI planner skips these so
-        a resume edit never auto-spends tokens re-scoring them (that path is the
-        explicit 'Re-score all' prompt)."""
-        if not job_ids:
-            return set()
-        stmt = select(JobScore.job_id).where(
-            JobScore.job_id.in_(job_ids), JobScore.scorer_impl == "scorer-llm"
-        )
-        return set(self._s.scalars(stmt))
-
-    def job_ids_missing_llm_score(
-        self, job_ids: list[str], profile_version: int
-    ) -> list[str]:
-        """AI-score cache MISSES at one version, input order preserved — the
-        set the re-score preview counts AND the re-score run enqueues (one
-        query for both, so the prompt's N always equals what actually runs)."""
-        if not job_ids:
-            return []
-        stmt = select(JobScore.job_id).where(
-            JobScore.job_id.in_(job_ids),
-            JobScore.profile_version == profile_version,
-            JobScore.scorer_impl == "scorer-llm",
-        )
-        hits = set(self._s.scalars(stmt))
-        return [job_id for job_id in job_ids if job_id not in hits]
-
-    def create(self, **fields: Any) -> JobScore:
-        score = JobScore(**fields)
-        self._s.add(score)
-        self._s.flush()
-        return score
-
-    def upsert(
+    def set_score(
         self,
-        *,
         job_id: str,
-        profile_version: int,
-        scorer_impl: str = "scorer-llm",
-        **fields: Any,
-    ) -> JobScore:
-        """Cache write: refresh the row for a `(job, version, impl)` triple, or
-        create it. A recompute of the same cache key never duplicates."""
-        existing = self.get_cached(job_id, profile_version, scorer_impl)
-        if existing is not None:
-            for key, value in fields.items():
-                setattr(existing, key, value)
-            self._s.flush()
-            return existing
-        return self.create(
-            job_id=job_id,
-            profile_version=profile_version,
-            scorer_impl=scorer_impl,
-            **fields,
+        *,
+        scorer_impl: str,
+        score_0_100: int,
+        reasons: list[Any],
+        breakdown_md: str,
+    ) -> bool:
+        """Write one scorer's rating onto the job. Returns True when this is the
+        FIRST rating that scorer has produced for this job, which is what the
+        priority distribution counts: a recompute must not double count."""
+        job = self._s.get(Job, job_id)
+        if job is None:
+            raise KeyError(f"job {job_id!r} not found")
+        prefix = "llm" if scorer_impl == "scorer-llm" else "keyword"
+        is_new = getattr(job, f"{prefix}_score") is None
+        setattr(job, f"{prefix}_score", score_0_100)
+        setattr(job, f"{prefix}_reasons", list(reasons))
+        setattr(job, f"{prefix}_breakdown_md", breakdown_md)
+        self._s.flush()
+        return is_new
+
+    def ids_without_any_score(self, job_ids: list[str]) -> set[str]:
+        """Of these jobs, the ones no scorer has rated — what the keyword floor
+        fills so no board row is ever stuck on Pending."""
+        if not job_ids:
+            return set()
+        stmt = select(Job.id).where(
+            Job.id.in_(job_ids), Job.llm_score.is_(None), Job.keyword_score.is_(None)
         )
+        return set(self._s.scalars(stmt))
 
 
 class TombstonesRepo:
@@ -777,8 +825,9 @@ class ArtifactsRepo:
 
 
 class DocumentsRepo:
-    """The content-addressed `documents` index (FR-TR manual-add). The blob on
-    disk is owned by `app.documents`; this repo owns the dedup row."""
+    """Uploaded documents attached to cards (FR-TR manual-add). One row per
+    attachment; the blob on disk is content-addressed and owned by
+    `app.documents`, so identical bytes on 2 cards are 2 rows and 1 file."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -786,27 +835,56 @@ class DocumentsRepo:
     def get(self, document_id: str) -> Document | None:
         return self._s.get(Document, document_id)
 
-    def get_many(self, document_ids: list[str]) -> dict[str, Document]:
-        """id → Document for a batch of attachment links (F-H2)."""
-        if not document_ids:
-            return {}
-        stmt = select(Document).where(Document.id.in_(document_ids))
-        return {doc.id: doc for doc in self._s.scalars(stmt)}
+    def list_for_application(self, application_id: str) -> list[Document]:
+        stmt = (
+            select(Document)
+            .where(Document.application_id == application_id)
+            .order_by(Document.doc_type, Document.created_at)
+        )
+        return list(self._s.scalars(stmt))
 
-    def get_by_sha256(self, sha256: str) -> Document | None:
-        return self._s.scalars(
-            select(Document).where(Document.sha256 == sha256)
+    def list_for_applications(self, application_ids: list[str]) -> list[Document]:
+        """`list_for_application` over many cards in one IN query (F-H2). Same
+        (doc_type, created_at) order, so per-card grouping preserves the order."""
+        if not application_ids:
+            return []
+        stmt = (
+            select(Document)
+            .where(Document.application_id.in_(application_ids))
+            .order_by(Document.doc_type, Document.created_at)
+        )
+        return list(self._s.scalars(stmt))
+
+    def set(
+        self,
+        application_id: str,
+        doc_type: str,
+        *,
+        sha256: str,
+        byte_size: int,
+        mime_type: str,
+        original_filename: str,
+    ) -> tuple[Document, str | None]:
+        """Fill this card's `doc_type` slot, replacing whatever was there — one
+        resume and one cover per card. Returns the row and the sha256 of the
+        blob the replacement orphaned, if any, so the caller can unlink it."""
+        existing = self._s.scalars(
+            select(Document).where(
+                Document.application_id == application_id,
+                Document.doc_type == doc_type,
+            )
         ).first()
-
-    def get_or_create(
-        self, *, sha256: str, byte_size: int, mime_type: str, original_filename: str
-    ) -> Document:
-        """The row for these bytes — dedup by sha256, so identical uploads share
-        one row (and one blob). A re-upload keeps the first-seen filename."""
-        existing = self.get_by_sha256(sha256)
         if existing is not None:
-            return existing
+            replaced = existing.sha256
+            existing.sha256 = sha256
+            existing.byte_size = byte_size
+            existing.mime_type = mime_type
+            existing.original_filename = original_filename
+            self._s.flush()
+            return existing, self._orphaned(replaced)
         doc = Document(
+            application_id=application_id,
+            doc_type=doc_type,
             sha256=sha256,
             byte_size=byte_size,
             mime_type=mime_type,
@@ -814,79 +892,46 @@ class DocumentsRepo:
         )
         self._s.add(doc)
         self._s.flush()
-        return doc
+        return doc, None
 
-
-class ApplicationDocumentsRepo:
-    """Links uploaded documents to applications as resume/cover (FR-TR manual-add)."""
-
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def list_for_application(self, application_id: str) -> list[ApplicationDocument]:
-        stmt = (
-            select(ApplicationDocument)
-            .where(ApplicationDocument.application_id == application_id)
-            .order_by(ApplicationDocument.kind, ApplicationDocument.created_at)
-        )
-        return list(self._s.scalars(stmt))
-
-    def list_for_applications(
-        self, application_ids: list[str]
-    ) -> list[ApplicationDocument]:
-        """`list_for_application` over many cards in one IN query (F-H2). Same
-        (kind, created_at) order, so per-card grouping preserves the per-card order."""
-        if not application_ids:
-            return []
-        stmt = (
-            select(ApplicationDocument)
-            .where(ApplicationDocument.application_id.in_(application_ids))
-            .order_by(ApplicationDocument.kind, ApplicationDocument.created_at)
-        )
-        return list(self._s.scalars(stmt))
-
-    def set(self, application_id: str, kind: str, document_id: str) -> ApplicationDocument:
-        """Attach `document_id` as this application's `kind` slot, replacing any
-        prior link for that (application, kind) — one resume + one cover per card."""
-        existing = self._s.scalars(
-            select(ApplicationDocument).where(
-                ApplicationDocument.application_id == application_id,
-                ApplicationDocument.kind == kind,
+    def delete(self, application_id: str, doc_type: str) -> str | None:
+        """Detach this card's `doc_type` document (the ✕ in the editor). Returns
+        the sha256 whose blob is now unreferenced, or None if another card still
+        uses those bytes or nothing was attached."""
+        row = self._s.scalars(
+            select(Document).where(
+                Document.application_id == application_id,
+                Document.doc_type == doc_type,
             )
         ).first()
-        if existing is not None:
-            existing.document_id = document_id
-            self._s.flush()
-            return existing
-        link = ApplicationDocument(
-            application_id=application_id, kind=kind, document_id=document_id
-        )
-        self._s.add(link)
+        if row is None:
+            return None
+        sha = row.sha256
+        self._s.delete(row)
         self._s.flush()
-        return link
+        return self._orphaned(sha)
 
-    def delete(self, application_id: str, kind: str) -> bool:
-        """Detach the (application, kind) document link (the resume/cover ✕ in
-        the editor). The content-addressed `Document` row and blob stay — one
-        blob may back many links. Returns whether a link was removed."""
-        result = self._s.execute(
-            delete(ApplicationDocument).where(
-                ApplicationDocument.application_id == application_id,
-                ApplicationDocument.kind == kind,
-            )
-        )
-        return cast("CursorResult[Any]", result).rowcount > 0
+    def delete_for_application(self, application_id: str) -> list[str]:
+        """Remove a purged card's documents. Returns every sha256 left with no
+        row pointing at it, so the caller unlinks exactly those blobs. Before the
+        table merge nothing collected these at all and each purge leaked a row
+        and a file permanently (S-C37)."""
+        rows = self.list_for_application(application_id)
+        if not rows:
+            return []
+        shas = {row.sha256 for row in rows}
+        for row in rows:
+            self._s.delete(row)
+        self._s.flush()
+        return [sha for sha in sorted(shas) if self._orphaned(sha) is not None]
 
-    def delete_for_application(self, application_id: str) -> int:
-        """Remove an application's document LINKS when the card is purged
-        (`foreign_keys=ON` forbids orphans). The content-addressed `Document`
-        rows and blobs stay — one blob may back many links."""
-        result = self._s.execute(
-            delete(ApplicationDocument).where(
-                ApplicationDocument.application_id == application_id
-            )
-        )
-        return cast("CursorResult[Any]", result).rowcount
+    def _orphaned(self, sha256: str) -> str | None:
+        """`sha256` if no row references it any more, else None. The reference
+        count that the 2-table shape had no way to compute."""
+        still = self._s.scalars(
+            select(Document.id).where(Document.sha256 == sha256).limit(1)
+        ).first()
+        return None if still is not None else sha256
 
 
 class ApplicationEventsRepo:
@@ -1060,14 +1105,37 @@ class ContactsRepo:
         return self._s.scalars(stmt).first()
 
     def list(
-        self, *, company: str | None = None, include_archived: bool = False
+        self,
+        *,
+        company: str | None = None,
+        archived_only: bool = False,
+        include_candidates: bool = True,
+        limit: int = 10_000,
     ) -> list[Contact]:
+        """The kanban roster, most-recently-touched first and capped (S-C8).
+
+        Every filter the roster route applies is in SQL, because a LIMIT on top
+        of a Python filter bounds the wrong population: the "Deleted Contacts"
+        view could show nothing while archived rows existed past the cap, and a
+        big `candidate` pile (discovery writes one row per person found) could
+        eat the whole budget before a single kanban card was reached.
+
+        10,000, matching the board's `list_by_states`. The first cut capped at
+        1,000 and nothing in the UI says "1,000 of 1,240", so a discovery-grown
+        roster (about 10 candidate rows per company watched) would silently drop
+        people past 100 companies — the same class of defect as the scoring
+        window it shipped beside. The batched last-message query removed the
+        real cost of a big roster; this cap now bounds DTO building only."""
         stmt = select(Contact)
-        if not include_archived:
+        if archived_only:
+            stmt = stmt.where(Contact.archived_at.is_not(None))
+        else:
             stmt = stmt.where(Contact.archived_at.is_(None))
+        if not include_candidates:
+            stmt = stmt.where(Contact.connection_status != "candidate")
         if company:
             stmt = stmt.where(Contact.current_company == company)
-        stmt = stmt.order_by(Contact.last_touched_at.desc(), Contact.id)
+        stmt = stmt.order_by(Contact.last_touched_at.desc(), Contact.id).limit(limit)
         return list(self._s.scalars(stmt))
 
     def list_for_referrals(
@@ -1144,7 +1212,7 @@ class ContactsRepo:
     # FR-NW-15). `candidate` (off the kanban), `converted` (the user's sacred
     # referral record — never auto-touched), and `ghosted` (terminal for auto —
     # revival is a manual drag) are excluded, so sync traffic stays bounded.
-    _SYNCABLE_STATUSES = ("sent", "accepted", "engagement")
+    _SYNCABLE_STATUSES = CONTACT_SYNCABLE_STATUSES
 
     def list_syncable(self, *, limit: int) -> list[Contact]:
         """The next `limit` contacts due for a status-sync probe (US-NW-12).
@@ -1177,27 +1245,28 @@ class ContactsRepo:
         contact = self._s.get(Contact, contact_id)
         if contact is None:
             return False
-        self._s.execute(delete(ContactJobAssoc).where(ContactJobAssoc.contact_id == contact_id))
+        self._s.execute(delete(ReferralCandidate).where(ReferralCandidate.contact_id == contact_id))
         self._s.execute(delete(OutreachLog).where(OutreachLog.contact_id == contact_id))
         self._s.delete(contact)
         return True
 
 
-class ContactJobAssocsRepo:
-    """Per-role referral asks (US-REF-05): a contact ↔ job link."""
+class ReferralCandidatesRepo:
+    """People put forward as referral candidates for a role (US-REF-05). One row
+    per (person, job): someone asked about 3 jobs is 1 contact and 3 rows."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def get(self, contact_id: str, job_id: str) -> ContactJobAssoc | None:
-        stmt = select(ContactJobAssoc).where(
-            ContactJobAssoc.contact_id == contact_id,
-            ContactJobAssoc.job_id == job_id,
+    def get(self, contact_id: str, job_id: str) -> ReferralCandidate | None:
+        stmt = select(ReferralCandidate).where(
+            ReferralCandidate.contact_id == contact_id,
+            ReferralCandidate.job_id == job_id,
         )
         return self._s.scalars(stmt).first()
 
-    def list_for_job(self, job_id: str) -> list[ContactJobAssoc]:
-        stmt = select(ContactJobAssoc).where(ContactJobAssoc.job_id == job_id)
+    def list_for_job(self, job_id: str) -> list[ReferralCandidate]:
+        stmt = select(ReferralCandidate).where(ReferralCandidate.job_id == job_id)
         return list(self._s.scalars(stmt))
 
     def job_ids_with_contacts(self, job_ids: list[str]) -> set[str]:
@@ -1207,36 +1276,44 @@ class ContactJobAssocsRepo:
         if not job_ids:
             return set()
         stmt = (
-            select(ContactJobAssoc.job_id)
-            .where(ContactJobAssoc.job_id.in_(job_ids))
+            select(ReferralCandidate.job_id)
+            .where(ReferralCandidate.job_id.in_(job_ids))
             .distinct()
         )
         return set(self._s.scalars(stmt))
 
-    def list_for_contact(self, contact_id: str) -> list[ContactJobAssoc]:
-        stmt = select(ContactJobAssoc).where(ContactJobAssoc.contact_id == contact_id)
+    def list_for_contact(self, contact_id: str) -> list[ReferralCandidate]:
+        stmt = select(ReferralCandidate).where(ReferralCandidate.contact_id == contact_id)
         return list(self._s.scalars(stmt))
 
     def selected_contact_ids(self, job_id: str) -> set[str]:
         """The contacts currently selected for this role (FR-NW-01) — restores the
         find-referrals popup selection when a `pending` popup is reopened."""
-        stmt = select(ContactJobAssoc.contact_id).where(
-            ContactJobAssoc.job_id == job_id, ContactJobAssoc.selected.is_(True)
+        stmt = select(ReferralCandidate.contact_id).where(
+            ReferralCandidate.job_id == job_id, ReferralCandidate.selected.is_(True)
         )
         return set(self._s.scalars(stmt))
 
     def upsert(
         self, contact_id: str, job_id: str, **fields: Any
-    ) -> ContactJobAssoc:
+    ) -> ReferralCandidate:
         existing = self.get(contact_id, job_id)
         if existing is not None:
             for key, value in fields.items():
                 setattr(existing, key, value)
             return existing
-        assoc = ContactJobAssoc(contact_id=contact_id, job_id=job_id, **fields)
+        assoc = ReferralCandidate(contact_id=contact_id, job_id=job_id, **fields)
         self._s.add(assoc)
         self._s.flush()
         return assoc
+
+    def delete_for_job(self, job_id: str) -> int:
+        """Remove every referral-candidate row for a job (`foreign_keys=ON`
+        forbids orphans when the job is deleted). Returns the row count."""
+        result = self._s.execute(
+            delete(ReferralCandidate).where(ReferralCandidate.job_id == job_id)
+        )
+        return cast("CursorResult[Any]", result).rowcount
 
 
 class OutreachLogsRepo:
@@ -1261,6 +1338,24 @@ class OutreachLogsRepo:
             .order_by(OutreachLog.created_at, OutreachLog.id)
         )
         return list(self._s.scalars(stmt))
+
+    def latest_for_contacts(self, contact_ids: list[str]) -> dict[str, OutreachLog]:
+        """contact_id → its newest OutreachLog — the roster's per-card "last
+        message" fallback done with one IN query instead of one `list_for_contact`
+        per contact (S-C8, the F-H2 batch pattern). Ordered the same way
+        `list_for_contact` is, so the row picked here is the row the per-contact
+        read's `logs[-1]` picks. Contacts with no logs are absent from the map."""
+        if not contact_ids:
+            return {}
+        stmt = select(OutreachLog).where(OutreachLog.contact_id.in_(contact_ids))
+        latest: dict[str, OutreachLog] = {}
+        for log in self._s.scalars(stmt):
+            current = latest.get(log.contact_id)
+            if current is None or (log.created_at, log.id) > (
+                current.created_at, current.id
+            ):
+                latest[log.contact_id] = log
+        return latest
 
     def count_sent_for_jobs(self, job_ids: list[str]) -> dict[str, int]:
         """Reaches actually sent per role (US-NW-09 per-role reached count) —
@@ -1304,29 +1399,16 @@ class OutreachLogsRepo:
                 batches[job_id] = [log for log in logs if log.batch_id == newest.batch_id]
         return batches
 
-
-class SequencesRepo:
-    """Audience playbooks (US-PLB-*). P1 seeds these from the bundled module
-    playbook files; the editor writes them back."""
-
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self, sequence_id: str) -> Sequence | None:
-        return self._s.get(Sequence, sequence_id)
-
-    def list(self) -> list[Sequence]:
-        return list(self._s.scalars(select(Sequence).order_by(Sequence.name)))
-
-    def get_by_audience(self, audience: str) -> Sequence | None:
-        stmt = select(Sequence).where(Sequence.audience == audience)
-        return self._s.scalars(stmt).first()
-
-    def create(self, name: str, audience: str, **fields: Any) -> Sequence:
-        seq = Sequence(name=name, audience=audience, **fields)
-        self._s.add(seq)
-        self._s.flush()
-        return seq
+    def nullify_for_job(self, job_id: str) -> int:
+        """SET job_id = NULL on every outreach log for a deleted job
+        (`foreign_keys=ON`). Outreach history is audit data — we keep the
+        rows but sever the FK so the job row can go. Returns the row count."""
+        result = self._s.execute(
+            update(OutreachLog)
+            .where(OutreachLog.job_id == job_id)
+            .values(job_id=None)
+        )
+        return cast("CursorResult[Any]", result).rowcount
 
 
 class LinkedInSessionRepo:
@@ -1472,30 +1554,18 @@ class Repos:
         self.engine_settings = EngineSettingsRepo(session)
         self.schedules = SchedulesRepo(session)
         self.jobs = JobsRepo(session)
-        self.job_scores = JobScoresRepo(session)
         self.tombstones = TombstonesRepo(session)
         self.applications = ApplicationsRepo(session)
         self.artifacts = ArtifactsRepo(session)
         self.documents = DocumentsRepo(session)
-        self.application_documents = ApplicationDocumentsRepo(session)
         self.application_events = ApplicationEventsRepo(session)
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)
-        self.contact_job_assocs = ContactJobAssocsRepo(session)
+        self.referral_candidates = ReferralCandidatesRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
-        self.sequences = SequencesRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)
         self.apply_runs = ApplyRunsRepo(session)
-
-    def prune_ledger(self, keep: int) -> int:
-        """Ledger retention that preserves all-time spend: fold the usd/tokens of
-        the terminal ops about to be pruned into the persistent lifetime aggregate
-        (`ui_state["cost_totals"]`), then delete them. One transaction, so a crash
-        mid-way never double-counts or loses a delta. Returns the number pruned."""
-        pruned = self.operations.sum_terminal_beyond(keep)
-        self.preferences.add_cost_totals(pruned)
-        return self.operations.trim_to(keep)
 
     def all_time_cost_totals(self) -> CostTotals:
         """Live-ledger sum + the pruned aggregate = every op ever recorded. The

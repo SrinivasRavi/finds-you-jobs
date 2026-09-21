@@ -73,10 +73,17 @@ def setup_flight_recorder(
     # recorder alive across migrations.
     logger.disabled = False
 
-    # Idempotence: don't add a second handler for the same file.
+    # Idempotence: don't add a second handler for the same file. Both sides are
+    # resolved because `baseFilename` is only `abspath`, which keeps symlinks:
+    # under `FYJ_DATA_DIR=/tmp/...` on macOS the handler holds `/tmp/...` while
+    # `log_path.resolve()` reads `/private/tmp/...`, the guard never matches,
+    # and every call stacks another handler. Observed 2026-09-20 in a packaged
+    # run on a throwaway profile: 3 boot-path calls, every line written 3 times.
+    resolved = log_path.resolve()
     for handler in logger.handlers:
-        if isinstance(handler, RotatingFileHandler) and handler.baseFilename == str(
-            log_path.resolve()
+        if (
+            isinstance(handler, RotatingFileHandler)
+            and Path(handler.baseFilename).resolve() == resolved
         ):
             return log_path
 

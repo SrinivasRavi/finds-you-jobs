@@ -47,9 +47,9 @@ def _seed_job(app: FastAPI, *, url: str = "https://ex.co/j/av", score: int | Non
             source_adapter="greenhouse",
         )
         if score is not None:
-            version = repos.profile.get_current().version
-            repos.job_scores.upsert(
-                job_id=job.id, profile_version=version, score_0_100=score,
+            repos.jobs.set_score(
+                job.id, scorer_impl="scorer-llm",
+                score_0_100=score, reasons=[], breakdown_md="",
             )
         return job.id
 
@@ -531,3 +531,19 @@ def test_detach_rejects_bad_kind(app_client: tuple[FastAPI, TestClient]) -> None
         f"/api/applications/{app_id}/documents/banner", headers=AUTH
     )
     assert resp.status_code == 422
+
+
+def test_saving_the_same_job_twice_is_a_conflict(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """One tracker card per role. Before `applications.job_id` was unique a
+    double-click on Save wrote a second card and the board's set-based reads
+    collapsed the pair with no way to tell (S-C40)."""
+    app, client = app_client
+    job_id = _seed_job(app, url="https://ex.co/j/dup-save")
+    first = client.post("/api/applications", headers=AUTH, json={"job_id": job_id})
+    assert first.status_code == 201, first.text
+    second = client.post("/api/applications", headers=AUTH, json={"job_id": job_id})
+    assert second.status_code == 409, second.text
+    listed = client.get("/api/applications", headers=AUTH).json()
+    assert [a["job_id"] for a in listed] == [job_id]

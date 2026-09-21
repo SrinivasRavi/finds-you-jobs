@@ -490,6 +490,115 @@ def test_discovery_analytics_shows_real_boards_behind_apify_actors(
     assert rows["seek"]["fetched"] == 5
 
 
+# `unscorable` = no usable description (MIN_JD_CHARS, dto.py `job_dto`'s own
+# rule). The board never shows such a row as a real 0, so analytics must not
+# either — S-C24 D5's board fix has an analytics half, maintainer 2026-09-03.
+_LONG_JD = "Backend role. " * 20  # >= MIN_JD_CHARS (200)
+
+
+def test_discovery_analytics_all_unscorable_source_reports_no_score(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A source whose every row lacks a usable description reports no score —
+    not a 0 — even though the keyword floor already wrote a missing-data 0 on
+    each row (the exact shape of the maintainer's 248-row install)."""
+    app, client = app_client
+    db = app.state.db
+    with db.repos() as repos:
+        repos.jobs.create(
+            canonical_url="https://boards.greenhouse.io/acme/jobs/1",
+            title="Backend Engineer", company="Acme", location="Remote",
+            description="", source_adapter="greenhouse", keyword_score=0,
+        )
+        repos.jobs.create(
+            canonical_url="https://boards.greenhouse.io/acme/jobs/2",
+            title="Frontend Engineer", company="Acme", location="Remote",
+            description="", source_adapter="greenhouse", keyword_score=0,
+        )
+
+    data = client.get("/api/discovery/analytics", headers=AUTH).json()
+    gh = {r["id"]: r for r in data["sources"]}["greenhouse"]
+    assert gh["scored"] == 0
+    assert gh["avg_score"] is None
+    assert gh["jobs"] == 2  # rows found stays a rows-found count
+
+
+def test_discovery_analytics_mixed_source_averages_only_scorable_jobs(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A source with both description-less and real rows averages only the
+    real ones — the unscorable row's missing-data 0 never enters score_sum."""
+    app, client = app_client
+    db = app.state.db
+    with db.repos() as repos:
+        repos.jobs.create(
+            canonical_url="https://jobs.lever.co/acme/1",
+            title="No description", company="Acme", location="Remote",
+            description="", source_adapter="lever", keyword_score=0,
+        )
+        repos.jobs.create(
+            canonical_url="https://jobs.lever.co/acme/2",
+            title="AI scored", company="Acme", location="Remote",
+            description=_LONG_JD, source_adapter="lever", llm_score=80,
+        )
+        repos.jobs.create(
+            canonical_url="https://jobs.lever.co/acme/3",
+            title="Keyword scored", company="Acme", location="Remote",
+            description=_LONG_JD, source_adapter="lever", keyword_score=60,
+        )
+
+    data = client.get("/api/discovery/analytics", headers=AUTH).json()
+    lever = {r["id"]: r for r in data["sources"]}["lever"]
+    assert lever["scored"] == 2
+    assert lever["avg_score"] == pytest.approx(70.0)
+    assert lever["jobs"] == 3
+
+
+def test_discovery_analytics_row_counts_ignore_the_score_exclusion(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """`jobs`, `saved`, and the per-scan fetch/keep/error counts are not score
+    statistics — they stay unchanged by the unscorable exclusion, because the
+    source really did return and the user really did save those rows."""
+    app, client = app_client
+    db = app.state.db
+    with db.repos() as repos:
+        saved_job = repos.jobs.create(
+            canonical_url="https://apply.workable.com/acme/j/1",
+            title="No description, saved", company="Acme", location="Remote",
+            description="", source_adapter="workable", keyword_score=0,
+        )
+        repos.jobs.create(
+            canonical_url="https://apply.workable.com/acme/j/2",
+            title="No description, not saved", company="Acme", location="Remote",
+            description="", source_adapter="workable", keyword_score=0,
+        )
+        repos.applications.create(saved_job.id)
+        repos.operations.create("scan", {})
+    with db.repos() as repos:
+        ops = repos.operations.list_by_kind_states("scan", {"queued"})
+        repos.operations.mark_running(ops[0].id)
+        repos.operations.mark_succeeded(
+            ops[0].id,
+            result_ref={
+                "per_source": {
+                    "workable:acme": {
+                        "fetched": 7, "kept": 2, "http_calls": 2,
+                        "latency_ms": 300, "errors": ["timeout"],
+                    },
+                }
+            },
+        )
+
+    data = client.get("/api/discovery/analytics", headers=AUTH).json()
+    workable = {r["id"]: r for r in data["sources"]}["workable"]
+    assert (workable["jobs"], workable["saved"]) == (2, 1)
+    assert (workable["fetched"], workable["kept"]) == (7, 2)
+    assert (workable["http_calls"], workable["latency_ms"], workable["errors"]) == (2, 300, 1)
+    assert workable["scored"] == 0
+    assert workable["avg_score"] is None
+
+
 def test_watch_company_from_url_and_job_row(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
@@ -762,3 +871,27 @@ def test_watchlist_roster_lists_and_removes_watched_rows_only(
     assert len(after["preferences"]["portals_config"]["sources"]) == len(
         settings["preferences"]["portals_config"]["sources"]
     ) - 1
+
+
+def test_guess_cache_is_bounded_and_evicts_oldest_first() -> None:
+    """S-C10 — the slug-guess cache used to grow for the process lifetime."""
+    discovery_api._GUESS_CACHE.clear()
+    for i in range(discovery_api._GUESS_CACHE_MAX + 50):
+        discovery_api._guess_cache_put(f"greenhouse:co{i}", f"https://example/{i}")
+    assert len(discovery_api._GUESS_CACHE) == discovery_api._GUESS_CACHE_MAX
+    # The 50 oldest went; the newest stayed.
+    assert discovery_api._guess_cache_get("greenhouse:co0") is None
+    assert discovery_api._guess_cache_get("greenhouse:co49") is None
+    last = discovery_api._GUESS_CACHE_MAX + 49
+    assert discovery_api._guess_cache_get(f"greenhouse:co{last}") == f"https://example/{last}"
+
+
+def test_guess_cache_read_refreshes_recency() -> None:
+    """A key read back must not be the next one evicted."""
+    discovery_api._GUESS_CACHE.clear()
+    for i in range(discovery_api._GUESS_CACHE_MAX):
+        discovery_api._guess_cache_put(f"lever:co{i}", f"https://example/{i}")
+    assert discovery_api._guess_cache_get("lever:co0") == "https://example/0"
+    discovery_api._guess_cache_put("lever:fresh", "https://example/fresh")
+    assert discovery_api._guess_cache_get("lever:co0") == "https://example/0"
+    assert discovery_api._guess_cache_get("lever:co1") is None

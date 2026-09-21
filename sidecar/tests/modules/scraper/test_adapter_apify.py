@@ -32,6 +32,16 @@ NAUKRI_ITEM = {
     "createdDate": "2026-07-10 09:30:00",
 }
 
+# Long enough to clear scan()'s post-enrich MIN_JD_CHARS drop — NAUKRI_ITEM's
+# terse fixture description is deliberately short for the exact-match unit
+# tests below, so the scan()-integration test below swaps this one in.
+_LONG_JD = (
+    "We are hiring a backend engineer to design, build, and operate "
+    "production services end to end, working closely with product and "
+    "design across the whole stack every single day of the working week, "
+    "rain or shine."
+)
+
 
 def _entry(actor: str) -> SourceEntry:
     return SourceEntry(board="apify", actor=actor)
@@ -221,10 +231,11 @@ def test_scan_integration_runs_apify_beside_other_sources():
         location_allow=["bengaluru"],
         credentials={"apify": "apify_api_TESTTOKEN"},
     )
+    item = {**NAUKRI_ITEM, "description": f"<p>{_LONG_JD}</p>"}
     result = scan(
         config,
         prefs,
-        fetcher_factory=routed({"memo23~naukri-scraper": [NAUKRI_ITEM]}),
+        fetcher_factory=routed({"memo23~naukri-scraper": [item]}),
     )
     report = result.per_source["apify:memo23/naukri-scraper"]
     assert report.fetched == 1

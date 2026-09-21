@@ -66,15 +66,11 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/settings-scoring-keyword.png`, fullPage: true });
-  // Back to AI asks before spending (2026-07-23): decline if the dialog opens.
-  const preview = page.waitForResponse((r) => r.url().includes("/api/jobs/rescore/preview"));
+  // Back to AI is a plain settings write now (S-C24, 2026-08-28): no prompt,
+  // no request beyond the settings POST, and the batch cap comes back.
   await page.getByTestId("scoring-mode-llm").click();
-  const previewBody = (await (await preview).json()) as { toScore: number };
-  if (previewBody.toScore > 0) {
-    await expect(page.getByTestId("confirm-dialog")).toBeVisible();
-    await page.getByTestId("confirm-cancel").click();
-    await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
-  }
+  await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
+  await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
 
   // Networking pane — the master toggle.
@@ -94,14 +90,14 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("settings-nav-applications")).toHaveCount(0);
 });
 
-test("switching scoring to AI asks consent, counting only cache misses", async ({
+test("switching scoring to AI prompts nothing and spends nothing in-request", async ({
   page,
   request,
 }) => {
   const { base, token } = sidecarInfo();
   // Enter keyword mode through the UI (the app's own settings merge), then
   // seed a job over the API — in keyword mode it earns a free keyword score
-  // only, so it is a guaranteed AI-cache MISS at the current resume version.
+  // only, so it is a guaranteed AI-cache miss.
   await page.goto("/settings");
   await page.getByTestId("settings-nav-discovery").click();
   await page.getByTestId("scoring-mode-keyword").click();
@@ -117,16 +113,13 @@ test("switching scoring to AI asks consent, counting only cache misses", async (
       source_adapter: "paste-url",
     },
   });
-  // keyword → AI: the consent dialog opens with the server's miss count and
-  // never re-scores silently.
+  // keyword → AI: the mode saves and nothing else happens. The re-score action
+  // and its consent dialog are gone (S-C24, maintainer 2026-08-28); the next
+  // scheduler tick is what picks the job up.
   await page.getByTestId("scoring-mode-llm").click();
-  await expect(page.getByTestId("confirm-dialog")).toBeVisible();
-  await expect(page.getByTestId("confirm-dialog")).toContainText("AI");
-  await page.screenshot({ path: `${DIR}/settings-rescore-consent.png`, fullPage: true });
-  // Decline: no tokens spent; the mode itself stays AI (already saved).
-  await page.getByTestId("confirm-cancel").click();
-  await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
   await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
+  await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/settings-scoring-ai.png`, fullPage: true });
 });
 
 test("linkedin session is nested inside referral outreach", async ({ page, request }) => {

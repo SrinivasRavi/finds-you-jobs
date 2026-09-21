@@ -29,6 +29,12 @@ const MONO_ALLOWLIST = new Set([
   "surfaces/settings/DiscoverySources.tsx", // masked API-key hints
 ]);
 
+// Forward slashes always: the allowlist above is written with them, and
+// `join` emits backslashes on Windows.
+function relative(path: string): string {
+  return path.slice(SRC.length + 1).replaceAll("\\", "/");
+}
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
@@ -49,7 +55,7 @@ describe("UI conventions", () => {
       /\buppercase\b/.test(readFileSync(f, "utf8")),
     );
     expect(
-      offenders.map((f) => f.slice(SRC.length + 1)),
+      offenders.map(relative),
       "all-caps text is banned — restyle these without `uppercase`",
     ).toEqual([]);
   });
@@ -57,7 +63,7 @@ describe("UI conventions", () => {
   it("allows `font-mono` only in the code-like allowlist (one font family)", () => {
     const offenders = files
       .filter((f) => /\bfont-mono\b/.test(readFileSync(f, "utf8")))
-      .map((f) => f.slice(SRC.length + 1))
+      .map(relative)
       .filter((rel) => !MONO_ALLOWLIST.has(rel));
     expect(
       offenders,

@@ -19,6 +19,7 @@ from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
 
 ID = "hackernews"
+INLINE_DESCRIPTION = True
 _CLAIM = "whoishiring"
 _SEARCH = "https://hn.algolia.com/api/v1/search_by_date"
 _STORY_QUERY = f"{_SEARCH}?tags=story,author_whoishiring&query=who%20is%20hiring"

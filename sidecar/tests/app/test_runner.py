@@ -13,6 +13,7 @@ import time
 import pytest
 
 from sidecar.app.db import Database
+from sidecar.app.db.models import Operation
 from sidecar.app.registry import (
     EngineNotConfiguredError,
     OperationContext,
@@ -307,82 +308,46 @@ def test_span_recording_failure_never_wedges_the_operation(
     assert states.count("succeeded") == 1 and states.count("failed") == 1
 
 
-def test_ledger_retention_trims_to_cap(migrated_db: Database) -> None:
-    """US-LOG-01 #2: trim_to keeps the N most-recent terminal ops; in-flight
-    (queued/running) rows are never pruned."""
+def _seed_terminal_ops(db: Database, n: int, *, usd: float = 0.01) -> None:
+    """`n` succeeded `score` rows, bulk-inserted so a 300-row ledger costs one
+    statement instead of 300 flushes."""
+    with db.repos() as repos:
+        repos.session.add_all(
+            [
+                Operation(
+                    kind="score", state="succeeded",
+                    input_snapshot={"n": i},
+                    usage={"usd": usd, "tokens_in": 100, "tokens_out": 50},
+                )
+                for i in range(n)
+            ]
+        )
+
+
+def test_a_completed_operation_no_longer_prunes_the_ledger(
+    migrated_db: Database,
+) -> None:
+    """Maintainer, 2026-08-24: "never delete anything".
+
+    Every completion used to end in `prune_ledger(250)`, so a ledger 300 rows
+    deep lost its oldest 50 the instant the next operation settled. Nothing
+    deletes an operation now; a deletion policy the user can see is S-C22.
+    """
     db = migrated_db
-    with db.repos() as repos:
-        # 6 terminal (succeeded) + 1 still-queued.
-        for i in range(6):
-            op = repos.operations.create("score", {"n": i})
-            repos.operations.mark_succeeded(op.id, usage={"usd": 0.0})
-        pending = repos.operations.create("scan", {})
-        deleted = repos.operations.trim_to(3)
-    assert deleted == 3  # 6 terminal - keep 3
-    with db.repos() as repos:
-        remaining = repos.operations.list_recent(50)
-        terminal = [o for o in remaining if o.state == "succeeded"]
-        assert len(terminal) == 3  # newest 3 kept
-        assert any(o.id == pending.id for o in remaining)  # queued survives
-
-
-def test_prune_ledger_preserves_all_time_spend(migrated_db: Database) -> None:
-    """FR-SET-07 / US-LOG-01 #2: retention prunes old terminal ops, but their
-    usd/tokens are folded into the persistent lifetime aggregate first — so the
-    all-time totals equal ledger + aggregate, not just the retained window."""
-    db = migrated_db
-    with db.repos() as repos:
-        for i in range(6):
-            op = repos.operations.create("score", {"n": i})
-            repos.operations.mark_succeeded(
-                op.id, usage={"usd": 0.10, "tokens_in": 100, "tokens_out": 50}
-            )
-        full = repos.all_time_cost_totals()  # before pruning: all six are live
-    assert full["operations"] == 6
-    assert full["usd"] == pytest.approx(0.60)
-    assert full["by_kind"]["score"] == pytest.approx(0.60)
+    _seed_terminal_ops(db, 300)
+    runner = OperationRunner(db, registry=OperationRegistry({"score": _success}))
+    runner.start()
+    try:
+        op_id = runner.submit("score", {})
+        assert wait_for_state(db, op_id, "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=2)
 
     with db.repos() as repos:
-        pruned = repos.prune_ledger(3)  # keep newest 3, fold the other 3
-    assert pruned == 3
-
-    with db.repos() as repos:
-        # The three pruned ops now live only in the aggregate…
-        agg = repos.preferences.get_cost_totals()
-        assert agg["operations"] == 3
-        assert agg["usd"] == pytest.approx(0.30)
-        # …and are still counted in the all-time totals (3 live + 3 pruned).
-        after = repos.all_time_cost_totals()
-        assert after["operations"] == 6
-        assert after["usd"] == pytest.approx(0.60)
-        assert after["tokens_in"] == 600
-        assert after["tokens_out"] == 300
-        assert after["by_kind"]["score"] == pytest.approx(0.60)
-        # The live ledger really did shrink — the aggregate is what saved the total.
-        assert len(repos.operations.list_recent(50)) == 3
-
-
-def test_prune_ledger_conserves_totals_across_repeated_prunes(migrated_db: Database) -> None:
-    """The all-time totals are conserved no matter how many prune cycles run —
-    each prune folds into (never overwrites) the aggregate, so earlier pruned
-    spend is never lost even when a later prune folds a still-live op."""
-    db = migrated_db
-    with db.repos() as repos:
-        for _ in range(4):
-            op = repos.operations.create("tailor", {})
-            repos.operations.mark_succeeded(op.id, usage={"usd": 0.25})
-        repos.prune_ledger(1)  # first cycle: fold 3 tailor
-    with db.repos() as repos:
-        for _ in range(3):
-            op = repos.operations.create("cover", {})
-            repos.operations.mark_succeeded(op.id, usage={"usd": 0.50})
-        repos.prune_ledger(1)  # second cycle: folds across both kinds
-        total = repos.all_time_cost_totals()
-    # 4×0.25 + 3×0.50 = 2.50, conserved across both prune cycles.
-    assert total["usd"] == pytest.approx(2.50)
-    assert total["operations"] == 7
-    assert total["by_kind"]["tailor"] == pytest.approx(1.0)
-    assert total["by_kind"]["cover"] == pytest.approx(1.5)
+        # 300 seeded + the one just run. Under the old 250 cap this was 250.
+        assert len(repos.operations.list_recent(1000)) == 301
+        # Nothing was folded forward either, because nothing was deleted.
+        assert repos.preferences.get_cost_totals()["operations"] == 0
 
 
 def test_usage_mapping_is_faithful_to_the_engine(migrated_db: Database) -> None:
@@ -681,7 +646,10 @@ def _open_circuit_then(migrated_db: Database, probe_mode: dict) -> OperationRunn
 def test_cancelled_probe_releases_the_lease_for_a_new_probe(migrated_db: Database) -> None:
     """A half-open probe the user cancels lands `cancelled` with no provider
     verdict — the lease is abandoned, so the next op after cooldown becomes a
-    fresh probe instead of every op being rejected until restart."""
+    fresh probe instead of every op being rejected until restart.
+
+    Pins the ordering too: the retry is submitted the moment the row reads
+    `cancelled`, so the lease must already be released by then."""
     db = migrated_db
     probe_mode = {"value": "engine_fail"}
     runner = _open_circuit_then(db, probe_mode)
@@ -701,7 +669,10 @@ def test_cancelled_probe_releases_the_lease_for_a_new_probe(migrated_db: Databas
 
 def test_probe_failing_with_non_engine_error_releases_the_lease(migrated_db: Database) -> None:
     """A probe that dies of module drift (non-EngineError) never fed the breaker
-    and must not keep the lease either — the next op gets a fresh probe."""
+    and must not keep the lease either — the next op gets a fresh probe.
+
+    Submitted the instant the row reads `failed`, so this pins the same
+    lease-before-state ordering the cancelled case does."""
     db = migrated_db
     probe_mode = {"value": "engine_fail"}
     runner = _open_circuit_then(db, probe_mode)

@@ -9,11 +9,15 @@ An adapter is a module (not a class) exposing:
 `detect` returns the tenant/host part of the source key (e.g. the Greenhouse
 board slug) so diagnostics read `greenhouse:gleanwork`. Adapters normalize and
 nothing else: no filtering, no dedup, no quality scoring — the shared pipeline
-(`scraper.scan`) does that for every source. One list request per source, using
-the API's content params where they exist so the JD `description` lands in that
-same request (Greenhouse `content=true`, Workable `details=true`, Lever/Ashby
-native `descriptionPlain`); per-job detail fetch only as a documented fallback
-(maintainer decision 2026-07-07, JD-description gap — none needed as-built).
+(`scraper.scan`) does that for every source. A description is a hard
+requirement (maintainer decision, description-gap closure, 2026-09): every
+adapter either lands the JD in the same list request (declared with the
+module-level `INLINE_DESCRIPTION = True` flag — Greenhouse `content=true`,
+Workable `details=true`, Lever/Ashby native `descriptionPlain`, ...) or
+implements `fetch_detail(job, fetcher) -> str` for the scan's enrich phase to
+call per row (BambooHR, Breezy, SmartRecruiters, Workday, LinkedIn guest).
+`provides_description()` below checks every registered adapter does one or
+the other.
 
 **Two source shapes (discovery-expansion 2026-07-17).**
 
@@ -62,6 +66,14 @@ class SearchAdapter(Protocol):
     def search(
         self, entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher
     ) -> list[NormalizedJob]: ...
+
+
+def provides_description(adapter: object) -> bool:
+    """True when `adapter` satisfies the description contract (module
+    docstring above): either it exposes `fetch_detail` for the scan's enrich
+    phase, or it declares `INLINE_DESCRIPTION = True` — its own `fetch`/
+    `search` already lands the JD in the same list request."""
+    return hasattr(adapter, "fetch_detail") or bool(getattr(adapter, "INLINE_DESCRIPTION", False))
 
 
 # ---------------------------------------------------------------------------

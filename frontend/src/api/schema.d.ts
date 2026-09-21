@@ -104,10 +104,11 @@ export interface paths {
          *     feed is paginated, so a client-side filter over loaded pages would silently
          *     miss matches on unloaded pages.
          *
-         *     The whole assembly runs off the event loop (async-first rule / F-H2 — at a
-         *     few thousand jobs it could hold the loop past the shell's 2 s health window),
-         *     and the DTO build (three regexes over the full JD each) happens only for the
-         *     returned page, not every eligible row.
+         *     A plain `def` handler runs off the event loop in Starlette's threadpool
+         *     automatically (async-first rule / F-H2 — at a few thousand jobs this could
+         *     hold the loop past the shell's 2 s health window), and the DTO build (three
+         *     regexes over the full JD each) happens only for the returned page, not every
+         *     eligible row.
          */
         get: operations["board_api_board_get"];
         put?: never;
@@ -136,7 +137,8 @@ export interface paths {
          *     `new_job_ids` count; and the scoring split — `score_pending` is the live
          *     (queued/running) score-op count, `score_done` is how many of THIS scan's
          *     new jobs have reached a terminal (succeeded/failed) score. Off the event
-         *     loop (async-first rule), one session inside the callable.
+         *     loop (async-first rule): a plain `def` handler runs in Starlette's
+         *     threadpool automatically.
          */
         get: operations["scan_progress_api_scan_progress_get"];
         put?: never;
@@ -160,7 +162,8 @@ export interface paths {
          * Preview Job
          * @description Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
          *     fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
-         *     blocking probe runs off the event loop.
+         *     blocking probe runs off the event loop: a plain `def` handler runs in
+         *     Starlette's threadpool automatically.
          *
          *     Two DB short-circuits before the network probe: a **tombstoned** URL fails
          *     fast with the honest 409 (re-add is impossible); an **existing** URL (active
@@ -232,8 +235,60 @@ export interface paths {
          * Empty Trash
          * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL and
          *     hard-delete the rows immediately, bypassing the 7-day TTL.
+         *
+         *     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
+         *     costs an existence check, an insert, and a delete, so on the loop a big
+         *     empty could hold it past the shell's 2 s /healthz window and cost a sidecar
+         *     restart. A plain `def` handler runs in Starlette's threadpool
+         *     automatically, same shape as `board`.
          */
         post: operations["empty_trash_api_jobs_trash_empty_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scoring/retryable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scoring Retryable
+         * @description How many jobs are stuck with a spent scoring budget (S-C24). Counts
+         *     only, never writes.
+         */
+        get: operations["scoring_retryable_api_scoring_retryable_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scoring/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scoring Retry
+         * @description Hand every job that spent its budget the budget back, so the next
+         *     scheduler tick re-plans it. This is the recovery path for a provider-wide
+         *     failure the per-job attempt cap can't tell apart from a bad job (an expired
+         *     key, an exhausted quota). It enqueues nothing itself: the tick does the
+         *     work, batched, off this request. Jobs with no usable description are
+         *     untouched — retrying one can't help until a scan fills the JD in (S-A6).
+         */
+        post: operations["scoring_retry_api_scoring_retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -252,54 +307,6 @@ export interface paths {
         put?: never;
         /** Upsert Profile */
         post: operations["upsert_profile_api_profile_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/rescore/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Rescore Preview
-         * @description The consent numbers behind every "Re-score with AI?" prompt (resume
-         *     edit, scoring-mode switch). Counts only — never enqueues, never spends.
-         *     A grey keyword score is not "cached" here; only a real AI score at the
-         *     current resume version is.
-         */
-        get: operations["rescore_preview_api_jobs_rescore_preview_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/rescore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rescore Board
-         * @description Re-score the active board against the CURRENT master resume — the action
-         *     behind every "Re-score with AI?" confirm (resume edit, scoring-mode
-         *     switch). Keyword mode refreshes the whole board inline (free). AI mode
-         *     enqueues one LLM score op per cache MISS only — a job already AI-scored at
-         *     the current resume version is never re-spent (maintainer 2026-07-23) — so
-         *     the call is idempotent and safe from any entry point.
-         */
-        post: operations["rescore_board_api_jobs_rescore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -453,7 +460,8 @@ export interface paths {
         /**
          * Detach Application Document
          * @description Detach the (application, kind) resume/cover file — the ✕ on the attached-
-         *     file chip. The content-addressed blob stays (it may back other cards).
+         *     file chip. The blob is unlinked too, once no row names it: before the table
+         *     merge nothing ever collected it and every detach leaked a file (S-C37).
          */
         delete: operations["detach_application_document_api_applications__application_id__documents__kind__delete"];
         options?: never;
@@ -742,10 +750,15 @@ export interface paths {
          * Cost Totals
          * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
          *
-         *     Live-ledger sum + the persisted pruned-ops aggregate, so the tiles show
-         *     lifetime spend that survives the ~250-op ledger retention — not just the
-         *     retained window (NFR-COST-02: the running spend total stays honest as an
-         *     install ages).
+         *     Live-ledger sum + the persisted pruned-ops aggregate (NFR-COST-02: the
+         *     running spend total stays honest as an install ages). Since 2026-08-24
+         *     nothing prunes, so the aggregate sits at zero and the live sum carries every
+         *     operation ever recorded; the addition stays because a future S-C22 deletion
+         *     policy has to be able to fold spend forward again.
+         *
+         *     Off the loop: summing every operation is inherently linear, so however cheap
+         *     the read gets it must not be the thing holding a 2 s health poll (S-C23) —
+         *     a plain `def` handler runs in Starlette's threadpool automatically.
          */
         get: operations["cost_totals_api_cost_totals_get"];
         put?: never;
@@ -807,6 +820,13 @@ export interface paths {
          *     default, `candidate` rows (discovered-but-not-reached — off the kanban).
          *     `archived=true` flips it to the "Deleted Contacts" recovery view: only the
          *     archived rows, so a user can restore a contact they removed.
+         *
+         *     Bounded, batched, and off the event loop (S-C8): a plain `def` handler
+         *     runs in Starlette's threadpool automatically. It used to read every
+         *     contact row with no LIMIT and then run one outreach-log query per row, so a
+         *     roster grown by discovery (one `candidate` per person found, at 10 people a
+         *     company) cost 1 + N queries on the loop. Both filters now live in the repo
+         *     query so the cap bounds the population the caller actually wants.
          */
         get: operations["list_contacts_api_contacts_get"];
         put?: never;
@@ -959,7 +979,8 @@ export interface paths {
          *     (maintainer 2026-08-02, closing the "divergent ledgers" item): the popup
          *     can never show head-room the send path will refuse. `OutreachLog` stays the
          *     per-send product history; it is no longer recounted as a quota source.
-         *     Zero LinkedIn traffic — a local file read, off the event loop.
+         *     Zero LinkedIn traffic — a local file read, off the event loop (a plain
+         *     `def` handler runs in Starlette's threadpool automatically).
          */
         get: operations["referrals_quota_api_referrals_quota_get"];
         put?: never;
@@ -1446,6 +1467,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/apply-runs/{run_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Apply Run
+         * @description Click the form's Submit once, because the USER asked (S-A5).
+         *
+         *     P1 keeps every irreversible action behind the human: the model's tool
+         *     vocabulary has no submit, and this route is the only thing that can reach
+         *     `submit_application`. It needs the run's own browser still open, which is
+         *     the review window after `ready_for_human`, so a run outside that window is
+         *     a 409 rather than a silent no-op. The click itself happens on the op's
+         *     thread; the outcome arrives on the `apply` SSE stream and on the run row.
+         */
+        post: operations["submit_apply_run_api_apply_runs__run_id__submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/apply-runs/{run_id}/attest": {
         parameters: {
             query?: never;
@@ -1576,6 +1624,53 @@ export interface paths {
          *     call while one is running returns `already_running`.
          */
         post: operations["install_browser_api_system_install_browser_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/scheduler": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scheduler Status
+         * @description Whether background work is running, and whether this boot is why it isn't.
+         *
+         *     `degraded_boot` means the shell started us with no scheduler because the
+         *     last 3 runs all ended the same bad way. The banner reads this.
+         */
+        get: operations["scheduler_status_api_system_scheduler_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/scheduler/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Scheduler
+         * @description Turn background work back on after a degraded boot. Idempotent.
+         *
+         *     `async def` on purpose: starting the tick loop creates an asyncio task, and
+         *     a plain `def` handler runs in Starlette's threadpool where there is no
+         *     running loop to create it on. It touches no database, so nothing blocks.
+         */
+        post: operations["resume_scheduler_api_system_scheduler_resume_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1765,6 +1860,18 @@ export interface paths {
          * @description Aggregates existing records only (no migration): stored `jobs` ×
          *     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
          *     scans' `result_ref.per_source` fetch/keep/error/latency numbers.
+         *
+         *     `scored` and `avg_score` exclude `unscorable` jobs (no usable
+         *     description — the board's own rule, dto.py `job_dto`), so a source with
+         *     no description-bearing rows reports no score rather than a 0-dragged
+         *     one. Every other count (`jobs`, `saved`, `fetched`, `kept`, ...) still
+         *     counts them: the source did return those rows.
+         *
+         *     Off the event loop (S-C7): the fold walks every job the board can hold
+         *     (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
+         *     install could hold it past the shell's 2 s /healthz window and cost a
+         *     sidecar restart. `board` and `list_jobs` got this in the F-H2 pass; this
+         *     route is the one it missed.
          */
         get: operations["discovery_analytics_api_discovery_analytics_get"];
         put?: never;
@@ -1949,7 +2056,9 @@ export interface components {
          * ApplicationDocumentDTO
          * @description One document the user attached to a manually-logged application (the
          *     resume/cover letter they actually submitted). Downloaded verbatim from
-         *     `GET /api/documents/{document_id}`.
+         *     `GET /api/documents/{document_id}`. The wire names (`document_id`, `kind`)
+         *     predate the table merge and stay: `document_id` is now the row's own id, and
+         *     `kind` is its `doc_type`.
          */
         ApplicationDocumentDTO: {
             /** Document Id */
@@ -2378,9 +2487,10 @@ export interface components {
          * CostTotalsDTO
          * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
          *
-         *     Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime totals
-         *     that survive ledger retention — not just the retained ~250 ops. `by_kind` maps
-         *     each operation kind to its all-time usd spend.
+         *     Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime
+         *     totals that survive any deletion of an operation row. Nothing deletes one
+         *     today, so the aggregate is empty and the live sum carries it all. `by_kind`
+         *     maps each operation kind to its all-time usd spend.
          */
         CostTotalsDTO: {
             /** Usd */
@@ -2927,8 +3037,6 @@ export interface components {
             linkedin_url: string;
             /** Connection Status */
             connection_status: string;
-            /** Ask Status */
-            ask_status?: string | null;
             /** Audience Tag */
             audience_tag: string;
             /** Last Message */
@@ -3133,11 +3241,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
              * Updated At
              * Format: date-time
              */
@@ -3336,20 +3439,6 @@ export interface components {
             in_flight_contact_ids?: string[];
         };
         /**
-         * RescorePreviewDTO
-         * @description GET /api/jobs/rescore/preview — the AI re-score consent numbers: how
-         *     many active jobs miss an AI score at the current resume version (what a
-         *     confirmed run would enqueue) vs already carry one (never re-spent). Both
-         *     come from the same miss query the run uses, so the prompt's N always
-         *     equals what actually runs.
-         */
-        RescorePreviewDTO: {
-            /** Toscore */
-            toScore: number;
-            /** Cached */
-            cached: number;
-        };
-        /**
          * ScanProgressDTO
          * @description Board-level scan + scoring progress (observed-issue #2 backend). A small,
          *     schema-free read the board polls while a scan runs — derived entirely from
@@ -3410,6 +3499,40 @@ export interface components {
             enabled?: boolean | null;
             /** Interval Minutes */
             interval_minutes?: number | null;
+        };
+        /**
+         * SchedulerStatus
+         * @description Whether the 60 s tick loop that plans background work is running, and
+         *     whether a degraded boot is the reason it is not.
+         */
+        SchedulerStatus: {
+            /** Running */
+            running: boolean;
+            /**
+             * Degradedboot
+             * @default false
+             */
+            degradedBoot: boolean;
+        };
+        /**
+         * ScoreRetryDTO
+         * @description The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
+         *     many active jobs have spent the whole attempt budget with no AI score, so
+         *     the button hides when pressing it would do nothing; `reset` on the POST is
+         *     how many got their budget back. Jobs with no usable description are in
+         *     neither number — they never spent an attempt (S-A6).
+         */
+        ScoreRetryDTO: {
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+            /**
+             * Reset
+             * @default 0
+             */
+            reset: number;
         };
         /** SettingsDTO */
         SettingsDTO: {
@@ -4040,6 +4163,46 @@ export interface operations {
             };
         };
     };
+    scoring_retryable_api_scoring_retryable_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScoreRetryDTO"];
+                };
+            };
+        };
+    };
+    scoring_retry_api_scoring_retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScoreRetryDTO"];
+                };
+            };
+        };
+    };
     get_profile_api_profile_get: {
         parameters: {
             query?: never;
@@ -4089,48 +4252,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rescore_preview_api_jobs_rescore_preview_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RescorePreviewDTO"];
-                };
-            };
-        };
-    };
-    rescore_board_api_jobs_rescore_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
                 };
             };
         };
@@ -5738,6 +5859,37 @@ export interface operations {
             };
         };
     };
+    submit_apply_run_api_apply_runs__run_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     attest_apply_run_api_apply_runs__run_id__attest_post: {
         parameters: {
             query?: never;
@@ -5939,6 +6091,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrowserInstallResult"];
+                };
+            };
+        };
+    };
+    scheduler_status_api_system_scheduler_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatus"];
+                };
+            };
+        };
+    };
+    resume_scheduler_api_system_scheduler_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatus"];
                 };
             };
         };

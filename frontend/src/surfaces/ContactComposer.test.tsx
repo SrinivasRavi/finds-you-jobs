@@ -48,7 +48,7 @@ function contact(overrides: Partial<NetContact>): NetContact {
     is_first_degree: false,
     audience_tag: "hm",
     warmth: "cold",
-    connection_status: "engagement",
+    connection_status: "pending_our_response",
     last_message: null,
     last_message_at: null,
     last_message_direction: null,
@@ -66,8 +66,8 @@ function box(): HTMLTextAreaElement {
 
 describe("ContactComposer", () => {
   it("prefills the box with the stage's first option and refills on selection", () => {
-    const c = contact({ connection_status: "engagement" });
-    const options = stageTemplateOptions("engagement", c, h.t);
+    const c = contact({ connection_status: "pending_our_response" });
+    const options = stageTemplateOptions("pending_our_response", c, h.t);
     render(<ContactComposer contact={c} onSubmit={() => {}} />);
 
     expect(box().value).toBe(options[0]!.body);

@@ -133,9 +133,12 @@ def test_manual_application_attaches_and_downloads_documents(
     assert "my-resume.pdf" in dl.headers.get("content-disposition", "")
 
 
-def test_identical_uploads_dedup_to_one_row_and_one_blob(
+def test_identical_uploads_share_one_blob(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
+    """The same file on 2 cards is 2 rows and 1 file on disk. Row dedup went with
+    the `documents` + `application_documents` merge; blob dedup is the part that
+    saves disk and it lives in `store_bytes`, which never asked the database."""
     app, client = app_client
     same = b"the very same resume bytes"
     for i in (1, 2):
@@ -147,19 +150,52 @@ def test_identical_uploads_dedup_to_one_row_and_one_blob(
         )
         assert r.status_code == 201, r.text
 
-    # One Document row, one blob on disk — despite two applications referencing it.
     from sqlalchemy import func, select
 
-    from sidecar.app.db.models import ApplicationDocument, Document
+    from sidecar.app.db.models import Document
 
     with app.state.db.session() as session:
-        doc_count = session.scalar(select(func.count()).select_from(Document))
-        link_count = session.scalar(select(func.count()).select_from(ApplicationDocument))
-    assert doc_count == 1
-    assert link_count == 2
+        assert session.scalar(select(func.count()).select_from(Document)) == 2
     blobs = list(_blob_dir(app).iterdir())
     assert len(blobs) == 1
     assert blobs[0].name == docstore.sha256_hex(same)
+
+
+def test_detaching_the_last_reference_unlinks_the_blob(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Detach removes the row AND the file once nothing names those bytes, and
+    leaves the file alone while another card still does (S-C37: before the merge
+    there was no reference count, so every detach leaked both)."""
+    app, client = app_client
+    same = b"a resume two cards both attached"
+    app_ids = []
+    for i in (1, 2):
+        r = client.post(
+            "/api/applications/manual",
+            data={"canonical_url": f"https://ex.co/j/unlink-{i}", "title": f"Role {i}"},
+            files={"resume": ("resume.pdf", same, "application/pdf")},
+            headers=AUTH,
+        )
+        assert r.status_code == 201, r.text
+        app_ids.append(r.json()["id"])
+    sha = docstore.sha256_hex(same)
+    assert (_blob_dir(app) / sha).exists()
+
+    # Card 2 still holds those bytes, so the blob stays.
+    r = client.delete(
+        f"/api/applications/{app_ids[0]}/documents/tailored_resume", headers=AUTH
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["documents"] == []
+    assert (_blob_dir(app) / sha).exists()
+
+    # Nothing references them now — row and file both go.
+    r = client.delete(
+        f"/api/applications/{app_ids[1]}/documents/tailored_resume", headers=AUTH
+    )
+    assert r.status_code == 200, r.text
+    assert not (_blob_dir(app) / sha).exists()
 
 
 # ---------------------------------------------------------------------------
