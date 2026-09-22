@@ -856,6 +856,17 @@ export class RealApi {
     return (d.packetState as PacketState) ?? "none";
   }
 
+  /** Run instant ad-hoc resume tailoring against raw Job Description text. */
+  async tailorAdhoc(
+    job_description: string,
+    guidance: string = "",
+  ): Promise<{ resume_md: string; notes: string[] }> {
+    return (await this.json("POST", "/api/tailor/adhoc", {
+      job_description,
+      guidance,
+    })) as { resume_md: string; notes: string[] };
+  }
+
   // ── apply runs (the agentic Applier — applier-as-built.md section 8/section 9) ───────────────────
   // Starting Apply IS the action (section 8.1): no pre-confirm modal, the run is
   // created and the op enqueued immediately. `retryOfRunId` links a Retry /

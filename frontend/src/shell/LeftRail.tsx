@@ -22,6 +22,7 @@ interface RailItem {
 const TOP: RailItem[] = [
   { to: "/jobs", label: "nav.jobBoard", icon: "search" },
   { to: "/applications", label: "nav.applications", icon: "bookmark" },
+  { to: "/tailor", label: "nav.tailor", icon: "file" },
   { to: "/networking", label: "nav.networking", icon: "share" },
 ];
 const BOTTOM: RailItem[] = [

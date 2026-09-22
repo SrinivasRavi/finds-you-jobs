@@ -2959,6 +2959,42 @@ async def install_browser(request: Request) -> dto.BrowserInstallResult:
     return dto.BrowserInstallResult(status=status)
 
 
+@router.post("/api/tailor/adhoc")
+async def tailor_adhoc(request: Request, payload: dto.AdhocTailorRequest) -> dto.AdhocTailorResult:
+    """Instant ad-hoc resume tailoring from raw Job Description text."""
+    from ..prompt_overrides import get_override
+    from sidecar.modules.tailorer import tailor
+    if not payload.job_description.strip():
+        raise HTTPException(status_code=422, detail="Job description cannot be empty")
+    with _db(request).repos() as repos:
+        profile = repos.profile.get_current()
+        if not profile or not profile.raw_markdown.strip():
+            raise HTTPException(status_code=400, detail="Master Resume is required before tailoring")
+        master_md = profile.raw_markdown
+    registry = getattr(request.app.state, "engine_registry", None)
+    if registry is None:
+        raise HTTPException(status_code=500, detail="engine registry unavailable")
+    resolved = registry.resolve("tailor")
+    if resolved is None:
+        raise HTTPException(status_code=500, detail="no AI engine configured for tailoring")
+    log = get_logger()
+    log.info("[ADHOC_TAILOR] Starting ad-hoc resume tailoring (engine=%s)", resolved.name)
+    try:
+        result = await asyncio.to_thread(
+            tailor,
+            master_md,
+            payload.job_description,
+            guidance=payload.guidance,
+            engine=resolved.engine,
+            skill_md=get_override("tailor"),
+        )
+        log.info("[ADHOC_TAILOR] Ad-hoc resume tailoring completed successfully")
+        return dto.AdhocTailorResult(resume_md=result.resume_md, notes=result.notes)
+    except Exception as exc:
+        log.exception("[ADHOC_TAILOR] Ad-hoc resume tailoring failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Tailoring failed: {exc}") from exc
+
+
 @router.post("/api/dev/operations/fail-running")
 async def dev_fail_running(request: Request) -> dict[str, Any]:
     """Mark every currently-`running` operation failed with the boot-recovery

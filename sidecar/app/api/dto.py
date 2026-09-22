@@ -1486,3 +1486,14 @@ def cost_totals_dto(totals: dict[str, Any]) -> CostTotalsDTO:
         failed=int(totals.get("failed", 0)),
         by_kind={k: float(v) for k, v in (totals.get("by_kind") or {}).items()},
     )
+
+
+class AdhocTailorRequest(BaseModel):
+    job_description: str
+    guidance: str = ""
+
+
+class AdhocTailorResult(BaseModel):
+    resume_md: str
+    notes: list[str] = Field(default_factory=list)
+

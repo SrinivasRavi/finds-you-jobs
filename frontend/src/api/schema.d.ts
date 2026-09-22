@@ -1582,6 +1582,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tailor/adhoc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tailor Adhoc
+         * @description Instant ad-hoc resume tailoring from raw Job Description text.
+         */
+        post: operations["tailor_adhoc_api_tailor_adhoc_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dev/operations/fail-running": {
         parameters: {
             query?: never;
@@ -1845,6 +1865,23 @@ export interface components {
             state?: string | null;
             /** At */
             at?: string | null;
+        };
+        /** AdhocTailorRequest */
+        AdhocTailorRequest: {
+            /** Job Description */
+            job_description: string;
+            /**
+             * Guidance
+             * @default
+             */
+            guidance: string;
+        };
+        /** AdhocTailorResult */
+        AdhocTailorResult: {
+            /** Resume Md */
+            resume_md: string;
+            /** Notes */
+            notes?: string[];
         };
         /** ApplicationCreate */
         ApplicationCreate: {
@@ -5939,6 +5976,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrowserInstallResult"];
+                };
+            };
+        };
+    };
+    tailor_adhoc_api_tailor_adhoc_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdhocTailorRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdhocTailorResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

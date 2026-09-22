@@ -12,6 +12,7 @@ import { JobBoard } from "./surfaces/JobBoard";
 import { Networking } from "./surfaces/Networking";
 import { Onboarding } from "./surfaces/Onboarding";
 import { Settings } from "./surfaces/Settings";
+import { TailorSurface } from "./surfaces/TailorSurface";
 import { Tracker } from "./surfaces/Tracker";
 import { Layout } from "./shell/Layout";
 import { SurfaceError } from "./shell/SurfaceError";
@@ -112,6 +113,7 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/jobs" replace /> },
       { path: "jobs", element: <JobBoard />, errorElement: <SurfaceError /> },
       { path: "applications", element: <Tracker />, errorElement: <SurfaceError /> },
+      { path: "tailor", element: <TailorSurface />, errorElement: <SurfaceError /> },
       { path: "networking", element: <Networking />, errorElement: <SurfaceError /> },
       { path: "dev", element: <Dev />, errorElement: <SurfaceError /> },
       { path: "browser", element: <BrowserSurface />, errorElement: <SurfaceError /> },

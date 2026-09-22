@@ -4,6 +4,7 @@ const common = {
   nav: {
     jobBoard: "Discover jobs",
     applications: "Applications",
+    tailor: "Tailor",
     networking: "Networking",
     analytics: "Analytics",
     settings: "Settings",
