@@ -45,6 +45,7 @@ datas = [
     # The gazetteer the location resolver reads: 4 gzipped GeoNames cuts, 0.95 MB
     # total, opened by path at runtime (sidecar/modules/geo/gazetteer.py).
     (os.path.join(SIDECAR, "modules", "geo", "data"), "sidecar/modules/geo/data"),
+    (os.path.join(SIDECAR, "modules", "titles", "data"), "sidecar/modules/titles/data"),
     (os.path.join(SIDECAR, "modules", "tailorer", "tailor-resume-skill.md"), "sidecar/modules/tailorer"),
     (os.path.join(SIDECAR, "modules", "coverletterer", "cover-letter-skill.md"), "sidecar/modules/coverletterer"),
     # Skyvern-derived DOM utility script the Applier's browser agent injects —

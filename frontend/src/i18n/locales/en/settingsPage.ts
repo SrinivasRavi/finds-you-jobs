@@ -37,7 +37,7 @@ const settingsPage = {
     licenseLine:
       "finds-you-jobs is licensed under AGPL-3.0-only. You're free to inspect, run, modify, and share it under the same terms.",
     attributionLine:
-      "This product includes data created by GeoNames (https://www.geonames.org), used under CC BY 4.0. Full third-party notices ship in THIRD_PARTY_NOTICES.md in the source tree.",
+      "This product includes data created by GeoNames (https://www.geonames.org) and information from O*NET OnLine by the U.S. Department of Labor, Employment and Training Administration, both used under CC BY 4.0. O*NET is a trademark of USDOL/ETA. Full third-party notices ship in THIRD_PARTY_NOTICES.md in the source tree.",
     sourceButton: "Source code",
     issuesButton: "Report a bug or request a feature",
   },
