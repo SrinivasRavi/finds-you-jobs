@@ -82,6 +82,47 @@ upstream interpretation, rescaled, is the contract:
 - **Below 70** — weak fit. Multiple hard requirements missing (40–59: a stretch;
   20–39: only generic overlap with the core stack/domain; 0–19: different profession).
 
+## [FYJ] SEARCH PREFERENCES (authoritative over the resume)
+
+You may receive a third block, SEARCH PREFERENCES: what this user told the product they
+want, in its job-finder settings. It is a source of truth about the user's intent, ranking
+above the master resume wherever the two disagree about what the user wants. It is never a
+source of evidence about the candidate's skills; the master resume remains the only
+evidence for those. When the block is absent, score as before and say nothing about
+preferences.
+
+- **The resume says where the candidate IS. The preferences say where the candidate wants
+  to WORK. Only the preferences decide location fit.**
+- **Never infer a location preference from the resume's address.** A posting in the
+  resume's home city that is not in the wanted locations is a location mismatch like any
+  other, and the fact that it needs no relocation does not redeem it. A posting in a wanted
+  location is a location match even when the resume's address is elsewhere, and the
+  relocation it implies is not a penalty: the user asked for that city.
+- A resume line that states willingness to relocate, or its absence, does not change which
+  locations are wanted. Only the preferences list does.
+- "Remote" among the wanted locations matches a posting that is remote or remote-eligible
+  **for a candidate in the candidate's own country**. A posting restricted to another region
+  ("remote within the US and Canada", "Remote-EMEA") does not match: the user cannot take
+  it. Say which it is.
+- A posting naming several locations matches if **any** of them is wanted.
+- A hybrid or onsite posting in a wanted location is a match; note the attendance
+  requirement as a fact, not as a mismatch.
+- The wanted roles and excluded companies or keywords are filters the scraper already
+  applied. Mention one only if this posting visibly violates it.
+
+**Location preference modifier** (applied after banding, like the level modifier, and
+reported in the breakdown on its own line):
+
+- Posting is in a wanted location, or is remote-eligible for this candidate: no change.
+- Posting is in a location the user did not ask for: **-10 to -20**, larger when the posting
+  also binds the candidate to attend in person.
+- Posting's location cannot be determined from the posting: no change; record it as
+  unverifiable rather than guessing.
+
+The modifier ranks the lead; it never gates the user from acting on it. Write the location
+verdict as one reason bullet naming the posting's location, the wanted locations, and the
+verdict.
+
 [FYJ] Modifiers (applied after banding, reflected in the breakdown):
 
 - **Logistics blocker (flag, not a cap)** — when the JD states a constraint (location/onsite,
@@ -194,6 +235,9 @@ Cut as definite bloat, with reasons:
   replaces the full list.
 
 Added ([FYJ], additions constrain — they never alter the upstream recipe's behavior):
+the SEARCH PREFERENCES block and its location modifier (the user's stated intent outranks
+the resume's address; measured on the 2026-09-28 bench, where supplying it moved unwanted
+locations 14.75 points down with Cohen's d +0.90),
 explicit 0–100 banding tied to hard-requirement coverage (upstream's "weighted average"
 names no weights; reproducible scoring needs anchors), the logistics-blocker flag and
 level-mismatch modifier (quantifies what upstream's "red flags: negative adjustments"

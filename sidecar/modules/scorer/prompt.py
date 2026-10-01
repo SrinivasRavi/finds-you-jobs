@@ -19,15 +19,30 @@ def load_skill() -> str:
     return load_skill_md(SKILL_PATH)
 
 
-def build_user_prompt(master_md: str, jd_md: str) -> str:
+def build_user_prompt(master_md: str, jd_md: str, preferences_md: str | None = None) -> str:
+    """The 3 input blocks, in the order the skill file reads them.
+
+    Preferences come last and are optional: the resume is evidence, the posting is
+    requirements, and the preferences are intent. A caller with no preferences
+    stored sends 2 blocks and the skill file says nothing about them.
+    """
+    blocks = [
+        "=== MASTER RESUME (sole candidate evidence) ===",
+        master_md.strip(),
+        "",
+        "=== JOB DESCRIPTION (sole requirements source) ===",
+        jd_md.strip(),
+        "",
+    ]
+    if preferences_md and preferences_md.strip():
+        blocks += [
+            "=== SEARCH PREFERENCES (the user's stated intent, authoritative over the resume) ===",
+            preferences_md.strip(),
+            "",
+        ]
     return "\n".join(
         [
-            "=== MASTER RESUME (sole candidate evidence) ===",
-            master_md.strip(),
-            "",
-            "=== JOB DESCRIPTION (sole requirements source) ===",
-            jd_md.strip(),
-            "",
+            *blocks,
             "Produce the fit score now, following the skill instructions and the output",
             "contract exactly (===SCORE=== then ===REASONS=== then ===BREAKDOWN===).",
         ]

@@ -387,6 +387,36 @@ def backfill_resolved_locations(
         return len(pending)
 
 
+def render_preferences_block(prefs: Any) -> str:
+    """The user's job-finder preferences as the Scorer's third prompt block.
+
+    Empty when the user has set nothing, so the prompt stays 2 blocks and the
+    skill file says nothing about preferences. The wording is the bench's
+    (`evidence/2026-09-25-scoring-bench/preferences.py`), which is the text the
+    2026-09-28 measurement was taken with.
+    """
+    roles = [str(r) for r in (getattr(prefs, "role_aliases", None) or []) if str(r).strip()]
+    locations = [str(loc) for loc in (getattr(prefs, "locations", None) or []) if str(loc).strip()]
+    excludes = getattr(prefs, "hard_excludes", None) or {}
+    companies = [str(c) for c in (excludes.get("companies") or []) if str(c).strip()]
+    keywords = [str(k) for k in (excludes.get("keywords") or []) if str(k).strip()]
+    freshness = int(getattr(prefs, "freshness_days", 0) or 0)
+    if not (roles or locations or companies or keywords):
+        return ""
+    lines = [
+        "The user set these in the product's job-finder preferences. They state what this "
+        "user wants, and they outrank the resume wherever the two disagree.",
+        "",
+        f"Roles wanted: {', '.join(roles) or 'any'}",
+        f"Locations wanted: {', '.join(locations) or 'any'}",
+        f"Excluded companies: {', '.join(companies) or 'none'}",
+        f"Excluded keywords: {', '.join(keywords) or 'none'}",
+    ]
+    if freshness > 0:
+        lines.append(f"Posting freshness wanted: within {freshness} days")
+    return "\n".join(lines)
+
+
 def scan_usage(result: ScanResult) -> dict[str, Any]:
     """Aggregate the zero-LLM scan usage (HTTP calls + latency)."""
     http_calls = sum(r.usage.internal_calls for r in result.per_source.values())

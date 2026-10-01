@@ -617,3 +617,53 @@ def test_retry_route_counts_only_stuck_jobs_and_hands_the_budget_back(tmp_path) 
             assert repos.jobs.get(thin).llm_score_attempts == 0  # type: ignore[union-attr]
         assert stuck in {snap["job_id"] for _k, snap in plan_score_new(db)}
         assert thin not in {snap["job_id"] for _k, snap in plan_score_new(db)}
+
+
+def test_the_llm_scorer_receives_the_users_own_preferences(migrated_db: Database) -> None:
+    """S-C67. The user's resume says one city and their preferences say another;
+    without this the scorer only ever saw the resume, so it read the city they
+    live in as the city they want (measured on the 2026-09-28 bench: unwanted
+    locations scored 14.75 points HIGHER than wanted ones)."""
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/prefs-1")
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "llm"},
+            locations=["Bengaluru", "Remote"],
+            role_aliases=["software engineer"],
+            hard_excludes={"companies": ["Acme"], "keywords": []},
+        )
+
+    seen: dict[str, str] = {}
+
+    class _CapturingEngine:
+        def complete(self, system_prompt: str, user_prompt: str, **_: Any) -> Any:
+            seen["user"] = user_prompt
+            seen["system"] = system_prompt
+            return SCORE_OUT, EngineUsage(internal_calls=1)
+
+    score_entrypoint(_ctx(db, job_id, engine=_CapturingEngine()))
+    assert "SEARCH PREFERENCES" in seen["user"]
+    assert "Locations wanted: Bengaluru, Remote" in seen["user"]
+    assert "Excluded companies: Acme" in seen["user"]
+    # And the rule that tells the model what to do with the block.
+    assert "Never infer a location preference from the resume's address" in seen["system"]
+
+
+def test_a_user_with_no_preferences_set_sends_two_blocks(migrated_db: Database) -> None:
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/prefs-2")
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "llm"}, locations=[], role_aliases=[]
+        )
+
+    seen: dict[str, str] = {}
+
+    class _CapturingEngine:
+        def complete(self, system_prompt: str, user_prompt: str, **_: Any) -> Any:
+            seen["user"] = user_prompt
+            return SCORE_OUT, EngineUsage(internal_calls=1)
+
+    score_entrypoint(_ctx(db, job_id, engine=_CapturingEngine()))
+    assert "SEARCH PREFERENCES" not in seen["user"]

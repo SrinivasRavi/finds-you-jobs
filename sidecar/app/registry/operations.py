@@ -375,10 +375,14 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     def _scoring_context(repos: Repos) -> dict[str, Any]:
         """Mode, wanted locations and the job's own title and location, in the
         one session `_load_job_inputs` already opens."""
+        from .persistence import render_preferences_block
+
         job = repos.jobs.get(job_id) if job_id is not None else None
+        prefs = repos.preferences.get_or_create()
         return {
-            "mode": scoring_mode(repos.preferences.get_or_create()),
+            "mode": scoring_mode(prefs),
             "wanted": _wanted_locations(repos),
+            "preferences_md": render_preferences_block(prefs),
             "title": job.title if job is not None else "",
             "location": job.location if job is not None else "",
         }
@@ -453,6 +457,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             engine=resolved.engine,
             skill_md=get_override("score"),
             cancelled=ctx.cancelled,
+            preferences_md=str((scoring_ctx or {}).get("preferences_md") or ""),
         )
     except Exception as exc:
         # The keyword floor is the fallback; guarantee it exists (idempotent)

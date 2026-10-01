@@ -59,6 +59,25 @@ def test_prompt_includes_blocks_in_order():
     assert "===SCORE===" in p  # contract reminder present
 
 
+def test_preferences_are_a_third_block_and_only_when_present():
+    """S-C67: without this block the scorer reads the resume's own address as the
+    user's location preference, which inverts their intent whenever the 2 differ."""
+    two = build_user_prompt("MASTER-X", "JD-Y")
+    assert "SEARCH PREFERENCES" not in two
+    three = build_user_prompt("MASTER-X", "JD-Y", "Locations wanted: Bengaluru, Remote")
+    assert three.index("JOB DESCRIPTION") < three.index("SEARCH PREFERENCES")
+    assert "Bengaluru" in three
+    # Whitespace is not a preference.
+    assert "SEARCH PREFERENCES" not in build_user_prompt("M", "J", "   \n ")
+
+
+def test_the_skill_file_tells_the_model_what_to_do_with_preferences():
+    skill = load_skill()
+    assert "SEARCH PREFERENCES" in skill
+    assert "Never infer a location preference from the resume's address" in skill
+    assert "unverifiable rather than guessing" in skill
+
+
 def test_resolve_job_reads_fixture_file():
     jd = resolve_job(str(FIXTURES / "jds" / "text" / "J01-glean-backend-bangalore.md"))
     assert len(jd) > 200
