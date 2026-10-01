@@ -18,6 +18,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
+from sidecar.modules.geo.resolve import resolve_location
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, ScraperError
 
@@ -353,6 +354,37 @@ def _job_columns(job: NormalizedJob) -> dict[str, Any]:
         "trust_score": job.trust_score,
         "trust_flags": list(job.trust_flags),
     }
+
+
+BACKFILL_LOCATION_BATCH = 500
+
+
+def backfill_resolved_locations(
+    db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH
+) -> int:
+    """Resolve the location of rows that predate the resolver. Returns the count.
+
+    `location_remote IS NULL` is the "never seen" marker, so this converges: a
+    row it touches stops matching, whatever the resolver concluded. Bounded per
+    call because it runs inside the maintenance tick, which has other stages
+    waiting behind it.
+    """
+    if db is None:
+        return 0
+    with db.repos() as repos:
+        pending = repos.jobs.list_unresolved_locations(limit=limit)
+        for job in pending:
+            resolved = resolve_location(job.location or "")
+            primary = resolved.primary
+            repos.jobs.update(
+                job.id,
+                location_country=primary.country if primary else None,
+                location_admin1=primary.admin1_key if primary else None,
+                location_city_id=primary.city_id if primary else None,
+                location_remote=resolved.remote_scope,
+                location_attendance=str(resolved.attendance) if resolved.attendance else None,
+            )
+        return len(pending)
 
 
 def scan_usage(result: ScanResult) -> dict[str, Any]:

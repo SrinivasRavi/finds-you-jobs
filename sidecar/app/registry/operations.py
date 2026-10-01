@@ -214,6 +214,7 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from ..lifecycle import LIFECYCLE_DEFAULTS, resolve_lifecycle
     from .persistence import (
         age_expired_jobs,
+        backfill_resolved_locations,
         evict_stale_trash,
         purge_archived_applications,
     )
@@ -229,6 +230,9 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     purged_apps = purge_archived_applications(
         ctx.db, retention_days=settings["archived_applications_purge_days"]
     )
+    # Rows that predate the location resolver. Bounded per tick and converging:
+    # a row it touches stops matching its own query.
+    resolved_locations = backfill_resolved_locations(ctx.db)
     return OperationOutcome(
         result_ref={
             "tombstoned_count": len(tombstoned),
@@ -239,6 +243,7 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
             "expired_deleted_ids": aged["deleted"],
             "purged_applications_count": len(purged_apps),
             "purged_application_ids": purged_apps,
+            "resolved_locations_count": resolved_locations,
         }
     )
 
