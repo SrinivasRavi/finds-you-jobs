@@ -35,11 +35,21 @@ SCORER_IMPL = "scorer-llm"
 SCORER_IMPL_DETERMINISTIC = "scorer-deterministic"
 
 
+# Every scoring method the user can pick, in menu order, richest explanation
+# first (`scoring.md` section 7.1). `local` is listed because the menu never
+# hides a method for a missing prerequisite (`talk.md` D44); its pack download is
+# not built yet, so picking it falls back to the keyword floor and says so.
+SCORING_MODES: tuple[str, ...] = ("llm", "jev", "local", "keyword")
+DEFAULT_SCORING_MODE = "llm"
+
+
 def scoring_mode(prefs: Any) -> str:
-    """The Settings → Scoring mode: `"llm"` (default) or `"keyword"`. The ONE
-    reader of `thresholds["scoring_mode"]` — every call site resolves the mode
-    through here so the default and the key can never drift apart."""
-    return str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "llm")
+    """The Settings → Scoring method. The ONE reader of
+    `thresholds["scoring_mode"]`, so the default and the key can never drift
+    apart, and an unrecognized stored value reads as the default rather than
+    breaking dispatch."""
+    stored = str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "")
+    return stored if stored in SCORING_MODES else DEFAULT_SCORING_MODE
 
 # The user-configurable windows below are DERIVED from `LIFECYCLE_DEFAULTS`
 # (D-A15) — they used to be re-typed here, so a Settings default change could
@@ -385,6 +395,42 @@ def backfill_resolved_locations(
                 location_attendance=str(resolved.attendance) if resolved.attendance else None,
             )
         return len(pending)
+
+
+# Jev is reached on the OpenRouter key the user may already have for everything
+# else, so "do you have one" is a database read. The key is opened for THIS
+# operation only, never cached and never written into a snapshot or a log, the
+# same discipline as the scraper credentials above.
+DECISIONS_ENGINE_ID = "openrouter"
+
+
+def decisions_key_present(repos: Repos) -> bool:
+    """Whether a usable key for the decision model is stored, without opening it.
+
+    The Settings row reads this to say "add a key" instead of going grey: a method
+    is never hidden for a missing prerequisite (`talk.md` D44).
+    """
+    row = repos.engine_settings.get_by_engine(DECISIONS_ENGINE_ID)
+    return bool(row is not None and row.key_encrypted and row.enabled)
+
+
+def load_decisions_client(repos: Repos) -> Any:
+    """The Jev client for this operation, or None when no key is stored."""
+    from ..db.database import resolve_data_dir
+    from ..security import get_app_key, open_secret
+    from .engines_http import DecisionsHttpClient
+
+    row = repos.engine_settings.get_by_engine(DECISIONS_ENGINE_ID)
+    if row is None or not row.key_encrypted or not row.enabled:
+        return None
+    try:
+        api_key = open_secret(row.key_encrypted, get_app_key(resolve_data_dir()))
+    except Exception:  # noqa: BLE001 — a corrupt key is a missing key, not a crash
+        import logging
+
+        logging.getLogger("fyj.sidecar").exception("could not open the sealed decisions key")
+        return None
+    return DecisionsHttpClient(api_key=api_key)
 
 
 def render_preferences_block(prefs: Any) -> str:

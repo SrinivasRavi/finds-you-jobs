@@ -375,16 +375,19 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     def _scoring_context(repos: Repos) -> dict[str, Any]:
         """Mode, wanted locations and the job's own title and location, in the
         one session `_load_job_inputs` already opens."""
-        from .persistence import render_preferences_block
+        from .persistence import load_decisions_client, render_preferences_block
 
         job = repos.jobs.get(job_id) if job_id is not None else None
         prefs = repos.preferences.get_or_create()
+        mode = scoring_mode(prefs)
         return {
-            "mode": scoring_mode(prefs),
+            "mode": mode,
             "wanted": _wanted_locations(repos),
             "preferences_md": render_preferences_block(prefs),
             "title": job.title if job is not None else "",
             "location": job.location if job is not None else "",
+            # Opened for this operation only, and only for the mode that needs it.
+            "decisions": load_decisions_client(repos) if mode == "jev" else None,
         }
 
     job_text, master_md, profile_version, scoring_ctx = _load_job_inputs(
@@ -443,6 +446,40 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             usage=None,
             engine="on-device",
             model="keyword",
+        )
+
+    if mode == "jev":
+        from sidecar.modules.scorer.jev import score_jev
+
+        client = (scoring_ctx or {}).get("decisions")
+        if client is None:
+            raise EngineNotConfiguredError(
+                "Fast scoring needs an OpenRouter key. Add one in Settings > LLM providers, "
+                "or pick another scoring method."
+            )
+        jev = score_jev(
+            master_md,
+            job_text,
+            client=client,
+            preferences_md=str((scoring_ctx or {}).get("preferences_md") or ""),
+        )
+        if job_id is not None:
+            _persist_score(
+                ctx,
+                job_id=job_id,
+                score_0_100=jev.score,
+                reasons=list(jev.reasons),
+                breakdown_md=jev.breakdown_md,
+                scorer_impl=SCORER_IMPL,
+                feed_priority_stats=True,
+                method="jev",
+                factors=_factor_rows(jev),
+            )
+        return OperationOutcome(
+            result_ref={"score": jev.score, "job_id": job_id},
+            usage=_usage_to_dict(jev.usage),
+            engine="jev",
+            model=jev.usage.model,
         )
 
     resolved = _require_engine(ctx)

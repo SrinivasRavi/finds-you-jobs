@@ -693,3 +693,87 @@ def test_an_ai_score_carries_its_method_and_its_factors(migrated_db: Database) -
     assert set(rows) == {"core_stack", "years", "location_preference"}
     assert rows["core_stack"].value == 0.9
     assert rows["core_stack"].evidence == "Java and Python evidenced"
+
+
+def test_jev_mode_scores_through_the_decisions_client(tmp_path) -> None:
+    """The op opens the sealed OpenRouter key, asks once, and stores the factors
+    with `method="jev"` so the board can say which method produced the number."""
+    from sidecar.app.registry.engines_http import DECISIONS_PATH, DecisionsHttpClient
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, bytes | None]] = []
+
+        def request(self, method, url, *, headers, body=None, timeout_s=60):
+            from sidecar.app.registry.engines_http import HttpResponse
+
+            self.calls.append((method, url, body))
+            payload = {
+                "answers": {
+                    "hard_requirements": {"score": 4.0},
+                    "core_stack": {"score": 3.0},
+                    "years": {"score": 4.0},
+                    "level": {"score": 4.0},
+                    "nice_to_haves": {"score": 2.0},
+                    "location_preference_met": {"noul": 0.95},
+                    "logistics_blocker": {"noul": 0.05},
+                },
+                "usage": {"cost": 0.00022},
+            }
+            import json as _json
+
+            return HttpResponse(status=200, body=_json.dumps(payload).encode())
+
+    transport = FakeTransport()
+    client = DecisionsHttpClient(api_key="sk-or-test", transport=transport)
+
+    db = Database(f"sqlite+pysqlite:///{tmp_path / 'db.sqlite'}")
+    from sidecar.app.db.migrate import upgrade_to_head
+
+    upgrade_to_head(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    job_id = _seed(db, url="https://ex.co/j/jev-1")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "jev"}, locations=["Bengaluru"])
+
+    import sidecar.app.registry.persistence as persistence
+
+    original = persistence.load_decisions_client
+    persistence.load_decisions_client = lambda _repos: client  # type: ignore[assignment]
+    try:
+        outcome = score_entrypoint(_ctx(db, job_id, engine=None))
+    finally:
+        persistence.load_decisions_client = original  # type: ignore[assignment]
+
+    assert outcome.engine == "jev"
+    assert len(transport.calls) == 1
+    method, url, body = transport.calls[0]
+    assert method == "POST" and url.endswith(DECISIONS_PATH)
+    assert body is not None and b"candidate_resume" in body
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        assert job.llm_score_method == "jev"
+        assert job.llm_score is not None and 0 <= job.llm_score <= 100
+        rows = {f.factor for f in repos.job_score_factors.list_for_job(job_id, "jev")}
+    assert rows == {
+        "hard_requirements",
+        "core_stack",
+        "years",
+        "level",
+        "nice_to_haves",
+        "location_preference",
+        "logistics",
+    }
+
+
+def test_jev_mode_without_a_key_says_so_instead_of_failing_silently(
+    migrated_db: Database,
+) -> None:
+    from sidecar.app.registry.engines import EngineNotConfiguredError
+
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/jev-2")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "jev"})
+    with pytest.raises(EngineNotConfiguredError, match="OpenRouter key"):
+        score_entrypoint(_ctx(db, job_id, engine=None))
