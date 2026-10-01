@@ -84,7 +84,7 @@ def score(
                 wait_before_retry(delay, cancelled)
                 continue
             try:
-                value, reasons, breakdown_md = parse_output(raw)
+                value, reasons, breakdown_md, factors = parse_output(raw)
             except ScoreError as e:
                 billed.append(usage)
                 if e.stage != "parse" or attempt == MAX_ATTEMPTS:
@@ -95,6 +95,7 @@ def score(
                 score=value,
                 reasons=reasons,
                 breakdown_md=breakdown_md,
+                factors=factors,
                 usage=Usage(**merge_usage(billed)),
             )
         raise AssertionError("unreachable — loop always returns or raises")

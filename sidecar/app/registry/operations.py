@@ -488,6 +488,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             breakdown_md=result.breakdown_md,
             scorer_impl=SCORER_IMPL,
             feed_priority_stats=True,
+            method="llm",
+            factors=_factor_rows(result),
         )
     return llm_outcome(
         {"score": result.score, "job_id": job_id},

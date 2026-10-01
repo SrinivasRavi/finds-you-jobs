@@ -43,6 +43,8 @@ RESUME = "# Test Candidate\n\nBackend engineer. Python, FastAPI, SQL, Kafka."
 SCORE_OUT = (
     "===SCORE===\n77\n===REASONS===\n- Strong backend overlap\n"
     "- Relocation matches\n===BREAKDOWN===\nRequirement | Match\n--- | ---\nJava | yes\n"
+    "===FACTORS===\ncore_stack: 0.90 | Java and Python evidenced\n"
+    "years: 1.00 | 9 against 5 required\nlocation_preference: 1.00 | Bengaluru is wanted\n"
 )
 
 
@@ -667,3 +669,27 @@ def test_a_user_with_no_preferences_set_sends_two_blocks(migrated_db: Database) 
 
     score_entrypoint(_ctx(db, job_id, engine=_CapturingEngine()))
     assert "SEARCH PREFERENCES" not in seen["user"]
+
+
+def test_an_ai_score_carries_its_method_and_its_factors(migrated_db: Database) -> None:
+    """4 methods write that one score slot, so the board has to be able to say
+    which one did, and the bars have to come from the same call that scored."""
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/factors-llm")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "llm"}, locations=["Bengaluru"])
+
+    class _Engine:
+        def complete(self, system_prompt: str, user_prompt: str, **_: Any) -> Any:
+            return SCORE_OUT, EngineUsage(internal_calls=1)
+
+    score_entrypoint(_ctx(db, job_id, engine=_Engine()))
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        assert job.llm_score == 77
+        assert job.llm_score_method == "llm"
+        rows = {f.factor: f for f in repos.job_score_factors.list_for_job(job_id, "llm")}
+    assert set(rows) == {"core_stack", "years", "location_preference"}
+    assert rows["core_stack"].value == 0.9
+    assert rows["core_stack"].evidence == "Java and Python evidenced"

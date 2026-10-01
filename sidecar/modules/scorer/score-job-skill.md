@@ -168,6 +168,42 @@ Emit exactly this structure (the module parses it):
 <gaps list: each partial/missing hard requirement with blocker/bridgeable and why>
 <level-fit line>
 <modifiers applied, if any>
+===FACTORS===
+<one line per axis you assessed: key: value | evidence>
+```
+
+## [FYJ] The FACTORS block
+
+The same judgement you just wrote as prose, as numbers the product can draw and
+weight. No new thinking: every line restates something already in the breakdown.
+
+One line per axis, `key: value | evidence`, where `value` is 0.00 to 1.00 (1.00 is a
+full match) and `evidence` is one short clause naming what you judged it against.
+These 7 keys, in this order, and no others:
+
+- `hard_requirements` — how much of what the posting states as required is evidenced
+- `core_stack` — hands-on evidence of the technical stack the role is built around
+- `years` — the stated experience bar against the master's own tenure
+- `level` — seniority alignment
+- `location_preference` — the posting's location against the SEARCH PREFERENCES block
+- `logistics` — work authorization, clearance, language, attendance
+- `nice_to_haves` — the preferred-but-not-required items
+
+**Omit any axis you could not assess.** A missing line means "not assessed", which the
+product shows as an absent bar. A 0.50 means "assessed, and half met", so never use a
+middle value to mean "I don't know". Omit `location_preference` entirely when no SEARCH
+PREFERENCES block was supplied, and omit any axis the posting says nothing about.
+
+Example:
+
+```
+===FACTORS===
+hard_requirements: 0.80 | every required item evidenced except Go
+core_stack: 1.00 | Python, Django and PostgreSQL all evidenced
+years: 1.00 | 9 years on the master against 6 required
+level: 0.75 | posting reads staff, master reads senior
+location_preference: 0.00 | preferences name Bengaluru and Remote; posting is Remote - USA only
+logistics: 1.00 | no stated constraint the master contradicts
 ```
 
 The BREAKDOWN is the same-pass structured output behind the reasons (US-JB-05: P1 shows
@@ -242,5 +278,5 @@ explicit 0–100 banding tied to hard-requirement coverage (upstream's "weighted
 names no weights; reproducible scoring needs anchors), the logistics-blocker flag and
 level-mismatch modifier (quantifies what upstream's "red flags: negative adjustments"
 leaves open; the blocker flags without capping — rank, don't gate), adjacent-experience-is-partial-never-full rule, the reasons format +
-balance rules (US-JB-05 acceptance criteria), the `===SCORE===/===REASONS===/===BREAKDOWN===`
-output contract, the integrity self-check, rank-don't-gate note (vision ethos).
+balance rules (US-JB-05 acceptance criteria), the `===SCORE===/===REASONS===/===BREAKDOWN===/===FACTORS===`
+output contract and its 7 typed per-axis factors, the integrity self-check, rank-don't-gate note (vision ethos).
