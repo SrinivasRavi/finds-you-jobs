@@ -501,6 +501,7 @@ def delete_job_cascade(repos: Repos, job_id: str) -> bool:
     before deletion, and trashing requires unsaving first."""
     repos.referral_candidates.delete_for_job(job_id)
     repos.outreach_logs.nullify_for_job(job_id)
+    repos.job_score_factors.delete_for_job(job_id)
     return repos.jobs.delete(job_id)
 
 

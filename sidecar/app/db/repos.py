@@ -7,7 +7,7 @@ single session (one short transaction per unit of work — AM4).
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -31,6 +31,7 @@ from .models import (
     Document,
     EngineSettings,
     Job,
+    JobScoreFactor,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
@@ -1316,6 +1317,65 @@ class ReferralCandidatesRepo:
         return cast("CursorResult[Any]", result).rowcount
 
 
+class JobScoreFactorsRepo:
+    """Per-axis score detail, one row per (job, method, factor).
+
+    A rescore `replace` instead of upserting row by row: a method that stops
+    emitting a factor must stop having it, or the bar chart would show an axis
+    the current rubric no longer scores.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def list_for_job(self, job_id: str, method: str | None = None) -> list[JobScoreFactor]:
+        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id == job_id)
+        if method is not None:
+            stmt = stmt.where(JobScoreFactor.method == method)
+        return list(self._s.scalars(stmt.order_by(JobScoreFactor.factor)))
+
+    def list_for_jobs(self, job_ids: list[str], method: str | None = None) -> list[JobScoreFactor]:
+        """Every factor for a page of jobs in 1 query, so the board never asks
+        per card (the F-H2 lesson)."""
+        if not job_ids:
+            return []
+        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id.in_(job_ids))
+        if method is not None:
+            stmt = stmt.where(JobScoreFactor.method == method)
+        return list(self._s.scalars(stmt))
+
+    def replace(
+        self, job_id: str, method: str, factors: Sequence[Mapping[str, Any]]
+    ) -> list[JobScoreFactor]:
+        """Drop this method's rows for the job and write the given ones."""
+        self._s.execute(
+            delete(JobScoreFactor).where(
+                JobScoreFactor.job_id == job_id, JobScoreFactor.method == method
+            )
+        )
+        rows = [
+            JobScoreFactor(
+                job_id=job_id,
+                method=method,
+                factor=str(f["factor"]),
+                value=float(f["value"]),
+                kind=str(f.get("kind") or "graded"),
+                evidence=str(f.get("evidence") or ""),
+            )
+            for f in factors
+        ]
+        for row in rows:
+            self._s.add(row)
+        self._s.flush()
+        return rows
+
+    def delete_for_job(self, job_id: str) -> int:
+        """Remove every factor row for a job (`foreign_keys=ON` forbids orphans
+        when the job is deleted). Returns the row count."""
+        result = self._s.execute(delete(JobScoreFactor).where(JobScoreFactor.job_id == job_id))
+        return cast("CursorResult[Any]", result).rowcount
+
+
 class OutreachLogsRepo:
     """Per-message audit (database-design section 5)."""
 
@@ -1562,6 +1622,7 @@ class Repos:
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)
         self.referral_candidates = ReferralCandidatesRepo(session)
+        self.job_score_factors = JobScoreFactorsRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)

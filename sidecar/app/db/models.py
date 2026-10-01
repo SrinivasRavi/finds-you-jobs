@@ -17,6 +17,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -165,6 +166,26 @@ class Job(Base):
     # status column. The keyword scorer never fails and never touches these.
     llm_score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     llm_score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which method produced `llm_score`: "llm", "jev" or "local". Backfilled to
+    # "llm" for every row scored before the column existed, because the single
+    # LLM path is the only thing that could have written them.
+    llm_score_method: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # The location field, read once at ingest by `modules/geo/resolve.py`, so no
+    # consumer re-parses the string and the 3 that do can't drift apart. These
+    # are facts about the posting, never about the user: the match verdict
+    # depends on preferences that change, so it is computed, never stored.
+    # `location_remote` carries 3 states on purpose: NULL means this row has not
+    # been through the resolver yet (which is every row that predates it), ""
+    # means resolved and not remote, and anything else is the scope, either
+    # "global", "unscoped", or the countries covered ("US,CA"). No index yet: the
+    # queries that would need one aren't written (D30, an index arrives with the
+    # query that reads it).
+    location_country: Mapped[str | None] = mapped_column(String, nullable=True)
+    location_admin1: Mapped[str | None] = mapped_column(String, nullable=True)
+    location_city_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    location_remote: Mapped[str | None] = mapped_column(String, nullable=True)
+    location_attendance: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index("ix_jobs_feedstate_ingested", "feed_state", "ingested_at"),
@@ -175,6 +196,37 @@ class Job(Base):
         Index("ix_jobs_feedstate_expired", "feed_state", "expired_at"),
         Index("ix_jobs_feedstate_trashed", "feed_state", "trashed_at"),
         Index("ix_jobs_feedstate_since", "feed_state", "feed_since"),
+    )
+
+
+class JobScoreFactor(Base):
+    """One axis of one job's score, as one scorer judged it (`scoring.md` 7.2).
+
+    Every method writes the same factor keys, so the bar chart, a user weight and
+    a "what failed on location" query all read one shape whichever scorer ran.
+    `value` is 0 to 1 and `kind` says what it means: a `graded` position on a
+    stated rubric, which a user weight may multiply, or a `probability` that the
+    factor holds, which it may not. The weight itself is NOT stored: it is a
+    preference that changes, and the total is computed on read.
+    """
+
+    __tablename__ = "job_score_factors"
+
+    id: Mapped[str] = _pk()
+    job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
+    # llm | keyword | jev | local — the same vocabulary as `Job.llm_score_method`.
+    method: Mapped[str] = mapped_column(String, nullable=False)
+    factor: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    # graded | probability
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="graded")
+    evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    __table_args__ = (
+        # One row per axis per method per job, which is also the read path's
+        # index: every query starts from a job and a method.
+        UniqueConstraint("job_id", "method", "factor", name="uq_job_score_factor"),
     )
 
 
