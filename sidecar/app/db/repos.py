@@ -711,18 +711,30 @@ class JobsRepo:
         score_0_100: int,
         reasons: list[Any],
         breakdown_md: str,
+        method: str | None = None,
+        factors: Sequence[Mapping[str, Any]] | None = None,
     ) -> bool:
         """Write one scorer's rating onto the job. Returns True when this is the
         FIRST rating that scorer has produced for this job, which is what the
-        priority distribution counts: a recompute must not double count."""
+        priority distribution counts: a recompute must not double count.
+
+        `method` is the named method behind the number (`llm`, `jev`, `local`,
+        `keyword`) and `factors` its per-axis detail. Both are written here, in
+        the one place a score is ever written, so a method cannot land a score
+        without its factors or leave a previous method's factors behind it."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
         prefix = "llm" if scorer_impl == "scorer-llm" else "keyword"
+        method = method or prefix
         is_new = getattr(job, f"{prefix}_score") is None
         setattr(job, f"{prefix}_score", score_0_100)
         setattr(job, f"{prefix}_reasons", list(reasons))
         setattr(job, f"{prefix}_breakdown_md", breakdown_md)
+        if prefix == "llm":
+            job.llm_score_method = method
+        if factors is not None:
+            JobScoreFactorsRepo(self._s).replace(job_id, method, factors)
         self._s.flush()
         return is_new
 

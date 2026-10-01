@@ -248,6 +248,25 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     )
 
 
+def _wanted_locations(repos: Repos) -> Any:
+    """The user's wanted locations, resolved from their preference chips.
+
+    Read here rather than inside the scorer so the module stays free of the
+    database, and resolved once per sweep rather than once per job.
+    """
+    from sidecar.modules.geo.resolve import resolve_wanted
+
+    return resolve_wanted(repos.preferences.get_or_create().locations or [])
+
+
+def _factor_rows(result: Any) -> list[dict[str, Any]]:
+    """A scorer's typed factors in the shape the repo writes."""
+    return [
+        {"factor": f.factor, "value": f.value, "kind": f.kind, "evidence": f.evidence}
+        for f in getattr(result, "factors", [])
+    ]
+
+
 def _persist_score(
     ctx: OperationContext,
     *,
@@ -257,6 +276,8 @@ def _persist_score(
     breakdown_md: str,
     scorer_impl: str,
     feed_priority_stats: bool,
+    method: str | None = None,
+    factors: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write one scorer's rating onto the job; optionally feed the running
     priority distribution (FR-TR-09) exactly once per *new* rating of that
@@ -272,6 +293,8 @@ def _persist_score(
             score_0_100=score_0_100,
             reasons=reasons,
             breakdown_md=breakdown_md,
+            method=method,
+            factors=factors,
         )
         if feed_priority_stats and is_new_score:
             prefs = repos.preferences.get_or_create()
@@ -304,8 +327,12 @@ def _ensure_keyword_floor(
         job = repos.jobs.get(job_id)
         if job is None or job.keyword_score is not None:
             return
+        title, location = job.title, job.location
+        wanted = _wanted_locations(repos)
     try:
-        det = score_deterministic(master_md, job_text)
+        det = score_deterministic(
+            master_md, job_text, title=title, location=location, wanted=wanted
+        )
         _persist_score(
             ctx,
             job_id=job_id,
@@ -313,6 +340,8 @@ def _ensure_keyword_floor(
             reasons=list(det.reasons),
             breakdown_md=det.breakdown_md,
             scorer_impl=SCORER_IMPL_DETERMINISTIC,
+            method="keyword",
+            factors=_factor_rows(det),
             feed_priority_stats=False,
         )
     except Exception:
@@ -343,11 +372,26 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     snap = ctx.input_snapshot
     job_id = snap.get("job_id")
 
-    job_text, master_md, profile_version, stored_mode = _load_job_inputs(
-        ctx, also=lambda repos: scoring_mode(repos.preferences.get_or_create())
+    def _scoring_context(repos: Repos) -> dict[str, Any]:
+        """Mode, wanted locations and the job's own title and location, in the
+        one session `_load_job_inputs` already opens."""
+        job = repos.jobs.get(job_id) if job_id is not None else None
+        return {
+            "mode": scoring_mode(repos.preferences.get_or_create()),
+            "wanted": _wanted_locations(repos),
+            "title": job.title if job is not None else "",
+            "location": job.location if job is not None else "",
+        }
+
+    job_text, master_md, profile_version, scoring_ctx = _load_job_inputs(
+        ctx, also=_scoring_context
     )
     # DB-free path (fake-entrypoint tests): the mode rides the snapshot instead.
-    mode: str = stored_mode if ctx.db is not None else str(snap.get("scoring_mode") or "llm")
+    mode: str = (
+        str(scoring_ctx["mode"])
+        if scoring_ctx is not None
+        else str(snap.get("scoring_mode") or "llm")
+    )
 
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS, score_deterministic
 
@@ -366,7 +410,13 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         mode = "keyword"
 
     if mode == "keyword":
-        det = score_deterministic(master_md, job_text)
+        det = score_deterministic(
+            master_md,
+            job_text,
+            title=str((scoring_ctx or {}).get("title") or ""),
+            location=str((scoring_ctx or {}).get("location") or ""),
+            wanted=(scoring_ctx or {}).get("wanted"),
+        )
         if job_id is not None:
             _persist_score(
                 ctx,
@@ -375,6 +425,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 reasons=list(det.reasons),
                 breakdown_md=det.breakdown_md,
                 scorer_impl=SCORER_IMPL_DETERMINISTIC,
+                method="keyword",
+                factors=_factor_rows(det),
                 # In keyword mode these ARE the displayed scores — they drive
                 # the priority distribution. A too-thin-to-score 0 is excluded:
                 # it's a missing-data marker, not a fit measurement, and feeding
@@ -463,12 +515,15 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
         if not refresh:
             unscored = repos.jobs.ids_without_any_score([j.id for j in jobs])
             jobs = [j for j in jobs if j.id in unscored]
-        todo = [(j.id, compose_job_text(j)) for j in jobs]
+        wanted = _wanted_locations(repos)
+        todo = [(j.id, compose_job_text(j), j.title, j.location) for j in jobs]
 
     done = 0
-    for job_id, job_text in todo:
+    for job_id, job_text, title, location in todo:
         try:
-            det = score_deterministic(master_md, job_text)
+            det = score_deterministic(
+                master_md, job_text, title=title, location=location, wanted=wanted
+            )
             with db.repos() as repos:
                 repos.jobs.set_score(
                     job_id,
@@ -476,6 +531,8 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
                     score_0_100=det.score,
                     reasons=list(det.reasons),
                     breakdown_md=det.breakdown_md,
+                    method="keyword",
+                    factors=_factor_rows(det),
                 )
             done += 1
         except Exception:  # noqa: BLE001 — one bad job never aborts the sweep

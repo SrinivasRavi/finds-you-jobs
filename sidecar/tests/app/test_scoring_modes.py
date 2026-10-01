@@ -130,6 +130,50 @@ def test_keyword_mode_scores_without_any_engine(migrated_db: Database) -> None:
     assert SCORER_IMPL_DETERMINISTIC in scores and SCORER_IMPL not in scores
 
 
+def test_keyword_mode_writes_its_factor_rows_and_reads_the_users_locations(
+    migrated_db: Database,
+) -> None:
+    """The bars and the user weights read these rows, so a score that lands
+    without them is a score the UI cannot explain (`scoring.md` section 7.2).
+
+    The seeded job is in Bengaluru and the preference says Bengaluru, so the
+    location axis must come back a match: the op has to carry the user's own
+    chips down to a scorer that knows nothing about the database."""
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "keyword"}, locations=["Bengaluru", "Remote"]
+        )
+    score_entrypoint(_ctx(db, job_id, engine=None))
+    with db.repos() as repos:
+        rows = {f.factor: f for f in repos.job_score_factors.list_for_job(job_id)}
+    # No level axis: neither the seeded title nor the seeded resume states a rung,
+    # and an unassessed axis is absent rather than a middle value.
+    assert set(rows) == {"core_stack", "years", "location_preference"}
+    assert rows["location_preference"].value == 1.0
+    assert "Bengaluru" in rows["location_preference"].evidence
+    assert all(row.kind == "graded" for row in rows.values())
+    assert all(0.0 <= row.value <= 1.0 for row in rows.values())
+
+
+def test_a_rescore_replaces_the_factor_rows_rather_than_piling_up(
+    migrated_db: Database,
+) -> None:
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "keyword"}, locations=["Bengaluru"]
+        )
+    score_entrypoint(_ctx(db, job_id, engine=None))
+    _settle_ops(db)
+    rescore_all_keyword(db)
+    with db.repos() as repos:
+        rows = repos.job_score_factors.list_for_job(job_id)
+    assert len(rows) == len({row.factor for row in rows})
+
+
 def test_llm_failure_persists_keyword_fallback_and_still_fails(
     migrated_db: Database,
 ) -> None:

@@ -1,6 +1,6 @@
-"""Deterministic (zero-LLM) scorer — experiment branch only, not shipped on
-main. See sidecar/modules/scorer/deterministic.py's module docstring for why
-this is a fresh design, not a JustHireMe port."""
+"""The zero-LLM scorer: Settings > Scoring "Keyword scoring", and the grey floor
+behind a failed AI score. See the module's own docstring for why the rubric is a
+fresh design rather than a JustHireMe port."""
 
 from __future__ import annotations
 
@@ -144,3 +144,83 @@ def test_result_has_usage_with_no_llm_cost():
     assert result.usage.tokens_in is None
     assert result.usage.usd is None
     assert result.usage.internal_calls == 0
+
+
+# The 3 signals added 2026-10-01 (scoring.md sections 6.6 and 6.7). Measured on
+# the 98 assessable bench postings, these moved the method's agreement with the
+# Opus 5 reference from Spearman +0.170 to +0.484.
+
+SENIOR_RESUME = (
+    "Senior Software Engineer at Acme. 9 years of Python, Django, PostgreSQL "
+    "and AWS. Built and operated production services."
+)
+BODY = (
+    "Python engineer wanted to own Django services on AWS with PostgreSQL. "
+    "Requirements: strong Python, Django, PostgreSQL and AWS experience."
+)
+
+
+def wanted_bengaluru():
+    from sidecar.modules.geo.resolve import resolve_wanted
+
+    return resolve_wanted(["Bengaluru", "Remote"])
+
+
+def test_the_old_signature_still_works_and_emits_the_2_old_factors():
+    """Every existing caller keeps compiling, and an axis it cannot assess is
+    absent rather than guessed."""
+    result = score_deterministic(SENIOR_RESUME, jd(BODY))
+    assert {f.factor for f in result.factors} == {"core_stack", "years"}
+    assert all(0.0 <= f.value <= 1.0 for f in result.factors)
+    assert all(f.kind == "graded" for f in result.factors)
+
+
+def test_a_location_the_user_did_not_ask_for_costs_15_points():
+    here = score_deterministic(
+        SENIOR_RESUME, jd(BODY), location="Bengaluru, India", wanted=wanted_bengaluru()
+    )
+    elsewhere = score_deterministic(
+        SENIOR_RESUME, jd(BODY), location="Remote - USA", wanted=wanted_bengaluru()
+    )
+    assert here.score - elsewhere.score == 15
+    assert [f.value for f in here.factors if f.factor == "location_preference"] == [1.0]
+    assert [f.value for f in elsewhere.factors if f.factor == "location_preference"] == [0.0]
+    assert any("Location:" in r for r in here.reasons)
+
+
+def test_a_location_the_field_cannot_settle_costs_nothing_and_claims_nothing():
+    """The honest third answer. 29 of the maintainer's 115 rows land here."""
+    plain = score_deterministic(SENIOR_RESUME, jd(BODY))
+    unreadable = score_deterministic(
+        SENIOR_RESUME, jd(BODY), location="Remote; San Francisco", wanted=wanted_bengaluru()
+    )
+    assert unreadable.score == plain.score
+    assert not [f for f in unreadable.factors if f.factor == "location_preference"]
+
+
+def test_the_rung_the_title_states_is_scored_against_the_rung_the_resume_states():
+    aligned = score_deterministic(SENIOR_RESUME, jd(BODY), title="Senior Software Engineer")
+    mismatched = score_deterministic(SENIOR_RESUME, jd(BODY), title="Software Engineer Intern")
+    assert aligned.score > mismatched.score
+    assert [f.value for f in aligned.factors if f.factor == "level"] == [1.0]
+    assert any("Seniority:" in r for r in aligned.reasons)
+
+
+def test_an_unstated_level_drops_out_of_the_weighting_rather_than_scoring_zero():
+    """23 of 93 real titles state no rung, and a scorer that read that as a bad
+    rung would punish every posting that does not advertise one."""
+    unstated = score_deterministic(SENIOR_RESUME, jd(BODY), title="Software Engineer, DevOps")
+    assert not [f for f in unstated.factors if f.factor == "level"]
+    assert unstated.score == score_deterministic(SENIOR_RESUME, jd(BODY)).score
+    assert any("weight 60%" in r for r in unstated.reasons)
+
+
+def test_a_resume_with_no_rung_leaves_the_level_axis_unassessed():
+    result = score_deterministic("Python and Django developer.", jd(BODY), title="Staff Engineer")
+    assert not [f for f in result.factors if f.factor == "level"]
+
+
+def test_an_unassessable_posting_still_claims_no_factors():
+    result = score_deterministic(SENIOR_RESUME, "too short", title="Senior Engineer")
+    assert result.score == 0
+    assert result.factors == []
