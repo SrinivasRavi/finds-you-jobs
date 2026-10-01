@@ -31,6 +31,14 @@ When third-party material is added, the same change must:
 - **Deliberately NOT taken:** OpenOutreach's remote-controlled *freemium promotional actions* (connection requests + promo messages sent from the user's account) and its *auto-newsletter subscription* in non-GDPR jurisdictions, plus the Django/Celery CRM, ML qualifier/embeddings, and mem0 vendor tree.
 - **GPL source availability:** the GPLv3 source ships in this public repository at `sidecar/packages/referral_outreach/upstream/`, satisfying the source-availability requirement (reinforced by the whole aggregate being AGPL-3.0-only).
 
+### GeoNames — CC BY 4.0 (gazetteer data, carried)
+
+- Upstream: [GeoNames](https://www.geonames.org), the `cities15000`, `admin1CodesASCII` and `countryInfo` dumps from <https://download.geonames.org/export/dump/>, taken 2026-10-01. License: **CC BY 4.0**, full text retained at `third_party/geonames/LICENSE-CC-BY-4.0.txt`.
+- **Required attribution, carried in the app and here:** "This product includes data created by GeoNames (https://www.geonames.org), used under CC BY 4.0."
+- **What is carried:** data, no code. 4 gzipped tab-separated cuts at `sidecar/modules/geo/data/` (0.95 MB total) holding 34,152 cities (geonameid, name, admin1, country, population), 67,588 latin-script name keys for cities over 200,000 people, 3,865 admin1 divisions and 252 countries.
+- **What was changed, which the license requires stating:** reduction only. 14 of the 19 city columns are dropped, every non-latin alternate name is dropped, names are folded to lowercase with accents stripped, and the result is written as gzipped TSV. No value is edited, corrected or invented. The per-field table is at `third_party/geonames/README.md` and `sidecar/modules/geo/build_data.py` is the executable record.
+- **Dependency closure of the carried subset:** none. The loader is stdlib `gzip` plus `unicodedata`.
+
 ### Skyvern — AGPL-3.0 (browser observation core, carried directly)
 
 - Upstream: [Skyvern-AI/skyvern](https://github.com/Skyvern-AI/skyvern) @ `28db09cb59d2f3c15b1a8e1a8405f1a9eaa36ca3` (2026-07-16). Upstream license: **GNU AGPL v3**. Full license text retained at `sidecar/packages/jobapplier/upstream/LICENSE`.

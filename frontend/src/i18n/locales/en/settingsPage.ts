@@ -36,6 +36,8 @@ const settingsPage = {
     aboutTitle: "About",
     licenseLine:
       "finds-you-jobs is licensed under AGPL-3.0-only. You're free to inspect, run, modify, and share it under the same terms.",
+    attributionLine:
+      "This product includes data created by GeoNames (https://www.geonames.org), used under CC BY 4.0. Full third-party notices ship in THIRD_PARTY_NOTICES.md in the source tree.",
     sourceButton: "Source code",
     issuesButton: "Report a bug or request a feature",
   },
