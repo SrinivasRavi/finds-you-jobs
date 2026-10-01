@@ -777,3 +777,45 @@ def test_jev_mode_without_a_key_says_so_instead_of_failing_silently(
         repos.preferences.update(thresholds={"scoring_mode": "jev"})
     with pytest.raises(EngineNotConfiguredError, match="OpenRouter key"):
         score_entrypoint(_ctx(db, job_id, engine=None))
+
+
+def test_the_settings_payload_lists_every_method_with_what_it_needs(tmp_path) -> None:
+    """The menu never hides a method, so the server reports all 4 and says what
+    each still needs; the client owns the copy and the prices (talk.md D44)."""
+    app = create_app(data_dir=tmp_path, token=TOKEN, enable_scheduler=False)
+    with TestClient(app) as client:
+        methods = client.get("/api/settings", headers=AUTH).json()["scoring_methods"]
+        assert [m["id"] for m in methods] == ["llm", "jev", "local", "keyword"]
+        by_id = {m["id"]: m for m in methods}
+        assert by_id["llm"]["ready"] is True and by_id["llm"]["needs"] is None
+        assert by_id["keyword"]["ready"] is True
+        # No OpenRouter key on a fresh install, and the pack downloader does not
+        # exist yet, so 2 rows are honestly not ready.
+        assert by_id["jev"] == {"id": "jev", "ready": False, "needs": "openrouter_key"}
+        assert by_id["local"] == {"id": "local", "ready": False, "needs": "model_pack"}
+
+        client.post(
+            "/api/engines",
+            headers=AUTH,
+            json={"provider": "openrouter", "key": "sk-or-test-key", "enabled": True},
+        )
+        after = client.get("/api/settings", headers=AUTH).json()["scoring_methods"]
+        jev = next(m for m in after if m["id"] == "jev")
+        assert jev == {"id": "jev", "ready": True, "needs": None}
+
+
+def test_picking_the_local_method_scores_by_keyword_and_says_so(migrated_db: Database) -> None:
+    """It is on the menu because the menu hides nothing, and its pack has no
+    downloader yet, so it must not silently score with something else."""
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/local-1")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "local"})
+    outcome = score_entrypoint(_ctx(db, job_id, engine=None))
+    assert outcome.engine == "on-device"
+    assert outcome.result_ref is not None
+    assert outcome.result_ref["fell_back_from"] == "local"
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None and job.keyword_score is not None
+        assert job.llm_score is None

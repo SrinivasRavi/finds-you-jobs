@@ -646,12 +646,32 @@ def patch_application_profile(
 # -- settings --------------------------------------------------------------
 
 
+def _scoring_methods(repos: Any) -> list[dto.ScoringMethodDTO]:
+    """Every method, in menu order, with the one thing each still needs."""
+    from ..registry.persistence import SCORING_MODES, decisions_key_present
+
+    has_key = decisions_key_present(repos)
+    needs: dict[str, str | None] = {
+        "llm": None,
+        "jev": None if has_key else "openrouter_key",
+        # The pack downloader is not built yet, so this one is honestly not ready
+        # on any install (scoring-build.md T10).
+        "local": "model_pack",
+        "keyword": None,
+    }
+    return [
+        dto.ScoringMethodDTO(id=mode, ready=needs[mode] is None, needs=needs[mode])
+        for mode in SCORING_MODES
+    ]
+
+
 def _settings_dto(repos: Any) -> dto.SettingsDTO:
     from ..registry.persistence import SCRAPER_ENGINE_PREFIX
 
     prefs = repos.preferences.get_or_create()
     engines = repos.engine_settings.list()
     return dto.SettingsDTO(
+        scoring_methods=_scoring_methods(repos),
         preferences=dto.preferences_dto(prefs),
         # `scraper:*` rows are BYO scraper keys (Apify/Brave) riding the same
         # sealed store — never LLM engines; they surface via /api/discovery.

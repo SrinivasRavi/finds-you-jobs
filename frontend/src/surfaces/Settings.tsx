@@ -84,7 +84,11 @@ export function Settings() {
           {/* Scoring: a scanned job is scored before anything else happens to it.
               Every scanned job is scored; the choice is HOW. AI failures fall
               back to a grey keyword score (retry in Logs). */}
-          <ScoringSection settings={settings} patch={patch} />
+          <ScoringSection
+            settings={settings}
+            patch={patch}
+            onAddKey={() => setCat("providers")}
+          />
 
           {/* Automation on Save — split defaults (FR-SET-02): Resume ON, Cover ON.
               After Scoring in the workflow (maintainer 2026-07-23). */}

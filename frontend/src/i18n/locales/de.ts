@@ -687,8 +687,6 @@ const de: DeepPartial<Messages> = {
       fallbackInfo:
         "Schlägt ein KI-Score fehl, springt ein grauer Keyword-Score ein — wiederhole ihn unter Analysen → Logs.",
       howHint: "Jeder neue Job bekommt einen Fit-Score anhand deines Master-Lebenslaufs.",
-      modeLlm: "KI-Scoring — beste Qualität, kostet aber LLM-Tokens und etwas Zeit",
-      modeKeyword: "Keyword-Scoring — geringere Qualität, aber gratis und sofort",
       batchCap: "Scoring-Limit pro Scan",
       batchCapInfo:
         "Ohne Limit wird alles bewertet, was ein Scan findet; ein Limit verteilt die LLM-Kosten auf mehrere Scans.",

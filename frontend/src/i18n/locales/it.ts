@@ -682,8 +682,6 @@ const it: DeepPartial<Messages> = {
       fallbackInfo:
         "Se un punteggio IA fallisce, subentra un punteggio grigio per parole chiave — riprovalo da Analisi → Log.",
       howHint: "Ogni nuova offerta riceve un punteggio di affinità rispetto al tuo curriculum principale.",
-      modeLlm: "Valutazione con IA — qualità migliore, ma costa token LLM e un po' di tempo",
-      modeKeyword: "Valutazione per parole chiave — qualità inferiore, ma gratuita e istantanea",
       batchCap: "Limite batch di valutazione",
       batchCapInfo:
         "Senza limite valuta tutto ciò che una scansione trova; un limite distribuisce il costo LLM su più scansioni.",

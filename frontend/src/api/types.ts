@@ -830,6 +830,17 @@ export interface WatchlistEntry {
   adapter: string;
 }
 
+export type ScoringMode = "llm" | "jev" | "local" | "keyword";
+
+/** What a method still needs before it can run. `null` means it is ready. */
+export type ScoringMethodNeed = "openrouter_key" | "model_pack";
+
+export type ScoringMethod = {
+  id: ScoringMode;
+  ready: boolean;
+  needs: ScoringMethodNeed | null;
+};
+
 export interface Settings {
   /** Legacy combined flag = resume && cover. Kept for consumers that read a
    *  single value (JobBoard per-job slider seed); the Settings UI drives the
@@ -841,10 +852,16 @@ export interface Settings {
   /** Find referrals on Save — default OFF (experimental, account-risk); only
    *  effective when Referral Outreach (networking) is enabled. */
   auto_referrals_on_save: boolean;
-  /** Scoring mode (2026-07-22): "llm" — AI scoring, best quality, costs
-   *  tokens; "keyword" — on-device keyword scorer, free and instant. Scoring
-   *  itself is always on (the old off-switch is retired). */
-  scoring_mode: "llm" | "keyword";
+  /** Which method scores a job. Scoring itself is always on (the old off-switch
+   *  is retired), and no method is ever hidden for a missing prerequisite: the
+   *  app clears it instead (`talk.md` D44).
+   *  - "llm": one AI call per job. The only method that writes prose.
+   *  - "jev": one structured decision call per job. Needs an OpenRouter key.
+   *  - "local": an on-device model. Needs its pack downloaded.
+   *  - "keyword": the on-device rules. Free, instant, always available. */
+  scoring_mode: ScoringMode;
+  /** Per-method readiness from the server: facts only, the copy lives in i18n. */
+  scoring_methods: ScoringMethod[];
   // 0 = unlimited (runner ceiling applies); otherwise 2-20.
   llm_concurrency: number;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to

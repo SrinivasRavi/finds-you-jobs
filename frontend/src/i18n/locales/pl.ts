@@ -707,8 +707,6 @@ const pl: DeepPartial<Messages> = {
       fallbackInfo:
         "Jeśli ocena AI się nie powiedzie, wskakuje szara ocena wg słów kluczowych — ponów ją z Analityka → Logi.",
       howHint: "Każda nowa oferta dostaje ocenę dopasowania względem twojego głównego CV.",
-      modeLlm: "Ocenianie AI — najlepsza jakość, ale kosztuje tokeny LLM i trochę czasu",
-      modeKeyword: "Ocenianie wg słów kluczowych — niższa jakość, ale darmowe i natychmiastowe",
       batchCap: "Limit partii oceniania",
       batchCapInfo:
         "Bez limitu ocenia wszystko znalezione w skanie; limit rozkłada koszt LLM na więcej skanów.",

@@ -416,6 +416,14 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     if mode != "keyword" and len(job_text.strip()) < MIN_JD_CHARS:
         mode = "keyword"
 
+    # "local" is on the menu because the menu never hides a method (talk.md D44),
+    # and its model pack has no downloader yet (scoring-build.md T10). So it runs
+    # the keyword floor and SAYS it did, in the operation's own result, rather
+    # than silently scoring with something the user did not pick.
+    fell_back_from: str | None = None
+    if mode == "local":
+        mode, fell_back_from = "keyword", "local"
+
     if mode == "keyword":
         det = score_deterministic(
             master_md,
@@ -442,7 +450,11 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 feed_priority_stats=len(job_text.strip()) >= MIN_JD_CHARS,
             )
         return OperationOutcome(
-            result_ref={"score": det.score, "job_id": job_id},
+            result_ref={
+                "score": det.score,
+                "job_id": job_id,
+                **({"fell_back_from": fell_back_from} if fell_back_from else {}),
+            },
             usage=None,
             engine="on-device",
             model="keyword",
