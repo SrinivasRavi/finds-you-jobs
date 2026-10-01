@@ -51,11 +51,16 @@ class Gazetteer:
     ambiguous: frozenset[str]
     admin1_to_country: dict[str, str]
     admin1_to_key: dict[str, str]
+    admin1_keys: frozenset[str]
     country_names: dict[str, str]
 
     def city(self, folded: str) -> City | None:
         city_id = self.alias_to_id.get(folded)
         return self.cities.get(city_id) if city_id is not None else None
+
+    def has_admin1(self, key: str) -> bool:
+        """True when `US.WA` is a real division, which is how an ATS code reads."""
+        return key in self.admin1_keys
 
     def admin1(self, folded: str) -> str | None:
         """The ISO-2 country a state, province or region name belongs to."""
@@ -93,12 +98,14 @@ def gazetteer() -> Gazetteer:
 
     admin1_to_country: dict[str, str] = {}
     admin1_to_key: dict[str, str] = {}
+    admin1_keys: set[str] = set()
     for row in _rows("admin1.tsv.gz"):
         key, country = row[0], row[0].split(".")[0]
         labels = [row[1], row[2]]
         # An alphabetic admin1 suffix IS how postings write the division:
         # "US-WA-Bellevue", "CA-ON". Numeric suffixes (India, Brazil) are codes
         # nobody types, so they stay out of the name index.
+        admin1_keys.add(key)
         suffix = key.split(".", 1)[1] if "." in key else ""
         if suffix.isalpha():
             labels.append(suffix)
@@ -117,6 +124,7 @@ def gazetteer() -> Gazetteer:
         ambiguous=frozenset(ambiguous),
         admin1_to_country=admin1_to_country,
         admin1_to_key=admin1_to_key,
+        admin1_keys=frozenset(admin1_keys),
         country_names=country_names,
     )
 
