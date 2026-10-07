@@ -91,3 +91,112 @@ def test_evidence_defaults_to_empty_rather_than_null(migrated_db: Database) -> N
         )
         assert rows[0].evidence == ""
         assert rows[0].created_at is not None
+
+
+# --- the route that feeds the bars (scoring-build.md T12) ---------------------
+
+
+def test_the_factors_route_serves_the_axes_and_the_table_they_were_weighted_with(
+    tmp_path,
+) -> None:
+    """One indexed read, no model call, and the weight table the method used."""
+    from fastapi.testclient import TestClient
+
+    from sidecar.app.main import create_app
+
+    token = "test-token-factors-route"  # noqa: S105 — test fixture
+    auth = {"Authorization": f"Bearer {token}"}
+    app = create_app(
+        token=token, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            job = repos.jobs.create(
+                canonical_url="https://ex.co/j/factors-route",
+                title="Backend Engineer",
+                company="Acme",
+                location="Remote",
+                description="x" * 400,
+                source_adapter="greenhouse",
+            )
+            job_id = job.id
+            repos.jobs.set_score(
+                job_id,
+                scorer_impl="scorer-llm",
+                score_0_100=74,
+                reasons=["because"],
+                breakdown_md="| a | b |",
+                method="jev",
+            )
+            repos.job_score_factors.replace(
+                job_id,
+                "jev",
+                [
+                    {
+                        "factor": "core_stack",
+                        "value": 0.9,
+                        "kind": "graded",
+                        "evidence": "Python evidenced",
+                    },
+                    {
+                        "factor": "location_preference",
+                        "value": 0.96,
+                        "kind": "probability",
+                        "evidence": "96% confident",
+                    },
+                ],
+            )
+
+        body = client.get(f"/api/jobs/{job_id}/factors", headers=auth).json()
+        assert body["method"] == "jev"
+        assert {f["factor"] for f in body["factors"]} == {"core_stack", "location_preference"}
+        kinds = {f["factor"]: f["kind"] for f in body["factors"]}
+        assert kinds["location_preference"] == "probability"
+        # The table Jev's own total used, so a bar's weight is the real one.
+        assert body["weights"]["core_stack"] == 0.30
+        # A confidence axis is NOT in the weight table: it modifies the total,
+        # it is not weighted into it (weights.MODIFIER_AXES).
+        assert "location_preference" not in body["weights"]
+
+
+def test_ai_scoring_serves_no_weights_because_it_weights_nothing(tmp_path) -> None:
+    """AI scoring asks a model for the total directly, so there is no weight per
+    axis. An empty table draws bars with no weight beside them, which is the
+    honest drawing; inventing one would be a number nobody computed."""
+    from fastapi.testclient import TestClient
+
+    from sidecar.app.main import create_app
+
+    token = "test-token-factors-llm"  # noqa: S105 — test fixture
+    auth = {"Authorization": f"Bearer {token}"}
+    app = create_app(
+        token=token, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            job_id = repos.jobs.create(
+                canonical_url="https://ex.co/j/factors-llm",
+                title="Backend Engineer",
+                company="Acme",
+                location="Remote",
+                description="x" * 400,
+                source_adapter="greenhouse",
+            ).id
+            repos.jobs.set_score(
+                job_id,
+                scorer_impl="scorer-llm",
+                score_0_100=82,
+                reasons=["because"],
+                breakdown_md="| a | b |",
+                method="llm",
+            )
+            repos.job_score_factors.replace(
+                job_id,
+                "llm",
+                [{"factor": "core_stack", "value": 0.9, "kind": "graded", "evidence": ""}],
+            )
+        body = client.get(f"/api/jobs/{job_id}/factors", headers=auth).json()
+        assert body["method"] == "llm"
+        assert body["weights"] == {}

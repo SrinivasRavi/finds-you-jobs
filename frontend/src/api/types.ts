@@ -35,6 +35,16 @@ export interface ScoreResult {
   method: string;
 }
 
+/** The per-axis breakdown behind one job's score (`JobFactorsDTO`).
+ *  `weights` is empty for AI scoring, which asks a model for the total rather
+ *  than weighting its own axes. */
+export interface JobFactors {
+  job_id: string;
+  method: string;
+  factors: { factor: string; value: number; kind: string; evidence: string }[];
+  weights: Record<string, number>;
+}
+
 // ─── /api/jobs ──────────────────────────────────────────────────────────────
 
 /** Board lifecycle for a job row: active feed, Trash (US-JB-11), or Expired —

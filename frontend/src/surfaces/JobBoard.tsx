@@ -18,6 +18,7 @@ import {
   useLinkedInSession,
   useBoard,
   useEmptyTrash,
+  useJobFactors,
   useProfile,
   useSaveJob,
   useSettings,
@@ -35,6 +36,7 @@ import { type BoardPage, type Job } from "../api/types";
 import { Avatar } from "../shell/Avatar";
 import { ChipInput } from "../shell/ChipInput";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
+import { FactorBars } from "../shell/FactorBars";
 import { Icon } from "../shell/icons";
 import { Chip, SearchBox } from "../shell/FilterRow";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
@@ -333,6 +335,9 @@ function JobDetail({
   searchQ?: string;
 }) {
   const { t } = useTranslation();
+  // The per-axis bars. Only the open card asks, so a 50-row board never fans
+  // out into 50 reads; the read itself is indexed and costs no model call.
+  const factors = useJobFactors(job?.id ?? null);
   // Per-job automation toggles (US-JB-03), seeded from the Settings default
   // (auto-packet-on-save) and reset per job — prototype jobs.html semantics.
   const [toggles, setToggles] = useState({ ...packetDefaults });
@@ -652,6 +657,18 @@ function JobDetail({
               ) : null}
               {job.score ? (
                 <>
+                  {/* The bars first (scoring.md 7.3): they are the only part of
+                      this panel that every method fills, and the only part a
+                      user can argue with axis by axis. The prose below is what
+                      AI scoring adds on top. */}
+                  {factors.data && factors.data.factors.length > 0 ? (
+                    <div className="mb-3">
+                      <FactorBars
+                        factors={factors.data.factors}
+                        weights={factors.data.weights}
+                      />
+                    </div>
+                  ) : null}
                   <ul data-testid="match-reasons" className="space-y-1.5 text-[12.5px] text-ink-2">
                     {job.score.reasons.slice(0, 4).map((r, i) => (
                       <li key={i} className="flex gap-1.5">

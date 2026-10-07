@@ -756,6 +756,34 @@ def get_job(request: Request, job_id: str) -> dto.JobDTO:
         return dto.job_dto(job, score_op_states=op_states)
 
 
+@router.get("/api/jobs/{job_id}/factors")
+def get_job_factors(request: Request, job_id: str) -> dto.JobFactorsDTO:
+    """The bars behind one job's number (scoring.md 7.3).
+
+    Read-only and free: every method stores its axes when it scores, so this
+    costs a single indexed read and never a model call."""
+    from sidecar.modules.scorer.weights import JEV_WEIGHTS, KEYWORD_WEIGHTS
+
+    with _db(request).repos() as repos:
+        job = _found(repos.jobs.get(job_id), "job", job_id)
+        method = (
+            job.llm_score_method or "llm" if job.llm_score is not None else "keyword"
+        )
+        rows = repos.job_score_factors.list_for_job(job_id, method)
+        weights = {"jev": JEV_WEIGHTS, "keyword": KEYWORD_WEIGHTS}.get(method, {})
+        return dto.JobFactorsDTO(
+            job_id=job_id,
+            method=method,
+            factors=[
+                dto.ScoreFactorDTO(
+                    factor=r.factor, value=r.value, kind=r.kind, evidence=r.evidence
+                )
+                for r in rows
+            ],
+            weights=dict(weights),
+        )
+
+
 # -- scoring retry ---------------------------------------------------------
 # Deliberately NOT under /api/jobs/: `GET /api/jobs/{job_id}` is registered
 # above and would swallow a single-segment sibling.

@@ -52,6 +52,33 @@ class JobScoreDTO(BaseModel):
     method: str = "llm"
 
 
+class ScoreFactorDTO(BaseModel):
+    """One axis of one job's score (`JobScoreFactor`). `value` is 0 to 1, and
+    `kind` says what it means: a `graded` position on a stated rubric, or a
+    `probability` that the factor holds. The bar chart draws the 2 differently
+    because a user weight may multiply the first and must never multiply the
+    second."""
+
+    factor: str
+    value: float
+    kind: str
+    evidence: str
+
+
+class JobFactorsDTO(BaseModel):
+    """The per-axis breakdown behind a job's displayed score.
+
+    `weights` is the table the total was computed with, per axis. It is EMPTY
+    for AI scoring, which asks a model for the total directly rather than
+    weighting its own axes, and an empty table draws bars with no weight beside
+    them rather than inventing one."""
+
+    job_id: str
+    method: str
+    factors: list[ScoreFactorDTO]
+    weights: dict[str, float]
+
+
 class JobDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

@@ -26,6 +26,7 @@ const SCORING_MODES: ScoringMode[] = ["llm", "jev", "local", "keyword"];
 import type {
   AttachLinkInput,
   AttachLinkResult,
+  JobFactors,
   LinkCandidate,
   ScoringMethod,
   ScoringMode,
@@ -779,6 +780,12 @@ export class RealApi {
       if (app) await this.req(`/api/applications/${app.id}`, { method: "DELETE" });
     }
     return this.getJob(id);
+  }
+
+  /** The bars behind a job's number. Read-only and free — every method stores
+   *  its axes when it scores, so nothing here costs a model call. */
+  async getJobFactors(id: string): Promise<JobFactors> {
+    return this.req<JobFactors>(`/api/jobs/${id}/factors`);
   }
 
   async setJobBoardState(id: string, board_state: Job["board_state"]): Promise<Job | undefined> {

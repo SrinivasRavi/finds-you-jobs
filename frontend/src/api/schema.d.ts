@@ -297,6 +297,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/{job_id}/factors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job Factors
+         * @description The bars behind one job's number (scoring.md 7.3).
+         *
+         *     Read-only and free: every method stores its axes when it scores, so this
+         *     costs a single indexed read and never a model call.
+         */
+        get: operations["get_job_factors_api_jobs__job_id__factors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/scoring/retryable": {
         parameters: {
             query?: never;
@@ -2921,6 +2944,27 @@ export interface components {
             isNew: boolean;
         };
         /**
+         * JobFactorsDTO
+         * @description The per-axis breakdown behind a job's displayed score.
+         *
+         *     `weights` is the table the total was computed with, per axis. It is EMPTY
+         *     for AI scoring, which asks a model for the total directly rather than
+         *     weighting its own axes, and an empty table draws bars with no weight beside
+         *     them rather than inventing one.
+         */
+        JobFactorsDTO: {
+            /** Job Id */
+            job_id: string;
+            /** Method */
+            method: string;
+            /** Factors */
+            factors: components["schemas"]["ScoreFactorDTO"][];
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+        };
+        /**
          * JobPreviewDTO
          * @description The editable review payload the Add-by-URL modal shows before submit.
          *
@@ -3641,6 +3685,24 @@ export interface components {
             degradedBoot: boolean;
         };
         /**
+         * ScoreFactorDTO
+         * @description One axis of one job's score (`JobScoreFactor`). `value` is 0 to 1, and
+         *     `kind` says what it means: a `graded` position on a stated rubric, or a
+         *     `probability` that the factor holds. The bar chart draws the 2 differently
+         *     because a user weight may multiply the first and must never multiply the
+         *     second.
+         */
+        ScoreFactorDTO: {
+            /** Factor */
+            factor: string;
+            /** Value */
+            value: number;
+            /** Kind */
+            kind: string;
+            /** Evidence */
+            evidence: string;
+        };
+        /**
          * ScoreRetryDTO
          * @description The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
          *     many active jobs have spent the whole attempt budget with no AI score, so
@@ -4345,6 +4407,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TombstoneResultDTO"];
+                };
+            };
+        };
+    };
+    get_job_factors_api_jobs__job_id__factors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobFactorsDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

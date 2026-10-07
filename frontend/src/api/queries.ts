@@ -63,6 +63,7 @@ export const qk = {
   ledger: ["ledger"] as const,
   costTotals: ["costTotals"] as const,
   retryableScores: ["retryableScores"] as const,
+  jobFactors: ["jobFactors"] as const,
   schedulerStatus: ["schedulerStatus"] as const,
   spans: ["spans"] as const,
   contacts: ["contacts"] as const,
@@ -78,6 +79,15 @@ export const qk = {
 
 export function useJobs() {
   return useQuery({ queryKey: qk.jobs, queryFn: () => api.listJobs() });
+}
+/** The per-axis bars behind one job's score. Only the open card asks, so the
+ *  board's 50 rows never fan out into 50 reads. */
+export function useJobFactors(jobId: string | null) {
+  return useQuery({
+    queryKey: [...qk.jobFactors, jobId],
+    queryFn: () => api.getJobFactors(jobId!),
+    enabled: !!jobId,
+  });
 }
 /** The paginated Job Board feed (FR-JB-02) — infinite scroll over 50-row pages
  *  with a live total + real last-scan meta (FR-JB-10). Saved-excluded server-side.
