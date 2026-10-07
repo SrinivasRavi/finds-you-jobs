@@ -285,3 +285,68 @@ def test_a_test_run_is_flagged_rather_than_being_its_own_kind() -> None:
     )
     assert is_prompt_test(plain) is False
     assert is_prompt_test(test) is True
+
+
+# --- the ledger row (url-less-jobs.md drawing 13) -----------------------------
+
+
+def test_the_ledger_names_a_run_that_has_no_job_behind_it(tmp_path) -> None:
+    """A triage score and a prompt test both have no job row, and until the
+    ledger learned to read `result_ref` they rendered as a bare kind with
+    nothing to say. A row the user paid for has to say what it was."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            repos.profile.upsert("# Candidate\n\nPython.")
+            triage = repos.operations.create(
+                "score", {"job": "Staff Backend Engineer\n\n" + REALISTIC_JD}
+            )
+            repos.operations.mark_succeeded(
+                triage.id, result_ref={"score": 72, "job_id": None, "method": "jev"}
+            )
+            test_run = repos.operations.create(
+                "tailor",
+                {"job": "Platform Engineer\n\n" + REALISTIC_JD, "prompt_test": True},
+            )
+            repos.operations.mark_succeeded(
+                test_run.id, result_ref={"prompt_test": True, "output_md": "# R"}
+            )
+
+        rows = {r["id"]: r for r in client.get("/api/operations", headers=AUTH).json()}
+
+        triage_row = rows[triage.id]["subject"]
+        assert triage_row is not None
+        assert triage_row["label"] == "Staff Backend Engineer"
+        # The number and the method it came from, in the row itself.
+        assert triage_row["badge"] == "72 · jev"
+
+        test_row = rows[test_run.id]["subject"]
+        assert test_row is not None
+        assert test_row["label"] == "Platform Engineer"
+        # P3: a test run is marked, not given its own kind, so it still groups
+        # and costs as the tailor it is.
+        assert test_row["badge"] == "prompt test"
+        assert rows[test_run.id]["kind"] == "tailor"
+
+
+def test_a_job_backed_row_is_unchanged_by_any_of_this(tmp_path) -> None:
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            job_id = repos.jobs.create(
+                canonical_url="https://ex.co/j/ledger-row",
+                title="Backend Engineer", company="Acme",
+                description=REALISTIC_JD, source_adapter="greenhouse",
+            ).id
+            op = repos.operations.create("tailor", {"job_id": job_id})
+            repos.operations.mark_succeeded(op.id, result_ref={"artifact_id": "a1"})
+        row = {r["id"]: r for r in client.get("/api/operations", headers=AUTH).json()}[op.id]
+        assert row["subject"]["label"] == "Backend Engineer"
+        assert row["subject"]["context"] == "Acme"
+        assert row["subject"]["badge"] is None

@@ -1170,6 +1170,11 @@ class OperationSubjectDTO(BaseModel):
     context: str | None = None  # secondary line (the role a send was for; search mode)
     detail: str | None = None  # long text for the EXPANDED row (the DM/note sent)
     count: int | None = None  # entities touched (contacts found, jobs persisted…)
+    # A short trailing mark: the score a `score` row produced, or the fact that
+    # a row was a prompt test rather than real work (url-less-jobs.md drawing 13,
+    # prompt-tuning.md P3). Verbatim like every other field here; the frontend
+    # adds its own chrome.
+    badge: str | None = None
 
 
 class OperationDTO(BaseModel):

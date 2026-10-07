@@ -446,6 +446,17 @@ function SubjectCell({ entry }: { entry: LedgerEntry }) {
             </span>
           )
         ) : null}
+        {s?.badge ? (
+          // The trailing mark: the number a score produced, or the fact that
+          // this row was a prompt test rather than real work. Both are things a
+          // user scanning their spend needs in the row itself.
+          <span
+            className="shrink-0 rounded-full bg-surface-3 px-1.5 text-[10.5px] text-ink-2"
+            data-testid="log-badge"
+          >
+            {s.badge}
+          </span>
+        ) : null}
         {s?.count != null && countKey ? (
           // min-w-0 + truncate (not shrink-0): at the 900px window floor a
           // long count must ellipsize inside the fixed Operation column, never

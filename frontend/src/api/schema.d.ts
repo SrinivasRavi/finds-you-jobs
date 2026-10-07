@@ -1686,6 +1686,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/prompts/{kind}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Prompt
+         * @description Run a prompt draft once, without committing it (prompt-tuning.md).
+         *
+         *     The draft rides the operation's snapshot, so the module runs it and the saved
+         *     prompt is untouched. The run writes nothing: no score on the job, no
+         *     artifact, no application profile. Its output comes back on the operation's
+         *     own result, which is where the modal reads it from.
+         */
+        post: operations["test_prompt_api_settings_prompts__kind__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/operations/{operation_id}/spans": {
         parameters: {
             query?: never;
@@ -3378,6 +3403,8 @@ export interface components {
             detail?: string | null;
             /** Count */
             count?: number | null;
+            /** Badge */
+            badge?: string | null;
         };
         /**
          * PacketRequest
@@ -3538,6 +3565,36 @@ export interface components {
             default_md: string;
             /** Override Md */
             override_md: string | null;
+        };
+        /**
+         * PromptTestRequest
+         * @description Run an UNSAVED prompt draft once (prompt-tuning.md section 5).
+         *
+         *     What each kind needs differs, so the route validates per kind rather than
+         *     making every field required:
+         *
+         *     - `score`, `tailor`, `cover`: a job. Either one off the board (`job_id`),
+         *       which is the useful case because the output is comparable against what the
+         *       committed prompt produced for that same job, or a pasted description
+         *       (`job_description`), which is what works on a board with nothing on it yet.
+         *     - `extract`: nothing. It reads the master resume alone.
+         *     - `networker_draft`: a real `contact_id`. A made-up contact would test the
+         *       prompt against input that never occurs.
+         */
+        PromptTestRequest: {
+            /** Markdown */
+            markdown: string;
+            /** Job Id */
+            job_id?: string | null;
+            /** Job Description */
+            job_description?: string | null;
+            /** Contact Id */
+            contact_id?: string | null;
+            /**
+             * Guidance
+             * @default
+             */
+            guidance: string;
         };
         /**
          * PromptUpdate
@@ -6416,6 +6473,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PromptDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_prompt_api_settings_prompts__kind__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
                 };
             };
             /** @description Validation Error */

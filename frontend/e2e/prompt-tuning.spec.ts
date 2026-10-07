@@ -117,3 +117,64 @@ test("the kinds that need no job, and the one that needs a contact", async ({ pa
   await expect(page.locator('[data-testid="prompt-tune-run"]')).toBeDisabled();
   await page.screenshot({ path: `${DIR}/modal-contact.png`, fullPage: true });
 });
+
+test("the ledger names a run with no job behind it, and marks a test run", async ({
+  page,
+}) => {
+  // url-less-jobs.md drawing 13: a triage score and a prompt test are rows the
+  // user paid for, and until this they rendered as a bare kind with nothing to
+  // say. Injected into the real response the way settings-analytics.spec.ts
+  // does it, so the rest of the page keeps its own data.
+  const now = new Date().toISOString();
+  await page.route("**/api/operations?*", async (route) => {
+    const injected = [
+      {
+        id: "e2e-triage-row",
+        kind: "score",
+        state: "succeeded",
+        subject: {
+          label: "Staff Backend Engineer",
+          href: null,
+          context: null,
+          detail: null,
+          count: null,
+          badge: "72 \u00b7 jev",
+        },
+        usage: null,
+        error: null,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+      {
+        id: "e2e-prompt-test-row",
+        kind: "tailor",
+        state: "succeeded",
+        subject: {
+          label: "Platform Engineer",
+          href: null,
+          context: null,
+          detail: null,
+          count: null,
+          badge: "prompt test",
+        },
+        usage: null,
+        error: null,
+        created_at: now,
+        started_at: now,
+        result_ref: null,
+      },
+    ];
+    const response = await route.fetch();
+    const body = (await response.json()) as unknown[];
+    await route.fulfill({ response, json: [...injected, ...body] });
+  });
+
+  await page.goto("/analytics");
+  await expect(page.getByTestId("agent-filters")).toBeVisible({ timeout: 15_000 });
+  const triage = page.getByTestId("log-row").filter({ hasText: "Staff Backend Engineer" }).first();
+  await expect(triage.getByTestId("log-badge")).toHaveText("72 \u00b7 jev");
+  const test_run = page.getByTestId("log-row").filter({ hasText: "Platform Engineer" }).first();
+  await expect(test_run.getByTestId("log-badge")).toHaveText("prompt test");
+  await page.screenshot({ path: `${DIR}/ledger-badges.png`, fullPage: true });
+});

@@ -1078,6 +1078,9 @@ export interface LedgerSubject {
   context: string | null; // secondary line (the role a send was for; search mode)
   detail: string | null; // long text for the EXPANDED row (the DM/note sent)
   count: number | null; // entities touched (contacts found, jobs persisted…)
+  /** A short trailing mark: the score a `score` row produced, or that the row
+   *  was a prompt test rather than real work. */
+  badge: string | null;
 }
 
 export interface LedgerEntry {

@@ -1864,6 +1864,16 @@ def _job_subject(job: Any | None) -> dto.OperationSubjectDTO | None:
     )
 
 
+def _first_line(text: str, limit: int = 60) -> str:
+    """The first meaningful line of a pasted job description, for a ledger row
+    that has no job row to name. Truncated because a ledger row is one line."""
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("# ").strip()
+        if stripped:
+            return stripped[:limit]
+    return ""
+
+
 def _int_or_none(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -1876,7 +1886,23 @@ def _operation_subject(
     kind = op.kind
 
     if kind in _JOB_SUBJECT_KINDS:
-        return _job_subject(jobs.get(str(snap.get("job_id") or "")))
+        subject = _job_subject(jobs.get(str(snap.get("job_id") or "")))
+        if subject is None:
+            # No job behind it. That is a triage score, or a prompt-tuning test
+            # run, and until this branch existed both rendered as a bare kind
+            # with nothing to say (url-less-jobs.md drawing 13). A row the user
+            # paid for has to say what it was.
+            if not snap.get("prompt_test") and not ref:
+                return None
+            subject = dto.OperationSubjectDTO(
+                label=_first_line(str(snap.get("job") or "")),
+            )
+        if snap.get("prompt_test"):
+            subject.badge = "prompt test"
+        elif kind == "score" and _int_or_none(ref.get("score")) is not None:
+            method = str(ref.get("method") or "")
+            subject.badge = f"{ref['score']} · {method}" if method else str(ref["score"])
+        return subject
     if kind == "apply":
         app = applications.get(str(snap.get("application_id") or ""))
         return _job_subject(jobs.get(app.job_id) if app is not None else None)

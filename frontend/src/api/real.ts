@@ -455,6 +455,7 @@ function toSubject(s: OperationDTO["subject"]): LedgerSubject | null {
     context: s.context ?? null,
     detail: s.detail ?? null,
     count: typeof s.count === "number" ? s.count : null,
+    badge: s.badge ?? null,
   };
 }
 
