@@ -37,6 +37,8 @@ import type {
   ManualApplicationInput,
   NetContact,
   Priority,
+  PromptTestInput,
+  PromptTestResult,
   ReachOutInput,
   Settings,
   Stage,
@@ -531,6 +533,55 @@ export interface TriageResult {
   score: number;
   method: string;
   reasons: string[];
+}
+
+/** Run a prompt draft and wait for its output (prompt-tuning.md section 3).
+ *
+ *  The run goes through the runner like every other LLM call, so its spend
+ *  reaches Analytics, the concurrency cap applies and Stop works. Polled the
+ *  same way triage is, because it is the same shape of wait. */
+export function usePromptTest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      kind,
+      input,
+    }: {
+      kind: string;
+      input: PromptTestInput;
+    }): Promise<PromptTestResult> => {
+      const opId = await api.testPrompt(kind, input);
+      for (let i = 0; i < 240; i += 1) {
+        await new Promise((r) => setTimeout(r, 500));
+        const op = await api.getOperation(opId);
+        if (op === undefined) continue;
+        if (op.state === "failed") return { state: "failed", error: op.error };
+        if (op.state !== "succeeded") continue;
+        const ref = (op.result_ref ?? {}) as Record<string, unknown>;
+        return {
+          state: "succeeded",
+          output_md: typeof ref.output_md === "string" ? ref.output_md : undefined,
+          notes: Array.isArray(ref.notes) ? ref.notes.map(String) : undefined,
+          score: typeof ref.score === "number" ? ref.score : undefined,
+          reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : undefined,
+          message: typeof ref.message === "string" ? ref.message : undefined,
+          profile:
+            typeof ref.profile === "object" && ref.profile !== null
+              ? (ref.profile as Record<string, unknown>)
+              : undefined,
+          usd:
+            typeof op.usage?.usd === "number" ? op.usage.usd : null,
+        };
+      }
+      throw new Error("the test run timed out");
+    },
+    onSettled: () => {
+      // A test run is real spend, so the dashboard moves with it.
+      void qc.invalidateQueries({ queryKey: qk.ledger });
+      void qc.invalidateQueries({ queryKey: qk.costTotals });
+    },
+    meta: { errorHandledLocally: true },
+  });
 }
 
 export function useTriageScore() {

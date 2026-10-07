@@ -10,9 +10,10 @@
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { usePrompts, useResetPrompt, useSetPrompt } from "../../api/queries";
+import { usePrompts, useResetPrompt } from "../../api/queries";
 import type { OperationKind, PromptSetting, Settings as SettingsT } from "../../api/types";
 import { CLAUDE_CLI_DEFAULT_MODEL, CLI_ENGINE_OPTIONS, isCliEngine } from "./engines";
+import { PromptTuningModal } from "./PromptTuningModal";
 
 /** What each prompt actually governs, and what it does NOT.
  *
@@ -52,15 +53,12 @@ export function PromptEditor({
   patch: (p: Partial<SettingsT>) => void;
 }) {
   const { t } = useTranslation();
-  const [draft, setDraft] = useState<string | null>(null);
   const [modelDraft, setModelDraft] = useState<string | null>(null);
-  const setPrompt = useSetPrompt();
+  const [tuning, setTuning] = useState(false);
   const resetPrompt = useResetPrompt();
 
   const edited = prompt.override_md != null;
-  const baseText = prompt.override_md ?? prompt.default_md;
-  const text = draft ?? baseText;
-  const dirty = text !== baseText;
+  const text = prompt.override_md ?? prompt.default_md;
 
   // The select picks the ENGINE; changing it clears the per-kind model so the
   // engine's own default applies.
@@ -84,12 +82,9 @@ export function PromptEditor({
     ...settings.providers.filter((p) => p.configured).map((p) => ({ id: p.id, label: p.label })),
   ];
 
-  function save() {
-    setPrompt.mutate({ kind: prompt.kind, markdown: text }, { onSuccess: () => setDraft(null) });
-  }
   function reset() {
     if (!window.confirm(t("settingsPage.prompts.resetConfirm"))) return;
-    resetPrompt.mutate(prompt.kind, { onSuccess: () => setDraft(null) });
+    resetPrompt.mutate(prompt.kind);
   }
 
   const scopeKey = SCOPE_KEY[prompt.kind];
@@ -153,12 +148,16 @@ export function PromptEditor({
           {t("settingsPage.prompts.noModel")}
         </div>
       )}
+      {/* Read-only here, editable in the modal. That IS the rule about which
+          prompt runs where: a test run uses the draft, everything else uses
+          this, and the boundary is a window rather than a sentence of copy
+          (prompt-tuning.md section 3). */}
       <textarea
         value={text}
+        readOnly
         spellCheck={false}
         data-testid={`prompt-textarea-${prompt.kind}`}
-        onChange={(e) => setDraft(e.target.value)}
-        className="h-[66vh] min-h-[360px] w-full resize-y rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[12px] leading-relaxed text-ink"
+        className="h-[66vh] min-h-[360px] w-full resize-y rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[12px] leading-relaxed text-ink-2"
       />
       <div className="flex items-center justify-between">
         <span className="text-[11px] text-ink-4" data-testid={`prompt-chars-${prompt.kind}`}>
@@ -168,6 +167,8 @@ export function PromptEditor({
             : t("settingsPage.prompts.shippedDefault")}
         </span>
         <div className="flex items-center gap-2">
+          {/* Reset stays OUT here, so the way back to what we ship is always 1
+              click away and never behind the editor (maintainer, 2026-10-06). */}
           <button
             type="button"
             onClick={reset}
@@ -179,15 +180,17 @@ export function PromptEditor({
           </button>
           <button
             type="button"
-            onClick={save}
-            disabled={!dirty || !text.trim()}
-            data-testid={`prompt-save-${prompt.kind}`}
-            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
+            onClick={() => setTuning(true)}
+            data-testid={`prompt-edit-${prompt.kind}`}
+            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white"
           >
-            {t("settingsPage.prompts.save")}
+            {t("settingsPage.prompts.editAndTest")}
           </button>
         </div>
       </div>
+      {tuning ? (
+        <PromptTuningModal prompt={prompt} onClose={() => setTuning(false)} />
+      ) : null}
     </div>
   );
 }

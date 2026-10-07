@@ -683,6 +683,28 @@ class ExplainCostDTO(BaseModel):
     ready: bool = True
 
 
+class PromptTestRequest(BaseModel):
+    """Run an UNSAVED prompt draft once (prompt-tuning.md section 5).
+
+    What each kind needs differs, so the route validates per kind rather than
+    making every field required:
+
+    - `score`, `tailor`, `cover`: a job. Either one off the board (`job_id`),
+      which is the useful case because the output is comparable against what the
+      committed prompt produced for that same job, or a pasted description
+      (`job_description`), which is what works on a board with nothing on it yet.
+    - `extract`: nothing. It reads the master resume alone.
+    - `networker_draft`: a real `contact_id`. A made-up contact would test the
+      prompt against input that never occurs.
+    """
+
+    markdown: str
+    job_id: str | None = None
+    job_description: str | None = None
+    contact_id: str | None = None
+    guidance: str = ""
+
+
 class SettingsDTO(BaseModel):
     preferences: PreferencesDTO
     engines: list[EngineSettingDTO]

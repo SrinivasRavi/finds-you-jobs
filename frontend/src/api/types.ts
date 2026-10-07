@@ -66,6 +66,29 @@ export interface ExplainCost {
   ready: boolean;
 }
 
+/** What a prompt-tuning test run needs, per kind (prompt-tuning.md section 5). */
+export interface PromptTestInput {
+  markdown: string;
+  job_id?: string;
+  job_description?: string;
+  contact_id?: string;
+  guidance?: string;
+}
+
+/** What one came back with. `output_md` for tailor and cover, `score` plus
+ *  `reasons` for score, `profile` for extract, `message` for a referral draft. */
+export interface PromptTestResult {
+  state: "succeeded" | "failed";
+  error?: string | null;
+  output_md?: string;
+  notes?: string[];
+  score?: number;
+  reasons?: string[];
+  message?: string;
+  profile?: Record<string, unknown>;
+  usd?: number | null;
+}
+
 export interface JobFactors {
   job_id: string;
   method: string;

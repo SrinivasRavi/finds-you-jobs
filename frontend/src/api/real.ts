@@ -43,6 +43,7 @@ import type {
   AttachLinkResult,
   ExplainCost,
   JobFactors,
+  PromptTestInput,
   ScoreWeightPreset,
   LinkCandidate,
   ScoringMethod,
@@ -798,6 +799,17 @@ export class RealApi {
       if (app) await this.req(`/api/applications/${app.id}`, { method: "DELETE" });
     }
     return this.getJob(id);
+  }
+
+  /** Run a prompt draft once without committing it. Returns the operation id;
+   *  the caller polls `getOperation` for the output, exactly like triage. */
+  async testPrompt(kind: string, input: PromptTestInput): Promise<string> {
+    const d = (await this.json(
+      "POST",
+      `/api/settings/prompts/${kind}/test`,
+      input as unknown as Record<string, unknown>,
+    )) as { id: string };
+    return d.id;
   }
 
   /** What an AI score will run on, and what it has cost this user before. */

@@ -669,12 +669,14 @@ def draft_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile = repos.profile.get_current()
         master_md = profile.resume_markdown if profile is not None else ""
 
-    from ..prompt_overrides import get_override
+    from .operations import prompt_for
 
+    # `draft` already persists nothing and returns the message in its result,
+    # so a prompt-tuning test run of this kind needs only the draft prompt.
     result = net_draft(
         net_contact, job_text, guidance=guidance,
         master_md=master_md, engine=ctx.engine.engine,
-        skill_md=get_override("networker_draft"),
+        skill_md=prompt_for(ctx, "networker_draft"),
         cancelled=ctx.cancelled,
     )
     return llm_outcome(

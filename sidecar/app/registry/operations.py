@@ -117,6 +117,35 @@ def _require_engine(ctx: OperationContext) -> ResolvedEngine:
     return ctx.engine
 
 
+def prompt_for(ctx: OperationContext, kind: str) -> str | None:
+    """The system prompt this operation runs with.
+
+    Normally the user's saved override, or None for the module's shipped
+    default. A prompt-tuning test run carries its UNSAVED draft in the snapshot
+    instead (prompt-tuning.md section 3), which is the whole point of the
+    feature: the draft runs, and the committed prompt is untouched until the
+    user presses the one button that commits it.
+    """
+    from ..prompt_overrides import get_override
+
+    draft = ctx.input_snapshot.get("prompt_draft_md")
+    if isinstance(draft, str) and draft.strip():
+        return draft
+    return get_override(kind)
+
+
+def is_prompt_test(ctx: OperationContext) -> bool:
+    """A test run writes nothing. It must not overwrite the job's real score,
+    its artifacts, or the application profile, because the user is trying a
+    prompt out rather than asking for work.
+
+    The flag rides `input_snapshot` rather than becoming its own operation kind
+    (prompt-tuning.md P3): `Operation.kind` drives the Analytics grouping in 3
+    places, and a test run IS a tailor, which is what makes its cost comparable
+    to a real one."""
+    return bool(ctx.input_snapshot.get("prompt_test"))
+
+
 def _load_job_inputs(
     ctx: OperationContext, *, also: Callable[[Repos], Any] | None = None
 ) -> tuple[str, str, int, Any]:
@@ -366,7 +395,6 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
       fallback the board shows (ensured here in case this op raced the floor
       pass). No hidden re-scoring; nothing to fall back below keyword.
     """
-    from ..prompt_overrides import get_override
     from .persistence import (
         SCORER_IMPL,
         SCORER_IMPL_DETERMINISTIC,
@@ -516,7 +544,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             master_md,
             job_text,
             engine=resolved.engine,
-            skill_md=get_override("score"),
+            skill_md=prompt_for(ctx, "score"),
             cancelled=ctx.cancelled,
             preferences_md=str((scoring_ctx or {}).get("preferences_md") or ""),
         )
@@ -703,7 +731,6 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
     resolved = _require_engine(ctx)
     from sidecar.modules.tailorer import tailor
 
-    from ..prompt_overrides import get_override
 
     snap = ctx.input_snapshot
     job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
@@ -713,9 +740,22 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
         job_text,
         guidance=snap.get("guidance", ""),
         engine=resolved.engine,
-        skill_md=get_override("tailor"),
+        skill_md=prompt_for(ctx, "tailor"),
         cancelled=ctx.cancelled,
     )
+    if is_prompt_test(ctx):
+        # The output goes in the ledger row and nowhere else, so the modal can
+        # read it the way every other surface reads an operation's result.
+        return llm_outcome(
+            {
+                "prompt_test": True,
+                "kind": "tailored_resume",
+                "output_md": result.resume_md,
+                "notes": list(result.notes),
+            },
+            usage=result.usage,
+            resolved=resolved,
+        )
     artifact_id = _persist_artifact(
         ctx,
         kind="tailored_resume",
@@ -740,7 +780,6 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     resolved = _require_engine(ctx)
     from sidecar.modules.coverletterer.coverletterer import cover
 
-    from ..prompt_overrides import get_override
 
     snap = ctx.input_snapshot
     job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
@@ -750,9 +789,20 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         job_text,
         guidance=snap.get("guidance", ""),
         engine=resolved.engine,
-        skill_md=get_override("cover"),
+        skill_md=prompt_for(ctx, "cover"),
         cancelled=ctx.cancelled,
     )
+    if is_prompt_test(ctx):
+        return llm_outcome(
+            {
+                "prompt_test": True,
+                "kind": "cover_letter",
+                "output_md": result.cover_letter_md,
+                "notes": list(result.notes),
+            },
+            usage=result.usage,
+            resolved=resolved,
+        )
     artifact_id = _persist_artifact(
         ctx,
         kind="cover_letter",
@@ -779,7 +829,6 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
     resolved = _require_engine(ctx)
     from sidecar.modules.profiler import extract_profile
 
-    from ..prompt_overrides import get_override
 
     if ctx.db is None:
         raise RuntimeError("extract operation requires a database context")
@@ -791,8 +840,14 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
         version = profile_row.version
 
     result = extract_profile(
-        master_md, engine=resolved.engine, system_prompt=get_override("extract")
+        master_md, engine=resolved.engine, system_prompt=prompt_for(ctx, "extract")
     )
+    if is_prompt_test(ctx):
+        return llm_outcome(
+            {"prompt_test": True, "kind": "extract", "profile": result.profile},
+            usage=result.usage,
+            resolved=resolved,
+        )
     record = {**result.profile, "profile_version": version, "source": "extracted"}
     with ctx.db.repos() as repos:
         repos.profile.set_application_profile(record)

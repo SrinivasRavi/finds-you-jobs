@@ -3270,6 +3270,80 @@ def set_prompt(
     )
 
 
+# Which operation kind runs a given prompt. A test run is that operation, not a
+# new one, so cost, the LLM cap, Stop and Retry all come for free and a test's
+# spend is comparable with a real run's (prompt-tuning.md section 6).
+_PROMPT_TEST_KIND: dict[str, str] = {
+    "score": "score",
+    "tailor": "tailor",
+    "cover": "cover",
+    "extract": "extract",
+    "networker_draft": "draft",
+}
+
+# The kinds that need a job to run against.
+_PROMPT_TEST_NEEDS_JOB = frozenset({"score", "tailor", "cover"})
+
+
+@router.post("/api/settings/prompts/{kind}/test", status_code=202)
+def test_prompt(
+    request: Request, kind: str, payload: dto.PromptTestRequest
+) -> dto.OperationAccepted:
+    """Run a prompt draft once, without committing it (prompt-tuning.md).
+
+    The draft rides the operation's snapshot, so the module runs it and the saved
+    prompt is untouched. The run writes nothing: no score on the job, no
+    artifact, no application profile. Its output comes back on the operation's
+    own result, which is where the modal reads it from."""
+    from ..prompt_overrides import PROMPT_KINDS
+
+    spec = PROMPT_KINDS.get(kind)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"unknown prompt kind {kind!r}")
+    if not payload.markdown.strip():
+        raise HTTPException(status_code=422, detail="prompt markdown cannot be empty")
+
+    snap: dict[str, Any] = {"prompt_draft_md": payload.markdown, "prompt_test": True}
+    if payload.guidance:
+        snap["guidance"] = payload.guidance
+
+    with _db(request).repos() as repos:
+        if kind in _PROMPT_TEST_NEEDS_JOB:
+            if payload.job_id:
+                job = _found(repos.jobs.get(payload.job_id), "job", payload.job_id)
+                from ..registry.persistence import compose_job_text
+
+                snap["job"] = compose_job_text(job)
+            elif payload.job_description and payload.job_description.strip():
+                snap["job"] = payload.job_description
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="pick a job from the board or paste a job description",
+                )
+            # Deliberately NO job_id in the snapshot: that is what stops the
+            # score path persisting onto the real job row.
+            profile = repos.profile.get_current()
+            if profile is None:
+                raise HTTPException(status_code=400, detail="no master resume to run against")
+            snap["master_md"] = profile.resume_markdown
+            snap["profile_version"] = profile.version
+        elif kind == "networker_draft":
+            if not payload.contact_id:
+                raise HTTPException(status_code=422, detail="pick a contact to draft for")
+            _found(repos.contacts.get(payload.contact_id), "contact", payload.contact_id)
+            snap["contact_id"] = payload.contact_id
+            if payload.job_id:
+                snap["job_id"] = payload.job_id
+        else:
+            if repos.profile.get_current() is None:
+                raise HTTPException(status_code=400, detail="no master resume to run against")
+
+    op_kind = _PROMPT_TEST_KIND[kind]
+    operation_id = _runner(request).submit(op_kind, snap)
+    return dto.OperationAccepted(id=operation_id, kind=op_kind, state="queued")
+
+
 @router.delete("/api/settings/prompts/{kind}")
 def reset_prompt(request: Request, kind: str) -> dto.PromptDTO:
     """Reset `kind` to its shipped default (delete the override file)."""
