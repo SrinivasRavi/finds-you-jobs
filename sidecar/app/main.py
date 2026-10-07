@@ -32,7 +32,7 @@ from .browser import BrowserBroker
 from .db import Database, resolve_db_url
 from .db.base import now_utc
 from .db.database import resolve_data_dir
-from .db.migrate import upgrade_to_head
+from .db.migrate import report_migration_failure, upgrade_to_head
 from .db.models import OP_ACTIVE_STATES
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub, register_sse_schemas
 from .logging_setup import get_logger, setup_flight_recorder
@@ -155,7 +155,17 @@ def create_app(
 
         # Storage: migrate to head, then open the engine (architecture section 5.3 boot).
         db_url = resolve_db_url(data_dir)
-        upgrade_to_head(db_url)
+        try:
+            upgrade_to_head(db_url)
+        except Exception as exc:
+            # Alembic's fileConfig disabled every existing logger on its way in,
+            # including ours AND uvicorn's, so a failure here used to reach no
+            # log, no stderr and no UI: the shell retried 3 times and the window
+            # sat on "Starting the local backend" forever (2026-10-07).
+            setup_flight_recorder()
+            get_logger().exception("boot: schema migration failed")
+            report_migration_failure(db_url, exc)
+            raise
         # Alembic's fileConfig (inside upgrade_to_head) disables existing loggers,
         # including our flight recorder — re-arm it so every runner/operation log
         # written after boot lands in the file (was the "only boot lines land" bug).
