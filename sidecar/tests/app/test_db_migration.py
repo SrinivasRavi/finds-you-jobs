@@ -34,6 +34,7 @@ _EXPECTED = {
     "apply_runs",
     "documents",
     "job_score_factors",
+    "job_duplicate_dismissals",
 }
 
 
