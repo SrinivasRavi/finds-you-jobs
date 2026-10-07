@@ -19,6 +19,9 @@ export interface RecoveryRow {
   avatarName: string;
   title: string;
   subtitle: ReactNode;
+  /** Extra copy shown only while this row's delete-forever confirm is open,
+   *  for a row whose permanent delete does something the label doesn't say. */
+  confirmNote?: ReactNode;
 }
 
 export interface RecoveryRestoreAction {
@@ -89,6 +92,14 @@ export function RecoveryListModal({
                 </div>
                 {deleteForever && confirmId === row.id ? (
                   <>
+                    {row.confirmNote ? (
+                      <span
+                        data-testid="delete-forever-note"
+                        className="max-w-[260px] text-[11px] leading-snug text-warn"
+                      >
+                        {row.confirmNote}
+                      </span>
+                    ) : null}
                     <button
                       data-testid={deleteForever.confirmTestid}
                       onClick={() => {

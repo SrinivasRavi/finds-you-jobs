@@ -24,6 +24,8 @@ import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
   Application,
+  AttachLinkInput,
+  AttachLinkResult,
   BoardPage,
   CompanyConfirmPick,
   ContactInput,
@@ -81,10 +83,10 @@ export function useJobs() {
  *  with a live total + real last-scan meta (FR-JB-10). Saved-excluded server-side.
  *  `listQ`/`textQ` (FR-JB-13) are server-side search filters keyed into the
  *  query, so clearing a search falls back to the cached unfiltered feed. */
-export function useBoard(listQ = "", textQ = "") {
+export function useBoard(listQ = "", textQ = "", link = "") {
   return useInfiniteQuery({
-    queryKey: [...qk.board, listQ, textQ],
-    queryFn: ({ pageParam }) => Promise.resolve(api.getBoard(pageParam, listQ, textQ)),
+    queryKey: [...qk.board, listQ, textQ, link],
+    queryFn: ({ pageParam }) => Promise.resolve(api.getBoard(pageParam, listQ, textQ, link)),
     initialPageParam: 0,
     getNextPageParam: (last, all) => {
       const loaded = all.reduce((n, p) => n + p.jobs.length, 0);
@@ -467,6 +469,56 @@ export function useAddJobByUrl() {
   return useMutation({
     mutationFn: (draft: JobDraft): Promise<Job> => Promise.resolve(api.addJobByUrl(draft)),
     onSuccess: () => invalidateFeed(qc),
+    meta: { errorHandledLocally: true },
+  });
+}
+
+/** Promotion (url-less-jobs.md section 5.4): attach a posting link to a job
+ *  that has none. A non-`attached` status is a question for the user, so the
+ *  dialog renders it inline rather than as a failure. */
+export function useAttachJobLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AttachLinkInput): Promise<AttachLinkResult> =>
+      Promise.resolve(api.attachJobLink(input)),
+    onSuccess: (result) => {
+      if (result.status === "attached") invalidateFeed(qc);
+    },
+    meta: { errorHandledLocally: true },
+  });
+}
+
+/** Triage (url-less-jobs.md section 9.1.1): score a pasted JD with nothing
+ *  saved. Resolves once the op reaches a terminal state, with the score,
+ *  the method that actually ran and its reasons out of `result_ref`.
+ *
+ *  Polled rather than SSE-driven: the strip is open for a few seconds inside
+ *  one modal, and a subscription would outlive it. */
+export interface TriageResult {
+  score: number;
+  method: string;
+  reasons: string[];
+}
+
+export function useTriageScore() {
+  return useMutation({
+    mutationFn: async (description: string): Promise<TriageResult> => {
+      const opId = await api.scoreJobText(description);
+      for (let i = 0; i < 120; i += 1) {
+        await new Promise((r) => setTimeout(r, 500));
+        const op = await api.getOperation(opId);
+        if (op === undefined) continue;
+        if (op.state === "failed") throw new Error(op.error ?? "scoring failed");
+        if (op.state !== "succeeded") continue;
+        const ref = op.result_ref ?? {};
+        return {
+          score: Number(ref.score ?? 0),
+          method: String(ref.method ?? ""),
+          reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : [],
+        };
+      }
+      throw new Error("scoring timed out");
+    },
     meta: { errorHandledLocally: true },
   });
 }

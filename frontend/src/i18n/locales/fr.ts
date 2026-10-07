@@ -153,7 +153,6 @@ const fr: DeepPartial<Messages> = {
       finderPrefs: "Préférences de recherche",
       finderPrefsTitle: "Configurer le scraping en arrière-plan et le scoring",
       deletedJobs: "Offres supprimées",
-      addJobByUrl: "Ajouter une offre par URL",
     },
     filters: {
       workStyle: "Mode de travail",
@@ -314,23 +313,6 @@ const fr: DeepPartial<Messages> = {
       starting: "Démarrage…",
       rescanNow: "Relancer un scan",
     },
-    addModal: {
-      title: "Ajouter une offre par URL",
-      pasteLabel:
-        "Collez l'URL d'une annonce. (Pour suivre tout le tableau d'une entreprise, utilisez « Voir plus d'offres de cette entreprise » sur une offre, ou la même liste dans les préférences de recherche.)",
-      tombstoned:
-        "Cette offre a été supprimée définitivement et ne peut pas être rajoutée. Si vous voulez encore la suivre, gardez-en une trace hors de l'app.",
-      cancel: "Annuler",
-      fetchDetails: "Récupérer les détails",
-      fetching: "Récupération des détails…",
-      noUrl: "(pas d'URL)",
-      refetch: "· Récupérer à nouveau",
-      titlePlaceholder: "Intitulé",
-      companyPlaceholder: "Entreprise",
-      locationPlaceholder: "Lieu",
-      descriptionPlaceholder: "Description",
-      submit: "Ajouter aux offres",
-    },
     trashModal: {
       title: "Offres supprimées",
       retention: "Les offres supprimées sont effacées définitivement après 7 jours.",
@@ -415,20 +397,9 @@ const fr: DeepPartial<Messages> = {
       optional: "facultatif",
     },
     addApp: {
-      intro:
-        "Déjà postulé ailleurs ? Collez l'URL de l'annonce pour l'enregistrer ici — vous pouvez joindre le CV et la lettre de motivation utilisés.",
-      tombstoned: "Cette offre a été supprimée définitivement et ne peut pas être rajoutée.",
-      fetch: "Récupérer les détails",
-      fetching: "Récupération des détails…",
-      noUrl: "(pas d'URL)",
-      refetch: "· Récupérer à nouveau",
-      titlePlaceholder: "Intitulé",
-      companyPlaceholder: "Entreprise",
-      locationPlaceholder: "Lieu",
       stage: "Étape",
       notesPlaceholder: "Notes (facultatif)",
       adding: "Ajout…",
-      submit: "Ajouter la candidature",
     },
     jobDetail: {
       matchScoreTitle: "Score de correspondance avec votre CV de référence",
@@ -903,8 +874,6 @@ const fr: DeepPartial<Messages> = {
       contactPurgeHint:
         "Les contacts supprimés sont effacés définitivement ce nombre de jours plus tard.",
       expireListingLabel: "Marquer une offre “Plus ancienne” après",
-      expireListingHint:
-        "Une offre que nous n'avons pas revue lors d'un scan depuis ce nombre de jours est grisée comme “Annonce plus ancienne” — toujours présente sur le tableau, et vous pouvez la restaurer.",
       trashedJobsLabel: "Effacer définitivement les offres supprimées après",
       trashedJobsHint:
         "Les offres supprimées sont effacées définitivement (et ne seront pas re-scrapées) ce nombre de jours plus tard.",

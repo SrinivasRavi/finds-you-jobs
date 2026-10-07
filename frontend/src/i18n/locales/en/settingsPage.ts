@@ -311,7 +311,7 @@ const settingsPage = {
     contactPurgeHint: "Deleted contacts are erased permanently this many days later.",
     expireListingLabel: "Mark a job listing “Older” after",
     expireListingHint:
-      "A job that has been on your board this many days is greyed as an “Older listing” — still on the board and restorable. Greyed listings are removed from the feed about a month later; Saved jobs are never auto-removed.",
+      "A job found by scanning that has been on your board this many days is greyed as an “Older listing” — still on the board and restorable. Greyed listings are removed from the feed about a month later; Saved jobs, and jobs you added by hand, are never auto-removed.",
     trashedJobsLabel: "Erase deleted jobs for good after",
     trashedJobsHint:
       "Deleted jobs are erased permanently (and won't be re-scraped) this many days later.",

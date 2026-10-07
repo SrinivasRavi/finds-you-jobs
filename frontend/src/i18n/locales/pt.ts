@@ -152,7 +152,6 @@ const pt: DeepPartial<Messages> = {
       finderPrefs: "Preferências de busca de vagas",
       finderPrefsTitle: "Configure a varredura em segundo plano e a pontuação",
       deletedJobs: "Vagas excluídas",
-      addJobByUrl: "Adicionar vaga por URL",
     },
     filters: {
       workStyle: "Modelo de trabalho",
@@ -314,23 +313,6 @@ const pt: DeepPartial<Messages> = {
       starting: "Iniciando…",
       rescanNow: "Nova varredura",
     },
-    addModal: {
-      title: "Adicionar vaga por URL",
-      pasteLabel:
-        "Cole a URL de um anúncio de vaga. (Para acompanhar o quadro inteiro de uma empresa, use “Mostrar mais vagas desta empresa” em uma vaga, ou a mesma lista em Preferências de busca de vagas.)",
-      tombstoned:
-        "Esta vaga foi excluída permanentemente e não pode ser adicionada de novo. Se ainda quiser acompanhá-la, guarde um registro dela fora do app.",
-      cancel: "Cancelar",
-      fetchDetails: "Buscar detalhes da vaga",
-      fetching: "Buscando detalhes da vaga…",
-      noUrl: "(sem URL)",
-      refetch: "· Buscar de novo",
-      titlePlaceholder: "Título",
-      companyPlaceholder: "Empresa",
-      locationPlaceholder: "Localidade",
-      descriptionPlaceholder: "Descrição",
-      submit: "Adicionar a Descobrir vagas",
-    },
     trashModal: {
       title: "Vagas excluídas",
       retention: "Vagas excluídas são apagadas permanentemente após 7 dias.",
@@ -414,20 +396,9 @@ const pt: DeepPartial<Messages> = {
       optional: "opcional",
     },
     addApp: {
-      intro:
-        "Já se candidatou a uma vaga em outro lugar? Cole a URL do anúncio para registrá-la aqui — você pode anexar o currículo e a carta de apresentação que usou.",
-      tombstoned: "Esta vaga foi excluída permanentemente e não pode ser adicionada de novo.",
-      fetch: "Buscar detalhes da vaga",
-      fetching: "Buscando detalhes da vaga…",
-      noUrl: "(sem URL)",
-      refetch: "· Buscar de novo",
-      titlePlaceholder: "Título",
-      companyPlaceholder: "Empresa",
-      locationPlaceholder: "Localidade",
       stage: "Etapa",
       notesPlaceholder: "Notas (opcional)",
       adding: "Adicionando…",
-      submit: "Adicionar candidatura",
     },
     jobDetail: {
       matchScoreTitle: "Pontuação de compatibilidade com seu currículo mestre",
@@ -899,8 +870,6 @@ const pt: DeepPartial<Messages> = {
       contactPurgeHint:
         "Contatos excluídos são apagados permanentemente esses dias depois.",
       expireListingLabel: "Marcar uma vaga como “Mais antiga” após",
-      expireListingHint:
-        "Uma vaga que não voltamos a ver em uma varredura por esses dias fica acinzentada como “Vaga mais antiga” — continua no quadro, e você pode restaurá-la.",
       trashedJobsLabel: "Apagar de vez vagas excluídas após",
       trashedJobsHint:
         "Vagas excluídas são apagadas permanentemente (e não voltam em varreduras) esses dias depois.",

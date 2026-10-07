@@ -148,7 +148,6 @@ const ja: DeepPartial<Messages> = {
       finderPrefs: "求人検索の設定",
       finderPrefsTitle: "バックグラウンドのスクレイピングとスコアリングを設定",
       deletedJobs: "削除した求人",
-      addJobByUrl: "URLで求人を追加",
     },
     filters: {
       workStyle: "勤務形態",
@@ -304,23 +303,6 @@ const ja: DeepPartial<Messages> = {
       starting: "開始中…",
       rescanNow: "今すぐ再スキャン",
     },
-    addModal: {
-      title: "URLで求人を追加",
-      pasteLabel:
-        "求人ページのURLを貼り付けてください。(企業のボード全体をフォローするには、求人の「この企業の求人をもっと見る」か、求人検索の設定にある同じリストを使ってください。)",
-      tombstoned:
-        "この求人は完全に削除されたため、再追加できません。引き続き記録したい場合は、アプリの外で記録を残してください。",
-      cancel: "キャンセル",
-      fetchDetails: "求人情報を取得",
-      fetching: "求人情報を取得中…",
-      noUrl: "(URLなし)",
-      refetch: "· 再取得",
-      titlePlaceholder: "職種名",
-      companyPlaceholder: "企業名",
-      locationPlaceholder: "勤務地",
-      descriptionPlaceholder: "求人内容",
-      submit: "求人検索に追加",
-    },
     trashModal: {
       title: "削除した求人",
       retention: "削除した求人は7日後に完全に消去されます。",
@@ -403,20 +385,9 @@ const ja: DeepPartial<Messages> = {
       optional: "任意",
     },
     addApp: {
-      intro:
-        "すでに他の場所で応募した求人がありますか?求人ページのURLを貼り付けてここに記録できます — 使用した職務経歴書とカバーレターも添付できます。",
-      tombstoned: "この求人は完全に削除されたため、再追加できません。",
-      fetch: "求人情報を取得",
-      fetching: "求人情報を取得中…",
-      noUrl: "(URLなし)",
-      refetch: "· 再取得",
-      titlePlaceholder: "職種名",
-      companyPlaceholder: "企業名",
-      locationPlaceholder: "勤務地",
       stage: "ステージ",
       notesPlaceholder: "メモ(任意)",
       adding: "追加中…",
-      submit: "応募を追加",
     },
     jobDetail: {
       matchScoreTitle: "マスター職務経歴書とのマッチスコア",
@@ -880,8 +851,6 @@ const ja: DeepPartial<Messages> = {
       contactPurgeLabel: "削除したコンタクトを完全に消去するまで",
       contactPurgeHint: "削除したコンタクトは、この日数が経過すると完全に消去されます。",
       expireListingLabel: "求人掲載を“古い”とマークするまで",
-      expireListingHint:
-        "この日数、スキャンで再び見つからなかった求人は“古い掲載”としてグレー表示されます — ボード上には残っており、復元できます。",
       trashedJobsLabel: "削除した求人を完全に消去するまで",
       trashedJobsHint:
         "削除した求人は、この日数が経過すると完全に消去されます(再スクレイピングもされません)。",

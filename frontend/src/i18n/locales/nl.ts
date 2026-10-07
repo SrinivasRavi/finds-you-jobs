@@ -162,7 +162,6 @@ const nl: DeepPartial<Messages> = {
       finderPrefs: "Zoekvoorkeuren",
       finderPrefsTitle: "Stel achtergrondscans en scoring in",
       deletedJobs: "Verwijderde vacatures",
-      addJobByUrl: "Vacature toevoegen via URL",
     },
     filters: {
       workStyle: "Werkvorm",
@@ -323,23 +322,6 @@ const nl: DeepPartial<Messages> = {
       starting: "Starten…",
       rescanNow: "Nu opnieuw scannen",
     },
-    addModal: {
-      title: "Vacature toevoegen via URL",
-      pasteLabel:
-        "Plak de URL van een vacature. (Wil je een heel bedrijfsboard volgen, gebruik dan “Meer vacatures van dit bedrijf tonen” bij een vacature, of dezelfde lijst in Zoekvoorkeuren.)",
-      tombstoned:
-        "Deze vacature is permanent verwijderd en kan niet opnieuw worden toegevoegd. Wil je hem toch bijhouden, bewaar hem dan buiten de app.",
-      cancel: "Annuleren",
-      fetchDetails: "Vacaturegegevens ophalen",
-      fetching: "Vacaturegegevens ophalen…",
-      noUrl: "(geen URL)",
-      refetch: "· Opnieuw ophalen",
-      titlePlaceholder: "Titel",
-      companyPlaceholder: "Bedrijf",
-      locationPlaceholder: "Locatie",
-      descriptionPlaceholder: "Omschrijving",
-      submit: "Toevoegen aan Vacatures ontdekken",
-    },
     trashModal: {
       title: "Verwijderde vacatures",
       retention: "Verwijderde vacatures worden na 7 dagen permanent gewist.",
@@ -427,20 +409,9 @@ const nl: DeepPartial<Messages> = {
       optional: "optioneel",
     },
     addApp: {
-      intro:
-        "Al ergens anders op een vacature gesolliciteerd? Plak de URL van de vacature om hem hier te loggen — je kunt het cv en de motivatiebrief bijvoegen die je hebt gebruikt.",
-      tombstoned: "Deze vacature is permanent verwijderd en kan niet opnieuw worden toegevoegd.",
-      fetch: "Vacaturegegevens ophalen",
-      fetching: "Vacaturegegevens ophalen…",
-      noUrl: "(geen URL)",
-      refetch: "· Opnieuw ophalen",
-      titlePlaceholder: "Titel",
-      companyPlaceholder: "Bedrijf",
-      locationPlaceholder: "Locatie",
       stage: "Fase",
       notesPlaceholder: "Notities (optioneel)",
       adding: "Toevoegen…",
-      submit: "Sollicitatie toevoegen",
     },
     jobDetail: {
       matchScoreTitle: "Matchscore tegen je master-cv",
@@ -911,8 +882,6 @@ const nl: DeepPartial<Messages> = {
       contactPurgeLabel: "Wis verwijderde contacten definitief na",
       contactPurgeHint: "Verwijderde contacten worden zoveel dagen later permanent gewist.",
       expireListingLabel: "Markeer een vacature als “Ouder” na",
-      expireListingHint:
-        "Een vacature die we zoveel dagen niet meer in een scan hebben gezien wordt grijs weergegeven als “Oudere vacature” — nog steeds op het bord, en je kunt hem herstellen.",
       trashedJobsLabel: "Wis verwijderde vacatures definitief na",
       trashedJobsHint:
         "Verwijderde vacatures worden zoveel dagen later permanent gewist (en niet opnieuw gescand).",

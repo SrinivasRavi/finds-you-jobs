@@ -40,6 +40,7 @@ import { ReferralsModal } from "../popups/ReferralsModal";
 import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
+import { AddLinkDialog } from "./jobs/AddLinkDialog";
 import { AddApplicationModal } from "./tracker/AddApplicationModal";
 import { ArchiveModal } from "./tracker/ArchiveModal";
 import { Card } from "./tracker/Card";
@@ -72,6 +73,8 @@ export function Tracker() {
   const [showArchive, setShowArchive] = useState(false);
   const [popup, setPopup] = useState<{ kind: ResumeModalKind; appId: string } | null>(null);
   const [guidance, setGuidance] = useState<{ appId: string; label: string } | null>(null);
+  // The card whose Apply click needs a posting link first (section 9.8).
+  const [applyLink, setApplyLink] = useState<Application | null>(null);
   // Card ⋮ menu: id + the button's viewport rect, so the menu opens anchored
   // beside the button (popover, not a modal — maintainer 2026-07-22 #5).
   const [menu, setMenu] = useState<{ id: string; anchor: DOMRect } | null>(null);
@@ -140,6 +143,14 @@ export function Tracker() {
     async (app: Application) => {
       if (app.apply_run_id) {
         setApplierPanel({ appId: app.id, runId: app.apply_run_id });
+        return;
+      }
+      // Drawing 12 (url-less-jobs.md section 9.8): a card with no posting link
+      // has no form to fill, so Apply asks for the link instead of failing.
+      // The sidecar refuses this before it writes an ApplyRun, so the panel
+      // never shows a run that had no chance of working.
+      if (!app.job.canonical_url) {
+        setApplyLink(app);
         return;
       }
       // Failure is logged + bannered by the global MutationCache hook — this
@@ -492,6 +503,31 @@ export function Tracker() {
       {/* "Add a job application" (FR-TR manual-add) — the Tracker sibling of the
           Job Board's Add-by-URL, for a job applied to outside the app. */}
       {showAddApp ? <AddApplicationModal onClose={() => setShowAddApp(false)} /> : null}
+
+      {/* Apply asked for the link (section 9.8): the same dialog as everywhere
+          else, 1 extra line of copy and a different primary button. On success
+          the link is attached and the run starts, so the Applier panel opens
+          against a run that can actually work. */}
+      {applyLink ? (
+        <AddLinkDialog
+          jobId={applyLink.job.id}
+          jobLabel={`${applyLink.job.title} · ${applyLink.job.company}`}
+          mode="apply"
+          onClose={() => setApplyLink(null)}
+          onAttached={() => {
+            const app = applyLink;
+            setApplyLink(null);
+            void startApply
+              .mutateAsync({ applicationId: app.id })
+              .then((run) => {
+                if (run) setApplierPanel({ appId: app.id, runId: run.id });
+              })
+              .catch(() => {
+                /* surfaced globally */
+              });
+          }}
+        />
+      ) : null}
 
       {/* Applier companion panel (applier-as-built.md section 8.2) — off the Apply slot. Bound
           to one Apply Run; Retry rebinds it to the fresh run (section 8.3). Closing it

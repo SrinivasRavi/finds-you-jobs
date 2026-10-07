@@ -148,7 +148,6 @@ const zh: DeepPartial<Messages> = {
       finderPrefs: "职位搜索偏好",
       finderPrefsTitle: "配置后台抓取与评分",
       deletedJobs: "已删除职位",
-      addJobByUrl: "通过 URL 添加职位",
     },
     filters: {
       workStyle: "工作方式",
@@ -304,23 +303,6 @@ const zh: DeepPartial<Messages> = {
       starting: "启动中…",
       rescanNow: "立即重新扫描",
     },
-    addModal: {
-      title: "通过 URL 添加职位",
-      pasteLabel:
-        "粘贴职位发布的 URL。（要跟踪某公司的整个招聘页，请在职位上使用“显示该公司的更多职位”，或在职位搜索偏好中的同名列表操作。）",
-      tombstoned:
-        "该职位已被永久删除，无法重新添加。如仍想跟踪，请在应用之外自行记录。",
-      cancel: "取消",
-      fetchDetails: "获取职位详情",
-      fetching: "正在获取职位详情…",
-      noUrl: "（无 URL）",
-      refetch: "· 重新获取",
-      titlePlaceholder: "职位名称",
-      companyPlaceholder: "公司",
-      locationPlaceholder: "地点",
-      descriptionPlaceholder: "职位描述",
-      submit: "添加到发现职位",
-    },
     trashModal: {
       title: "已删除职位",
       retention: "已删除的职位将在 7 天后被永久清除。",
@@ -403,20 +385,9 @@ const zh: DeepPartial<Messages> = {
       optional: "可选",
     },
     addApp: {
-      intro:
-        "已经在别处申请过职位？粘贴其发布 URL 即可在此记录 — 你还可以附上当时使用的简历和求职信。",
-      tombstoned: "该职位已被永久删除，无法重新添加。",
-      fetch: "获取职位详情",
-      fetching: "正在获取职位详情…",
-      noUrl: "（无 URL）",
-      refetch: "· 重新获取",
-      titlePlaceholder: "职位名称",
-      companyPlaceholder: "公司",
-      locationPlaceholder: "地点",
       stage: "阶段",
       notesPlaceholder: "备注（可选）",
       adding: "添加中…",
-      submit: "添加申请",
     },
     jobDetail: {
       matchScoreTitle: "相对你主简历的匹配分",
@@ -880,8 +851,6 @@ const zh: DeepPartial<Messages> = {
       contactPurgeLabel: "已删除的联系人在以下时长后永久清除",
       contactPurgeHint: "已删除的联系人会在这么多天后被永久清除。",
       expireListingLabel: "在以下时长后将职位标记为“较早”",
-      expireListingHint:
-        "在扫描中已有这么多天未再出现的职位会被置灰为“较早的职位” — 仍留在看板上，你可以将其恢复。",
       trashedJobsLabel: "已删除的职位在以下时长后永久清除",
       trashedJobsHint:
         "已删除的职位会在这么多天后被永久清除（且不会被重新抓取）。",

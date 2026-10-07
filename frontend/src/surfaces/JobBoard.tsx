@@ -1,6 +1,6 @@
 // Job Board (US-JB-01..07, 09, 10, 11, 12) — two-column scored feed + JD detail,
 // filters/sort, board search (list + deep all-text), resizable persisted split,
-// Save/Remove, Add-by-URL, Trash, source filter, master-resume popup.
+// Save/Remove, Add a job, Trash, source filter, master-resume popup.
 // Ports design/prototype/prototype-modal/jobs.html.
 
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -18,7 +18,6 @@ import {
   useLinkedInSession,
   useBoard,
   useEmptyTrash,
-  useJobPreview,
   useProfile,
   useSaveJob,
   useSettings,
@@ -32,12 +31,7 @@ import {
   useWatchlist,
 } from "../api/queries";
 import { ApiError } from "../api/real";
-import {
-  JobTombstonedError,
-  type BoardPage,
-  type Job,
-  type JobDraft,
-} from "../api/types";
+import { type BoardPage, type Job } from "../api/types";
 import { Avatar } from "../shell/Avatar";
 import { ChipInput } from "../shell/ChipInput";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
@@ -47,6 +41,9 @@ import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Modal } from "../shell/Modal";
 import { Markdown } from "../shell/Markdown";
 import { RecoveryListModal } from "../shell/RecoveryListModal";
+import { AddJobModal } from "./jobs/AddJobModal";
+import { JobProvenanceChips } from "./jobs/JobProvenanceChips";
+import { AddLinkDialog, type AddLinkMode } from "./jobs/AddLinkDialog";
 import { ScanProgressPill } from "./ScanProgressPill";
 import {
   CADENCE_OPTIONS,
@@ -71,6 +68,8 @@ import {
 type StatusFilter = "ALL" | "AI" | "KEYWORD";
 type WorkStyleFilter = "ALL" | "REMOTE" | "HYBRID" | "ONSITE" | "REMOTE_FRIENDLY";
 type SortMode = "match" | "recency";
+/** The URL axis. "" is All — the server reads it as no filter (section 9.3). */
+type LinkFilter = "" | "has" | "none";
 
 const SPLIT_KEY = "fyj-job-board-split";
 
@@ -151,11 +150,13 @@ const JobRow = memo(function JobRow({
   selected,
   onSelect,
   q = "",
+  onLinkFilter,
 }: {
   job: Job;
   selected: boolean;
   onSelect: (id: string) => void;
   q?: string;
+  onLinkFilter?: () => void;
 }) {
   const { t } = useTranslation();
   const tier = job.score ? scoreTier(job.score.score_0_100) : null;
@@ -222,6 +223,8 @@ const JobRow = memo(function JobRow({
           >
             {job.source_adapter}
           </span>
+          {/* The URL axis, and the first thing to render trust_flags (9.3). */}
+          <JobProvenanceChips job={job} onNoLink={onLinkFilter} />
         </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
@@ -310,6 +313,9 @@ function JobDetail({
   const unwatchCompany = useUnwatchCompany();
   const { data: watchlist } = useWatchlist();
   const [watchError, setWatchError] = useState<Error | null>(null);
+  // Which door opened the Add-link dialog: the inert "Add link" slot, or the
+  // watch-a-company variant (D12). Null means closed.
+  const [linkMode, setLinkMode] = useState<AddLinkMode | null>(null);
   const jobId = job?.id;
   useEffect(() => {
     setToggles({ ...packetDefaults });
@@ -324,8 +330,8 @@ function JobDetail({
   const watchedEntry = job
     ? watchlist?.find(
         (e) =>
-          job.canonical_url === e.url ||
-          job.canonical_url.startsWith(`${e.url}/`) ||
+          (!!job.canonical_url &&
+            (job.canonical_url === e.url || job.canonical_url.startsWith(`${e.url}/`))) ||
           (!!e.company && !!job.company && slugish(e.company) === slugish(job.company)),
       )
     : undefined;
@@ -495,6 +501,14 @@ function JobDetail({
             disabled={watchCompany.isPending || unwatchCompany.isPending}
             onClick={() => {
               setWatchError(null);
+              // D12: `watch_company` reads the job's URL and 422s without one,
+              // which the UI rendered as "Can't watch this source" — false,
+              // the user did give a job id. A careers page is what watching a
+              // board actually needs, so ask for one (9.4).
+              if (!job.canonical_url && !watchedEntry) {
+                setLinkMode("watch");
+                return;
+              }
               if (watchedEntry) {
                 unwatchCompany.mutate(watchedEntry.url, {
                   onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
@@ -542,15 +556,38 @@ function JobDetail({
                   : t("jobBoard.detail.showMoreFromCompany")}
           </button>
         )}
-        <a
-          href={job.canonical_url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex h-[30px] items-center gap-1 rounded-7 px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
-        >
-          {t("jobBoard.detail.openPosting")}
-        </a>
+        {job.canonical_url ? (
+          <a
+            href={job.canonical_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-[30px] items-center gap-1 rounded-7 px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
+          >
+            {t("jobBoard.detail.openPosting")}
+          </a>
+        ) : (
+          // Same position, same weight. This is the affordance the user looks
+          // at most, so it's where "always ask for the URL" shows up (9.4).
+          <button
+            type="button"
+            data-testid="add-link-open"
+            title={t("jobBoard.detail.addLinkTitle")}
+            onClick={() => setLinkMode("link")}
+            className="inline-flex h-[30px] items-center gap-1 rounded-7 px-3 text-[12px] font-medium text-accent hover:bg-surface-3"
+          >
+            {t("jobBoard.detail.addLink")}
+          </button>
+        )}
       </div>
+      {linkMode !== null ? (
+        <AddLinkDialog
+          jobId={job.id}
+          jobLabel={`${job.title} · ${job.company}`}
+          mode={linkMode}
+          onClose={() => setLinkMode(null)}
+          onAttached={() => setLinkMode(null)}
+        />
+      ) : null}
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
@@ -614,10 +651,12 @@ function BoardEmptyState({
   meta,
   loading,
   filteredOut,
+  onAddJob,
 }: {
   meta: BoardPage | undefined;
   loading: boolean;
   filteredOut: boolean;
+  onAddJob: () => void;
 }) {
   const { t } = useTranslation();
   const wrap = "grid h-full place-items-center px-6 text-center text-[12.5px] text-ink-3";
@@ -669,6 +708,17 @@ function BoardEmptyState({
         <div className="text-ink-4">
           {t("jobBoard.empty.lastRefresh", { ago: shortAgo(meta?.last_scan_at) })}
         </div>
+        {/* D13: 1 button, reusing the same modal. A user whose first scan
+            found nothing is the user with a JD sitting in their inbox. */}
+        <button
+          type="button"
+          data-testid="empty-add-job"
+          onClick={onAddJob}
+          className="mt-3 rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
+        >
+          {t("jobBoard.empty.addJob")}
+        </button>
+        <div className="text-ink-4">{t("jobBoard.empty.gotOne")}</div>
       </div>
     </div>
   );
@@ -683,7 +733,9 @@ export function JobBoard() {
   // unloaded pages), debounced per keystroke.
   const [textSearch, setTextSearch] = useState("");
   const textQ = useDebounced(textSearch.trim(), 250);
-  const board = useBoard("", textQ);
+  // The URL axis filters server-side for the same reason the search does.
+  const [linkFilter, setLinkFilter] = useState<LinkFilter>("");
+  const board = useBoard("", textQ, linkFilter);
   const { data: trashed = [] } = useTrash();
   const saveJob = useSaveJob();
   const trashJob = useTrashJob();
@@ -827,7 +879,7 @@ export function JobBoard() {
             testid="trash-btn"
           />
           <HeaderAddButton
-            label={t("jobBoard.header.addJobByUrl")}
+            label={t("jobBoard.header.addJob")}
             onClick={() => setShowAdd(true)}
             testid="add-job"
           />
@@ -898,6 +950,24 @@ export function JobBoard() {
             ] as [StatusFilter, string][]
           ).map(([s, label]) => (
             <Chip key={s} active={status === s} onClick={() => setStatus(s)}>
+              {t(label)}
+            </Chip>
+          ))}
+        </div>
+        <span className="mx-1 h-4 w-px bg-border-2" />
+        {/* The URL axis (url-less-jobs.md section 9.3). The source chip on each
+            card covers the other one, scanned versus typed in, and the 2
+            deliberately disagree on a promoted job. */}
+        <div className="flex items-center gap-1.5" id="filter-link">
+          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.link")}</span>
+          {(
+            [
+              ["", "jobBoard.filters.all"],
+              ["has", "jobBoard.filters.linkHas"],
+              ["none", "jobBoard.filters.linkNone"],
+            ] as [LinkFilter, string][]
+          ).map(([v, label]) => (
+            <Chip key={v || "all"} active={linkFilter === v} onClick={() => setLinkFilter(v)}>
               {t(label)}
             </Chip>
           ))}
@@ -974,7 +1044,8 @@ export function JobBoard() {
                 loading={board.isLoading}
                 // A server-side search miss returns zero rows with scan_status
                 // "idle" — that's a filter miss, never an empty scrape (FR-JB-13).
-                filteredOut={boardJobs.length > 0 || Boolean(textQ)}
+                filteredOut={boardJobs.length > 0 || Boolean(textQ) || Boolean(linkFilter)}
+                onAddJob={() => setShowAdd(true)}
               />
             ) : (
               <div
@@ -997,6 +1068,7 @@ export function JobBoard() {
                           selected={selected?.id === j.id}
                           onSelect={setSelectedId}
                           q={textQ}
+                          onLinkFilter={() => setLinkFilter("none")}
                         />
                       ) : (
                         // The extra virtual row past the loaded feed.
@@ -1059,7 +1131,7 @@ export function JobBoard() {
 
       {/* Modals */}
       {showAdd ? (
-        <AddByUrlModal onClose={() => setShowAdd(false)} onAdd={(draft) => addByUrl.mutateAsync(draft)} />
+        <AddJobModal onClose={() => setShowAdd(false)} onAdd={(draft) => addByUrl.mutateAsync(draft)} />
       ) : null}
       {showTrash ? (
         <TrashModal
@@ -1474,200 +1546,6 @@ function FinderPrefsModal({
   );
 }
 
-// ─── Add-by-URL (US-JB-07) ────────────────────────────────────────────────────
-
-function AddByUrlModal({
-  onClose,
-  onAdd,
-}: {
-  onClose: () => void;
-  onAdd: (draft: JobDraft) => Promise<unknown>;
-}) {
-  const { t } = useTranslation();
-  const [url, setUrl] = useState("");
-  const [phase, setPhase] = useState<"entry" | "fetching" | "editing">("entry");
-  const [draft, setDraft] = useState<JobDraft | null>(null);
-  // Set when the pasted URL was permanently deleted (tombstoned) — trash is
-  // recoverable, a tombstone is final, so re-add is impossible (US-JB-07).
-  const [tombstoned, setTombstoned] = useState(false);
-  const preview = useJobPreview();
-  // Watchlist path (approved-plan #4): the same paste box also accepts a
-  // company careers URL — "watch" adds it as a permanent scan source.
-  function fetchDetails() {
-    setPhase("fetching");
-    setTombstoned(false);
-    preview.mutate(url, {
-      onSuccess: (d) => {
-        setDraft(d);
-        setPhase("editing");
-      },
-      onError: (err) => {
-        if (err instanceof JobTombstonedError) {
-          // Final — don't offer an editable form; show the honest copy.
-          setTombstoned(true);
-          setPhase("entry");
-          return;
-        }
-        // Other fetch failures: still let the user fill fields by hand
-        // (rank-don't-gate escape hatch, US-JB-07).
-        setDraft({
-          canonical_url: url,
-          title: "",
-          company: "",
-          location: "",
-          description: "",
-          salary: "",
-          source_adapter: "paste-url",
-        });
-        setPhase("editing");
-      },
-    });
-  }
-
-  function submit() {
-    if (!draft) return;
-    void onAdd(draft)
-      .then(() => onClose())
-      .catch((err: unknown) => {
-        if (err instanceof JobTombstonedError) {
-          setTombstoned(true);
-          setPhase("entry");
-        }
-        // Any other error surfaces via the mutation; leave the form open.
-      });
-  }
-
-  function patch(fields: Partial<JobDraft>) {
-    setDraft((d) => (d ? { ...d, ...fields } : d));
-  }
-
-  return (
-    <Modal title={t("jobBoard.addModal.title")} onClose={onClose} width={520}>
-      {phase === "entry" ? (
-        <form
-          className="flex flex-col gap-3 px-5 py-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            fetchDetails();
-          }}
-        >
-          {/* One modal, one job (maintainer 2026-07-22): the "watch a whole
-              board" path moved out — that's "Show more jobs from this company"
-              on any job row, or the roster of the same name in preferences. */}
-          <label className="text-[12.5px] text-ink-2">
-            {t("jobBoard.addModal.pasteLabel")}
-          </label>
-          {tombstoned ? (
-            <p
-              data-testid="add-job-tombstoned"
-              className="rounded-md border border-bad/40 bg-bad-wash px-3 py-2 text-[12px] text-bad"
-            >
-              {t("jobBoard.addModal.tombstoned")}
-            </p>
-          ) : null}
-          <input
-            type="url"
-            required
-            autoFocus
-            data-testid="add-job-url-input"
-            value={url}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              setTombstoned(false);
-            }}
-            placeholder="https://company.com/careers/senior-engineer"
-            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
-          />
-          <div className="mt-1 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
-            >
-              {t("jobBoard.addModal.cancel")}
-            </button>
-            <button
-              type="submit"
-              data-testid="add-job-fetch-btn"
-              className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
-            >
-              {t("jobBoard.addModal.fetchDetails")}
-            </button>
-          </div>
-        </form>
-      ) : phase === "fetching" ? (
-        <div className="grid place-items-center px-5 py-10 text-[13px] text-ink-3">
-          <div className="flex items-center gap-2">
-            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border-2 border-t-accent" />
-            {t("jobBoard.addModal.fetching")}
-          </div>
-        </div>
-      ) : (
-        <form
-          className="flex flex-col gap-3 px-5 py-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit();
-          }}
-        >
-          <div className="text-[11.5px] text-ink-3">
-            {url || t("jobBoard.addModal.noUrl")}{" "}
-            <button
-              type="button"
-              onClick={() => setPhase("entry")}
-              className="text-accent hover:underline"
-            >
-              {t("jobBoard.addModal.refetch")}
-            </button>
-          </div>
-          <input
-            value={draft?.title ?? ""}
-            onChange={(e) => patch({ title: e.target.value })}
-            placeholder={t("jobBoard.addModal.titlePlaceholder")}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
-          />
-          <input
-            value={draft?.company ?? ""}
-            onChange={(e) => patch({ company: e.target.value })}
-            placeholder={t("jobBoard.addModal.companyPlaceholder")}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
-          />
-          <input
-            value={draft?.location ?? ""}
-            onChange={(e) => patch({ location: e.target.value })}
-            placeholder={t("jobBoard.addModal.locationPlaceholder")}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
-          />
-          <textarea
-            value={draft?.description ?? ""}
-            onChange={(e) => patch({ description: e.target.value })}
-            placeholder={t("jobBoard.addModal.descriptionPlaceholder")}
-            rows={5}
-            data-testid="add-job-description"
-            className="resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink"
-          />
-          <div className="mt-1 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
-            >
-              {t("jobBoard.addModal.cancel")}
-            </button>
-            <button
-              type="submit"
-              data-testid="add-job-submit-btn"
-              className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
-            >
-              {t("jobBoard.addModal.submit")}
-            </button>
-          </div>
-        </form>
-      )}
-    </Modal>
-  );
-}
-
 // ─── Trash (US-JB-11) ─────────────────────────────────────────────────────────
 
 function TrashModal({
@@ -1701,6 +1579,10 @@ function TrashModal({
         avatarName: j.company,
         title: j.title,
         subtitle: t("jobBoard.trashModal.removedRecently", { company: j.company }),
+        // Under a content-hash identity, delete forever blocks every future
+        // paste of this exact description. Useful and surprising at once, so
+        // the confirm says which one it's doing (url-less-jobs.md 8.2, 9.12).
+        confirmNote: j.canonical_url ? undefined : t("jobBoard.trashModal.textWarning"),
       }))}
       restore={{
         label: t("jobBoard.trashModal.undo"),

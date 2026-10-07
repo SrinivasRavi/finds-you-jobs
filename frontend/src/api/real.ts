@@ -20,6 +20,9 @@ import type { components } from "./schema";
 import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
 import { JobTombstonedError } from "./types";
 import type {
+  AttachLinkInput,
+  AttachLinkResult,
+  LinkCandidate,
   Application,
   ApplicationDocument,
   ApplicationProfile,
@@ -74,6 +77,8 @@ import type {
 type JobDTO = components["schemas"]["JobDTO"];
 type BoardPageDTO = components["schemas"]["BoardPageDTO"];
 type JobPreviewDTO = components["schemas"]["JobPreviewDTO"];
+type AttachLinkResultDTO = components["schemas"]["AttachLinkResultDTO"];
+type LinkCandidateDTO = components["schemas"]["LinkCandidateDTO"];
 type TombstoneResultDTO = components["schemas"]["TombstoneResultDTO"];
 type SettingsDTO = components["schemas"]["SettingsDTO"];
 type ProfileDTO = components["schemas"]["ProfileDTO"];
@@ -159,7 +164,7 @@ function toJob(d: JobDTO, saved: boolean): Job {
   return {
     id: d.id,
     title: d.title,
-    canonical_url: d.canonical_url,
+    canonical_url: d.canonical_url ?? null,
     company: d.company,
     location: d.location,
     description: d.description,
@@ -348,6 +353,17 @@ export function stubOperation(d: OperationStubDTO): Operation {
     usage: null,
     error: null,
     created_at: new Date().toISOString(),
+    // A stub is the 202 acknowledgement, so nothing has been produced yet.
+    result_ref: null,
+  };
+}
+
+function toLinkCandidate(d: LinkCandidateDTO): LinkCandidate {
+  return {
+    title: d.title,
+    company: d.company,
+    location: d.location,
+    similarity: d.similarity ?? null,
   };
 }
 
@@ -371,6 +387,7 @@ function toOperation(d: OperationDTO): Operation {
       : null,
     error: d.error ?? null,
     created_at: d.created_at,
+    result_ref: (d.result_ref as Record<string, unknown> | null) ?? null,
   };
 }
 
@@ -497,7 +514,22 @@ export class RealApi {
       const body = await res.text().catch(() => "");
       let detail = body;
       try {
-        detail = (JSON.parse(body) as { detail?: string }).detail ?? body;
+        const parsed = (JSON.parse(body) as { detail?: unknown }).detail;
+        // FastAPI's own 422 is an ARRAY of {loc, msg}, not a string, and
+        // string-concatenating it put a literal "[object Object]" in front of
+        // the user (found by the url-less e2e, 2026-10-07).
+        if (Array.isArray(parsed)) {
+          detail = parsed
+            .map((e) => {
+              const { loc, msg } = e as { loc?: unknown[]; msg?: string };
+              const field = Array.isArray(loc) ? loc[loc.length - 1] : undefined;
+              return field ? `${String(field)}: ${msg ?? ""}` : (msg ?? "");
+            })
+            .filter(Boolean)
+            .join("; ");
+        } else if (typeof parsed === "string") {
+          detail = parsed;
+        }
       } catch {
         /* non-JSON body — surface as-is */
       }
@@ -522,10 +554,14 @@ export class RealApi {
    *  Expired-inclusive (greyed), paginated server-side (no silent 200-row cap).
    *  `listQ`/`textQ` (FR-JB-13) are server-side search filters applied before
    *  pagination — shallow (title/company/location) vs deep (JD + score texts). */
-  async getBoard(page = 0, listQ = "", textQ = ""): Promise<BoardPage> {
+  async getBoard(page = 0, listQ = "", textQ = "", link = ""): Promise<BoardPage> {
     const params = new URLSearchParams({ page: String(page) });
     if (listQ) params.set("list_q", listQ);
     if (textQ) params.set("text_q", textQ);
+    // The URL axis filters server-side with the search needles, before
+    // pagination — a client-side pass over loaded pages would silently miss
+    // matches on unloaded ones (url-less-jobs.md section 9.3).
+    if (link) params.set("link", link);
     const d = await this.req<BoardPageDTO>(`/api/board?${params.toString()}`);
     return {
       jobs: (d.jobs ?? []).map((j) => toJob(j, false)),
@@ -604,6 +640,36 @@ export class RealApi {
       throw e;
     })) as JobDTO;
     return toJob(d, false);
+  }
+
+  /** Promotion (url-less-jobs.md section 5.4): attach a posting link to a job
+   *  that has none. The sidecar probes the URL and runs the compound check
+   *  before it writes, so a non-`attached` status is a question for the user,
+   *  not an error. */
+  async attachJobLink(input: AttachLinkInput): Promise<AttachLinkResult> {
+    const d = (await this.json("POST", `/api/jobs/${input.job_id}/link`, {
+      url: input.url,
+      confirm: input.confirm ?? false,
+      merge: input.merge ?? false,
+    })) as AttachLinkResultDTO;
+    return {
+      status: d.status,
+      job: d.job ? toJob(d.job, false) : null,
+      pasted: d.pasted ? toLinkCandidate(d.pasted) : null,
+      card: d.card ? toLinkCandidate(d.card) : null,
+      other_job_id: d.other_job_id ?? null,
+    };
+  }
+
+  /** Triage (url-less-jobs.md section 9.1.1): score a JD with nothing saved.
+   *  A score op with an inline `job` and no `job_id` writes no rows — the
+   *  number and its reasons come back in the operation's own `result_ref`.
+   *  Returns the op id; the caller polls `getOperation` for the result. */
+  async scoreJobText(description: string): Promise<string> {
+    const d = (await this.json("POST", "/api/operations/score", {
+      job: description,
+    })) as { id: string };
+    return d.id;
   }
 
   /** "Add a job application" (FR-TR manual-add): log a job applied to outside

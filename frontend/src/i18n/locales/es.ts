@@ -152,7 +152,6 @@ const es: DeepPartial<Messages> = {
       finderPrefs: "Preferencias de búsqueda de empleo",
       finderPrefsTitle: "Configura el rastreo en segundo plano y la puntuación",
       deletedJobs: "Empleos eliminados",
-      addJobByUrl: "Añadir un empleo por URL",
     },
     filters: {
       workStyle: "Modalidad",
@@ -314,23 +313,6 @@ const es: DeepPartial<Messages> = {
       starting: "Iniciando…",
       rescanNow: "Reescanear ahora",
     },
-    addModal: {
-      title: "Añadir un empleo por URL",
-      pasteLabel:
-        "Pega la URL de una oferta de empleo. (Para seguir el tablón completo de una empresa, usa «Ver más empleos de esta empresa» en un empleo, o la misma lista en Preferencias de búsqueda de empleo.)",
-      tombstoned:
-        "Este empleo se eliminó permanentemente y no se puede volver a añadir. Si aún quieres seguirlo, guarda un registro fuera de la app.",
-      cancel: "Cancelar",
-      fetchDetails: "Obtener los detalles del empleo",
-      fetching: "Obteniendo los detalles…",
-      noUrl: "(sin URL)",
-      refetch: "· Volver a obtener",
-      titlePlaceholder: "Título",
-      companyPlaceholder: "Empresa",
-      locationPlaceholder: "Ubicación",
-      descriptionPlaceholder: "Descripción",
-      submit: "Añadir a Descubrir empleos",
-    },
     trashModal: {
       title: "Empleos eliminados",
       retention: "Los empleos eliminados se borran definitivamente a los 7 días.",
@@ -414,20 +396,9 @@ const es: DeepPartial<Messages> = {
       optional: "opcional",
     },
     addApp: {
-      intro:
-        "¿Ya solicitaste un empleo en otro sitio? Pega la URL de su oferta para registrarlo aquí — puedes adjuntar el currículum y la carta de presentación que usaste.",
-      tombstoned: "Este empleo se eliminó permanentemente y no se puede volver a añadir.",
-      fetch: "Obtener los detalles del empleo",
-      fetching: "Obteniendo los detalles…",
-      noUrl: "(sin URL)",
-      refetch: "· Volver a obtener",
-      titlePlaceholder: "Título",
-      companyPlaceholder: "Empresa",
-      locationPlaceholder: "Ubicación",
       stage: "Etapa",
       notesPlaceholder: "Notas (opcional)",
       adding: "Añadiendo…",
-      submit: "Añadir solicitud",
     },
     jobDetail: {
       matchScoreTitle: "Puntuación de compatibilidad con tu currículum maestro",
@@ -898,8 +869,6 @@ const es: DeepPartial<Messages> = {
       contactPurgeHint:
         "Los contactos eliminados se borran definitivamente estos días después.",
       expireListingLabel: "Marcar una oferta de empleo como “Más antigua” después de",
-      expireListingHint:
-        "Una oferta que no hemos vuelto a ver en un escaneo durante estos días se atenúa como “oferta más antigua” — sigue en el tablero y puedes restaurarla.",
       trashedJobsLabel: "Borrar definitivamente los empleos eliminados tras",
       trashedJobsHint:
         "Los empleos eliminados se borran definitivamente (y no se vuelven a rastrear) estos días después.",

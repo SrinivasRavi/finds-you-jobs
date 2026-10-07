@@ -149,7 +149,6 @@ const it: DeepPartial<Messages> = {
       finderPrefs: "Preferenze di ricerca offerte",
       finderPrefsTitle: "Configura lo scraping in background e la valutazione",
       deletedJobs: "Offerte eliminate",
-      addJobByUrl: "Aggiungi un'offerta tramite URL",
     },
     filters: {
       workStyle: "Modalità di lavoro",
@@ -308,23 +307,6 @@ const it: DeepPartial<Messages> = {
       starting: "Avvio…",
       rescanNow: "Riscansiona ora",
     },
-    addModal: {
-      title: "Aggiungi un'offerta tramite URL",
-      pasteLabel:
-        "Incolla l'URL di un annuncio di lavoro. (Per seguire un'intera bacheca aziendale, usa “Mostra altre offerte di questa azienda” su un'offerta, o lo stesso elenco nelle Preferenze di ricerca offerte.)",
-      tombstoned:
-        "Questa offerta è stata eliminata definitivamente e non può essere riaggiunta. Se vuoi comunque seguirla, tienine traccia fuori dall'app.",
-      cancel: "Annulla",
-      fetchDetails: "Recupera i dettagli dell'offerta",
-      fetching: "Recupero dei dettagli…",
-      noUrl: "(nessun URL)",
-      refetch: "· Recupera di nuovo",
-      titlePlaceholder: "Titolo",
-      companyPlaceholder: "Azienda",
-      locationPlaceholder: "Località",
-      descriptionPlaceholder: "Descrizione",
-      submit: "Aggiungi a Scopri offerte",
-    },
     trashModal: {
       title: "Offerte eliminate",
       retention: "Le offerte eliminate vengono cancellate definitivamente dopo 7 giorni.",
@@ -408,20 +390,9 @@ const it: DeepPartial<Messages> = {
       optional: "facoltativo",
     },
     addApp: {
-      intro:
-        "Ti sei già candidato altrove per un'offerta? Incolla l'URL dell'annuncio per registrarla qui — puoi allegare il curriculum e la lettera di presentazione che hai usato.",
-      tombstoned: "Questa offerta è stata eliminata definitivamente e non può essere riaggiunta.",
-      fetch: "Recupera i dettagli dell'offerta",
-      fetching: "Recupero dei dettagli…",
-      noUrl: "(nessun URL)",
-      refetch: "· Recupera di nuovo",
-      titlePlaceholder: "Titolo",
-      companyPlaceholder: "Azienda",
-      locationPlaceholder: "Località",
       stage: "Fase",
       notesPlaceholder: "Note (facoltative)",
       adding: "Aggiunta…",
-      submit: "Aggiungi candidatura",
     },
     jobDetail: {
       matchScoreTitle: "Punteggio di affinità rispetto al tuo curriculum principale",
@@ -888,8 +859,6 @@ const it: DeepPartial<Messages> = {
       contactPurgeLabel: "Cancella definitivamente i contatti eliminati dopo",
       contactPurgeHint: "I contatti eliminati vengono cancellati definitivamente dopo questo numero di giorni.",
       expireListingLabel: "Segna un'offerta di lavoro come “Più vecchia” dopo",
-      expireListingHint:
-        "Un'offerta che non rivediamo in una scansione da questo numero di giorni viene resa in grigio come “offerta più vecchia” — resta comunque nella bacheca e puoi ripristinarla.",
       trashedJobsLabel: "Cancella definitivamente le offerte eliminate dopo",
       trashedJobsHint:
         "Le offerte eliminate vengono cancellate definitivamente (e non verranno più recuperate dallo scraping) dopo questo numero di giorni.",

@@ -100,9 +100,16 @@ export interface paths {
          * @description The paginated Job Board feed + header meta (FR-JB-02/10). Saved jobs are
          *     excluded server-side; Expired jobs stay (greyed). One honest `total` count and
          *     a real last-scan time/status — never a silent 200-row cap or hardcoded refresh.
-         *     `list_q` / `text_q` (FR-JB-13) filter server-side *before* pagination — the
-         *     feed is paginated, so a client-side filter over loaded pages would silently
-         *     miss matches on unloaded pages.
+         *     `list_q` / `text_q` (FR-JB-13) and `link` filter server-side *before*
+         *     pagination — the feed is paginated, so a client-side filter over loaded
+         *     pages would silently miss matches on unloaded pages.
+         *
+         *     `link` is `has` or `none`, the URL axis of url-less-jobs.md section 9.3.
+         *     It reads `canonical_url IS NOT NULL` rather than a stored flag, because a
+         *     second copy of a fact the column already carries would drift from it. The
+         *     other axis, scanned versus typed in, is `source_adapter` and needs nothing
+         *     here. Both run beside the search needles rather than in SQL so that an
+         *     empty result still reads as a filter miss, not as an empty scrape.
          *
          *     A plain `def` handler runs off the event loop in Starlette's threadpool
          *     automatically (async-first rule / F-H2 — at a few thousand jobs this could
@@ -200,6 +207,44 @@ export interface paths {
         patch: operations["update_job_api_jobs__job_id__patch"];
         trace?: never;
     };
+    "/api/jobs/{job_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach Job Link
+         * @description Promotion (url-less-jobs.md section 5.4): a URL-less job gets its URL.
+         *
+         *     The day the user finds the posting, the row is re-keyed and becomes an
+         *     ordinary URL job: Apply unlocks, "Open posting" comes back, and the
+         *     Networker anchors on the real employer domain instead of the company name.
+         *
+         *     The check before the write is compound, because a bare 90% similarity gate
+         *     is 55% precise on real data and would accept a Senior URL pasted onto a
+         *     Principal card (section 6.4). Content hashes equal accepts silently; same
+         *     company, same title and similarity at or above 0.90 accepts; anything else
+         *     comes back as `mismatch` with both sides so the user decides.
+         *
+         *     Re-keying is 1 UPDATE on 1 column: every child FKs to `jobs.id`, so the
+         *     application, its documents and its score all survive. The old hash stays in
+         *     `content_hash`, which is what makes a later re-paste of the same text find
+         *     this row.
+         *
+         *     Off the event loop: `probe_url` is a network fetch, and a plain `def`
+         *     handler runs in Starlette's threadpool automatically.
+         */
+        post: operations["attach_job_link_api_jobs__job_id__link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}/tombstone": {
         parameters: {
             query?: never;
@@ -233,8 +278,11 @@ export interface paths {
         put?: never;
         /**
          * Empty Trash
-         * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL and
-         *     hard-delete the rows immediately, bypassing the 7-day TTL.
+         * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's
+         *     identity and hard-delete the rows immediately, bypassing the 7-day TTL.
+         *
+         *     `canonical_urls` lists only the rows that had a URL, so the count is the
+         *     authoritative total.
          *
          *     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
          *     costs an existence check, an insert, and a delete, so on the loop a big
@@ -2214,6 +2262,55 @@ export interface components {
             approved?: boolean | null;
         };
         /**
+         * AttachLinkRequest
+         * @description Promotion (url-less-jobs.md section 5.4): give a URL-less job its URL.
+         *
+         *     `confirm` attaches despite a mismatch or an unreadable page, which is
+         *     rank-don't-gate applied to a field: always available, never the default.
+         *     `merge` answers the collision in section 5.5 when a scanned row already
+         *     holds the pasted URL.
+         */
+        AttachLinkRequest: {
+            /** Url */
+            url: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+            /**
+             * Merge
+             * @default false
+             */
+            merge: boolean;
+        };
+        /**
+         * AttachLinkResultDTO
+         * @description What the Add-link dialog renders next.
+         *
+         *     - `attached`: the check passed (or the user confirmed), the row is re-keyed.
+         *     - `mismatch`: the compound gate said no; `pasted` and `card` fill the
+         *       side-by-side and `confirm` attaches anyway.
+         *     - `unreadable`: `probe_url` failed, so there's nothing to compare.
+         *     - `duplicate`: a scanned row already holds this URL; `merge` resolves it.
+         *     - `merge_refused`: both rows have an application, so merging would throw
+         *       one away. The user picks (section 5.5).
+         */
+        AttachLinkResultDTO: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "attached" | "mismatch" | "unreadable" | "duplicate" | "merge_refused";
+            job?: components["schemas"]["JobDTO"] | null;
+            pasted?: components["schemas"]["LinkCandidateDTO"] | null;
+            card?: components["schemas"]["LinkCandidateDTO"] | null;
+            /** Other Job Id */
+            other_job_id?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
          * BoardPageDTO
          * @description One page of the Job Board feed (FR-JB-02) plus the header meta the board
          *     needs (FR-JB-10): a real last-scan time + scrape status so the empty state is
@@ -2733,10 +2830,17 @@ export interface components {
         };
         /**
          * JobCreate
-         * @description Add-by-URL (US-JB-07) + programmatic ingest.
+         * @description Add a job (US-JB-07) + programmatic ingest.
+         *
+         *     The link is recommended, never required: a job with no usable URL is keyed
+         *     on its description instead (url-less-jobs.md section 5.1). One of the 2
+         *     has to be there, which the route enforces.
          */
         JobCreate: {
-            /** Canonical Url */
+            /**
+             * Canonical Url
+             * @default
+             */
             canonical_url: string;
             /** Title */
             title: string;
@@ -2770,7 +2874,7 @@ export interface components {
             /** Id */
             id: string;
             /** Canonical Url */
-            canonical_url: string;
+            canonical_url: string | null;
             /** Title */
             title: string;
             /** Company */
@@ -2870,6 +2974,20 @@ export interface components {
         JobUpdate: {
             /** Feed State */
             feed_state?: string | null;
+        };
+        /**
+         * LinkCandidateDTO
+         * @description One side of the mismatch confirm's side-by-side.
+         */
+        LinkCandidateDTO: {
+            /** Title */
+            title: string;
+            /** Company */
+            company: string;
+            /** Location */
+            location: string;
+            /** Similarity */
+            similarity?: number | null;
         };
         /**
          * LinkedInCapDTO
@@ -3581,7 +3699,10 @@ export interface components {
         /**
          * TombstoneResultDTO
          * @description Result of a permanent-discard action (Empty Trash / Delete forever /
-         *     TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned.
+         *     TTL eviction — US-JB-11 / FR-SYS-04): how many identities were tombstoned.
+         *
+         *     `canonical_urls` lists only the rows that had one, so it can be shorter
+         *     than `tombstoned` when a URL-less job was among them.
          */
         TombstoneResultDTO: {
             /** Tombstoned */
@@ -3966,6 +4087,7 @@ export interface operations {
                 page_size?: number;
                 list_q?: string;
                 text_q?: string;
+                link?: string;
             };
             header?: never;
             path?: never;
@@ -4099,6 +4221,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_job_link_api_jobs__job_id__link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachLinkResultDTO"];
                 };
             };
             /** @description Validation Error */

@@ -21,6 +21,8 @@ import { formatWhen } from "../../shell/datetime";
 import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
+import { AddLinkDialog } from "../jobs/AddLinkDialog";
+import { JobProvenanceChips } from "../jobs/JobProvenanceChips";
 import { scoreTier, workLabel } from "../jobFormat";
 
 // Translation keys for the attached-document slots' human labels (the artifact
@@ -99,6 +101,10 @@ function JobDetail({ job }: { job: Job }) {
   const { t } = useTranslation();
   const tier = job.score ? scoreTier(job.score.score_0_100) : null;
   const meta = [job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · ");
+  // Same Add-link dialog as the board's detail pane (url-less-jobs.md 9.7):
+  // this is where a user looks at a job they're already pursuing, so it's
+  // where they're most likely to have found the posting since.
+  const [linking, setLinking] = useState(false);
   return (
     <div className="space-y-3" data-testid="detail-job-info">
       <div className="flex items-start gap-3">
@@ -118,17 +124,38 @@ function JobDetail({ job }: { job: Job }) {
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-3 text-[12px]">
-        <a
-          href={job.canonical_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          data-testid="detail-job-url"
-          className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
-        >
-          {t("tracker.jobDetail.openPosting")}
-        </a>
+        {job.canonical_url ? (
+          <a
+            href={job.canonical_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="detail-job-url"
+            className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+          >
+            {t("tracker.jobDetail.openPosting")}
+          </a>
+        ) : (
+          <button
+            type="button"
+            data-testid="detail-add-link"
+            onClick={() => setLinking(true)}
+            className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+          >
+            {t("jobBoard.detail.addLink")}
+          </button>
+        )}
         {job.salary ? <span className="text-ink-3">{job.salary}</span> : null}
+        {/* The source and trust chips, same 2 axes as the board card (9.7). */}
+        <JobProvenanceChips job={job} />
       </div>
+      {linking ? (
+        <AddLinkDialog
+          jobId={job.id}
+          jobLabel={`${job.title} · ${job.company}`}
+          onClose={() => setLinking(false)}
+          onAttached={() => setLinking(false)}
+        />
+      ) : null}
       {job.description ? (
         <details className="rounded-md border border-border bg-surface-2" data-testid="detail-jd">
           <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-ink-2">

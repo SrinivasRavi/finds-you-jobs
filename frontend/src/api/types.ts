@@ -78,7 +78,10 @@ export type WorkStyle = "REMOTE" | "HYBRID" | "ONSITE" | "";
 export interface Job {
   id: string;
   title: string;
-  canonical_url: string;
+  /** null on a job the user typed in (url-less-jobs.md section 5.3). Every
+   *  reader treating it as somewhere to go needs a branch: "Open posting"
+   *  becomes "Add link", and Apply asks for the link instead of failing. */
+  canonical_url: string | null;
   company: string;
   location: string;
   description: string;
@@ -936,6 +939,38 @@ export interface Operation {
   /** verbatim error message on failure (never swallowed). */
   error: string | null;
   created_at: string;
+  /** What the op produced, when the op is its own home for it: a triage
+   *  score's number and reasons (no job row to put them on), a scan's
+   *  per-source report, a draft's message. Null until the op finishes. */
+  result_ref: Record<string, unknown> | null;
+}
+
+/** One side of the Add-link mismatch confirm (url-less-jobs.md section 9.5). */
+export interface LinkCandidate {
+  title: string;
+  company: string;
+  location: string;
+  /** 0..1 against the card's description; null when there's nothing to compare. */
+  similarity: number | null;
+}
+
+/** What the Add-link dialog renders next (section 5.4 / 5.5). */
+export interface AttachLinkResult {
+  status: "attached" | "mismatch" | "unreadable" | "duplicate" | "merge_refused";
+  job: Job | null;
+  pasted: LinkCandidate | null;
+  card: LinkCandidate | null;
+  other_job_id: string | null;
+}
+
+export interface AttachLinkInput {
+  job_id: string;
+  url: string;
+  /** Attach despite a mismatch or an unreadable page — always available,
+   *  never the default (rank-don't-gate applied to a field). */
+  confirm?: boolean;
+  /** Resolve a collision by merging into this card (section 5.5). */
+  merge?: boolean;
 }
 
 // ─── Operations ledger (Logs/Analytics reads this — section 10) ────────────────────

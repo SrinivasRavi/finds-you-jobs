@@ -152,7 +152,6 @@ const de: DeepPartial<Messages> = {
       finderPrefs: "Jobfinder-Präferenzen",
       finderPrefsTitle: "Hintergrund-Scans und Scoring konfigurieren",
       deletedJobs: "Gelöschte Jobs",
-      addJobByUrl: "Job per URL hinzufügen",
     },
     filters: {
       workStyle: "Arbeitsmodell",
@@ -311,23 +310,6 @@ const de: DeepPartial<Messages> = {
       starting: "Wird gestartet…",
       rescanNow: "Jetzt neu scannen",
     },
-    addModal: {
-      title: "Job per URL hinzufügen",
-      pasteLabel:
-        "Füge die URL einer Jobanzeige ein. (Um ein ganzes Firmen-Board zu verfolgen, nutze „Mehr Jobs dieser Firma anzeigen“ bei einem Job oder dieselbe Liste in den Jobfinder-Präferenzen.)",
-      tombstoned:
-        "Dieser Job wurde endgültig gelöscht und kann nicht erneut hinzugefügt werden. Wenn du ihn weiter verfolgen willst, notiere ihn außerhalb der App.",
-      cancel: "Abbrechen",
-      fetchDetails: "Jobdetails abrufen",
-      fetching: "Jobdetails werden abgerufen…",
-      noUrl: "(keine URL)",
-      refetch: "· Neu abrufen",
-      titlePlaceholder: "Titel",
-      companyPlaceholder: "Firma",
-      locationPlaceholder: "Ort",
-      descriptionPlaceholder: "Beschreibung",
-      submit: "Zu „Jobs“ hinzufügen",
-    },
     trashModal: {
       title: "Gelöschte Jobs",
       retention: "Gelöschte Jobs werden nach 7 Tagen endgültig gelöscht.",
@@ -411,20 +393,9 @@ const de: DeepPartial<Messages> = {
       optional: "optional",
     },
     addApp: {
-      intro:
-        "Schon woanders auf einen Job beworben? Füge die URL der Anzeige ein, um die Bewerbung hier zu erfassen — den verwendeten Lebenslauf und das Anschreiben kannst du anhängen.",
-      tombstoned: "Dieser Job wurde endgültig gelöscht und kann nicht erneut hinzugefügt werden.",
-      fetch: "Jobdetails abrufen",
-      fetching: "Jobdetails werden abgerufen…",
-      noUrl: "(keine URL)",
-      refetch: "· Neu abrufen",
-      titlePlaceholder: "Titel",
-      companyPlaceholder: "Firma",
-      locationPlaceholder: "Ort",
       stage: "Phase",
       notesPlaceholder: "Notizen (optional)",
       adding: "Wird hinzugefügt…",
-      submit: "Bewerbung hinzufügen",
     },
     jobDetail: {
       matchScoreTitle: "Match-Score anhand deines Master-Lebenslaufs",

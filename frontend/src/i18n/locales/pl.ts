@@ -159,7 +159,6 @@ const pl: DeepPartial<Messages> = {
       finderPrefs: "Preferencje wyszukiwania ofert",
       finderPrefsTitle: "Skonfiguruj skanowanie w tle i ocenianie",
       deletedJobs: "Usunięte oferty",
-      addJobByUrl: "Dodaj ofertę z URL",
     },
     filters: {
       workStyle: "Tryb pracy",
@@ -323,23 +322,6 @@ const pl: DeepPartial<Messages> = {
       starting: "Uruchamianie…",
       rescanNow: "Skanuj ponownie",
     },
-    addModal: {
-      title: "Dodaj ofertę z URL",
-      pasteLabel:
-        "Wklej URL ogłoszenia o pracę. (Aby śledzić całą stronę karier firmy, użyj „Pokaż więcej ofert tej firmy” na ofercie albo tej samej listy w Preferencjach wyszukiwania ofert.)",
-      tombstoned:
-        "Ta oferta została trwale usunięta i nie można jej dodać ponownie. Jeśli nadal chcesz ją śledzić, zachowaj jej zapis poza aplikacją.",
-      cancel: "Anuluj",
-      fetchDetails: "Pobierz szczegóły oferty",
-      fetching: "Pobieranie szczegółów oferty…",
-      noUrl: "(brak URL)",
-      refetch: "· Pobierz ponownie",
-      titlePlaceholder: "Tytuł",
-      companyPlaceholder: "Firma",
-      locationPlaceholder: "Lokalizacja",
-      descriptionPlaceholder: "Opis",
-      submit: "Dodaj do Ofert",
-    },
     trashModal: {
       title: "Usunięte oferty",
       retention: "Oferty w koszu są trwale usuwane po 7 dniach.",
@@ -427,20 +409,9 @@ const pl: DeepPartial<Messages> = {
       optional: "opcjonalnie",
     },
     addApp: {
-      intro:
-        "Aplikacja na jakąś ofertę poszła już gdzie indziej? Wklej URL jej ogłoszenia, aby ją tu zarejestrować — możesz załączyć użyte CV i list motywacyjny.",
-      tombstoned: "Ta oferta została trwale usunięta i nie można jej dodać ponownie.",
-      fetch: "Pobierz szczegóły oferty",
-      fetching: "Pobieranie szczegółów oferty…",
-      noUrl: "(brak URL)",
-      refetch: "· Pobierz ponownie",
-      titlePlaceholder: "Tytuł",
-      companyPlaceholder: "Firma",
-      locationPlaceholder: "Lokalizacja",
       stage: "Etap",
       notesPlaceholder: "Notatki (opcjonalnie)",
       adding: "Dodawanie…",
-      submit: "Dodaj aplikację",
     },
     jobDetail: {
       matchScoreTitle: "Ocena dopasowania względem twojego głównego CV",
@@ -915,8 +886,6 @@ const pl: DeepPartial<Messages> = {
       contactPurgeLabel: "Usuwaj na dobre usunięte kontakty po upływie",
       contactPurgeHint: "Usunięte kontakty są kasowane trwale po tylu dniach.",
       expireListingLabel: "Oznaczaj ofertę jako „Starsza” po upływie",
-      expireListingHint:
-        "Oferta, której nie zobaczyliśmy ponownie podczas skanowania przez tyle dni, jest wyszarzana jako „Starsza oferta” — nadal jest na tablicy i możesz ją przywrócić.",
       trashedJobsLabel: "Usuwaj na dobre usunięte oferty po upływie",
       trashedJobsHint:
         "Usunięte oferty są kasowane trwale (i nie będą ponownie skanowane) po tylu dniach.",

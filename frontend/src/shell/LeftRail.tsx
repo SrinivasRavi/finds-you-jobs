@@ -33,11 +33,6 @@ const BOTTOM: RailItem[] = [
   // Logs folded into Analytics (US-LOG-01): one surface, cost left + ledger right.
   { to: "/analytics", label: "nav.analytics", icon: "barChart" },
 ];
-// Design-preview tiles, vite dev builds only (never in a packaged app): the
-// url-less-jobs surfaces are mock-data screens for review, not product.
-const DEV_ONLY: RailItem[] = import.meta.env.DEV
-  ? [{ to: "/url-less", label: "nav.urlLessPreview", icon: "file" }]
-  : [];
 // The Dev tab (US-DEV-01) is hidden from the rail — its scenarios are better
 // covered by killing `pnpm dev` (crash) + the persistent browser profile
 // (logout). The /dev route + endpoints stay for future not-otherwise-testable
@@ -114,7 +109,7 @@ export function LeftRail() {
         ))}
       </ul>
       <ul className="flex flex-col items-center gap-1 pb-1" role="list">
-        {[...DEV_ONLY, ...BOTTOM].map((it) => (
+        {BOTTOM.map((it) => (
           <li key={it.to}>
             <Tile {...it} />
           </li>

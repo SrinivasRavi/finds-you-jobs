@@ -151,7 +151,6 @@ const hi: DeepPartial<Messages> = {
       finderPrefs: "जॉब खोज प्राथमिकताएँ",
       finderPrefsTitle: "बैकग्राउंड स्क्रैपिंग और स्कोरिंग कॉन्फ़िगर करें",
       deletedJobs: "हटाई गई जॉब्स",
-      addJobByUrl: "URL से जॉब जोड़ें",
     },
     filters: {
       workStyle: "कार्य शैली",
@@ -310,23 +309,6 @@ const hi: DeepPartial<Messages> = {
       starting: "शुरू हो रहा है…",
       rescanNow: "अभी दोबारा स्कैन करें",
     },
-    addModal: {
-      title: "URL से जॉब जोड़ें",
-      pasteLabel:
-        "जॉब पोस्टिंग का URL पेस्ट करें। (पूरी कंपनी का बोर्ड फ़ॉलो करने के लिए किसी जॉब पर “इस कंपनी की और जॉब्स दिखाएँ” या जॉब खोज प्राथमिकताओं की वही सूची इस्तेमाल करें।)",
-      tombstoned:
-        "यह जॉब स्थायी रूप से मिटाई जा चुकी है और दोबारा नहीं जोड़ी जा सकती। फिर भी ट्रैक करना हो तो इसका रिकॉर्ड ऐप के बाहर रखें।",
-      cancel: "रद्द करें",
-      fetchDetails: "जॉब विवरण लाएँ",
-      fetching: "जॉब विवरण लाया जा रहा है…",
-      noUrl: "(कोई URL नहीं)",
-      refetch: "· दोबारा लाएँ",
-      titlePlaceholder: "पदनाम",
-      companyPlaceholder: "कंपनी",
-      locationPlaceholder: "स्थान",
-      descriptionPlaceholder: "विवरण",
-      submit: "जॉब खोज में जोड़ें",
-    },
     trashModal: {
       title: "हटाई गई जॉब्स",
       retention: "हटाई गई जॉब्स 7 दिन बाद स्थायी रूप से मिट जाती हैं।",
@@ -410,20 +392,9 @@ const hi: DeepPartial<Messages> = {
       optional: "वैकल्पिक",
     },
     addApp: {
-      intro:
-        "कहीं और किसी जॉब पर पहले ही आवेदन कर चुके हैं? उसकी पोस्टिंग का URL पेस्ट करके यहाँ दर्ज करें — उपयोग किए रेज़्यूमे और कवर लेटर भी संलग्न कर सकते हैं।",
-      tombstoned: "यह जॉब स्थायी रूप से मिटाई जा चुकी है और दोबारा नहीं जोड़ी जा सकती।",
-      fetch: "जॉब विवरण लाएँ",
-      fetching: "जॉब विवरण लाया जा रहा है…",
-      noUrl: "(कोई URL नहीं)",
-      refetch: "· दोबारा लाएँ",
-      titlePlaceholder: "पदनाम",
-      companyPlaceholder: "कंपनी",
-      locationPlaceholder: "स्थान",
       stage: "चरण",
       notesPlaceholder: "नोट्स (वैकल्पिक)",
       adding: "जोड़ा जा रहा है…",
-      submit: "आवेदन जोड़ें",
     },
     jobDetail: {
       matchScoreTitle: "आपके मास्टर रेज़्यूमे के आधार पर मैच स्कोर",
@@ -889,8 +860,6 @@ const hi: DeepPartial<Messages> = {
       contactPurgeLabel: "हटाए संपर्क स्थायी रूप से मिटाएँ, इतने बाद",
       contactPurgeHint: "आपके हटाए संपर्क इतने दिनों बाद स्थायी रूप से मिट जाते हैं।",
       expireListingLabel: "जॉब लिस्टिंग को “पुरानी” चिह्नित करें, इतने बाद",
-      expireListingHint:
-        "जो जॉब इतने दिनों तक किसी स्कैन में दोबारा नहीं दिखी, उसे “पुरानी लिस्टिंग” के रूप में धूसर कर दिया जाता है — फिर भी बोर्ड पर रहती है, और आप उसे पुनर्स्थापित कर सकते हैं।",
       trashedJobsLabel: "हटाई गई जॉब्स स्थायी रूप से मिटाएँ, इतने बाद",
       trashedJobsHint:
         "हटाई गई जॉब्स इतने दिनों बाद स्थायी रूप से मिट जाती हैं (और दोबारा स्क्रैप नहीं होतीं)।",
