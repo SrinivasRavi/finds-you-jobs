@@ -4,9 +4,9 @@ The dedup invariant (canonical URL) can't catch the same role posted on a
 company's Greenhouse board *and* on LinkedIn: different hosts, different
 canonical URLs, two rows. This module flags those probable cross-listings by
 content identity: a 64-bit SimHash (Charikar) over 3-token shingles of the
-normalized JD text; two descriptions whose hashes agree on ≥ 92% of bits are
-near-certainly the same posting. Technique per career-ops's
-`fingerprint-core.mjs` (MIT) — reimplemented here from its documented design
+normalized JD text; two descriptions whose hashes agree on ≥ 90% of bits are
+candidates for the same posting, confirmed by company and title. Technique per
+career-ops's `fingerprint-core.mjs` (MIT) — reimplemented from its design
 (Python `hashlib` in place of Node `crypto`), no upstream code carried; see
 `UPSTREAMS.md`.
 
@@ -20,7 +20,10 @@ from __future__ import annotations
 import hashlib
 import re
 
-SIMILARITY_THRESHOLD = 0.92
+# 0.90 with the company+title gate below. Similarity alone is 57% precise at
+# 0.92 on the 112-posting bench corpus, because employer boilerplate puts any
+# 2 postings from 1 company on a high floor (url-less-jobs.md section 6.4).
+SIMILARITY_THRESHOLD = 0.90
 _SHINGLE = 3
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -54,5 +57,26 @@ def similarity(a: int, b: int) -> float:
     return 1.0 - ((a ^ b).bit_count() / 64)
 
 
-def is_probable_cross_listing(a: int, b: int) -> bool:
-    return similarity(a, b) >= SIMILARITY_THRESHOLD
+def normalize_label(value: str) -> str:
+    """Company/title normalized for equality: lowercase alphanumeric tokens."""
+    return " ".join(_TOKEN_RE.findall((value or "").lower()))
+
+
+def is_probable_cross_listing(
+    a: int,
+    b: int,
+    *,
+    company_a: str = "",
+    company_b: str = "",
+    title_a: str = "",
+    title_b: str = "",
+) -> bool:
+    """Same company, same title, and descriptions at or above the threshold.
+
+    The 3 parts are one gate: 0 clear false positives on the bench corpus,
+    against 9 for the bare similarity test it replaces (section 6.4)."""
+    if similarity(a, b) < SIMILARITY_THRESHOLD:
+        return False
+    if normalize_label(company_a) != normalize_label(company_b):
+        return False
+    return normalize_label(title_a) == normalize_label(title_b)

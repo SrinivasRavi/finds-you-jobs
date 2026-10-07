@@ -19,6 +19,7 @@ independent clean-room reimplementation.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 # ATS / aggregator hosts whose domain is the *board provider*, never the employer.
@@ -119,11 +120,16 @@ def registrable_domain(url_or_host: str | None) -> str:
 
 
 def _host(canonical_url: str) -> str:
+    """The host of an http(s) URL, "" for anything else.
+
+    The scheme guard is load-bearing: without it `//`-prepending turns a
+    non-URL identity such as `fyj-local:<uuid>` into `host=fyj-local`, which
+    collapses every URL-less job of every company onto one resolution key."""
     if not canonical_url:
         return ""
     raw = canonical_url.strip()
-    if "//" not in raw:
-        raw = "//" + raw
+    if not re.match(r"(?i)^https?://", raw):
+        return ""
     return (urlparse(raw).netloc or "").split("@")[-1].split(":")[0].lower()
 
 

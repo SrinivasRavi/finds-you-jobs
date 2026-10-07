@@ -190,7 +190,14 @@ def _flag_cross_listings(jobs: list[NormalizedJob]) -> None:
     printed = [(job, simhash64(job.description)) for job in jobs if job.description]
     for i, (job_a, fp_a) in enumerate(printed):
         for job_b, fp_b in printed[i + 1 :]:
-            if not is_probable_cross_listing(fp_a, fp_b):
+            if not is_probable_cross_listing(
+                fp_a,
+                fp_b,
+                company_a=job_a.company,
+                company_b=job_b.company,
+                title_a=job_a.title,
+                title_b=job_b.title,
+            ):
                 continue
             for job, other in ((job_a, job_b), (job_b, job_a)):
                 if not any(f.startswith("probable-cross-listing:") for f in job.trust_flags):
