@@ -537,6 +537,11 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
                 salary=payload.salary,
                 source_adapter=payload.source_adapter,
             )
+            # The cross-scan duplicate check, at write (url-less-jobs.md 9.6).
+            # One narrow scan here keeps the board's render free of it.
+            from ..registry.persistence import flag_near_duplicate
+
+            flag_near_duplicate(repos, job)
             profile = repos.profile.get_current()
             if profile is not None:
                 enqueue_score = True
@@ -708,6 +713,76 @@ def _merge_or_refuse(
         source_adapter=source_adapter,
     )
     return dto.AttachLinkResultDTO(status="attached", job=dto.job_dto(updated))
+
+
+@router.get("/api/jobs/{job_id}/duplicate")
+def get_job_duplicate(request: Request, job_id: str) -> dto.DuplicatePromptDTO | None:
+    """The other job this one probably duplicates, or null (url-less-jobs.md 9.6).
+
+    Reads the flag the ingest pass already wrote, so this is 1 row by primary
+    key plus, only when a flag is actually there, 1 dismissal lookup. A job with
+    no flag never touches the dismissals table."""
+    from ..registry.persistence import DUPLICATE_FLAG
+
+    with _db(request).repos() as repos:
+        job = _found(repos.jobs.get(job_id), "job", job_id)
+        other_id = next(
+            (
+                flag[len(DUPLICATE_FLAG) :]
+                for flag in (job.trust_flags or [])
+                if flag.startswith(DUPLICATE_FLAG)
+            ),
+            "",
+        )
+        if not other_id:
+            return None
+        other = repos.jobs.get(other_id)
+        if other is None or other.feed_state != "active":
+            return None
+        if repos.duplicate_dismissals.is_dismissed(job_id, other_id):
+            return None
+        with_apps = repos.applications.job_ids()
+        return dto.DuplicatePromptDTO(
+            job_id=job_id,
+            other_job_id=other_id,
+            other=dto.LinkCandidateDTO(
+                title=other.title, company=other.company, location=other.location
+            ),
+            other_added_at=other.ingested_at,
+            both_have_applications=job_id in with_apps and other_id in with_apps,
+        )
+
+
+@router.post("/api/jobs/{job_id}/duplicate/dismiss")
+def dismiss_job_duplicate(
+    request: Request, job_id: str, payload: dto.DuplicateActionRequest
+) -> dto.JobDTO:
+    """"They're different." Remembered on the PAIR, so it never asks again from
+    either card (D15)."""
+    with _db(request).repos() as repos:
+        job = _found(repos.jobs.get(job_id), "job", job_id)
+        _found(repos.jobs.get(payload.other_job_id), "job", payload.other_job_id)
+        repos.duplicate_dismissals.dismiss(job_id, payload.other_job_id)
+        return dto.job_dto(job)
+
+
+@router.post("/api/jobs/{job_id}/duplicate/merge")
+def merge_job_duplicate(
+    request: Request, job_id: str, payload: dto.DuplicateActionRequest
+) -> dto.AttachLinkResultDTO:
+    """Merge the scanned row into the user's own (url-less-jobs.md 5.5).
+
+    `job_id` is the row the user KEEPS. The same `_merge_or_refuse` the Add-link
+    collision uses, so the rule, the refusal and the cascade can't drift between
+    the 2 doors that reach it."""
+    with _db(request).repos() as repos:
+        job = _found(repos.jobs.get(job_id), "job", job_id)
+        other = _found(
+            repos.jobs.get(payload.other_job_id), "job", payload.other_job_id
+        )
+        return _merge_or_refuse(
+            repos, job, other, other.canonical_url or job.canonical_url or "", merge=True
+        )
 
 
 @router.post("/api/jobs/{job_id}/tombstone")

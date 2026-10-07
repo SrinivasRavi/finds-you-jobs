@@ -245,6 +245,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/{job_id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job Duplicate
+         * @description The other job this one probably duplicates, or null (url-less-jobs.md 9.6).
+         *
+         *     Reads the flag the ingest pass already wrote, so this is 1 row by primary
+         *     key plus, only when a flag is actually there, 1 dismissal lookup. A job with
+         *     no flag never touches the dismissals table.
+         */
+        get: operations["get_job_duplicate_api_jobs__job_id__duplicate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/duplicate/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Job Duplicate
+         * @description "They're different." Remembered on the PAIR, so it never asks again from
+         *     either card (D15).
+         */
+        post: operations["dismiss_job_duplicate_api_jobs__job_id__duplicate_dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/duplicate/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Job Duplicate
+         * @description Merge the scanned row into the user's own (url-less-jobs.md 5.5).
+         *
+         *     `job_id` is the row the user KEEPS. The same `_merge_or_refuse` the Add-link
+         *     collision uses, so the rule, the refusal and the cascade can't drift between
+         *     the 2 doors that reach it.
+         */
+        post: operations["merge_job_duplicate_api_jobs__job_id__duplicate_merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}/tombstone": {
         parameters: {
             query?: never;
@@ -2839,6 +2908,38 @@ export interface components {
             enabled: boolean;
         };
         /**
+         * DuplicateActionRequest
+         * @description Which other job the user is answering about.
+         */
+        DuplicateActionRequest: {
+            /** Other Job Id */
+            other_job_id: string;
+        };
+        /**
+         * DuplicatePromptDTO
+         * @description The "this looks like the job you added on Monday" prompt (9.6).
+         *
+         *     Absent (null) whenever there is nothing to ask: no flag, the counterpart is
+         *     gone or archived, or the user already said they are different.
+         */
+        DuplicatePromptDTO: {
+            /** Job Id */
+            job_id: string;
+            /** Other Job Id */
+            other_job_id: string;
+            other: components["schemas"]["LinkCandidateDTO"];
+            /**
+             * Other Added At
+             * Format: date-time
+             */
+            other_added_at: string;
+            /**
+             * Both Have Applications
+             * @default false
+             */
+            both_have_applications: boolean;
+        };
+        /**
          * EngineSettingDTO
          * @description Engine config sans secret — `has_key` reports presence, `key_hint` is a
          *     masked display fragment (e.g. `sk-…abc4`), never the key itself.
@@ -4482,6 +4583,107 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AttachLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachLinkResultDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_duplicate_api_jobs__job_id__duplicate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DuplicatePromptDTO"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_job_duplicate_api_jobs__job_id__duplicate_dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_job_duplicate_api_jobs__job_id__duplicate_merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateActionRequest"];
             };
         };
         responses: {

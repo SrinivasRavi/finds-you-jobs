@@ -33,6 +33,7 @@ from .models import (
     Document,
     EngineSettings,
     Job,
+    JobDuplicateDismissal,
     JobScoreFactor,
     LinkedInSearchCursor,
     LinkedInSession,
@@ -596,6 +597,52 @@ class JobsRepo:
                 llm_score_last_error=error[:2000],
             )
         )
+
+    def near_duplicate_ids(
+        self, fingerprint: int | None, *, company: str, title: str, exclude_id: str
+    ) -> list[str]:
+        """Active jobs that are probably the SAME posting as this one.
+
+        Run at INGEST, never at render, so the board pays nothing for this and
+        the answer is already on the row by the time anybody looks at it.
+
+        Deliberately a narrow scan rather than an index lookup: similarity here
+        is Hamming distance over a simhash, which no equality index can answer.
+        So it reads 4 columns and never the descriptions, which is what keeps a
+        1,000-job board at roughly 100 KB and a few thousand popcounts per
+        inserted row instead of a multi-megabyte load.
+
+        The gate is the compound one (same company, same title, similarity at or
+        above the threshold), because bare similarity was 57% precise on the
+        bench corpus and called a Senior and a Principal at one employer the
+        same job (S-C69, url-less-jobs.md 6.4)."""
+        from sidecar.modules.scraper.fingerprint import (
+            from_signed64,
+            is_probable_cross_listing,
+        )
+
+        if not fingerprint:
+            return []
+        rows = self._s.execute(
+            select(Job.id, Job.fingerprint, Job.company, Job.title).where(
+                Job.id != exclude_id,
+                Job.feed_state == "active",
+                Job.fingerprint.is_not(None),
+            )
+        )
+        mine = from_signed64(fingerprint)
+        return [
+            row_id
+            for row_id, row_fp, row_company, row_title in rows
+            if is_probable_cross_listing(
+                mine,
+                from_signed64(row_fp or 0),
+                company_a=company,
+                company_b=row_company,
+                title_a=title,
+                title_b=row_title,
+            )
+        ]
 
     def count_score_exhausted(self, max_attempts: int) -> int:
         """Active jobs that have spent their whole AI-scoring budget and still
@@ -1429,6 +1476,62 @@ class ReferralCandidatesRepo:
         return cast("CursorResult[Any]", result).rowcount
 
 
+class JobDuplicateDismissalsRepo:
+    """Pairs the user has said are NOT the same posting (D15).
+
+    Everything here works on the ORDERED pair, so a caller never has to know
+    which job it is asking from.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    @staticmethod
+    def _pair(a: str, b: str) -> tuple[str, str]:
+        return (a, b) if a < b else (b, a)
+
+    def dismiss(self, job_id: str, other_job_id: str) -> None:
+        """Idempotent: asking twice is the same as asking once."""
+        low, high = self._pair(job_id, other_job_id)
+        existing = self._s.scalars(
+            select(JobDuplicateDismissal).where(
+                JobDuplicateDismissal.low_job_id == low,
+                JobDuplicateDismissal.high_job_id == high,
+            )
+        ).first()
+        if existing is None:
+            self._s.add(JobDuplicateDismissal(low_job_id=low, high_job_id=high))
+
+    def is_dismissed(self, job_id: str, other_job_id: str) -> bool:
+        low, high = self._pair(job_id, other_job_id)
+        return (
+            self._s.scalars(
+                select(JobDuplicateDismissal).where(
+                    JobDuplicateDismissal.low_job_id == low,
+                    JobDuplicateDismissal.high_job_id == high,
+                )
+            ).first()
+            is not None
+        )
+
+    def dismissed_pairs(self, job_ids: list[str]) -> set[tuple[str, str]]:
+        """Every dismissed pair touching these jobs, in 1 query.
+
+        The board calls this ONLY for the handful of rows carrying a duplicate
+        flag, so a page with no flagged pair never reaches this table."""
+        if not job_ids:
+            return set()
+        rows = self._s.scalars(
+            select(JobDuplicateDismissal).where(
+                or_(
+                    JobDuplicateDismissal.low_job_id.in_(job_ids),
+                    JobDuplicateDismissal.high_job_id.in_(job_ids),
+                )
+            )
+        )
+        return {(row.low_job_id, row.high_job_id) for row in rows}
+
+
 class JobScoreFactorsRepo:
     """Per-axis score detail, one row per (job, method, factor).
 
@@ -1735,6 +1838,7 @@ class Repos:
         self.company_resolutions = CompanyResolutionsRepo(session)
         self.referral_candidates = ReferralCandidatesRepo(session)
         self.job_score_factors = JobScoreFactorsRepo(session)
+        self.duplicate_dismissals = JobDuplicateDismissalsRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)

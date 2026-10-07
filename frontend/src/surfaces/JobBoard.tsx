@@ -39,6 +39,7 @@ import { Avatar } from "../shell/Avatar";
 import { ChipInput } from "../shell/ChipInput";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { FactorBars } from "../shell/FactorBars";
+import { DuplicatePrompt } from "./jobs/DuplicatePrompt";
 import { Icon } from "../shell/icons";
 import { Chip, SearchBox } from "../shell/FilterRow";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
@@ -666,6 +667,9 @@ function JobDetail({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
+        <div className="px-6 pt-4">
+          <DuplicatePrompt jobId={job.id} />
+        </div>
         {/* JD | Scoring as equal columns (maintainer, 2026-07-11) — the scoring
             table needs real width, matching the detail modal's Scoring tab. */}
         <div className="grid grid-cols-2 gap-6 px-6 py-5">

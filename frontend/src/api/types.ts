@@ -89,6 +89,17 @@ export interface PromptTestResult {
   usd?: number | null;
 }
 
+/** The "this looks like the job you added on Monday" prompt (url-less-jobs.md
+ *  9.6). Null whenever there is nothing to ask. */
+export interface DuplicatePrompt {
+  job_id: string;
+  other_job_id: string;
+  other: LinkCandidate;
+  other_added_at: string;
+  /** Merging would throw an application away, so the dialog refuses and asks. */
+  both_have_applications: boolean;
+}
+
 export interface JobFactors {
   job_id: string;
   method: string;

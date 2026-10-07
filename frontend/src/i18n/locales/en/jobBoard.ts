@@ -84,6 +84,22 @@ const jobBoard = {
     gotOne: "Got a description from an email? Paste it.",
     lastRefresh: "Last refresh {{ago}}.",
   },
+  duplicate: {
+    looksLike: "This looks like \"{{title}}\", which you added {{days}} days ago.",
+    compare: "Compare",
+    different: "They're different",
+    mergeTitle: "Merge these 2 jobs?",
+    keeping: "Keeping",
+    keepingWhat: "Your own card, with its stage, documents and notes.",
+    taking: "Taking",
+    takingWhat: "The scanned job's description, link and source.",
+    nothingLost: "The scanned card is deleted. Nothing you wrote is lost.",
+    bothTracked:
+      "Both of these are in your tracker. Merging would throw one of them away, so pick "
+      + "the one to keep and delete the other yourself.",
+    keepBoth: "Keep both",
+    merge: "Merge",
+  },
   detail: {
     pickJob: "Pick a job to see details.",
     workStyleNA: "Work style: N/A",

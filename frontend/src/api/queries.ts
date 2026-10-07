@@ -66,6 +66,7 @@ export const qk = {
   costTotals: ["costTotals"] as const,
   retryableScores: ["retryableScores"] as const,
   jobFactors: ["jobFactors"] as const,
+  jobDuplicate: ["jobDuplicate"] as const,
   explainCost: ["explainCost"] as const,
   schedulerStatus: ["schedulerStatus"] as const,
   spans: ["spans"] as const,
@@ -89,6 +90,41 @@ export function useExplainCost(enabled: boolean) {
     queryKey: qk.explainCost,
     queryFn: () => api.getExplainCost(),
     enabled,
+  });
+}
+
+/** The duplicate prompt for one open card (url-less-jobs.md 9.6). Only the open
+ *  card asks, and the answer is a flag the ingest pass already wrote. */
+export function useJobDuplicate(jobId: string | null) {
+  return useQuery({
+    queryKey: [...qk.jobDuplicate, jobId],
+    queryFn: () => api.getJobDuplicate(jobId!),
+    enabled: !!jobId,
+  });
+}
+
+/** "They're different", remembered on the pair so it never asks again. */
+export function useDismissJobDuplicate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, otherJobId }: { jobId: string; otherJobId: string }) =>
+      api.dismissJobDuplicate(jobId, otherJobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.jobDuplicate });
+    },
+  });
+}
+
+/** Merge the scanned row into the user's own. `jobId` is the one kept. */
+export function useMergeJobDuplicate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, otherJobId }: { jobId: string; otherJobId: string }) =>
+      api.mergeJobDuplicate(jobId, otherJobId),
+    onSuccess: () => {
+      invalidateFeed(qc);
+      void qc.invalidateQueries({ queryKey: qk.jobDuplicate });
+    },
   });
 }
 

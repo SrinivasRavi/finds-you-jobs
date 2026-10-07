@@ -243,6 +243,32 @@ class JobScoreFactor(Base):
     )
 
 
+class JobDuplicateDismissal(Base):
+    """A pair of jobs the user said are NOT the same posting (D15).
+
+    Stored as an ORDERED pair, `low_job_id` < `high_job_id`, so one row answers
+    the question from either side and there is exactly one write site. Both
+    sides are real foreign keys with ON DELETE CASCADE, so deleting either job
+    takes the dismissal with it rather than leaving an id pointing at nothing.
+    """
+
+    __tablename__ = "job_duplicate_dismissals"
+
+    id: Mapped[str] = _pk()
+    low_job_id: Mapped[str] = mapped_column(
+        String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    high_job_id: Mapped[str] = mapped_column(
+        String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("low_job_id", "high_job_id", name="uq_job_duplicate_pair"),
+        Index("ix_job_duplicate_dismissals_high", "high_job_id"),
+    )
+
+
 class Tombstone(Base):
     """A permanently-discarded job identity — never re-ingested (FR-SYS-04).
 

@@ -209,6 +209,12 @@ class AttachLinkRequest(BaseModel):
     merge: bool = False
 
 
+class DuplicateActionRequest(BaseModel):
+    """Which other job the user is answering about."""
+
+    other_job_id: str
+
+
 class LinkCandidateDTO(BaseModel):
     """One side of the mismatch confirm's side-by-side."""
 
@@ -216,6 +222,21 @@ class LinkCandidateDTO(BaseModel):
     company: str
     location: str
     similarity: float | None = None
+
+
+class DuplicatePromptDTO(BaseModel):
+    """The "this looks like the job you added on Monday" prompt (9.6).
+
+    Absent (null) whenever there is nothing to ask: no flag, the counterpart is
+    gone or archived, or the user already said they are different."""
+
+    job_id: str
+    other_job_id: str
+    other: LinkCandidateDTO
+    other_added_at: datetime
+    # Both rows in the tracker means the merge would throw one away, so the
+    # dialog refuses and asks rather than guessing with the user's pipeline.
+    both_have_applications: bool = False
 
 
 class AttachLinkResultDTO(BaseModel):

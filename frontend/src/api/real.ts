@@ -41,6 +41,7 @@ const DEFAULT_LOCATION_PENALTY: Record<ScoreWeightPreset, number> = {
 import type {
   AttachLinkInput,
   AttachLinkResult,
+  DuplicatePrompt,
   ExplainCost,
   JobFactors,
   PromptTestInput,
@@ -811,6 +812,25 @@ export class RealApi {
       input as unknown as Record<string, unknown>,
     )) as { id: string };
     return d.id;
+  }
+
+  /** The duplicate this job probably is, or null. Reads a flag written at
+   *  ingest, so it is 1 row by primary key. */
+  async getJobDuplicate(id: string): Promise<DuplicatePrompt | null> {
+    return this.req<DuplicatePrompt | null>(`/api/jobs/${id}/duplicate`);
+  }
+
+  async dismissJobDuplicate(id: string, otherJobId: string): Promise<void> {
+    await this.json("POST", `/api/jobs/${id}/duplicate/dismiss`, {
+      other_job_id: otherJobId,
+    });
+  }
+
+  /** `id` is the row the user KEEPS. */
+  async mergeJobDuplicate(id: string, otherJobId: string): Promise<AttachLinkResult> {
+    return (await this.json("POST", `/api/jobs/${id}/duplicate/merge`, {
+      other_job_id: otherJobId,
+    })) as AttachLinkResult;
   }
 
   /** What an AI score will run on, and what it has cost this user before. */
