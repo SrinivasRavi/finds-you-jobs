@@ -2341,7 +2341,10 @@ export interface components {
         };
         /** Body_create_manual_application_api_applications_manual_post */
         Body_create_manual_application_api_applications_manual_post: {
-            /** Canonical Url */
+            /**
+             * Canonical Url
+             * @default
+             */
             canonical_url: string;
             /**
              * Title
@@ -4625,7 +4628,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_create_manual_application_api_applications_manual_post"];
             };
