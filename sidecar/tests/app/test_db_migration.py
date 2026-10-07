@@ -33,6 +33,7 @@ _EXPECTED = {
     "linkedin_search_cursors",
     "apply_runs",
     "documents",
+    "job_score_factors",
 }
 
 
