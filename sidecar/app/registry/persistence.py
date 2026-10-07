@@ -18,6 +18,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
+from sidecar.modules.geo.resolve import resolve_location
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
 from sidecar.modules.scraper.fingerprint import simhash64, to_signed64
 from sidecar.modules.scraper.identity import content_hash
@@ -37,11 +38,21 @@ SCORER_IMPL = "scorer-llm"
 SCORER_IMPL_DETERMINISTIC = "scorer-deterministic"
 
 
+# Every scoring method the user can pick, in menu order, richest explanation
+# first (`scoring.md` section 7.1). `local` is listed because the menu never
+# hides a method for a missing prerequisite (`talk.md` D44); its pack download is
+# not built yet, so picking it falls back to the keyword floor and says so.
+SCORING_MODES: tuple[str, ...] = ("llm", "jev", "local", "keyword")
+DEFAULT_SCORING_MODE = "llm"
+
+
 def scoring_mode(prefs: Any) -> str:
-    """The Settings → Scoring mode: `"llm"` (default) or `"keyword"`. The ONE
-    reader of `thresholds["scoring_mode"]` — every call site resolves the mode
-    through here so the default and the key can never drift apart."""
-    return str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "llm")
+    """The Settings → Scoring method. The ONE reader of
+    `thresholds["scoring_mode"]`, so the default and the key can never drift
+    apart, and an unrecognized stored value reads as the default rather than
+    breaking dispatch."""
+    stored = str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "")
+    return stored if stored in SCORING_MODES else DEFAULT_SCORING_MODE
 
 # The user-configurable windows below are DERIVED from `LIFECYCLE_DEFAULTS`
 # (D-A15) — they used to be re-typed here, so a Settings default change could
@@ -365,6 +376,103 @@ def _job_columns(job: NormalizedJob) -> dict[str, Any]:
     }
 
 
+BACKFILL_LOCATION_BATCH = 500
+
+
+def backfill_resolved_locations(
+    db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH
+) -> int:
+    """Resolve the location of rows that predate the resolver. Returns the count.
+
+    `location_remote IS NULL` is the "never seen" marker, so this converges: a
+    row it touches stops matching, whatever the resolver concluded. Bounded per
+    call because it runs inside the maintenance tick, which has other stages
+    waiting behind it.
+    """
+    if db is None:
+        return 0
+    with db.repos() as repos:
+        pending = repos.jobs.list_unresolved_locations(limit=limit)
+        for job in pending:
+            resolved = resolve_location(job.location or "")
+            primary = resolved.primary
+            repos.jobs.update(
+                job.id,
+                location_country=primary.country if primary else None,
+                location_admin1=primary.admin1_key if primary else None,
+                location_city_id=primary.city_id if primary else None,
+                location_remote=resolved.remote_scope,
+                location_attendance=str(resolved.attendance) if resolved.attendance else None,
+            )
+        return len(pending)
+
+
+# Jev is reached on the OpenRouter key the user may already have for everything
+# else, so "do you have one" is a database read. The key is opened for THIS
+# operation only, never cached and never written into a snapshot or a log, the
+# same discipline as the scraper credentials above.
+DECISIONS_ENGINE_ID = "openrouter"
+
+
+def decisions_key_present(repos: Repos) -> bool:
+    """Whether a usable key for the decision model is stored, without opening it.
+
+    The Settings row reads this to say "add a key" instead of going grey: a method
+    is never hidden for a missing prerequisite (`talk.md` D44).
+    """
+    row = repos.engine_settings.get_by_engine(DECISIONS_ENGINE_ID)
+    return bool(row is not None and row.key_encrypted and row.enabled)
+
+
+def load_decisions_client(repos: Repos) -> Any:
+    """The Jev client for this operation, or None when no key is stored."""
+    from ..db.database import resolve_data_dir
+    from ..security import get_app_key, open_secret
+    from .engines_http import DecisionsHttpClient
+
+    row = repos.engine_settings.get_by_engine(DECISIONS_ENGINE_ID)
+    if row is None or not row.key_encrypted or not row.enabled:
+        return None
+    try:
+        api_key = open_secret(row.key_encrypted, get_app_key(resolve_data_dir()))
+    except Exception:  # noqa: BLE001 — a corrupt key is a missing key, not a crash
+        import logging
+
+        logging.getLogger("fyj.sidecar").exception("could not open the sealed decisions key")
+        return None
+    return DecisionsHttpClient(api_key=api_key)
+
+
+def render_preferences_block(prefs: Any) -> str:
+    """The user's job-finder preferences as the Scorer's third prompt block.
+
+    Empty when the user has set nothing, so the prompt stays 2 blocks and the
+    skill file says nothing about preferences. The wording is the bench's
+    (`evidence/2026-09-25-scoring-bench/preferences.py`), which is the text the
+    2026-09-28 measurement was taken with.
+    """
+    roles = [str(r) for r in (getattr(prefs, "role_aliases", None) or []) if str(r).strip()]
+    locations = [str(loc) for loc in (getattr(prefs, "locations", None) or []) if str(loc).strip()]
+    excludes = getattr(prefs, "hard_excludes", None) or {}
+    companies = [str(c) for c in (excludes.get("companies") or []) if str(c).strip()]
+    keywords = [str(k) for k in (excludes.get("keywords") or []) if str(k).strip()]
+    freshness = int(getattr(prefs, "freshness_days", 0) or 0)
+    if not (roles or locations or companies or keywords):
+        return ""
+    lines = [
+        "The user set these in the product's job-finder preferences. They state what this "
+        "user wants, and they outrank the resume wherever the two disagree.",
+        "",
+        f"Roles wanted: {', '.join(roles) or 'any'}",
+        f"Locations wanted: {', '.join(locations) or 'any'}",
+        f"Excluded companies: {', '.join(companies) or 'none'}",
+        f"Excluded keywords: {', '.join(keywords) or 'none'}",
+    ]
+    if freshness > 0:
+        lines.append(f"Posting freshness wanted: within {freshness} days")
+    return "\n".join(lines)
+
+
 def scan_usage(result: ScanResult) -> dict[str, Any]:
     """Aggregate the zero-LLM scan usage (HTTP calls + latency)."""
     http_calls = sum(r.usage.internal_calls for r in result.per_source.values())
@@ -527,6 +635,7 @@ def delete_job_cascade(repos: Repos, job_id: str) -> bool:
     before deletion, and trashing requires unsaving first."""
     repos.referral_candidates.delete_for_job(job_id)
     repos.outreach_logs.nullify_for_job(job_id)
+    repos.job_score_factors.delete_for_job(job_id)
     return repos.jobs.delete(job_id)
 
 

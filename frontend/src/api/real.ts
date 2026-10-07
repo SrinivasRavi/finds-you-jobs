@@ -19,10 +19,16 @@
 import type { components } from "./schema";
 import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
 import { JobTombstonedError } from "./types";
+
+/** The methods this build knows. A stored value outside this list reads as "llm",
+ *  the same fallback the server applies. */
+const SCORING_MODES: ScoringMode[] = ["llm", "jev", "local", "keyword"];
 import type {
   AttachLinkInput,
   AttachLinkResult,
   LinkCandidate,
+  ScoringMethod,
+  ScoringMode,
   Application,
   ApplicationDocument,
   ApplicationProfile,
@@ -1088,7 +1094,14 @@ export class RealApi {
       auto_resume_on_save: autoResume,
       auto_cover_on_save: autoCover,
       auto_referrals_on_save: autoReferrals,
-      scoring_mode: thresholds.scoring_mode === "keyword" ? "keyword" : "llm",
+      scoring_mode: SCORING_MODES.includes(thresholds.scoring_mode as ScoringMode)
+        ? (thresholds.scoring_mode as ScoringMode)
+        : "llm",
+      scoring_methods: (d.scoring_methods ?? []).map((m) => ({
+        id: m.id as ScoringMode,
+        ready: Boolean(m.ready),
+        needs: (m.needs ?? null) as ScoringMethod["needs"],
+      })),
       llm_concurrency:
         typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
       score_new_batch: scoreNewBatch,

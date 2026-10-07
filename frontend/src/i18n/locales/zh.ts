@@ -646,8 +646,6 @@ const zh: DeepPartial<Messages> = {
       fallbackInfo:
         "如果 AI 评分失败，会以灰色关键词评分填补 — 可在“分析 → 日志”中重试。",
       howHint: "每个新职位都会根据你的主简历获得匹配分。",
-      modeLlm: "AI 评分 — 质量最佳，但会消耗 LLM token 并需要一些时间",
-      modeKeyword: "关键词评分 — 质量较低，但免费且即时",
       batchCap: "评分批次上限",
       batchCapInfo:
         "不设上限会为一次扫描找到的所有职位评分；设上限则把 LLM 成本分摊到更多次扫描。",

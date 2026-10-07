@@ -3655,11 +3655,32 @@ export interface components {
              */
             reset: number;
         };
+        /**
+         * ScoringMethodDTO
+         * @description One row of the scoring menu, and whether it can run right now.
+         *
+         *     The server reports facts; the client owns the copy and the prices. A method is
+         *     never hidden or disabled for a missing prerequisite (`talk.md` D44), so `ready`
+         *     drives an inline "add a key" or "download" affordance, never a greyed-out row.
+         */
+        ScoringMethodDTO: {
+            /** Id */
+            id: string;
+            /** Ready */
+            ready: boolean;
+            /** Needs */
+            needs?: string | null;
+        };
         /** SettingsDTO */
         SettingsDTO: {
             preferences: components["schemas"]["PreferencesDTO"];
             /** Engines */
             engines: components["schemas"]["EngineSettingDTO"][];
+            /**
+             * Scoring Methods
+             * @default []
+             */
+            scoring_methods: components["schemas"]["ScoringMethodDTO"][];
         };
         /**
          * SpanDTO

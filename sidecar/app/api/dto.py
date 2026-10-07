@@ -616,9 +616,25 @@ class EngineSettingDTO(BaseModel):
     key_hint: str | None
 
 
+class ScoringMethodDTO(BaseModel):
+    """One row of the scoring menu, and whether it can run right now.
+
+    The server reports facts; the client owns the copy and the prices. A method is
+    never hidden or disabled for a missing prerequisite (`talk.md` D44), so `ready`
+    drives an inline "add a key" or "download" affordance, never a greyed-out row.
+    """
+
+    id: str
+    ready: bool
+    # None when ready. "openrouter_key" or "model_pack" otherwise, which is what
+    # the client turns into the one action that clears it.
+    needs: str | None = None
+
+
 class SettingsDTO(BaseModel):
     preferences: PreferencesDTO
     engines: list[EngineSettingDTO]
+    scoring_methods: list[ScoringMethodDTO] = []
 
 
 # ---------------------------------------------------------------------------

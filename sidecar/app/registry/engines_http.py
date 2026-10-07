@@ -37,7 +37,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from sidecar.modules._shared.claude_engine import EngineError, EngineUsage
 
@@ -168,6 +168,59 @@ def price_usd(model: str | None, tokens_in: int | None, tokens_out: int | None) 
 # ---------------------------------------------------------------------------
 # Verify result
 # ---------------------------------------------------------------------------
+
+
+# TypeSafe's Jev is not a chat completion: it takes a state plus typed questions
+# and returns typed answers, so it gets its own client rather than an `Engine`.
+# OpenRouter is the access path to build against. TypeSafe's own API is in early
+# access behind a waitlist, while OpenRouter serves Jev today on the key the user
+# already has, and OpenRouter also mirrors TypeSafe's own shape at
+# `/api/v1/systemone`, so the base URL is a constructor argument: the same client
+# reaches OpenRouter, the Vercel and Cloudflare gateways, or TypeSafe direct.
+DEFAULT_DECISIONS_BASE = "https://openrouter.ai"
+DECISIONS_PATH = "/api/alpha/decisions"
+
+
+class DecisionsHttpClient:
+    """`decide(body) -> reply` over the same transport every engine uses."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        base_url: str = DEFAULT_DECISIONS_BASE,
+        transport: HttpTransport | None = None,
+        timeout_s: int = 60,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.transport = transport or _default_transport()
+        self.timeout_s = timeout_s
+
+    def decide(self, body: dict[str, Any]) -> dict[str, Any]:
+        headers = {"content-type": "application/json"}
+        if self.api_key:
+            headers["authorization"] = f"Bearer {self.api_key}"
+        resp = self.transport.request(
+            "POST",
+            f"{self.base_url}{DECISIONS_PATH}",
+            headers=headers,
+            body=json.dumps(body).encode(),
+            timeout_s=self.timeout_s,
+        )
+        if resp.status != 200:
+            # Same structured classification as the engines, so the runner's
+            # retry policy and circuit breaker treat a decision call like any
+            # other provider call (F-H5).
+            raise EngineError(
+                f"decisions API {resp.status}: {_verbatim(resp)}",
+                status=resp.status,
+                retry_after_s=_retry_after_s(resp),
+            )
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise EngineError("decisions API returned a non-object response")
+        return data
 
 
 @dataclass

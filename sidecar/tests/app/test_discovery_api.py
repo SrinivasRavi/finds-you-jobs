@@ -326,8 +326,9 @@ def test_scan_entrypoint_injects_credentials_in_memory_only(
 def test_brave_key_seeds_source_and_budget_ledger_caps(
     sealed_env: None, app_client: tuple[FastAPI, TestClient]
 ) -> None:
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
+    from sidecar.app.db.base import now_utc
     from sidecar.app.registry.persistence import (
         BRAVE_LEDGER_KEY,
         BRAVE_MONTHLY_BUDGET,
@@ -353,7 +354,7 @@ def test_brave_key_seeds_source_and_budget_ledger_caps(
     assert len([s for s in sources if s.get("board") == "brave"]) == 1
 
     db = app.state.db
-    now = datetime.now()
+    now = now_utc()
 
     # Under budget: prefs untouched.
     with db.repos() as repos:

@@ -22,6 +22,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from sidecar.modules.geo.gazetteer import warm as warm_gazetteer
+
 from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
@@ -202,6 +204,18 @@ def create_app(
         configure_engines(
             engines, routing, engine_rows=engine_rows, data_dir=resolved_data_dir
         )
+
+        # Load the place index on a worker thread. It costs 290 ms and 21 MB, and
+        # every job insert reads it, so paying it here keeps that cost off the
+        # first request. The resolver loads it on demand anyway, so a failure
+        # here only means the first caller pays; it must never block boot.
+        async def _warm_gazetteer() -> None:
+            try:
+                await asyncio.to_thread(warm_gazetteer)
+            except Exception:  # noqa: BLE001 — warming must never kill boot
+                log.exception("gazetteer warm failed; the first resolve will pay for it")
+
+        app.state.gazetteer_warm_task = asyncio.create_task(_warm_gazetteer())
 
         # Observability (architecture section 10): wire Logfire → local `logfire.sqlite`
         # under the data dir. `send_to_logfire=False` is the hard invariant (no

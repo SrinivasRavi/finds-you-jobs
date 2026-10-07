@@ -663,8 +663,6 @@ const fr: DeepPartial<Messages> = {
       fallbackInfo:
         "Si un score IA échoue, un score mots-clés gris prend le relais — relancez-le depuis Analyses → Journaux.",
       howHint: "Chaque nouvelle offre reçoit un score d'adéquation avec votre CV de référence.",
-      modeLlm: "Scoring IA — meilleure qualité, mais coûte des tokens LLM et un peu de temps",
-      modeKeyword: "Scoring par mots-clés — qualité moindre, mais gratuit et instantané",
       batchCap: "Plafond de scoring par scan",
       batchCapInfo:
         "Sans plafond, tout ce qu'un scan trouve est évalué ; un plafond répartit le coût LLM sur plusieurs scans.",

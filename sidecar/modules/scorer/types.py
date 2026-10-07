@@ -25,6 +25,22 @@ class Usage:
     model: str | None = None
 
 
+@dataclass(frozen=True)
+class Factor:
+    """One axis of a score, in the shape every method writes (`scoring.md` 7.2).
+
+    `value` is 0 to 1 and `kind` says what it means: a `graded` position on a
+    stated rubric, which a user weight may multiply, or a `probability` that the
+    factor holds, which it may not. A factor the method could not assess is
+    ABSENT, never a middle value, so a bar is only ever drawn over a real answer.
+    """
+
+    factor: str
+    value: float
+    kind: str = "graded"
+    evidence: str = ""
+
+
 @dataclass
 class ScoreResult:
     """Output of one score() operation.
@@ -36,6 +52,7 @@ class ScoreResult:
     score: int  # 0–100
     reasons: list[str] = field(default_factory=list)  # 2–4 bullets (US-JB-05)
     breakdown_md: str = ""
+    factors: list[Factor] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
 
 

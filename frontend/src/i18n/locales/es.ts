@@ -661,8 +661,6 @@ const es: DeepPartial<Messages> = {
       fallbackInfo:
         "Si una puntuación con IA falla, la sustituye una puntuación gris por palabras clave — reinténtala desde Análisis → Registros.",
       howHint: "Cada empleo nuevo recibe una puntuación de encaje con tu currículum maestro.",
-      modeLlm: "Puntuación con IA — la mejor calidad, pero cuesta tokens de LLM y algo de tiempo",
-      modeKeyword: "Puntuación por palabras clave — menor calidad, pero gratis e instantánea",
       batchCap: "Tope de puntuación por lote",
       batchCapInfo:
         "Sin tope se puntúa todo lo encontrado en un escaneo; un tope reparte el coste del LLM entre más escaneos.",

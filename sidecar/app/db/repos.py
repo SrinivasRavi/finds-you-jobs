@@ -7,7 +7,7 @@ single session (one short transaction per unit of work — AM4).
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
+
+from sidecar.modules.geo.resolve import resolve_location
 
 from .base import now_utc
 from .models import (
@@ -31,6 +33,7 @@ from .models import (
     Document,
     EngineSettings,
     Job,
+    JobScoreFactor,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
@@ -426,6 +429,29 @@ class SchedulesRepo:
         return sched
 
 
+def resolved_location_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Fill a new job's resolved-location columns from its location string.
+
+    Here rather than at the 4 call sites that create a job, because a 5th would
+    forget. A caller that already resolved (the backfill pass) passes the columns
+    itself and is left alone, and a job with no location keeps `location_remote`
+    NULL, which is the "resolver has not seen this" state.
+    """
+    location = str(fields.get("location") or "").strip()
+    if not location or "location_remote" in fields:
+        return fields
+    resolved = resolve_location(location)
+    primary = resolved.primary
+    return {
+        **fields,
+        "location_country": primary.country if primary else None,
+        "location_admin1": primary.admin1_key if primary else None,
+        "location_city_id": primary.city_id if primary else None,
+        "location_remote": resolved.remote_scope,
+        "location_attendance": str(resolved.attendance) if resolved.attendance else None,
+    }
+
+
 class JobsRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -472,6 +498,17 @@ class JobsRepo:
         if feed_state is not None:
             stmt = stmt.where(Job.feed_state == feed_state)
         stmt = stmt.order_by(Job.ingested_at.desc(), Job.id).limit(limit)
+        return list(self._s.scalars(stmt))
+
+    def list_unresolved_locations(self, *, limit: int = 500) -> list[Job]:
+        """Jobs the location resolver has never seen (`location_remote IS NULL`),
+        in any feed state: an expired job can come back."""
+        stmt = (
+            select(Job)
+            .where(Job.location_remote.is_(None), Job.location != "")
+            .order_by(Job.ingested_at.desc(), Job.id)
+            .limit(limit)
+        )
         return list(self._s.scalars(stmt))
 
     def list_active_without_llm_score(
@@ -573,7 +610,7 @@ class JobsRepo:
         return list(self._s.scalars(stmt))
 
     def create(self, **fields: Any) -> Job:
-        job = Job(**fields)
+        job = Job(**resolved_location_fields(fields))
         self._s.add(job)
         self._s.flush()
         return job
@@ -694,18 +731,30 @@ class JobsRepo:
         score_0_100: int,
         reasons: list[Any],
         breakdown_md: str,
+        method: str | None = None,
+        factors: Sequence[Mapping[str, Any]] | None = None,
     ) -> bool:
         """Write one scorer's rating onto the job. Returns True when this is the
         FIRST rating that scorer has produced for this job, which is what the
-        priority distribution counts: a recompute must not double count."""
+        priority distribution counts: a recompute must not double count.
+
+        `method` is the named method behind the number (`llm`, `jev`, `local`,
+        `keyword`) and `factors` its per-axis detail. Both are written here, in
+        the one place a score is ever written, so a method cannot land a score
+        without its factors or leave a previous method's factors behind it."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
         prefix = "llm" if scorer_impl == "scorer-llm" else "keyword"
+        method = method or prefix
         is_new = getattr(job, f"{prefix}_score") is None
         setattr(job, f"{prefix}_score", score_0_100)
         setattr(job, f"{prefix}_reasons", list(reasons))
         setattr(job, f"{prefix}_breakdown_md", breakdown_md)
+        if prefix == "llm":
+            job.llm_score_method = method
+        if factors is not None:
+            JobScoreFactorsRepo(self._s).replace(job_id, method, factors)
         self._s.flush()
         return is_new
 
@@ -1351,6 +1400,65 @@ class ReferralCandidatesRepo:
         return cast("CursorResult[Any]", result).rowcount
 
 
+class JobScoreFactorsRepo:
+    """Per-axis score detail, one row per (job, method, factor).
+
+    A rescore `replace` instead of upserting row by row: a method that stops
+    emitting a factor must stop having it, or the bar chart would show an axis
+    the current rubric no longer scores.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def list_for_job(self, job_id: str, method: str | None = None) -> list[JobScoreFactor]:
+        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id == job_id)
+        if method is not None:
+            stmt = stmt.where(JobScoreFactor.method == method)
+        return list(self._s.scalars(stmt.order_by(JobScoreFactor.factor)))
+
+    def list_for_jobs(self, job_ids: list[str], method: str | None = None) -> list[JobScoreFactor]:
+        """Every factor for a page of jobs in 1 query, so the board never asks
+        per card (the F-H2 lesson)."""
+        if not job_ids:
+            return []
+        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id.in_(job_ids))
+        if method is not None:
+            stmt = stmt.where(JobScoreFactor.method == method)
+        return list(self._s.scalars(stmt))
+
+    def replace(
+        self, job_id: str, method: str, factors: Sequence[Mapping[str, Any]]
+    ) -> list[JobScoreFactor]:
+        """Drop this method's rows for the job and write the given ones."""
+        self._s.execute(
+            delete(JobScoreFactor).where(
+                JobScoreFactor.job_id == job_id, JobScoreFactor.method == method
+            )
+        )
+        rows = [
+            JobScoreFactor(
+                job_id=job_id,
+                method=method,
+                factor=str(f["factor"]),
+                value=float(f["value"]),
+                kind=str(f.get("kind") or "graded"),
+                evidence=str(f.get("evidence") or ""),
+            )
+            for f in factors
+        ]
+        for row in rows:
+            self._s.add(row)
+        self._s.flush()
+        return rows
+
+    def delete_for_job(self, job_id: str) -> int:
+        """Remove every factor row for a job (`foreign_keys=ON` forbids orphans
+        when the job is deleted). Returns the row count."""
+        result = self._s.execute(delete(JobScoreFactor).where(JobScoreFactor.job_id == job_id))
+        return cast("CursorResult[Any]", result).rowcount
+
+
 class OutreachLogsRepo:
     """Per-message audit (database-design section 5)."""
 
@@ -1597,6 +1705,7 @@ class Repos:
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)
         self.referral_candidates = ReferralCandidatesRepo(session)
+        self.job_score_factors = JobScoreFactorsRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)

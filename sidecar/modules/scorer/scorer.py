@@ -39,17 +39,23 @@ def score(
     keep_scratch: bool = False,
     skill_md: str | None = None,
     cancelled: Callable[[], bool] | None = None,
+    preferences_md: str | None = None,
 ) -> ScoreResult:
     """Score `master_md` against `job` (raw JD text, a .md/.txt path, or a URL).
 
     `skill_md`, when provided, replaces the on-disk skill file as the system
     prompt (the app's user-editable-prompt override, section 5). None → the default.
     `cancelled`, when provided, is polled at the retry checkpoints (loop top,
-    mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7)."""
+    mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7).
+    `preferences_md`, when provided, becomes a third prompt block: what the user
+    told the product they want, which outranks the resume on where they want to
+    work. Without it the scorer reads the resume's own address as its only
+    location signal, which inverts the user's intent whenever the two differ
+    (backlog S-C67, measured on the 2026-09-28 bench)."""
     engine = engine or ClaudeCliEngine()
     jd_md = resolve_job(job)
     system_prompt = skill_md if skill_md is not None else load_skill()
-    user_prompt = build_user_prompt(master_md, jd_md)
+    user_prompt = build_user_prompt(master_md, jd_md, preferences_md)
 
     scratch = tempfile.TemporaryDirectory(prefix="fyj-score-")
     try:
@@ -78,7 +84,7 @@ def score(
                 wait_before_retry(delay, cancelled)
                 continue
             try:
-                value, reasons, breakdown_md = parse_output(raw)
+                value, reasons, breakdown_md, factors = parse_output(raw)
             except ScoreError as e:
                 billed.append(usage)
                 if e.stage != "parse" or attempt == MAX_ATTEMPTS:
@@ -89,6 +95,7 @@ def score(
                 score=value,
                 reasons=reasons,
                 breakdown_md=breakdown_md,
+                factors=factors,
                 usage=Usage(**merge_usage(billed)),
             )
         raise AssertionError("unreachable — loop always returns or raises")

@@ -36,6 +36,8 @@ const settingsPage = {
     aboutTitle: "About",
     licenseLine:
       "finds-you-jobs is licensed under AGPL-3.0-only. You're free to inspect, run, modify, and share it under the same terms.",
+    attributionLine:
+      "This product includes data created by GeoNames (https://www.geonames.org) and information from O*NET OnLine by the U.S. Department of Labor, Employment and Training Administration, both used under CC BY 4.0. O*NET is a trademark of USDOL/ETA. Full third-party notices ship in THIRD_PARTY_NOTICES.md in the source tree.",
     sourceButton: "Source code",
     issuesButton: "Report a bug or request a feature",
   },
@@ -86,9 +88,28 @@ const settingsPage = {
     fallbackLabel: "Scoring fallback",
     fallbackInfo:
       "If an AI score fails, a grey keyword score fills in — retry it from Analytics → Logs.",
-    howHint: "Every new job gets a fit score against your master resume.",
-    modeLlm: "AI scoring — best quality, but costs LLM tokens and some time",
-    modeKeyword: "Keyword scoring — lower quality, but free and instant",
+    howHint: "Every new job gets a fit score against your master resume. Pick how.",
+    // One row per method, in menu order, richest explanation first. The price is
+    // per 100 jobs, measured where it says measured (docs/internal/scoring.md
+    // section 7.1); nothing here hides a method the user has not set up yet.
+    modeLlmName: "AI scoring",
+    modeLlmBlurb: "One AI call per job. The only method that writes sentences.",
+    modeLlmPrice: "About $2.22 per 100 jobs on Haiku 4.5, $23.55 on today's Opus path",
+    modeJevName: "Fast scoring",
+    modeJevBlurb: "One structured call per job. Score and per-axis bars, prose on demand.",
+    modeJevPrice: "About $0.02 per 100 jobs",
+    modeLocalName: "On-device scoring",
+    modeLocalBlurb: "A small model running on your own machine. Nothing leaves it.",
+    modeLocalPrice: "Free, after a one-time model download",
+    modeKeywordName: "Keyword scoring",
+    modeKeywordBlurb: "On-device rules over your resume and the posting. Always available.",
+    modeKeywordPrice: "Free and instant",
+    needsKeyLabel: "Needs an OpenRouter key",
+    needsKeyAction: "Add a key",
+    needsPackLabel: "Not available yet",
+    needsPackBody:
+      "The model download isn't built. Pick it and jobs are scored by keyword until it is.",
+    modeCurrent: "In use",
     batchCap: "Scoring batch cap",
     batchCapInfo:
       "Uncapped scores everything found in a scan; a cap spreads the LLM cost across more scans.",

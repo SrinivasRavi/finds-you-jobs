@@ -43,6 +43,8 @@ RESUME = "# Test Candidate\n\nBackend engineer. Python, FastAPI, SQL, Kafka."
 SCORE_OUT = (
     "===SCORE===\n77\n===REASONS===\n- Strong backend overlap\n"
     "- Relocation matches\n===BREAKDOWN===\nRequirement | Match\n--- | ---\nJava | yes\n"
+    "===FACTORS===\ncore_stack: 0.90 | Java and Python evidenced\n"
+    "years: 1.00 | 9 against 5 required\nlocation_preference: 1.00 | Bengaluru is wanted\n"
 )
 
 
@@ -128,6 +130,50 @@ def test_keyword_mode_scores_without_any_engine(migrated_db: Database) -> None:
     assert outcome.engine == "on-device"
     scores = _scores(db, job_id)
     assert SCORER_IMPL_DETERMINISTIC in scores and SCORER_IMPL not in scores
+
+
+def test_keyword_mode_writes_its_factor_rows_and_reads_the_users_locations(
+    migrated_db: Database,
+) -> None:
+    """The bars and the user weights read these rows, so a score that lands
+    without them is a score the UI cannot explain (`scoring.md` section 7.2).
+
+    The seeded job is in Bengaluru and the preference says Bengaluru, so the
+    location axis must come back a match: the op has to carry the user's own
+    chips down to a scorer that knows nothing about the database."""
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "keyword"}, locations=["Bengaluru", "Remote"]
+        )
+    score_entrypoint(_ctx(db, job_id, engine=None))
+    with db.repos() as repos:
+        rows = {f.factor: f for f in repos.job_score_factors.list_for_job(job_id)}
+    # No level axis: neither the seeded title nor the seeded resume states a rung,
+    # and an unassessed axis is absent rather than a middle value.
+    assert set(rows) == {"core_stack", "years", "location_preference"}
+    assert rows["location_preference"].value == 1.0
+    assert "Bengaluru" in rows["location_preference"].evidence
+    assert all(row.kind == "graded" for row in rows.values())
+    assert all(0.0 <= row.value <= 1.0 for row in rows.values())
+
+
+def test_a_rescore_replaces_the_factor_rows_rather_than_piling_up(
+    migrated_db: Database,
+) -> None:
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "keyword"}, locations=["Bengaluru"]
+        )
+    score_entrypoint(_ctx(db, job_id, engine=None))
+    _settle_ops(db)
+    rescore_all_keyword(db)
+    with db.repos() as repos:
+        rows = repos.job_score_factors.list_for_job(job_id)
+    assert len(rows) == len({row.factor for row in rows})
 
 
 def test_llm_failure_persists_keyword_fallback_and_still_fails(
@@ -573,3 +619,203 @@ def test_retry_route_counts_only_stuck_jobs_and_hands_the_budget_back(tmp_path) 
             assert repos.jobs.get(thin).llm_score_attempts == 0  # type: ignore[union-attr]
         assert stuck in {snap["job_id"] for _k, snap in plan_score_new(db)}
         assert thin not in {snap["job_id"] for _k, snap in plan_score_new(db)}
+
+
+def test_the_llm_scorer_receives_the_users_own_preferences(migrated_db: Database) -> None:
+    """S-C67. The user's resume says one city and their preferences say another;
+    without this the scorer only ever saw the resume, so it read the city they
+    live in as the city they want (measured on the 2026-09-28 bench: unwanted
+    locations scored 14.75 points HIGHER than wanted ones)."""
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/prefs-1")
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "llm"},
+            locations=["Bengaluru", "Remote"],
+            role_aliases=["software engineer"],
+            hard_excludes={"companies": ["Acme"], "keywords": []},
+        )
+
+    seen: dict[str, str] = {}
+
+    class _CapturingEngine:
+        def complete(self, system_prompt: str, user_prompt: str, **_: Any) -> Any:
+            seen["user"] = user_prompt
+            seen["system"] = system_prompt
+            return SCORE_OUT, EngineUsage(internal_calls=1)
+
+    score_entrypoint(_ctx(db, job_id, engine=_CapturingEngine()))
+    assert "SEARCH PREFERENCES" in seen["user"]
+    assert "Locations wanted: Bengaluru, Remote" in seen["user"]
+    assert "Excluded companies: Acme" in seen["user"]
+    # And the rule that tells the model what to do with the block.
+    assert "Never infer a location preference from the resume's address" in seen["system"]
+
+
+def test_a_user_with_no_preferences_set_sends_two_blocks(migrated_db: Database) -> None:
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/prefs-2")
+    with db.repos() as repos:
+        repos.preferences.update(
+            thresholds={"scoring_mode": "llm"}, locations=[], role_aliases=[]
+        )
+
+    seen: dict[str, str] = {}
+
+    class _CapturingEngine:
+        def complete(self, system_prompt: str, user_prompt: str, **_: Any) -> Any:
+            seen["user"] = user_prompt
+            return SCORE_OUT, EngineUsage(internal_calls=1)
+
+    score_entrypoint(_ctx(db, job_id, engine=_CapturingEngine()))
+    assert "SEARCH PREFERENCES" not in seen["user"]
+
+
+def test_an_ai_score_carries_its_method_and_its_factors(migrated_db: Database) -> None:
+    """4 methods write that one score slot, so the board has to be able to say
+    which one did, and the bars have to come from the same call that scored."""
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/factors-llm")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "llm"}, locations=["Bengaluru"])
+
+    class _Engine:
+        def complete(self, system_prompt: str, user_prompt: str, **_: Any) -> Any:
+            return SCORE_OUT, EngineUsage(internal_calls=1)
+
+    score_entrypoint(_ctx(db, job_id, engine=_Engine()))
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        assert job.llm_score == 77
+        assert job.llm_score_method == "llm"
+        rows = {f.factor: f for f in repos.job_score_factors.list_for_job(job_id, "llm")}
+    assert set(rows) == {"core_stack", "years", "location_preference"}
+    assert rows["core_stack"].value == 0.9
+    assert rows["core_stack"].evidence == "Java and Python evidenced"
+
+
+def test_jev_mode_scores_through_the_decisions_client(tmp_path) -> None:
+    """The op opens the sealed OpenRouter key, asks once, and stores the factors
+    with `method="jev"` so the board can say which method produced the number."""
+    from sidecar.app.registry.engines_http import DECISIONS_PATH, DecisionsHttpClient
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, bytes | None]] = []
+
+        def request(self, method, url, *, headers, body=None, timeout_s=60):
+            from sidecar.app.registry.engines_http import HttpResponse
+
+            self.calls.append((method, url, body))
+            payload = {
+                "answers": {
+                    "hard_requirements": {"score": 4.0},
+                    "core_stack": {"score": 3.0},
+                    "years": {"score": 4.0},
+                    "level": {"score": 4.0},
+                    "nice_to_haves": {"score": 2.0},
+                    "location_preference_met": {"noul": 0.95},
+                    "logistics_blocker": {"noul": 0.05},
+                },
+                "usage": {"cost": 0.00022},
+            }
+            import json as _json
+
+            return HttpResponse(status=200, body=_json.dumps(payload).encode())
+
+    transport = FakeTransport()
+    client = DecisionsHttpClient(api_key="sk-or-test", transport=transport)
+
+    db = Database(f"sqlite+pysqlite:///{tmp_path / 'db.sqlite'}")
+    from sidecar.app.db.migrate import upgrade_to_head
+
+    upgrade_to_head(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    job_id = _seed(db, url="https://ex.co/j/jev-1")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "jev"}, locations=["Bengaluru"])
+
+    import sidecar.app.registry.persistence as persistence
+
+    original = persistence.load_decisions_client
+    persistence.load_decisions_client = lambda _repos: client  # type: ignore[assignment]
+    try:
+        outcome = score_entrypoint(_ctx(db, job_id, engine=None))
+    finally:
+        persistence.load_decisions_client = original  # type: ignore[assignment]
+
+    assert outcome.engine == "jev"
+    assert len(transport.calls) == 1
+    method, url, body = transport.calls[0]
+    assert method == "POST" and url.endswith(DECISIONS_PATH)
+    assert body is not None and b"candidate_resume" in body
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        assert job.llm_score_method == "jev"
+        assert job.llm_score is not None and 0 <= job.llm_score <= 100
+        rows = {f.factor for f in repos.job_score_factors.list_for_job(job_id, "jev")}
+    assert rows == {
+        "hard_requirements",
+        "core_stack",
+        "years",
+        "level",
+        "nice_to_haves",
+        "location_preference",
+        "logistics",
+    }
+
+
+def test_jev_mode_without_a_key_says_so_instead_of_failing_silently(
+    migrated_db: Database,
+) -> None:
+    from sidecar.app.registry.engines import EngineNotConfiguredError
+
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/jev-2")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "jev"})
+    with pytest.raises(EngineNotConfiguredError, match="OpenRouter key"):
+        score_entrypoint(_ctx(db, job_id, engine=None))
+
+
+def test_the_settings_payload_lists_every_method_with_what_it_needs(tmp_path) -> None:
+    """The menu never hides a method, so the server reports all 4 and says what
+    each still needs; the client owns the copy and the prices (talk.md D44)."""
+    app = create_app(data_dir=tmp_path, token=TOKEN, enable_scheduler=False)
+    with TestClient(app) as client:
+        methods = client.get("/api/settings", headers=AUTH).json()["scoring_methods"]
+        assert [m["id"] for m in methods] == ["llm", "jev", "local", "keyword"]
+        by_id = {m["id"]: m for m in methods}
+        assert by_id["llm"]["ready"] is True and by_id["llm"]["needs"] is None
+        assert by_id["keyword"]["ready"] is True
+        # No OpenRouter key on a fresh install, and the pack downloader does not
+        # exist yet, so 2 rows are honestly not ready.
+        assert by_id["jev"] == {"id": "jev", "ready": False, "needs": "openrouter_key"}
+        assert by_id["local"] == {"id": "local", "ready": False, "needs": "model_pack"}
+
+        client.post(
+            "/api/engines",
+            headers=AUTH,
+            json={"provider": "openrouter", "key": "sk-or-test-key", "enabled": True},
+        )
+        after = client.get("/api/settings", headers=AUTH).json()["scoring_methods"]
+        jev = next(m for m in after if m["id"] == "jev")
+        assert jev == {"id": "jev", "ready": True, "needs": None}
+
+
+def test_picking_the_local_method_scores_by_keyword_and_says_so(migrated_db: Database) -> None:
+    """It is on the menu because the menu hides nothing, and its pack has no
+    downloader yet, so it must not silently score with something else."""
+    db = migrated_db
+    job_id = _seed(db, url="https://ex.co/j/local-1")
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "local"})
+    outcome = score_entrypoint(_ctx(db, job_id, engine=None))
+    assert outcome.engine == "on-device"
+    assert outcome.result_ref is not None
+    assert outcome.result_ref["fell_back_from"] == "local"
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None and job.keyword_score is not None
+        assert job.llm_score is None

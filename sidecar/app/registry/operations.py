@@ -214,6 +214,7 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from ..lifecycle import LIFECYCLE_DEFAULTS, resolve_lifecycle
     from .persistence import (
         age_expired_jobs,
+        backfill_resolved_locations,
         evict_stale_trash,
         purge_archived_applications,
     )
@@ -229,6 +230,9 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     purged_apps = purge_archived_applications(
         ctx.db, retention_days=settings["archived_applications_purge_days"]
     )
+    # Rows that predate the location resolver. Bounded per tick and converging:
+    # a row it touches stops matching its own query.
+    resolved_locations = backfill_resolved_locations(ctx.db)
     return OperationOutcome(
         result_ref={
             "tombstoned_count": len(tombstoned),
@@ -239,8 +243,28 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
             "expired_deleted_ids": aged["deleted"],
             "purged_applications_count": len(purged_apps),
             "purged_application_ids": purged_apps,
+            "resolved_locations_count": resolved_locations,
         }
     )
+
+
+def _wanted_locations(repos: Repos) -> Any:
+    """The user's wanted locations, resolved from their preference chips.
+
+    Read here rather than inside the scorer so the module stays free of the
+    database, and resolved once per sweep rather than once per job.
+    """
+    from sidecar.modules.geo.resolve import resolve_wanted
+
+    return resolve_wanted(repos.preferences.get_or_create().locations or [])
+
+
+def _factor_rows(result: Any) -> list[dict[str, Any]]:
+    """A scorer's typed factors in the shape the repo writes."""
+    return [
+        {"factor": f.factor, "value": f.value, "kind": f.kind, "evidence": f.evidence}
+        for f in getattr(result, "factors", [])
+    ]
 
 
 def _persist_score(
@@ -252,6 +276,8 @@ def _persist_score(
     breakdown_md: str,
     scorer_impl: str,
     feed_priority_stats: bool,
+    method: str | None = None,
+    factors: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write one scorer's rating onto the job; optionally feed the running
     priority distribution (FR-TR-09) exactly once per *new* rating of that
@@ -267,6 +293,8 @@ def _persist_score(
             score_0_100=score_0_100,
             reasons=reasons,
             breakdown_md=breakdown_md,
+            method=method,
+            factors=factors,
         )
         if feed_priority_stats and is_new_score:
             prefs = repos.preferences.get_or_create()
@@ -299,8 +327,12 @@ def _ensure_keyword_floor(
         job = repos.jobs.get(job_id)
         if job is None or job.keyword_score is not None:
             return
+        title, location = job.title, job.location
+        wanted = _wanted_locations(repos)
     try:
-        det = score_deterministic(master_md, job_text)
+        det = score_deterministic(
+            master_md, job_text, title=title, location=location, wanted=wanted
+        )
         _persist_score(
             ctx,
             job_id=job_id,
@@ -308,6 +340,8 @@ def _ensure_keyword_floor(
             reasons=list(det.reasons),
             breakdown_md=det.breakdown_md,
             scorer_impl=SCORER_IMPL_DETERMINISTIC,
+            method="keyword",
+            factors=_factor_rows(det),
             feed_priority_stats=False,
         )
     except Exception:
@@ -338,11 +372,33 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     snap = ctx.input_snapshot
     job_id = snap.get("job_id")
 
-    job_text, master_md, profile_version, stored_mode = _load_job_inputs(
-        ctx, also=lambda repos: scoring_mode(repos.preferences.get_or_create())
+    def _scoring_context(repos: Repos) -> dict[str, Any]:
+        """Mode, wanted locations and the job's own title and location, in the
+        one session `_load_job_inputs` already opens."""
+        from .persistence import load_decisions_client, render_preferences_block
+
+        job = repos.jobs.get(job_id) if job_id is not None else None
+        prefs = repos.preferences.get_or_create()
+        mode = scoring_mode(prefs)
+        return {
+            "mode": mode,
+            "wanted": _wanted_locations(repos),
+            "preferences_md": render_preferences_block(prefs),
+            "title": job.title if job is not None else "",
+            "location": job.location if job is not None else "",
+            # Opened for this operation only, and only for the mode that needs it.
+            "decisions": load_decisions_client(repos) if mode == "jev" else None,
+        }
+
+    job_text, master_md, profile_version, scoring_ctx = _load_job_inputs(
+        ctx, also=_scoring_context
     )
     # DB-free path (fake-entrypoint tests): the mode rides the snapshot instead.
-    mode: str = stored_mode if ctx.db is not None else str(snap.get("scoring_mode") or "llm")
+    mode: str = (
+        str(scoring_ctx["mode"])
+        if scoring_ctx is not None
+        else str(snap.get("scoring_mode") or "llm")
+    )
 
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS, score_deterministic
 
@@ -360,8 +416,22 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
     if mode != "keyword" and len(job_text.strip()) < MIN_JD_CHARS:
         mode = "keyword"
 
+    # "local" is on the menu because the menu never hides a method (talk.md D44),
+    # and its model pack has no downloader yet (scoring-build.md T10). So it runs
+    # the keyword floor and SAYS it did, in the operation's own result, rather
+    # than silently scoring with something the user did not pick.
+    fell_back_from: str | None = None
+    if mode == "local":
+        mode, fell_back_from = "keyword", "local"
+
     if mode == "keyword":
-        det = score_deterministic(master_md, job_text)
+        det = score_deterministic(
+            master_md,
+            job_text,
+            title=str((scoring_ctx or {}).get("title") or ""),
+            location=str((scoring_ctx or {}).get("location") or ""),
+            wanted=(scoring_ctx or {}).get("wanted"),
+        )
         if job_id is not None:
             _persist_score(
                 ctx,
@@ -370,6 +440,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 reasons=list(det.reasons),
                 breakdown_md=det.breakdown_md,
                 scorer_impl=SCORER_IMPL_DETERMINISTIC,
+                method="keyword",
+                factors=_factor_rows(det),
                 # In keyword mode these ARE the displayed scores — they drive
                 # the priority distribution. A too-thin-to-score 0 is excluded:
                 # it's a missing-data marker, not a fit measurement, and feeding
@@ -379,11 +451,49 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             )
         return OperationOutcome(
             result_ref=_score_result_ref(
-                det.score, job_id, "keyword", list(det.reasons)
+                det.score,
+                job_id,
+                "keyword",
+                list(det.reasons),
+                fell_back_from=fell_back_from,
             ),
             usage=None,
             engine="on-device",
             model="keyword",
+        )
+
+    if mode == "jev":
+        from sidecar.modules.scorer.jev import score_jev
+
+        client = (scoring_ctx or {}).get("decisions")
+        if client is None:
+            raise EngineNotConfiguredError(
+                "Fast scoring needs an OpenRouter key. Add one in Settings > LLM providers, "
+                "or pick another scoring method."
+            )
+        jev = score_jev(
+            master_md,
+            job_text,
+            client=client,
+            preferences_md=str((scoring_ctx or {}).get("preferences_md") or ""),
+        )
+        if job_id is not None:
+            _persist_score(
+                ctx,
+                job_id=job_id,
+                score_0_100=jev.score,
+                reasons=list(jev.reasons),
+                breakdown_md=jev.breakdown_md,
+                scorer_impl=SCORER_IMPL,
+                feed_priority_stats=True,
+                method="jev",
+                factors=_factor_rows(jev),
+            )
+        return OperationOutcome(
+            result_ref=_score_result_ref(jev.score, job_id, "jev", list(jev.reasons)),
+            usage=_usage_to_dict(jev.usage),
+            engine="jev",
+            model=jev.usage.model,
         )
 
     resolved = _require_engine(ctx)
@@ -398,6 +508,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             engine=resolved.engine,
             skill_md=get_override("score"),
             cancelled=ctx.cancelled,
+            preferences_md=str((scoring_ctx or {}).get("preferences_md") or ""),
         )
     except Exception as exc:
         # The keyword floor is the fallback; guarantee it exists (idempotent)
@@ -428,6 +539,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             breakdown_md=result.breakdown_md,
             scorer_impl=SCORER_IMPL,
             feed_priority_stats=True,
+            method="llm",
+            factors=_factor_rows(result),
         )
     return llm_outcome(
         _score_result_ref(result.score, job_id, "llm", list(result.reasons)),
@@ -437,13 +550,22 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
 def _score_result_ref(
-    score_0_100: int, job_id: str | None, method: str, reasons: list[Any]
+    score_0_100: int,
+    job_id: str | None,
+    method: str,
+    reasons: list[Any],
+    *,
+    fell_back_from: str | None = None,
 ) -> dict[str, Any]:
     """The score op's ledger payload.
 
     `method` is always there: a thin JD is silently downgraded to keyword even
     in LLM mode, and the user who paid for a model deserves to be told which
     one actually ran (url-less-jobs.md section 8.7).
+
+    `fell_back_from` names the method the user actually picked when something
+    else ran it, which today is only On-device falling back to keyword
+    (scoring-build.md T10).
 
     `reasons` rides along only on the triage path. With a job id they are
     already on the job row, and a second copy of them here would drift from
@@ -452,6 +574,8 @@ def _score_result_ref(
     ref: dict[str, Any] = {"score": score_0_100, "job_id": job_id, "method": method}
     if job_id is None:
         ref["reasons"] = reasons
+    if fell_back_from:
+        ref["fell_back_from"] = fell_back_from
     return ref
 
 
@@ -479,12 +603,15 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
         if not refresh:
             unscored = repos.jobs.ids_without_any_score([j.id for j in jobs])
             jobs = [j for j in jobs if j.id in unscored]
-        todo = [(j.id, compose_job_text(j)) for j in jobs]
+        wanted = _wanted_locations(repos)
+        todo = [(j.id, compose_job_text(j), j.title, j.location) for j in jobs]
 
     done = 0
-    for job_id, job_text in todo:
+    for job_id, job_text, title, location in todo:
         try:
-            det = score_deterministic(master_md, job_text)
+            det = score_deterministic(
+                master_md, job_text, title=title, location=location, wanted=wanted
+            )
             with db.repos() as repos:
                 repos.jobs.set_score(
                     job_id,
@@ -492,6 +619,8 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
                     score_0_100=det.score,
                     reasons=list(det.reasons),
                     breakdown_md=det.breakdown_md,
+                    method="keyword",
+                    factors=_factor_rows(det),
                 )
             done += 1
         except Exception:  # noqa: BLE001 — one bad job never aborts the sweep

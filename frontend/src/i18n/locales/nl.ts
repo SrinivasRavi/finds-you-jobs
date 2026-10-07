@@ -675,8 +675,6 @@ const nl: DeepPartial<Messages> = {
       fallbackInfo:
         "Mislukt een AI-score, dan vult een grijze trefwoordscore hem in — probeer opnieuw via Analyse → Logs.",
       howHint: "Elke nieuwe vacature krijgt een fitscore tegen je master-cv.",
-      modeLlm: "AI-scoring — beste kwaliteit, maar kost LLM-tokens en wat tijd",
-      modeKeyword: "Trefwoordscoring — lagere kwaliteit, maar gratis en direct",
       batchCap: "Batchlimiet voor scoring",
       batchCapInfo:
         "Zonder limiet wordt alles gescoord wat een scan vindt; een limiet spreidt de LLM-kosten over meer scans.",

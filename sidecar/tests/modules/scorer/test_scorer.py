@@ -59,6 +59,25 @@ def test_prompt_includes_blocks_in_order():
     assert "===SCORE===" in p  # contract reminder present
 
 
+def test_preferences_are_a_third_block_and_only_when_present():
+    """S-C67: without this block the scorer reads the resume's own address as the
+    user's location preference, which inverts their intent whenever the 2 differ."""
+    two = build_user_prompt("MASTER-X", "JD-Y")
+    assert "SEARCH PREFERENCES" not in two
+    three = build_user_prompt("MASTER-X", "JD-Y", "Locations wanted: Bengaluru, Remote")
+    assert three.index("JOB DESCRIPTION") < three.index("SEARCH PREFERENCES")
+    assert "Bengaluru" in three
+    # Whitespace is not a preference.
+    assert "SEARCH PREFERENCES" not in build_user_prompt("M", "J", "   \n ")
+
+
+def test_the_skill_file_tells_the_model_what_to_do_with_preferences():
+    skill = load_skill()
+    assert "SEARCH PREFERENCES" in skill
+    assert "Never infer a location preference from the resume's address" in skill
+    assert "unverifiable rather than guessing" in skill
+
+
 def test_resolve_job_reads_fixture_file():
     jd = resolve_job(str(FIXTURES / "jds" / "text" / "J01-glean-backend-bangalore.md"))
     assert len(jd) > 200
@@ -73,7 +92,7 @@ def test_resolve_job_accepts_raw_text_and_rejects_fragments():
 
 
 def test_parse_output_roundtrip_and_fence_stripping():
-    value, reasons, breakdown = parse_output(GOOD_OUTPUT)
+    value, reasons, breakdown, _factors = parse_output(GOOD_OUTPUT)
     assert value == 82
     assert reasons == [
         "8 years Java/Spring matches the 5+ years backend requirement",
@@ -82,6 +101,56 @@ def test_parse_output_roundtrip_and_fence_stripping():
     assert breakdown.startswith("Backend platform")
     fenced = f"```markdown\n{GOOD_OUTPUT}\n```"
     assert parse_output(fenced)[0] == 82
+
+
+FACTORS_BLOCK = """===FACTORS===
+hard_requirements: 0.80 | every required item evidenced except Go
+core_stack: 1.00 | Python, Django and PostgreSQL all evidenced
+years: 1.0 | 9 years against 6 required
+level: 0.75 | posting reads staff, master reads senior
+location_preference: 0.00 | preferences name Bengaluru; posting is Remote - USA
+logistics: 1.00 | no stated constraint the master contradicts
+"""
+
+
+def test_the_factors_block_parses_into_typed_axes():
+    value, _reasons, breakdown, factors = parse_output(f"{GOOD_OUTPUT}\n{FACTORS_BLOCK}")
+    assert value == 82
+    # The breakdown must stop at the factors rather than swallowing them.
+    assert "===FACTORS===" not in breakdown
+    assert "hard_requirements" not in breakdown
+    assert [f.factor for f in factors] == [
+        "hard_requirements",
+        "core_stack",
+        "years",
+        "level",
+        "location_preference",
+        "logistics",
+    ]
+    assert [f.value for f in factors] == [0.8, 1.0, 1.0, 0.75, 0.0, 1.0]
+    assert all(f.kind == "graded" for f in factors)
+    assert factors[0].evidence == "every required item evidenced except Go"
+
+
+def test_an_override_prompt_with_no_factors_block_still_parses():
+    """The skill file is user-editable, so a prompt written before this block
+    existed has to keep working: no factors, no failure."""
+    value, reasons, breakdown, factors = parse_output(GOOD_OUTPUT)
+    assert value == 82 and reasons and breakdown
+    assert factors == []
+
+
+def test_a_junk_factor_line_costs_a_bar_and_never_the_call():
+    junk = """===FACTORS===
+core_stack: 1.00 | fine
+this line is prose, not a factor
+invented_axis: 0.90 | a key the product does not draw
+years: not-a-number | unparseable
+level: 1.40 | out of range
+core_stack: 0.10 | a duplicate of an axis already read
+"""
+    _value, _reasons, _breakdown, factors = parse_output(f"{GOOD_OUTPUT}\n{junk}")
+    assert [(f.factor, f.value) for f in factors] == [("core_stack", 1.0)]
 
 
 def test_parse_output_rejects_contract_violations():
@@ -212,7 +281,7 @@ def test_parse_output_truncates_excess_reasons_instead_of_failing():
         "===BREAKDOWN===",
         "- extra reason three\n- extra reason four\n- extra reason five\n===BREAKDOWN===",
     )
-    value, reasons, _ = parse_output(six)
+    value, reasons, _breakdown, _factors = parse_output(six)
     assert value == 82
     assert len(reasons) == 4
     assert reasons[0] == "8 years Java/Spring matches the 5+ years backend requirement"

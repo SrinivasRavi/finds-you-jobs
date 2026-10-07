@@ -661,8 +661,6 @@ const pt: DeepPartial<Messages> = {
       fallbackInfo:
         "Se uma pontuação por IA falhar, uma pontuação cinza por palavras-chave entra no lugar — tente novamente em Análises → Logs.",
       howHint: "Cada vaga nova recebe uma pontuação de compatibilidade contra seu currículo mestre.",
-      modeLlm: "Pontuação por IA — melhor qualidade, mas gasta tokens de LLM e algum tempo",
-      modeKeyword: "Pontuação por palavras-chave — qualidade menor, mas grátis e instantânea",
       batchCap: "Limite do lote de pontuação",
       batchCapInfo:
         "Sem limite, pontua tudo que a varredura encontrar; um limite dilui o custo de LLM entre mais varreduras.",
