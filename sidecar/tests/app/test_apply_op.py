@@ -56,7 +56,28 @@ def _action(tool: str, **args: object) -> str:
     return json.dumps({"tool": tool, **args})
 
 
-def _seed_card(client: TestClient) -> tuple[str, str]:
+def _seed_fixture_job(app: FastAPI, fixture: str, **over: str) -> str:
+    """A job pointing at a local fixture page, seeded through the repo.
+
+    `POST /api/jobs` only accepts an http(s) link now — anything else is not a
+    usable identity and is dropped rather than stored (url-less-jobs.md section
+    9.1 item 5). The Applier itself is happy to drive a `file://` page, so the
+    fixture rides in through the repo instead of through the public door."""
+    fields = {
+        "title": "Staff Engineer",
+        "company": "Acme",
+        "location": "Remote",
+        "description": "Own the monolith.",
+        "source_adapter": "paste-url",
+    }
+    fields.update(over)
+    with app.state.db.repos() as repos:
+        return repos.jobs.create(
+            canonical_url=(FIXTURES / fixture).as_uri(), **fields
+        ).id
+
+
+def _seed_card(client: TestClient, app: FastAPI) -> tuple[str, str]:
     """Master profile + a fixture-form job + a Saved application."""
     resp = client.post(
         "/api/profile",
@@ -64,18 +85,7 @@ def _seed_card(client: TestClient) -> tuple[str, str]:
         json={"resume_markdown": "# Ada Lovelace\n\nBackend engineer."},
     )
     assert resp.status_code in (200, 201)
-    job = client.post(
-        "/api/jobs",
-        headers=AUTH,
-        json={
-            "canonical_url": (FIXTURES / "form.html").as_uri(),
-            "title": "Staff Engineer",
-            "company": "Acme",
-            "location": "Remote",
-            "description": "Own the monolith.",
-            "source_adapter": "paste-url",
-        },
-    ).json()
+    job = {"id": _seed_fixture_job(app, "form.html")}
     application = client.post(
         "/api/applications",
         headers=AUTH,
@@ -118,8 +128,8 @@ def _happy_script() -> list[str]:
 
 
 def test_apply_run_lands_ready_for_human(app_client) -> None:
-    _app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
 
     resp = client.post(
         f"/api/applications/{app_id}/apply",
@@ -162,8 +172,8 @@ def test_apply_run_lands_ready_for_human(app_client) -> None:
 
 
 def test_attest_submitted_moves_card_to_applied(app_client) -> None:
-    _app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
     run = client.post(
         f"/api/applications/{app_id}/apply",
         headers=AUTH,
@@ -192,8 +202,8 @@ def test_attest_submitted_moves_card_to_applied(app_client) -> None:
 
 
 def test_attest_didnt_submit_leaves_card(app_client) -> None:
-    _app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
     run = client.post(
         f"/api/applications/{app_id}/apply",
         headers=AUTH,
@@ -237,18 +247,7 @@ def test_closed_posting_blocks_with_zero_model_calls(app_client) -> None:
         json={"resume_markdown": "# Ada Lovelace\n\nBackend engineer."},
     )
     assert resp.status_code in (200, 201)
-    job = client.post(
-        "/api/jobs",
-        headers=AUTH,
-        json={
-            "canonical_url": (FIXTURES / "closed.html").as_uri(),
-            "title": "Staff Engineer",
-            "company": "Acme",
-            "location": "Remote",
-            "description": "Own the monolith.",
-            "source_adapter": "paste-url",
-        },
-    ).json()
+    job = {"id": _seed_fixture_job(_app, "closed.html")}
     app_id = client.post(
         "/api/applications",
         headers=AUTH,
@@ -435,7 +434,7 @@ def test_submit_failure_finalizes_route_created_run(app_client, monkeypatch) -> 
     (`failed`), never strand it `queued` until boot sweep. The error still
     propagates as the route's 500."""
     app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    _job_id, app_id = _seed_card(client, app)
 
     def rejecting_submit(kind: str, snapshot: dict) -> str:
         raise RuntimeError("executor rejected the dispatch")
@@ -643,7 +642,7 @@ def test_purge_run_dirs_is_guarded_and_best_effort(
 
 def test_card_delete_removes_run_dirs_from_disk(app_client, tmp_path: Path) -> None:
     app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    _job_id, app_id = _seed_card(client, app)
     db = app.state.db
     with db.repos() as repos:
         run_id = repos.apply_runs.create(app_id, status="ready_for_human").id
@@ -737,7 +736,7 @@ async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> 
     from sidecar.app.registry.operations import OperationContext
 
     app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    _job_id, app_id = _seed_card(client, app)
     db = app.state.db
     with db.repos() as repos:
         run_id = repos.apply_runs.create(app_id, status="ready_for_human").id
@@ -778,7 +777,7 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
     from sidecar.app.registry.operations import OperationContext
 
     app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    _job_id, app_id = _seed_card(client, app)
     db = app.state.db
     with db.repos() as repos:
         run_id = repos.apply_runs.create(app_id, status="ready_for_human").id
@@ -804,8 +803,8 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
 
 def test_user_submit_is_409_once_the_browser_is_gone(app_client) -> None:
     """No review window means no live page; say so instead of a silent no-op."""
-    _app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
     run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
         "dev": {
             "engine_script": [_action("finish", reason="filled")],
@@ -820,8 +819,8 @@ def test_user_submit_is_409_once_the_browser_is_gone(app_client) -> None:
 
 def test_user_submit_is_409_on_a_run_past_the_handoff(app_client) -> None:
     """An attested run is done; Submit must not re-click a second application."""
-    _app, client = app_client
-    _job_id, app_id = _seed_card(client)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
     run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
         "dev": {
             "engine_script": [_action("finish", reason="filled")],

@@ -520,7 +520,7 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile = resolve_pacing_profile(repos)
         job = repos.jobs.get(job_id) if job_id else None
         job_text = job.description if job is not None else ""
-        canonical_url = job.canonical_url if job is not None else ""
+        canonical_url = (job.canonical_url or "") if job is not None else ""
         source_adapter = job.source_adapter if job is not None else ""
 
     resolve_usage: dict = {}

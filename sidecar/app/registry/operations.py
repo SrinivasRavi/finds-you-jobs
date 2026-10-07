@@ -378,7 +378,9 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 feed_priority_stats=len(job_text.strip()) >= MIN_JD_CHARS,
             )
         return OperationOutcome(
-            result_ref={"score": det.score, "job_id": job_id},
+            result_ref=_score_result_ref(
+                det.score, job_id, "keyword", list(det.reasons)
+            ),
             usage=None,
             engine="on-device",
             model="keyword",
@@ -428,10 +430,29 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             feed_priority_stats=True,
         )
     return llm_outcome(
-        {"score": result.score, "job_id": job_id},
+        _score_result_ref(result.score, job_id, "llm", list(result.reasons)),
         usage=result.usage,
         resolved=resolved,
     )
+
+
+def _score_result_ref(
+    score_0_100: int, job_id: str | None, method: str, reasons: list[Any]
+) -> dict[str, Any]:
+    """The score op's ledger payload.
+
+    `method` is always there: a thin JD is silently downgraded to keyword even
+    in LLM mode, and the user who paid for a model deserves to be told which
+    one actually ran (url-less-jobs.md section 8.7).
+
+    `reasons` rides along only on the triage path. With a job id they are
+    already on the job row, and a second copy of them here would drift from
+    it; with no job id there is no row and the operation is their only home
+    (section 9.1.1)."""
+    ref: dict[str, Any] = {"score": score_0_100, "job_id": job_id, "method": method}
+    if job_id is None:
+        ref["reasons"] = reasons
+    return ref
 
 
 def _keyword_sweep(db: Database, *, refresh: bool) -> int:

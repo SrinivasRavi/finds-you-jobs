@@ -51,7 +51,10 @@ class JobDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: str
-    canonical_url: str
+    # Null for a job the user typed in (url-less-jobs.md section 5.3). Every
+    # reader that treats this as an action target needs a branch for it:
+    # "Open posting" becomes "Add link", and Apply refuses and prompts.
+    canonical_url: str | None
     title: str
     company: str
     location: str
@@ -119,9 +122,13 @@ class ScanProgressDTO(BaseModel):
 
 
 class JobCreate(BaseModel):
-    """Add-by-URL (US-JB-07) + programmatic ingest."""
+    """Add a job (US-JB-07) + programmatic ingest.
 
-    canonical_url: str
+    The link is recommended, never required: a job with no usable URL is keyed
+    on its description instead (url-less-jobs.md section 5.1). One of the 2
+    has to be there, which the route enforces."""
+
+    canonical_url: str = ""
     title: str
     company: str = ""
     location: str = ""
@@ -153,6 +160,48 @@ class JobPreviewDTO(BaseModel):
     source_adapter: str
 
 
+class AttachLinkRequest(BaseModel):
+    """Promotion (url-less-jobs.md section 5.4): give a URL-less job its URL.
+
+    `confirm` attaches despite a mismatch or an unreadable page, which is
+    rank-don't-gate applied to a field: always available, never the default.
+    `merge` answers the collision in section 5.5 when a scanned row already
+    holds the pasted URL."""
+
+    url: str
+    confirm: bool = False
+    merge: bool = False
+
+
+class LinkCandidateDTO(BaseModel):
+    """One side of the mismatch confirm's side-by-side."""
+
+    title: str
+    company: str
+    location: str
+    similarity: float | None = None
+
+
+class AttachLinkResultDTO(BaseModel):
+    """What the Add-link dialog renders next.
+
+    - `attached`: the check passed (or the user confirmed), the row is re-keyed.
+    - `mismatch`: the compound gate said no; `pasted` and `card` fill the
+      side-by-side and `confirm` attaches anyway.
+    - `unreadable`: `probe_url` failed, so there's nothing to compare.
+    - `duplicate`: a scanned row already holds this URL; `merge` resolves it.
+    - `merge_refused`: both rows have an application, so merging would throw
+      one away. The user picks (section 5.5).
+    """
+
+    status: Literal["attached", "mismatch", "unreadable", "duplicate", "merge_refused"]
+    job: JobDTO | None = None
+    pasted: LinkCandidateDTO | None = None
+    card: LinkCandidateDTO | None = None
+    other_job_id: str | None = None
+    reason: str | None = None
+
+
 class JobUpdate(BaseModel):
     """App-side job state — Trash (US-JB-11): `feed_state` active/removed."""
 
@@ -161,7 +210,10 @@ class JobUpdate(BaseModel):
 
 class TombstoneResultDTO(BaseModel):
     """Result of a permanent-discard action (Empty Trash / Delete forever /
-    TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned."""
+    TTL eviction — US-JB-11 / FR-SYS-04): how many identities were tombstoned.
+
+    `canonical_urls` lists only the rows that had one, so it can be shorter
+    than `tombstoned` when a URL-less job was among them."""
 
     tombstoned: int
     canonical_urls: list[str]

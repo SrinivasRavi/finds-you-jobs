@@ -1,0 +1,482 @@
+"""Covers: a job with no posting URL, end to end (url-less-jobs.md).
+
+Layer 1, identity. The migration gives a URL-less row its own key, so these
+tests are the layer's acceptance bar: post the same JD twice and get 1 row.
+
+- identity: a URL row keys on its URL, a URL-less row on its description hash,
+  and neither population collides with the other;
+- the dedup branch, the tombstone lookup and Trash restore all read whichever
+  key the row has;
+- `age_expired_jobs` never touches a row the feed can't replace (section 5.6).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from sidecar.app.db.base import now_utc
+from sidecar.app.main import create_app
+from sidecar.app.registry.persistence import age_expired_jobs
+from sidecar.modules.scraper import ScraperError
+from sidecar.modules.scraper.identity import content_hash
+from sidecar.modules.scraper.types import NormalizedJob
+
+TOKEN = "test-token-urlless"  # noqa: S105 — test fixture, not a real secret
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
+_JD = (
+    "We are hiring a Senior Software Engineer to own our ingestion pipeline. "
+    "You will design services in Python, run them on AWS, and mentor two "
+    "junior engineers. Five years of backend experience required."
+)
+
+
+@pytest.fixture
+def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    app = create_app(
+        token=TOKEN,
+        original_ppid=None,
+        data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+    with TestClient(app) as client:
+        yield app, client
+
+
+def _paste(client: TestClient, description: str, **over: str) -> dict:
+    body: dict[str, str] = {
+        "title": "Senior Software Engineer",
+        "company": "Acme",
+        "description": description,
+        "source_adapter": "paste-text",
+    }
+    body.update(over)
+    return client.post("/api/jobs", headers=AUTH, json=body).json()
+
+
+# ---------------------------------------------------------------------------
+# identity
+# ---------------------------------------------------------------------------
+
+
+def test_a_job_with_no_link_is_created_and_says_so(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _app, client = app_client
+    resp = client.post(
+        "/api/jobs",
+        headers=AUTH,
+        json={
+            "title": "Senior Software Engineer",
+            "company": "Acme",
+            "description": _JD,
+            "source_adapter": "paste-text",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["canonical_url"] is None
+
+
+def test_the_same_jd_pasted_twice_is_one_row(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    # The acceptance test for Layer 1. A per-paste UUID identity passes the
+    # unique index and still writes 2 rows (section 6.3).
+    _app, client = app_client
+    first = _paste(client, _JD)
+    second = _paste(client, _JD)
+    assert first["id"] == second["id"]
+
+    board = client.get("/api/board", headers=AUTH).json()
+    assert [j["id"] for j in board["jobs"]] == [first["id"]]
+
+
+def test_whitespace_only_differences_are_the_same_job(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    # 2 of 3 OneTrust requisitions in the bench corpus differ by 1 non-breaking
+    # space in 7,437 characters. Raw hashing calls those 2 jobs (section 6.2).
+    _app, client = app_client
+    first = _paste(client, _JD)
+    second = _paste(client, _JD.replace(" ", " \n", 1).upper())
+    assert first["id"] == second["id"]
+
+
+def test_different_jds_are_different_jobs(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _app, client = app_client
+    first = _paste(client, _JD)
+    second = _paste(client, _JD + " Kubernetes experience is a plus.")
+    assert first["id"] != second["id"]
+
+
+def test_a_job_needs_a_link_or_a_description(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _app, client = app_client
+    resp = client.post(
+        "/api/jobs", headers=AUTH, json={"title": "Senior Software Engineer"}
+    )
+    assert resp.status_code == 422
+
+
+def test_prose_in_the_link_box_never_becomes_an_identity(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    # The hand-fill hatch used to hand a failed fetch's typed string straight
+    # to canonical_url, which is how an English sentence became a job's
+    # identity (section 3.4).
+    _app, client = app_client
+    created = _paste(client, _JD, canonical_url="Senior Engineer at Acme, via email")
+    assert created["canonical_url"] is None
+
+
+def test_url_jobs_sharing_a_description_do_not_collide(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    # 5 Tekion requisitions in the corpus share one byte-identical
+    # description. Hashing a row that already has a URL would make the 2nd
+    # one violate the unique hash index (section 8.2).
+    _app, client = app_client
+    one = _paste(
+        client, _JD, canonical_url="https://boards.greenhouse.io/acme/jobs/1"
+    )
+    two = _paste(
+        client, _JD, canonical_url="https://boards.greenhouse.io/acme/jobs/2"
+    )
+    assert one["id"] != two["id"]
+
+
+# ---------------------------------------------------------------------------
+# tombstones and Trash
+# ---------------------------------------------------------------------------
+
+
+def test_delete_forever_blocks_a_re_paste_of_the_same_text(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    created = _paste(client, _JD)
+    client.patch(
+        f"/api/jobs/{created['id']}", headers=AUTH, json={"feed_state": "removed"}
+    )
+    result = client.post(f"/api/jobs/{created['id']}/tombstone", headers=AUTH)
+    assert result.status_code == 200
+    assert result.json()["tombstoned"] == 1
+
+    resp = client.post(
+        "/api/jobs",
+        headers=AUTH,
+        json={"title": "Senior Software Engineer", "description": _JD},
+    )
+    assert resp.status_code == 409
+
+    with app.state.db.repos() as repos:
+        assert repos.tombstones.exists(content_hash=content_hash(_JD))
+        # A URL tombstone must not be what answered that.
+        assert not repos.tombstones.exists(canonical_url="")
+
+
+def test_a_trashed_paste_comes_back_on_a_re_paste(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _app, client = app_client
+    created = _paste(client, _JD)
+    client.patch(
+        f"/api/jobs/{created['id']}", headers=AUTH, json={"feed_state": "removed"}
+    )
+    restored = _paste(client, _JD)
+    assert restored["id"] == created["id"]
+    assert restored["feed_state"] == "active"
+
+
+# ---------------------------------------------------------------------------
+# the lifecycle sweep (section 5.6)
+# ---------------------------------------------------------------------------
+
+
+def test_a_typed_in_job_never_ages_out(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    typed = _paste(client, _JD)
+    scanned = _paste(
+        client,
+        _JD + " Different text so this is its own row.",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/7",
+    )
+    old = now_utc() - timedelta(days=400)
+    with app.state.db.repos() as repos:
+        for job_id in (typed["id"], scanned["id"]):
+            repos.jobs.update(job_id, feed_since=old, ingested_at=old)
+
+    result = age_expired_jobs(app.state.db)
+    assert result["expired"] == [scanned["id"]]
+
+    with app.state.db.repos() as repos:
+        repos.jobs.update(scanned["id"], expired_at=old)
+    result = age_expired_jobs(app.state.db)
+    assert result["deleted"] == [scanned["id"]]
+
+    with app.state.db.repos() as repos:
+        assert repos.jobs.get(typed["id"]) is not None
+        assert repos.jobs.get(typed["id"]).feed_state == "active"
+
+
+# ---------------------------------------------------------------------------
+# the board's link filter (section 9.3)
+# ---------------------------------------------------------------------------
+
+
+def test_the_link_filter_splits_the_board_on_the_url_axis(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    _app, client = app_client
+    typed = _paste(client, _JD)
+    linked = _paste(
+        client,
+        _JD + " Posted on our board.",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/9",
+    )
+
+    has = client.get("/api/board", headers=AUTH, params={"link": "has"}).json()
+    assert [j["id"] for j in has["jobs"]] == [linked["id"]]
+
+    none = client.get("/api/board", headers=AUTH, params={"link": "none"}).json()
+    assert [j["id"] for j in none["jobs"]] == [typed["id"]]
+
+    both = client.get("/api/board", headers=AUTH).json()
+    assert both["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# promotion (sections 5.4 and 5.5)
+# ---------------------------------------------------------------------------
+
+_URL = "https://boards.greenhouse.io/acme/jobs/9"
+
+
+def _probe(description: str, title: str = "Senior Software Engineer", company: str = "Acme"):
+    def _fake(_url: str, *_a: object, **_k: object) -> NormalizedJob:
+        return NormalizedJob(
+            canonical_url=_URL,
+            title=title,
+            company=company,
+            location="Pune, India",
+            description=description,
+            source_adapter="greenhouse",
+        )
+
+    return _fake
+
+
+def test_an_exact_text_match_attaches_silently(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, client = app_client
+    job = _paste(client, _JD)
+    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
+
+    resp = client.post(f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "attached"
+    assert resp.json()["job"]["canonical_url"] == _URL
+
+    with app.state.db.repos() as repos:
+        row = repos.jobs.get(job["id"])
+        # The old hash stays, so a later re-paste of the same text finds this
+        # row instead of writing a second one (section 5.4).
+        assert row.content_hash == content_hash(_JD)
+    assert _paste(client, _JD)["id"] == job["id"]
+
+
+def test_promotion_keeps_the_application_and_its_documents(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _app, client = app_client
+    job = _paste(client, _JD)
+    saved = client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": job["id"], "generate_resume": False, "generate_cover": False},
+    ).json()
+    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
+
+    client.post(f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL})
+
+    after = client.get(f"/api/applications/{saved['id']}", headers=AUTH).json()
+    assert after["job"]["canonical_url"] == _URL
+
+
+def test_adjacent_seniority_comes_back_as_a_mismatch(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The failure a bare 90% similarity gate accepts (section 6.4): same
+    # company, same boilerplate, a different seniority.
+    _app, client = app_client
+    job = _paste(client, _JD)
+    monkeypatch.setattr(
+        "sidecar.app.api.routes.probe_url",
+        _probe(_JD + " Equity included.", title="Principal Software Engineer"),
+    )
+
+    body = client.post(
+        f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL}
+    ).json()
+    assert body["status"] == "mismatch"
+    assert body["pasted"]["title"] == "Principal Software Engineer"
+    assert body["card"]["title"] == "Senior Software Engineer"
+    assert body["job"] is None  # nothing written
+
+
+def test_confirm_attaches_a_mismatch_anyway(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Rank-don't-gate: confirming is always available, it just isn't default.
+    _app, client = app_client
+    job = _paste(client, _JD)
+    monkeypatch.setattr(
+        "sidecar.app.api.routes.probe_url",
+        _probe("Something else entirely.", title="Product Designer"),
+    )
+
+    assert (
+        client.post(f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL})
+        .json()["status"]
+        == "mismatch"
+    )
+    body = client.post(
+        f"/api/jobs/{job['id']}/link",
+        headers=AUTH,
+        json={"url": _URL, "confirm": True},
+    ).json()
+    assert body["status"] == "attached"
+    assert body["job"]["canonical_url"] == _URL
+
+
+def test_an_unreadable_page_says_so_instead_of_refusing(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _app, client = app_client
+    job = _paste(client, _JD)
+
+    def _boom(_url: str, *_a: object, **_k: object) -> NormalizedJob:
+        raise ScraperError("fetch", "likely a JS-only page")
+
+    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _boom)
+    body = client.post(
+        f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL}
+    ).json()
+    assert body["status"] == "unreadable"
+    assert body["job"] is None
+
+
+def test_the_collision_keeps_the_users_row_and_takes_the_scans_text(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Flow D (section 5.5): pasted Monday, scanned Wednesday, linked Friday.
+    app, client = app_client
+    mine = _paste(client, _JD)
+    client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": mine["id"], "generate_resume": False, "generate_cover": False},
+    )
+    scanned = _paste(
+        client,
+        _JD + " The board's fuller text, with the benefits section.",
+        canonical_url=_URL,
+        source_adapter="greenhouse",
+    )
+    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
+
+    asked = client.post(
+        f"/api/jobs/{mine['id']}/link", headers=AUTH, json={"url": _URL}
+    ).json()
+    assert asked["status"] == "duplicate"
+    assert asked["other_job_id"] == scanned["id"]
+
+    merged = client.post(
+        f"/api/jobs/{mine['id']}/link",
+        headers=AUTH,
+        json={"url": _URL, "confirm": True, "merge": True},
+    ).json()
+    assert merged["status"] == "attached"
+    assert merged["job"]["id"] == mine["id"]
+    assert merged["job"]["source_adapter"] == "greenhouse"
+    assert "benefits section" in merged["job"]["description"]
+    with app.state.db.repos() as repos:
+        assert repos.jobs.get(scanned["id"]) is None
+
+
+def test_the_merge_refuses_when_both_rows_are_in_the_tracker(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, client = app_client
+    mine = _paste(client, _JD)
+    scanned = _paste(client, _JD + " Board copy.", canonical_url=_URL)
+    for job_id in (mine["id"], scanned["id"]):
+        client.post(
+            "/api/applications",
+            headers=AUTH,
+            json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
+        )
+    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
+
+    body = client.post(
+        f"/api/jobs/{mine['id']}/link",
+        headers=AUTH,
+        json={"url": _URL, "confirm": True, "merge": True},
+    ).json()
+    assert body["status"] == "merge_refused"
+    with app.state.db.repos() as repos:
+        assert repos.jobs.get(scanned["id"]) is not None  # nothing thrown away
+
+
+def test_apply_refuses_a_url_less_card_before_writing_a_run(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    # Section 9.8: the refusal lands before `apply_runs.create`, so the panel
+    # never shows a run that had no chance of working.
+    app, client = app_client
+    job = _paste(client, _JD)
+    saved = client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": job["id"], "generate_resume": False, "generate_cover": False},
+    ).json()
+
+    resp = client.post(f"/api/applications/{saved['id']}/apply", headers=AUTH)
+    assert resp.status_code == 409
+    assert "no posting link" in resp.json()["detail"]
+    with app.state.db.repos() as repos:
+        assert repos.apply_runs.latest_for_application(saved["id"]) is None
+
+
+def test_the_tracker_logs_an_application_with_no_link(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    # Section 9.2: the person logging an application they made 3 weeks ago out
+    # of an email is the person least likely to still have the URL.
+    _app, client = app_client
+    resp = client.post(
+        "/api/applications/manual",
+        headers=AUTH,
+        data={
+            "canonical_url": "",
+            "title": "Logged Engineer",
+            "company": "Umbrella",
+            "description": _JD,
+            "source_adapter": "paste-text",
+            "column": "applied",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["job"]["canonical_url"] is None

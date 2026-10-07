@@ -156,3 +156,72 @@ def test_job_board_resolution_keys_are_purged(tmp_path: Path) -> None:
             ).fetchall()
         }
     assert keys == {"domain:abnormal.ai", "domain:tataelxsi.co.in"}
+
+
+def test_url_less_identity_preserves_existing_rows(tmp_path: Path) -> None:
+    """c9e4a71b3f02 (url-less-jobs.md section 5.3): `canonical_url` goes
+    nullable and identity gets its own column, with no backfill — every
+    pre-migration row already has a URL and is keyed on it."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'db.sqlite'}"
+    command.upgrade(make_alembic_config(url), "b4d8e2a7c531")
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO jobs (id, canonical_url, title, company, location,"
+                " description, source_adapter, trust_score, trust_flags,"
+                " ingested_at, feed_state, feed_since, llm_reasons,"
+                " llm_breakdown_md, keyword_reasons, keyword_breakdown_md,"
+                " llm_score_attempts) VALUES ('j1',"
+                " 'https://boards.greenhouse.io/acme/jobs/1', 'SWE', 'Acme',"
+                " 'Pune', 'JD', 'greenhouse', 100, '[]',"
+                " '2026-10-01T00:00:00', 'active', '2026-10-01T00:00:00',"
+                " '[]', '', '[]', '', 0)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO tombstones (id, canonical_url, reason)"
+                " VALUES ('t1', 'https://boards.greenhouse.io/acme/jobs/2',"
+                " 'user_delete')"
+            )
+        )
+
+    upgrade_to_head(url)
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT canonical_url, content_hash, fingerprint FROM jobs")
+        ).one()
+        assert row[0] == "https://boards.greenhouse.io/acme/jobs/1"
+        assert row[1] is None  # no backfill: this row is keyed on its URL
+        assert row[2] is None
+        assert (
+            conn.execute(text("SELECT content_hash FROM tombstones")).scalar()
+            is None
+        )
+
+        # Both populations coexist: NULLs are distinct in a unique index, so
+        # any number of URL-less rows and URL rows live side by side.
+        for i in (2, 3):
+            conn.execute(
+                text(
+                    "INSERT INTO jobs (id, canonical_url, content_hash, title,"
+                    " company, location, description, source_adapter,"
+                    " trust_score, trust_flags, ingested_at, feed_state,"
+                    " feed_since, llm_reasons, llm_breakdown_md,"
+                    " keyword_reasons, keyword_breakdown_md,"
+                    " llm_score_attempts) VALUES (:id, NULL, :hash, 'SWE',"
+                    " 'Acme', 'Pune', 'JD', 'paste-text', 100, '[]',"
+                    " '2026-10-07T00:00:00', 'active', '2026-10-07T00:00:00',"
+                    " '[]', '', '[]', '', 0)"
+                ),
+                {"id": f"j{i}", "hash": f"hash-{i}"},
+            )
+        assert conn.execute(text("SELECT count(*) FROM jobs")).scalar() == 3

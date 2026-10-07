@@ -3,7 +3,7 @@
 The wrappers call the modules; this file makes them persist their results into
 the DB the app owns (architecture section 5.3/section 5.6, database-design section 3–section 4):
 
-- scan → `Job` rows, canonical-URL dedup (first-seen wins) + `Tombstone`
+- scan → `Job` rows, identity dedup (first-seen wins) + `Tombstone`
   suppression + a per-source report into `result_ref`;
 - score → a cached `JobScore` row for `(job_id, profile_version, scorer_impl)`;
 - tailor/cover → an `Artifact` row (lands with the applications-schema commit).
@@ -19,10 +19,13 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
+from sidecar.modules.scraper.fingerprint import simhash64, to_signed64
+from sidecar.modules.scraper.identity import content_hash
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, ScraperError
 
 from ..db import Database, Repos
 from ..db.base import now_utc
+from ..db.models import Job
 from ..lifecycle import LIFECYCLE_DEFAULTS
 
 SCORER_IMPL = "scorer-llm"
@@ -294,7 +297,10 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
     if db is not None:
         with db.repos() as repos:
             for job in result.jobs:
-                if repos.tombstones.exists(job.canonical_url):
+                if repos.tombstones.exists(
+                    canonical_url=job.canonical_url,
+                    content_hash=content_hash(job.description),
+                ):
                     tombstoned += 1
                     continue
                 if repos.jobs.get_by_canonical_url(job.canonical_url) is not None:
@@ -352,6 +358,10 @@ def _job_columns(job: NormalizedJob) -> dict[str, Any]:
         "source_adapter": job.source_adapter or "unknown",
         "trust_score": job.trust_score,
         "trust_flags": list(job.trust_flags),
+        # Stored rather than recomputed per comparison: the scan already pays
+        # for it, and the promotion check and duplicate prompt read it per
+        # card (url-less-jobs.md section 5.2). 0 means "too short to shingle".
+        "fingerprint": to_signed64(simhash64(job.description)) or None,
     }
 
 
@@ -430,8 +440,9 @@ def evict_stale_trash(
     with db.repos() as repos:
         repos.jobs.stamp_missing_lifecycle_dates(now=now)
         for job in repos.jobs.list_trashed_before(cutoff):
-            if not repos.tombstones.exists(job.canonical_url):
-                repos.tombstones.create(job.canonical_url, reason="trash_ttl")
+            key = _identity_kwargs(job)
+            if not repos.tombstones.exists(**key):
+                repos.tombstones.create(reason="trash_ttl", **key)
             delete_job_cascade(repos, job.id)
             tombstoned.append(job.id)
     return tombstoned
@@ -447,7 +458,15 @@ def age_expired_jobs(
     """TTL aging for feed jobs (FR-SYS-03), run by the daily maintenance tick.
 
     Two stages, both **skipping any job that has an Application** (Saving rescues
-    it — the Saved/Tracker side is never auto-expired):
+    it) and both **skipping any job with no `canonical_url`**.
+
+    The URL-less exemption is the sweep's own reasoning applied honestly: the
+    freshness clock exists because the feed is a feed, and the hard delete
+    writes no tombstone specifically because a later scrape may bring the
+    posting back. Neither premise holds for a row no scan can ever produce, so
+    the rule is "age what the feed can replace" and a job the user typed in by
+    hand is outside it (url-less-jobs.md sections 5.6 and 8.3). It leaves the
+    board the way it arrived: by hand, through Trash.
 
     1. **active → expired** once a job is older than `expire_after_days`,
        measured from `feed_since` (which starts at `ingested_at` and is reset by
@@ -474,18 +493,25 @@ def age_expired_jobs(
 
         # Stage 2 first: hard-delete stale Expired rows (no tombstone).
         for job in repos.jobs.list_expired_before(delete_cutoff):
-            if job.id in saved:
-                continue  # Saved rescues it — never auto-delete
+            if job.id in saved or not job.canonical_url:
+                continue  # Saved, or no feed to replace it — never auto-delete
             delete_job_cascade(repos, job.id)  # no Tombstone — FR-SYS-03
             deleted.append(job.id)
 
         # Stage 1: grey out active jobs past the freshness window.
         for job in repos.jobs.list_active_before(expire_cutoff):
-            if job.id in saved:
+            if job.id in saved or not job.canonical_url:
                 continue
             repos.jobs.set_expired(job.id, now=now)
             expired.append(job.id)
     return {"expired": expired, "deleted": deleted}
+
+
+def _identity_kwargs(job: Job) -> dict[str, str]:
+    """The one key this job is identified by, as tombstone kwargs."""
+    if job.canonical_url:
+        return {"canonical_url": job.canonical_url}
+    return {"content_hash": job.content_hash or ""}
 
 
 def _saved_job_ids(repos: Repos) -> set[str]:

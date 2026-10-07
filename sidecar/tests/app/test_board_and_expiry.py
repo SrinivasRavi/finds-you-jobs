@@ -415,7 +415,7 @@ def test_expired_hard_deleted_at_30_days_without_tombstone(
     with db.repos() as repos:
         assert repos.jobs.get(job_id) is None
         # FR-SYS-03: no tombstone — a later scrape may re-surface the posting.
-        assert repos.tombstones.exists(url) is False
+        assert repos.tombstones.exists(canonical_url=url or "") is False
 
 
 def test_expired_legacy_row_without_stamp_backfilled_not_deleted(

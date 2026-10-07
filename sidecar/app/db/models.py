@@ -115,12 +115,23 @@ SCORE_MAX_ATTEMPTS = 3
 
 
 class Job(Base):
-    """One discovered posting; `canonical_url` is the dedup key (FR-SYS-01)."""
+    """One discovered posting, keyed on its URL or, failing that, its text.
+
+    `canonical_url` is the dedup key for anything a scan found (FR-SYS-01).
+    A job the user typed in has no URL, so `content_hash` keys it instead
+    (url-less-jobs.md section 5.2). Exactly one of the 2 is set on any row, and
+    SQLite's NULLs-are-distinct rule lets each population keep its own unique
+    index. Promotion fills the URL in later and keeps the hash, so a re-paste
+    of the same text still lands on the promoted row."""
 
     __tablename__ = "jobs"
 
     id: Mapped[str] = _pk()
-    canonical_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    canonical_url: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    # The SimHash the scan already computes: "nearly the same text?", which
+    # keys the duplicate prompt, the promotion check and the repost signal.
+    fingerprint: Mapped[int | None] = mapped_column(Integer, nullable=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     company: Mapped[str] = mapped_column(String, nullable=False, default="")
     location: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -175,16 +186,23 @@ class Job(Base):
         Index("ix_jobs_feedstate_expired", "feed_state", "expired_at"),
         Index("ix_jobs_feedstate_trashed", "feed_state", "trashed_at"),
         Index("ix_jobs_feedstate_since", "feed_state", "feed_since"),
+        # The near-duplicate lookups (promotion, the duplicate prompt).
+        Index("ix_jobs_fingerprint", "fingerprint"),
     )
 
 
 class Tombstone(Base):
-    """A permanently-discarded canonical URL — never re-ingested (FR-SYS-04)."""
+    """A permanently-discarded job identity — never re-ingested (FR-SYS-04).
+
+    Keyed on whichever identity the deleted job had, so delete forever works
+    on a pasted JD as well as on a scanned URL. On a text tombstone that means
+    the same description can't be pasted back in; the confirm copy says so."""
 
     __tablename__ = "tombstones"
 
     id: Mapped[str] = _pk()
-    canonical_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    canonical_url: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
     reason: Mapped[str] = mapped_column(String, nullable=False, default="manual")
 
 

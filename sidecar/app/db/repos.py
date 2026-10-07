@@ -442,8 +442,28 @@ class JobsRepo:
         return {job.id: job for job in self._s.scalars(stmt)}
 
     def get_by_canonical_url(self, canonical_url: str) -> Job | None:
+        if not canonical_url:
+            return None
         stmt = select(Job).where(Job.canonical_url == canonical_url)
         return self._s.scalars(stmt).first()
+
+    def get_by_content_hash(self, content_hash: str) -> Job | None:
+        """The URL-less dedup lookup. Empty hash matches nothing rather than
+        every row whose column is NULL (url-less-jobs.md section 5.2)."""
+        if not content_hash:
+            return None
+        stmt = select(Job).where(Job.content_hash == content_hash)
+        return self._s.scalars(stmt).first()
+
+    def get_by_identity(
+        self, *, canonical_url: str = "", content_hash: str = ""
+    ) -> Job | None:
+        """Whichever key this job has. The URL wins when both are given: a
+        promoted row keeps its old hash, so the hash alone could resolve to a
+        row that now belongs to a different URL."""
+        return self.get_by_canonical_url(canonical_url) or self.get_by_content_hash(
+            content_hash
+        )
 
     def list(
         self, *, feed_state: str | None = "active", limit: int = 200
@@ -704,12 +724,27 @@ class TombstonesRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def exists(self, canonical_url: str) -> bool:
-        stmt = select(Tombstone.id).where(Tombstone.canonical_url == canonical_url)
+    def exists(self, canonical_url: str = "", content_hash: str = "") -> bool:
+        """True when either identity is tombstoned. Empty values match nothing,
+        so a URL-less check never collides with the NULL column."""
+        clauses = []
+        if canonical_url:
+            clauses.append(Tombstone.canonical_url == canonical_url)
+        if content_hash:
+            clauses.append(Tombstone.content_hash == content_hash)
+        if not clauses:
+            return False
+        stmt = select(Tombstone.id).where(or_(*clauses))
         return self._s.scalars(stmt).first() is not None
 
-    def create(self, canonical_url: str, reason: str = "manual") -> Tombstone:
-        tomb = Tombstone(canonical_url=canonical_url, reason=reason)
+    def create(
+        self, canonical_url: str = "", content_hash: str = "", reason: str = "manual"
+    ) -> Tombstone:
+        tomb = Tombstone(
+            canonical_url=canonical_url or None,
+            content_hash=content_hash or None,
+            reason=reason,
+        )
         self._s.add(tomb)
         self._s.flush()
         return tomb

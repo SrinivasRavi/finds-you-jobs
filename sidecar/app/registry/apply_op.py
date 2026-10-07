@@ -65,6 +65,13 @@ APPLY_CONTROL: dict[str, ApplyControl] = {}
 
 _PACKET_POLL_S = 2.0
 _PACKET_WAIT_MAX_S = 15 * 60.0
+# Why an Apply can't start, shown by the route's refusal and raised by the
+# retry path's guard (url-less-jobs.md section 5.4).
+NO_POSTING_URL_DETAIL = (
+    "This job has no posting link, so there's no form to apply on. "
+    "Add the link and try again."
+)
+
 _REVIEW_WAIT_S = 10 * 60.0
 _REVIEW_POLL_S = 3.0
 
@@ -173,6 +180,13 @@ async def _apply_async(
         job = repos.jobs.get(app_row.job_id)
         if job is None:
             raise ValueError(f"job {app_row.job_id!r} not found")
+        # Before the run row, never after: a run against a job with no posting
+        # link has no form to fill and would sit in the Applier panel as a
+        # failure the user can't act on (url-less-jobs.md section 5.4).
+        # `start_apply` refuses first and prompts for the link; this is the
+        # retry path's own guard.
+        if not job.canonical_url:
+            raise ValueError(NO_POSTING_URL_DETAIL)
         # Adopt the route-created row by its snapshot id first: the route
         # commits it BEFORE runner.submit, so it is always visible here, while
         # `operation_id` may not be attached yet (the route writes that after
@@ -188,13 +202,13 @@ async def _apply_async(
                 application_id,
                 operation_id=ctx.operation_id,
                 retry_of_run_id=ctx.input_snapshot.get("retry_of_run_id"),
-                source_url=job.canonical_url,
+                source_url=job.canonical_url or "",
                 deadline_at=now_utc() + timedelta(minutes=20),
             )
         elif run.operation_id != ctx.operation_id:
             run = repos.apply_runs.update(run.id, operation_id=ctx.operation_id)
         run_id = run.id
-        job_url = job.canonical_url
+        job_url = job.canonical_url or ""
         company = job.company
         role = job.title
         jd_text = (job.description or "")[:12_000]

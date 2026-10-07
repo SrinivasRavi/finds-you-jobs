@@ -57,6 +57,20 @@ def similarity(a: int, b: int) -> float:
     return 1.0 - ((a ^ b).bit_count() / 64)
 
 
+def to_signed64(value: int) -> int:
+    """The same 64 bits, reinterpreted as signed.
+
+    SQLite's INTEGER is a signed 64-bit value, so an unsigned SimHash with the
+    top bit set overflows on insert. Storing the signed reinterpretation keeps
+    every bit, and `from_signed64` is its exact inverse."""
+    return value - (1 << 64) if value >= (1 << 63) else value
+
+
+def from_signed64(value: int) -> int:
+    """The inverse of `to_signed64`: a stored column back to a fingerprint."""
+    return value + (1 << 64) if value < 0 else value
+
+
 def normalize_label(value: str) -> str:
     """Company/title normalized for equality: lowercase alphanumeric tokens."""
     return " ".join(_TOKEN_RE.findall((value or "").lower()))
