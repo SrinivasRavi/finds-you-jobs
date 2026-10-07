@@ -176,3 +176,31 @@ test("the factor bars draw a confidence differently from a graded position", asy
   await bars.screenshot({ path: `${DIR}/factor-bars.png` });
   await page.screenshot({ path: `${DIR}/detail-with-bars.png`, fullPage: true });
 });
+
+test("weight presets and the sliders behind their disclosure", async ({ page }) => {
+  await page.goto("/settings");
+  await page.getByTestId("settings-nav-discovery").click().catch(async () => {
+    await page.getByText("Discover jobs", { exact: false }).last().click();
+  });
+
+  const weights = page.locator('[data-testid="score-weights"]');
+  await expect(weights).toBeVisible({ timeout: 15_000 });
+  await weights.scrollIntoViewIfNeeded();
+
+  // The reset lives outside the disclosure and starts inert on a fresh install.
+  await expect(page.locator('[data-testid="score-weights-reset"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="score-weight-core_stack"]')).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/weights-presets.png`, fullPage: true });
+
+  await page.locator('[data-testid="score-weights-disclosure"]').click();
+  await expect(page.locator('[data-testid="score-weight-core_stack"]')).toBeVisible();
+  await expect(page.locator('[data-testid="score-location-penalty"]')).toBeVisible();
+  await weights.screenshot({ path: `${DIR}/weights-sliders.png` });
+
+  // Picking a preset is a real save, and the reset wakes up.
+  await page.locator('[data-testid="score-weight-preset-skills_only"]').click();
+  await expect(page.locator('[data-testid="score-weights-reset"]')).toBeEnabled({
+    timeout: 10_000,
+  });
+  await weights.screenshot({ path: `${DIR}/weights-skills-only.png` });
+});

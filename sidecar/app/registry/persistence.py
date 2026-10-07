@@ -54,6 +54,49 @@ def scoring_mode(prefs: Any) -> str:
     stored = str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "")
     return stored if stored in SCORING_MODES else DEFAULT_SCORING_MODE
 
+
+def scoring_weights(prefs: Any) -> tuple[dict[str, float], int]:
+    """The user's own axis weights and location penalty, or the empty table.
+
+    The ONE reader of `thresholds["score_weight_preset"]` and
+    `thresholds["score_weights"]`, for the same reason `scoring_mode` is the one
+    reader of its key. An empty table means "use whatever the method that ran
+    shipped with", which is what the `balanced` preset is and what every install
+    gets until someone opens the control (scoring.md 7.4).
+
+    Custom slider values outrank the preset: moving a slider is a more specific
+    statement than picking a preset, and the UI only ever stores one of them.
+    """
+    from sidecar.modules.scorer.weights import (
+        LOCATION_MISS_PENALTY,
+        PRESET_LOCATION_PENALTY,
+        PRESETS,
+        WEIGHTED_AXES,
+    )
+
+    thresholds = getattr(prefs, "thresholds", None) or {}
+    preset = str(thresholds.get("score_weight_preset") or "balanced")
+    if preset not in PRESETS:
+        preset = "balanced"
+    stored_penalty = thresholds.get("score_location_penalty")
+    penalty = (
+        int(stored_penalty)
+        if isinstance(stored_penalty, int | float)
+        else PRESET_LOCATION_PENALTY.get(preset, LOCATION_MISS_PENALTY)
+    )
+
+    custom = thresholds.get("score_weights")
+    if isinstance(custom, dict):
+        table = {
+            axis: float(custom[axis])
+            for axis in WEIGHTED_AXES
+            if isinstance(custom.get(axis), int | float)
+        }
+        if table and any(v > 0 for v in table.values()):
+            return table, penalty
+    return dict(PRESETS[preset]), penalty
+
+
 # The user-configurable windows below are DERIVED from `LIFECYCLE_DEFAULTS`
 # (D-A15) — they used to be re-typed here, so a Settings default change could
 # silently disagree with the fallback these functions use. Single home:

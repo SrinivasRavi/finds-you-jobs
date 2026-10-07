@@ -5,10 +5,16 @@
 // Memoized: `settings` is the query-stable object; `patch` is a root
 // useCallback.
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ScoringMethod, ScoringMode, Settings as SettingsT } from "../../api/types";
+import type {
+  ScoreWeightPreset,
+  ScoringMethod,
+  ScoringMode,
+  Settings as SettingsT,
+} from "../../api/types";
+import { WEIGHTED_AXES } from "../../api/types";
 import { InfoDot } from "../../shell/InfoDot";
 import { Section } from "./shared";
 
@@ -84,6 +90,181 @@ const COPY: Record<ScoringMode, { name: string; blurb: string; price: string }> 
     price: "settingsPage.scoring.modeKeywordPrice",
   },
 };
+
+// Weight presets (scoring.md 7.4). The taste is the preset; the sliders are the
+// escape hatch. Shipping only sliders would turn this pane into 5 numbers with
+// no opinion in them, and shipping only presets would be an opinion with no
+// escape, so both, with the sliders folded away.
+const PRESETS: ScoreWeightPreset[] = [
+  "balanced",
+  "location_first",
+  "seniority_first",
+  "skills_only",
+];
+
+/** What each preset sets, mirroring `weights.PRESETS`. `balanced` is empty
+ *  because it means "whatever table the method that ran shipped with", so the
+ *  sliders show that method's own numbers rather than a second opinion. */
+const PRESET_WEIGHTS: Record<ScoreWeightPreset, Record<string, number>> = {
+  balanced: {},
+  location_first: {},
+  seniority_first: {
+    hard_requirements: 0.25,
+    core_stack: 0.25,
+    years: 0.1,
+    level: 0.35,
+    nice_to_haves: 0.05,
+  },
+  skills_only: {
+    hard_requirements: 0.45,
+    core_stack: 0.55,
+    years: 0,
+    level: 0,
+    nice_to_haves: 0,
+  },
+};
+
+// The shipped table a `balanced` install actually scores with, so the sliders
+// open showing real numbers instead of 5 zeroes.
+const BALANCED_FALLBACK: Record<string, number> = {
+  hard_requirements: 0.3,
+  core_stack: 0.3,
+  years: 0.15,
+  level: 0.15,
+  nice_to_haves: 0.1,
+};
+
+function WeightControls({
+  settings,
+  patch,
+}: {
+  settings: SettingsT;
+  patch: (p: Partial<SettingsT>) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const custom = settings.score_weights ?? {};
+  const customised = Object.keys(custom).length > 0;
+  // An older sidecar sends no preset at all, and a pane that throws on a
+  // missing field takes the whole Settings screen with it.
+  const preset = PRESETS.includes(settings.score_weight_preset)
+    ? settings.score_weight_preset
+    : "balanced";
+  const presetTable = PRESET_WEIGHTS[preset];
+  const shown = customised
+    ? custom
+    : Object.keys(presetTable).length > 0
+      ? presetTable
+      : BALANCED_FALLBACK;
+  const dirty = customised || preset !== "balanced";
+  return (
+    <div data-testid="score-weights">
+      <div className="flex items-center gap-2">
+        <div className="flex flex-1 items-center text-[13px] font-medium text-ink">
+          {t("settingsPage.scoring.weightsTitle")}
+          <InfoDot label={t("settingsPage.scoring.weightsTitle")}>
+            {t("settingsPage.scoring.weightsInfo")}
+          </InfoDot>
+        </div>
+        {/* Always visible, never only inside the disclosure: weights are the
+            easiest setting in this app to get lost in. */}
+        <button
+          data-testid="score-weights-reset"
+          disabled={!dirty}
+          onClick={() => patch({ score_weight_preset: "balanced" })}
+          className={
+            "rounded-7 px-2 py-1 text-[12px] " +
+            (dirty ? "text-accent hover:bg-surface-3" : "text-ink-4")
+          }
+        >
+          {t("settingsPage.scoring.weightsReset")}
+        </button>
+      </div>
+      <div className="mb-2 text-[12px] text-ink-3">
+        {t("settingsPage.scoring.weightsHint")}
+      </div>
+      <div className="flex flex-wrap gap-1.5" data-testid="score-weight-presets">
+        {PRESETS.map((chip) => (
+          <button
+            key={chip}
+            data-testid={`score-weight-preset-${chip}`}
+            aria-pressed={!customised && preset === chip}
+            onClick={() => patch({ score_weight_preset: chip })}
+            className={
+              "rounded-7 border px-2.5 py-1 text-[12px] " +
+              (!customised && preset === chip
+                ? "border-accent bg-accent text-white"
+                : "border-border-2 bg-surface text-ink-2 hover:bg-surface-3")
+            }
+          >
+            {t(`settingsPage.scoring.preset_${chip}`)}
+          </button>
+        ))}
+      </div>
+      <button
+        data-testid="score-weights-disclosure"
+        onClick={() => setOpen((v) => !v)}
+        className="mt-2 text-[12px] text-accent hover:underline"
+      >
+        {open
+          ? t("settingsPage.scoring.weightsHide")
+          : t("settingsPage.scoring.weightsShow")}
+      </button>
+      {open ? (
+        <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-3">
+          {WEIGHTED_AXES.map((axis) => (
+            <label key={axis} className="flex items-center gap-3 text-[12px]">
+              <span className="w-36 shrink-0 text-ink-2">{t(`scoreFactor.${axis}`)}</span>
+              <input
+                type="range"
+                data-testid={`score-weight-${axis}`}
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round((shown[axis] ?? 0) * 100)}
+                onChange={(e) =>
+                  patch({
+                    score_weights: {
+                      ...Object.fromEntries(
+                        WEIGHTED_AXES.map((a) => [a, shown[a] ?? 0]),
+                      ),
+                      [axis]: Number(e.target.value) / 100,
+                    },
+                  })
+                }
+                className="flex-1 accent-accent"
+              />
+              <span className="w-10 shrink-0 text-right tabular-nums text-ink-3">
+                {Math.round((shown[axis] ?? 0) * 100)}%
+              </span>
+            </label>
+          ))}
+          <label className="flex items-center gap-3 border-t border-border pt-2 text-[12px]">
+            <span className="w-36 shrink-0 text-ink-2">
+              {t("settingsPage.scoring.locationPenalty")}
+            </span>
+            <input
+              type="range"
+              data-testid="score-location-penalty"
+              min={0}
+              max={50}
+              step={5}
+              value={settings.score_location_penalty ?? 15}
+              onChange={(e) => patch({ score_location_penalty: Number(e.target.value) })}
+              className="flex-1 accent-accent"
+            />
+            <span className="w-10 shrink-0 text-right tabular-nums text-ink-3">
+              −{settings.score_location_penalty ?? 15}
+            </span>
+          </label>
+          <p className="text-[11px] text-ink-3">
+            {t("settingsPage.scoring.locationPenaltyHint")}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /** Every method, in menu order, whatever the server sent. A method missing from
  *  the payload (an older sidecar) still renders, because hiding a row is the one
@@ -207,6 +388,7 @@ export const ScoringSection = memo(function ScoringSection({
             ))}
           </div>
         </div>
+        <WeightControls settings={settings} patch={patch} />
         {settings.scoring_mode === "llm" ? (
           <div className="flex items-center gap-3">
             <div className="flex-1">

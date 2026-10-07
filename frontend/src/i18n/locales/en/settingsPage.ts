@@ -92,6 +92,23 @@ const settingsPage = {
     // One row per method, in menu order, richest explanation first. The price is
     // per 100 jobs, measured where it says measured (docs/internal/scoring.md
     // section 7.1); nothing here hides a method the user has not set up yet.
+    weightsTitle: "What counts most",
+    weightsInfo:
+      "Changes how every job's number is worked out from the detail already stored. "
+      + "It costs nothing and spends nothing: no model is called and no job is scored again.",
+    weightsHint: "Re-ranks your board instantly. No model call, no cost.",
+    weightsReset: "Reset",
+    weightsShow: "Fine-tune each one",
+    weightsHide: "Hide the sliders",
+    preset_balanced: "Balanced",
+    preset_location_first: "Location first",
+    preset_seniority_first: "Seniority first",
+    preset_skills_only: "Skills only",
+    locationPenalty: "Location miss",
+    locationPenaltyHint:
+      "How far a job in a place you did not ask for drops. It is a penalty rather "
+      + "than a weight, because some methods answer location as a confidence and a "
+      + "confidence multiplied by a weight means nothing.",
     modeLlmBlurb: "One AI call per job. The only method that writes sentences.",
     modeLlmPrice: "About $2.22 per 100 jobs on Haiku 4.5, $23.55 on today's Opus path",
     modeJevBlurb: "One structured call per job. Score and per-axis bars, prose on demand.",

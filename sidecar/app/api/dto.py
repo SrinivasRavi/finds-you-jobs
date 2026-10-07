@@ -50,6 +50,10 @@ class JobScoreDTO(BaseModel):
     # AI one. The board's inner ring is this value, because a board carrying 2
     # methods' numbers has to say which is which (maintainer, 2026-10-07).
     method: str = "llm"
+    # True when the user's own axis weights produced this number instead of the
+    # method's. The card says so, because a 72 under "skills only" and a 72 as
+    # the model scored it are not the same claim.
+    weighted: bool = False
 
 
 class ScoreFactorDTO(BaseModel):
@@ -1267,13 +1271,88 @@ def derive_work_style(location: str, description: str) -> str:
     return ""
 
 
-def job_dto(job: Job, *, score_op_states: set[str] | None = None) -> JobDTO:
+class WeightLens:
+    """The user's own axis weights, ready to re-total a page of jobs on read.
+
+    Computed on read and never stored (scoring.md 7.4): a weight is a preference
+    that changes, and an AI score is the model's own number, so writing a
+    re-weighted total over it would destroy the thing "balanced" has to return
+    to. The arithmetic is `weights.user_total`, the same function every scorer
+    already totals with.
+
+    Build it once per request and hand it to `job_dto`. With an empty table
+    (every install until someone opens the control) it is inert by construction,
+    so the default path costs one dict lookup and changes no number.
+    """
+
+    __slots__ = ("_by_job", "_penalty", "_weights")
+
+    def __init__(
+        self,
+        weights: dict[str, float],
+        location_penalty: int,
+        factors_by_job: dict[str, list[Any]],
+    ) -> None:
+        self._weights = weights
+        self._penalty = location_penalty
+        self._by_job = factors_by_job
+
+    @property
+    def active(self) -> bool:
+        return bool(self._weights)
+
+    def total_for(self, job_id: str, method: str) -> int | None:
+        """The re-weighted score for this job, or None to keep the stored one."""
+        if not self._weights:
+            return None
+        from sidecar.modules.scorer.types import Factor
+        from sidecar.modules.scorer.weights import user_total
+
+        rows = [r for r in self._by_job.get(job_id, ()) if r.method == method]
+        if not rows:
+            return None
+        return user_total(
+            [Factor(r.factor, r.value, r.kind, r.evidence) for r in rows],
+            self._weights,
+            location_penalty=self._penalty,
+        )
+
+
+def build_weight_lens(repos: Any, job_ids: list[str]) -> WeightLens:
+    """One lens for a page of jobs: 1 preferences read and 1 indexed factor
+    read, never one per card (the F-H2 lesson). Skips the factor read entirely
+    when the user has set no weights, which is every install by default."""
+    from ..registry.persistence import scoring_weights
+
+    weights, penalty = scoring_weights(repos.preferences.get_or_create())
+    if not weights or not job_ids:
+        return WeightLens(weights, penalty, {})
+    by_job: dict[str, list[Any]] = {}
+    for row in repos.job_score_factors.list_for_jobs(job_ids):
+        by_job.setdefault(row.job_id, []).append(row)
+    return WeightLens(weights, penalty, by_job)
+
+
+def job_dto(
+    job: Job,
+    *,
+    score_op_states: set[str] | None = None,
+    lens: WeightLens | None = None,
+) -> JobDTO:
     """The board/tracker view of one job. The rating rides on the job row, so
-    there is no score to pass in and no second query to forget."""
+    there is no score to pass in and no second query to forget.
+
+    `lens` re-totals the score under the user's own axis weights. Omitted, or
+    holding an empty table, the stored number is served unchanged."""
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
     dto = JobDTO.model_validate(job)
     dto.score = job_score_dto(job)
+    if dto.score is not None and lens is not None:
+        reweighted = lens.total_for(job.id, dto.score.method)
+        if reweighted is not None:
+            dto.score.score_0_100 = reweighted
+            dto.score.weighted = True
     dto.score_status = derive_score_status(
         dto.score is not None,
         score_op_states or set(),

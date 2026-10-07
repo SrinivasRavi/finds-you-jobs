@@ -3018,6 +3018,11 @@ export interface components {
              * @default llm
              */
             method: string;
+            /**
+             * Weighted
+             * @default false
+             */
+            weighted: boolean;
         };
         /**
          * JobUpdate

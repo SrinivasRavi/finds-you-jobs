@@ -29,6 +29,9 @@ export interface ScoreResult {
   /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
    *  never styled like an AI score). Scoring modes, 2026-07-22. */
   scorer_impl: string;
+  /** True when the user's own axis weights produced this number instead of the
+   *  method's, so the card can say the score is theirs. */
+  weighted: boolean;
   /** Which of the 4 methods ran: "llm" | "jev" | "local" | "keyword". The
    *  board's inner ring (maintainer, 2026-10-07). Finer than `scorer_impl`,
    *  which reads a Fast score as an AI one. */
@@ -38,6 +41,22 @@ export interface ScoreResult {
 /** The per-axis breakdown behind one job's score (`JobFactorsDTO`).
  *  `weights` is empty for AI scoring, which asks a model for the total rather
  *  than weighting its own axes. */
+export type ScoreWeightPreset =
+  | "balanced"
+  | "location_first"
+  | "seniority_first"
+  | "skills_only";
+
+/** The 5 graded axes a user weight may multiply. The 2 modifier axes
+ *  (location, logistics) are deliberately absent — see `score_location_penalty`. */
+export const WEIGHTED_AXES = [
+  "hard_requirements",
+  "core_stack",
+  "years",
+  "level",
+  "nice_to_haves",
+] as const;
+
 export interface JobFactors {
   job_id: string;
   method: string;
@@ -889,6 +908,17 @@ export interface Settings {
    *  (audit P1-1) — 0 = uncapped (planner default). Read by
    *  `plan_score_new` via `thresholds["score_new_batch"]`. */
   score_new_batch: number;
+  /** The user's own axis weights (scoring.md 7.4). "balanced" is the shipped
+   *  default and means "use whatever table the method that ran shipped with",
+   *  so an untouched install sees exactly the numbers it saw before. */
+  score_weight_preset: ScoreWeightPreset;
+  /** Custom slider values, which outrank the preset when any is set. Empty
+   *  until the user opens the disclosure and moves one. */
+  score_weights: Record<string, number>;
+  /** How far a location the user did not ask for pushes a job down. Location
+   *  is a modifier rather than a weighted axis, because Jev answers it as a
+   *  confidence and a confidence must never be multiplied by a weight. */
+  score_location_penalty: number;
   providers: ProviderConfig[];
   routing: EngineRoute[];
   networking_enabled: boolean;

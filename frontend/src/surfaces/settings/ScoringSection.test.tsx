@@ -2,7 +2,7 @@
 // on the row that needs it (`talk.md` D44). The picker's testid and `data-on`
 // live on the button, not the row, so an action below can never absorb the click.
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The i18n module is mocked so the real one's top-level await stays out of the
@@ -85,5 +85,76 @@ describe("ScoringSection", () => {
       <ScoringSection settings={settings({ scoring_mode: "keyword" })} patch={() => {}} />,
     );
     expect(screen.queryByTestId("score-batch-cap-25")).toBeNull();
+  });
+});
+
+describe("ScoringSection weights", () => {
+  it("offers the 4 presets and marks the chosen one", () => {
+    render(
+      <ScoringSection
+        settings={settings({ score_weight_preset: "skills_only" } as Partial<SettingsT>)}
+        patch={() => {}}
+      />,
+    );
+    for (const p of ["balanced", "location_first", "seniority_first", "skills_only"]) {
+      expect(screen.getByTestId(`score-weight-preset-${p}`)).toBeTruthy();
+    }
+    expect(
+      screen.getByTestId("score-weight-preset-skills_only").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("score-weight-preset-balanced").getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+
+  it("keeps the sliders behind a disclosure, and the reset outside it", () => {
+    // Weights are the easiest setting in this app to get lost in, so the way
+    // back is never itself hidden (scoring.md 7.4).
+    render(<ScoringSection settings={settings()} patch={() => {}} />);
+    expect(screen.getByTestId("score-weights-reset")).toBeTruthy();
+    expect(screen.queryByTestId("score-weight-core_stack")).toBeNull();
+    // The disclosure is local state, so the click needs an act() boundary.
+    act(() => screen.getByTestId("score-weights-disclosure").click());
+    expect(screen.getByTestId("score-weight-core_stack")).toBeTruthy();
+    expect(screen.getByTestId("score-location-penalty")).toBeTruthy();
+  });
+
+  it("the reset is inert on an untouched install and live once something moved", () => {
+    const { unmount } = render(<ScoringSection settings={settings()} patch={() => {}} />);
+    expect(screen.getByTestId("score-weights-reset").hasAttribute("disabled")).toBe(true);
+    unmount();
+    render(
+      <ScoringSection
+        settings={settings({ score_weight_preset: "location_first" } as Partial<SettingsT>)}
+        patch={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("score-weights-reset").hasAttribute("disabled")).toBe(false);
+  });
+
+  it("a custom slider outranks the preset, so no chip claims to be in effect", () => {
+    render(
+      <ScoringSection
+        settings={
+          settings({
+            score_weight_preset: "skills_only",
+            score_weights: { core_stack: 1 },
+          } as Partial<SettingsT>)
+        }
+        patch={() => {}}
+      />,
+    );
+    for (const p of ["balanced", "location_first", "seniority_first", "skills_only"]) {
+      expect(screen.getByTestId(`score-weight-preset-${p}`).getAttribute("aria-pressed")).toBe(
+        "false",
+      );
+    }
+  });
+
+  it("renders against an older sidecar that sends no weight fields at all", () => {
+    // A pane that throws on a missing field takes the whole Settings screen
+    // down with it.
+    render(<ScoringSection settings={settings()} patch={() => {}} />);
+    expect(screen.getByTestId("score-weights")).toBeTruthy();
   });
 });

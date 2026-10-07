@@ -179,8 +179,9 @@ def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
     with _db(request).repos() as repos:
         jobs = repos.jobs.list(feed_state=feed_state or None)
         score_op_states = repos.operations.score_states_by_job()
+        lens = dto.build_weight_lens(repos, [j.id for j in jobs])
         dtos = [
-            dto.job_dto(j, score_op_states=score_op_states.get(j.id))
+            dto.job_dto(j, score_op_states=score_op_states.get(j.id), lens=lens)
             for j in jobs
         ]
         new_ids = _scan_new_ids(repos.operations.latest_succeeded_by_kind("scan"))
@@ -328,9 +329,11 @@ def board(
     elif link == "none":
         rows = [j for j in rows if not j.canonical_url]
     total = len(rows)
+    page_rows = rows[page * page_size : page * page_size + page_size]
+    lens = dto.build_weight_lens(repos, [j.id for j in page_rows])
     window = [
-        dto.job_dto(j, score_op_states=score_op_states.get(j.id))
-        for j in rows[page * page_size : page * page_size + page_size]
+        dto.job_dto(j, score_op_states=score_op_states.get(j.id), lens=lens)
+        for j in page_rows
     ]
     for d in window:
         d.is_new = d.id in new_ids
@@ -567,7 +570,8 @@ def update_job(
         else:
             job = repos.jobs.update(job_id, **fields)
         op_states = repos.operations.score_states_for_job(job_id)
-        return dto.job_dto(job, score_op_states=op_states)
+        lens = dto.build_weight_lens(repos, [job_id])
+        return dto.job_dto(job, score_op_states=op_states, lens=lens)
 
 
 @router.post("/api/jobs/{job_id}/link")
@@ -753,7 +757,8 @@ def get_job(request: Request, job_id: str) -> dto.JobDTO:
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
         op_states = repos.operations.score_states_for_job(job_id)
-        return dto.job_dto(job, score_op_states=op_states)
+        lens = dto.build_weight_lens(repos, [job_id])
+        return dto.job_dto(job, score_op_states=op_states, lens=lens)
 
 
 @router.get("/api/jobs/{job_id}/factors")
@@ -1053,6 +1058,10 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         ]
     )
     jobs_by_id = repos.jobs.get_many(job_ids)
+    # The tracker shows the same number the board does, so it reads it through
+    # the same lens. One extra indexed read per page, and none at all until the
+    # user sets a weight.
+    lens = dto.build_weight_lens(repos, list(job_ids))
     sent_counts = repos.outreach_logs.count_sent_for_jobs(job_ids)
     latest_batches = repos.outreach_logs.latest_batches_for_jobs(job_ids)
     jobs_with_candidates = repos.referral_candidates.job_ids_with_contacts(job_ids)
@@ -1075,7 +1084,7 @@ def _application_dtos(repos: Any, applications: list[Any]) -> list[dto.Applicati
         job_dto_val = None
         if job is not None:
             job_dto_val = dto.job_dto(
-                job, score_op_states=score_op_states.get(job_id)
+                job, score_op_states=score_op_states.get(job_id), lens=lens
             )
         # Referral progress (FR-NW-01 canonical enum): landed-send count, in-flight
         # send ops, whether a discover op is running, whether a roster was found for

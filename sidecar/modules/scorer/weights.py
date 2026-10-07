@@ -60,3 +60,90 @@ def weighted_total(factors: Sequence[Factor], weights: Mapping[str, float]) -> i
     if location is not None and location.value < 0.5:
         total -= LOCATION_MISS_PENALTY
     return max(0, min(100, round(total)))
+
+
+# --- user weights (scoring.md 7.4) -------------------------------------------
+#
+# One table over the 5 GRADED axes, applied to whatever factors a job has and
+# renormalized over the ones present, so it works whichever method scored it.
+# The 2 modifier axes are deliberately not in it: location and logistics are
+# answered as confidences by Jev, and multiplying a confidence by a weight
+# produces a number with no meaning (talk.md D43). Location gets its own dial
+# instead, the size of the miss penalty, which is what "location first"
+# actually means in this arithmetic.
+
+WEIGHTED_AXES: tuple[str, ...] = (
+    "hard_requirements",
+    "core_stack",
+    "years",
+    "level",
+    "nice_to_haves",
+)
+
+# The 4 named presets. "balanced" is empty on purpose: it means "use whatever
+# table the method that ran shipped with", so a user who never opens this
+# control sees exactly the numbers they saw before it existed (assumption A7).
+PRESETS: Mapping[str, Mapping[str, float]] = {
+    "balanced": {},
+    "location_first": {},
+    "seniority_first": {
+        "hard_requirements": 0.25,
+        "core_stack": 0.25,
+        "years": 0.10,
+        "level": 0.35,
+        "nice_to_haves": 0.05,
+    },
+    "skills_only": {
+        "hard_requirements": 0.45,
+        "core_stack": 0.55,
+        "years": 0.0,
+        "level": 0.0,
+        "nice_to_haves": 0.0,
+    },
+}
+
+# How hard a location the user did not ask for pushes a job down, per preset.
+# `location_first` is the only preset that moves it, because the weighted axes
+# cannot express "I care about location" at all.
+PRESET_LOCATION_PENALTY: Mapping[str, int] = {
+    "balanced": LOCATION_MISS_PENALTY,
+    "location_first": 35,
+    "seniority_first": LOCATION_MISS_PENALTY,
+    "skills_only": 0,
+}
+
+# The table a method shipped with, for a job scored by that method. AI scoring
+# is absent because it asks a model for the total rather than weighting axes.
+METHOD_WEIGHTS: Mapping[str, Mapping[str, float]] = {
+    "jev": JEV_WEIGHTS,
+    "keyword": KEYWORD_WEIGHTS,
+}
+
+
+def user_total(
+    factors: Sequence[Factor],
+    weights: Mapping[str, float],
+    *,
+    location_penalty: int = LOCATION_MISS_PENALTY,
+) -> int | None:
+    """The score these factors deserve under the user's own weights.
+
+    `None` when the factors can't answer: no graded axis the table names is
+    present, so there is nothing to weight and the stored score stands. That is
+    the honest outcome for a job whose method recorded no factors, and it is why
+    this returns an option rather than a 0.
+    """
+    by_key = {f.factor: f for f in factors}
+    present = {
+        key: w
+        for key, w in weights.items()
+        if key in by_key and by_key[key].kind != "probability" and w > 0
+    }
+    if not present:
+        return None
+    scale = sum(present.values())
+    total = sum(by_key[key].value * w for key, w in present.items()) / scale * 100
+    location = by_key.get("location_preference")
+    if location is not None and location.value < 0.5:
+        total -= location_penalty
+    return max(0, min(100, round(total)))

@@ -23,10 +23,26 @@ import { JobTombstonedError } from "./types";
 /** The methods this build knows. A stored value outside this list reads as "llm",
  *  the same fallback the server applies. */
 const SCORING_MODES: ScoringMode[] = ["llm", "jev", "local", "keyword"];
+const SCORE_WEIGHT_PRESETS: ScoreWeightPreset[] = [
+  "balanced",
+  "location_first",
+  "seniority_first",
+  "skills_only",
+];
+// Mirrors `weights.PRESET_LOCATION_PENALTY`. Picking a preset here writes the
+// value rather than leaving the sidecar to infer it, so what the slider shows
+// and what the score used are always the same number.
+const DEFAULT_LOCATION_PENALTY: Record<ScoreWeightPreset, number> = {
+  balanced: 15,
+  location_first: 35,
+  seniority_first: 15,
+  skills_only: 0,
+};
 import type {
   AttachLinkInput,
   AttachLinkResult,
   JobFactors,
+  ScoreWeightPreset,
   LinkCandidate,
   ScoringMethod,
   ScoringMode,
@@ -192,6 +208,7 @@ function toJob(d: JobDTO, saved: boolean): Job {
           reasons: d.score.reasons as string[],
           breakdown_md: d.score.breakdown_md,
           scorer_impl: d.score.scorer_impl ?? "scorer-llm",
+          weighted: d.score.weighted ?? false,
           method: d.score.method ?? "llm",
         }
       : null,
@@ -1113,6 +1130,21 @@ export class RealApi {
       llm_concurrency:
         typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
       score_new_batch: scoreNewBatch,
+      score_weight_preset: SCORE_WEIGHT_PRESETS.includes(
+        thresholds.score_weight_preset as ScoreWeightPreset,
+      )
+        ? (thresholds.score_weight_preset as ScoreWeightPreset)
+        : "balanced",
+      score_weights:
+        typeof thresholds.score_weights === "object" && thresholds.score_weights !== null
+          ? (thresholds.score_weights as Record<string, number>)
+          : {},
+      score_location_penalty:
+        typeof thresholds.score_location_penalty === "number"
+          ? thresholds.score_location_penalty
+          : DEFAULT_LOCATION_PENALTY[
+              (thresholds.score_weight_preset as ScoreWeightPreset) ?? "balanced"
+            ] ?? 15,
       providers: d.engines.map((e) => ({
         id: e.engine,
         label: e.engine,
@@ -1175,6 +1207,17 @@ export class RealApi {
     if (patch.auto_packet_on_save !== undefined) thresholdPatch.auto_packet_on_save = patch.auto_packet_on_save;
     if (patch.score_new_batch !== undefined)
       thresholdPatch.score_new_batch = patch.score_new_batch;
+    if (patch.score_weight_preset !== undefined) {
+      thresholdPatch.score_weight_preset = patch.score_weight_preset;
+      // Picking a preset clears any custom sliders, because the sidecar lets
+      // sliders outrank a preset and a preset the user just picked has to win.
+      thresholdPatch.score_weights = {};
+      thresholdPatch.score_location_penalty =
+        DEFAULT_LOCATION_PENALTY[patch.score_weight_preset] ?? 15;
+    }
+    if (patch.score_weights !== undefined) thresholdPatch.score_weights = patch.score_weights;
+    if (patch.score_location_penalty !== undefined)
+      thresholdPatch.score_location_penalty = patch.score_location_penalty;
     if (Object.keys(thresholdPatch).length > 0) {
       body.thresholds = { ...(p.thresholds ?? {}), ...thresholdPatch };
     }
