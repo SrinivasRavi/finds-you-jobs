@@ -21,6 +21,14 @@ function sidecarInfo(): { base: string; token: string } {
   return { base: `http://127.0.0.1:${port}`, token };
 }
 
+/** index.css transitions colour over 240ms on anything whose class string
+ *  contains "bg-surface" or "text-ink", so a shot fired the instant a control
+ *  changes state catches it mid-fade and reads as disabled when it is not. */
+async function settled(page: import("@playwright/test").Page, path: string) {
+  await page.waitForTimeout(300);
+  await page.screenshot({ path, fullPage: true });
+}
+
 test("a prompt draft runs inside the popup, and only its own button commits it", async ({
   page,
   request,
@@ -56,7 +64,11 @@ test("a prompt draft runs inside the popup, and only its own button commits it",
   await expect(inline).toHaveAttribute("readonly", "");
   // Reset lives out here, where it is always 1 click away.
   await expect(page.locator('[data-testid="prompt-reset-score"]')).toBeVisible();
-  await page.screenshot({ path: `${DIR}/pane-readonly.png`, fullPage: true });
+  await settled(page, `${DIR}/pane-readonly.png`);
+  // The row under the prompt is where Reset and the way into the editor live,
+  // and it is below the fold on this pane, so it gets its own shot.
+  await page.locator('[data-testid="prompt-reset-score"]').scrollIntoViewIfNeeded();
+  await settled(page, `${DIR}/pane-actions.png`);
 
   await page.locator('[data-testid="prompt-edit-score"]').click();
   const draft = page.locator('[data-testid="prompt-tune-draft"]');
@@ -71,7 +83,7 @@ test("a prompt draft runs inside the popup, and only its own button commits it",
   await expect(page.locator('[data-testid="prompt-tune-run"]')).toBeEnabled();
   // Section 6: the modal says what the run will use before it is pressed.
   await expect(page.locator('[data-testid="prompt-tune-engine"]')).toContainText("Runs on");
-  await page.screenshot({ path: `${DIR}/modal-board-source.png`, fullPage: true });
+  await settled(page, `${DIR}/modal-board-source.png`);
 
   // Editing the draft wakes the commit button up, and the pane behind still
   // shows the SAVED text, which is the whole point of the window.
@@ -84,7 +96,7 @@ test("a prompt draft runs inside the popup, and only its own button commits it",
   await expect(page.locator('[data-testid="prompt-tune-run"]')).toBeDisabled();
   await page.locator('[data-testid="prompt-test-paste"]').fill("A pasted job description.");
   await expect(page.locator('[data-testid="prompt-tune-run"]')).toBeEnabled();
-  await page.screenshot({ path: `${DIR}/modal-paste-source.png`, fullPage: true });
+  await settled(page, `${DIR}/modal-paste-source.png`);
 
   // Closing without committing leaves the saved prompt exactly as it was.
   await page.locator('[data-testid="prompt-tune-cancel"]').click();
@@ -106,7 +118,7 @@ test("the kinds that need no job, and the one that needs a contact", async ({ pa
   await expect(page.locator('[data-testid="prompt-test-job"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="prompt-test-contact"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="prompt-tune-run"]')).toBeEnabled();
-  await page.screenshot({ path: `${DIR}/modal-extract.png`, fullPage: true });
+  await settled(page, `${DIR}/modal-extract.png`);
   await page.locator('[data-testid="prompt-tune-cancel"]').click();
 
   // Referral drafting needs a REAL contact: a made-up one would test the
@@ -115,7 +127,7 @@ test("the kinds that need no job, and the one that needs a contact", async ({ pa
   await page.locator('[data-testid="prompt-edit-networker_draft"]').click();
   await expect(page.locator('[data-testid="prompt-test-contact"]')).toBeVisible();
   await expect(page.locator('[data-testid="prompt-tune-run"]')).toBeDisabled();
-  await page.screenshot({ path: `${DIR}/modal-contact.png`, fullPage: true });
+  await settled(page, `${DIR}/modal-contact.png`);
 });
 
 test("the ledger names a run with no job behind it, and marks a test run", async ({
@@ -176,5 +188,5 @@ test("the ledger names a run with no job behind it, and marks a test run", async
   await expect(triage.getByTestId("log-badge")).toHaveText("72 \u00b7 jev");
   const test_run = page.getByTestId("log-row").filter({ hasText: "Platform Engineer" }).first();
   await expect(test_run.getByTestId("log-badge")).toHaveText("prompt test");
-  await page.screenshot({ path: `${DIR}/ledger-badges.png`, fullPage: true });
+  await settled(page, `${DIR}/ledger-badges.png`);
 });

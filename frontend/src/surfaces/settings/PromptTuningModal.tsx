@@ -22,7 +22,7 @@ import {
   useSetPrompt,
   useSettings,
 } from "../../api/queries";
-import type { PromptSetting, PromptTestResult } from "../../api/types";
+import type { Job, PromptSetting, PromptTestResult } from "../../api/types";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
 
@@ -30,7 +30,29 @@ import { Modal } from "../../shell/Modal";
 const NEEDS_JOB = new Set(["score", "tailor", "cover"]);
 const NEEDS_CONTACT = new Set(["networker_draft"]);
 
+/** The run button, per kind. A button is read to find out what is about to
+ *  happen, and "Run this draft once" named our mechanism instead of the work
+ *  (maintainer, 2026-10-08). An unregistered kind gets the generic label. */
+export const RUN_LABEL_KEY: Record<string, string> = {
+  score: "settingsPage.prompts.testRunScore",
+  tailor: "settingsPage.prompts.testRunTailor",
+  cover: "settingsPage.prompts.testRunCover",
+  extract: "settingsPage.prompts.testRunExtract",
+  networker_draft: "settingsPage.prompts.testRunNetworkerDraft",
+};
+
 type JobSource = "board" | "paste";
+
+/** Both columns open with the same 2-line block, so their bodies start on the
+ *  same baseline whatever each one holds. */
+function ColumnHead({ title, hint }: { title: string; hint: string }) {
+  return (
+    <header className="min-h-[38px]">
+      <h3 className="m-0 text-[13px] font-semibold text-ink">{title}</h3>
+      <p className="mt-0.5 text-[11.5px] text-ink-3">{hint}</p>
+    </header>
+  );
+}
 
 function Output({ result }: { result: PromptTestResult }) {
   const { t } = useTranslation();
@@ -87,9 +109,12 @@ function Output({ result }: { result: PromptTestResult }) {
 
 export function PromptTuningModal({
   prompt,
+  name,
   onClose,
 }: {
   prompt: PromptSetting;
+  /** What the tab behind this window calls it, so the 2 can never disagree. */
+  name: string;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -117,6 +142,17 @@ export function PromptTuningModal({
     (!needsJob || (source === "board" ? !!jobId : pasted.trim().length > 0)) &&
     (!needsContact || !!contactId);
 
+  // Where the job is and what it already scored, because a picker that says
+  // only the title and company is a picker whose first row always wins. The
+  // board hands over 1 score per job, already resolved model-over-keyword, so
+  // there is no method to choose between here (maintainer, 2026-10-08).
+  function jobLabel(job: Job): string {
+    const parts = [job.title, job.company, job.location].filter(Boolean);
+    const n = job.score?.score_0_100;
+    if (n != null) parts.push(t("settingsPage.prompts.jobOptionScore", { n }));
+    return parts.join(" · ");
+  }
+
   function run() {
     setResult(null);
     test.mutate(
@@ -135,9 +171,9 @@ export function PromptTuningModal({
 
   return (
     <Modal
-      title={t("settingsPage.prompts.tuneTitle", { name: prompt.title })}
+      title={t("settingsPage.prompts.tuneTitle", { name })}
       onClose={onClose}
-      width={1040}
+      width={1280}
       footer={
         <div className="flex items-center gap-3">
           <p className="flex-1 text-[11.5px] text-ink-3">
@@ -146,7 +182,7 @@ export function PromptTuningModal({
           <button
             data-testid="prompt-tune-cancel"
             onClick={onClose}
-            className="rounded-md border border-border-2 px-2.5 py-1 text-[12px] text-ink-2"
+            className="rounded-md border border-border-2 px-3 py-1.5 text-[12px] text-ink-2"
           >
             {t("settingsPage.prompts.close")}
           </button>
@@ -156,33 +192,44 @@ export function PromptTuningModal({
             onClick={() =>
               setPrompt.mutate({ kind: prompt.kind, markdown: draft }, { onSuccess: onClose })
             }
-            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
+            className="rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
           >
             {t("settingsPage.prompts.commit")}
           </button>
         </div>
       }
     >
-      <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-2">
-          <label className="text-[11.5px] text-ink-3">
-            {t("settingsPage.prompts.draftLabel")}
-          </label>
+      <div className="grid grid-cols-[1.05fr_1fr] gap-5 p-5">
+        <section className="flex min-w-0 flex-col gap-2">
+          <ColumnHead
+            title={t("settingsPage.prompts.draftTitle")}
+            hint={t("settingsPage.prompts.draftLabel")}
+          />
           <textarea
             data-testid="prompt-tune-draft"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
-            className="h-[52vh] w-full resize-none rounded-md border border-border-2 bg-surface p-3 text-[12px] leading-relaxed text-ink"
+            className="h-[58vh] w-full resize-none rounded-md border border-border-2 bg-surface-2 p-3 font-mono text-[12px] leading-relaxed text-ink"
           />
           <div className="text-[11px] text-ink-4">
             {t("settingsPage.prompts.chars", { n: draft.length })}
           </div>
-        </div>
+        </section>
 
-        <div className="flex flex-col gap-2">
+        <section className="flex min-w-0 flex-col gap-2">
+          <ColumnHead
+            title={t("settingsPage.prompts.tryTitle")}
+            hint={
+              needsJob
+                ? t("settingsPage.prompts.tryHintJob")
+                : needsContact
+                  ? t("settingsPage.prompts.tryHintContact")
+                  : t("settingsPage.prompts.tryHintNone")
+            }
+          />
           {needsJob ? (
-            <div className="flex flex-col gap-1.5">
+            <>
               <div className="flex gap-1.5">
                 {(["board", "paste"] as JobSource[]).map((s) => (
                   <button
@@ -208,12 +255,12 @@ export function PromptTuningModal({
                   data-testid="prompt-test-job"
                   value={jobId}
                   onChange={(e) => setJobId(e.target.value)}
-                  className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+                  className="h-[32px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
                 >
                   <option value="">{t("settingsPage.prompts.pickJob")}</option>
                   {jobs.map((j) => (
                     <option key={j.id} value={j.id}>
-                      {j.title} · {j.company}
+                      {jobLabel(j)}
                     </option>
                   ))}
                 </select>
@@ -226,7 +273,7 @@ export function PromptTuningModal({
                   className="h-24 w-full resize-none rounded-md border border-border-2 bg-surface p-2 text-[12px] text-ink"
                 />
               )}
-            </div>
+            </>
           ) : null}
 
           {needsContact ? (
@@ -234,7 +281,7 @@ export function PromptTuningModal({
               data-testid="prompt-test-contact"
               value={contactId}
               onChange={(e) => setContactId(e.target.value)}
-              className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+              className="h-[32px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
             >
               <option value="">{t("settingsPage.prompts.pickContact")}</option>
               {(contacts.data ?? []).map((c) => (
@@ -245,30 +292,34 @@ export function PromptTuningModal({
             </select>
           ) : null}
 
+          {/* `disabled:opacity-40` rather than a disabled colour: index.css
+              transitions any element whose class string merely CONTAINS
+              "bg-surface" or "text-ink" over 240ms, so a colour variant would
+              fade in over a quarter-second every time this enables. */}
           <button
             data-testid="prompt-tune-run"
             disabled={!ready || test.isPending}
             onClick={run}
-            className="rounded-md border border-accent bg-accent-wash px-3 py-1.5 text-[12px] font-medium text-accent-ink hover:bg-accent hover:text-white disabled:border-border-2 disabled:bg-surface disabled:text-ink-4 disabled:hover:bg-surface disabled:hover:text-ink-4"
+            className="rounded-md bg-accent px-3 py-2 text-[12.5px] font-medium text-white disabled:opacity-40"
           >
             {test.isPending
               ? t("settingsPage.prompts.testRunning")
-              : t("settingsPage.prompts.testRun")}
+              : t(RUN_LABEL_KEY[prompt.kind] ?? "settingsPage.prompts.testRun")}
           </button>
-          {/* What it will run on, before it runs (prompt-tuning.md section 6).
-              The dollar figure can only be known afterwards, and the result
-              panel reports it, so this says the part that is knowable now. */}
-          <p className="text-[11px] text-ink-3" data-testid="prompt-tune-engine">
+          {/* One line, not two: what it will run on, and what that costs the
+              user. The dollar figure is only knowable afterwards, and the
+              result panel reports it (prompt-tuning.md section 6). */}
+          <p className="text-[11px] leading-relaxed text-ink-3" data-testid="prompt-tune-engine">
             {prompt.routed && route
               ? t("settingsPage.prompts.testOn", {
                   engine: route.engine,
                   model: route.model || t("settingsPage.prompts.providerDefault"),
-                })
-              : t("settingsPage.prompts.testHint")}
+                }) + " "
+              : ""}
+            {t("settingsPage.prompts.testHint")}
           </p>
-          <p className="text-[11px] text-ink-3">{t("settingsPage.prompts.testHint")}</p>
 
-          <div className="min-h-[36vh] flex-1 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
+          <div className="min-h-[34vh] flex-1 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
             {result ? (
               <Output result={result} />
             ) : (
@@ -281,7 +332,7 @@ export function PromptTuningModal({
               </p>
             )}
           </div>
-        </div>
+        </section>
       </div>
     </Modal>
   );

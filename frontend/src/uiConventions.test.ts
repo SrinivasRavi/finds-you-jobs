@@ -26,6 +26,7 @@ const MONO_ALLOWLIST = new Set([
   "surfaces/Onboarding.tsx", // the API-key input
   "surfaces/Dev.tsx", // dev-only tooling
   "surfaces/settings/PromptsSection.tsx", // the prompt editor
+  "surfaces/settings/PromptTuningModal.tsx", // the same prompt, editable
   "surfaces/settings/DiscoverySources.tsx", // masked API-key hints
 ]);
 

@@ -21,7 +21,7 @@ import { PromptTuningModal } from "./PromptTuningModal";
  *  else. Keyword scoring is Python rules, Fast scoring sends typed questions
  *  carrying their own rubric bands, and On-device has no prompt either, so
  *  editing this file changes 1 of the 4 methods (maintainer, 2026-10-07). */
-const SCOPE_KEY: Record<string, string> = {
+export const SCOPE_KEY: Record<string, string> = {
   score: "settingsPage.prompts.scopeScore",
   tailor: "settingsPage.prompts.scopeTailor",
   cover: "settingsPage.prompts.scopeCover",
@@ -29,10 +29,11 @@ const SCOPE_KEY: Record<string, string> = {
   networker_draft: "settingsPage.prompts.scopeNetworkerDraft",
 };
 
-/** The tab label. `score` reads as the scoring method it belongs to, so the
- *  Scoring pane and this one can never call it 2 different things. An unknown
- *  kind falls back to whatever the sidecar called it. */
-const TITLE_KEY: Record<string, string> = {
+/** The name of a prompt, wherever it is shown: the tab, the modal title, the
+ *  pointer from the Scoring pane. `score` reads as the scoring method it
+ *  belongs to, so the Scoring pane and this one can never call it 2 different
+ *  things. An unknown kind falls back to whatever the sidecar called it. */
+export const TITLE_KEY: Record<string, string> = {
   score: "scoreMethod.llm",
   tailor: "settingsPage.prompts.titleTailor",
   cover: "settingsPage.prompts.titleCover",
@@ -178,18 +179,25 @@ export function PromptEditor({
           >
             {t("settingsPage.prompts.resetToDefault")}
           </button>
+          {/* Outlined, not filled: the loudest control on this row would
+              otherwise be the one that changes nothing on its own
+              (maintainer, 2026-10-08). */}
           <button
             type="button"
             onClick={() => setTuning(true)}
             data-testid={`prompt-edit-${prompt.kind}`}
-            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white"
+            className="rounded-md border border-accent px-2.5 py-1 text-[12px] font-medium text-accent-ink hover:bg-accent-wash"
           >
-            {t("settingsPage.prompts.editAndTest")}
+            {t("settingsPage.prompts.openEditor")}
           </button>
         </div>
       </div>
       {tuning ? (
-        <PromptTuningModal prompt={prompt} onClose={() => setTuning(false)} />
+        <PromptTuningModal
+          prompt={prompt}
+          name={TITLE_KEY[prompt.kind] ? t(TITLE_KEY[prompt.kind]) : prompt.title}
+          onClose={() => setTuning(false)}
+        />
       ) : null}
     </div>
   );
