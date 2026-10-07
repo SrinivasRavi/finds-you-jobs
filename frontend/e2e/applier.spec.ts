@@ -45,7 +45,11 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
     await request.post(`${base}/api/jobs`, {
       headers: auth,
       data: {
-        canonical_url: FIXTURE_FORM,
+        // No link: a `file://` fixture is not a posting URL, and
+        // `canonicalize_url` rejects it, so the job is stored URL-less and the
+        // form travels in the dev knobs below where every other dev-only input
+        // already lives.
+        canonical_url: "",
         title: "Platform Engineer",
         company: "Acme",
         location: "Remote",
@@ -68,6 +72,7 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
       headers: auth,
       data: {
         dev: {
+          form_url: FIXTURE_FORM,
           engine_script: [
             JSON.stringify({ tool: "fill", element_id: "e2", value: "Ada Lovelace" }),
             JSON.stringify({ tool: "finish", reason: "grounded fields filled; review the rest" }),

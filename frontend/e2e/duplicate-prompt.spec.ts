@@ -95,5 +95,12 @@ test("the scanned card asks once, and never again once dismissed", async ({ page
     headers: auth,
   });
   expect(await fromOther.json()).toBeNull();
-  expect(scannedId).toBeTruthy();
+
+  // Clean up after itself. The e2e profile is shared across the whole suite,
+  // and a LEFTOVER url-less job broke `url-less-jobs.spec.ts`, whose
+  // "no Add-link slot remains" assertion is board-wide rather than scoped to
+  // its own card. Both halves are worth fixing; this is the half that is mine.
+  for (const id of [scannedId, pastedId]) {
+    await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
+  }
 });

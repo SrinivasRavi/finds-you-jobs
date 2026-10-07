@@ -3160,10 +3160,18 @@ def start_apply(
         # user can't act on, and the browser would launch at nothing. 409 so
         # the card can open the Add-link dialog and start the run once the
         # link lands (url-less-jobs.md sections 5.4 and 9.8).
-        if not job.canonical_url:
+        # The dev seam carries its own form, because a local fixture is a
+        # `file://` URL and `canonicalize_url` deliberately rejects any scheme
+        # that isn't http(s) — a posting's identity cannot be a path on this
+        # machine. So a dev run's fixture has nowhere to live on the job row,
+        # and pretending otherwise is what silently cost the Applier its only
+        # end-to-end gate when the no-link guard landed. Production is
+        # unchanged: no dev knobs, no override, and a URL-less card still 409s.
+        dev_form_url = str((payload.dev or {}).get("form_url") or "")
+        if not job.canonical_url and not dev_form_url:
             raise HTTPException(status_code=409, detail=NO_POSTING_URL_DETAIL)
         needs_intent = app_row.intent != "apply"
-        job_url = job.canonical_url
+        job_url = job.canonical_url or dev_form_url
 
     snapshot: dict[str, Any] = {"application_id": application_id}
     if payload.retry_of_run_id:

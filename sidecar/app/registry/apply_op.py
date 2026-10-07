@@ -185,7 +185,10 @@ async def _apply_async(
         # failure the user can't act on (url-less-jobs.md section 5.4).
         # `start_apply` refuses first and prompts for the link; this is the
         # retry path's own guard.
-        if not job.canonical_url:
+        # Same dev seam as the route: a local fixture form lives in the dev
+        # knobs, never in `canonical_url`, which is the posting's identity.
+        dev_form_url = str(ctx.input_snapshot.get("dev_form_url") or "")
+        if not job.canonical_url and not dev_form_url:
             raise ValueError(NO_POSTING_URL_DETAIL)
         # Adopt the route-created row by its snapshot id first: the route
         # commits it BEFORE runner.submit, so it is always visible here, while
@@ -202,13 +205,13 @@ async def _apply_async(
                 application_id,
                 operation_id=ctx.operation_id,
                 retry_of_run_id=ctx.input_snapshot.get("retry_of_run_id"),
-                source_url=job.canonical_url or "",
+                source_url=job.canonical_url or dev_form_url,
                 deadline_at=now_utc() + timedelta(minutes=20),
             )
         elif run.operation_id != ctx.operation_id:
             run = repos.apply_runs.update(run.id, operation_id=ctx.operation_id)
         run_id = run.id
-        job_url = job.canonical_url or ""
+        job_url = job.canonical_url or dev_form_url
         company = job.company
         role = job.title
         jd_text = (job.description or "")[:12_000]

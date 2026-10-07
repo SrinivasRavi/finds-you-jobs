@@ -459,6 +459,47 @@ def test_apply_refuses_a_url_less_card_before_writing_a_run(
     with app.state.db.repos() as repos:
         assert repos.apply_runs.latest_for_application(saved["id"]) is None
 
+    # And an EMPTY dev form url is not a form either, so the dev seam below
+    # cannot be used to slip past the refusal by accident.
+    resp = client.post(
+        f"/api/applications/{saved['id']}/apply",
+        headers=AUTH,
+        json={"dev": {"form_url": ""}},
+    )
+    assert resp.status_code == 409
+
+
+def test_a_dev_run_may_carry_its_own_form_because_a_fixture_is_not_a_posting(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A local fixture form is a `file://` URL, and `canonicalize_url` rejects
+    any scheme that is not http(s), because a posting's identity cannot be a
+    path on this machine. So the Applier's own end-to-end gate stores its job
+    URL-less, and the no-link refusal silently took that whole test with it.
+
+    The fixture travels in the dev knobs instead, where `allow_local` and the
+    scripted engine already live. Production is untouched: the test above still
+    gets its 409, because no dev knobs means no override."""
+    app, client = app_client
+    job = _paste(client, _JD)
+    saved = client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": job["id"], "generate_resume": False, "generate_cover": False},
+    ).json()
+
+    resp = client.post(
+        f"/api/applications/{saved['id']}/apply",
+        headers=AUTH,
+        json={"dev": {"form_url": "file:///tmp/fixture-form.html", "allow_local": True}},
+    )
+    assert resp.status_code in (200, 201, 202), resp.text
+    with app.state.db.repos() as repos:
+        run = repos.apply_runs.latest_for_application(saved["id"])
+        assert run is not None
+        # The run records the form it will actually open, not an empty string.
+        assert run.source_url == "file:///tmp/fixture-form.html"
+
 
 def test_the_tracker_logs_an_application_with_no_link(
     app_client: tuple[FastAPI, TestClient],
