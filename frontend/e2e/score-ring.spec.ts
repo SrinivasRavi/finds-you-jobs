@@ -179,9 +179,8 @@ test("the factor bars draw a confidence differently from a graded position", asy
 
 test("weight presets and the sliders behind their disclosure", async ({ page }) => {
   await page.goto("/settings");
-  await page.getByTestId("settings-nav-discovery").click().catch(async () => {
-    await page.getByText("Discover jobs", { exact: false }).last().click();
-  });
+  await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("settings-nav-discovery").click();
 
   const weights = page.locator('[data-testid="score-weights"]');
   await expect(weights).toBeVisible({ timeout: 15_000 });
@@ -254,4 +253,29 @@ test("explain this one shows its price, and only where there is prose to buy", a
   await page.locator('[data-testid="job-row"]').first().click();
   await expect(page.locator('[data-testid="match-reasons"]')).toBeVisible({ timeout: 15_000 });
   await expect(button).toHaveCount(0);
+});
+
+test("the prompts pane says which method each prompt governs", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("settings-nav-prompts").click();
+
+  // The scoring prompt is named after the method it belongs to, and says so.
+  const tab = page.locator('[data-testid="prompt-row-score"]');
+  await expect(tab).toBeVisible({ timeout: 15_000 });
+  await expect(tab).toContainText("AI scoring");
+  await tab.click();
+
+  const scope = page.locator('[data-testid="prompt-scope-score"]');
+  await expect(scope).toBeVisible();
+  await expect(scope).toContainText("AI scoring only");
+  await expect(scope).toContainText("Keyword scoring");
+  await expect(scope).toContainText("Fast scoring");
+  await page.screenshot({ path: `${DIR}/prompts-scope.png`, fullPage: true });
+
+  // Every other prompt carries its own scope line too.
+  for (const kind of ["tailor", "cover", "extract", "networker_draft"]) {
+    await page.locator(`[data-testid="prompt-row-${kind}"]`).click();
+    await expect(page.locator(`[data-testid="prompt-scope-${kind}"]`)).toBeVisible();
+  }
 });

@@ -14,6 +14,31 @@ import { usePrompts, useResetPrompt, useSetPrompt } from "../../api/queries";
 import type { OperationKind, PromptSetting, Settings as SettingsT } from "../../api/types";
 import { CLAUDE_CLI_DEFAULT_MODEL, CLI_ENGINE_OPTIONS, isCliEngine } from "./engines";
 
+/** What each prompt actually governs, and what it does NOT.
+ *
+ *  The one that needed saying: `score` is the AI scoring rubric and nothing
+ *  else. Keyword scoring is Python rules, Fast scoring sends typed questions
+ *  carrying their own rubric bands, and On-device has no prompt either, so
+ *  editing this file changes 1 of the 4 methods (maintainer, 2026-10-07). */
+const SCOPE_KEY: Record<string, string> = {
+  score: "settingsPage.prompts.scopeScore",
+  tailor: "settingsPage.prompts.scopeTailor",
+  cover: "settingsPage.prompts.scopeCover",
+  extract: "settingsPage.prompts.scopeExtract",
+  networker_draft: "settingsPage.prompts.scopeNetworkerDraft",
+};
+
+/** The tab label. `score` reads as the scoring method it belongs to, so the
+ *  Scoring pane and this one can never call it 2 different things. An unknown
+ *  kind falls back to whatever the sidecar called it. */
+const TITLE_KEY: Record<string, string> = {
+  score: "scoreMethod.llm",
+  tailor: "settingsPage.prompts.titleTailor",
+  cover: "settingsPage.prompts.titleCover",
+  extract: "settingsPage.prompts.titleExtract",
+  networker_draft: "settingsPage.prompts.titleNetworkerDraft",
+};
+
 // One prompt's editor (routed model selector + full-height system-prompt
 // textarea + Save/Reset). Rendered for the ACTIVE tab only; keyed by kind in the
 // parent so switching tabs gives it fresh local draft state.
@@ -67,8 +92,17 @@ export function PromptEditor({
     resetPrompt.mutate(prompt.kind, { onSuccess: () => setDraft(null) });
   }
 
+  const scopeKey = SCOPE_KEY[prompt.kind];
   return (
     <div className="flex flex-col gap-3">
+      {scopeKey ? (
+        <p
+          data-testid={`prompt-scope-${prompt.kind}`}
+          className="rounded-md border border-border bg-surface-2 px-3 py-2 text-[11.5px] text-ink-2"
+        >
+          {t(scopeKey)}
+        </p>
+      ) : null}
       {prompt.routed ? (
         <div className="flex items-center gap-3">
           <span className="text-[11.5px] text-ink-3">{t("settingsPage.prompts.modelEngine")}</span>
@@ -189,7 +223,7 @@ export const EngineRoutingSection = memo(function EngineRoutingSection({
                 (on ? "bg-accent-wash text-accent-ink" : "text-ink-2 hover:bg-surface-3")
               }
             >
-              {p.title}
+              {TITLE_KEY[p.kind] ? t(TITLE_KEY[p.kind]) : p.title}
               {p.override_md != null ? (
                 <span
                   data-testid={`prompt-edited-${p.kind}`}

@@ -158,3 +158,38 @@ describe("ScoringSection weights", () => {
     expect(screen.getByTestId("score-weights")).toBeTruthy();
   });
 });
+
+describe("ScoringSection, what costs money", () => {
+  it("shows the per-tick cap for both methods that bill per job", () => {
+    // It used to show for AI scoring alone, which was right when that was the
+    // only paid method. Fast scoring bills per job too, so a first scan of
+    // 1,000 jobs could run uncapped on it.
+    for (const mode of ["llm", "jev"] as const) {
+      const { unmount } = render(
+        <ScoringSection settings={settings({ scoring_mode: mode })} patch={() => {}} />,
+      );
+      expect(screen.getByTestId("score-batch-cap-uncapped")).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it("hides it for the 2 free methods, where there is nothing to cap", () => {
+    for (const mode of ["keyword", "local"] as const) {
+      const { unmount } = render(
+        <ScoringSection settings={settings({ scoring_mode: mode })} patch={() => {}} />,
+      );
+      expect(screen.queryByTestId("score-batch-cap-uncapped")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("points at the prompt pane only where a prompt exists", () => {
+    const { unmount } = render(
+      <ScoringSection settings={settings({ scoring_mode: "llm" })} patch={() => {}} />,
+    );
+    expect(screen.getByTestId("scoring-prompt-pointer")).toBeTruthy();
+    unmount();
+    render(<ScoringSection settings={settings({ scoring_mode: "jev" })} patch={() => {}} />);
+    expect(screen.queryByTestId("scoring-prompt-pointer")).toBeNull();
+  });
+});

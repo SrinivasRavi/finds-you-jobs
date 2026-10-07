@@ -92,6 +92,9 @@ const settingsPage = {
     // One row per method, in menu order, richest explanation first. The price is
     // per 100 jobs, measured where it says measured (docs/internal/scoring.md
     // section 7.1); nothing here hides a method the user has not set up yet.
+    rubricPointer:
+      "The rubric AI scoring follows is editable in Settings \u203a Prompts & Models \u203a AI scoring. "
+      + "The other 3 methods have no prompt.",
     weightsTitle: "What counts most",
     weightsInfo:
       "Changes how every job's number is worked out from the detail already stored. "
@@ -187,6 +190,15 @@ const settingsPage = {
   },
   prompts: {
     title: "Pick the model engines and edit the prompts",
+    titleTailor: "Resume tailoring",
+    titleCover: "Cover letter",
+    titleExtract: "Application profile extraction",
+    titleNetworkerDraft: "Referral message drafting",
+    scopeScore: "This is the rubric for AI scoring only. The other 3 methods never read it: Keyword scoring is rules on your own machine, Fast scoring sends typed questions that carry their own rubric, and On-device scoring has no prompt either.",
+    scopeTailor: "Used every time a resume is tailored to a posting, whichever job it is.",
+    scopeCover: "Used every time a cover letter is written.",
+    scopeExtract: "Used when your master resume is read into the profile that fills application forms.",
+    scopeNetworkerDraft: "Used when a referral message is drafted for a contact.",
     modelEngine: "Model engine",
     cliDefaultModel: "CLI default model",
     providerDefault: "provider default",

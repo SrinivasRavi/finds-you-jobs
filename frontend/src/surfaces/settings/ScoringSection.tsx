@@ -18,6 +18,12 @@ import { WEIGHTED_AXES } from "../../api/types";
 import { InfoDot } from "../../shell/InfoDot";
 import { Section } from "./shared";
 
+// The methods that cost money per job, and so the ones a per-tick cap is for.
+// It used to show for `llm` alone, which was right when AI scoring was the only
+// paid method; Fast scoring also bills per job, so a first scan of 1,000 jobs
+// could run uncapped on it (maintainer, 2026-10-07).
+const METERED_METHODS: ScoringMode[] = ["llm", "jev"];
+
 // Scoring batch cap presets (audit P1-1): the scheduler's `score_new` tick
 // scores every unscored job by default (0 = uncapped) — a large first scan can
 // burn a lot of LLM cost in one tick. These presets are a UI convenience over
@@ -388,8 +394,16 @@ export const ScoringSection = memo(function ScoringSection({
             ))}
           </div>
         </div>
-        <WeightControls settings={settings} patch={patch} />
+        {/* Where the AI rubric is edited, said once, here, because this is the
+            pane where a user decides scoring is wrong and goes looking. The
+            other 3 methods have no prompt to edit (maintainer, 2026-10-07). */}
         {settings.scoring_mode === "llm" ? (
+          <p className="text-[12px] text-ink-3" data-testid="scoring-prompt-pointer">
+            {t("settingsPage.scoring.rubricPointer")}
+          </p>
+        ) : null}
+        <WeightControls settings={settings} patch={patch} />
+        {METERED_METHODS.includes(settings.scoring_mode) ? (
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <div className="flex items-center text-[13px] font-medium text-ink">
