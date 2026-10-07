@@ -36,6 +36,21 @@ const common = {
     // a title attribute has no surrounding copy to lean on.
     scoredBy: "Scored by {{method}}",
   },
+  // The 7 scoring axes, named for a reader rather than for the code. Shared,
+  // because the board's bars and Settings' weight sliders label the same axes.
+  scoreFactor: {
+    hard_requirements: "Hard requirements",
+    core_stack: "Core stack",
+    years: "Years of experience",
+    level: "Seniority fit",
+    location_preference: "Location",
+    logistics: "Logistics",
+    nice_to_haves: "Nice to haves",
+    // A confidence is not a graded position, so it reads differently on purpose.
+    confidence: "{{percent}}% confident",
+    weight: "weight {{percent}}%",
+    none: "This method recorded no per-axis detail for this job.",
+  },
   appearance: {
     theme: "Theme",
     themeHint: "\u201cSystem\u201d will match your OS light/dark settings.",
