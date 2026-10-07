@@ -167,7 +167,7 @@ const zh: DeepPartial<Messages> = {
       salary100k: "≥ $100k",
       salary150k: "≥ $150k",
       status: "状态",
-      aiScored: "AI 已评分",
+      modelScored: "模型评分",
       keywordsScored: "关键词评分",
       sort: "排序",
       sortMatchScore: "匹配分",

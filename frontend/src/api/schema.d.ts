@@ -2969,6 +2969,11 @@ export interface components {
              * @default scorer-llm
              */
             scorer_impl: string;
+            /**
+             * Method
+             * @default llm
+             */
+            method: string;
         };
         /**
          * JobUpdate

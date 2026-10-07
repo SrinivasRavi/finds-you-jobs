@@ -167,7 +167,7 @@ const ja: DeepPartial<Messages> = {
       salary100k: "≥ $100k",
       salary150k: "≥ $150k",
       status: "ステータス",
-      aiScored: "AIスコア済み",
+      modelScored: "モデルスコア済み",
       keywordsScored: "キーワードスコア済み",
       sort: "並べ替え",
       sortMatchScore: "マッチスコア",

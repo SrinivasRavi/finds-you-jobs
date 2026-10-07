@@ -172,7 +172,7 @@ const fr: DeepPartial<Messages> = {
       salary100k: "≥ 100 k$",
       salary150k: "≥ 150 k$",
       status: "Statut",
-      aiScored: "Score IA",
+      modelScored: "Score par modèle",
       keywordsScored: "Score mots-clés",
       sort: "Tri",
       sortMatchScore: "Score de correspondance",

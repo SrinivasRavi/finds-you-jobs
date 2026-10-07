@@ -29,6 +29,10 @@ export interface ScoreResult {
   /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
    *  never styled like an AI score). Scoring modes, 2026-07-22. */
   scorer_impl: string;
+  /** Which of the 4 methods ran: "llm" | "jev" | "local" | "keyword". The
+   *  board's inner ring (maintainer, 2026-10-07). Finer than `scorer_impl`,
+   *  which reads a Fast score as an AI one. */
+  method: string;
 }
 
 // ─── /api/jobs ──────────────────────────────────────────────────────────────

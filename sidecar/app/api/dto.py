@@ -45,6 +45,11 @@ class JobScoreDTO(BaseModel):
     # frontend renders a keyword score visibly grey, never styled like an AI
     # score (Scoring modes, maintainer design 2026-07-22).
     scorer_impl: str = "scorer-llm"
+    # Which of the 4 methods ran: `llm` | `jev` | `local` | `keyword`. Finer than
+    # `scorer_impl`, which can only say AI-or-not and so reads a Fast score as an
+    # AI one. The board's inner ring is this value, because a board carrying 2
+    # methods' numbers has to say which is which (maintainer, 2026-10-07).
+    method: str = "llm"
 
 
 class JobDTO(BaseModel):
@@ -1161,13 +1166,19 @@ def job_score_dto(job: Job) -> JobScoreDTO | None:
 
     `scorer_impl` stays on the wire under its old values so the frontend's grey
     styling keeps working; nothing stores that string any more, so renaming it
-    to `keyword` is now a frontend change with no data migration behind it."""
+    to `keyword` is now a frontend change with no data migration behind it.
+
+    `method` is the finer answer, and the `llm` default covers a row written
+    before the column existed: migration `b4d8e2a7c531` set exactly those rows
+    to `llm`, so the default only ever fires for a row written between that
+    migration and a scorer that tags its work."""
     if job.llm_score is not None:
         return JobScoreDTO(
             score_0_100=job.llm_score,
             reasons=list(job.llm_reasons),
             breakdown_md=job.llm_breakdown_md,
             scorer_impl="scorer-llm",
+            method=job.llm_score_method or "llm",
         )
     if job.keyword_score is not None:
         return JobScoreDTO(
@@ -1175,6 +1186,7 @@ def job_score_dto(job: Job) -> JobScoreDTO | None:
             reasons=list(job.keyword_reasons),
             breakdown_md=job.keyword_breakdown_md,
             scorer_impl="scorer-deterministic",
+            method="keyword",
         )
     return None
 

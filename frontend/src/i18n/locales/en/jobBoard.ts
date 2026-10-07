@@ -28,7 +28,7 @@ const jobBoard = {
     salary100k: "≥ $100k",
     salary150k: "≥ $150k",
     status: "Status",
-    aiScored: "AI Scored",
+    modelScored: "Model scored",
     keywordsScored: "Keywords scored",
     sort: "Sort",
     sortMatchScore: "Match score",

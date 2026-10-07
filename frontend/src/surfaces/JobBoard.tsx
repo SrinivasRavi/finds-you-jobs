@@ -54,7 +54,9 @@ import {
 import {
   daysBetween,
   firstHeading,
+  methodColor,
   salaryFloor,
+  scoreRingColor,
   scoreTier,
   shortAgo,
   sourceClasses,
@@ -65,7 +67,7 @@ import {
 // Every job always carries at least a keyword score (the instant on-device
 // floor), so "Pending"/"Failed" are gone — the filter is now which scorer
 // produced the displayed score (maintainer 2026-07-22).
-type StatusFilter = "ALL" | "AI" | "KEYWORD";
+type StatusFilter = "ALL" | "MODEL" | "KEYWORD";
 type WorkStyleFilter = "ALL" | "REMOTE" | "HYBRID" | "ONSITE" | "REMOTE_FRIENDLY";
 type SortMode = "match" | "recency";
 /** The URL axis. "" is All — the server reads it as no filter (section 9.3). */
@@ -86,15 +88,25 @@ function useDebounced<T>(value: T, ms: number): T {
 
 /** One search input with a clear (×) button — clearing restores the unfiltered
  *  feed (FR-JB-13). Used for both the list search and the deep all-text search. */
-function MatchRing({ score, keyword = false }: { score: number; keyword?: boolean }) {
-  // Keyword scores render grey with a dashed ring — never the tier-colored
-  // conic gradient — so they can't be mistaken for an AI score (Scoring
-  // modes, 2026-07-22).
-  if (keyword) {
+/** 2 concentric rings (maintainer, 2026-10-07). The OUTER arc is the score:
+ *  red at 0 through amber to green at 100, drawn as far round as the number
+ *  goes. The INNER ring is the method that produced it, because a board can
+ *  now carry 2 methods' numbers at once and the user has to be able to tell
+ *  which is which without opening anything.
+ *
+ *  Keyword keeps its grey dashed circle unchanged: it's the always-free floor,
+ *  it must never read as a paid score, and grey IS its method colour. */
+function MatchRing({ score, method }: { score: number; method: string }) {
+  const { t } = useTranslation();
+  const label = t(`common.scoreMethod.${method}`, { defaultValue: method });
+  const title = t("common.scoreMethod.scoredBy", { method: label });
+  if (method === "keyword") {
     return (
       <div
         className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-border-2 bg-surface-2"
         data-testid="keyword-score-ring"
+        data-method="keyword"
+        title={title}
       >
         <span className="text-[13px] font-semibold text-ink-3">{score}</span>
       </div>
@@ -105,9 +117,17 @@ function MatchRing({ score, keyword = false }: { score: number; keyword?: boolea
   return (
     <div
       className="grid h-12 w-12 place-items-center rounded-full"
-      style={{ background: `conic-gradient(${tier.ring} ${deg}deg, var(--surface-3) 0deg)` }}
+      data-testid="match-score-ring"
+      data-method={method}
+      title={title}
+      style={{ background: `conic-gradient(${scoreRingColor(score)} ${deg}deg, var(--surface-3) 0deg)` }}
     >
-      <div className="grid h-9 w-9 place-items-center rounded-full bg-surface">
+      {/* An inset shadow rather than a border: a border would shrink the disc
+          and reflow the number off centre. */}
+      <div
+        className="grid h-9 w-9 place-items-center rounded-full bg-surface"
+        style={{ boxShadow: `inset 0 0 0 2px ${methodColor(method)}` }}
+      >
         <span className={`text-[13px] font-semibold ${tier.text}`}>{score}</span>
       </div>
     </div>
@@ -237,20 +257,34 @@ const JobRow = memo(function JobRow({
         {job.score ? (
           <span
             data-keyword={job.score.scorer_impl === "scorer-deterministic"}
+            data-method={job.score.method}
             title={
               job.score_status === "unscorable"
                 ? t("jobBoard.row.unscorableTitle")
                 : job.score.scorer_impl === "scorer-deterministic"
                   ? t("jobBoard.row.keywordScoreTitle")
-                  : undefined
+                  : t("common.scoreMethod.scoredBy", {
+                      method: t(`common.scoreMethod.${job.score.method}`, {
+                        defaultValue: job.score.method,
+                      }),
+                    })
             }
             className={
-              "text-[15px] font-semibold " +
+              "inline-flex items-center gap-1.5 text-[15px] font-semibold " +
               (job.score.scorer_impl === "scorer-deterministic"
                 ? "text-ink-3"
                 : (tier?.text ?? ""))
             }
           >
+            {/* The row's method mark. The detail pane draws the method as the
+                dial's inner ring; a list row has no room for a dial, and
+                without something here a board carrying 2 methods' numbers is
+                unreadable while scrolling. Same colours, same hover line. */}
+            <span
+              aria-hidden="true"
+              className="size-[7px] shrink-0 rounded-full"
+              style={{ background: methodColor(job.score.method) }}
+            />
             {job.score.score_0_100}
           </span>
         ) : (
@@ -379,10 +413,7 @@ function JobDetail({
         </div>
         {job.score ? (
           <div className="flex flex-col items-center">
-            <MatchRing
-              score={job.score.score_0_100}
-              keyword={job.score.scorer_impl === "scorer-deterministic"}
-            />
+            <MatchRing score={job.score.score_0_100} method={job.score.method} />
             <span className="mt-1 text-[10.5px] text-ink-3">
               {job.score.scorer_impl === "scorer-deterministic"
                 ? t("jobBoard.detail.keywordsScored")
@@ -782,10 +813,13 @@ export function JobBoard() {
     } else if (ws !== "ALL") {
       list = list.filter((j) => j.work_style === ws);
     }
-    if (status === "AI")
-      list = list.filter((j) => j.score?.scorer_impl === "scorer-llm");
-    if (status === "KEYWORD")
-      list = list.filter((j) => j.score?.scorer_impl === "scorer-deterministic");
+    // Both sides read `method`, not `scorer_impl`: that field says "scorer-llm"
+    // for a Fast or On-device score as well, so this chip pair silently
+    // promised AI and delivered any-model the moment a 2nd method shipped. The
+    // ring carries which one; the chip stays a 2-way split of paid-ish versus
+    // the always-free floor.
+    if (status === "MODEL") list = list.filter((j) => (j.score?.method ?? "") !== "keyword" && !!j.score);
+    if (status === "KEYWORD") list = list.filter((j) => j.score?.method === "keyword");
     if (posted > 0) {
       list = list.filter((j) => {
         if (!j.posted_at) return false;
@@ -945,7 +979,7 @@ export function JobBoard() {
           {(
             [
               ["ALL", "jobBoard.filters.all"],
-              ["AI", "jobBoard.filters.aiScored"],
+              ["MODEL", "jobBoard.filters.modelScored"],
               ["KEYWORD", "jobBoard.filters.keywordsScored"],
             ] as [StatusFilter, string][]
           ).map(([s, label]) => (

@@ -32,6 +32,48 @@ export function scoreTier(score: number): { text: string; ring: string; wash: st
  *  "round" snaps to the nearest day (relative time-ago copy), and "exact" keeps
  *  the fraction for comparisons that feed a filter rather than a label.
  *  Returns NaN for an unparseable timestamp — callers guard. */
+/** The 4 scoring methods, in the vocabulary `Job.llm_score_method` stores.
+ *  Theme tokens, not hexes, so both themes are right for free. */
+export const SCORE_METHODS = ["llm", "jev", "local", "keyword"] as const;
+export type ScoreMethod = (typeof SCORE_METHODS)[number];
+
+const METHOD_COLOR: Record<ScoreMethod, string> = {
+  llm: "var(--purple)",
+  jev: "var(--accent)",
+  local: "var(--pink)",
+  keyword: "var(--ink-4)",
+};
+
+/** The inner ring's colour: which method produced the number. An unknown
+ *  string (a newer sidecar naming a method this build doesn't know) reads as
+ *  keyword grey rather than throwing — the board must never fail to draw. */
+export function methodColor(method: string): string {
+  return METHOD_COLOR[method as ScoreMethod] ?? METHOD_COLOR.keyword;
+}
+
+/** The outer arc's colour: red at 0, amber at 50, green at 100, interpolated.
+ *  The 3 stops are the same `--bad`/`--warn`/`--good` values `scoreTier` uses,
+ *  inlined for the same reason that function inlines them: a conic-gradient
+ *  stop is a colour, not a class.
+ *
+ *  Continuous rather than banded (maintainer, 2026-10-07): a 69 and a 70 are
+ *  not different kinds of job, and the old banding put a blue at 70 to 84, so
+ *  the ramp read green, blue, amber, red going down. */
+export function scoreRingColor(score: number): string {
+  const stops: [number, [number, number, number]][] = [
+    [0, [220, 38, 38]],
+    [50, [217, 119, 6]],
+    [100, [5, 150, 105]],
+  ];
+  const s = Math.max(0, Math.min(100, score));
+  const i = s <= stops[1][0] ? 0 : 1;
+  const [from, a] = stops[i];
+  const [to, b] = stops[i + 1];
+  const t = (s - from) / (to - from);
+  const mix = a.map((v, k) => Math.round(v + (b[k] - v) * t));
+  return `rgb(${mix[0]} ${mix[1]} ${mix[2]})`;
+}
+
 export function daysBetween(iso: string, mode: "floor" | "round" | "exact" = "floor"): number {
   const days = (Date.now() - new Date(iso).getTime()) / 86_400_000;
   if (mode === "exact") return days;

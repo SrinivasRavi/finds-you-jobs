@@ -181,7 +181,7 @@ const nl: DeepPartial<Messages> = {
       salary100k: "≥ $100k",
       salary150k: "≥ $150k",
       status: "Status",
-      aiScored: "AI-gescoord",
+      modelScored: "Model-gescoord",
       keywordsScored: "Trefwoordscore",
       sort: "Sorteren",
       sortMatchScore: "Matchscore",

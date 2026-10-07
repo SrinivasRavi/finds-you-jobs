@@ -183,7 +183,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       salary100k: "≥ $100k",
       salary150k: "≥ $150k",
       status: "Статус",
-      aiScored: "ИИ-оценка",
+      modelScored: "Оценка моделью",
       keywordsScored: "По ключевым словам",
       sort: "Сортировка",
       sortMatchScore: "По соответствию",

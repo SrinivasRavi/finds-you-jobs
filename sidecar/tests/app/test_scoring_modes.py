@@ -819,3 +819,108 @@ def test_picking_the_local_method_scores_by_keyword_and_says_so(migrated_db: Dat
         job = repos.jobs.get(job_id)
         assert job is not None and job.keyword_score is not None
         assert job.llm_score is None
+
+
+# --- which method ran, on the wire (maintainer, 2026-10-07) -------------------
+#
+# The board draws 2 concentric rings: the outer arc is the score, the inner one
+# is the method. That needs the method on the wire per job, and `scorer_impl`
+# cannot carry it — it says "scorer-llm" for a Fast or On-device score too, so
+# every one of them would draw as AI.
+
+
+class _FakeDecisions:
+    """The Jev transport, in the shape the 2026-09-28 bench recorded."""
+
+    def decide(self, body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "answers": {
+                "hard_requirements": {"score": 4.0, "confidence": 0.81},
+                "core_stack": {"score": 3.6, "confidence": 0.74},
+                "years": {"score": 4.0, "confidence": 0.9},
+                "level": {"score": 3.8, "confidence": 0.7},
+                "nice_to_haves": {"score": 1.0, "confidence": 0.6},
+                "location_preference_met": {"noul": 0.96},
+                "logistics_blocker": {"noul": 0.04},
+            },
+            "usage": {"cost": 0.000215, "prompt_tokens": 5129, "completion_tokens": 132},
+        }
+
+
+def test_the_dto_names_the_method_that_actually_ran(migrated_db: Database) -> None:
+    """AI scoring and keyword scoring each report themselves, and the keyword
+    floor under an AI score never claims the AI's name."""
+    from sidecar.app.api import dto as dto_mod
+
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "keyword"})
+    score_entrypoint(_ctx(db, job_id, engine=None))
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        shown = dto_mod.job_score_dto(job)
+        assert shown is not None
+        assert shown.method == "keyword"
+
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "llm"})
+    score_entrypoint(_ctx(db, job_id, engine=_OkEngine()))
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        shown = dto_mod.job_score_dto(job)
+        assert shown is not None
+        # The keyword rating is still in its own column; the AI one displays,
+        # and it says AI.
+        assert job.keyword_score is not None
+        assert shown.method == "llm"
+
+
+def test_a_fast_score_says_jev_and_not_llm(
+    migrated_db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect this pins: Fast scoring writes `jobs.llm_score`, so every
+    AI-or-not test in the app reads it as an AI score. Only `method` can tell
+    the user they are looking at a $0.0002 number rather than a $0.24 one."""
+    from sidecar.app.api import dto as dto_mod
+    from sidecar.app.registry import persistence as persistence_mod
+
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "jev"})
+    monkeypatch.setattr(
+        persistence_mod, "load_decisions_client", lambda repos: _FakeDecisions()
+    )
+    outcome = score_entrypoint(_ctx(db, job_id, engine=None))
+
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        assert job.llm_score is not None
+        shown = dto_mod.job_score_dto(job)
+        assert shown is not None
+        assert shown.method == "jev"
+        # `scorer_impl` is the field that cannot tell them apart. Pinned so
+        # nobody "fixes" the ring by reading it again.
+        assert shown.scorer_impl == SCORER_IMPL
+
+    # And the ledger says it too, so the Analytics row and the board agree.
+    assert outcome.result_ref is not None
+    assert outcome.result_ref["method"] == "jev"
+
+
+def test_on_device_falling_back_to_keyword_says_both(migrated_db: Database) -> None:
+    """On-device has no model pack yet (scoring-build.md T10), so it runs the
+    keyword floor. The ledger says keyword ran AND that On-device was asked for,
+    because a user who picked a method deserves to know it didn't run."""
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "local"})
+    outcome = score_entrypoint(_ctx(db, job_id, engine=None))
+    assert outcome.result_ref is not None
+    assert outcome.result_ref["method"] == "keyword"
+    assert outcome.result_ref["fell_back_from"] == "local"

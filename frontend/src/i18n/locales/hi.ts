@@ -170,7 +170,7 @@ const hi: DeepPartial<Messages> = {
       salary100k: "≥ $100k",
       salary150k: "≥ $150k",
       status: "स्थिति",
-      aiScored: "AI स्कोर",
+      modelScored: "मॉडल स्कोर",
       keywordsScored: "कीवर्ड स्कोर",
       sort: "क्रम",
       sortMatchScore: "मैच स्कोर",

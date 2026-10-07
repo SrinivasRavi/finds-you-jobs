@@ -191,6 +191,7 @@ function toJob(d: JobDTO, saved: boolean): Job {
           reasons: d.score.reasons as string[],
           breakdown_md: d.score.breakdown_md,
           scorer_impl: d.score.scorer_impl ?? "scorer-llm",
+          method: d.score.method ?? "llm",
         }
       : null,
     score_status: (d.scoreStatus as Job["score_status"] | undefined) ?? (d.score ? "scored" : "pending"),

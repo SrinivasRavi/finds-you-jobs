@@ -176,7 +176,7 @@ const ar = {
       salary100k: "≥ $100k",
       salary150k: "≥ $150k",
       status: "الحالة",
-      aiScored: "مُقيَّمة بالذكاء الاصطناعي",
+      modelScored: "مُقيَّمة بنموذج",
       keywordsScored: "مُقيَّمة بالكلمات المفتاحية",
       sort: "الترتيب",
       sortMatchScore: "درجة التطابق",
