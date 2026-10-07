@@ -13,6 +13,7 @@ import { Networking } from "./surfaces/Networking";
 import { Onboarding } from "./surfaces/Onboarding";
 import { Settings } from "./surfaces/Settings";
 import { Tracker } from "./surfaces/Tracker";
+import { UrlLessPreview } from "./surfaces/UrlLessPreview";
 import { Layout } from "./shell/Layout";
 import { SurfaceError } from "./shell/SurfaceError";
 import { installExternalLinkInterceptor } from "./shell/openExternal";
@@ -114,6 +115,9 @@ const router = createBrowserRouter([
       { path: "applications", element: <Tracker />, errorElement: <SurfaceError /> },
       { path: "networking", element: <Networking />, errorElement: <SurfaceError /> },
       { path: "dev", element: <Dev />, errorElement: <SurfaceError /> },
+      // Jobs-without-a-URL design preview (docs/internal/url-less-jobs.md
+      // section 9) — mock data only, hidden from the rail outside a dev build.
+      { path: "url-less", element: <UrlLessPreview />, errorElement: <SurfaceError /> },
       { path: "browser", element: <BrowserSurface />, errorElement: <SurfaceError /> },
       { path: "analytics", element: <Analytics />, errorElement: <SurfaceError /> },
       { path: "logs", element: <Navigate to="/analytics" replace /> },

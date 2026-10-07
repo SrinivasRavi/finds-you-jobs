@@ -7,6 +7,7 @@ const common = {
     networking: "Networking",
     analytics: "Analytics",
     settings: "Settings",
+    urlLessPreview: "UI preview",
   },
   settingsNav: {
     providers: "LLM Providers",
