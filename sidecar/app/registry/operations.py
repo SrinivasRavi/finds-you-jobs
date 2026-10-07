@@ -367,7 +367,12 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
       pass). No hidden re-scoring; nothing to fall back below keyword.
     """
     from ..prompt_overrides import get_override
-    from .persistence import SCORER_IMPL, SCORER_IMPL_DETERMINISTIC, scoring_mode
+    from .persistence import (
+        SCORER_IMPL,
+        SCORER_IMPL_DETERMINISTIC,
+        SCORING_MODES,
+        scoring_mode,
+    )
 
     snap = ctx.input_snapshot
     job_id = snap.get("job_id")
@@ -379,7 +384,12 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
         job = repos.jobs.get(job_id) if job_id is not None else None
         prefs = repos.preferences.get_or_create()
-        mode = scoring_mode(prefs)
+        # "Explain this one" (scoring-build.md T13) is the only caller that
+        # names a mode: 1 click, 1 job, 1 AI call, on a board the user is
+        # otherwise scoring cheaply. Everything else reads the setting, so a
+        # scan can never spend on a mode the user did not pick.
+        forced = str(snap.get("force_mode") or "")
+        mode = forced if forced in SCORING_MODES else scoring_mode(prefs)
         return {
             "mode": mode,
             "wanted": _wanted_locations(repos),

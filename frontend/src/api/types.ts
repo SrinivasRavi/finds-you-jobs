@@ -57,6 +57,15 @@ export const WEIGHTED_AXES = [
   "nice_to_haves",
 ] as const;
 
+/** What "Explain this one" will run, and what it has cost this user before. */
+export interface ExplainCost {
+  engine: string;
+  model: string;
+  avg_usd: number | null;
+  samples: number;
+  ready: boolean;
+}
+
 export interface JobFactors {
   job_id: string;
   method: string;

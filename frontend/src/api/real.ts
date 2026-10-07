@@ -41,6 +41,7 @@ const DEFAULT_LOCATION_PENALTY: Record<ScoreWeightPreset, number> = {
 import type {
   AttachLinkInput,
   AttachLinkResult,
+  ExplainCost,
   JobFactors,
   ScoreWeightPreset,
   LinkCandidate,
@@ -797,6 +798,17 @@ export class RealApi {
       if (app) await this.req(`/api/applications/${app.id}`, { method: "DELETE" });
     }
     return this.getJob(id);
+  }
+
+  /** What an AI score will run on, and what it has cost this user before. */
+  async getExplainCost(): Promise<ExplainCost> {
+    return this.req<ExplainCost>("/api/scoring/explain-cost");
+  }
+
+  /** 1 click, 1 job, 1 AI call. An ordinary score operation, so cost, the cap,
+   *  Stop and Retry all apply. */
+  async explainJob(id: string): Promise<{ id: string }> {
+    return this.json("POST", `/api/jobs/${id}/explain`, {}) as Promise<{ id: string }>;
   }
 
   /** The bars behind a job's number. Read-only and free — every method stores

@@ -320,6 +320,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scoring/explain-cost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Explain Cost
+         * @description The price on the button before it is pressed (vision.md, cost honesty).
+         */
+        get: operations["explain_cost_api_scoring_explain_cost_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explain Job
+         * @description 1 click, 1 job, 1 AI call (scoring-build.md T13).
+         *
+         *     AI scoring is the only method that writes sentences, and it costs about
+         *     $0.24 a job against Fast scoring's $0.0002. A user scores 100 jobs and opens
+         *     maybe 8, so this buys prose for the 8 instead of the 100, at the moment they
+         *     asked for it.
+         *
+         *     It is an ordinary `score` operation with the mode named, so the spend lands
+         *     in the ledger, the LLM concurrency cap applies, Stop works and Retry is free.
+         *     The job ADOPTS the AI score it comes back with (maintainer decision pending,
+         *     scoring-build.md section 4 choice 1): the call returns one whether we want it
+         *     or not, discarding it would waste money the user just spent, and the card's
+         *     ring says which method scored it.
+         *
+         *     It can run again. A user who edited their resume should be able to, and both
+         *     spends are in the ledger.
+         */
+        post: operations["explain_job_api_jobs__job_id__explain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/scoring/retryable": {
         parameters: {
             query?: never;
@@ -2830,6 +2885,34 @@ export interface components {
             status: "ok" | "not_found" | "not_logged_in" | "error";
         };
         /**
+         * ExplainCostDTO
+         * @description What "Explain this one" will run, and what it has cost this user.
+         *
+         *     `avg_usd` is MEASURED off their own succeeded score operations on the same
+         *     model, never a figure from a price list: the app cannot know what a model
+         *     costs, and quoting one would be wrong the first time someone switched. None
+         *     means they have never paid for an AI score, and the button says so rather
+         *     than guessing.
+         */
+        ExplainCostDTO: {
+            /** Engine */
+            engine: string;
+            /** Model */
+            model: string;
+            /** Avg Usd */
+            avg_usd?: number | null;
+            /**
+             * Samples
+             * @default 0
+             */
+            samples: number;
+            /**
+             * Ready
+             * @default true
+             */
+            ready: boolean;
+        };
+        /**
          * ExportPdfRequest
          * @description Export a markdown document (resume / cover letter) as a PDF into the
          *     user's Downloads folder (US-RES-03 slice, 2026-07-12 — the webview can't
@@ -4434,6 +4517,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobFactorsDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explain_cost_api_scoring_explain_cost_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplainCostDTO"];
+                };
+            };
+        };
+    };
+    explain_job_api_jobs__job_id__explain_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
                 };
             };
             /** @description Validation Error */

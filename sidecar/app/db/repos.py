@@ -333,6 +333,35 @@ class OperationsRepo:
         return op
 
 
+    def recent_score_cost(self, model: str | None, limit: int = 20) -> tuple[float | None, int]:
+        """What an AI score has actually cost THIS user, and over how many runs.
+
+        Measured, never estimated: the price of a model is not something the app
+        can know, and quoting a number off a doc would be a cost-honesty problem
+        the first time a user switched model. `None` means they have never paid
+        for one, which the button says rather than guessing.
+        """
+        stmt = (
+            select(Operation.usage)
+            .where(
+                Operation.kind == "score",
+                Operation.state == "succeeded",
+                Operation.usage.is_not(None),
+            )
+            .order_by(Operation.finished_at.desc())
+            .limit(limit)
+        )
+        if model:
+            stmt = stmt.where(Operation.model == model)
+        costs = [
+            float(u["usd"])
+            for (u,) in self._s.execute(stmt)
+            if isinstance(u, dict) and isinstance(u.get("usd"), int | float)
+        ]
+        if not costs:
+            return None, 0
+        return sum(costs) / len(costs), len(costs)
+
 class PreferencesRepo:
     """User preferences — single row in P1."""
 

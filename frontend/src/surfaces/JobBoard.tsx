@@ -18,6 +18,8 @@ import {
   useLinkedInSession,
   useBoard,
   useEmptyTrash,
+  useExplainCost,
+  useExplainJob,
   useJobFactors,
   useProfile,
   useSaveJob,
@@ -132,6 +134,43 @@ function MatchRing({ score, method }: { score: number; method: string }) {
       >
         <span className={`text-[13px] font-semibold ${tier.text}`}>{score}</span>
       </div>
+    </div>
+  );
+}
+
+/** "Explain this one": 1 click, 1 job, 1 AI call, with the price on the button
+ *  before it is pressed (vision.md, cost honesty).
+ *
+ *  The price is what THIS user's own AI scores have cost, measured off their
+ *  ledger, because the app cannot know what a model charges and a figure from a
+ *  price list would be wrong the first time somebody switched model. With no
+ *  history it names the model instead of inventing a number. */
+function ExplainButton({ job }: { job: Job }) {
+  const { t } = useTranslation();
+  const cost = useExplainCost(true);
+  const explain = useExplainJob();
+  const price = cost.data;
+  const label =
+    price?.avg_usd != null
+      ? t("jobBoard.detail.explainPriced", { usd: price.avg_usd.toFixed(2) })
+      : price?.model
+        ? t("jobBoard.detail.explainOnModel", { model: price.model })
+        : t("jobBoard.detail.explain");
+  return (
+    <div className="mb-3">
+      <button
+        data-testid="explain-this-one"
+        disabled={explain.isPending || price?.ready === false}
+        onClick={() => explain.mutate(job.id)}
+        className="w-full rounded-md border border-border-2 bg-surface px-3 py-1.5 text-[12px] text-ink-2 hover:bg-surface-3 disabled:text-ink-4"
+      >
+        {explain.isPending ? t("jobBoard.detail.explainRunning") : label}
+      </button>
+      {price?.ready === false ? (
+        <p className="mt-1 text-[11px] text-ink-3">{t("jobBoard.detail.explainNoEngine")}</p>
+      ) : (
+        <p className="mt-1 text-[11px] text-ink-3">{t("jobBoard.detail.explainHint")}</p>
+      )}
     </div>
   );
 }
@@ -668,6 +707,13 @@ function JobDetail({
                         weights={factors.data.weights}
                       />
                     </div>
+                  ) : null}
+                  {/* The cheap methods rank well and write nothing, so the one
+                      job the user is about to spend an hour on can buy prose on
+                      its own (scoring-build.md T13). Hidden once AI scoring has
+                      already written it: there would be nothing to buy. */}
+                  {job.score.method !== "llm" ? (
+                    <ExplainButton job={job} />
                   ) : null}
                   <ul data-testid="match-reasons" className="space-y-1.5 text-[12.5px] text-ink-2">
                     {job.score.reasons.slice(0, 4).map((r, i) => (

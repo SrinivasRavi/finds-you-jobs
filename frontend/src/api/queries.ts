@@ -64,6 +64,7 @@ export const qk = {
   costTotals: ["costTotals"] as const,
   retryableScores: ["retryableScores"] as const,
   jobFactors: ["jobFactors"] as const,
+  explainCost: ["explainCost"] as const,
   schedulerStatus: ["schedulerStatus"] as const,
   spans: ["spans"] as const,
   contacts: ["contacts"] as const,
@@ -80,6 +81,15 @@ export const qk = {
 export function useJobs() {
   return useQuery({ queryKey: qk.jobs, queryFn: () => api.listJobs() });
 }
+/** The price on the Explain button before it is pressed. */
+export function useExplainCost(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.explainCost,
+    queryFn: () => api.getExplainCost(),
+    enabled,
+  });
+}
+
 /** The per-axis bars behind one job's score. Only the open card asks, so the
  *  board's 50 rows never fan out into 50 reads. */
 export function useJobFactors(jobId: string | null) {
@@ -173,6 +183,19 @@ export function useDiscoverySources() {
     queryFn: () => api.listDiscoverySources(),
   });
 }
+/** Buy prose for 1 job. The board and its factors both change underneath, so
+ *  both are invalidated when the operation lands, not when the click returns. */
+export function useExplainJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.explainJob(jobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.ledger });
+      void qc.invalidateQueries({ queryKey: qk.costTotals });
+    },
+  });
+}
+
 export function useToggleDiscoverySource() {
   const qc = useQueryClient();
   return useMutation({

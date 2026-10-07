@@ -924,3 +924,96 @@ def test_on_device_falling_back_to_keyword_says_both(migrated_db: Database) -> N
     assert outcome.result_ref is not None
     assert outcome.result_ref["method"] == "keyword"
     assert outcome.result_ref["fell_back_from"] == "local"
+
+
+# --- "explain this one" (scoring-build.md T13) --------------------------------
+
+
+def test_explain_enqueues_an_ordinary_score_op_with_the_mode_named(tmp_path) -> None:
+    """1 click, 1 job, 1 AI call. It is a `score` operation and not a new kind,
+    so cost, the LLM cap, Stop and Retry all apply without being re-built."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        job_id = _seed(db)
+        with db.repos() as repos:
+            repos.preferences.update(thresholds={"scoring_mode": "keyword"})
+
+        resp = client.post(f"/api/jobs/{job_id}/explain", headers=AUTH)
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["kind"] == "score"
+
+        with db.repos() as repos:
+            op = repos.operations.get(body["id"])
+            assert op is not None
+            # The mode rides the snapshot. Nothing else in the app sets it, so a
+            # scan can never spend on a mode the user did not pick.
+            assert op.input_snapshot["force_mode"] == "llm"
+            assert op.input_snapshot["job_id"] == job_id
+
+
+def test_explain_runs_the_ai_path_even_while_the_board_is_on_keyword(
+    migrated_db: Database,
+) -> None:
+    db = migrated_db
+    job_id = _seed(db)
+    with db.repos() as repos:
+        repos.preferences.update(thresholds={"scoring_mode": "keyword"})
+    ctx = _ctx(db, job_id, engine=_OkEngine())
+    with db.repos() as repos:
+        snap = dict(ctx.input_snapshot)
+        snap["force_mode"] = "llm"
+    forced = OperationContext(
+        kind="score", input_snapshot=snap, engine=ctx.engine, db=db,
+        operation_id=ctx.operation_id,
+    )
+    outcome = score_entrypoint(forced)
+    assert outcome.result_ref is not None
+    assert outcome.result_ref["method"] == "llm"
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        # It ADOPTS the score it paid for, and the row says which method ran.
+        assert job.llm_score == 77
+        assert job.llm_score_method == "llm"
+
+
+def test_explain_refuses_a_posting_with_too_little_to_explain(tmp_path) -> None:
+    """Spending the user's money to say "we know nothing about this job" is the
+    exact defect MIN_JD_CHARS exists to stop (S-C27)."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            repos.profile.upsert("# Master\n\nBackend engineer.")
+            job_id = repos.jobs.create(
+                canonical_url="https://ex.co/j/explain-thin",
+                title="Backend Engineer",
+                description="Backend engineer.",
+                source_adapter="greenhouse",
+            ).id
+        resp = client.post(f"/api/jobs/{job_id}/explain", headers=AUTH)
+        assert resp.status_code == 400
+        with db.repos() as repos:
+            assert repos.operations.list_by_kind_states("score", OP_ALL_STATES) == []
+
+
+def test_explain_refuses_with_no_master_resume(tmp_path) -> None:
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            job_id = repos.jobs.create(
+                canonical_url="https://ex.co/j/explain-noresume",
+                title="Backend Engineer",
+                description=REALISTIC_JD,
+                source_adapter="greenhouse",
+            ).id
+        assert client.post(f"/api/jobs/{job_id}/explain", headers=AUTH).status_code == 400

@@ -667,6 +667,22 @@ class ScoringMethodDTO(BaseModel):
     needs: str | None = None
 
 
+class ExplainCostDTO(BaseModel):
+    """What "Explain this one" will run, and what it has cost this user.
+
+    `avg_usd` is MEASURED off their own succeeded score operations on the same
+    model, never a figure from a price list: the app cannot know what a model
+    costs, and quoting one would be wrong the first time someone switched. None
+    means they have never paid for an AI score, and the button says so rather
+    than guessing."""
+
+    engine: str
+    model: str
+    avg_usd: float | None = None
+    samples: int = 0
+    ready: bool = True
+
+
 class SettingsDTO(BaseModel):
     preferences: PreferencesDTO
     engines: list[EngineSettingDTO]

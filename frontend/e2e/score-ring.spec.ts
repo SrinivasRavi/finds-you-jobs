@@ -204,3 +204,54 @@ test("weight presets and the sliders behind their disclosure", async ({ page }) 
   });
   await weights.screenshot({ path: `${DIR}/weights-skills-only.png` });
 });
+
+test("explain this one shows its price, and only where there is prose to buy", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+
+  // This user has paid for AI scores before, so the button quotes their own
+  // average rather than a figure off a price list.
+  await page.route("**/api/scoring/explain-cost", async (route) => {
+    await route.fulfill({
+      json: { engine: "openrouter", model: "claude-haiku-4-5", avg_usd: 0.24, samples: 12, ready: true },
+    });
+  });
+
+  let method = "jev";
+  await page.route("**/api/board*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { jobs: Record<string, unknown>[] };
+    const t = body.jobs[0];
+    if (t) {
+      body.jobs = [
+        {
+          ...t,
+          scoreStatus: "scored",
+          score: { ...(t.score as Record<string, unknown>), score_0_100: 74, method },
+        },
+      ];
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/jobs");
+  await page.locator('[data-testid="job-row"]').first().click();
+  const button = page.locator('[data-testid="explain-this-one"]');
+  await expect(button).toBeVisible({ timeout: 15_000 });
+  await expect(button).toContainText("0.24");
+  await page.screenshot({ path: `${DIR}/explain-button.png`, fullPage: true });
+
+  // An AI-scored job already has its prose, so there is nothing to buy.
+  method = "llm";
+  await page.reload();
+  await page.locator('[data-testid="job-row"]').first().click();
+  await expect(page.locator('[data-testid="match-reasons"]')).toBeVisible({ timeout: 15_000 });
+  await expect(button).toHaveCount(0);
+});

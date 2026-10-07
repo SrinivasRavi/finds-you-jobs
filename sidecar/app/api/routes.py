@@ -789,6 +789,67 @@ def get_job_factors(request: Request, job_id: str) -> dto.JobFactorsDTO:
         )
 
 
+@router.get("/api/scoring/explain-cost")
+def explain_cost(request: Request) -> dto.ExplainCostDTO:
+    """The price on the button before it is pressed (vision.md, cost honesty)."""
+    engines = _engines(request)
+    resolved = None
+    if engines is not None:
+        try:
+            resolved = engines.resolve("score")
+        except Exception:  # noqa: BLE001 — nothing routed is a state, not an error
+            resolved = None
+    model = getattr(resolved, "model", "") or ""
+    with _db(request).repos() as repos:
+        avg, samples = repos.operations.recent_score_cost(model or None)
+    return dto.ExplainCostDTO(
+        engine=getattr(resolved, "name", "") or "",
+        model=model,
+        avg_usd=avg,
+        samples=samples,
+        ready=resolved is not None,
+    )
+
+
+@router.post("/api/jobs/{job_id}/explain", status_code=202)
+def explain_job(request: Request, job_id: str) -> dto.OperationAccepted:
+    """1 click, 1 job, 1 AI call (scoring-build.md T13).
+
+    AI scoring is the only method that writes sentences, and it costs about
+    $0.24 a job against Fast scoring's $0.0002. A user scores 100 jobs and opens
+    maybe 8, so this buys prose for the 8 instead of the 100, at the moment they
+    asked for it.
+
+    It is an ordinary `score` operation with the mode named, so the spend lands
+    in the ledger, the LLM concurrency cap applies, Stop works and Retry is free.
+    The job ADOPTS the AI score it comes back with (maintainer decision pending,
+    scoring-build.md section 4 choice 1): the call returns one whether we want it
+    or not, discarding it would waste money the user just spent, and the card's
+    ring says which method scored it.
+
+    It can run again. A user who edited their resume should be able to, and both
+    spends are in the ledger."""
+    with _db(request).repos() as repos:
+        job = _found(repos.jobs.get(job_id), "job", job_id)
+        profile = repos.profile.get_current()
+        if profile is None:
+            raise HTTPException(status_code=400, detail="no master resume to score against")
+        from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
+        if len((job.description or "").strip()) < MIN_JD_CHARS:
+            # The same floor the planner uses. Explaining a job we know nothing
+            # about would spend the user's money to say so (S-C27).
+            raise HTTPException(
+                status_code=400,
+                detail="this posting has too little description to explain",
+            )
+        version = profile.version
+    operation_id = _runner(request).submit(
+        "score", {"job_id": job_id, "profile_version": version, "force_mode": "llm"}
+    )
+    return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
+
+
 # -- scoring retry ---------------------------------------------------------
 # Deliberately NOT under /api/jobs/: `GET /api/jobs/{job_id}` is registered
 # above and would swallow a single-segment sibling.
