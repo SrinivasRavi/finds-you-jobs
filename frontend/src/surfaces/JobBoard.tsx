@@ -98,8 +98,8 @@ function useDebounced<T>(value: T, ms: number): T {
  *  it must never read as a paid score, and grey IS its method colour. */
 function MatchRing({ score, method }: { score: number; method: string }) {
   const { t } = useTranslation();
-  const label = t(`common.scoreMethod.${method}`, { defaultValue: method });
-  const title = t("common.scoreMethod.scoredBy", { method: label });
+  const label = t(`scoreMethod.${method}`, { defaultValue: method });
+  const title = t("scoreMethod.scoredBy", { method: label });
   if (method === "keyword") {
     return (
       <div
@@ -263,8 +263,8 @@ const JobRow = memo(function JobRow({
                 ? t("jobBoard.row.unscorableTitle")
                 : job.score.scorer_impl === "scorer-deterministic"
                   ? t("jobBoard.row.keywordScoreTitle")
-                  : t("common.scoreMethod.scoredBy", {
-                      method: t(`common.scoreMethod.${job.score.method}`, {
+                  : t("scoreMethod.scoredBy", {
+                      method: t(`scoreMethod.${job.score.method}`, {
                         defaultValue: job.score.method,
                       }),
                     })

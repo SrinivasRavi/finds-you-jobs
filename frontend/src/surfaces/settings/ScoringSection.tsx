@@ -58,24 +58,28 @@ function ScoreBatchCapControl({
 // build that ships a new method does not need a server string.
 const MENU_ORDER: ScoringMode[] = ["llm", "jev", "local", "keyword"];
 
+// The NAME of each method lives in `common.scoreMethod`, because the board's
+// score ring names them too and a menu that disagrees with the board about
+// what a method is called is worse than either name alone. The blurb and the
+// price stay here: this menu is their only reader.
 const COPY: Record<ScoringMode, { name: string; blurb: string; price: string }> = {
   llm: {
-    name: "settingsPage.scoring.modeLlmName",
+    name: "scoreMethod.llm",
     blurb: "settingsPage.scoring.modeLlmBlurb",
     price: "settingsPage.scoring.modeLlmPrice",
   },
   jev: {
-    name: "settingsPage.scoring.modeJevName",
+    name: "scoreMethod.jev",
     blurb: "settingsPage.scoring.modeJevBlurb",
     price: "settingsPage.scoring.modeJevPrice",
   },
   local: {
-    name: "settingsPage.scoring.modeLocalName",
+    name: "scoreMethod.local",
     blurb: "settingsPage.scoring.modeLocalBlurb",
     price: "settingsPage.scoring.modeLocalPrice",
   },
   keyword: {
-    name: "settingsPage.scoring.modeKeywordName",
+    name: "scoreMethod.keyword",
     blurb: "settingsPage.scoring.modeKeywordBlurb",
     price: "settingsPage.scoring.modeKeywordPrice",
   },
