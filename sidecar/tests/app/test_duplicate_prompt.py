@@ -175,3 +175,46 @@ def test_there_is_no_merge_the_user_resolves_a_duplicate_themselves(tmp_path) ->
         with app.state.db.repos() as repos:
             assert repos.jobs.get(monday) is not None
             assert repos.jobs.get(wednesday) is not None
+
+
+def test_a_scan_flags_the_job_the_user_pasted_on_monday(tmp_path) -> None:
+    """Flow D through the real scan path. The flag used to be written only by
+    `POST /api/jobs`, so a scanned row was never compared with anything and
+    this test's predecessor faked the scan with a second manual add."""
+    from sidecar.app.registry.persistence import persist_scan
+    from sidecar.modules.scraper.types import NormalizedJob, ScanResult
+
+    client, app = _client(tmp_path)
+    with client:
+        monday = _add(client, url="", title="Senior Software Engineer", company="Acme")
+        scanned = NormalizedJob(
+            canonical_url="https://boards.greenhouse.io/acme/jobs/1",
+            title="Senior Software Engineer", company="Acme", location="",
+            description=JD + " Apply today.", source_adapter="greenhouse",
+        )
+        ref = persist_scan(app.state.db, ScanResult(jobs=[scanned], per_source={}))
+        wednesday = ref["scan"]["new_job_ids"][0]
+        body = client.get(f"/api/jobs/{wednesday}/duplicate", headers=AUTH).json()
+        assert body is not None
+        assert body["other_job_id"] == monday
+
+
+def test_a_row_written_before_fingerprints_existed_is_backfilled(tmp_path) -> None:
+    """Rows from before migration c9e4a71b3f02 had no fingerprint, and the
+    duplicate check skips a NULL, so they could never be matched. The daily
+    maintenance pass fills them in, once."""
+    from sidecar.app.registry.persistence import backfill_fingerprints
+
+    client, app = _client(tmp_path)
+    with client:
+        db: Database = app.state.db
+        with db.repos() as repos:
+            old = repos.jobs.create(
+                canonical_url="https://ex.co/old", title="Senior Software Engineer",
+                company="Acme", description=JD, source_adapter="greenhouse",
+            ).id
+        assert backfill_fingerprints(db) == 1
+        assert backfill_fingerprints(db) == 0  # converged
+        pasted = _add(client, url="", title="Senior Software Engineer", company="Acme")
+        body = client.get(f"/api/jobs/{pasted}/duplicate", headers=AUTH).json()
+        assert body is not None and body["other_job_id"] == old

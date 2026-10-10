@@ -358,6 +358,16 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
                     continue
                 new_job_ids.append(repos.jobs.create(**_job_columns(job)).id)
                 persisted += 1
+            # The duplicate notice (url-less-jobs.md 9.6) for every row this scan
+            # wrote, against the whole active board including each other. Without
+            # it a scanned row was never compared, so pasted-Monday,
+            # scanned-Wednesday could never be noticed.
+            if new_job_ids:
+                rows = repos.jobs.fingerprint_rows()
+                for job_id in new_job_ids:
+                    written = repos.jobs.get(job_id)
+                    if written is not None:
+                        flag_near_duplicate(repos, written, rows=rows)
 
     fetched = sum(r.fetched for r in result.per_source.values())
     kept = sum(r.kept for r in result.per_source.values())
@@ -443,6 +453,22 @@ def backfill_resolved_locations(
                 location_remote=resolved.remote_scope,
                 location_attendance=str(resolved.attendance) if resolved.attendance else None,
             )
+        return len(pending)
+
+
+def backfill_fingerprints(db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH) -> int:
+    """Fingerprint rows written before the column existed. Returns the count.
+
+    The duplicate check skips a NULL fingerprint, so until this runs a board
+    from before migration `c9e4a71b3f02` is invisible to it. A description too
+    short to shingle stores 0 rather than NULL, so this converges; 0 matches
+    nothing. It flags nothing itself: a notice comes when a new row arrives."""
+    if db is None:
+        return 0
+    with db.repos() as repos:
+        pending = repos.jobs.list_unfingerprinted(limit=limit)
+        for job in pending:
+            repos.jobs.update(job.id, fingerprint=to_signed64(simhash64(job.description)))
         return len(pending)
 
 
@@ -540,7 +566,9 @@ DUPLICATE_FLAG = "probable-duplicate:"
 DUPLICATE_BATCH_FLAG = "duplicate-batch:"
 
 
-def flag_near_duplicate(repos: Repos, job: Job) -> str | None:
+def flag_near_duplicate(
+    repos: Repos, job: Job, *, rows: list[tuple[str, int, str, str]] | None = None
+) -> str | None:
     """Mark a freshly-written job as a probable duplicate of one already here.
 
     This is the cross-SCAN case the board could never catch: the user pasted an
@@ -553,10 +581,12 @@ def flag_near_duplicate(repos: Repos, job: Job) -> str | None:
     column it already loads, so the duplicate prompt costs the main flow nothing
     (url-less-jobs.md 9.6, D15).
 
+    `rows` is `fingerprint_rows()` read once by a caller flagging many jobs.
     Returns the id it flagged against, or None.
     """
     others = repos.jobs.near_duplicate_ids(
-        job.fingerprint, company=job.company, title=job.title, exclude_id=job.id
+        job.fingerprint, company=job.company, title=job.title, exclude_id=job.id,
+        rows=rows,
     )
     if not others:
         return None

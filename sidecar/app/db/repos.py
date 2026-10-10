@@ -598,8 +598,36 @@ class JobsRepo:
             )
         )
 
+    def fingerprint_rows(self) -> list[tuple[str, int, str, str]]:
+        """`(id, fingerprint, company, title)` for every active fingerprinted job:
+        the 4 narrow columns `near_duplicate_ids` compares. A scan reads them once
+        for all the rows it writes rather than once per row."""
+        rows = self._s.execute(
+            select(Job.id, Job.fingerprint, Job.company, Job.title).where(
+                Job.feed_state == "active", Job.fingerprint.is_not(None)
+            )
+        )
+        return [(r[0], r[1] or 0, r[2], r[3]) for r in rows]
+
+    def list_unfingerprinted(self, *, limit: int = 500) -> list[Job]:
+        """Jobs with a description and no fingerprint: rows written before the
+        column existed. The backfill's own query, so it converges."""
+        stmt = (
+            select(Job)
+            .where(Job.fingerprint.is_(None), Job.description != "")
+            .order_by(Job.ingested_at.desc(), Job.id)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
     def near_duplicate_ids(
-        self, fingerprint: int | None, *, company: str, title: str, exclude_id: str
+        self,
+        fingerprint: int | None,
+        *,
+        company: str,
+        title: str,
+        exclude_id: str,
+        rows: list[tuple[str, int, str, str]] | None = None,
     ) -> list[str]:
         """Active jobs that are probably the SAME posting as this one.
 
@@ -623,18 +651,14 @@ class JobsRepo:
 
         if not fingerprint:
             return []
-        rows = self._s.execute(
-            select(Job.id, Job.fingerprint, Job.company, Job.title).where(
-                Job.id != exclude_id,
-                Job.feed_state == "active",
-                Job.fingerprint.is_not(None),
-            )
-        )
         mine = from_signed64(fingerprint)
         return [
             row_id
-            for row_id, row_fp, row_company, row_title in rows
-            if is_probable_cross_listing(
+            for row_id, row_fp, row_company, row_title in (
+                self.fingerprint_rows() if rows is None else rows
+            )
+            if row_id != exclude_id
+            and is_probable_cross_listing(
                 mine,
                 from_signed64(row_fp or 0),
                 company_a=company,
