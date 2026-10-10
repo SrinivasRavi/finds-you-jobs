@@ -216,7 +216,10 @@ test("delete forever has room for its confirm, and a typed-in job can be pasted 
   await page.getByTestId("add-job-title").fill("Ledger Engineer");
   await page.getByTestId("add-job-description").fill(TOMBSTONE_JD);
   await page.getByTestId("add-job-submit-btn").click();
+  await expect(page.getByTestId("add-job-submit-btn")).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByTestId("add-job-save-error")).toHaveCount(0);
-  await expect(page.getByText("Ledger Engineer").first()).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.getByTestId("job-row").filter({ hasText: "Ledger Engineer" }),
+  ).toHaveCount(1, { timeout: 15_000 });
   await page.screenshot({ path: `${DIR}/15-pasted-back.png`, fullPage: true });
 });
