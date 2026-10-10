@@ -96,8 +96,6 @@ export interface DuplicatePrompt {
   other_job_id: string;
   other: LinkCandidate;
   other_added_at: string;
-  /** Merging would throw an application away, so the dialog refuses and asks. */
-  both_have_applications: boolean;
 }
 
 export interface JobFactors {
@@ -1078,7 +1076,7 @@ export interface LinkCandidate {
 
 /** What the Add-link dialog renders next (section 5.4 / 5.5). */
 export interface AttachLinkResult {
-  status: "attached" | "mismatch" | "unreadable" | "duplicate" | "merge_refused";
+  status: "attached" | "mismatch" | "unreadable" | "duplicate";
   job: Job | null;
   pasted: LinkCandidate | null;
   card: LinkCandidate | null;
@@ -1091,8 +1089,6 @@ export interface AttachLinkInput {
   /** Attach despite a mismatch or an unreadable page — always available,
    *  never the default (rank-don't-gate applied to a field). */
   confirm?: boolean;
-  /** Resolve a collision by merging into this card (section 5.5). */
-  merge?: boolean;
 }
 
 // ─── Operations ledger (Logs/Analytics reads this — section 10) ────────────────────

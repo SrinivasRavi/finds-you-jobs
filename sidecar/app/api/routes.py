@@ -662,7 +662,16 @@ def attach_job_link(
         job = _found(repos.jobs.get(job_id), "job", job_id)
         other = repos.jobs.get_by_canonical_url(canonical)
         if other is not None and other.id != job.id:
-            return _merge_or_refuse(repos, job, other, canonical, merge=payload.merge)
+            # 2 rows want 1 URL. Say which one and write nothing: the user
+            # deletes the one they don't need, the app never picks (maintainer,
+            # url-less-jobs.md line 409 note).
+            return dto.AttachLinkResultDTO(
+                status="duplicate",
+                pasted=dto.LinkCandidateDTO(
+                    title=other.title, company=other.company, location=other.location
+                ),
+                other_job_id=other.id,
+            )
         updated = repos.jobs.update(job_id, canonical_url=canonical)
         return dto.AttachLinkResultDTO(status="attached", job=dto.job_dto(updated))
 
@@ -686,45 +695,6 @@ def _link_verdict(
         ),
         similarity(card_fp, probed_fp),
     )
-
-
-def _merge_or_refuse(
-    repos: Any, job: Any, other: Any, canonical: str | None, *, merge: bool
-) -> dto.AttachLinkResultDTO:
-    """The collision of section 5.5: 2 rows want 1 URL.
-
-    The user's row survives, because it carries their application, stage, notes
-    and generated documents while the scanned row only carries a better
-    description and a real `source_adapter`. Those 2 fields move across and the
-    scanned row goes. When both rows have an application the merge can't
-    reparent one (`uq_applications_job` permits 1 per job), so it refuses and
-    asks rather than guessing with the user's pipeline."""
-    candidate = dto.LinkCandidateDTO(
-        title=other.title, company=other.company, location=other.location
-    )
-    if not merge:
-        return dto.AttachLinkResultDTO(
-            status="duplicate", pasted=candidate, other_job_id=other.id
-        )
-    with_apps = repos.applications.job_ids()
-    if job.id in with_apps and other.id in with_apps:
-        return dto.AttachLinkResultDTO(
-            status="merge_refused", pasted=candidate, other_job_id=other.id
-        )
-    description = other.description or job.description
-    source_adapter = other.source_adapter or job.source_adapter
-    delete_job_cascade(repos, other.id)
-    # Flush before the re-key: both rows want the same URL, and the unit of
-    # work would otherwise order the UPDATE ahead of the DELETE and trip the
-    # unique index (the IntegrityError section 5.5 opens with).
-    repos.flush()
-    updated = repos.jobs.update(
-        job.id,
-        canonical_url=canonical,
-        description=description,
-        source_adapter=source_adapter,
-    )
-    return dto.AttachLinkResultDTO(status="attached", job=dto.job_dto(updated))
 
 
 @router.get("/api/jobs/{job_id}/duplicate")
@@ -753,7 +723,6 @@ def get_job_duplicate(request: Request, job_id: str) -> dto.DuplicatePromptDTO |
             return None
         if repos.duplicate_dismissals.is_dismissed(job_id, other_id):
             return None
-        with_apps = repos.applications.job_ids()
         return dto.DuplicatePromptDTO(
             job_id=job_id,
             other_job_id=other_id,
@@ -761,7 +730,6 @@ def get_job_duplicate(request: Request, job_id: str) -> dto.DuplicatePromptDTO |
                 title=other.title, company=other.company, location=other.location
             ),
             other_added_at=other.ingested_at,
-            both_have_applications=job_id in with_apps and other_id in with_apps,
         )
 
 
@@ -776,25 +744,6 @@ def dismiss_job_duplicate(
         _found(repos.jobs.get(payload.other_job_id), "job", payload.other_job_id)
         repos.duplicate_dismissals.dismiss(job_id, payload.other_job_id)
         return dto.job_dto(job)
-
-
-@router.post("/api/jobs/{job_id}/duplicate/merge")
-def merge_job_duplicate(
-    request: Request, job_id: str, payload: dto.DuplicateActionRequest
-) -> dto.AttachLinkResultDTO:
-    """Merge the scanned row into the user's own (url-less-jobs.md 5.5).
-
-    `job_id` is the row the user KEEPS. The same `_merge_or_refuse` the Add-link
-    collision uses, so the rule, the refusal and the cascade can't drift between
-    the 2 doors that reach it."""
-    with _db(request).repos() as repos:
-        job = _found(repos.jobs.get(job_id), "job", job_id)
-        other = _found(
-            repos.jobs.get(payload.other_job_id), "job", payload.other_job_id
-        )
-        return _merge_or_refuse(
-            repos, job, other, other.canonical_url or job.canonical_url, merge=True
-        )
 
 
 @router.post("/api/jobs/{job_id}/tombstone")

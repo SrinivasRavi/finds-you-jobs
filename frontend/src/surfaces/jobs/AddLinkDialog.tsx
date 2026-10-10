@@ -60,7 +60,7 @@ export function AddLinkDialog({
   const [error, setError] = useState<string | null>(null);
   const attach = useAttachJobLink();
 
-  function run(opts: { confirm?: boolean; merge?: boolean } = {}) {
+  function run(opts: { confirm?: boolean } = {}) {
     setError(null);
     attach.mutate(
       { job_id: jobId, url: url.trim(), ...opts },
@@ -77,7 +77,7 @@ export function AddLinkDialog({
   const title =
     result?.status === "mismatch"
       ? t("jobBoard.addLink.mismatchTitle")
-      : result?.status === "duplicate" || result?.status === "merge_refused"
+      : result?.status === "duplicate"
         ? t("jobBoard.addLink.duplicateTitle")
         : mode === "apply"
           ? t("jobBoard.addLink.applyTitle")
@@ -153,7 +153,9 @@ export function AddLinkDialog({
           </>
         ) : result?.status === "duplicate" ? (
           <>
-            <p className="text-[12.5px] leading-snug text-ink-2">
+            {/* 2 jobs want 1 link. The user deletes the one they don't need;
+                the app never merges them (url-less-jobs.md line 409 note). */}
+            <p className="text-[12.5px] leading-snug text-ink-2" data-testid="add-link-duplicate">
               {t("jobBoard.addLink.duplicateBody")}
             </p>
             {result.pasted ? <SideBySide pasted={result.pasted} card={null} /> : null}
@@ -163,26 +165,10 @@ export function AddLinkDialog({
                 onClick={onClose}
                 className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
               >
-                {t("jobBoard.addLink.keepBoth")}
-              </button>
-              <button
-                type="button"
-                data-testid="add-link-merge"
-                disabled={attach.isPending}
-                onClick={() => run({ confirm: true, merge: true })}
-                className="rounded-md border border-accent bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-ink"
-              >
-                {t("jobBoard.addLink.merge")}
+                {t("jobBoard.addLink.cancel")}
               </button>
             </div>
           </>
-        ) : result?.status === "merge_refused" ? (
-          <p
-            className="rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-[12.5px] leading-snug text-warn"
-            data-testid="add-link-merge-refused"
-          >
-            ⚠ {t("jobBoard.addLink.refusal")}
-          </p>
         ) : (
           <>
             <input

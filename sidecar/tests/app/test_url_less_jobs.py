@@ -399,66 +399,37 @@ def test_an_unreadable_page_says_so_instead_of_refusing(
     assert body["job"] is None
 
 
-def test_the_collision_keeps_the_users_row_and_takes_the_scans_text(
+def test_a_link_another_job_already_has_is_reported_and_writes_nothing(
     app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Flow D (section 5.5): pasted Monday, scanned Wednesday, linked Friday.
+    """Flow D: pasted Monday, scanned Wednesday, linked Friday. The dialog names
+    the other job and changes neither row; the user deletes the one they don't
+    need (maintainer, url-less-jobs.md line 409 note). Both rows tracked or
+    not, it's the same answer, so there is no refusal case and no 500."""
     app, client = app_client
     mine = _paste(client, _JD)
+    scanned = _paste(
+        client, _JD + " Board copy.", canonical_url=_URL, source_adapter="greenhouse"
+    )
     client.post(
         "/api/applications",
         headers=AUTH,
-        json={"job_id": mine["id"], "generate_resume": False, "generate_cover": False},
-    )
-    scanned = _paste(
-        client,
-        _JD + " The board's fuller text, with the benefits section.",
-        canonical_url=_URL,
-        source_adapter="greenhouse",
+        json={"job_id": scanned["id"], "generate_resume": False, "generate_cover": False},
     )
     monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
 
-    asked = client.post(
-        f"/api/jobs/{mine['id']}/link", headers=AUTH, json={"url": _URL}
-    ).json()
-    assert asked["status"] == "duplicate"
-    assert asked["other_job_id"] == scanned["id"]
-
-    merged = client.post(
-        f"/api/jobs/{mine['id']}/link",
-        headers=AUTH,
-        json={"url": _URL, "confirm": True, "merge": True},
-    ).json()
-    assert merged["status"] == "attached"
-    assert merged["job"]["id"] == mine["id"]
-    assert merged["job"]["source_adapter"] == "greenhouse"
-    assert "benefits section" in merged["job"]["description"]
-    with app.state.db.repos() as repos:
-        assert repos.jobs.get(scanned["id"]) is None
-
-
-def test_the_merge_refuses_when_both_rows_are_in_the_tracker(
-    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, client = app_client
-    mine = _paste(client, _JD)
-    scanned = _paste(client, _JD + " Board copy.", canonical_url=_URL)
-    for job_id in (mine["id"], scanned["id"]):
-        client.post(
-            "/api/applications",
+    for confirm in (False, True):
+        body = client.post(
+            f"/api/jobs/{mine['id']}/link",
             headers=AUTH,
-            json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
-        )
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
-
-    body = client.post(
-        f"/api/jobs/{mine['id']}/link",
-        headers=AUTH,
-        json={"url": _URL, "confirm": True, "merge": True},
-    ).json()
-    assert body["status"] == "merge_refused"
+            json={"url": _URL, "confirm": confirm},
+        ).json()
+        assert body["status"] == "duplicate"
+        assert body["other_job_id"] == scanned["id"]
     with app.state.db.repos() as repos:
-        assert repos.jobs.get(scanned["id"]) is not None  # nothing thrown away
+        kept_mine, kept_scanned = repos.jobs.get(mine["id"]), repos.jobs.get(scanned["id"])
+        assert kept_mine is not None and kept_mine.canonical_url is None
+        assert kept_scanned is not None and kept_scanned.canonical_url == _URL
 
 
 def test_apply_refuses_a_url_less_card_before_writing_a_run(
@@ -542,26 +513,3 @@ def test_the_tracker_logs_an_application_with_no_link(
     )
     assert resp.status_code == 201, resp.text
     assert resp.json()["job"]["canonical_url"] is None
-
-
-def test_merging_2_pasted_duplicates_leaves_no_empty_string_url(
-    app_client: tuple[FastAPI, TestClient],
-) -> None:
-    """2 pasted near-duplicates have no URL between them. The merge used to
-    write `canonical_url = ""`, which is a real value in the unique index: the
-    survivor read as "has a link" to SQL, and the next such merge 500'd."""
-    app, client = app_client
-    for n in range(2):
-        first = _paste(client, _JD + f" Batch {n}, copy one.", company=f"Acme{n}")
-        second = _paste(client, _JD + f" Batch {n}, copy two.", company=f"Acme{n}")
-        prompt = client.get(f"/api/jobs/{second['id']}/duplicate", headers=AUTH).json()
-        assert prompt is not None and prompt["other_job_id"] == first["id"]
-        resp = client.post(
-            f"/api/jobs/{first['id']}/duplicate/merge",
-            headers=AUTH,
-            json={"other_job_id": second["id"]},
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["job"]["canonical_url"] is None
-    with app.state.db.repos() as repos:
-        assert repos.jobs.get_by_canonical_url("") is None

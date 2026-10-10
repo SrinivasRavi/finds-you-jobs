@@ -108,19 +108,8 @@ const jobBoard = {
   },
   duplicate: {
     looksLike: "This looks like \"{{title}}\", which you added {{days}} days ago.",
-    compare: "Compare",
     different: "They're different",
-    mergeTitle: "Merge these 2 jobs?",
-    keeping: "Keeping",
-    keepingWhat: "Your own card, with its stage, documents and notes.",
-    taking: "Taking",
-    takingWhat: "The scanned job's description, link and source.",
-    nothingLost: "The scanned card is deleted. Nothing you wrote is lost.",
-    bothTracked:
-      "Both of these are in your tracker. Merging would throw one of them away, so pick "
-      + "the one to keep and delete the other yourself.",
-    keepBoth: "Keep both",
-    merge: "Merge",
+    resolveHint: "If it is the same job, delete the one you don't need.",
   },
   detail: {
     pickJob: "Pick a job to see details.",
@@ -288,11 +277,7 @@ const jobBoard = {
       "We couldn't read that page, so we can't check it against this job. Attach it anyway?",
     duplicateTitle: "Another card already has this link",
     duplicateBody:
-      "A scanned card holds this posting. Merging keeps this card — its stage, notes and documents — and takes the scanned card's description and source. The scanned card is deleted.",
-    keepBoth: "Keep both",
-    merge: "Merge",
-    refusal:
-      "Both of these are in your tracker, so merging would throw one of them away. Pick the one to keep and delete the other yourself.",
+      "Another job on your board already has this link. Delete the one you don't need, then add the link again.",
     applyTitle: "Where should I apply?",
     applyBody:
       "This job has no posting link, so there's no form to fill in. Paste the link and I'll start.",

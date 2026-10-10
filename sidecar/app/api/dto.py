@@ -200,13 +200,10 @@ class AttachLinkRequest(BaseModel):
     """Promotion (url-less-jobs.md section 5.4): give a URL-less job its URL.
 
     `confirm` attaches despite a mismatch or an unreadable page, which is
-    rank-don't-gate applied to a field: always available, never the default.
-    `merge` answers the collision in section 5.5 when a scanned row already
-    holds the pasted URL."""
+    rank-don't-gate applied to a field: always available, never the default."""
 
     url: str
     confirm: bool = False
-    merge: bool = False
 
 
 class DuplicateActionRequest(BaseModel):
@@ -234,9 +231,6 @@ class DuplicatePromptDTO(BaseModel):
     other_job_id: str
     other: LinkCandidateDTO
     other_added_at: datetime
-    # Both rows in the tracker means the merge would throw one away, so the
-    # dialog refuses and asks rather than guessing with the user's pipeline.
-    both_have_applications: bool = False
 
 
 class AttachLinkResultDTO(BaseModel):
@@ -246,12 +240,12 @@ class AttachLinkResultDTO(BaseModel):
     - `mismatch`: the compound gate said no; `pasted` and `card` fill the
       side-by-side and `confirm` attaches anyway.
     - `unreadable`: `probe_url` failed, so there's nothing to compare.
-    - `duplicate`: a scanned row already holds this URL; `merge` resolves it.
-    - `merge_refused`: both rows have an application, so merging would throw
-      one away. The user picks (section 5.5).
+    - `duplicate`: another job already holds this URL, named in `pasted` and
+      `other_job_id`. Nothing is written; the user deletes the one they don't
+      need and attaches again.
     """
 
-    status: Literal["attached", "mismatch", "unreadable", "duplicate", "merge_refused"]
+    status: Literal["attached", "mismatch", "unreadable", "duplicate"]
     job: JobDTO | None = None
     pasted: LinkCandidateDTO | None = None
     card: LinkCandidateDTO | None = None

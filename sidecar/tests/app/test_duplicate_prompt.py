@@ -80,7 +80,6 @@ def test_the_second_row_is_flagged_when_it_is_written(tmp_path) -> None:
         assert body is not None
         assert body["other_job_id"] == monday
         assert body["other"]["title"] == "Senior Software Engineer"
-        assert body["both_have_applications"] is False
 
 
 def test_a_different_level_at_the_same_employer_is_not_a_duplicate(tmp_path) -> None:
@@ -158,53 +157,21 @@ def test_deleting_either_job_takes_the_dismissal_with_it(tmp_path) -> None:
             assert repos.duplicate_dismissals.dismissed_pairs([monday]) == set()
 
 
-def test_merging_keeps_the_user_s_row_and_takes_the_scanned_one_s_link(tmp_path) -> None:
-    client, app = _client(tmp_path)
-    with client:
-        monday = _add(client, url="", title="Senior Software Engineer", company="Acme")
-        wednesday = _add(
-            client,
-            url="https://boards.greenhouse.io/acme/jobs/7",
-            title="Senior Software Engineer",
-            company="Acme",
-        )
-        resp = client.post(
-            f"/api/jobs/{monday}/duplicate/merge",
-            headers=AUTH,
-            json={"other_job_id": wednesday},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "attached"
-        with app.state.db.repos() as repos:
-            kept = repos.jobs.get(monday)
-            assert kept is not None
-            # The user's row survives and gains the link it never had.
-            assert kept.canonical_url == "https://boards.greenhouse.io/acme/jobs/7"
-            assert repos.jobs.get(wednesday) is None
-
-
-def test_the_prompt_says_when_both_rows_are_in_the_tracker(tmp_path) -> None:
-    """Merging would throw one application away (`uq_applications_job` permits
-    1 per job), so the dialog has to refuse rather than guess."""
+def test_there_is_no_merge_the_user_resolves_a_duplicate_themselves(tmp_path) -> None:
+    """The app says 2 rows look like 1 job and stops there (maintainer,
+    url-less-jobs.md line 409 note). Nothing deletes or re-keys either row."""
     client, app = _client(tmp_path)
     with client:
         monday = _add(client, url="", title="Senior Software Engineer", company="Acme")
         wednesday = _add(
             client, url="https://ex.co/w", title="Senior Software Engineer", company="Acme"
         )
-        for job_id in (monday, wednesday):
-            resp = client.post(
-                "/api/applications", headers=AUTH, json={"job_id": job_id}
-            )
-            assert resp.status_code == 201, resp.text
-        body = client.get(f"/api/jobs/{wednesday}/duplicate", headers=AUTH).json()
-        assert body is not None
-        assert body["both_have_applications"] is True
-        refused = client.post(
+        resp = client.post(
             f"/api/jobs/{monday}/duplicate/merge",
             headers=AUTH,
             json={"other_job_id": wednesday},
-        ).json()
-        assert refused["status"] == "merge_refused"
+        )
+        assert resp.status_code in (404, 405)
         with app.state.db.repos() as repos:
+            assert repos.jobs.get(monday) is not None
             assert repos.jobs.get(wednesday) is not None

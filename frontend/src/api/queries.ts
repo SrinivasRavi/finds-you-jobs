@@ -115,19 +115,6 @@ export function useDismissJobDuplicate() {
   });
 }
 
-/** Merge the scanned row into the user's own. `jobId` is the one kept. */
-export function useMergeJobDuplicate() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ jobId, otherJobId }: { jobId: string; otherJobId: string }) =>
-      api.mergeJobDuplicate(jobId, otherJobId),
-    onSuccess: () => {
-      invalidateFeed(qc);
-      void qc.invalidateQueries({ queryKey: qk.jobDuplicate });
-    },
-  });
-}
-
 /** The per-axis bars behind one job's score. Only the open card asks, so the
  *  board's 50 rows never fan out into 50 reads. */
 export function useJobFactors(jobId: string | null) {

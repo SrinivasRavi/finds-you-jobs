@@ -67,12 +67,9 @@ test("the scanned card asks once, and never again once dismissed", async ({ page
   await expect(prompt).toContainText("Senior Software Engineer");
   await page.screenshot({ path: `${DIR}/prompt-on-card.png`, fullPage: true });
 
-  // Compare opens the merge dialog, spelling the outcome out before anything.
-  await page.getByTestId("duplicate-compare").click();
-  await expect(page.getByTestId("duplicate-merge-confirm")).toBeVisible();
-  await page.screenshot({ path: `${DIR}/merge-dialog.png`, fullPage: true });
-  await page.getByTestId("duplicate-keep-both").click();
-  await expect(page.getByTestId("duplicate-merge-confirm")).toHaveCount(0);
+  // A notice only: it says what to do, and there is nothing to merge with.
+  await expect(prompt).toContainText("delete the one you don't need");
+  await expect(page.getByTestId("duplicate-compare")).toHaveCount(0);
 
   // "They're different" is remembered, so the prompt goes and stays gone.
   await page.getByTestId("duplicate-different").click();

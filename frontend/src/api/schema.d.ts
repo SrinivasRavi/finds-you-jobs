@@ -290,30 +290,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/jobs/{job_id}/duplicate/merge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Merge Job Duplicate
-         * @description Merge the scanned row into the user's own (url-less-jobs.md 5.5).
-         *
-         *     `job_id` is the row the user KEEPS. The same `_merge_or_refuse` the Add-link
-         *     collision uses, so the rule, the refusal and the cascade can't drift between
-         *     the 2 doors that reach it.
-         */
-        post: operations["merge_job_duplicate_api_jobs__job_id__duplicate_merge_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/jobs/{job_id}/tombstone": {
         parameters: {
             query?: never;
@@ -327,7 +303,8 @@ export interface paths {
          * Tombstone Job
          * @description Delete forever from Trash (US-JB-11): write a `Tombstone` for the job's
          *     canonical URL, then hard-delete the row. A tombstone is final — a future
-         *     scan or Add-by-URL can never re-surface it (FR-SYS-04).
+         *     scan or Add-by-URL can never re-surface it (FR-SYS-04). A job with no URL
+         *     is only deleted, so its description can be pasted again.
          */
         post: operations["tombstone_job_api_jobs__job_id__tombstone_post"];
         delete?: never;
@@ -347,11 +324,9 @@ export interface paths {
         put?: never;
         /**
          * Empty Trash
-         * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's
-         *     identity and hard-delete the rows immediately, bypassing the 7-day TTL.
-         *
-         *     `canonical_urls` lists only the rows that had a URL, so the count is the
-         *     authoritative total.
+         * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL
+         *     and hard-delete the rows immediately, bypassing the 7-day TTL. A job with
+         *     no URL is deleted without a tombstone.
          *
          *     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
          *     costs an existence check, an insert, and a delete, so on the loop a big
@@ -2439,8 +2414,6 @@ export interface components {
          *
          *     `confirm` attaches despite a mismatch or an unreadable page, which is
          *     rank-don't-gate applied to a field: always available, never the default.
-         *     `merge` answers the collision in section 5.5 when a scanned row already
-         *     holds the pasted URL.
          */
         AttachLinkRequest: {
             /** Url */
@@ -2450,11 +2423,6 @@ export interface components {
              * @default false
              */
             confirm: boolean;
-            /**
-             * Merge
-             * @default false
-             */
-            merge: boolean;
         };
         /**
          * AttachLinkResultDTO
@@ -2464,16 +2432,16 @@ export interface components {
          *     - `mismatch`: the compound gate said no; `pasted` and `card` fill the
          *       side-by-side and `confirm` attaches anyway.
          *     - `unreadable`: `probe_url` failed, so there's nothing to compare.
-         *     - `duplicate`: a scanned row already holds this URL; `merge` resolves it.
-         *     - `merge_refused`: both rows have an application, so merging would throw
-         *       one away. The user picks (section 5.5).
+         *     - `duplicate`: another job already holds this URL, named in `pasted` and
+         *       `other_job_id`. Nothing is written; the user deletes the one they don't
+         *       need and attaches again.
          */
         AttachLinkResultDTO: {
             /**
              * Status
              * @enum {string}
              */
-            status: "attached" | "mismatch" | "unreadable" | "duplicate" | "merge_refused";
+            status: "attached" | "mismatch" | "unreadable" | "duplicate";
             job?: components["schemas"]["JobDTO"] | null;
             pasted?: components["schemas"]["LinkCandidateDTO"] | null;
             card?: components["schemas"]["LinkCandidateDTO"] | null;
@@ -2933,11 +2901,6 @@ export interface components {
              * Format: date-time
              */
             other_added_at: string;
-            /**
-             * Both Have Applications
-             * @default false
-             */
-            both_have_applications: boolean;
         };
         /**
          * EngineSettingDTO
@@ -4047,10 +4010,8 @@ export interface components {
         /**
          * TombstoneResultDTO
          * @description Result of a permanent-discard action (Empty Trash / Delete forever /
-         *     TTL eviction — US-JB-11 / FR-SYS-04): how many identities were tombstoned.
-         *
-         *     `canonical_urls` lists only the rows that had one, so it can be shorter
-         *     than `tombstoned` when a URL-less job was among them.
+         *     TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned. A job
+         *     with no URL is deleted without one, so it counts in neither field.
          */
         TombstoneResultDTO: {
             /** Tombstoned */
@@ -4670,41 +4631,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    merge_job_duplicate_api_jobs__job_id__duplicate_merge_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DuplicateActionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AttachLinkResultDTO"];
                 };
             };
             /** @description Validation Error */

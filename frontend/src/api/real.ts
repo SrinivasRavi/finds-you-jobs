@@ -685,7 +685,6 @@ export class RealApi {
     const d = (await this.json("POST", `/api/jobs/${input.job_id}/link`, {
       url: input.url,
       confirm: input.confirm ?? false,
-      merge: input.merge ?? false,
     })) as AttachLinkResultDTO;
     return {
       status: d.status,
@@ -830,13 +829,6 @@ export class RealApi {
     await this.json("POST", `/api/jobs/${id}/duplicate/dismiss`, {
       other_job_id: otherJobId,
     });
-  }
-
-  /** `id` is the row the user KEEPS. */
-  async mergeJobDuplicate(id: string, otherJobId: string): Promise<AttachLinkResult> {
-    return (await this.json("POST", `/api/jobs/${id}/duplicate/merge`, {
-      other_job_id: otherJobId,
-    })) as AttachLinkResult;
   }
 
   /** What an AI score will run on, and what it has cost this user before. */
