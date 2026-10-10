@@ -350,7 +350,6 @@ const zh: DeepPartial<Messages> = {
       removedRecently: "{{company}} · 最近删除",
       deleteForever: "永久删除",
       undo: "撤销",
-      textWarning: "这同时会阻止你再次粘贴时该描述被重新加入。",
     },
     duplicate: {
       looksLike: "这看起来像你 {{days}} 天前添加的“{{title}}”。",

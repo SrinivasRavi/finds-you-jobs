@@ -355,7 +355,6 @@ const nl: DeepPartial<Messages> = {
       removedRecently: "{{company}} · Onlangs verwijderd",
       deleteForever: "Definitief verwijderen",
       undo: "Ongedaan maken",
-      textWarning: "Dit voorkomt ook dat de omschrijving terugkomt als je hem opnieuw plakt.",
     },
     duplicate: {
       looksLike: "Dit lijkt op \"{{title}}\", die je {{days}} dagen geleden toevoegde.",

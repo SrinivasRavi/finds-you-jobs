@@ -1681,10 +1681,6 @@ function TrashModal({
         avatarName: j.company,
         title: j.title,
         subtitle: t("jobBoard.trashModal.removedRecently", { company: j.company }),
-        // Under a content-hash identity, delete forever blocks every future
-        // paste of this exact description. Useful and surprising at once, so
-        // the confirm says which one it's doing (url-less-jobs.md 8.2, 9.12).
-        confirmNote: j.canonical_url ? undefined : t("jobBoard.trashModal.textWarning"),
       }))}
       restore={{
         label: t("jobBoard.trashModal.undo"),

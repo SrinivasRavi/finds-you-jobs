@@ -378,7 +378,6 @@ const ar = {
       removedRecently: "{{company}} · حُذفت مؤخرًا",
       deleteForever: "احذف نهائيًا",
       undo: "تراجع",
-      textWarning: "هذا يمنع أيضًا عودة الوصف إن ألصقته مرة أخرى.",
     },
     duplicate: {
       looksLike: "يبدو هذا مثل «{{title}}» التي أضفتها قبل {{days}} يومًا.",

@@ -143,9 +143,12 @@ def test_url_jobs_sharing_a_description_do_not_collide(
 # ---------------------------------------------------------------------------
 
 
-def test_delete_forever_blocks_a_re_paste_of_the_same_text(
+def test_delete_forever_never_tombstones_a_typed_in_job(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
+    """A tombstone stops a scan re-adding a posting. No scan can produce a job
+    the user typed in, so deleting one forever only deletes it, and the same
+    description can be pasted again later (maintainer, 2026-10-10)."""
     app, client = app_client
     created = _paste(client, _JD)
     client.patch(
@@ -153,19 +156,53 @@ def test_delete_forever_blocks_a_re_paste_of_the_same_text(
     )
     result = client.post(f"/api/jobs/{created['id']}/tombstone", headers=AUTH)
     assert result.status_code == 200
-    assert result.json()["tombstoned"] == 1
+    assert result.json() == {"tombstoned": 0, "canonical_urls": []}
 
-    resp = client.post(
+    again = client.post(
         "/api/jobs",
         headers=AUTH,
         json={"title": "Senior Software Engineer", "description": _JD},
     )
-    assert resp.status_code == 409
-
+    assert again.status_code == 201
+    assert again.json()["id"] != created["id"]
     with app.state.db.repos() as repos:
-        assert repos.tombstones.exists(content_hash=content_hash(_JD))
-        # A URL tombstone must not be what answered that.
-        assert not repos.tombstones.exists(canonical_url="")
+        assert repos.jobs.get(created["id"]) is None
+
+
+def test_a_scan_is_never_blocked_by_a_deleted_typed_in_job(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """The real posting for a JD the user once pasted and deleted still lands."""
+    from sidecar.app.registry.persistence import persist_scan
+    from sidecar.modules.scraper.types import ScanResult
+
+    app, client = app_client
+    created = _paste(client, _JD)
+    client.patch(
+        f"/api/jobs/{created['id']}", headers=AUTH, json={"feed_state": "removed"}
+    )
+    client.post(f"/api/jobs/{created['id']}/tombstone", headers=AUTH)
+    scanned = NormalizedJob(
+        canonical_url=_URL, title="Senior Software Engineer", company="Acme",
+        location="", description=_JD, source_adapter="greenhouse",
+    )
+    ref = persist_scan(app.state.db, ScanResult(jobs=[scanned], per_source={}))
+    assert ref["scan"]["persisted"] == 1
+    assert ref["scan"]["tombstoned"] == 0
+
+
+def test_delete_forever_on_a_linked_job_still_tombstones_its_url(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_client
+    created = _paste(client, _JD, canonical_url=_URL, source_adapter="greenhouse")
+    client.patch(
+        f"/api/jobs/{created['id']}", headers=AUTH, json={"feed_state": "removed"}
+    )
+    result = client.post(f"/api/jobs/{created['id']}/tombstone", headers=AUTH)
+    assert result.json() == {"tombstoned": 1, "canonical_urls": [_URL]}
+    with app.state.db.repos() as repos:
+        assert repos.tombstones.exists(_URL)
 
 
 def test_a_trashed_paste_comes_back_on_a_re_paste(

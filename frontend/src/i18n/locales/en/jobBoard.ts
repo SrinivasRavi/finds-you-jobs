@@ -304,9 +304,7 @@ const jobBoard = {
   },
   trashModal: {
     title: "Deleted Jobs",
-    retention:
-      "Deleted jobs are erased permanently after 7 days. For a job you typed in, that also blocks pasting the same description again.",
-    textWarning: "This also stops the description coming back if you paste it again.",
+    retention: "Deleted jobs are erased permanently after 7 days.",
     emptyConfirm_one: "Delete all forever? {{count}} job will be erased permanently.",
     emptyConfirm_other: "Delete all forever? {{count}} jobs will be erased permanently.",
     confirm: "Confirm",

@@ -68,9 +68,9 @@ from ..registry.persistence import (
     SCORER_IMPL_DETERMINISTIC,
     delete_application_cascade,
     delete_job_cascade,
-    identity_kwargs,
     saved_job_ids,
     scoring_mode,
+    tombstone_url,
 )
 from ..runner import OperationRunner
 from ..scheduler.planner import plan_schedule
@@ -450,7 +450,7 @@ def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.JobPrev
     rather than re-scrape."""
     canonical = canonicalize_url(payload.url) or payload.url
     with _db(request).repos() as repos:
-        if repos.tombstones.exists(canonical_url=canonical):
+        if repos.tombstones.exists(canonical):
             raise HTTPException(status_code=409, detail=_TOMBSTONE_409_DETAIL)
         existing = repos.jobs.get_by_canonical_url(canonical)
         if existing is not None:
@@ -497,9 +497,7 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
     with db.repos() as repos:
         # Tombstone = final: a permanently-deleted identity can never be
         # re-added. Trash = recoverable: a Trashed one is restored.
-        if repos.tombstones.exists(
-            canonical_url=canonical or "", content_hash=digest or ""
-        ):
+        if repos.tombstones.exists(canonical or ""):
             raise HTTPException(status_code=409, detail=_TOMBSTONE_409_DETAIL)
         existing = repos.jobs.get_by_identity(
             canonical_url=canonical or "", content_hash=digest or ""
@@ -629,7 +627,7 @@ def attach_job_link(
                 status_code=409,
                 detail="This job already has a posting link.",
             )
-        if repos.tombstones.exists(canonical_url=canonical):
+        if repos.tombstones.exists(canonical):
             raise HTTPException(status_code=409, detail=_TOMBSTONE_409_DETAIL)
         card = dto.LinkCandidateDTO(
             title=job.title, company=job.company, location=job.location
@@ -803,24 +801,23 @@ def merge_job_duplicate(
 def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO:
     """Delete forever from Trash (US-JB-11): write a `Tombstone` for the job's
     canonical URL, then hard-delete the row. A tombstone is final — a future
-    scan or Add-by-URL can never re-surface it (FR-SYS-04)."""
+    scan or Add-by-URL can never re-surface it (FR-SYS-04). A job with no URL
+    is only deleted, so its description can be pasted again."""
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
-        key = identity_kwargs(job)
-        label = job.canonical_url or ""
-        if not repos.tombstones.exists(**key):
-            repos.tombstones.create(reason="user_delete", **key)
+        url = job.canonical_url or ""
+        tombstoned = tombstone_url(repos, job, reason="user_delete")
         delete_job_cascade(repos, job_id)
-    return dto.TombstoneResultDTO(tombstoned=1, canonical_urls=[label])
+    return dto.TombstoneResultDTO(
+        tombstoned=int(tombstoned), canonical_urls=[url] if tombstoned else []
+    )
 
 
 @router.post("/api/jobs/trash/empty")
 def empty_trash(request: Request) -> dto.TombstoneResultDTO:
-    """Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's
-    identity and hard-delete the rows immediately, bypassing the 7-day TTL.
-
-    `canonical_urls` lists only the rows that had a URL, so the count is the
-    authoritative total.
+    """Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL
+    and hard-delete the rows immediately, bypassing the 7-day TTL. A job with
+    no URL is deleted without a tombstone.
 
     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
     costs an existence check, an insert, and a delete, so on the loop a big
@@ -828,17 +825,12 @@ def empty_trash(request: Request) -> dto.TombstoneResultDTO:
     restart. A plain `def` handler runs in Starlette's threadpool
     automatically, same shape as `board`."""
     urls: list[str] = []
-    count = 0
     with _db(request).repos() as repos:
         for job in repos.jobs.list(feed_state="removed", limit=10_000):
-            key = identity_kwargs(job)
-            if not repos.tombstones.exists(**key):
-                repos.tombstones.create(reason="empty_trash", **key)
-            if job.canonical_url:
-                urls.append(job.canonical_url)
-            count += 1
+            if tombstone_url(repos, job, reason="empty_trash"):
+                urls.append(job.canonical_url or "")
             delete_job_cascade(repos, job.id)
-    return dto.TombstoneResultDTO(tombstoned=count, canonical_urls=urls)
+    return dto.TombstoneResultDTO(tombstoned=len(urls), canonical_urls=urls)
 
 
 @router.get("/api/jobs/{job_id}")
@@ -1393,9 +1385,7 @@ async def create_manual_application(
 
     # 2. Upsert the job + create the manual card (refusing to double-track).
     with db.repos() as repos:
-        if repos.tombstones.exists(
-            canonical_url=canonical or "", content_hash=digest or ""
-        ):
+        if repos.tombstones.exists(canonical or ""):
             raise HTTPException(status_code=409, detail=_TOMBSTONE_409_DETAIL)
         existing_job = repos.jobs.get_by_identity(
             canonical_url=canonical or "", content_hash=digest or ""

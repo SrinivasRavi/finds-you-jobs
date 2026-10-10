@@ -849,27 +849,16 @@ class TombstonesRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def exists(self, canonical_url: str = "", content_hash: str = "") -> bool:
-        """True when either identity is tombstoned. Empty values match nothing,
-        so a URL-less check never collides with the NULL column."""
-        clauses = []
-        if canonical_url:
-            clauses.append(Tombstone.canonical_url == canonical_url)
-        if content_hash:
-            clauses.append(Tombstone.content_hash == content_hash)
-        if not clauses:
+    def exists(self, canonical_url: str) -> bool:
+        """True when this URL was deleted forever. An empty URL matches nothing:
+        only a job with a URL is ever tombstoned."""
+        if not canonical_url:
             return False
-        stmt = select(Tombstone.id).where(or_(*clauses))
+        stmt = select(Tombstone.id).where(Tombstone.canonical_url == canonical_url)
         return self._s.scalars(stmt).first() is not None
 
-    def create(
-        self, canonical_url: str = "", content_hash: str = "", reason: str = "manual"
-    ) -> Tombstone:
-        tomb = Tombstone(
-            canonical_url=canonical_url or None,
-            content_hash=content_hash or None,
-            reason=reason,
-        )
+    def create(self, canonical_url: str, reason: str = "manual") -> Tombstone:
+        tomb = Tombstone(canonical_url=canonical_url, reason=reason)
         self._s.add(tomb)
         self._s.flush()
         return tomb

@@ -355,7 +355,6 @@ const es: DeepPartial<Messages> = {
       removedRecently: "{{company}} · Eliminado hace poco",
       deleteForever: "Eliminar definitivamente",
       undo: "Deshacer",
-      textWarning: "Esto también impide que la descripción vuelva si la pegas otra vez.",
     },
     duplicate: {
       looksLike: "Esto se parece a «{{title}}», que añadiste hace {{days}} días.",

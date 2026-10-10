@@ -350,7 +350,6 @@ const ja: DeepPartial<Messages> = {
       removedRecently: "{{company}} · 最近削除",
       deleteForever: "完全に削除",
       undo: "元に戻す",
-      textWarning: "これにより、同じ説明を貼り直しても戻らなくなります。",
     },
     duplicate: {
       looksLike: "これは {{days}} 日前に追加した「{{title}}」に似ています。",

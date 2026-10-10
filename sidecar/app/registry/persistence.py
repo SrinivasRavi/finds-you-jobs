@@ -21,7 +21,6 @@ from typing import Any
 from sidecar.modules.geo.resolve import resolve_location
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
 from sidecar.modules.scraper.fingerprint import simhash64, to_signed64
-from sidecar.modules.scraper.identity import content_hash
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, ScraperError
 
 from ..db import Database, Repos
@@ -351,10 +350,7 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
     if db is not None:
         with db.repos() as repos:
             for job in result.jobs:
-                if repos.tombstones.exists(
-                    canonical_url=job.canonical_url,
-                    content_hash=content_hash(job.description),
-                ):
+                if repos.tombstones.exists(job.canonical_url):
                     tombstoned += 1
                     continue
                 if repos.jobs.get_by_canonical_url(job.canonical_url) is not None:
@@ -630,9 +626,7 @@ def evict_stale_trash(
     with db.repos() as repos:
         repos.jobs.stamp_missing_lifecycle_dates(now=now)
         for job in repos.jobs.list_trashed_before(cutoff):
-            key = identity_kwargs(job)
-            if not repos.tombstones.exists(**key):
-                repos.tombstones.create(reason="trash_ttl", **key)
+            tombstone_url(repos, job, reason="trash_ttl")
             delete_job_cascade(repos, job.id)
             tombstoned.append(job.id)
     return tombstoned
@@ -697,20 +691,23 @@ def age_expired_jobs(
     return {"expired": expired, "deleted": deleted}
 
 
-def identity_kwargs(job: Job) -> dict[str, str]:
-    """The one key this job is identified by, as tombstone kwargs.
+def tombstone_url(repos: Repos, job: Job, *, reason: str) -> bool:
+    """Tombstone the job's URL so no scan re-adds it (FR-SYS-04). True if it had one.
 
-    Public because `api/routes` tombstones rows too, and used to carry a
-    byte-identical private copy of this (duplication audit D-A16)."""
-    if job.canonical_url:
-        return {"canonical_url": job.canonical_url}
-    return {"content_hash": job.content_hash or ""}
+    A job with no URL gets no tombstone: a tombstone exists to stop a scan
+    bringing a deleted posting back, and no scan can produce a job the user
+    typed in, so its text stays free to paste again (maintainer, 2026-10-10)."""
+    if not job.canonical_url:
+        return False
+    if not repos.tombstones.exists(job.canonical_url):
+        repos.tombstones.create(job.canonical_url, reason=reason)
+    return True
 
 
 def saved_job_ids(repos: Repos) -> set[str]:
     """Job ids rescued by a Saved application: never auto-expired or deleted, and
-    excluded from the board server-side (US-JB-06). Public for the same reason
-    as `identity_kwargs` (duplication audit D-A17)."""
+    excluded from the board server-side (US-JB-06). Public because `api/routes`
+    reads it too (duplication audit D-A17)."""
     return set(repos.applications.job_ids())
 
 

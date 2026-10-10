@@ -175,7 +175,7 @@ const TOMBSTONE_JD =
   "reconciliation run. Six years of systems experience is the bar, and " +
   "the team is four engineers reporting to a staff lead.";
 
-test("delete forever has room to explain itself, and refuses the paste back", async ({
+test("delete forever has room for its confirm, and a typed-in job can be pasted back", async ({
   page,
 }) => {
   await page.goto("/jobs");
@@ -199,27 +199,24 @@ test("delete forever has room to explain itself, and refuses the paste back", as
   expect((await emptyAll.boundingBox())?.width ?? 0).toBeGreaterThan(400);
   await page.screenshot({ path: `${DIR}/13-trash-roster.png`, fullPage: true });
 
-  // Arming a row's confirm drops the warning onto its own line under the row,
-  // where it has the dialog's full width instead of a 260px squeeze.
+  // Arming a row's confirm opens its own line under the row. A typed-in job
+  // carries no "can't paste it again" warning: it is never tombstoned
+  // (maintainer, 2026-10-10).
   await page.getByTestId("trash-delete-forever-btn").first().click();
-  const note = page.getByTestId("delete-forever-note");
-  await expect(note).toBeVisible();
-  expect((await note.boundingBox())?.width ?? 0).toBeGreaterThan(400);
+  await expect(page.getByTestId("trash-delete-forever-confirm-btn").first()).toBeVisible();
+  await expect(page.getByText("paste it again")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/14-trash-confirm.png`, fullPage: true });
 
   await page.getByTestId("trash-delete-forever-confirm-btn").first().click();
   await expect(page.getByTestId("trash-delete-forever-btn")).toHaveCount(0, { timeout: 15_000 });
   await page.keyboard.press("Escape");
 
-  // Paste the same description back. The sidecar refuses with a 409 and the
-  // modal now says why: before this the rejection went nowhere and Add job
-  // read as a dead button (maintainer, 2026-10-08).
+  // Paste the same description back: it lands on the board again.
   await page.getByTestId("add-job").click();
   await page.getByTestId("add-job-title").fill("Ledger Engineer");
   await page.getByTestId("add-job-description").fill(TOMBSTONE_JD);
   await page.getByTestId("add-job-submit-btn").click();
-  const refusal = page.getByTestId("add-job-save-error");
-  await expect(refusal).toBeVisible({ timeout: 15_000 });
-  await expect(refusal).toContainText("permanently deleted");
-  await page.screenshot({ path: `${DIR}/15-tombstone-refusal.png`, fullPage: true });
+  await expect(page.getByTestId("add-job-save-error")).toHaveCount(0);
+  await expect(page.getByText("Ledger Engineer").first()).toBeVisible({ timeout: 15_000 });
+  await page.screenshot({ path: `${DIR}/15-pasted-back.png`, fullPage: true });
 });

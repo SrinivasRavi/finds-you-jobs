@@ -267,10 +267,8 @@ class JobUpdate(BaseModel):
 
 class TombstoneResultDTO(BaseModel):
     """Result of a permanent-discard action (Empty Trash / Delete forever /
-    TTL eviction — US-JB-11 / FR-SYS-04): how many identities were tombstoned.
-
-    `canonical_urls` lists only the rows that had one, so it can be shorter
-    than `tombstoned` when a URL-less job was among them."""
+    TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned. A job
+    with no URL is deleted without one, so it counts in neither field."""
 
     tombstoned: int
     canonical_urls: list[str]

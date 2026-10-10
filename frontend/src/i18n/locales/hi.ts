@@ -355,7 +355,6 @@ const hi: DeepPartial<Messages> = {
       removedRecently: "{{company}} · हाल में हटाई गई",
       deleteForever: "हमेशा के लिए मिटाएँ",
       undo: "अनडू",
-      textWarning: "इससे यह भी रुक जाता है कि दोबारा पेस्ट करने पर विवरण वापस आए।",
     },
     duplicate: {
       looksLike: "यह \"{{title}}\" जैसा लगता है, जिसे आपने {{days}} दिन पहले जोड़ा था।",

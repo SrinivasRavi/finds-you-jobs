@@ -374,7 +374,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       removedRecently: "{{company}} · Удалена недавно",
       deleteForever: "Удалить навсегда",
       undo: "Вернуть",
-      textWarning: "Это также не даст описанию вернуться, если вы вставите его снова.",
     },
     duplicate: {
       looksLike: "Похоже на «{{title}}», добавленную {{days}} дн. назад.",
