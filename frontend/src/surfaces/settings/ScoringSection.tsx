@@ -370,7 +370,9 @@ export const ScoringSection = memo(function ScoringSection({
 }) {
   const { t } = useTranslation();
   return (
-    <Section title={t("settingsPage.scoring.title")}>
+    // No title: the category header already says "Scoring", and the card
+    // repeating it was 2 headings deep for 1 thing (2026-10-08 split).
+    <Section>
       <div className="space-y-4">
         <div>
           <div className="flex items-center text-[13px] font-medium text-ink">

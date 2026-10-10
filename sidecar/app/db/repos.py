@@ -944,6 +944,14 @@ class ArtifactsRepo:
     def get(self, artifact_id: str) -> Artifact | None:
         return self._s.get(Artifact, artifact_id)
 
+    def get_many(self, artifact_ids: list[str]) -> dict[str, Artifact]:
+        """id → Artifact for a batch — one IN query for the ledger's tailor and
+        cover subject pass, same shape as JobsRepo.get_many."""
+        if not artifact_ids:
+            return {}
+        stmt = select(Artifact).where(Artifact.id.in_(artifact_ids))
+        return {a.id: a for a in self._s.scalars(stmt)}
+
     def list_for_application(self, application_id: str) -> list[Artifact]:
         stmt = (
             select(Artifact)

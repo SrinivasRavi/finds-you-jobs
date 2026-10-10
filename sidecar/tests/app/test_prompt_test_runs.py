@@ -1,4 +1,4 @@
-"""Running a prompt draft without committing it (prompt-tuning.md, S-C70).
+"""Running a prompt draft without committing it (url-less-jobs.md section 11, S-C70).
 
 The problem it closes: Save was the only way to run a prompt, so the only way to
 try one was to overwrite the shipped default, generate on a real job, read it,
@@ -234,7 +234,7 @@ def test_extract_needs_no_input_picker_at_all(tmp_path) -> None:
 
 def test_the_draft_kind_needs_a_real_contact(tmp_path) -> None:
     """A made-up contact would test the prompt against input that never occurs
-    (prompt-tuning.md P2)."""
+    (url-less-jobs.md P2)."""
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
     )
@@ -350,3 +350,63 @@ def test_a_job_backed_row_is_unchanged_by_any_of_this(tmp_path) -> None:
         assert row["subject"]["label"] == "Backend Engineer"
         assert row["subject"]["context"] == "Acme"
         assert row["subject"]["badge"] is None
+
+
+def test_a_tailor_row_names_the_document_it_wrote(tmp_path) -> None:
+    """url-less-jobs.md drawing 13: the ledger linked out to the posting and
+    nothing else, so reading your own tailored resume meant hunting for the
+    card in the Tracker. The row carries where the artifact lives now."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            job_id = repos.jobs.create(
+                canonical_url="https://ex.co/j/artifact-row",
+                title="Backend Engineer", company="Acme",
+                description=REALISTIC_JD, source_adapter="greenhouse",
+            ).id
+            application_id = repos.applications.create(job_id).id
+            artifact_id = repos.artifacts.create(
+                application_id, kind="tailored", markdown="# Tailored"
+            ).id
+            tailor = repos.operations.create("tailor", {"job_id": job_id})
+            repos.operations.mark_succeeded(tailor.id, result_ref={"artifact_id": artifact_id})
+            cover_artifact = repos.artifacts.create(
+                application_id, kind="cover", markdown="# Cover"
+            ).id
+            cover = repos.operations.create("cover", {"job_id": job_id})
+            repos.operations.mark_succeeded(cover.id, result_ref={"artifact_id": cover_artifact})
+            # A score row writes no document, so it must carry no destination.
+            score = repos.operations.create("score", {"job_id": job_id})
+            repos.operations.mark_succeeded(score.id, result_ref={"score": 72, "method": "jev"})
+
+        rows = {r["id"]: r for r in client.get("/api/operations", headers=AUTH).json()}
+        assert rows[tailor.id]["subject"]["artifact"] == {
+            "application_id": application_id, "kind": "tailored",
+        }
+        assert rows[cover.id]["subject"]["artifact"] == {
+            "application_id": application_id, "kind": "cover",
+        }
+        assert rows[score.id]["subject"]["artifact"] is None
+
+
+def test_a_tailor_row_whose_artifact_is_gone_says_nothing(tmp_path) -> None:
+    """Nothing is fabricated: a deleted artifact leaves the row as it was."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            job_id = repos.jobs.create(
+                canonical_url="https://ex.co/j/missing-artifact",
+                title="Backend Engineer", company="Acme",
+                description=REALISTIC_JD, source_adapter="greenhouse",
+            ).id
+            op = repos.operations.create("tailor", {"job_id": job_id})
+            repos.operations.mark_succeeded(op.id, result_ref={"artifact_id": "gone"})
+        row = {r["id"]: r for r in client.get("/api/operations", headers=AUTH).json()}[op.id]
+        assert row["subject"]["label"] == "Backend Engineer"
+        assert row["subject"]["artifact"] is None

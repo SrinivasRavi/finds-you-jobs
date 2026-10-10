@@ -41,37 +41,52 @@ def _parse_posted_at(posted_at: str) -> datetime | None:
     return dt
 
 
-def assess(job: NormalizedJob, now: datetime | None = None) -> None:
-    """Annotate `job.trust_score` (0–100) + `job.trust_flags` in place."""
+def evaluate(
+    *,
+    title: str,
+    location: str,
+    description: str,
+    canonical_url: str = "",
+    posted_at: str | None = None,
+    now: datetime | None = None,
+) -> tuple[int, list[str]]:
+    """The checks themselves, over plain fields: `(trust_score, trust_flags)`.
+
+    Split out of `assess` so the paste path can run them too. A job the user
+    typed in never reached a scan, so until 2026-10-08 the red-flag terms were
+    never checked on the 1 ingest path where the text arrived by hand out of an
+    email (url-less-jobs.md 15.3). The URL checks no-op on an empty
+    `canonical_url`, so the same rules serve both callers.
+    """
     score = 100
     flags: list[str] = []
 
-    if job.canonical_url.startswith("http://"):
+    if canonical_url.startswith("http://"):
         score -= 20
         flags.append("insecure-url")
 
-    haystack = f"{job.title}\n{job.description}".lower()
+    haystack = f"{title}\n{description}".lower()
     for term in RED_FLAG_TERMS:
         if term in haystack:
             score -= 40
             flags.append(f"red-flag-term:{term}")
             break  # one hit is signal enough; don't stack to zero on synonyms
 
-    letters = [c for c in job.title if c.isalpha()]
+    letters = [c for c in title if c.isalpha()]
     if len(letters) > 6 and all(c.isupper() for c in letters):
         score -= 10
         flags.append("shouty-title")
 
-    if len(job.title) > 120:
+    if len(title) > 120:
         score -= 5
         flags.append("overlong-title")
 
-    if not job.location.strip():
+    if not location.strip():
         score -= 5
         flags.append("no-location")
 
-    if job.posted_at:
-        dt = _parse_posted_at(job.posted_at)
+    if posted_at:
+        dt = _parse_posted_at(posted_at)
         if dt is None:
             flags.append("unparseable-posted-date")
         else:
@@ -82,8 +97,19 @@ def assess(job: NormalizedJob, now: datetime | None = None) -> None:
     else:
         flags.append("no-posted-date")
 
-    job.trust_score = max(score, 0)
-    job.trust_flags = flags
+    return max(score, 0), flags
+
+
+def assess(job: NormalizedJob, now: datetime | None = None) -> None:
+    """Annotate `job.trust_score` (0–100) + `job.trust_flags` in place."""
+    job.trust_score, job.trust_flags = evaluate(
+        title=job.title,
+        location=job.location,
+        description=job.description,
+        canonical_url=job.canonical_url,
+        posted_at=job.posted_at,
+        now=now,
+    )
 
 
 def is_structurally_broken(job: NormalizedJob) -> bool:

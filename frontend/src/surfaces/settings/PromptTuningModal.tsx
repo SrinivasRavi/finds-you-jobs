@@ -1,4 +1,4 @@
-// Try a prompt before you commit it (prompt-tuning.md, backlog S-C70).
+// Try a prompt before you commit it (url-less-jobs.md section 11, backlog S-C70).
 //
 // The problem: Save was the only way to run a prompt. So trying one out meant
 // overwriting the shipped default, generating on a real job, reading the output
@@ -26,7 +26,7 @@ import type { Job, PromptSetting, PromptTestResult } from "../../api/types";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
 
-/** What each kind needs before Run can do anything (prompt-tuning.md 5). */
+/** What each kind needs before Run can do anything (url-less-jobs.md 11.3). */
 const NEEDS_JOB = new Set(["score", "tailor", "cover"]);
 const NEEDS_CONTACT = new Set(["networker_draft"]);
 
@@ -133,7 +133,10 @@ export function PromptTuningModal({
   const test = usePromptTest();
   const setPrompt = useSetPrompt();
   const settings = useSettings();
-  const route = settings.data?.routing.find((r) => r.kind === prompt.kind);
+  // By OPERATION kind, not prompt kind: `networker_draft` runs as `draft`,
+  // and looking it up by its own name found nothing, so the referral test
+  // run never said what it would run on.
+  const route = settings.data?.routing.find((r) => r.kind === prompt.op_kind);
 
   const jobs = board.data?.pages.flatMap((p) => p.jobs) ?? [];
   const dirty = draft !== saved;
@@ -173,7 +176,7 @@ export function PromptTuningModal({
     <Modal
       title={t("settingsPage.prompts.tuneTitle", { name })}
       onClose={onClose}
-      width={1280}
+      size="xl"
       footer={
         <div className="flex items-center gap-3">
           <p className="flex-1 text-[11.5px] text-ink-3">
@@ -308,9 +311,9 @@ export function PromptTuningModal({
           </button>
           {/* One line, not two: what it will run on, and what that costs the
               user. The dollar figure is only knowable afterwards, and the
-              result panel reports it (prompt-tuning.md section 6). */}
+              result panel reports it (url-less-jobs.md section 11.4). */}
           <p className="text-[11px] leading-relaxed text-ink-3" data-testid="prompt-tune-engine">
-            {prompt.routed && route
+            {route
               ? t("settingsPage.prompts.testOn", {
                   engine: route.engine,
                   model: route.model || t("settingsPage.prompts.providerDefault"),

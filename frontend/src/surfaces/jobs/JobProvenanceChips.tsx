@@ -10,6 +10,7 @@
 import { useTranslation } from "react-i18next";
 
 import type { Job } from "../../api/types";
+import { readTrust } from "./trustRead";
 
 const CHIP =
   "inline-flex h-[16px] items-center rounded-full border px-1.5 text-[9.5px]";
@@ -38,23 +39,23 @@ export function NoLinkChip({ job, onClick }: { job: Job; onClick?: () => void })
 /** `trust_score` and `trust_flags` have been computed at ingest, stored and
  *  serialized to the frontend since the first scan, and rendered nowhere
  *  (section 8.4). This is their first reader, which also surfaces the
- *  cross-listing flags nobody has ever seen. */
+ *  cross-listing flags nobody has ever seen.
+ *
+ *  It says the worst thing it knows, in words, and `readTrust` owns both the
+ *  severity order and the rule that an untranslated flag family says nothing
+ *  (section 15.5). A job whose only flags are scraper notes renders no chip. */
 export function TrustChip({ job }: { job: Job }) {
   const { t } = useTranslation();
-  const unverified = !job.canonical_url;
-  if (!unverified && job.trust_flags.length === 0) return null;
-  const lines = [
-    unverified ? t("jobBoard.row.unverifiedTitle") : "",
-    ...job.trust_flags,
-  ].filter(Boolean);
+  const read = readTrust(job, t);
+  if (!read) return null;
   return (
     <span
       data-testid="trust-chip"
-      title={lines.join("\n")}
-      aria-label={t("jobBoard.row.unverified")}
+      title={read.lines.join("\n\n")}
+      aria-label={read.lines.join(" ")}
       className={`${CHIP} border-warn/40 bg-warn/5 text-warn`}
     >
-      ?
+      {read.label}
     </span>
   );
 }

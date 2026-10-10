@@ -109,9 +109,11 @@ def test_list_prompts_shape(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert set(rows) == set(PROMPT_KINDS)
     assert rows["tailor"]["override_md"] == "# Edited tailor"
     assert rows["score"]["override_md"] is None
-    # networker_draft is the one unrouted (prompt-only) kind.
-    assert rows["networker_draft"]["routed"] is False
-    assert rows["score"]["routed"] is True
+    # Every prompt routes. `networker_draft` is the one whose operation kind
+    # differs from its own name: it runs as `draft`, and looking its engine up
+    # by the prompt name is what left the referral model with no picker.
+    assert rows["networker_draft"]["op_kind"] == "draft"
+    assert rows["score"]["op_kind"] == "score"
     assert rows["score"]["default_md"] == default_md("score")
 
 

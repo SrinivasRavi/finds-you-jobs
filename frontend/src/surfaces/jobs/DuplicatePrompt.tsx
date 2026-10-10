@@ -27,7 +27,7 @@ function MergeDialog({
   const merge = useMergeJobDuplicate();
   const [refused, setRefused] = useState(prompt.both_have_applications);
   return (
-    <Modal title={t("jobBoard.duplicate.mergeTitle")} onClose={onClose} width={520}>
+    <Modal title={t("jobBoard.duplicate.mergeTitle")} onClose={onClose} size="md">
       <div className="space-y-3 text-[12.5px] text-ink-2">
         {refused ? (
           // `uq_applications_job` permits 1 application per job, so a merge

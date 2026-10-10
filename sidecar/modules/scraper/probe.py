@@ -5,10 +5,11 @@ best-effort extraction of title / company / location / description. This is
 *not* scan()'s one-request-per-source path — it's an explicit single-URL user
 action, so a per-URL fetch is exactly right here:
 
-- If a known ATS / board adapter claims the URL shape, fetch that board (one
-  request) and return the row whose canonical URL matches the pasted one —
-  Greenhouse / Lever / Ashby job URLs come back fully structured, description
-  included (the content-in-list params from the JD-gap work).
+- If a known ATS / board adapter claims the URL shape, ask it for that one
+  posting when it has a single-job endpoint (`fetch_posting`), else fetch the
+  board (one request) and return the row whose canonical URL matches the pasted
+  one — Greenhouse / Lever / Ashby job URLs come back fully structured,
+  description included (the content-in-list params from the JD-gap work).
 - Otherwise fetch the page directly and pull a best-effort title + text body from
   the HTML (generic careers pages, Workable job links, anything else).
 
@@ -20,6 +21,7 @@ fill the fields in by hand. The result is *not* persisted — the app owns that.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from . import adapters
 from .canonical import canonicalize_url
@@ -49,14 +51,41 @@ def probe_url(
 
     if resolved is not None:
         adapter, _key = resolved
-        matched = _match_from_board(adapter, entry, fetcher, canonical)
+        matched = _from_adapter(adapter, entry, fetcher, canonical)
         if matched is not None:
             return matched
         # The board claimed the URL but it wasn't a specific job we could match
-        # (e.g. a board root, or a shape the list doesn't expose) — fall through
-        # to generic extraction so the user still gets a pre-filled draft.
+        # (a board root, a shape the list doesn't expose, or a list too big to
+        # fetch at all) — fall through to generic extraction so the user still
+        # gets a pre-filled draft.
 
     return _generic_probe(url, canonical, fetcher)
+
+
+def _from_adapter(
+    adapter: object, entry: SourceEntry, fetcher: Fetcher, canonical: str
+) -> NormalizedJob | None:
+    """The claiming adapter's best answer for one pasted URL, or None.
+
+    A ScraperError here is never fatal: the generic path below still produces a
+    usable draft, and a whole-board read that the fetcher refuses as too large
+    used to surface as a 422 with Lever's 20 MB list in the message
+    (maintainer, 2026-10-08)."""
+    fetch_posting: Callable[[str, Fetcher], NormalizedJob | None] | None = getattr(
+        adapter, "fetch_posting", None
+    )
+    if fetch_posting is not None:
+        try:
+            job = fetch_posting(entry.url, fetcher)
+        except ScraperError:
+            job = None
+        if job is not None:
+            job.canonical_url = canonical
+            return job
+    try:
+        return _match_from_board(adapter, entry, fetcher, canonical)
+    except ScraperError:
+        return None
 
 
 def _match_from_board(

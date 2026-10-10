@@ -68,6 +68,8 @@ const analytics = {
   // themselves come verbatim from the backend, never from here).
   subject: {
     masterResume: "Master resume",
+    viewResume: "View resume",
+    viewCover: "View cover letter",
     contactsFound_one: "{{count}} contact found",
     contactsFound_other: "{{count}} contacts found",
     newJobs_one: "{{count}} new job",

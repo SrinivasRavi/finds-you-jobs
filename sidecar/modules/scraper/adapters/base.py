@@ -19,6 +19,11 @@ call per row (BambooHR, Breezy, SmartRecruiters, Workday, LinkedIn guest).
 `provides_description()` below checks every registered adapter does one or
 the other.
 
+**One pasted URL (`probe_url`).** An adapter whose vendor exposes a single-job
+endpoint may add `fetch_posting(url, fetcher) -> NormalizedJob | None`, and the
+probe prefers it over reading the whole board. None means "not a single job on
+my board", so the probe falls back to the list and then to generic extraction.
+
 **Two source shapes (discovery-expansion 2026-07-17).**
 
 - *Enumerate* sources (every ATS + keyless board) list a company's or board's

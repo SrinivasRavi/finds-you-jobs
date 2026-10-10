@@ -457,6 +457,12 @@ function toSubject(s: OperationDTO["subject"]): LedgerSubject | null {
     detail: s.detail ?? null,
     count: typeof s.count === "number" ? s.count : null,
     badge: s.badge ?? null,
+    artifact: s.artifact
+      ? {
+          application_id: s.artifact.application_id,
+          kind: s.artifact.kind === "cover" ? "cover" : "tailored",
+        }
+      : null,
   };
 }
 

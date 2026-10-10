@@ -311,7 +311,7 @@ export function ApplierPanel({
     <Modal
       title={title}
       onClose={onClose}
-      width={720}
+      size="lg"
       headerExtra={
         <span
           data-testid="applier-phase-pill"

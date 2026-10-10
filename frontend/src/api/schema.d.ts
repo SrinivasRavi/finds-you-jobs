@@ -1766,7 +1766,7 @@ export interface paths {
         put?: never;
         /**
          * Test Prompt
-         * @description Run a prompt draft once, without committing it (prompt-tuning.md).
+         * @description Run a prompt draft once, without committing it (url-less-jobs.md section 11).
          *
          *     The draft rides the operation's snapshot, so the module runs it and the saved
          *     prompt is untouched. The run writes nothing: no score on the job, no
@@ -3439,6 +3439,16 @@ export interface components {
             /** State */
             state: string;
         };
+        /**
+         * OperationArtifactDTO
+         * @description The in-app destination behind a ledger row's View button.
+         */
+        OperationArtifactDTO: {
+            /** Application Id */
+            application_id: string;
+            /** Kind */
+            kind: string;
+        };
         /** OperationDTO */
         OperationDTO: {
             /** Id */
@@ -3506,6 +3516,7 @@ export interface components {
             count?: number | null;
             /** Badge */
             badge?: string | null;
+            artifact?: components["schemas"]["OperationArtifactDTO"] | null;
         };
         /**
          * PacketRequest
@@ -3653,15 +3664,15 @@ export interface components {
          * PromptDTO
          * @description One user-editable LLM prompt (module skill markdown). `default_md` is the
          *     shipped text; `override_md` is the saved edit or None when unset (→ default).
-         *     `routed` marks the kinds that also carry an engine/model selector.
+         *     `op_kind` is the `LLM_KINDS` operation whose engine and model it runs on.
          */
         PromptDTO: {
             /** Kind */
             kind: string;
             /** Title */
             title: string;
-            /** Routed */
-            routed: boolean;
+            /** Op Kind */
+            op_kind: string;
             /** Default Md */
             default_md: string;
             /** Override Md */
@@ -3669,7 +3680,7 @@ export interface components {
         };
         /**
          * PromptTestRequest
-         * @description Run an UNSAVED prompt draft once (prompt-tuning.md section 5).
+         * @description Run an UNSAVED prompt draft once (url-less-jobs.md section 11.3).
          *
          *     What each kind needs differs, so the route validates per kind rather than
          *     making every field required:

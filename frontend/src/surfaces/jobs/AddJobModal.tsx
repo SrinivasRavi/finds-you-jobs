@@ -1,4 +1,4 @@
-// "Add a job by URL" became "Add a job" (US-JB-07, url-less-jobs.md section
+// "Add a job by URL" became "Add a job posting" (US-JB-07, url-less-jobs.md
 // 9.1): 1 form, every field visible from the moment it opens, the link first
 // rather than as the gate, and a Score-it-first strip that saves nothing.
 
@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useTriageScore, type TriageResult } from "../../api/queries";
-import type { JobDraft } from "../../api/types";
+import { JobTombstonedError, type JobDraft } from "../../api/types";
 import { Modal } from "../../shell/Modal";
 import { canSave, emptyDraft, JobFields, useAutofill } from "./JobFields";
 
@@ -79,7 +79,9 @@ export function AddJobModal({
   const triage = useTriageScore();
   const [score, setScore] = useState<TriageResult | null>(null);
   const [triageError, setTriageError] = useState<string | null>(null);
-  const valid = canSave(draft, autofill.state);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const valid = canSave(draft, autofill.state) && !saving;
 
   function runTriage() {
     setScore(null);
@@ -95,15 +97,32 @@ export function AddJobModal({
     // reaches the draft's URL, and the sidecar re-checks (section 9.1 item 5).
     const link = draft.canonical_url.trim();
     const isUrl = /^https?:\/\//i.test(link);
+    setSaveError(null);
+    setSaving(true);
     void onAdd({
       ...draft,
       canonical_url: isUrl ? link : "",
       source_adapter: isUrl ? draft.source_adapter || "paste-url" : "paste-text",
-    }).then(() => onClose());
+    })
+      .then(() => onClose())
+      .catch((e: unknown) => {
+        // A refused save used to reject into nothing, so the button looked
+        // dead and the user had no idea why (maintainer, 2026-10-08). The
+        // tombstone is the one that actually happens: the description was
+        // permanently deleted, and pasting it back is final.
+        setSaving(false);
+        setSaveError(
+          e instanceof JobTombstonedError
+            ? t("jobBoard.addModal.tombstoned")
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
+      });
   }
 
   return (
-    <Modal title={t("jobBoard.addModal.title")} onClose={onClose} width={520}>
+    <Modal title={t("jobBoard.addModal.title")} onClose={onClose} size="md">
       <form
         className="flex flex-col gap-3 px-5 py-4"
         onSubmit={(e) => {
@@ -118,6 +137,15 @@ export function AddJobModal({
           error={triageError}
           onAgain={runTriage}
         />
+        {saveError ? (
+          <p
+            data-testid="add-job-save-error"
+            role="alert"
+            className="rounded-lg border border-warn/30 bg-warn/5 px-4 py-3 text-[12.5px] text-warn"
+          >
+            {saveError}
+          </p>
+        ) : null}
         <div className="mt-1 flex items-center gap-2">
           <button
             type="button"

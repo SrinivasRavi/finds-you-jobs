@@ -1,7 +1,14 @@
 // OS-style Settings navigation (maintainer directive 2026-07-23): a left
 // category rail + one focused pane per category, the way macOS/Windows Settings
 // organize a large surface — instead of one long scroll where "Prompts" was
-// invisible at the bottom. Each pane reuses the existing `Section` cards.
+// invisible at the bottom.
+//
+// 2026-10-08 (url-less-jobs.md section 11.5): `Prompts & Models` dissolved into
+// the features its prompts govern, and Scoring, Resume & cover letter and
+// Applying became categories of their own. Nothing persists or deep-links the
+// active category, so adding and renaming ids breaks nothing.
+//
+// Each pane reuses the existing `Section` cards.
 // (Extracted from Settings.tsx 2026-07-25, F-M6 monolith split — pure moves,
 // zero behavior change.) Memoized: `active` is a primitive, `onPick` the
 // root's stable setState.
@@ -13,8 +20,10 @@ import { Icon, type IconName } from "../../shell/icons";
 
 export type SettingsCat =
   | "providers"
-  | "prompts"
   | "discovery"
+  | "scoring"
+  | "documents"
+  | "applying"
   | "networking"
   | "data"
   | "appearance"
@@ -27,8 +36,10 @@ export const SETTINGS_CATS: {
   blurb: string; // i18n key
 }[] = [
   { id: "providers", label: "settingsNav.providers", icon: "settings", blurb: "settingsNav.providersBlurb" },
-  { id: "prompts", label: "settingsNav.prompts", icon: "pencil", blurb: "settingsNav.promptsBlurb" },
   { id: "discovery", label: "settingsNav.discovery", icon: "search", blurb: "settingsNav.discoveryBlurb" },
+  { id: "scoring", label: "settingsNav.scoring", icon: "barChart", blurb: "settingsNav.scoringBlurb" },
+  { id: "documents", label: "settingsNav.documents", icon: "file", blurb: "settingsNav.documentsBlurb" },
+  { id: "applying", label: "settingsNav.applying", icon: "check", blurb: "settingsNav.applyingBlurb" },
   { id: "networking", label: "settingsNav.networking", icon: "share", blurb: "settingsNav.networkingBlurb" },
   { id: "data", label: "settingsNav.data", icon: "barChart", blurb: "settingsNav.dataBlurb" },
   { id: "appearance", label: "settingsNav.appearance", icon: "sun", blurb: "settingsNav.appearanceBlurb" },

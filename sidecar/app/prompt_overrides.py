@@ -32,7 +32,11 @@ class PromptRow(TypedDict):
 
     kind: str
     title: str
-    routed: bool
+    # The `LLM_KINDS` operation this prompt runs as. It differs from `kind` for
+    # exactly one prompt: `networker_draft` runs as the `draft` operation, and
+    # looking its engine up by the prompt name found nothing, which is why the
+    # referral model had no picker anywhere (url-less-jobs.md section 11.5).
+    op_kind: str
     default_md: str
     override_md: str | None
 
@@ -41,13 +45,18 @@ class PromptRow(TypedDict):
 class PromptKind:
     """One editable prompt: its stable id, human title, and default-text loader.
 
-    `routed` marks the kinds that also carry an engine/model selector — the
-    `LLM_KINDS` routed through the engine registry."""
+    Every prompt routes through the engine registry; `op_kind` names which
+    `LLM_KINDS` operation it runs as."""
 
     kind: str
     title: str
     default_loader: Callable[[], str]
-    routed: bool = True
+    # Defaults to `kind`; set only where the prompt's name and its operation
+    # kind differ (see PromptRow.op_kind).
+    op_kind: str = ""
+
+    def operation_kind(self) -> str:
+        return self.op_kind or self.kind
 
 
 def _tailor_default() -> str:
@@ -80,8 +89,9 @@ def _networker_draft_default() -> str:
     return load_skill()
 
 
-# The registry — order is the Settings display order. `networker_draft` is
-# prompt-only (not a routed LLM kind — `routed=False`).
+# The registry. Order used to be the Settings display order; since the 2026-10
+# split each prompt is rendered by the feature category that owns it, so this
+# backend list no longer dictates a frontend layout.
 PROMPT_KINDS: dict[str, PromptKind] = {
     p.kind: p
     for p in (
@@ -95,7 +105,7 @@ PROMPT_KINDS: dict[str, PromptKind] = {
         PromptKind("cover", "Cover letter", _cover_default),
         PromptKind("extract", "Application profile extraction", _extract_default),
         PromptKind("networker_draft", "Referral message drafting",
-                   _networker_draft_default, routed=False),
+                   _networker_draft_default, op_kind="draft"),
     )
 }
 
@@ -149,7 +159,7 @@ def list_prompts(data_dir: Path | None = None) -> list[PromptRow]:
             PromptRow(
                 kind=kind.kind,
                 title=kind.title,
-                routed=kind.routed,
+                op_kind=kind.operation_kind(),
                 default_md=kind.default_loader(),
                 override_md=get_override(kind.kind, data_dir),
             )

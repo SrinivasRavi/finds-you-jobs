@@ -93,7 +93,7 @@ export function AddLinkDialog({
         : t("jobBoard.addLink.attach");
 
   return (
-    <Modal title={title} onClose={onClose} width={520}>
+    <Modal title={title} onClose={onClose} size="md">
       <div className="flex flex-col gap-3 px-5 py-4" data-testid="add-link-dialog">
         <p className="text-[12.5px] text-ink-2">{jobLabel}</p>
 

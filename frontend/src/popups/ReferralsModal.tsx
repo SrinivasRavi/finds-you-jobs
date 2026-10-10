@@ -485,7 +485,7 @@ export function ReferralsModal({
   const title = `${titleVerb} — ${jobTitle} · ${company}`;
 
   return (
-    <Modal title={title} onClose={onClose} width={1300}>
+    <Modal title={title} onClose={onClose} size="xl">
       <div className="flex h-[80vh] flex-col" data-testid="find-referrals-popup">
         {/* Quota / status bar */}
         {phase !== "start" && phase !== "searching" && phase !== "confirm" && (

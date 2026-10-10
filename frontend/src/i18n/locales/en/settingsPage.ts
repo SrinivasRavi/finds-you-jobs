@@ -92,8 +92,10 @@ const settingsPage = {
     // One row per method, in menu order, richest explanation first. The price is
     // per 100 jobs, measured where it says measured (docs/internal/scoring.md
     // section 7.1); nothing here hides a method the user has not set up yet.
+    // 2026-10-08: it used to send the user to another pane for this pane's own
+    // rubric. The rubric is now further down this page, so it says where.
     rubricPointer:
-      "The rubric AI scoring follows is editable in Settings \u203a Prompts & Models \u203a AI scoring. "
+      "The rubric AI scoring follows is further down this page, and you can edit it. "
       + "The other 3 methods have no prompt.",
     weightsTitle: "What counts most",
     weightsInfo:
@@ -190,6 +192,8 @@ const settingsPage = {
   },
   prompts: {
     title: "Pick the model engines and edit the prompts",
+    // 2026-10-08: the category is gone and each prompt sits with its feature,
+    // so `title` survives only for anything still naming the old pane.
     // The trigger out on the Settings row is deliberately NOT the loud accent
     // button: the noisiest thing on that row would otherwise be the one action
     // that changes nothing (maintainer, 2026-10-08).
@@ -242,12 +246,33 @@ const settingsPage = {
     scopeCover: "Used every time a cover letter is written.",
     scopeExtract: "Runs once each time you save your master resume. It pulls out the details that fill application forms \u2014 your name, your contact details, years of experience, work authorization \u2014 so the Applier does not have to ask you again.",
     scopeNetworkerDraft: "Used when a referral message is drafted for a contact.",
+    // The model each piece of work runs on, stated where that work is
+    // configured. The 4 that had a picker had it beside their prompt; `draft`
+    // and `apply` had none anywhere (url-less-jobs.md section 11.5). Only the
+    // 2 pickers whose prompt scope line does NOT already say when they run
+    // carry a hint, so no card says the same sentence twice.
+    titleScoreModel: "The model AI scoring runs on",
+    hintScoreModel:
+      "Only AI scoring uses a model. Keyword scoring runs on your own machine, "
+      + "Fast scoring sends typed questions, and On-device scoring will run locally.",
+    titleApplyModel: "The model the Applier runs on",
+    hintApplyModel:
+      "The Applier reads a job application form and decides what goes in each field. "
+      + "It has no prompt you can edit yet.",
+    // The one picker that governs a button rather than a default: the message
+    // the popup opens with is a canned sentence with the name and company
+    // dropped in, and no model is involved until Regenerate (maintainer asked
+    // whether referral drafting is templated, 2026-10-08 — it is, until you
+    // press that button).
+    hintDraftModel:
+      "The message each referral row opens with is a fixed template with the name and "
+      + "company filled in, and it costs nothing. This model runs only when you press "
+      + "Regenerate, which rewrites it against your master resume and the posting.",
     modelEngine: "Runs on",
     cliDefaultModel: "CLI default model",
     providerDefault: "provider default",
     modelTitle:
       "Model this operation uses on {{engineLabel}}. Blank = {{effectiveModel}} (the provider/CLI default).",
-    noModel: "Referral messages run on the model you picked when you set the app up. There is no picker for them here yet.",
     resetConfirm: "Throw your version away and go back to the one we ship? This cannot be undone.",
     charCount: "{{n, number}} characters",
     overrideActive: " \u00b7 your version",

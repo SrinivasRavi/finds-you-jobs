@@ -571,7 +571,7 @@ export interface TriageResult {
   reasons: string[];
 }
 
-/** Run a prompt draft and wait for its output (prompt-tuning.md section 3).
+/** Run a prompt draft and wait for its output (url-less-jobs.md section 11.2).
  *
  *  The run goes through the runner like every other LLM call, so its spend
  *  reaches Analytics, the concurrency cap applies and Stop works. Polled the

@@ -122,7 +122,7 @@ def prompt_for(ctx: OperationContext, kind: str) -> str | None:
 
     Normally the user's saved override, or None for the module's shipped
     default. A prompt-tuning test run carries its UNSAVED draft in the snapshot
-    instead (prompt-tuning.md section 3), which is the whole point of the
+    instead (url-less-jobs.md section 11.2), which is the whole point of the
     feature: the draft runs, and the committed prompt is untouched until the
     user presses the one button that commits it.
     """
@@ -140,7 +140,7 @@ def is_prompt_test(ctx: OperationContext) -> bool:
     prompt out rather than asking for work.
 
     The flag rides `input_snapshot` rather than becoming its own operation kind
-    (prompt-tuning.md P3): `Operation.kind` drives the Analytics grouping in 3
+    (url-less-jobs.md P3): `Operation.kind` drives the Analytics grouping in 3
     places, and a test run IS a tailor, which is what makes its cost comparable
     to a real one."""
     return bool(ctx.input_snapshot.get("prompt_test"))

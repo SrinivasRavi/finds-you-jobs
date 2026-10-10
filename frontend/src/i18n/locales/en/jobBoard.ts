@@ -7,7 +7,7 @@ const jobBoard = {
     finderPrefs: "Job finder preferences",
     finderPrefsTitle: "Configure background scraping and scoring",
     deletedJobs: "Deleted Jobs",
-    addJob: "Add a job",
+    addJob: "Add a job posting",
   },
   filters: {
     workStyle: "Work style",
@@ -60,6 +60,28 @@ const jobBoard = {
     unverified: "Unverified source",
     unverifiedTitle:
       "You typed this job in, so the title, company and location haven't been checked against a job board. Add the posting link to verify it.",
+    // The trust chip says the worst thing it knows (url-less-jobs.md 15.5).
+    // The repost sentence states what we watched happen to postings like this
+    // one, never what the employer intended, which nobody can see from outside.
+    trust: {
+      labelRisk: "check this",
+      labelReposted: "reposted",
+      labelStale: "60+ days",
+      labelInsecure: "insecure link",
+      labelUnverified: "unverified",
+      redFlag:
+        'This posting uses the phrase "{{term}}", which turns up in unpaid and pay-to-apply listings. Read it closely before you spend anything on it.',
+      reposted_one:
+        "{{count}} other near-identical posting from {{company}} is already on your board. Batches like this usually get withdrawn, so the role may already be gone.",
+      reposted_other:
+        "{{count}} other near-identical postings from {{company}} are already on your board. Batches like this usually get withdrawn, so the role may already be gone.",
+      repostedUncounted:
+        "The same job description appears on another posting. Batches like this usually get withdrawn, so the role may already be gone.",
+      stale:
+        "Posted more than 60 days ago. Roles that actually get filled usually close in 30 to 45 days.",
+      insecure:
+        "The posting link isn't https, so anything you send through it travels unencrypted.",
+    },
     applicants_one: "{{count}} applicant",
     applicants_other: "{{count}} applicants",
     scoring: "scoring…",
@@ -80,7 +102,7 @@ const jobBoard = {
     lastAttempt: "Last attempt {{ago}}.",
     noMatches: "No jobs matched your roles and locations.",
     widenPrefs: "Try widening your job finder preferences.",
-    addJob: "Add a job",
+    addJob: "Add a job posting",
     gotOne: "Got a description from an email? Paste it.",
     lastRefresh: "Last refresh {{ago}}.",
   },
@@ -215,7 +237,7 @@ const jobBoard = {
     rescanNow: "Rescan now",
   },
   addModal: {
-    title: "Add a job",
+    title: "Add a job posting",
     linkLabel: "Job posting link",
     linkTag: "recommended",
     fetch: "Fetch",

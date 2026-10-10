@@ -705,7 +705,7 @@ class ExplainCostDTO(BaseModel):
 
 
 class PromptTestRequest(BaseModel):
-    """Run an UNSAVED prompt draft once (prompt-tuning.md section 5).
+    """Run an UNSAVED prompt draft once (url-less-jobs.md section 11.3).
 
     What each kind needs differs, so the route validates per kind rather than
     making every field required:
@@ -1075,11 +1075,11 @@ class LinkedInRateLimitsRequest(BaseModel):
 class PromptDTO(BaseModel):
     """One user-editable LLM prompt (module skill markdown). `default_md` is the
     shipped text; `override_md` is the saved edit or None when unset (→ default).
-    `routed` marks the kinds that also carry an engine/model selector."""
+    `op_kind` is the `LLM_KINDS` operation whose engine and model it runs on."""
 
     kind: str
     title: str
-    routed: bool
+    op_kind: str
     default_md: str
     override_md: str | None
 
@@ -1177,6 +1177,13 @@ class EngineSettingUpsert(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class OperationArtifactDTO(BaseModel):
+    """The in-app destination behind a ledger row's View button."""
+
+    application_id: str
+    kind: str  # "tailored" | "cover" — the ResumeModal slot it opens
+
+
 class OperationSubjectDTO(BaseModel):
     """What one ledger row acted ON — its human subject (US-LOG-01 legibility,
     maintainer directive 2026-08-03). Every field is verbatim entity data
@@ -1193,9 +1200,14 @@ class OperationSubjectDTO(BaseModel):
     count: int | None = None  # entities touched (contacts found, jobs persisted…)
     # A short trailing mark: the score a `score` row produced, or the fact that
     # a row was a prompt test rather than real work (url-less-jobs.md drawing 13,
-    # prompt-tuning.md P3). Verbatim like every other field here; the frontend
+    # url-less-jobs.md P3). Verbatim like every other field here; the frontend
     # adds its own chrome.
     badge: str | None = None
+    # What this row produced, when the app can open it in place: the document a
+    # `tailor` or `cover` run wrote, named by its application and its slot. The
+    # ledger used to link only the posting, so reading your own tailored resume
+    # meant finding the card in the Tracker (maintainer, 2026-10-08).
+    artifact: OperationArtifactDTO | None = None
 
 
 class OperationDTO(BaseModel):
