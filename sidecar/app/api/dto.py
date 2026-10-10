@@ -1375,23 +1375,39 @@ class WeightLens:
 
     @property
     def active(self) -> bool:
-        return bool(self._weights)
+        # A penalty-only preset (`location_first`, or the slider on its own)
+        # carries no weight table and still has to move numbers.
+        from sidecar.modules.scorer.weights import LOCATION_MISS_PENALTY
 
-    def total_for(self, job_id: str, method: str) -> int | None:
+        return bool(self._weights) or self._penalty != LOCATION_MISS_PENALTY
+
+    def total_for(self, job: Any, method: str) -> int | None:
         """The re-weighted score for this job, or None to keep the stored one."""
-        if not self._weights:
+        if not self.active:
             return None
+        from sidecar.modules.scorer.deterministic import RED_FLAG_CAP
         from sidecar.modules.scorer.types import Factor
-        from sidecar.modules.scorer.weights import user_total
+        from sidecar.modules.scorer.weights import METHOD_WEIGHTS, user_total
+        from sidecar.modules.scraper.quality import RED_FLAG_PREFIX
 
-        rows = [r for r in self._by_job.get(job_id, ()) if r.method == method]
-        if not rows:
+        # No table of the user's own means the method's table with their penalty.
+        # AI scoring ships no table, so its own number stands.
+        weights = self._weights or METHOD_WEIGHTS.get(method)
+        rows = [r for r in self._by_job.get(job.id, ()) if r.method == method]
+        if not weights or not rows:
             return None
-        return user_total(
+        total = user_total(
             [Factor(r.factor, r.value, r.kind, r.evidence) for r in rows],
-            self._weights,
+            weights,
             location_penalty=self._penalty,
         )
+        # The keyword scorer's scam-risk clamp leaves no trace in its factors,
+        # so a re-total would quietly lift a capped posting back up.
+        if total is not None and method == "keyword" and any(
+            f.startswith(RED_FLAG_PREFIX) for f in job.trust_flags or []
+        ):
+            total = min(total, RED_FLAG_CAP)
+        return total
 
 
 def build_weight_lens(repos: Any, job_ids: list[str]) -> WeightLens:
@@ -1401,7 +1417,7 @@ def build_weight_lens(repos: Any, job_ids: list[str]) -> WeightLens:
     from ..registry.persistence import scoring_weights
 
     weights, penalty = scoring_weights(repos.preferences.get_or_create())
-    if not weights or not job_ids:
+    if not job_ids or not WeightLens(weights, penalty, {}).active:
         return WeightLens(weights, penalty, {})
     by_job: dict[str, list[Any]] = {}
     for row in repos.job_score_factors.list_for_jobs(job_ids):
@@ -1425,7 +1441,7 @@ def job_dto(
     dto = JobDTO.model_validate(job)
     dto.score = job_score_dto(job)
     if dto.score is not None and lens is not None:
-        reweighted = lens.total_for(job.id, dto.score.method)
+        reweighted = lens.total_for(job, dto.score.method)
         if reweighted is not None:
             dto.score.score_0_100 = reweighted
             dto.score.weighted = True

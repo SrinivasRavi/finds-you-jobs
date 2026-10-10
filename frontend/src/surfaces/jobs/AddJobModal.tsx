@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useTriageScore, type TriageResult } from "../../api/queries";
 import { JobTombstonedError, type JobDraft } from "../../api/types";
 import { Modal } from "../../shell/Modal";
-import { canSave, emptyDraft, JobFields, useAutofill } from "./JobFields";
+import { canSave, draftForSave, emptyDraft, JobFields, useAutofill } from "./JobFields";
 
 function TriageStrip({
   score,
@@ -93,17 +93,9 @@ export function AddJobModal({
   }
 
   function submit() {
-    // The link box holds whatever the user typed; only an http(s) string ever
-    // reaches the draft's URL, and the sidecar re-checks (section 9.1 item 5).
-    const link = draft.canonical_url.trim();
-    const isUrl = /^https?:\/\//i.test(link);
     setSaveError(null);
     setSaving(true);
-    void onAdd({
-      ...draft,
-      canonical_url: isUrl ? link : "",
-      source_adapter: isUrl ? draft.source_adapter || "paste-url" : "paste-text",
-    })
+    void onAdd(draftForSave(draft))
       .then(() => onClose())
       .catch((e: unknown) => {
         // A refused save used to reject into nothing, so the button looked

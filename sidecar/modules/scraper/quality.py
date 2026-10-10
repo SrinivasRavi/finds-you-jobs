@@ -28,6 +28,9 @@ RED_FLAG_TERMS = (
     "training fee",
 )
 
+# The trust flag a hit writes. The weight lens reads it to keep the keyword cap.
+RED_FLAG_PREFIX = "red-flag-term:"
+
 STALE_AFTER_DAYS = 60
 
 
@@ -69,7 +72,7 @@ def evaluate(
     for term in RED_FLAG_TERMS:
         if term in haystack:
             score -= 40
-            flags.append(f"red-flag-term:{term}")
+            flags.append(f"{RED_FLAG_PREFIX}{term}")
             break  # one hit is signal enough; don't stack to zero on synonyms
 
     letters = [c for c in title if c.isalpha()]

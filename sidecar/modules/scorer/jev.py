@@ -208,7 +208,7 @@ def _reasons(factors: list[Factor]) -> list[str]:
         if found is not None:
             lines.append(f"{key.replace('_', ' ').capitalize()}: {found.evidence}")
     if len(lines) < 2:
-        lines.append("Scored on-device rubrics by a decision model; no prose is produced.")
+        lines.append("Scored against fixed rubrics by a decision model; no prose is produced.")
     return lines[:4]
 
 

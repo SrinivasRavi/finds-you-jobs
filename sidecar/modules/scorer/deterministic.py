@@ -88,6 +88,9 @@ _YEARS_RE = re.compile(r"(\d{1,2})\+?\s*(?:years|yrs)\b")
 # falls between 0 and 464.
 MIN_JD_CHARS = 200
 
+# A red-flag hit clamps the keyword score here. The weight lens re-applies it.
+RED_FLAG_CAP = 40
+
 
 def _tokenize(text: str) -> set[str]:
     # Trailing punctuation strip matters: the word regex allows internal
@@ -249,9 +252,13 @@ def score_deterministic(
             f"- Location modifier: -{penalty} for a location you did not ask for"
         )
     if red_flag:
-        final = min(final, 40)
-        reasons.append(f"Cap applied: red-flag term {red_flag!r} detected — capped at 40.")
-        breakdown_lines.append(f"- Cap: red-flag term {red_flag!r} detected (score capped at 40)")
+        final = min(final, RED_FLAG_CAP)
+        reasons.append(
+            f"Cap applied: red-flag term {red_flag!r} detected — capped at {RED_FLAG_CAP}."
+        )
+        breakdown_lines.append(
+            f"- Cap: red-flag term {red_flag!r} detected (score capped at {RED_FLAG_CAP})"
+        )
 
     return ScoreResult(
         score=final,

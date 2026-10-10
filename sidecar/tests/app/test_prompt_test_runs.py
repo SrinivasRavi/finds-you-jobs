@@ -410,3 +410,35 @@ def test_a_tailor_row_whose_artifact_is_gone_says_nothing(tmp_path) -> None:
         row = {r["id"]: r for r in client.get("/api/operations", headers=AUTH).json()}[op.id]
         assert row["subject"]["label"] == "Backend Engineer"
         assert row["subject"]["artifact"] is None
+
+
+def test_a_score_prompt_test_runs_the_ai_scorer_whatever_the_board_uses(tmp_path) -> None:
+    """The AI scoring prompt is read by the AI scorer and nothing else. A user
+    whose board runs Fast or Keyword scoring used to get that method back from
+    "Test scoring with this prompt", with their draft never sent anywhere."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        db = app.state.db
+        with db.repos() as repos:
+            repos.profile.upsert("# Candidate\n\nPython, SQL.")
+        client.post(
+            "/api/settings", headers=AUTH,
+            json={"thresholds": {"scoring_mode": "keyword"}},
+        )
+        resp = client.post(
+            "/api/settings/prompts/score/test",
+            headers=AUTH,
+            json={"markdown": "# DRAFT", "job_description": REALISTIC_JD * 2},
+        )
+        assert resp.status_code == 202
+        with db.repos() as repos:
+            op = repos.operations.get(resp.json()["id"])
+            assert op is not None
+            snap = dict(op.input_snapshot)
+
+        engine = _Recorder()
+        outcome = score_entrypoint(_ctx("score", snap, engine, db=db))
+        assert engine.prompts == ["# DRAFT"]
+        assert (outcome.result_ref or {}).get("method") == "llm"

@@ -41,8 +41,12 @@ export function emptyDraft(): JobDraft {
  *  so Undo restores exactly those. */
 export function useAutofill(draft: JobDraft, setDraft: (next: JobDraft) => void) {
   const [state, setState] = useState<AutofillState>({ kind: "idle" });
-  const before = useRef<JobDraft | null>(null);
+  const before = useRef<Partial<JobDraft> | null>(null);
   const lastRun = useRef("");
+  // The fields stay editable while a fetch is in flight, so its result merges
+  // into the draft as it is when the fetch lands, not as it was on blur.
+  const latest = useRef(draft);
+  latest.current = draft;
   const preview = useJobPreview();
 
   function run(url: string, { force = false }: { force?: boolean } = {}) {
@@ -56,15 +60,26 @@ export function useAutofill(draft: JobDraft, setDraft: (next: JobDraft) => void)
     setState({ kind: "reading" });
     preview.mutate(link, {
       onSuccess: (fetched) => {
-        before.current = draft;
-        const next = { ...draft, canonical_url: fetched.canonical_url || link };
+        const current = latest.current;
+        // The link changed while this one was being read; its result is stale.
+        if (current.canonical_url.trim() !== link) {
+          setState({ kind: "idle" });
+          return;
+        }
+        const touched: Partial<JobDraft> = {
+          canonical_url: current.canonical_url,
+          source_adapter: current.source_adapter,
+        };
+        const next = { ...current, canonical_url: fetched.canonical_url || link };
         let count = 0;
         for (const key of FILLABLE) {
           if (!next[key] && fetched[key]) {
+            touched[key] = current[key];
             next[key] = fetched[key];
             count += 1;
           }
         }
+        before.current = touched;
         next.source_adapter = fetched.source_adapter || "paste-url";
         setDraft(next);
         setState({ kind: "filled", count, adapter: fetched.source_adapter || "the page" });
@@ -82,7 +97,7 @@ export function useAutofill(draft: JobDraft, setDraft: (next: JobDraft) => void)
   }
 
   function undo() {
-    if (before.current) setDraft(before.current);
+    if (before.current) setDraft({ ...latest.current, ...before.current });
     before.current = null;
     setState({ kind: "idle" });
   }
@@ -265,6 +280,18 @@ export function JobFields({
       </div>
     </>
   );
+}
+
+/** What either door sends. Only an http(s) string reaches the link, and the
+ *  sidecar re-checks (section 9.1 item 5). A link whose autofill never landed
+ *  is still a pasted URL, so it can't keep the `paste-text` it started with. */
+export function draftForSave(draft: JobDraft): JobDraft {
+  const link = draft.canonical_url.trim();
+  if (!/^https?:\/\//i.test(link)) {
+    return { ...draft, canonical_url: "", source_adapter: "paste-text" };
+  }
+  const adapter = draft.source_adapter === "paste-text" ? "" : draft.source_adapter;
+  return { ...draft, canonical_url: link, source_adapter: adapter || "paste-url" };
 }
 
 /** Title and description are what `compose_job_text` renders, so they're the

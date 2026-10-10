@@ -505,3 +505,26 @@ def test_the_tracker_logs_an_application_with_no_link(
     )
     assert resp.status_code == 201, resp.text
     assert resp.json()["job"]["canonical_url"] is None
+
+
+def test_merging_2_pasted_duplicates_leaves_no_empty_string_url(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """2 pasted near-duplicates have no URL between them. The merge used to
+    write `canonical_url = ""`, which is a real value in the unique index: the
+    survivor read as "has a link" to SQL, and the next such merge 500'd."""
+    app, client = app_client
+    for n in range(2):
+        first = _paste(client, _JD + f" Batch {n}, copy one.", company=f"Acme{n}")
+        second = _paste(client, _JD + f" Batch {n}, copy two.", company=f"Acme{n}")
+        prompt = client.get(f"/api/jobs/{second['id']}/duplicate", headers=AUTH).json()
+        assert prompt is not None and prompt["other_job_id"] == first["id"]
+        resp = client.post(
+            f"/api/jobs/{first['id']}/duplicate/merge",
+            headers=AUTH,
+            json={"other_job_id": second["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["job"]["canonical_url"] is None
+    with app.state.db.repos() as repos:
+        assert repos.jobs.get_by_canonical_url("") is None

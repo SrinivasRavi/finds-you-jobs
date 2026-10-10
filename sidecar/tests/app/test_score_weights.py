@@ -185,3 +185,139 @@ def test_a_confidence_axis_is_never_multiplied_by_a_weight(tmp_path) -> None:
     assert user_total(graded + [confidence], table, location_penalty=0) == 100
     # ...and everything to the penalty, which is where location belongs.
     assert user_total(graded + [confidence], table, location_penalty=30) == 70
+
+
+def _seed_with_location_miss(db: Database, *, method: str, score: int) -> str:
+    """The FACTORS job, plus a location the user did not ask for."""
+    job_id = _seed(db, method=method, score=score)
+    with db.repos() as repos:
+        repos.job_score_factors.replace(
+            job_id,
+            method,
+            [
+                *FACTORS,
+                {"factor": "location_preference", "value": 0.0, "kind": "probability",
+                 "evidence": ""},
+            ],
+        )
+    return job_id
+
+
+def test_location_first_deepens_the_miss_penalty_on_the_method_s_own_table(tmp_path) -> None:
+    """`location_first` carries no weight table, only a 35-point penalty, so it
+    has to re-total on the method's own table. An empty table used to read as
+    "nothing to do" and the preset changed no number at all."""
+    client, app = _client(tmp_path)
+    with client:
+        # JEV_WEIGHTS over FACTORS is 57.5; the shipped 15-point miss makes 42.
+        job_id = _seed_with_location_miss(app.state.db, method="jev", score=42)
+        assert _row(client, job_id)["score"]["score_0_100"] == 42
+        client.post(
+            "/api/settings", headers=AUTH,
+            json={"thresholds": {"score_weight_preset": "location_first"}},
+        )
+        row = _row(client, job_id)["score"]
+        assert row["score_0_100"] == 22  # 57.5 - 35
+        assert row["weighted"] is True
+
+
+def test_the_penalty_slider_alone_moves_a_balanced_board(tmp_path) -> None:
+    client, app = _client(tmp_path)
+    with client:
+        job_id = _seed_with_location_miss(app.state.db, method="jev", score=42)
+        client.post(
+            "/api/settings", headers=AUTH,
+            json={"thresholds": {"score_location_penalty": 0}},
+        )
+        from sidecar.modules.scorer.types import Factor
+        from sidecar.modules.scorer.weights import JEV_WEIGHTS, user_total
+
+        no_miss = user_total([Factor(**f) for f in FACTORS], JEV_WEIGHTS)
+        assert no_miss is not None and no_miss > 42
+        assert _row(client, job_id)["score"]["score_0_100"] == no_miss
+
+
+def test_location_first_leaves_an_ai_score_alone(tmp_path) -> None:
+    """AI scoring weighs location inside the model's own number and ships no
+    axis table, so there is nothing for a penalty-only preset to re-total."""
+    client, app = _client(tmp_path)
+    with client:
+        job_id = _seed_with_location_miss(app.state.db, method="llm", score=42)
+        client.post(
+            "/api/settings", headers=AUTH,
+            json={"thresholds": {"score_weight_preset": "location_first"}},
+        )
+        row = _row(client, job_id)["score"]
+        assert row["score_0_100"] == 42
+        assert row["weighted"] is False
+
+
+def test_re_weighting_never_lifts_a_keyword_score_past_its_red_flag_cap(tmp_path) -> None:
+    """The keyword scorer clamps a red-flag posting to 40 as a scam-risk floor.
+    The factors carry no trace of that clamp, so a re-total would quietly undo
+    it: "skills only" turned a capped 40 into a 100."""
+    client, app = _client(tmp_path)
+    with client:
+        db = app.state.db
+        with db.repos() as repos:
+            job_id = repos.jobs.create(
+                canonical_url="https://ex.co/j/weights-red-flag",
+                title="Backend Engineer",
+                company="Acme",
+                description="x" * 400,
+                source_adapter="greenhouse",
+                trust_flags=["red-flag-term:pay to apply"],
+            ).id
+            repos.jobs.set_score(
+                job_id,
+                scorer_impl="scorer-deterministic",
+                score_0_100=40,
+                reasons=[],
+                breakdown_md="",
+                method="keyword",
+                factors=[
+                    {"factor": "core_stack", "value": 1.0, "kind": "graded", "evidence": ""},
+                    {"factor": "years", "value": 1.0, "kind": "graded", "evidence": ""},
+                ],
+            )
+        client.post(
+            "/api/settings", headers=AUTH,
+            json={"thresholds": {"score_weight_preset": "skills_only"}},
+        )
+        assert _row(client, job_id)["score"]["score_0_100"] == 40
+
+
+def test_the_board_ranks_by_the_number_it_shows_across_pages(tmp_path) -> None:
+    """The board sorts before it paginates. Sorting on the stored score while
+    showing the re-weighted one put a 100 on page 2 behind a 50 on page 1."""
+    client, app = _client(tmp_path)
+    with client:
+        db = app.state.db
+        weak = _seed(db, method="jev", score=60)  # FACTORS: weak level, strong stack
+        with db.repos() as repos:
+            strong = repos.jobs.create(
+                canonical_url="https://ex.co/j/weights-strong",
+                title="Backend Engineer",
+                company="Acme",
+                description="x" * 400,
+                source_adapter="greenhouse",
+            ).id
+            repos.jobs.set_score(
+                strong, scorer_impl="scorer-llm", score_0_100=50, reasons=[],
+                breakdown_md="", method="jev",
+            )
+            repos.job_score_factors.replace(
+                strong, "jev",
+                [{"factor": "core_stack", "value": 1.0, "kind": "graded", "evidence": ""},
+                 {"factor": "hard_requirements", "value": 1.0, "kind": "graded",
+                  "evidence": ""}],
+            )
+        client.post(
+            "/api/settings", headers=AUTH,
+            json={"thresholds": {"score_weight_preset": "skills_only"}},
+        )
+        first = client.get("/api/board?page=0&page_size=1", headers=AUTH).json()["jobs"]
+        assert [j["id"] for j in first] == [strong]
+        assert first[0]["score"]["score_0_100"] == 100
+        second = client.get("/api/board?page=1&page_size=1", headers=AUTH).json()["jobs"]
+        assert [j["id"] for j in second] == [weak]

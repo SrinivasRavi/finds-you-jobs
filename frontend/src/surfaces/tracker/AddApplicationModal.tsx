@@ -17,7 +17,7 @@ import { POST_APPLICATION_STAGES } from "../../api/types";
 import { Icon } from "../../shell/icons";
 import { Modal } from "../../shell/Modal";
 import { ATTACH_ACCEPT } from "../../shell/uploadFormats";
-import { canSave, emptyDraft, JobFields, useAutofill } from "../jobs/JobFields";
+import { canSave, draftForSave, emptyDraft, JobFields, useAutofill } from "../jobs/JobFields";
 
 function FilePicker({
   label,
@@ -77,17 +77,16 @@ export function AddApplicationModal({ onClose }: { onClose: () => void }) {
 
   function submit() {
     setError(null);
-    const link = draft.canonical_url.trim();
-    const isUrl = /^https?:\/\//i.test(link);
+    const saved = draftForSave(draft);
     addApp.mutate(
       {
-        canonical_url: isUrl ? link : "",
-        title: draft.title,
-        company: draft.company,
-        location: draft.location,
-        description: draft.description,
-        salary: draft.salary,
-        source_adapter: isUrl ? draft.source_adapter || "paste-url" : "paste-text",
+        canonical_url: saved.canonical_url,
+        title: saved.title,
+        company: saved.company,
+        location: saved.location,
+        description: saved.description,
+        salary: saved.salary,
+        source_adapter: saved.source_adapter,
         stage,
         notes,
         resume,

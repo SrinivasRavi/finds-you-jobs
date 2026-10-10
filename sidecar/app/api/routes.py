@@ -189,11 +189,20 @@ def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
     return dtos
 
 
-def _display_score_value(job: Any) -> int:
+def _display_score_value(job: Any, lens: dto.WeightLens | None = None) -> int:
     """The number a board row sorts on: the AI rating if the job has one, else
-    the keyword floor, else -1 so unscored rows land last."""
+    the keyword floor, else -1 so unscored rows land last. With `lens`, the
+    number the row will SHOW under the user's weights, so the board sorts
+    before it paginates on the same value each card displays."""
     value = job.llm_score if job.llm_score is not None else job.keyword_score
-    return -1 if value is None else value
+    if value is None:
+        return -1
+    if lens is not None:
+        method = (job.llm_score_method or "llm") if job.llm_score is not None else "keyword"
+        reweighted = lens.total_for(job, method)
+        if reweighted is not None:
+            return reweighted
+    return value
 
 
 # Board-eligible feed states: active + expired (Expired stays on the board,
@@ -306,11 +315,12 @@ def board(
         last_scan = repos.operations.latest_succeeded_by_kind("scan")
         latest_scan = repos.operations.latest_by_kind("scan")
         new_ids = _scan_new_ids(last_scan)
+        lens = dto.build_weight_lens(repos, [j.id for j in jobs])
     # Sort + search over the ORM rows — same key/haystack as the DTO path
     # (FR-JB-01 / FR-JB-13); the DTO is built only for the window below.
     rows = sorted(
         jobs,
-        key=lambda j: (_display_score_value(j), j.ingested_at),
+        key=lambda j: (_display_score_value(j, lens), j.ingested_at),
         reverse=True,
     )
     # `empty` means the scrape found nothing — judged before search filtering,
@@ -328,7 +338,6 @@ def board(
         rows = [j for j in rows if not j.canonical_url]
     total = len(rows)
     page_rows = rows[page * page_size : page * page_size + page_size]
-    lens = dto.build_weight_lens(repos, [j.id for j in page_rows])
     window = [
         dto.job_dto(j, score_op_states=score_op_states.get(j.id), lens=lens)
         for j in page_rows
@@ -682,7 +691,7 @@ def _link_verdict(
 
 
 def _merge_or_refuse(
-    repos: Any, job: Any, other: Any, canonical: str, *, merge: bool
+    repos: Any, job: Any, other: Any, canonical: str | None, *, merge: bool
 ) -> dto.AttachLinkResultDTO:
     """The collision of section 5.5: 2 rows want 1 URL.
 
@@ -786,7 +795,7 @@ def merge_job_duplicate(
             repos.jobs.get(payload.other_job_id), "job", payload.other_job_id
         )
         return _merge_or_refuse(
-            repos, job, other, other.canonical_url or job.canonical_url or "", merge=True
+            repos, job, other, other.canonical_url or job.canonical_url, merge=True
         )
 
 
@@ -3404,17 +3413,6 @@ def set_prompt(
     )
 
 
-# Which operation kind runs a given prompt. A test run is that operation, not a
-# new one, so cost, the LLM cap, Stop and Retry all come for free and a test's
-# spend is comparable with a real run's (url-less-jobs.md section 11.4).
-_PROMPT_TEST_KIND: dict[str, str] = {
-    "score": "score",
-    "tailor": "tailor",
-    "cover": "cover",
-    "extract": "extract",
-    "networker_draft": "draft",
-}
-
 # The kinds that need a job to run against.
 _PROMPT_TEST_NEEDS_JOB = frozenset({"score", "tailor", "cover"})
 
@@ -3438,6 +3436,10 @@ def test_prompt(
         raise HTTPException(status_code=422, detail="prompt markdown cannot be empty")
 
     snap: dict[str, Any] = {"prompt_draft_md": payload.markdown, "prompt_test": True}
+    if kind == "score":
+        # Only AI scoring reads this prompt. Without the override a board on
+        # Fast or Keyword scoring ran that method and never sent the draft.
+        snap["force_mode"] = "llm"
     if payload.guidance:
         snap["guidance"] = payload.guidance
 
@@ -3473,7 +3475,10 @@ def test_prompt(
             if repos.profile.get_current() is None:
                 raise HTTPException(status_code=400, detail="no master resume to run against")
 
-    op_kind = _PROMPT_TEST_KIND[kind]
+    # A test run is the prompt's own operation, not a new kind, so cost, the LLM
+    # cap, Stop and Retry come for free and its spend compares with a real run's
+    # (url-less-jobs.md section 11.4).
+    op_kind = spec.operation_kind()
     operation_id = _runner(request).submit(op_kind, snap)
     return dto.OperationAccepted(id=operation_id, kind=op_kind, state="queued")
 
