@@ -18,7 +18,6 @@
 // code path; only the handshake SOURCE is injected.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,18 +25,11 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 import { E2E_DATA_DIR } from "../playwright.config";
+import { sidecarHandshake } from "./_helpers";
 
 const DIR = "e2e/_screenshots/reconnect-newport";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(SPEC_DIR, "..", "..");
-
-function sidecarInfo(): { port: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { port, token };
-}
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -73,7 +65,7 @@ test("SSE stream recovers when the sidecar restarts on a NEW port + token", asyn
   page,
   request,
 }) => {
-  const old = sidecarInfo();
+  const old = sidecarHandshake();
   let respawned: ChildProcess | null = null;
 
   try {
@@ -163,7 +155,7 @@ test("SSE stream recovers when the first re-handshake attempt fails", async ({
   page,
   request,
 }) => {
-  const old = sidecarInfo();
+  const old = sidecarHandshake();
   let respawned: ChildProcess | null = null;
 
   try {

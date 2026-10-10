@@ -41,22 +41,8 @@ from sidecar.app.api import routes as routes_module
 from sidecar.app.db import Database
 from sidecar.app.db.base import now_utc
 from sidecar.app.db.models import Job
-from sidecar.app.main import create_app
 
-TOKEN = "test-token-perf"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH
 
 
 def _db(app: FastAPI) -> Database:

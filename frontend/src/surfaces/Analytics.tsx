@@ -7,6 +7,7 @@
 
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import {
   useCancelOperation,
@@ -28,6 +29,7 @@ import type {
 } from "../api/types";
 import { formatWhen } from "../shell/datetime";
 import { formatEngineError } from "../shell/formatError";
+import { Icon } from "../shell/icons";
 
 const STATE_CLS: Record<OperationState, string> = {
   succeeded: "bg-good-wash text-good",
@@ -343,11 +345,6 @@ function ErrorCell({ entry }: { entry: LedgerEntry }) {
       data-testid="log-error"
     >
       {formatEngineError(entry.error, t)}
-            {formatEngineError(entry.error, t) !== entry.error && (
-              <div className="mt-2 pt-2 border-t border-border/50 opacity-80 text-[10px] break-words whitespace-pre-wrap">
-                {entry.error}
-              </div>
-            )}
     </div>
   );
 }
@@ -471,7 +468,38 @@ function SubjectCell({ entry }: { entry: LedgerEntry }) {
           {context}
         </div>
       ) : null}
+      {s?.artifact ? <ViewArtifactLink artifact={s.artifact} /> : null}
     </>
+  );
+}
+
+/** The document a tailor or cover row wrote, opened where it lives. The ledger
+ *  only ever linked out to the posting, so reading your own tailored resume
+ *  meant hunting for the card in the Tracker (maintainer, 2026-10-08). It
+ *  hands off to the Tracker's own viewer rather than mounting a second one,
+ *  because Save, Approve and Regenerate all belong to that card. */
+function ViewArtifactLink({
+  artifact,
+}: {
+  artifact: NonNullable<LedgerSubject["artifact"]>;
+}) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      data-testid="log-view-artifact"
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigate(`/applications?doc=${artifact.application_id}&slot=${artifact.kind}`);
+      }}
+      className="mt-1 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] text-ink-2 hover:border-border-2 hover:text-accent"
+    >
+      <Icon name="file" size={11} strokeWidth={2} />
+      {artifact.kind === "cover"
+        ? t("analytics.subject.viewCover")
+        : t("analytics.subject.viewResume")}
+    </button>
   );
 }
 

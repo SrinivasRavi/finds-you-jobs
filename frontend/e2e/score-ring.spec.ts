@@ -7,11 +7,11 @@
 // OpenRouter key, On-device has no pack yet), so the board response is patched
 // the way board.spec.ts already patches it for the 150-row virtualization test.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/score-ring";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -22,14 +22,6 @@ const METHODS = [
   { method: "local", score: 58, title: "Services Engineer", company: "Linear" },
   { method: "keyword", score: 31, title: "Frontend Engineer", company: "Vercel" },
 ];
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test("every scoring method is legible on the board and in the detail pane", async ({
   page,
@@ -180,7 +172,7 @@ test("the factor bars draw a confidence differently from a graded position", asy
 test("weight presets and the sliders behind their disclosure", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId("settings-nav-discovery").click();
+  await page.getByTestId("settings-nav-scoring").click();
 
   const weights = page.locator('[data-testid="score-weights"]');
   await expect(weights).toBeVisible({ timeout: 15_000 });
@@ -255,16 +247,12 @@ test("explain this one shows its price, and only where there is prose to buy", a
   await expect(button).toHaveCount(0);
 });
 
-test("the prompts pane says which method each prompt governs", async ({ page }) => {
+test("the Scoring pane says which method the rubric governs", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId("settings-nav-prompts").click();
-
-  // The scoring prompt is named after the method it belongs to, and says so.
-  const tab = page.locator('[data-testid="prompt-row-score"]');
-  await expect(tab).toBeVisible({ timeout: 15_000 });
-  await expect(tab).toContainText("AI scoring");
-  await tab.click();
+  // The rubric lives in the Scoring pane now, under the method menu it
+  // belongs to, instead of behind a tab bar in another category.
+  await page.getByTestId("settings-nav-scoring").click();
 
   const scope = page.locator('[data-testid="prompt-scope-score"]');
   await expect(scope).toBeVisible();
@@ -273,9 +261,16 @@ test("the prompts pane says which method each prompt governs", async ({ page }) 
   await expect(scope).toContainText("Fast scoring");
   await page.screenshot({ path: `${DIR}/prompts-scope.png`, fullPage: true });
 
-  // Every other prompt carries its own scope line too.
-  for (const kind of ["tailor", "cover", "extract", "networker_draft"]) {
-    await page.locator(`[data-testid="prompt-row-${kind}"]`).click();
+  // Every other prompt carries its own scope line too, in the category that
+  // owns its work.
+  const homes: [string, string][] = [
+    ["documents", "tailor"],
+    ["documents", "cover"],
+    ["applying", "extract"],
+    ["networking", "networker_draft"],
+  ];
+  for (const [cat, kind] of homes) {
+    await page.getByTestId(`settings-nav-${cat}`).click();
     await expect(page.locator(`[data-testid="prompt-scope-${kind}"]`)).toBeVisible();
   }
 });

@@ -78,7 +78,10 @@ export function CompanyConfirmStep({
       <div className="flex-1 overflow-y-auto">
         {companyCandidates.map((c) => (
           <label
-            key={c.urn}
+            // Not `c.urn`: a candidate we could only scrape a vanity for has
+            // none, so 2 of them would share key="". Same fallback the radio
+            // below uses for its own identity.
+            key={c.urn || `v:${c.vanity}`}
             data-testid="company-candidate"
             className="flex cursor-pointer items-center gap-3 border-b border-border px-5 py-3 hover:bg-surface-2"
           >

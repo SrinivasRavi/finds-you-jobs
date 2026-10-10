@@ -19,7 +19,8 @@ import { DiscoveryKeysSection, DiscoverySourcesSection } from "./settings/Discov
 import { LifecycleSection } from "./settings/LifecycleSection";
 import { LinkedInJobSearchSection, LinkedInRateLimitsSection } from "./settings/LinkedInSections";
 import { ObservabilitySection } from "./settings/ObservabilitySection";
-import { EngineRoutingSection } from "./settings/PromptsSection";
+import { ModelPicker } from "./settings/ModelPicker";
+import { PromptCard } from "./settings/PromptsSection";
 import { ReferralOutreachSection } from "./settings/ReferralOutreachSection";
 import { ScoringSection } from "./settings/ScoringSection";
 import { SETTINGS_CATS, SettingsNav, type SettingsCat } from "./settings/SettingsNav";
@@ -81,44 +82,92 @@ export function Settings() {
               LinkedIn session with Referral Outreach. */}
           <LinkedInJobSearchSection settings={settings} patch={patch} />
 
-          {/* Scoring: a scanned job is scored before anything else happens to it.
-              Every scanned job is scored; the choice is HOW. AI failures fall
-              back to a grey keyword score (retry in Logs). */}
+          </div>
+          )}
+
+          {/* Scoring (url-less-jobs.md section 11.5): the method menu, the user
+              weights, the batch cap, AND the rubric the AI method follows with
+              the model that runs it. The Scoring pane used to point at another
+              pane for its own rubric, which is the information architecture
+              filing a bug report. */}
+          {cat === "scoring" && (
+          <div className="space-y-8">
           <ScoringSection
             settings={settings}
             patch={patch}
             onAddKey={() => setCat("providers")}
           />
+          <Section title={t("settingsPage.prompts.titleScoreModel")}>
+            <ModelPicker
+              kind="score"
+              settings={settings}
+              patch={patch}
+              hint={t("settingsPage.prompts.hintScoreModel")}
+            />
+          </Section>
+          <Section title={t("scoreMethod.llm")}>
+            <PromptCard kind="score" />
+          </Section>
+          </div>
+          )}
 
-          {/* Automation on Save — split defaults (FR-SET-02): Resume ON, Cover ON.
-              After Scoring in the workflow (maintainer 2026-07-23). */}
+          {/* Resume & cover letter — 1 category, 2 cards (maintainer,
+              2026-10-08: "I am ok with resume tailoring and cover letter
+              sharing the same settings option"). The 2 generate-on-save
+              toggles are a pair and would otherwise have been split across
+              2 categories holding 1 control each. */}
+          {cat === "documents" && (
+          <div className="space-y-8">
           <AutomationSection settings={settings} patch={patch} />
+          <Section title={t("settingsPage.prompts.titleTailor")}>
+            <div className="space-y-4">
+              <ModelPicker kind="tailor" settings={settings} patch={patch} />
+              <PromptCard kind="tailor" />
+            </div>
+          </Section>
+          <Section title={t("settingsPage.prompts.titleCover")}>
+            <div className="space-y-4">
+              <ModelPicker kind="cover" settings={settings} patch={patch} />
+              <PromptCard kind="cover" />
+            </div>
+          </Section>
+          </div>
+          )}
 
+          {/* Applying — the Form answers prompt (what the master resume is
+              read into) and the Applier's own model, which had no UI at all
+              before today. Filed by what it produces rather than what it eats
+              (url-less-jobs.md section 11.5). */}
+          {cat === "applying" && (
+          <div className="space-y-8">
+          <Section title={t("settingsPage.prompts.titleApplyModel")}>
+            <ModelPicker
+              kind="apply"
+              settings={settings}
+              patch={patch}
+              hint={t("settingsPage.prompts.hintApplyModel")}
+            />
+          </Section>
+          <Section title={t("settingsPage.prompts.titleExtract")}>
+            <div className="space-y-4">
+              <ModelPicker kind="extract" settings={settings} patch={patch} />
+              <PromptCard kind="extract" />
+            </div>
+          </Section>
           </div>
           )}
 
           {/* The "Applications" settings category (P1 Applier statement +
               Application-profile editor) was removed 2026-07-23 (maintainer:
-              no value in P1). The ApplicationProfileEditor component is parked
-              below, unreferenced, for trivial restoration; the profile is still
-              auto-extracted on master-save regardless. */}
+              no value in P1). The profile is still auto-extracted on
+              master-save regardless. The editor component itself is gone, not
+              parked: restoring it means writing it again. */}
 
           {cat === "providers" && (
           <div className="space-y-8">
           {/* LLM Providers (FR-SET-06 / US-SET-07) — tile grid + Verify + Save */}
           <Section title={t("settingsPage.providers.title")}>
             <AIProvidersPanel settings={settings} />
-          </Section>
-          </div>
-          )}
-
-          {cat === "prompts" && (
-          <div className="space-y-8">
-          {/* Per-operation engine routing + editable system prompts (FR-SET-11).
-              Its own category so prompt editing is discoverable — the old long
-              scroll buried it at the bottom (maintainer 2026-07-23). */}
-          <Section title={t("settingsPage.prompts.title")}>
-            <EngineRoutingSection settings={settings} patch={patch} />
           </Section>
           </div>
           )}
@@ -141,6 +190,21 @@ export function Settings() {
               block links here by name. Renders nothing until a rate-limit
               profile exists. */}
           <LinkedInRateLimitsSection />
+
+          {/* The referral message prompt, beside the feature that sends it.
+              Its model is routed as the `draft` operation, which is why it had
+              no picker while the pane was keyed on prompt names. */}
+          <Section title={t("settingsPage.prompts.titleNetworkerDraft")}>
+            <div className="space-y-4">
+              <ModelPicker
+                kind="draft"
+                settings={settings}
+                patch={patch}
+                hint={t("settingsPage.prompts.hintDraftModel")}
+              />
+              <PromptCard kind="networker_draft" />
+            </div>
+          </Section>
           </div>
           )}
 

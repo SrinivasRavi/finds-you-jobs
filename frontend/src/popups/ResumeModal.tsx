@@ -17,8 +17,10 @@ import { api } from "../api/index";
 
 import type { Application, ApplicationDocument, PacketState, Profile } from "../api/types";
 import { Icon } from "../shell/icons";
+import { downloadDocument, downloadDocumentOrReport } from "../shell/downloadDocument";
 import { MarkdownEditor } from "../shell/MarkdownEditor";
 import { Modal } from "../shell/Modal";
+import { ATTACH_ACCEPT, EXTRACT_ACCEPT } from "../shell/uploadFormats";
 
 export type ResumeModalKind = "master" | "tailored" | "cover";
 
@@ -164,19 +166,10 @@ function SubmittedDocViewer({ doc }: { doc: ApplicationDocument }) {
     doc.mime_type.startsWith("image/");
 
   function download() {
-    api
-      .fetchDocument(doc.document_id)
-      .then((blob) => {
-        const dl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = dl;
-        a.download = doc.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(dl);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    // This viewer renders its own error line, so it keeps the rejecting form.
+    void downloadDocument(doc).catch((e: unknown) =>
+      setError(e instanceof Error ? e.message : String(e)),
+    );
   }
 
   if (error) {
@@ -220,25 +213,7 @@ function DownloadDocButton({ doc }: { doc: ApplicationDocument }) {
   return (
     <button
       data-testid="submitted-doc-download-btn"
-      onClick={() => {
-        void api
-          .fetchDocument(doc.document_id)
-          .then((blob) => {
-            const dl = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = dl;
-            a.download = doc.filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(dl);
-          })
-          .catch((e: unknown) => {
-            // Never a silent no-op (2026-07-24 graceful-failure audit).
-            console.error("[finds-you-jobs] document download failed:", e);
-            window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: e }));
-          });
-      }}
+      onClick={() => downloadDocumentOrReport(doc)}
       className="inline-flex h-[28px] items-center gap-1 rounded-7 border border-border-2 bg-surface px-2.5 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
     >
       {t("popups.resume.submittedDoc.download")}
@@ -272,15 +247,6 @@ function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void 
   );
 }
 
-// Every format the sidecar can EXTRACT (master resume → editor) or STORE as a
-// binary attachment (tailored/cover → submitted document). One list so all
-// three uploaders offer the same set (pdf/docx/odt/pages/txt/md/rtf/doc).
-const UPLOAD_ACCEPT =
-  ".pdf,.docx,.odt,.pages,.txt,.md,.rtf,.doc,application/pdf," +
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
-  "application/vnd.oasis.opendocument.text,application/vnd.apple.pages," +
-  "text/plain,text/markdown,application/rtf,application/msword";
-
 /** The shared "Upload" control (icon + short label). It only PICKS a file and
  *  hands it to `onFile`; the caller decides what to do — extract-to-editor for
  *  the master resume, attach-as-submitted-document for the tailored / cover
@@ -290,11 +256,14 @@ function UploadButton({
   busy,
   error,
   testid,
+  accept,
 }: {
   onFile: (file: File) => void;
   busy: boolean;
   error: string | null;
   testid: string;
+  /** Extract-into-the-editor and attach-as-submitted take different sets. */
+  accept: string;
 }) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -303,7 +272,7 @@ function UploadButton({
       <input
         ref={inputRef}
         type="file"
-        accept={UPLOAD_ACCEPT}
+        accept={accept}
         data-testid={`${testid}-input`}
         className="hidden"
         onChange={(e) => {
@@ -335,24 +304,7 @@ function UploadButton({
  *  name to download it verbatim; ✕ detaches it. */
 function AttachedDocChip({ doc, onRemove }: { doc: ApplicationDocument; onRemove: () => void }) {
   const { t } = useTranslation();
-  const download = () => {
-    void api
-      .fetchDocument(doc.document_id)
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = doc.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      })
-      .catch((e: unknown) => {
-        console.error("[finds-you-jobs] document download failed:", e);
-        window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: e }));
-      });
-  };
+  const download = () => downloadDocumentOrReport(doc);
   return (
     <span
       data-testid="attached-doc-chip"
@@ -478,7 +430,9 @@ export function ResumeModal({
   // As large as a dialog can read without becoming a fullscreen takeover: the
   // shell clamps to 96vw / 94vh, backdrop + × stay visible (2026-07-12 beta
   // feedback, twice — these carry a lot of text; give them the room).
-  const width = kind === "tailored" ? 1840 : kind === "cover" ? 1480 : 1100;
+  // Both single-column kinds take the same size; only the 2-column tailored
+  // view needs the full width (maintainer, 2026-10-08: few standard sizes).
+  const size = kind === "tailored" ? "full" : "xl";
 
   // Right-aligned control cluster, rendered beside the pane it controls: in the
   // modal header for master/cover, in the tailored pane's own header row for the
@@ -503,6 +457,7 @@ export function ResumeModal({
         busy={ingesting}
         error={ingestError}
         testid="upload-doc-master"
+        accept={EXTRACT_ACCEPT}
       />
       <ModeToggle mode={mode} setMode={setMode} />
     </div>
@@ -518,6 +473,7 @@ export function ResumeModal({
           busy={attaching}
           error={attachError}
           testid="upload-doc-variant"
+          accept={ATTACH_ACCEPT}
         />
       ) : null}
       <ModeToggle mode={mode} setMode={setMode} />
@@ -759,7 +715,7 @@ export function ResumeModal({
     <Modal
       title={title}
       onClose={onClose}
-      width={width}
+      size={size}
       footer={footer}
       headerExtra={
         showEditor && value ? (

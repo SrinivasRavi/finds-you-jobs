@@ -5,15 +5,7 @@
 // window.open. `installExternalLinkInterceptor` makes this automatic for
 // every `<a target="_blank">` in the app — no per-link wiring.
 
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown;
-  }
-}
-
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+import { inTauri } from "./host";
 
 export function openExternal(url: string): void {
   if (!/^https?:\/\//i.test(url)) return;

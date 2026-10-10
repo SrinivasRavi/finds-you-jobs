@@ -4,11 +4,11 @@
 // chips, the filter row's Link group, the detail pane's Add link, and the
 // Tracker's Log it.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/url-less";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -27,14 +27,6 @@ const TRACKER_JD =
   "You will own Go services on GCP, carry the on-call pager one week in six, " +
   "and work with a product manager on quarterly roadmaps. Four years of " +
   "experience with distributed systems is what we are looking for.";
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test("a job with no link: add it, see it, filter it, give it a link", async ({
   page,
@@ -134,10 +126,20 @@ test("a job with no link: add it, see it, filter it, give it a link", async ({
   await page.getByTestId("add-link-confirm").click();
   await expect(page.getByTestId("add-link-dialog")).toHaveCount(0, { timeout: 15_000 });
 
-  // Promoted: the chip is gone and the posting opens again.
-  await expect(page.getByTestId("add-link-open")).toHaveCount(0);
+  // Promoted: it crossed to the Has-link side, and ITS pane now offers the
+  // posting instead of Add link.
+  //
+  // Crossing the filter first, then re-selecting, is load-bearing (S-C71). The
+  // board resolves the detail pane as `visible.find(selectedId) ?? visible[0]`,
+  // so asserting straight after the dialog closes, while the No-link filter is
+  // still on, reads whichever URL-less neighbour the pane fell back to and its
+  // correctly-rendered Add link button. On the Has-link side no visible job can
+  // offer one, and the click pins the pane to this job either way.
   await page.locator("#filter-link").getByText("Has link").click();
   await expect(page.getByText("Staff Platform Engineer").first()).toBeVisible();
+  await page.getByText("Staff Platform Engineer").first().click();
+  await expect(page.getByText("Open posting").first()).toBeVisible();
+  await expect(page.getByTestId("add-link-open")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/10-promoted.png`, fullPage: true });
 });
 
@@ -164,4 +166,60 @@ test("the tracker logs an application with no link", async ({ page, request }) =
   await page.getByTestId("add-app-submit-btn").click();
   await expect(page.getByText("Logged Engineer").first()).toBeVisible({ timeout: 15_000 });
   await page.screenshot({ path: `${DIR}/12-logged.png`, fullPage: true });
+});
+
+// Its own description, for the same keying reason as TRACKER_JD above.
+const TOMBSTONE_JD =
+  "Initech needs a Ledger Engineer to maintain our settlement service. " +
+  "You will write Rust, operate Postgres replicas, and own the nightly " +
+  "reconciliation run. Six years of systems experience is the bar, and " +
+  "the team is four engineers reporting to a staff lead.";
+
+test("delete forever has room to explain itself, and refuses the paste back", async ({
+  page,
+}) => {
+  await page.goto("/jobs");
+  await page.getByTestId("add-job").click();
+  await page.getByTestId("add-job-title").fill("Ledger Engineer");
+  await page.getByTestId("add-job-company").fill("Initech");
+  await page.getByTestId("add-job-description").fill(TOMBSTONE_JD);
+  await page.getByTestId("add-job-submit-btn").click();
+  await expect(page.getByText("Ledger Engineer").first()).toBeVisible({ timeout: 15_000 });
+
+  // Trash it from the detail pane, then open the roster.
+  await page.getByText("Ledger Engineer").first().click();
+  await page.getByTestId("remove-job").click();
+  await page.getByTestId("trash-btn").click();
+  await expect(page.getByTestId("trash-modal")).toBeVisible();
+
+  // The whole-roster button is 1 line of its own now, rather than wedged
+  // beside the retention sentence (maintainer, 2026-10-08).
+  const emptyAll = page.getByTestId("trash-empty-btn");
+  await expect(emptyAll).toBeVisible();
+  expect((await emptyAll.boundingBox())?.width ?? 0).toBeGreaterThan(400);
+  await page.screenshot({ path: `${DIR}/13-trash-roster.png`, fullPage: true });
+
+  // Arming a row's confirm drops the warning onto its own line under the row,
+  // where it has the dialog's full width instead of a 260px squeeze.
+  await page.getByTestId("trash-delete-forever-btn").first().click();
+  const note = page.getByTestId("delete-forever-note");
+  await expect(note).toBeVisible();
+  expect((await note.boundingBox())?.width ?? 0).toBeGreaterThan(400);
+  await page.screenshot({ path: `${DIR}/14-trash-confirm.png`, fullPage: true });
+
+  await page.getByTestId("trash-delete-forever-confirm-btn").first().click();
+  await expect(page.getByTestId("trash-delete-forever-btn")).toHaveCount(0, { timeout: 15_000 });
+  await page.keyboard.press("Escape");
+
+  // Paste the same description back. The sidecar refuses with a 409 and the
+  // modal now says why: before this the rejection went nowhere and Add job
+  // read as a dead button (maintainer, 2026-10-08).
+  await page.getByTestId("add-job").click();
+  await page.getByTestId("add-job-title").fill("Ledger Engineer");
+  await page.getByTestId("add-job-description").fill(TOMBSTONE_JD);
+  await page.getByTestId("add-job-submit-btn").click();
+  const refusal = page.getByTestId("add-job-save-error");
+  await expect(refusal).toBeVisible({ timeout: 15_000 });
+  await expect(refusal).toContainText("permanently deleted");
+  await page.screenshot({ path: `${DIR}/15-tombstone-refusal.png`, fullPage: true });
 });

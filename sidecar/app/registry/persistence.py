@@ -536,6 +536,12 @@ def scan_usage(result: ScanResult) -> dict[str, Any]:
 
 
 DUPLICATE_FLAG = "probable-duplicate:"
+# How many peers the gate matched, written beside the id of the first one. The
+# chip says the count, because batch size is the part of this signal that
+# separates: on the bench corpus a batch of 5 was 5 of 5 withdrawn and a pair
+# 5 of 6, against 22% for everything the gate didn't flag (url-less-jobs.md
+# 15.3, n=11, suggestive and not proof).
+DUPLICATE_BATCH_FLAG = "duplicate-batch:"
 
 
 def flag_near_duplicate(repos: Repos, job: Job) -> str | None:
@@ -563,6 +569,7 @@ def flag_near_duplicate(repos: Repos, job: Job) -> str | None:
     if any(f.startswith(DUPLICATE_FLAG) for f in flags):
         return None
     flags.append(f"{DUPLICATE_FLAG}{other_id}")
+    flags.append(f"{DUPLICATE_BATCH_FLAG}{len(others)}")
     repos.jobs.update(job.id, trust_flags=flags)
     return other_id
 
@@ -623,7 +630,7 @@ def evict_stale_trash(
     with db.repos() as repos:
         repos.jobs.stamp_missing_lifecycle_dates(now=now)
         for job in repos.jobs.list_trashed_before(cutoff):
-            key = _identity_kwargs(job)
+            key = identity_kwargs(job)
             if not repos.tombstones.exists(**key):
                 repos.tombstones.create(reason="trash_ttl", **key)
             delete_job_cascade(repos, job.id)
@@ -672,7 +679,7 @@ def age_expired_jobs(
         repos.jobs.stamp_missing_lifecycle_dates(now=now)
         # The applications table lands with the tracker commit; until then no
         # job can be Saved, so nothing is rescued from aging.
-        saved: set[str] = _saved_job_ids(repos)
+        saved: set[str] = saved_job_ids(repos)
 
         # Stage 2 first: hard-delete stale Expired rows (no tombstone).
         for job in repos.jobs.list_expired_before(delete_cutoff):
@@ -690,23 +697,28 @@ def age_expired_jobs(
     return {"expired": expired, "deleted": deleted}
 
 
-def _identity_kwargs(job: Job) -> dict[str, str]:
-    """The one key this job is identified by, as tombstone kwargs."""
+def identity_kwargs(job: Job) -> dict[str, str]:
+    """The one key this job is identified by, as tombstone kwargs.
+
+    Public because `api/routes` tombstones rows too, and used to carry a
+    byte-identical private copy of this (duplication audit D-A16)."""
     if job.canonical_url:
         return {"canonical_url": job.canonical_url}
     return {"content_hash": job.content_hash or ""}
 
 
-def _saved_job_ids(repos: Repos) -> set[str]:
-    """Job ids rescued by a Saved application — never auto-expired/deleted."""
-    return repos.applications.job_ids()
+def saved_job_ids(repos: Repos) -> set[str]:
+    """Job ids rescued by a Saved application: never auto-expired or deleted, and
+    excluded from the board server-side (US-JB-06). Public for the same reason
+    as `identity_kwargs` (duplication audit D-A17)."""
+    return set(repos.applications.job_ids())
 
 
 def delete_job_cascade(repos: Repos, job_id: str) -> bool:
     """The ONE job cascade; all 4 delete paths call it, so a new FK child
     cannot wedge one path while another keeps working (S-C46). Referral
     candidates hard-delete; outreach logs nullify, because the log is audit
-    data. Applications are not touched: `_saved_job_ids` rescues a saved job
+    data. Applications are not touched: `saved_job_ids` rescues a saved job
     before deletion, and trashing requires unsaving first."""
     repos.referral_candidates.delete_for_job(job_id)
     repos.outreach_logs.nullify_for_job(job_id)

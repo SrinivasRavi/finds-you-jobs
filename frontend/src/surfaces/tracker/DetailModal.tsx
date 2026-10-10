@@ -7,14 +7,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { api } from "../../api/index";
 import {
   useApplicationActivity,
   useApplicationNetworking,
   useLinkedInSession,
 } from "../../api/queries";
 import type { Application, ApplicationDocument, Job, Priority } from "../../api/types";
-import i18n from "../../i18n";
 import type { ResumeModalKind } from "../../popups/ResumeModal";
 import { Avatar } from "../../shell/Avatar";
 import { formatWhen } from "../../shell/datetime";
@@ -22,6 +20,7 @@ import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
 import { AddLinkDialog } from "../jobs/AddLinkDialog";
+import { downloadDocument } from "../../shell/downloadDocument";
 import { JobProvenanceChips } from "../jobs/JobProvenanceChips";
 import { scoreTier, workLabel } from "../jobFormat";
 
@@ -31,20 +30,6 @@ const DOC_KIND_KEY: Record<ApplicationDocument["kind"], string> = {
   tailored_resume: "tracker.docKind.tailored_resume",
   cover_letter: "tracker.docKind.cover_letter",
 };
-
-/** Download an attached document (authed fetch → object URL → save). The bearer
- *  token can't ride on a plain href, so we fetch the blob and click a temp link. */
-async function downloadDocument(doc: ApplicationDocument): Promise<void> {
-  const blob = await api.fetchDocument(doc.document_id);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = doc.filename || i18n.t(DOC_KIND_KEY[doc.kind] ?? doc.kind);
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
 
 /** Activity timestamps read naturally — "7 July 2026, 00:20" (local time). The
  *  date used to be pinned to "en-GB" in a 13-language app (duplication audit
@@ -210,7 +195,7 @@ export function DetailModal({
   ];
 
   return (
-    <Modal title={`${app.job.title} · ${app.job.company}`} onClose={onClose} width={640}>
+    <Modal title={`${app.job.title} · ${app.job.company}`} onClose={onClose} size="lg">
       <div className="flex items-center gap-1 border-b border-border px-5">
         {tabs.map((tb) => (
           <button

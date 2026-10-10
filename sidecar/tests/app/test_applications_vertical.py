@@ -14,28 +14,12 @@ route logic — not a routed engine — is what's under test.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from sidecar.app.main import create_app
 from sidecar.app.priority import STATS_KEY
 
-TOKEN = "test-token-appvert"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH
 
 
 def _seed_job(app: FastAPI, *, url: str = "https://ex.co/j/av", score: int | None = None) -> str:
@@ -345,7 +329,6 @@ def test_application_dto_embeds_its_job(
     single = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
     assert single["job"]["id"] == job_id
     assert single["job"]["title"] == "Backend Engineer"
-
 
 
 # ---------------------------------------------------------------------------

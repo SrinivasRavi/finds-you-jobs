@@ -23,15 +23,6 @@ export function scoreTier(score: number): { text: string; ring: string; wash: st
   return { text: "text-bad", ring: "#dc2626", wash: "bg-bad-wash" };
 }
 
-/** Whole days elapsed from `iso` until now (duplication audit D-F11 — the
- *  hand-rolled copies of this arithmetic disagreed on floor vs round, so the
- *  same age could read "3d" on one surface and "4d" on another).
- *
- *  `mode` stays explicit at every call site because each existing choice is
- *  load-bearing: "floor" counts completed days (days-in-column / days-in-status),
- *  "round" snaps to the nearest day (relative time-ago copy), and "exact" keeps
- *  the fraction for comparisons that feed a filter rather than a label.
- *  Returns NaN for an unparseable timestamp — callers guard. */
 /** The 4 scoring methods, in the vocabulary `Job.llm_score_method` stores.
  *  Theme tokens, not hexes, so both themes are right for free. */
 export const SCORE_METHODS = ["llm", "jev", "local", "keyword"] as const;
@@ -74,6 +65,15 @@ export function scoreRingColor(score: number): string {
   return `rgb(${mix[0]} ${mix[1]} ${mix[2]})`;
 }
 
+/** Whole days elapsed from `iso` until now (duplication audit D-F11 — the
+ *  hand-rolled copies of this arithmetic disagreed on floor vs round, so the
+ *  same age could read "3d" on one surface and "4d" on another).
+ *
+ *  `mode` stays explicit at every call site because each existing choice is
+ *  load-bearing: "floor" counts completed days (days-in-column / days-in-status),
+ *  "round" snaps to the nearest day (relative time-ago copy), and "exact" keeps
+ *  the fraction for comparisons that feed a filter rather than a label.
+ *  Returns NaN for an unparseable timestamp — callers guard. */
 export function daysBetween(iso: string, mode: "floor" | "round" | "exact" = "floor"): number {
   const days = (Date.now() - new Date(iso).getTime()) / 86_400_000;
   if (mode === "exact") return days;
@@ -98,14 +98,29 @@ export function sourceClasses(adapter: string): string {
   return map[adapter] ?? "border-border-2 bg-surface text-ink-2";
 }
 
-export function timeAgo(iso: string): string {
-  if (!iso) return "";
+/** A relative-time phrase as an i18n key plus its number. Both formatters below
+ *  used to return English, which the board spliced into translated sentences
+ *  ("पिछला रिफ़्रेश 5m ago"). The 2026-07-24 extraction missed them because the
+ *  literals came out of a helper, not JSX. Same shape as Networking.syncedAgo. */
+export interface RelativeTime {
+  key: string;
+  n?: number;
+}
+
+/** Translate what the 2 formatters below return. `null` renders nothing. */
+export function relativeTime(rt: RelativeTime | null): string {
+  if (!rt) return "";
+  return i18n.t(rt.key, rt.n === undefined ? undefined : { n: rt.n });
+}
+
+/** A posting's age, for the board row. `null` when there is no usable date. */
+export function timeAgo(iso: string): RelativeTime | null {
+  if (!iso) return null;
   const days = daysBetween(iso, "round");
-  if (Number.isNaN(days)) return "";
-  if (days <= 0) return "today";
-  if (days === 1) return "1d ago";
-  if (days < 30) return `${days}d ago`;
-  return `${Math.round(days / 30)}mo ago`;
+  if (Number.isNaN(days)) return null;
+  if (days <= 0) return { key: "relativeTime.today" };
+  if (days < 30) return { key: "relativeTime.days", n: days };
+  return { key: "relativeTime.months", n: Math.round(days / 30) };
 }
 
 /** Best-effort min-USD salary from a fuzzy string, across currencies/formats
@@ -133,18 +148,19 @@ export function salaryFloor(salary: string): number | null {
   return Math.round(amount);
 }
 
-/** Short relative time for the board's "last refresh" (FR-JB-02) — minutes/hours. */
-export function shortAgo(iso: string | null | undefined): string {
-  if (!iso) return "never";
+/** Short relative time for the board's "last refresh" (FR-JB-02). Never null:
+ *  "never" is a real answer here, unlike a missing posting date. */
+export function shortAgo(iso: string | null | undefined): RelativeTime {
+  if (!iso) return { key: "relativeTime.never" };
   const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "never";
+  if (Number.isNaN(then)) return { key: "relativeTime.never" };
   const s = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (s < 60) return "just now";
+  if (s < 60) return { key: "relativeTime.justNow" };
   const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return { key: "relativeTime.minutes", n: m };
   const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
+  if (h < 24) return { key: "relativeTime.hours", n: h };
+  return { key: "relativeTime.days", n: Math.round(h / 24) };
 }
 
 export function jobHasScore(j: Job): boolean {

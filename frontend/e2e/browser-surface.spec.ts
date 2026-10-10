@@ -6,31 +6,16 @@
 // wikipedia.org): the whole point is proving the broker drives a real page.
 // Zero model calls.
 
-import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/browser";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  // An isolated run (second vite on FYJ_WEB_PORT beside the maintainer's dev
-  // session) passes the handshake via env — dev-web's .env.local is absent there.
-  const envPort = process.env.VITE_SIDECAR_PORT;
-  const envToken = process.env.VITE_SIDECAR_TOKEN;
-  if (envPort && envToken) {
-    return { base: `http://127.0.0.1:${envPort}`, token: envToken };
-  }
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 const PAGES = [
   { name: "example", url: "https://example.com", host: "example.com" },
@@ -58,7 +43,6 @@ const CANVAS_SIG = `(() => {
   }
   return sig;
 })()`;
-
 
 /** Drive the shared surface the way an operation would — server-side via the
  *  dev navigate route. The surface is WATCH-ONLY in the UI (maintainer,

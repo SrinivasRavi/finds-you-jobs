@@ -7,19 +7,13 @@
 // reachable at all (Tauri webview, or `VITE_SIDECAR_PORT`/`TOKEN` on the
 // `pnpm dev:web` path).
 
+import { inTauri } from "../shell/host";
 import { RealApi } from "./real";
-
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown;
-  }
-}
 
 /** True when a real sidecar is reachable (Tauri webview or explicit env). */
 export function hasSidecar(): boolean {
-  const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   const envPort = import.meta.env.VITE_SIDECAR_PORT;
-  return inTauri || Boolean(envPort);
+  return inTauri() || Boolean(envPort);
 }
 
 /** Build the client the current environment dictates (A4 switch). Mock mode

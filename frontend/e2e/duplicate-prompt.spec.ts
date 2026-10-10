@@ -3,11 +3,11 @@
 // the ingest-time flag, the compound gate and the dismissal are all exercised
 // for real rather than stubbed.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/duplicate-prompt";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -17,14 +17,6 @@ const JD =
   "design PostgreSQL schemas, run workloads on AWS and mentor other engineers. " +
   "Requirements: 6+ years of backend experience, strong Python, solid SQL, and " +
   "production ownership. Nice to have: Go, Kubernetes, and event-driven design.";
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test("the scanned card asks once, and never again once dismissed", async ({ page, request }) => {
   const { base, token } = sidecarInfo();

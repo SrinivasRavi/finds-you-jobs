@@ -34,14 +34,14 @@ import {
   useWatchlist,
 } from "../api/queries";
 import { ApiError } from "../api/real";
-import { type BoardPage, type Job } from "../api/types";
+import { type BoardPage, type Job, type Settings } from "../api/types";
 import { Avatar } from "../shell/Avatar";
 import { ChipInput } from "../shell/ChipInput";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { FactorBars } from "../shell/FactorBars";
 import { DuplicatePrompt } from "./jobs/DuplicatePrompt";
 import { Icon } from "../shell/icons";
-import { Chip, SearchBox } from "../shell/FilterRow";
+import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import { Modal } from "../shell/Modal";
 import { Markdown } from "../shell/Markdown";
@@ -60,6 +60,7 @@ import {
   daysBetween,
   firstHeading,
   methodColor,
+  relativeTime,
   salaryFloor,
   scoreRingColor,
   scoreTier,
@@ -91,8 +92,6 @@ function useDebounced<T>(value: T, ms: number): T {
   return debounced;
 }
 
-/** One search input with a clear (×) button — clearing restores the unfiltered
- *  feed (FR-JB-13). Used for both the list search and the deep all-text search. */
 /** 2 concentric rings (maintainer, 2026-10-07). The OUTER arc is the score:
  *  red at 0 through amber to green at 100, drawn as far round as the number
  *  goes. The INNER ring is the method that produced it, because a board can
@@ -262,7 +261,7 @@ const JobRow = memo(function JobRow({
         <div className="text-[11.5px] text-ink-3">
           {[
             job.salary,
-            timeAgo(job.posted_at),
+            relativeTime(timeAgo(job.posted_at)),
             job.applicants !== null
               ? t("jobBoard.row.applicants", { count: job.applicants })
               : "",
@@ -789,7 +788,7 @@ function BoardEmptyState({
             {meta?.scan_error || t("jobBoard.empty.unknownError")}
           </div>
           <div className="text-ink-4">
-            {t("jobBoard.empty.lastAttempt", { ago: shortAgo(meta?.last_scan_at) })}
+            {t("jobBoard.empty.lastAttempt", { ago: relativeTime(shortAgo(meta?.last_scan_at)) })}
           </div>
         </div>
       </div>
@@ -804,7 +803,7 @@ function BoardEmptyState({
           {t("jobBoard.empty.widenPrefs")}
         </div>
         <div className="text-ink-4">
-          {t("jobBoard.empty.lastRefresh", { ago: shortAgo(meta?.last_scan_at) })}
+          {t("jobBoard.empty.lastRefresh", { ago: relativeTime(shortAgo(meta?.last_scan_at)) })}
         </div>
         {/* D13: 1 button, reusing the same modal. A user whose first scan
             found nothing is the user with a JD sitting in their inbox. */}
@@ -963,11 +962,14 @@ export function JobBoard() {
               Resume lands immediately before the shared Deleted+Add cluster —
               the one spot it can share pixel-for-pixel with the Applications and
               Networking tabs (maintainer 2026-07-28 swap). */}
+          {/* Disabled until the prefs land: the modal is seeded from them, and
+              a control that renders is a control that works (section 7.4). */}
           <button
             onClick={() => setShowPrefs(true)}
             data-testid="finder-prefs"
+            disabled={!settings}
             title={t("jobBoard.header.finderPrefsTitle")}
-            className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink"
+            className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-7 border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink disabled:opacity-50"
           >
             <Icon name="settings" size={14} strokeWidth={2} />
             {t("jobBoard.header.finderPrefs")}
@@ -990,13 +992,9 @@ export function JobBoard() {
       {/* Filter row — right-aligned like the Applications/Networking FilterBar,
           so the trailing Search box lands on the same edge in every tab
           (maintainer 2026-07-24 #4). */}
-      <div
-        data-testid="v2-filters"
-        className="flex min-h-[45px] flex-wrap items-center justify-end gap-2 border-b border-border bg-surface px-5 py-2"
-      >
+      <FilterBar testid="v2-filters">
         {/* Work style chip group (US-JB-02) — first, per the prototype filter row */}
-        <div className="flex items-center gap-1.5" id="filter-ws" aria-label={t("jobBoard.filters.workStyle")}>
-          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.workStyle")}</span>
+        <FilterGroup label={t("jobBoard.filters.workStyle")} id="filter-ws">
           {(
             [
               ["ALL", "jobBoard.filters.all"],
@@ -1010,10 +1008,9 @@ export function JobBoard() {
               {t(l)}
             </Chip>
           ))}
-        </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.posted")}</span>
+        </FilterGroup>
+        <FilterSep />
+        <FilterGroup label={t("jobBoard.filters.posted")}>
           {[
             [0, "jobBoard.filters.anyTime"],
             [1, "jobBoard.filters.last24h"],
@@ -1025,10 +1022,9 @@ export function JobBoard() {
               {t(l as string)}
             </Chip>
           ))}
-        </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.minSalary")}</span>
+        </FilterGroup>
+        <FilterSep />
+        <FilterGroup label={t("jobBoard.filters.minSalary")}>
           {[
             [0, "jobBoard.filters.any"],
             [50000, "jobBoard.filters.salary50k"],
@@ -1039,10 +1035,9 @@ export function JobBoard() {
               {t(l as string)}
             </Chip>
           ))}
-        </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
-        <div className="flex items-center gap-1.5" id="filter-status">
-          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.status")}</span>
+        </FilterGroup>
+        <FilterSep />
+        <FilterGroup label={t("jobBoard.filters.status")} id="filter-status">
           {(
             [
               ["ALL", "jobBoard.filters.all"],
@@ -1054,13 +1049,12 @@ export function JobBoard() {
               {t(label)}
             </Chip>
           ))}
-        </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
+        </FilterGroup>
+        <FilterSep />
         {/* The URL axis (url-less-jobs.md section 9.3). The source chip on each
             card covers the other one, scanned versus typed in, and the 2
             deliberately disagree on a promoted job. */}
-        <div className="flex items-center gap-1.5" id="filter-link">
-          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.link")}</span>
+        <FilterGroup label={t("jobBoard.filters.link")} id="filter-link">
           {(
             [
               ["", "jobBoard.filters.all"],
@@ -1072,10 +1066,9 @@ export function JobBoard() {
               {t(label)}
             </Chip>
           ))}
-        </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11.5px] text-ink-4">{t("jobBoard.filters.sort")}</span>
+        </FilterGroup>
+        <FilterSep />
+        <FilterGroup label={t("jobBoard.filters.sort")}>
           <div
             data-testid="sort-toggle"
             className="inline-flex items-center rounded-full border border-border-2 bg-surface p-0.5"
@@ -1093,8 +1086,8 @@ export function JobBoard() {
               </button>
             ))}
           </div>
-        </div>
-        <span className="mx-1 h-4 w-px bg-border-2" />
+        </FilterGroup>
+        <FilterSep />
         {/* THE board search (FR-JB-13): sits right after SORT, behind the same
             "|" separator as the other groups. A SMALL flex-basis + min-width
             means it shrinks to fit the space the filter groups leave — down to
@@ -1107,7 +1100,7 @@ export function JobBoard() {
           placeholder={t("jobBoard.filters.searchPlaceholder")}
           testid="board-text-search"
         />
-      </div>
+      </FilterBar>
 
       {/* Split */}
       <div className="flex min-h-0 flex-1" data-testid="v2-split-host">
@@ -1118,7 +1111,7 @@ export function JobBoard() {
                   real "last refresh" from the last successful scan (FR-JB-10). */}
               {t("jobBoard.list.jobsCount", { count: meta?.total ?? visible.length })}{" "}
               <span className="text-ink-3/80" data-testid="last-refresh">
-                {t("jobBoard.list.lastRefresh", { ago: shortAgo(meta?.last_scan_at) })}
+                {t("jobBoard.list.lastRefresh", { ago: relativeTime(shortAgo(meta?.last_scan_at)) })}
               </span>
             </span>
           </div>
@@ -1243,7 +1236,12 @@ export function JobBoard() {
           onEmpty={() => emptyTrash.mutate()}
         />
       ) : null}
-      {showPrefs ? <FinderPrefsModal onClose={() => setShowPrefs(false)} /> : null}
+      {showPrefs && settings ? (
+        <FinderPrefsModal
+          prefs={settings.job_prefs}
+          onClose={() => setShowPrefs(false)}
+        />
+      ) : null}
     </>
   );
 }
@@ -1411,29 +1409,32 @@ function nextScanLabel(iso: string): string {
 }
 
 function FinderPrefsModal({
+  prefs,
   onClose,
 }: {
+  prefs: Settings["job_prefs"];
   onClose: () => void;
 }) {
   // Seeded from the STORED preferences and saved back through the same
   // /api/settings path onboarding uses — which also threads the cadence into
   // the scan schedule server-side. (2026-07-12 audit P0-2: this modal was a
   // hardcoded mock stub whose "Save & rescan" rescanned with stale prefs.)
+  //
+  // `prefs` is a required prop, not a query read, because these are `useState`
+  // seeds: they run once and nothing re-seeds them. Reading an unresolved
+  // query here left roles and locations empty for the modal's whole life, and
+  // the first edit then autosaved those empties over the user's real excludes
+  // (S-C72).
   const { t } = useTranslation();
-  const { data: settings } = useSettings();
   const qc = useQueryClient();
-  const [roles, setRoles] = useState<string[]>(settings?.job_prefs.role_aliases ?? []);
-  const [locations, setLocations] = useState<string[]>(settings?.job_prefs.locations ?? []);
+  const [roles, setRoles] = useState<string[]>(prefs.role_aliases);
+  const [locations, setLocations] = useState<string[]>(prefs.locations);
   const [freshness, setFreshness] = useState(
-    FRESHNESS_LABEL[settings?.job_prefs.freshness_days ?? 7] ?? "7d",
+    FRESHNESS_LABEL[prefs.freshness_days] ?? "7d",
   );
-  const [cadence, setCadence] = useState(settings?.job_prefs.scrape_cadence ?? "Every 24h");
-  const [excludedCompanies, setExcludedCompanies] = useState<string[]>(
-    settings?.job_prefs.excluded_companies ?? [],
-  );
-  const [excludedKeywords, setExcludedKeywords] = useState<string[]>(
-    settings?.job_prefs.excluded_keywords ?? [],
-  );
+  const [cadence, setCadence] = useState(prefs.scrape_cadence);
+  const [excludedCompanies, setExcludedCompanies] = useState<string[]>(prefs.excluded_companies);
+  const [excludedKeywords, setExcludedKeywords] = useState<string[]>(prefs.excluded_keywords);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [savedFlash, setSavedFlash] = useState(false);
@@ -1503,7 +1504,7 @@ function FinderPrefsModal({
   }
 
   return (
-    <Modal title={t("jobBoard.prefs.title")} onClose={onClose} width={560}>
+    <Modal title={t("jobBoard.prefs.title")} onClose={onClose} size="md">
       <form
         className="flex flex-col gap-5 px-5 py-5"
         onSubmit={(e) => {
@@ -1699,36 +1700,43 @@ function TrashModal({
         onRun: onDeleteForever,
       }}
       footer={
-        <div className="flex items-center justify-between gap-3 text-[11.5px] text-ink-3">
-          <span>{t("jobBoard.trashModal.retention")}</span>
+        /* "Delete all forever" gets its own line. Wedged next to the retention
+           sentence it was a 2-word button in a 3-column squeeze, and the whole
+           dialog read as cramped (maintainer, 2026-10-08). */
+        <div className="space-y-2.5">
+          <p className="text-[11.5px] leading-relaxed text-ink-3">
+            {t("jobBoard.trashModal.retention")}
+          </p>
           {confirmEmpty ? (
-            <span className="flex items-center gap-2">
-              <span className="text-ink-2">
+            <div className="space-y-2">
+              <p className="text-[12px] text-warn">
                 {t("jobBoard.trashModal.emptyConfirm", { count: trashed.length })}
-              </span>
-              <button
-                data-testid="trash-empty-confirm-btn"
-                onClick={() => {
-                  onEmpty();
-                  setConfirmEmpty(false);
-                }}
-                className="rounded-md border border-bad/40 bg-bad px-2 py-1 font-medium text-white hover:opacity-90"
-              >
-                {t("jobBoard.trashModal.confirm")}
-              </button>
-              <button
-                onClick={() => setConfirmEmpty(false)}
-                className="rounded-md border border-border px-2 py-1 text-ink-2 hover:bg-surface-3"
-              >
-                {t("jobBoard.trashModal.cancel")}
-              </button>
-            </span>
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  data-testid="trash-empty-confirm-btn"
+                  onClick={() => {
+                    onEmpty();
+                    setConfirmEmpty(false);
+                  }}
+                  className="rounded-md border border-bad/40 bg-bad px-3 py-1.5 text-[12px] font-medium text-white hover:opacity-90"
+                >
+                  {t("jobBoard.trashModal.confirm")}
+                </button>
+                <button
+                  onClick={() => setConfirmEmpty(false)}
+                  className="rounded-md border border-border px-3 py-1.5 text-[12px] text-ink-2 hover:bg-surface-3"
+                >
+                  {t("jobBoard.trashModal.cancel")}
+                </button>
+              </div>
+            </div>
           ) : (
             <button
               data-testid="trash-empty-btn"
               disabled={trashed.length === 0}
               onClick={() => setConfirmEmpty(true)}
-              className="rounded-md border border-bad/40 px-2 py-1 text-bad hover:bg-bad-wash disabled:opacity-40 disabled:hover:bg-transparent"
+              className="w-full rounded-md border border-bad/40 px-3 py-2 text-[12px] font-medium text-bad hover:bg-bad-wash disabled:opacity-40 disabled:hover:bg-transparent"
             >
               {t("jobBoard.trashModal.emptyTrash")}
             </button>

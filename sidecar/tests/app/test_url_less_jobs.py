@@ -12,41 +12,25 @@ tests are the layer's acceptance bar: post the same JD twice and get 1 row.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app.db.base import now_utc
-from sidecar.app.main import create_app
 from sidecar.app.registry.persistence import age_expired_jobs
 from sidecar.modules.scraper import ScraperError
 from sidecar.modules.scraper.identity import content_hash
 from sidecar.modules.scraper.types import NormalizedJob
 
-TOKEN = "test-token-urlless"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
+from ._support import AUTH
 
 _JD = (
     "We are hiring a Senior Software Engineer to own our ingestion pipeline. "
     "You will design services in Python, run them on AWS, and mentor two "
     "junior engineers. Five years of backend experience required."
 )
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
 
 
 def _paste(client: TestClient, description: str, **over: str) -> dict:

@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from .deterministic import MIN_JD_CHARS
 from .types import Factor, ScoreError, ScoreResult, Usage
 from .weights import JEV_WEIGHTS, weighted_total
 
@@ -97,7 +98,6 @@ QUESTION_INSTRUCTIONS: Mapping[str, str] = {
     "evidenced in the resume?",
 }
 
-MIN_JD_CHARS = 200
 _BAND_COUNT = 5
 
 
@@ -234,7 +234,8 @@ def score_jev(
     """Score 1 posting with 1 decision call. Raises `ScoreError` on a bad reply.
 
     A posting under `MIN_JD_CHARS` is refused rather than scored, the same bar and
-    the same reason as every other method: see `deterministic.MIN_JD_CHARS`.
+    the same reason as every other method: `deterministic.MIN_JD_CHARS`, imported
+    rather than restated (duplication audit D-M18).
     """
     if len((job_text or "").strip()) < MIN_JD_CHARS:
         raise ScoreError(

@@ -33,11 +33,12 @@ from sidecar.modules.scraper.fingerprint import (
     to_signed64,
 )
 from sidecar.modules.scraper.identity import content_hash
+from sidecar.modules.scraper.quality import evaluate as quality_evaluate
 from sidecar.modules.scraper.types import ScanPrefs
 
 from .. import documents as docstore
 from ..db.base import now_utc
-from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES, Job
+from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import heartbeat_stream
 from ..logging_setup import get_logger
 from ..observability import reconfigure_observability
@@ -67,6 +68,8 @@ from ..registry.persistence import (
     SCORER_IMPL_DETERMINISTIC,
     delete_application_cascade,
     delete_job_cascade,
+    identity_kwargs,
+    saved_job_ids,
     scoring_mode,
 )
 from ..runner import OperationRunner
@@ -153,11 +156,6 @@ def _sort_board(dtos: list[dto.JobDTO]) -> None:
         key=lambda d: (d.score.score_0_100 if d.score is not None else -1, d.ingested_at),
         reverse=True,
     )
-
-
-def _saved_job_ids(repos: Any) -> set[str]:
-    """Job ids already Saved — excluded from the board server-side (US-JB-06)."""
-    return set(repos.applications.job_ids())
 
 
 def _scan_new_ids(last_scan: Any) -> set[str]:
@@ -290,7 +288,7 @@ def board(
     page_size = max(1, min(_BOARD_PAGE_SIZE, page_size))
 
     with _db(request).repos() as repos:
-        saved = _saved_job_ids(repos)
+        saved = saved_job_ids(repos)
         jobs = [
             j
             for j in repos.jobs.list_by_states(_BOARD_FEED_STATES)
@@ -430,13 +428,6 @@ def _identity(canonical_url: str, description: str) -> tuple[str | None, str | N
     return None, content_hash(description) or None
 
 
-def _tombstone_key(job: Job) -> dict[str, str]:
-    """The one identity this stored row is tombstoned under."""
-    if job.canonical_url:
-        return {"canonical_url": job.canonical_url}
-    return {"content_hash": job.content_hash or ""}
-
-
 @router.post("/api/jobs/preview")
 def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.JobPreviewDTO:
     """Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
@@ -525,6 +516,18 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
                     enqueue_score = True
                     job_id, profile_version = job.id, profile.version
         else:
+            # The same ingest quality checks a scanned row gets. A hand-added
+            # job never passed through a scan, so until this call the red-flag
+            # terms were never read on the 1 path where the text arrives out of
+            # the user's own email (url-less-jobs.md 15.3). The URL-dependent
+            # checks no-op on a URL-less job.
+            trust_score, trust_flags = quality_evaluate(
+                title=payload.title,
+                location=payload.location,
+                description=payload.description,
+                canonical_url=canonical or "",
+                posted_at=payload.posted_at,
+            )
             job = repos.jobs.create(
                 canonical_url=canonical,
                 content_hash=digest,
@@ -536,6 +539,8 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
                 posted_at=payload.posted_at,
                 salary=payload.salary,
                 source_adapter=payload.source_adapter,
+                trust_score=trust_score,
+                trust_flags=trust_flags,
             )
             # The cross-scan duplicate check, at write (url-less-jobs.md 9.6).
             # One narrow scan here keeps the board's render free of it.
@@ -792,7 +797,7 @@ def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO:
     scan or Add-by-URL can never re-surface it (FR-SYS-04)."""
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
-        key = _tombstone_key(job)
+        key = identity_kwargs(job)
         label = job.canonical_url or ""
         if not repos.tombstones.exists(**key):
             repos.tombstones.create(reason="user_delete", **key)
@@ -817,7 +822,7 @@ def empty_trash(request: Request) -> dto.TombstoneResultDTO:
     count = 0
     with _db(request).repos() as repos:
         for job in repos.jobs.list(feed_state="removed", limit=10_000):
-            key = _tombstone_key(job)
+            key = identity_kwargs(job)
             if not repos.tombstones.exists(**key):
                 repos.tombstones.create(reason="empty_trash", **key)
             if job.canonical_url:
@@ -1953,8 +1958,16 @@ def _int_or_none(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+_ARTIFACT_SLOT = {"tailor": "tailored", "cover": "cover"}
+
+
 def _operation_subject(
-    op: Any, *, jobs: dict[str, Any], contacts: dict[str, Any], applications: dict[str, Any]
+    op: Any,
+    *,
+    jobs: dict[str, Any],
+    contacts: dict[str, Any],
+    applications: dict[str, Any],
+    artifacts: dict[str, Any],
 ) -> dto.OperationSubjectDTO | None:
     snap = op.input_snapshot or {}
     ref = op.result_ref or {}
@@ -1977,6 +1990,14 @@ def _operation_subject(
         elif kind == "score" and _int_or_none(ref.get("score")) is not None:
             method = str(ref.get("method") or "")
             subject.badge = f"{ref['score']} · {method}" if method else str(ref["score"])
+        # A tailor or cover row wrote a document. Name where it lives so the
+        # ledger can open it, rather than only linking out to the posting.
+        slot = _ARTIFACT_SLOT.get(kind)
+        artifact = artifacts.get(str(ref.get("artifact_id") or "")) if slot else None
+        if artifact is not None:
+            subject.artifact = dto.OperationArtifactDTO(
+                application_id=artifact.application_id, kind=slot or ""
+            )
         return subject
     if kind == "apply":
         app = applications.get(str(snap.get("application_id") or ""))
@@ -2069,10 +2090,11 @@ def _operation_subject(
 
 def _ledger_subjects(repos: Any, ops: list[Any]) -> dict[str, dto.OperationSubjectDTO]:
     """Batched subject pass over a page of ledger rows: gather every ref first,
-    then ONE IN query per table (applications → jobs, contacts)."""
+    then ONE IN query per table (applications → jobs, contacts, artifacts)."""
     job_ids: set[str] = set()
     contact_ids: set[str] = set()
     application_ids: set[str] = set()
+    artifact_ids: set[str] = set()
     for op in ops:
         snap = op.input_snapshot or {}
         if (op.kind in _JOB_SUBJECT_KINDS or op.kind in _CONTACT_SUBJECT_KINDS) and snap.get(
@@ -2083,14 +2105,17 @@ def _ledger_subjects(repos: Any, ops: list[Any]) -> dict[str, dto.OperationSubje
             contact_ids.add(str(snap["contact_id"]))
         if op.kind == "apply" and snap.get("application_id"):
             application_ids.add(str(snap["application_id"]))
+        if op.kind in _ARTIFACT_SLOT and (op.result_ref or {}).get("artifact_id"):
+            artifact_ids.add(str(op.result_ref["artifact_id"]))
     applications = repos.applications.get_many(sorted(application_ids))
     job_ids.update(app.job_id for app in applications.values())
     jobs = repos.jobs.get_many(sorted(job_ids))
     contacts = repos.contacts.get_many(sorted(contact_ids))
+    artifacts = repos.artifacts.get_many(sorted(artifact_ids))
     subjects: dict[str, dto.OperationSubjectDTO] = {}
     for op in ops:
         subject = _operation_subject(
-            op, jobs=jobs, contacts=contacts, applications=applications
+            op, jobs=jobs, contacts=contacts, applications=applications, artifacts=artifacts
         )
         if subject is not None:
             subjects[op.id] = subject
@@ -3374,14 +3399,14 @@ def set_prompt(
     data_dir = _prompts_data_dir(request)
     set_override(kind, payload.markdown, data_dir)
     return dto.PromptDTO(
-        kind=spec.kind, title=spec.title, routed=spec.routed,
+        kind=spec.kind, title=spec.title, op_kind=spec.operation_kind(),
         default_md=default_md(kind), override_md=get_override(kind, data_dir),
     )
 
 
 # Which operation kind runs a given prompt. A test run is that operation, not a
 # new one, so cost, the LLM cap, Stop and Retry all come for free and a test's
-# spend is comparable with a real run's (prompt-tuning.md section 6).
+# spend is comparable with a real run's (url-less-jobs.md section 11.4).
 _PROMPT_TEST_KIND: dict[str, str] = {
     "score": "score",
     "tailor": "tailor",
@@ -3398,7 +3423,7 @@ _PROMPT_TEST_NEEDS_JOB = frozenset({"score", "tailor", "cover"})
 def test_prompt(
     request: Request, kind: str, payload: dto.PromptTestRequest
 ) -> dto.OperationAccepted:
-    """Run a prompt draft once, without committing it (prompt-tuning.md).
+    """Run a prompt draft once, without committing it (url-less-jobs.md section 11).
 
     The draft rides the operation's snapshot, so the module runs it and the saved
     prompt is untouched. The run writes nothing: no score on the job, no
@@ -3464,7 +3489,7 @@ def reset_prompt(request: Request, kind: str) -> dto.PromptDTO:
     data_dir = _prompts_data_dir(request)
     reset(kind, data_dir)
     return dto.PromptDTO(
-        kind=spec.kind, title=spec.title, routed=spec.routed,
+        kind=spec.kind, title=spec.title, op_kind=spec.operation_kind(),
         default_md=default_md(kind), override_md=None,
     )
 

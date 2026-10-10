@@ -12,19 +12,14 @@ runner + seeded-disabled schedules):
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from sidecar.app.main import create_app
 from sidecar.modules.scraper import ScraperError
 from sidecar.modules.scraper.types import NormalizedJob
 
-TOKEN = "test-token-a4b"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
+from ._support import AUTH
 
 
 def _add_job(client: TestClient, url: str, title: str = "T") -> dict[str, object]:
@@ -32,18 +27,6 @@ def _add_job(client: TestClient, url: str, title: str = "T") -> dict[str, object
     return client.post(
         "/api/jobs", headers=AUTH, json={"canonical_url": url, "title": title}
     ).json()
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,  # we drive run-now / ticks explicitly
-    )
-    with TestClient(app) as client:
-        yield app, client
 
 
 # ---------------------------------------------------------------------------

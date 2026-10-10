@@ -9,7 +9,6 @@ before any fetch.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,12 +16,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app.api import discovery as discovery_api
-from sidecar.app.main import create_app
 from sidecar.modules.scraper import adapters
 from sidecar.modules.scraper.types import ScraperError
 
-TOKEN = "test-token-discovery"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
+from ._support import AUTH
 
 
 class _ProbeOkFetcher:
@@ -47,18 +44,6 @@ def _offline_watch_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     is cleared so no test sees another's cache."""
     monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
     discovery_api._GUESS_CACHE.clear()
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
 
 
 def test_catalog_lists_every_family_enabled_by_default(

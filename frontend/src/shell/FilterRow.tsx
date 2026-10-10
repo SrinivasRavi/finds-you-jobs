@@ -13,10 +13,19 @@ import { Icon } from "./icons";
  *  `children` (the filter groups + search) are right-aligned and separated by
  *  <FilterSep />; an optional `left` node holds context that sits on the left
  *  (the left side is allowed to be empty otherwise). */
-export function FilterBar({ children, left }: { children: ReactNode; left?: ReactNode }) {
+export function FilterBar({
+  children,
+  left,
+  testid = "filter-bar",
+}: {
+  children: ReactNode;
+  left?: ReactNode;
+  /** The Job Board's row kept its own id when it adopted this component. */
+  testid?: string;
+}) {
   return (
     <div
-      data-testid="filter-bar"
+      data-testid={testid}
       className="flex min-h-[45px] flex-wrap items-center gap-2 border-b border-border bg-surface px-5 py-2"
     >
       {left ? <div className="flex items-center gap-2">{left}</div> : null}

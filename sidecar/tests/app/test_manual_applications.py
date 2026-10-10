@@ -14,7 +14,6 @@ Through the real app (TestClient → lifespan → real migration):
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,20 +21,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app import documents as docstore
-from sidecar.app.main import create_app
 
-TOKEN = "test-token-manual"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH
 
 
 def _blob_dir(app: FastAPI) -> Path:

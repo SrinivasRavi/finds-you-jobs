@@ -9,22 +9,14 @@
 // never clicks "Find referrals" or "Send", so no discover/send op ever
 // enqueues and the voyager driver is never constructed.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/networking";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test("networking kanban renders seeded contacts and drag persists", async ({
   page,
@@ -472,7 +464,7 @@ test("settings expose the rate-limit controls and the 25-job search cap", async 
   // The logged-in job search lives in the Discover-jobs settings category and
   // pulls exactly one LinkedIn page (25) — fixed, not a selector: the request
   // carries count=25 whatever we ask for, so a knob would only be cosmetic.
-  await page.getByRole("button", { name: /Sources, scoring & automation/ }).click();
+  await page.getByTestId("settings-nav-discovery").click();
   const ack = page.getByTestId("linkedin-search-ack");
   await ack.scrollIntoViewIfNeeded();
   await ack.check();
@@ -492,7 +484,7 @@ test("settings expose the rate-limit controls and the 25-job search cap", async 
   await expect(page.getByTestId("linkedin-jobsearch-next-btn")).toHaveCount(0);
   await request.post(`${base}/api/dev/linkedin/seed-search-cursor`, { headers: auth });
   await page.reload();
-  await page.getByRole("button", { name: /Sources, scoring & automation/ }).click();
+  await page.getByTestId("settings-nav-discovery").click();
   const nextBtn = page.getByTestId("linkedin-jobsearch-next-btn");
   await nextBtn.scrollIntoViewIfNeeded();
   await expect(nextBtn).toBeVisible();

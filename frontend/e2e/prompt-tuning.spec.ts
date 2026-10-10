@@ -1,25 +1,17 @@
-// Covers: trying a prompt before committing it (prompt-tuning.md, S-C70).
+// Covers: trying a prompt before committing it (url-less-jobs.md section 11, S-C70).
 //
 // The shape under test is the maintainer's (2026-10-06): the draft and its test
 // runs live inside a popup, 1 button in that popup commits, and the shipped
 // prompt stays reachable with Reset outside it.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/prompt-tuning";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 /** index.css transitions colour over 240ms on anything whose class string
  *  contains "bg-surface" or "text-ink", so a shot fired the instant a control
@@ -56,7 +48,7 @@ test("a prompt draft runs inside the popup, and only its own button commits it",
 
   await page.goto("/settings");
   await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId("settings-nav-prompts").click();
+  await page.getByTestId("settings-nav-scoring").click();
 
   // The pane itself is read-only now: the way to change a prompt is the popup.
   const inline = page.locator('[data-testid="prompt-textarea-score"]');
@@ -109,11 +101,12 @@ test("a prompt draft runs inside the popup, and only its own button commits it",
 test("the kinds that need no job, and the one that needs a contact", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId("settings-nav-prompts").click();
+  // Each prompt now sits in the category that owns the work it does
+  // (url-less-jobs.md section 11.5), so there is no tab bar to click through.
+  await page.getByTestId("settings-nav-applying").click();
 
-  // Application profile extraction reads the master resume alone, so it has no
-  // picker at all and Run is live immediately.
-  await page.locator('[data-testid="prompt-row-extract"]').click();
+  // Form answers reads the master resume alone, so it has no picker at all
+  // and Run is live immediately.
   await page.locator('[data-testid="prompt-edit-extract"]').click();
   await expect(page.locator('[data-testid="prompt-test-job"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="prompt-test-contact"]')).toHaveCount(0);
@@ -123,7 +116,7 @@ test("the kinds that need no job, and the one that needs a contact", async ({ pa
 
   // Referral drafting needs a REAL contact: a made-up one would test the
   // prompt against input that never occurs.
-  await page.locator('[data-testid="prompt-row-networker_draft"]').click();
+  await page.getByTestId("settings-nav-networking").click();
   await page.locator('[data-testid="prompt-edit-networker_draft"]').click();
   await expect(page.locator('[data-testid="prompt-test-contact"]')).toBeVisible();
   await expect(page.locator('[data-testid="prompt-tune-run"]')).toBeDisabled();

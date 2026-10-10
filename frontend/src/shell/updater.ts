@@ -23,15 +23,12 @@
 // keeps the e2e run from making outbound calls.
 
 import { rawAppVersion } from "./appVersion";
+import { inTauri } from "./host";
 
 const REPO = "SrinivasRavi/finds-you-jobs";
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 /** Fallback target when a release carries no html_url of its own. */
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
-
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
 /** True only inside the packaged desktop app, where a version check is meaningful. */
 export function updaterAvailable(): boolean {

@@ -22,7 +22,11 @@ import { useLinkedInSession } from "../api/queries";
 import { Modal } from "../shell/Modal";
 import { BrowserOpPlan, opBusy, useBrowserOps, type BrowserOps } from "./BrowserOpPlan";
 import { BrowserSurface } from "./BrowserSurface";
-import { type LinkedInPillTone, linkedInStatusPill } from "./linkedInStatus";
+import {
+  HEADER_PILL_CLS,
+  HEADER_PILL_LABEL,
+  linkedInStatusPill,
+} from "./linkedInStatus";
 
 // The broker surface slug this modal attaches to. Owned by the add-on side —
 // never spelled inside the shared BrowserSurface / screencast components.
@@ -108,21 +112,6 @@ export function LinkedInBrowserProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// The modal's own status chip (D-F8: only status→semantics is shared via
-// linkedInStatusPill; each surface keeps its own chrome and copy).
-const HEADER_PILL_CLS: Record<LinkedInPillTone, string> = {
-  good: "bg-good-wash border-good text-good",
-  warn: "bg-warn-wash border-warn text-warn",
-  bad: "bg-bad-wash border-bad text-bad",
-};
-const HEADER_PILL_LABEL: Record<string, string> = {
-  connected: "networking.linkedinPill.connected",
-  connecting: "networking.linkedinPill.connecting",
-  backingOff: "networking.linkedinPill.backingOff",
-  expired: "networking.linkedinPill.expired",
-  disconnected: "networking.linkedinPill.connect",
-};
-
 function LinkedInBrowserModal({
   ops,
   onClose,
@@ -141,7 +130,7 @@ function LinkedInBrowserModal({
     <Modal
       title={t("networking.linkedinModal.title")}
       onClose={onClose}
-      width={1840}
+      size="full"
       headerExtra={
         <>
           {onBack ? (

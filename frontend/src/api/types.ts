@@ -66,7 +66,7 @@ export interface ExplainCost {
   ready: boolean;
 }
 
-/** What a prompt-tuning test run needs, per kind (prompt-tuning.md section 5). */
+/** What a prompt-tuning test run needs, per kind (url-less-jobs.md section 11.3). */
 export interface PromptTestInput {
   markdown: string;
   job_id?: string;
@@ -230,6 +230,23 @@ export const STAGES: Stage[] = [
   "Rejected",
 ];
 
+/** The stages where the application has already gone out. 4 copies of this
+ *  list existed under 4 names (`frozen` in Tracker, `POST_APPLICATION` in Card,
+ *  `MANUAL_STAGES` in AddApplicationModal, and an inline `Extract<>` below).
+ *  3 rules read it: a card can't be dragged back out of these, the Apply slot
+ *  can't start a run in one, and a manually-logged application starts in one. */
+export const POST_APPLICATION_STAGES = [
+  "Applied",
+  "Interviewing",
+  "Offer",
+  "Rejected",
+] as const;
+
+export type PostApplicationStage = (typeof POST_APPLICATION_STAGES)[number];
+
+/** The pre-submission stages, where moves are free. */
+export const PRE_APPLICATION_STAGES = ["Saved", "Seeking Referral"] as const;
+
 /** Card-level triage priority — z-band against the score distribution (US-TR-10). */
 export type Priority = "P0" | "P1" | "P2" | "P3";
 
@@ -297,7 +314,7 @@ export interface ManualApplicationInput {
   salary: string;
   source_adapter: string;
   /** Post-referral stage the record lands in (default Applied). */
-  stage: Extract<Stage, "Applied" | "Interviewing" | "Offer" | "Rejected">;
+  stage: PostApplicationStage;
   notes: string;
   resume: File | null;
   cover: File | null;
@@ -797,13 +814,14 @@ export interface EngineRoute {
 
 /** A user-editable LLM prompt (module skill markdown) — US-SET-12 / FR-SET-11.
  *  `default_md` is the shipped text; `override_md` is the saved edit or null
- *  (→ default). `routed` kinds also carry an engine/model selector; the one
- *  unrouted kind (`networker_draft`) is prompt-only. The list is server-driven
+ *  (→ default). `op_kind` is the `LLM_KINDS` operation whose engine and model
+ *  this prompt runs on; it differs from `kind` only for `networker_draft`,
+ *  which runs as `draft`. The list is server-driven
  *  (`GET /api/settings/prompts`), so whatever kinds the sidecar exposes render. */
 export interface PromptSetting {
   kind: string;
   title: string;
-  routed: boolean;
+  op_kind: string;
   default_md: string;
   override_md: string | null;
 }
@@ -1092,6 +1110,9 @@ export interface LedgerSubject {
   /** A short trailing mark: the score a `score` row produced, or that the row
    *  was a prompt test rather than real work. */
   badge: string | null;
+  /** The document this row wrote, when the app can open it in place: a tailor
+   *  or cover run's artifact, named by its application and its slot. */
+  artifact: { application_id: string; kind: "tailored" | "cover" } | null;
 }
 
 export interface LedgerEntry {

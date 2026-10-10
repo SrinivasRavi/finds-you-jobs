@@ -7,9 +7,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from sidecar.app.db import Database
 from sidecar.app.db.migrate import upgrade_to_head
+from sidecar.app.main import create_app
+
+from ._support import TOKEN
 
 
 @pytest.fixture(autouse=True)
@@ -63,3 +68,22 @@ def wait_for_state(
             return state  # type: ignore[return-value]
         time.sleep(0.02)
     raise AssertionError(f"operation {operation_id} never reached {targets} (last={state})")
+
+
+@pytest.fixture
+def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    """A booted app plus its client, on a throwaway data dir and with the
+    scheduler off so a test drives ticks itself.
+
+    10 modules carried this fixture verbatim (duplication audit D-T2). The 9
+    that genuinely need more (an env var, a session key, a fake driver) keep
+    their own, because that divergence is real.
+    """
+    app = create_app(
+        token=TOKEN,
+        original_ppid=None,
+        data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+    with TestClient(app) as client:
+        yield app, client

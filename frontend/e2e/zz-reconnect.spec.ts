@@ -13,25 +13,17 @@
 // it does not sever loopback connections.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
 
 import { E2E_DATA_DIR } from "../playwright.config";
+import { sidecarHandshake } from "./_helpers";
 
 const DIR = "e2e/_screenshots/reconnect";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(SPEC_DIR, "..", "..");
-
-function sidecarInfo(): { port: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { port, token };
-}
 
 function respawnSidecar(port: string, token: string): ChildProcess {
   return spawn("uv", ["run", "python", "-m", "sidecar.app"], {
@@ -54,7 +46,7 @@ function respawnSidecar(port: string, token: string): ChildProcess {
 }
 
 test("SSE stream state survives a sidecar restart", async ({ page, request }) => {
-  const { port, token } = sidecarInfo();
+  const { port, token } = sidecarHandshake();
   let respawned: ChildProcess | null = null;
 
   try {

@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import {
   useApplications,
@@ -33,9 +34,13 @@ import {
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { MasterResumeLauncher } from "../shell/MasterResumeLauncher";
 import type { Application, Priority, Stage } from "../api/types";
-import { STAGES } from "../api/types";
+import {
+  POST_APPLICATION_STAGES,
+  PRE_APPLICATION_STAGES,
+  STAGES,
+} from "../api/types";
 import { ApplierPanel } from "../popups/ApplierPanel";
-import { GuidanceDialog } from "../popups/GuidanceDialog";
+import { GuidanceDialog, type GuidanceKind } from "../popups/GuidanceDialog";
 import { ReferralsModal } from "../popups/ReferralsModal";
 import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
@@ -72,7 +77,7 @@ export function Tracker() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [showArchive, setShowArchive] = useState(false);
   const [popup, setPopup] = useState<{ kind: ResumeModalKind; appId: string } | null>(null);
-  const [guidance, setGuidance] = useState<{ appId: string; label: string } | null>(null);
+  const [guidance, setGuidance] = useState<{ appId: string; kind: GuidanceKind } | null>(null);
   // The card whose Apply click needs a posting link first (section 9.8).
   const [applyLink, setApplyLink] = useState<Application | null>(null);
   // Card ⋮ menu: id + the button's viewport rect, so the menu opens anchored
@@ -90,6 +95,19 @@ export function Tracker() {
   // freely reversible move).
   const [pendingFrozenMove, setPendingFrozenMove] =
     useState<{ id: string; stage: Stage } | null>(null);
+
+  // Deep link from the Analytics ledger's View button: /applications?doc=<app
+  // id>&slot=tailored|cover opens that card's document in the one viewer that
+  // has real Save, Approve and Regenerate behind it. The params are consumed
+  // once and stripped, so a refresh doesn't reopen it.
+  const [params, setParams] = useSearchParams();
+  const docAppId = params.get("doc");
+  const docSlot = params.get("slot");
+  useEffect(() => {
+    if (!docAppId) return;
+    setPopup({ kind: docSlot === "cover" ? "cover" : "tailored", appId: docAppId });
+    setParams(new URLSearchParams(), { replace: true });
+  }, [docAppId, docSlot, setParams]);
 
   const filtered = useMemo(() => {
     return apps.filter((a) => {
@@ -112,8 +130,8 @@ export function Tracker() {
     if (!dragId) return;
     const app = apps.find((a) => a.id === dragId);
     if (!app) return;
-    const frozen: Stage[] = ["Applied", "Interviewing", "Offer", "Rejected"];
-    const backward: Stage[] = ["Saved", "Seeking Referral"];
+    const frozen: readonly Stage[] = POST_APPLICATION_STAGES;
+    const backward: readonly Stage[] = PRE_APPLICATION_STAGES;
     if (frozen.includes(app.stage) && backward.includes(stage)) {
       setAlert(t("tracker.backwardAlert"));
       setDragId(null);
@@ -342,7 +360,7 @@ export function Tracker() {
         <Modal
           title={t("tracker.frozenMove.title", { stage: t(`tracker.stage.${pendingFrozenMove.stage}`) })}
           onClose={() => setPendingFrozenMove(null)}
-          width={440}
+          size="sm"
         >
           <div className="space-y-4 px-5 py-4" data-testid="frozen-move-confirm">
             <p className="text-[13px] leading-relaxed text-ink-2">
@@ -404,8 +422,8 @@ export function Tracker() {
           app={menuApp}
           anchor={menu.anchor}
           onClose={() => setMenu(null)}
-          onGenerate={(label) => {
-            setGuidance({ appId: menu.id, label });
+          onGenerate={(kind) => {
+            setGuidance({ appId: menu.id, kind });
             setMenu(null);
           }}
           onArchive={() => {
@@ -471,7 +489,7 @@ export function Tracker() {
           }}
           onRegenerate={() => {
             setPopup(null);
-            setGuidance({ appId: popupApp.id, label: popup.kind === "cover" ? "cover letter" : "tailored resume" });
+            setGuidance({ appId: popupApp.id, kind: popup.kind === "cover" ? "cover" : "tailored" });
           }}
         />
       ) : null}
@@ -479,7 +497,7 @@ export function Tracker() {
       {/* Guidance / generation dialog */}
       {guidance ? (
         <GuidanceDialog
-          label={guidance.label}
+          kind={guidance.kind}
           onClose={() => setGuidance(null)}
           onGenerate={(text) =>
             // Per-artifact generation (US-TL-02/US-CL-01): the two modules are
@@ -487,8 +505,8 @@ export function Tracker() {
             // freeform guidance (FR-TL-02) rides through to the Tailorer.
             genPacket.mutate({
               id: guidance.appId,
-              resume: guidance.label !== "cover letter",
-              cover: guidance.label === "cover letter",
+              resume: guidance.kind === "tailored",
+              cover: guidance.kind === "cover",
               guidance: text,
             })
           }

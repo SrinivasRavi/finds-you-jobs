@@ -24,6 +24,7 @@ import { ChipInput } from "../shell/ChipInput";
 import { InfoDot } from "../shell/InfoDot";
 import { LanguageSelect } from "../shell/LanguageSelect";
 import { openLoginTerminal } from "../shell/openExternal";
+import { EXTRACT_ACCEPT } from "../shell/uploadFormats";
 import { CADENCE_OPTIONS, FRESHNESS_DAYS, FRESHNESS_OPTIONS } from "./scanPrefs";
 
 // The wizard's interactive steps (i18n keys). The stepper *displays* "Download
@@ -398,7 +399,7 @@ export function Onboarding() {
               <label className="block rounded-lg border border-dashed border-border-2 bg-surface-2 p-4 text-center text-[13px] text-ink-3 hover:border-accent">
                 <input
                   type="file"
-                  accept=".md,.txt,.markdown,.pdf"
+                  accept={EXTRACT_ACCEPT}
                   className="hidden"
                   data-testid="resume-upload"
                   onChange={(e) => void onFile(e.target.files?.[0])}

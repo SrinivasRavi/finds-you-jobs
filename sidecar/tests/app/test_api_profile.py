@@ -8,30 +8,14 @@ claude-cli engine — never a real subprocess.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app.db.models import OP_TERMINAL_STATES
-from sidecar.app.main import create_app
 
-TOKEN = "test-token-profile"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH
 
 
 def _wait_for_kind_terminal(client: TestClient, kind: str) -> dict:

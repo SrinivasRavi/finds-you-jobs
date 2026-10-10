@@ -12,13 +12,11 @@
 
 import { useEffect, useState } from "react";
 
+import { inTauri } from "./host";
+
 declare const __APP_VERSION__: string;
 
 export const RELEASE_CHANNEL_SUFFIX = "-beta";
-
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
 /** Raw numeric version, e.g. "0.5.4". */
 export async function rawAppVersion(): Promise<string> {

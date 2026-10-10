@@ -19,7 +19,7 @@ const onboarding = {
         "Upload a .md / .txt / .pdf, or paste it below. Review the extracted text — this is what the app scores and tailors against. You can refine it later from the Master Resume button in Discover jobs.",
     extracting: "Extracting…",
     resumeLoaded: "{{name}} — loaded, review below",
-    resumeChoose: "Click to choose a .md / .txt / .pdf resume file",
+    resumeChoose: "Click to choose your resume (PDF, Word, Pages, ODT, RTF, Markdown or text)",
     resumeTextLabel: "Resume (Markdown) — paste or edit the extracted text",
     resumePlaceholder: "# Your name\n\nPaste your resume here, or upload a file above.",
     // Preferences step.
@@ -107,7 +107,7 @@ const onboarding = {
     retry: "Retry",
     // All-set step.
     allSetIntro: "On Finish we write your profile and fire the cold-start scrape across every role × location.",
-    allSetAddUrl: "Add a job by URL anytime from the board",
+    allSetAddUrl: "Add a job posting anytime from the board",
     allSetResume: "Review your master resume from the board's Master Resume button",
     allSetSettings: "Tune providers + networking in Settings",
 };

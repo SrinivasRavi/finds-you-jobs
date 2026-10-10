@@ -11,21 +11,13 @@ import { useTranslation } from "react-i18next";
 
 import { useAddManualApplication } from "../../api/queries";
 import type { JobDraft, ManualApplicationInput } from "../../api/types";
+// It's already been applied to, so it starts at Applied or later; the
+// pre-submission columns don't apply.
+import { POST_APPLICATION_STAGES } from "../../api/types";
 import { Icon } from "../../shell/icons";
 import { Modal } from "../../shell/Modal";
+import { ATTACH_ACCEPT } from "../../shell/uploadFormats";
 import { canSave, emptyDraft, JobFields, useAutofill } from "../jobs/JobFields";
-
-// Stages a manually-logged application can land in — it's already been applied
-// to, so it starts at Applied (or later); the pre-submission columns don't apply.
-const MANUAL_STAGES: ManualApplicationInput["stage"][] = [
-  "Applied",
-  "Interviewing",
-  "Offer",
-  "Rejected",
-];
-
-// The upload formats the sidecar accepts (mirrors `documents.ALLOWED_TYPES`).
-const DOC_ACCEPT = ".pdf,.doc,.docx,.txt,.md,.rtf";
 
 function FilePicker({
   label,
@@ -46,7 +38,7 @@ function FilePicker({
         {file ? t("tracker.documents.change") : label}
         <input
           type="file"
-          accept={DOC_ACCEPT}
+          accept={ATTACH_ACCEPT}
           data-testid={testid}
           className="hidden"
           onChange={(e) => onPick(e.target.files?.[0] ?? null)}
@@ -109,7 +101,7 @@ export function AddApplicationModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title={t("tracker.addApplication")} onClose={onClose} width={520}>
+    <Modal title={t("tracker.addApplication")} onClose={onClose} size="md">
       <form
         className="flex flex-col gap-3 px-5 py-4"
         onSubmit={(e) => {
@@ -129,7 +121,7 @@ export function AddApplicationModal({ onClose }: { onClose: () => void }) {
             data-testid="add-app-stage"
             className="rounded-md border border-border bg-surface px-2 py-1.5 text-[12.5px] text-ink"
           >
-            {MANUAL_STAGES.map((s) => (
+            {POST_APPLICATION_STAGES.map((s) => (
               <option key={s} value={s}>
                 {t(`tracker.stage.${s}`)}
               </option>

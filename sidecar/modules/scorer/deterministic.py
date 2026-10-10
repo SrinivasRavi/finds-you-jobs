@@ -47,6 +47,10 @@ from sidecar.modules.scraper.quality import RED_FLAG_TERMS
 from .level import LEVEL_ORDER, Level, extract_level
 from .types import Factor, ScoreResult, Usage
 
+# The location penalty lives beside the arithmetic that applies it. This module
+# used to restate the number (duplication audit D-M18).
+from .weights import LOCATION_MISS_PENALTY
+
 _STOPWORDS = frozenset(
     """
     a an the and or but if then else for of to in on at by with from as is are
@@ -119,11 +123,6 @@ def _years_match(master_md: str, job_text: str) -> tuple[int, int, int]:
         return 60, required, offered
     return 25, required, offered
 
-
-# A posting in a location the user did not ask for. The LLM path is instructed to
-# apply -10 to -20 after banding (score-job-skill.md), so the keyword path takes
-# the middle of that range and the 2 methods rank the same trap the same way.
-LOCATION_MISS_PENALTY = 15
 
 _LEVEL_RANK = {level: i for i, level in enumerate(LEVEL_ORDER)}
 

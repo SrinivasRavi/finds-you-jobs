@@ -5,22 +5,14 @@
 // through /api/settings/prompts; Analytics renders the cost tiles + ledger
 // with a real completed operation row, and /logs redirects there.
 
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/settings-analytics";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test.beforeEach(async ({ request }) => {
   const { base, token } = sidecarInfo();
@@ -47,20 +39,33 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("provider-tile-embedded")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
 
-  // Prompts pane — the one-line prompt tab bar (2026-07-23 redesign).
-  await page.getByTestId("settings-nav-prompts").click();
-  await expect(page.getByTestId("prompt-row-score")).toBeVisible();
-  await page.screenshot({ path: `${DIR}/settings-prompts.png`, fullPage: true });
-
-  // Job Discovery pane — Scoring (before Automation now) + the Automation toggles.
-  await page.getByTestId("settings-nav-discovery").click();
+  // Scoring pane — the method menu, the batch cap, AND the rubric the AI
+  // method follows, which used to live 2 categories away (2026-10-08 split).
+  await page.getByTestId("settings-nav-scoring").click();
   await expect(page.getByTestId("scoring-mode-picker")).toBeVisible();
   await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
   await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
+  await expect(page.getByTestId("model-picker-score")).toBeVisible();
+  await expect(page.getByTestId("prompt-textarea-score")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-scoring.png`, fullPage: true });
+
+  // Resume & cover letter — the 2 generate-on-save toggles and both models.
+  await page.getByTestId("settings-nav-documents").click();
   await expect(page.getByTestId("auto-resume-toggle")).toBeVisible();
   await expect(page.getByTestId("auto-cover-toggle")).toBeVisible();
-  await page.screenshot({ path: `${DIR}/settings-overview.png`, fullPage: true });
+  await expect(page.getByTestId("model-picker-tailor")).toBeVisible();
+  await expect(page.getByTestId("model-picker-cover")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-documents.png`, fullPage: true });
+
+  // Applying — the Applier's model, which had no UI at all before the split,
+  // and the Form answers prompt.
+  await page.getByTestId("settings-nav-applying").click();
+  await expect(page.getByTestId("model-picker-apply")).toBeVisible();
+  await expect(page.getByTestId("prompt-textarea-extract")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-applying.png`, fullPage: true });
+
+  await page.getByTestId("settings-nav-scoring").click();
   // keyword hides the batch cap.
   await page.getByTestId("scoring-mode-keyword").click();
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
@@ -73,9 +78,17 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
 
-  // Networking pane — the master toggle.
+  // Networking pane — the master toggle, and the referral model, which had no
+  // picker anywhere before the split (maintainer, 2026-10-08).
   await page.getByTestId("settings-nav-networking").click();
   await expect(page.getByTestId("networking-toggle")).toBeVisible();
+  await expect(page.getByTestId("model-picker-draft")).toBeVisible();
+  // It says what it governs: the row's opening message is a free template,
+  // and this model runs only on Regenerate.
+  await expect(page.getByTestId("model-picker-draft")).toContainText("Regenerate");
+  await expect(page.getByTestId("prompt-textarea-networker_draft")).toBeVisible();
+  await page.getByTestId("model-picker-draft").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-networking-model.png`, fullPage: true });
 
   // Privacy & Data pane — observability + lifecycle.
   await page.getByTestId("settings-nav-data").click();
@@ -99,7 +112,7 @@ test("switching scoring to AI prompts nothing and spends nothing in-request", as
   // seed a job over the API — in keyword mode it earns a free keyword score
   // only, so it is a guaranteed AI-cache miss.
   await page.goto("/settings");
-  await page.getByTestId("settings-nav-discovery").click();
+  await page.getByTestId("settings-nav-scoring").click();
   await page.getByTestId("scoring-mode-keyword").click();
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
   await request.post(`${base}/api/jobs`, {
@@ -152,8 +165,7 @@ test("prompts editor round-trips an override", async ({ page, request }) => {
   const auth = { Authorization: `Bearer ${token}` };
 
   await page.goto("/settings");
-  await page.getByTestId("settings-nav-prompts").click();
-  await page.getByTestId("prompt-row-score").click();
+  await page.getByTestId("settings-nav-scoring").click();
   await expect(page.getByTestId("prompt-textarea-score")).toBeVisible();
   await expect(page.getByTestId("route-score")).toBeVisible();
   await page.screenshot({ path: `${DIR}/prompts-editor-open.png`, fullPage: true });
@@ -596,4 +608,88 @@ test("linkedin one-shot job search block lives under Discovery and gates on a co
   // Leave the shared profile clean.
   await page.getByTestId("settings-nav-networking").click();
   await page.getByTestId("networking-toggle").click();
+});
+
+test("a tailor row in the ledger opens the document it wrote", async ({ page, request }) => {
+  // url-less-jobs.md drawing 13. The row used to link out to the posting and
+  // nothing else, so reading your own tailored resume meant finding the card
+  // in the Tracker by hand (maintainer, 2026-10-08).
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  const seeded = await (
+    await request.post(`${base}/api/dev/seed-application`, { headers: auth, data: {} })
+  ).json();
+
+  // The real tailor path needs an LLM, so inject the row the backend would
+  // build for one. Its destination is a REAL application, which is what makes
+  // the hand-off testable end to end.
+  await page.route("**/api/operations?*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const injected = [
+      {
+        id: "e2e-tailor-artifact",
+        kind: "tailor",
+        state: "succeeded",
+        subject: {
+          label: "Dev Sample Engineer",
+          context: "Devbento",
+          artifact: { application_id: seeded.application_id, kind: "tailored" },
+        },
+        usage: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        result_ref: null,
+      },
+    ];
+    const response = await route.fetch();
+    const body = (await response.json()) as unknown[];
+    await route.fulfill({ response, json: [...injected, ...body] });
+  });
+
+  await page.goto("/analytics");
+  const row = page.getByTestId("log-row").filter({ hasText: "Dev Sample Engineer" }).first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const view = row.getByTestId("log-view-artifact");
+  await expect(view).toHaveText("View resume");
+  await page.screenshot({ path: `${DIR}/ledger-view-artifact.png`, fullPage: true });
+
+  // It hands off to the Tracker's own viewer, where Save, Approve and
+  // Regenerate are real, rather than mounting a second read-only one.
+  await view.click();
+  await expect(page).toHaveURL(/\/applications/);
+  await expect(page.getByTestId("tailored-editor")).toBeVisible({ timeout: 15_000 });
+  await page.screenshot({ path: `${DIR}/ledger-view-artifact-opened.png`, fullPage: true });
+});
+
+test("the new panes render translated, not as an English fallback", async ({ page }) => {
+  // The 2026-10-08 i18n pass filled 369 keys across all 12 non-English
+  // locales. Before it, every string on the new panes fell back to English,
+  // which is silent: nothing errors, it just quietly stays English. This
+  // spec picks 2 locales and 2 of the newest strings and insists they moved.
+  await page.goto("/settings");
+  await page.getByTestId("settings-nav-appearance").click();
+  const picker = page.getByTestId("language-select");
+  await expect(picker).toBeVisible({ timeout: 15_000 });
+
+  await picker.selectOption("es");
+  await expect(page.getByTestId("settings-nav-scoring")).toContainText("Puntuación");
+  await expect(page.getByTestId("settings-nav-documents")).toContainText(
+    "CV y carta de presentación",
+  );
+  await page.getByTestId("settings-nav-applying").click();
+  await expect(page.getByTestId("prompt-scope-extract")).toContainText("CV maestro");
+  await page.screenshot({ path: `${DIR}/i18n-es-applying.png`, fullPage: true });
+
+  await page.getByTestId("settings-nav-appearance").click();
+  await picker.selectOption("ja");
+  await expect(page.getByTestId("settings-nav-scoring")).toContainText("スコアリング");
+  await page.getByTestId("settings-nav-documents").click();
+  await expect(page.getByTestId("prompt-scope-cover")).toContainText("カバーレター");
+  await page.screenshot({ path: `${DIR}/i18n-ja-documents.png`, fullPage: true });
+
+  // Leave the shared e2e profile in English for every other spec.
+  await page.getByTestId("settings-nav-appearance").click();
+  await picker.selectOption("en");
+  await expect(page.getByTestId("settings-nav-scoring")).toContainText("Scoring");
 });

@@ -15,22 +15,17 @@ Covers:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import timedelta
-from pathlib import Path
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app.db import Database
 from sidecar.app.db.base import now_utc
 from sidecar.app.db.models import SCORE_MAX_ATTEMPTS
-from sidecar.app.main import create_app
 from sidecar.app.registry.persistence import age_expired_jobs
 
-TOKEN = "test-token-board"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
+from ._support import AUTH
 
 # Long enough to clear `MIN_JD_CHARS` (200). A shorter description makes the row
 # `unscorable`, which outranks every other score state, so any test about the
@@ -40,18 +35,6 @@ REALISTIC_JD = (
     "greSQL schemas, run workloads on AWS, and review other engineers' work. Requirem"
     "ents: strong Python, solid SQL, and production ownership experience."
 )
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
 
 
 def _db(app: FastAPI) -> Database:
@@ -555,7 +538,6 @@ def test_board_excludes_saved_jobs(app_client: tuple[FastAPI, TestClient]) -> No
 # Board search (FR-JB-13): list_q (title/company/location) + text_q (full text
 # incl. JD + match-score reasons/breakdown), filtered before pagination.
 # ---------------------------------------------------------------------------
-
 
 
 def test_saved_job_never_auto_expires_or_deletes(migrated_db: Database) -> None:

@@ -41,7 +41,11 @@ import { opBusy } from "./BrowserOpPlan";
 import { ContactComposer } from "./ContactComposer";
 import { daysBetween } from "./jobFormat";
 import { useLinkedInBrowser } from "./LinkedInBrowserProvider";
-import { type LinkedInPillState, type LinkedInPillTone, linkedInStatusPill } from "./linkedInStatus";
+import {
+  HEADER_PILL_CLS,
+  HEADER_PILL_LABEL,
+  linkedInStatusPill,
+} from "./linkedInStatus";
 
 // label/empty hold i18n keys — wrapped with t(...) at render.
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
@@ -61,22 +65,6 @@ function statusLabel(status: ConnectionStatus, t: TFunction): string {
   const column = COLUMNS.find((col) => col.id === status);
   return column ? t(column.label) : status;
 }
-
-// The header's read-only session chip. Tone + which state a status means come
-// from the shared table (duplication audit D-F8); the classes and the copy stay
-// here because this chip is not the one Settings renders.
-const PILL_CLS: Record<LinkedInPillTone, string> = {
-  good: "bg-good-wash border-good text-good",
-  warn: "bg-warn-wash border-warn text-warn",
-  bad: "bg-bad-wash border-bad text-bad",
-};
-const PILL_LABEL: Record<LinkedInPillState, string> = {
-  connected: "networking.linkedinPill.connected",
-  connecting: "networking.linkedinPill.connecting",
-  backingOff: "networking.linkedinPill.backingOff",
-  expired: "networking.linkedinPill.expired",
-  disconnected: "networking.linkedinPill.connect",
-};
 
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
@@ -270,14 +258,14 @@ export function Networking() {
   const connState = pill
     ? laneBusy
       ? {
-          cls: PILL_CLS.good,
+          cls: HEADER_PILL_CLS.good,
           label: t("networking.linkedinPill.inProgress"),
           live: true,
           opensModal: true,
         }
       : {
-          cls: PILL_CLS[pill.tone],
-          label: t(PILL_LABEL[pill.state]),
+          cls: HEADER_PILL_CLS[pill.tone],
+          label: t(HEADER_PILL_LABEL[pill.state]),
           live: false,
           opensModal: pill.state !== "expired" && pill.state !== "disconnected",
         }
@@ -626,7 +614,7 @@ function ContactDetailModal({
   const composeEnabled = Boolean(session.data?.enabled);
 
   return (
-    <Modal title={contact.name} onClose={onClose} width={520}>
+    <Modal title={contact.name} onClose={onClose} size="md">
       <div className="flex flex-col gap-4 px-5 py-5">
         <div className="text-[13px] text-ink-2">
           {contact.current_role} · {contact.current_company}
@@ -705,7 +693,7 @@ function AddContactModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title={t("networking.add.title")} onClose={onClose} width={520}>
+    <Modal title={t("networking.add.title")} onClose={onClose} size="md">
       <form
         data-testid="add-contact-form"
         onSubmit={(e) => { e.preventDefault(); submit(); }}

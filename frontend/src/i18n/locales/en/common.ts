@@ -11,10 +11,14 @@ const common = {
   settingsNav: {
     providers: "LLM Providers",
     providersBlurb: "Keys & connected models",
-    prompts: "Prompts & Models",
-    promptsBlurb: "Customize the AI's instructions",
     discovery: "Discover jobs",
-    discoveryBlurb: "Sources, scoring & automation",
+    discoveryBlurb: "Where your jobs come from",
+    scoring: "Scoring",
+    scoringBlurb: "How jobs are rated, and the rubric",
+    documents: "Resume & cover letter",
+    documentsBlurb: "What gets written, and how",
+    applying: "Applying",
+    applyingBlurb: "Form answers & the Applier's model",
     networking: "Networking",
     networkingBlurb: "Referral outreach & LinkedIn",
     data: "Privacy & Data",
@@ -50,6 +54,17 @@ const common = {
     confidence: "{{percent}}% confident",
     weight: "weight {{percent}}%",
     none: "This method recorded no per-axis detail for this job.",
+  },
+  // Relative-time phrases, as keys rather than formatted strings, because the
+  // board interpolates them into translated sentences (see jobFormat.ts).
+  relativeTime: {
+    never: "never",
+    justNow: "just now",
+    today: "today",
+    minutes: "{{n}}m ago",
+    hours: "{{n}}h ago",
+    days: "{{n}}d ago",
+    months: "{{n}}mo ago",
   },
   appearance: {
     theme: "Theme",

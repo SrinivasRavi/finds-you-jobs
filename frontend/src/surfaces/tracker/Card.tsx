@@ -7,7 +7,10 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { Application, Priority, Stage } from "../../api/types";
+import type { Application, Priority } from "../../api/types";
+// The Apply slot must not start a fresh run on a card already applied to
+// (2026-07-17 dogfood).
+import { POST_APPLICATION_STAGES } from "../../api/types";
 import type { ResumeModalKind } from "../../popups/ResumeModal";
 import { applyRunDisplay } from "../../shell/applyRunDisplay";
 import { Avatar } from "../../shell/Avatar";
@@ -49,10 +52,6 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
 // (yellow), submitted→"Submitted" (green check), and the honest non-success
 // terminals→"Retry" (red). The table itself lives in shell/applyRunDisplay,
 // shared with the Applier panel's phase pill (duplication audit D-F14).
-
-// Stages where the job has already been applied to — the Apply slot must not
-// start a fresh run there (2026-07-17 dogfood).
-const POST_APPLICATION: Stage[] = ["Applied", "Interviewing", "Offer", "Rejected"];
 
 const SLOT_SPINNER = new Set(["generating", "finding", "sending"]);
 const SLOT_CHECK = new Set(["ready", "approved"]);
@@ -208,7 +207,8 @@ export const Card = memo(function Card({
             start one — you don't apply to a job you've already applied to
             (2026-07-17 dogfood); it shows a static "Applied" and is inert. An
             existing run stays reviewable in any stage. */}
-        {POST_APPLICATION.includes(app.stage) && app.apply_run_status === "none" ? (
+        {(POST_APPLICATION_STAGES as readonly string[]).includes(app.stage) &&
+        app.apply_run_status === "none" ? (
           <span data-testid="card-apply-slot">
             <PacketSlotTag label={t("tracker.applySlot.applied")} state="approved" />
           </span>

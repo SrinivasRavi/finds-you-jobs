@@ -6,6 +6,8 @@
 // the app imports its typed operations from here. Keep hand-written helpers that
 // sit outside the generated surface (the handshake itself) in this file.
 
+import { inTauri } from "../shell/host";
+
 export interface SidecarInfo {
   port: number;
   token: string;
@@ -13,16 +15,11 @@ export interface SidecarInfo {
 
 declare global {
   interface Window {
-    __TAURI_INTERNALS__?: unknown;
     // e2e-only handshake override (zzz-reconnect-newport.spec.ts): outside
     // Tauri there is no shell to re-ask after a sidecar restart, so the spec
     // injects the respawned sidecar's port + token here.
     __FYJ_SIDECAR_INFO__?: SidecarInfo;
   }
-}
-
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 async function fromTauri(): Promise<SidecarInfo | null> {
