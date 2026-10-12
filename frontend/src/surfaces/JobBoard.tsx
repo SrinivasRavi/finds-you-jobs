@@ -35,6 +35,7 @@ import {
 } from "../api/queries";
 import { ApiError } from "../api/real";
 import {
+  type BoardFilters,
   type BoardPage,
   type Job,
   type PlaceChip,
@@ -67,11 +68,9 @@ import {
   FRESHNESS_OPTIONS,
 } from "./scanPrefs";
 import {
-  daysBetween,
   firstHeading,
   methodColor,
   relativeTime,
-  salaryFloor,
   scoreRingColor,
   scoreTier,
   shortAgo,
@@ -840,7 +839,25 @@ export function JobBoard() {
   const textQ = useDebounced(textSearch.trim(), 250);
   // The URL axis filters server-side for the same reason the search does.
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("");
-  const board = useBoard("", textQ, linkFilter);
+  const [status, setStatus] = useState<StatusFilter>("ALL");
+  const [ws, setWs] = useState<WorkStyleFilter>("ALL");
+  const [sort, setSort] = useState<SortMode>("match");
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+  const [salaryMin, setSalaryMin] = useState(0);
+  const [posted, setPosted] = useState<number>(0); // 0=all
+  // The chips filter server-side too, for the same reason (audit finding 6).
+  const filters = useMemo<BoardFilters>(
+    () => ({
+      source: sourceFilter ?? "",
+      work_style: ws === "ALL" ? "" : ws,
+      method: status === "MODEL" ? "model" : status === "KEYWORD" ? "keyword" : "",
+      posted_days: posted,
+      salary_min: salaryMin,
+      sort,
+    }),
+    [sourceFilter, ws, status, posted, salaryMin, sort],
+  );
+  const board = useBoard("", textQ, linkFilter, filters);
   const { data: trashed = [] } = useTrash();
   const saveJob = useSaveJob();
   const trashJob = useTrashJob();
@@ -852,12 +869,6 @@ export function JobBoard() {
   const discoverReferrals = useDiscoverReferrals();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [status, setStatus] = useState<StatusFilter>("ALL");
-  const [ws, setWs] = useState<WorkStyleFilter>("ALL");
-  const [sort, setSort] = useState<SortMode>("match");
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  const [salaryMin, setSalaryMin] = useState(0);
-  const [posted, setPosted] = useState<number>(0); // 0=all
   const [split, setSplit] = useState<number>(() => {
     const s = Number(localStorage.getItem(SPLIT_KEY));
     return s >= 20 && s <= 80 ? s : 32;
@@ -876,49 +887,8 @@ export function JobBoard() {
   );
   const meta = board.data?.pages[0];
 
-  const visible = useMemo(() => {
-    // Server already excludes Saved and Trashed; Expired rows stay (greyed).
-    let list = [...boardJobs];
-    if (sourceFilter) list = list.filter((j) => j.source_adapter === sourceFilter);
-    if (ws === "REMOTE_FRIENDLY") {
-      list = list.filter(
-        (j) => j.work_style === "REMOTE" || /remote/i.test(j.location),
-      );
-    } else if (ws !== "ALL") {
-      list = list.filter((j) => j.work_style === ws);
-    }
-    // Both sides read `method`, not `scorer_impl`: that field says "scorer-llm"
-    // for a Fast or On-device score as well, so this chip pair silently
-    // promised AI and delivered any-model the moment a 2nd method shipped. The
-    // ring carries which one; the chip stays a 2-way split of paid-ish versus
-    // the always-free floor.
-    if (status === "MODEL") list = list.filter((j) => (j.score?.method ?? "") !== "keyword" && !!j.score);
-    if (status === "KEYWORD") list = list.filter((j) => j.score?.method === "keyword");
-    if (posted > 0) {
-      list = list.filter((j) => {
-        if (!j.posted_at) return false;
-        // "exact" on purpose: this feeds the filter, not a label — rounding
-        // here would move the boundary a whole day (duplication audit D-F11).
-        return daysBetween(j.posted_at, "exact") <= posted;
-      });
-    }
-    if (salaryMin > 0) {
-      // FR-JB-04: best-effort band match; an unparseable/absent salary is never
-      // silently hidden (rank-don't-gate) — only a parseable, below-band salary is.
-      list = list.filter((j) => {
-        const floor = salaryFloor(j.salary);
-        return floor === null || floor >= salaryMin;
-      });
-    }
-    list = [...list].sort((a, b) => {
-      if (sort === "recency") return (b.posted_at || "").localeCompare(a.posted_at || "");
-      const sa = a.score?.score_0_100 ?? -1;
-      const sb = b.score?.score_0_100 ?? -1;
-      if (sb !== sa) return sb - sa;
-      return (b.posted_at || "").localeCompare(a.posted_at || "");
-    });
-    return list;
-  }, [boardJobs, sourceFilter, ws, status, posted, salaryMin, sort]);
+  // The server has already filtered and sorted every row (audit finding 6).
+  const visible = boardJobs;
 
   const selected = visible.find((j) => j.id === selectedId) ?? visible[0] ?? null;
 

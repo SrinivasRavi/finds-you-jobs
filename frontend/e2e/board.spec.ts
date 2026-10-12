@@ -179,3 +179,49 @@ test("the Rescan pill shows the scoring state (M of N) then flips to Done (obser
   await expect(pill).toContainText("Found 10 new roles");
   await page.screenshot({ path: `${DIR}/scan-progress-done.png`, fullPage: true });
 });
+
+// Audit finding 6: the chips filtered only the 50 loaded rows, so a remote job
+// at position 61 read as "No jobs matched". They run on the server now.
+test("a filter finds a match beyond the first page", async ({ page, request }) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  const jd =
+    "Filterco builds payment rails. You will run Python services and PostgreSQL in our " +
+    "Berlin office, five days a week, alongside the platform team and on-call rotation.";
+  const ids: string[] = [];
+  // Created first, so among equal scores it sorts last: past row 60.
+  const make = async (n: number, location: string, description: string) => {
+    const r = await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: `https://example.com/filterco-${n}`,
+        title: n === 0 ? "Faraway Remote Engineer" : `Filterco Engineer ${n}`,
+        company: "Filterco",
+        location,
+        description,
+        source_adapter: "greenhouse",
+      },
+    });
+    ids.push((await r.json()).id as string);
+  };
+  await make(0, "Remote", jd.replace("in our Berlin office, five days a week", "fully remote"));
+  for (let n = 1; n <= 60; n += 1) await make(n, "Berlin", jd);
+
+  await page.goto("/jobs");
+  await expect(page.getByTestId("job-row").first()).toBeVisible({ timeout: 15_000 });
+  const faraway = page.getByTestId("job-row").filter({ hasText: "Faraway Remote Engineer" });
+  await expect(faraway).toHaveCount(0);
+  await page.locator("#filter-ws").getByRole("button", { name: "Remote", exact: true }).click();
+  await expect(faraway).toBeVisible({ timeout: 10_000 });
+  // The chips' colours fade over 240 ms (url-less-jobs.md section 11.7).
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${DIR}/filter-beyond-first-page.png`, fullPage: true });
+
+  for (const id of ids) {
+    await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
+  }
+});

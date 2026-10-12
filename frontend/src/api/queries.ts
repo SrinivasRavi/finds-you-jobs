@@ -23,6 +23,7 @@ import { useEffect, useState } from "react";
 import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
+  BoardFilters,
   Application,
   Operation,
   AttachLinkInput,
@@ -143,10 +144,11 @@ export function useJobFactors(jobId: string | null) {
  *  with a live total + real last-scan meta (FR-JB-10). Saved-excluded server-side.
  *  `listQ`/`textQ` (FR-JB-13) are server-side search filters keyed into the
  *  query, so clearing a search falls back to the cached unfiltered feed. */
-export function useBoard(listQ = "", textQ = "", link = "") {
+export function useBoard(listQ = "", textQ = "", link = "", filters: BoardFilters = {}) {
   return useInfiniteQuery({
-    queryKey: [...qk.board, listQ, textQ, link],
-    queryFn: ({ pageParam }) => Promise.resolve(api.getBoard(pageParam, listQ, textQ, link)),
+    queryKey: [...qk.board, listQ, textQ, link, filters],
+    queryFn: ({ pageParam }) =>
+      Promise.resolve(api.getBoard(pageParam, listQ, textQ, link, filters)),
     initialPageParam: 0,
     getNextPageParam: (last, all) => {
       const loaded = all.reduce((n, p) => n + p.jobs.length, 0);

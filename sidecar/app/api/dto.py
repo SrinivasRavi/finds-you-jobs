@@ -8,6 +8,7 @@ shapes drive the OpenAPI → TS codegen, so drift is a build error.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -125,6 +126,17 @@ class JobDTO(BaseModel):
     # and whether it has any open pair (the detail pane asks for the notice).
     duplicates: int = 0
     duplicate_notice: bool = Field(default=False, serialization_alias="duplicateNotice")
+
+
+@dataclass(frozen=True)
+class BoardFilters:
+    """The board's chip filters, as `/api/board` reads them (audit finding 6)."""
+
+    source: str = ""
+    work_style: str = ""
+    method: str = ""
+    posted_days: int = 0
+    salary_min: int = 0
 
 
 class BoardPageDTO(BaseModel):

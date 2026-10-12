@@ -4439,6 +4439,12 @@ export interface operations {
                 list_q?: string;
                 text_q?: string;
                 link?: string;
+                source?: string;
+                work_style?: "" | "REMOTE" | "HYBRID" | "ONSITE" | "REMOTE_FRIENDLY";
+                method?: "" | "model" | "keyword";
+                posted_days?: number;
+                salary_min?: number;
+                sort?: "match" | "recency";
             };
             header?: never;
             path?: never;

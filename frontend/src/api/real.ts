@@ -57,6 +57,7 @@ import type {
   AudienceTag,
   BoardPage,
   CompanyConfirmPick,
+  BoardFilters,
   ContactInput,
   CostTotals,
   DevResult,
@@ -602,14 +603,22 @@ export class RealApi {
    *  Expired-inclusive (greyed), paginated server-side (no silent 200-row cap).
    *  `listQ`/`textQ` (FR-JB-13) are server-side search filters applied before
    *  pagination — shallow (title/company/location) vs deep (JD + score texts). */
-  async getBoard(page = 0, listQ = "", textQ = "", link = ""): Promise<BoardPage> {
+  async getBoard(
+    page = 0,
+    listQ = "",
+    textQ = "",
+    link = "",
+    filters: BoardFilters = {},
+  ): Promise<BoardPage> {
     const params = new URLSearchParams({ page: String(page) });
     if (listQ) params.set("list_q", listQ);
     if (textQ) params.set("text_q", textQ);
-    // The URL axis filters server-side with the search needles, before
-    // pagination — a client-side pass over loaded pages would silently miss
-    // matches on unloaded ones (url-less-jobs.md section 9.3).
+    // Every filter and the sort run server-side, before pagination: a pass
+    // over the loaded pages would miss matches on unloaded ones (finding 6).
     if (link) params.set("link", link);
+    for (const [k, v] of Object.entries(filters)) {
+      if (v) params.set(k, String(v));
+    }
     const d = await this.req<BoardPageDTO>(`/api/board?${params.toString()}`);
     return {
       jobs: (d.jobs ?? []).map((j) => toJob(j, false)),

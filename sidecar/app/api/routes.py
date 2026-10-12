@@ -16,7 +16,7 @@ import os
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from sidecar.modules.scraper import ScraperError, probe_url
 from sidecar.modules.scraper.canonical import canonicalize_url
-from sidecar.modules.scraper.filters import passes_company, passes_content
+from sidecar.modules.scraper.filters import passes_company, passes_content, passes_salary
 from sidecar.modules.scraper.fingerprint import (
     is_probable_cross_listing,
     simhash64,
@@ -274,6 +274,47 @@ def _board_search_haystack(job: Any, deep: bool) -> str:
     return "\n".join(parts).lower()
 
 
+def _posted_within(job: Any, days: int, now: datetime) -> bool:
+    """A job with no readable posting date fails a "posted within" filter, as
+    the browser's filter did: the user asked for recent, and it can't say."""
+    try:
+        posted = datetime.fromisoformat(job.posted_at or "")
+    except ValueError:
+        return False
+    if posted.tzinfo is None:
+        posted = posted.replace(tzinfo=UTC)
+    return (now - posted).total_seconds() <= days * 86_400
+
+
+def _board_filter(rows: list[Any], f: dto.BoardFilters) -> list[Any]:
+    """The board's 5 chip filters, over every eligible row before the page is
+    cut (audit finding 6). Work style reads `derive_work_style`, the card chip's
+    own function, and only when asked, because it's 3 regexes per JD. Minimum
+    salary reads the scan's `passes_salary`, so the board and the scan agree on
+    what a salary says; no salary, or one in another currency, always passes."""
+    if f.source:
+        rows = [j for j in rows if j.source_adapter == f.source]
+    if f.work_style == "REMOTE_FRIENDLY":
+        rows = [
+            j for j in rows
+            if dto.derive_work_style(j.location, j.description) == "REMOTE"
+            or "remote" in j.location.lower()
+        ]
+    elif f.work_style:
+        rows = [j for j in rows if dto.derive_work_style(j.location, j.description) == f.work_style]
+    if f.method == "model":
+        rows = [j for j in rows if j.llm_score is not None]
+    elif f.method == "keyword":
+        rows = [j for j in rows if j.llm_score is None and j.keyword_score is not None]
+    if f.posted_days > 0:
+        now = now_utc()
+        rows = [j for j in rows if _posted_within(j, f.posted_days, now)]
+    if f.salary_min > 0:
+        prefs = ScanPrefs(salary_min=f.salary_min, salary_currency="USD")
+        rows = [j for j in rows if passes_salary(j.salary or "", prefs)]
+    return rows
+
+
 @router.get("/api/board")
 def board(
     request: Request,
@@ -282,6 +323,12 @@ def board(
     list_q: str = "",
     text_q: str = "",
     link: str = "",
+    source: str = "",
+    work_style: Literal["", "REMOTE", "HYBRID", "ONSITE", "REMOTE_FRIENDLY"] = "",
+    method: Literal["", "model", "keyword"] = "",
+    posted_days: int = 0,
+    salary_min: int = 0,
+    sort: Literal["match", "recency"] = "match",
 ) -> dto.BoardPageDTO:
     """The paginated Job Board feed + header meta (FR-JB-02/10). Saved jobs are
     excluded server-side; Expired jobs stay (greyed). One honest `total` count and
@@ -327,11 +374,14 @@ def board(
         lens = dto.build_weight_lens(repos, [j.id for j in jobs])
     # Sort + search over the ORM rows — same key/haystack as the DTO path
     # (FR-JB-01 / FR-JB-13); the DTO is built only for the window below.
-    rows = sorted(
-        jobs,
-        key=lambda j: (_display_score_value(j, lens), j.ingested_at),
-        reverse=True,
-    )
+    if sort == "recency":
+        rows = sorted(jobs, key=lambda j: (j.posted_at or "", j.ingested_at), reverse=True)
+    else:
+        rows = sorted(
+            jobs,
+            key=lambda j: (_display_score_value(j, lens), j.ingested_at),
+            reverse=True,
+        )
     # `empty` means the scrape found nothing — judged before search filtering,
     # so a search miss reads as a filter miss, not an empty scrape (FR-JB-13).
     feed_empty = len(rows) == 0
@@ -345,6 +395,13 @@ def board(
         rows = [j for j in rows if j.canonical_url]
     elif link == "none":
         rows = [j for j in rows if not j.canonical_url]
+    rows = _board_filter(
+        rows,
+        dto.BoardFilters(
+            source=source, work_style=work_style, method=method,
+            posted_days=max(0, posted_days), salary_min=max(0, salary_min),
+        ),
+    )
     total = len(rows)
     page_rows = rows[page * page_size : page * page_size + page_size]
     window = [

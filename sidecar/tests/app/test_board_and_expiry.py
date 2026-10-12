@@ -312,6 +312,86 @@ def test_board_search_filters_before_pagination(
     assert body["total"] == 1
 
 
+def _filler(repos: object, n: int = 60) -> None:
+    """A page and more of plain rows that match none of the filters below, all
+    scored above the targets, so a target sits beyond page 0 unfiltered."""
+    for i in range(n):
+        repos.jobs.create(  # type: ignore[attr-defined]
+            canonical_url=f"f{i}", title=f"F{i}", location="Berlin", description="Office role.",
+            source_adapter="lever", keyword_score=90,
+        )
+
+
+def test_board_filters_run_on_the_whole_board_before_pagination(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Audit finding 6: the 5 filters ran in the browser over the 50 loaded
+    rows, so a match on job 61 read as "no jobs matched". Each now runs on the
+    server before the page is cut, and `total` counts the filtered set."""
+    app, client = app_client
+    recent = (now_utc() - timedelta(days=2)).isoformat()
+    old = (now_utc() - timedelta(days=40)).isoformat()
+    with _db(app).repos() as repos:
+        _filler(repos)
+        remote = repos.jobs.create(
+            canonical_url="t-remote", title="Remote Role", location="Remote",
+            description="Fully remote.",
+            source_adapter="lever", keyword_score=10, posted_at=old,
+        ).id
+        ashby = repos.jobs.create(
+            canonical_url="t-ashby", title="Ashby Role", location="Berlin",
+            description="Office role.",
+            source_adapter="ashby", keyword_score=10, posted_at=old,
+        ).id
+        ai = repos.jobs.create(
+            canonical_url="t-ai", title="AI Scored", location="Berlin",
+            description="Office role.",
+            source_adapter="lever", llm_score=10, llm_score_method="llm", posted_at=recent,
+        ).id
+        paid = repos.jobs.create(
+            canonical_url="t-paid", title="Paid Role", location="Berlin",
+            description="Office role.",
+            source_adapter="lever", keyword_score=10, salary="$150k - $180k", posted_at=old,
+        ).id
+        low = repos.jobs.create(
+            canonical_url="t-low", title="Low Role", location="Berlin",
+            description="Office role.",
+            source_adapter="lever", keyword_score=10, salary="$30k - $40k", posted_at=old,
+        ).id
+
+    def ids(query: str) -> tuple[set[str], int]:
+        body = client.get(f"/api/board?{query}", headers=AUTH).json()
+        return {j["id"] for j in body["jobs"]}, body["total"]
+
+    assert ids("work_style=REMOTE") == ({remote}, 1)
+    assert ids("work_style=REMOTE_FRIENDLY") == ({remote}, 1)
+    assert ids("source=ashby") == ({ashby}, 1)
+    assert ids("method=model") == ({ai}, 1)
+    assert ids("posted_days=7") == ({ai}, 1)
+    # The scan's own salary rule: a range under the floor is hidden, a job
+    # with no salary is never hidden (rank, don't gate).
+    found, total = ids("salary_min=100000")
+    found |= ids("salary_min=100000&page=1")[0]
+    assert paid in found and low not in found
+    assert total == 64
+
+
+def test_board_recency_sort_runs_before_pagination(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Recency sorted only the loaded 50; the newest posting on the whole board
+    must lead page 0."""
+    app, client = app_client
+    with _db(app).repos() as repos:
+        _filler(repos)
+        newest = repos.jobs.create(
+            canonical_url="t-new", title="Newest", source_adapter="lever", keyword_score=1,
+            posted_at=now_utc().isoformat(),
+        ).id
+    body = client.get("/api/board?sort=recency", headers=AUTH).json()
+    assert body["jobs"][0]["id"] == newest
+
+
 # ---------------------------------------------------------------------------
 # Last-scan meta + explained status (FR-JB-10)
 # ---------------------------------------------------------------------------

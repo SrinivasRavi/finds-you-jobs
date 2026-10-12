@@ -175,6 +175,17 @@ export interface Job {
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */
+/** The board's chip filters and sort, sent to `/api/board` and applied before
+ *  pagination (audit finding 6). An empty value means no filter. */
+export interface BoardFilters {
+  source?: string;
+  work_style?: "" | "REMOTE" | "HYBRID" | "ONSITE" | "REMOTE_FRIENDLY";
+  method?: "" | "model" | "keyword";
+  posted_days?: number;
+  salary_min?: number;
+  sort?: "match" | "recency";
+}
+
 export interface BoardPage {
   jobs: Job[];
   total: number;

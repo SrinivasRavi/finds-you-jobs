@@ -71,12 +71,10 @@ export function scoreRingColor(score: number): string {
  *
  *  `mode` stays explicit at every call site because each existing choice is
  *  load-bearing: "floor" counts completed days (days-in-column / days-in-status),
- *  "round" snaps to the nearest day (relative time-ago copy), and "exact" keeps
- *  the fraction for comparisons that feed a filter rather than a label.
+ *  and "round" snaps to the nearest day (relative time-ago copy).
  *  Returns NaN for an unparseable timestamp — callers guard. */
-export function daysBetween(iso: string, mode: "floor" | "round" | "exact" = "floor"): number {
+export function daysBetween(iso: string, mode: "floor" | "round" = "floor"): number {
   const days = (Date.now() - new Date(iso).getTime()) / 86_400_000;
-  if (mode === "exact") return days;
   return mode === "round" ? Math.round(days) : Math.floor(days);
 }
 
@@ -121,31 +119,6 @@ export function timeAgo(iso: string): RelativeTime | null {
   if (days <= 0) return { key: "relativeTime.today" };
   if (days < 30) return { key: "relativeTime.days", n: days };
   return { key: "relativeTime.months", n: Math.round(days / 30) };
-}
-
-/** Best-effort min-USD salary from a fuzzy string, across currencies/formats
- *  (FR-JB-04). Returns `null` when nothing is parseable — the caller must NOT
- *  hide a `null` row (rank-don't-gate; an unparseable/absent salary is never
- *  silently filtered out by a comp band). Rough currency proxies only. */
-export function salaryFloor(salary: string): number | null {
-  if (!salary) return null;
-  // Grab the first number with an optional magnitude suffix (k / L=lakh / M).
-  const m = salary.match(/([\d][\d,.]*)\s*([KkMmLl]?)/);
-  if (!m) return null;
-  const n = parseFloat(m[1].replace(/,/g, ""));
-  if (Number.isNaN(n)) return null;
-  const unit = m[2].toLowerCase();
-  const inr = /₹|inr|rs\b|lpa|lakh/i.test(salary);
-  let amount = n;
-  if (unit === "k") amount = n * 1_000;
-  else if (unit === "m") amount = n * 1_000_000;
-  else if (unit === "l") amount = n * 100_000; // lakh
-  else if (!unit && n < 1000) amount = n * 1000; // bare "40" → 40k
-  // Rough currency normalization to USD for cross-currency band matching.
-  if (inr) amount = amount / 83; // ₹ → $ proxy
-  else if (/€/.test(salary)) amount = amount * 1.08;
-  else if (/£/.test(salary)) amount = amount * 1.27;
-  return Math.round(amount);
 }
 
 /** Short relative time for the board's "last refresh" (FR-JB-02). Never null:
