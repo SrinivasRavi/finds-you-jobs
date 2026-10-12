@@ -29,6 +29,11 @@ const ja: DeepPartial<Messages> = {
     about: "情報とアップデート",
     aboutBlurb: "バージョン、更新、サポート",
   },
+  run: {
+    stop: "停止",
+    stopped: "停止しました。これ以上費用はかかりません。",
+    timedOut: "キーで費用がかかり続けないよう、4 分後に停止しました。",
+  },
   appearance: {
     theme: "テーマ",
     themeHint: "「システム」はOSのライト/ダーク設定に合わせます。",

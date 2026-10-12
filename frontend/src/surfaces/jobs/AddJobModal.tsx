@@ -5,7 +5,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useTriageScore, type TriageResult } from "../../api/queries";
+import {
+  RunStoppedError,
+  useCancelOperation,
+  useTriageScore,
+  type TriageResult,
+} from "../../api/queries";
 import { JobTombstonedError, type JobDraft } from "../../api/types";
 import { Modal } from "../../shell/Modal";
 import { canSave, draftForSave, emptyDraft, JobFields, useAutofill } from "./JobFields";
@@ -77,6 +82,8 @@ export function AddJobModal({
   const [draft, setDraft] = useState<JobDraft>(emptyDraft);
   const autofill = useAutofill(draft, setDraft);
   const triage = useTriageScore();
+  const cancel = useCancelOperation();
+  const [runningOp, setRunningOp] = useState<string | null>(null);
   const [score, setScore] = useState<TriageResult | null>(null);
   const [triageError, setTriageError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -86,10 +93,21 @@ export function AddJobModal({
   function runTriage() {
     setScore(null);
     setTriageError(null);
-    triage.mutate(draft.description, {
-      onSuccess: setScore,
-      onError: (e) => setTriageError(e instanceof Error ? e.message : String(e)),
-    });
+    triage.mutate(
+      { description: draft.description, onStarted: setRunningOp },
+      {
+        onSuccess: setScore,
+        onError: (e) =>
+          setTriageError(
+            e instanceof RunStoppedError
+              ? t(e.reason === "timeout" ? "run.timedOut" : "run.stopped")
+              : e instanceof Error
+                ? e.message
+                : String(e),
+          ),
+        onSettled: () => setRunningOp(null),
+      },
+    );
   }
 
   function submit() {
@@ -148,6 +166,17 @@ export function AddJobModal({
           >
             {t("jobBoard.addModal.scoreFirst")}
           </button>
+          {triage.isPending && runningOp ? (
+            <button
+              type="button"
+              data-testid="add-job-score-stop"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate(runningOp)}
+              className="rounded-full border border-border-2 px-2.5 py-1 text-[11.5px] text-ink-2 disabled:opacity-50"
+            >
+              {t("run.stop")}
+            </button>
+          ) : null}
           <div className="flex-1" />
           <button
             type="button"

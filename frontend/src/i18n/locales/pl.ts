@@ -34,6 +34,11 @@ const pl: DeepPartial<Messages> = {
     about: "O programie i aktualizacje",
     aboutBlurb: "Wersja, aktualizacje i wsparcie",
   },
+  run: {
+    stop: "Zatrzymaj",
+    stopped: "Zatrzymano. Nic więcej nie zostanie na to wydane.",
+    timedOut: "Zatrzymano po 4 minutach, żeby nie wydawać dalej z twojego klucza.",
+  },
   appearance: {
     theme: "Motyw",
     themeHint: "„System” dopasuje się do ustawień jasny/ciemny twojego systemu.",

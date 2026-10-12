@@ -29,6 +29,11 @@ const nl: DeepPartial<Messages> = {
     about: "Over en updates",
     aboutBlurb: "Versie, updates en ondersteuning",
   },
+  run: {
+    stop: "Stop",
+    stopped: "Gestopt. Hier wordt niets meer aan uitgegeven.",
+    timedOut: "Na 4 minuten gestopt, zodat het niet blijft uitgeven op je sleutel.",
+  },
   appearance: {
     theme: "Thema",
     themeHint: "“Systeem” volgt de licht/donker-instelling van je besturingssysteem.",

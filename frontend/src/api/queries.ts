@@ -24,6 +24,7 @@ import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
   Application,
+  Operation,
   AttachLinkInput,
   AttachLinkResult,
   BoardPage,
@@ -572,6 +573,35 @@ export interface TriageResult {
   reasons: string[];
 }
 
+/** How long a prompt test or a triage score may run before it's cancelled for
+ *  the user, so a forgotten run can't keep spending on their key (audit
+ *  finding 4, maintainer 2026-10-12). Stop cancels sooner. */
+export const RUN_LIMIT_MS = 240_000;
+
+/** A run that ended without a result: the user pressed Stop, or the limit hit. */
+export class RunStoppedError extends Error {
+  constructor(readonly reason: "stopped" | "timeout") {
+    super(reason);
+  }
+}
+
+/** Wait for an operation to finish. It keeps asking for as long as the run
+ *  lasts, and at the limit it cancels the run itself rather than abandoning it. */
+async function waitForOperation(opId: string): Promise<Operation> {
+  const started = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (Date.now() - started >= RUN_LIMIT_MS) {
+      await api.cancelOperation(opId).catch(() => undefined);
+      throw new RunStoppedError("timeout");
+    }
+    const op = await api.getOperation(opId);
+    if (op === undefined) continue;
+    if (op.state === "cancelled") throw new RunStoppedError("stopped");
+    if (op.state === "succeeded" || op.state === "failed") return op;
+  }
+}
+
 /** Run a prompt draft and wait for its output (url-less-jobs.md section 11.2).
  *
  *  The run goes through the runner like every other LLM call, so its spend
@@ -583,19 +613,19 @@ export function usePromptTest() {
     mutationFn: async ({
       kind,
       input,
+      onStarted,
     }: {
       kind: string;
       input: PromptTestInput;
+      /** The run's operation id, so the window can offer Stop. */
+      onStarted?: (opId: string) => void;
     }): Promise<PromptTestResult> => {
       const opId = await api.testPrompt(kind, input);
-      for (let i = 0; i < 240; i += 1) {
-        await new Promise((r) => setTimeout(r, 500));
-        const op = await api.getOperation(opId);
-        if (op === undefined) continue;
-        if (op.state === "failed") return { state: "failed", error: op.error };
-        if (op.state !== "succeeded") continue;
-        const ref = (op.result_ref ?? {}) as Record<string, unknown>;
-        return {
+      onStarted?.(opId);
+      const op = await waitForOperation(opId);
+      if (op.state === "failed") return { state: "failed", error: op.error };
+      const ref = (op.result_ref ?? {}) as Record<string, unknown>;
+      return {
           state: "succeeded",
           output_md: typeof ref.output_md === "string" ? ref.output_md : undefined,
           notes: Array.isArray(ref.notes) ? ref.notes.map(String) : undefined,
@@ -608,9 +638,7 @@ export function usePromptTest() {
               : undefined,
           usd:
             typeof op.usage?.usd === "number" ? op.usage.usd : null,
-        };
-      }
-      throw new Error("the test run timed out");
+      };
     },
     onSettled: () => {
       // A test run is real spend, so the dashboard moves with it.
@@ -623,22 +651,23 @@ export function usePromptTest() {
 
 export function useTriageScore() {
   return useMutation({
-    mutationFn: async (description: string): Promise<TriageResult> => {
+    mutationFn: async ({
+      description,
+      onStarted,
+    }: {
+      description: string;
+      onStarted?: (opId: string) => void;
+    }): Promise<TriageResult> => {
       const opId = await api.scoreJobText(description);
-      for (let i = 0; i < 120; i += 1) {
-        await new Promise((r) => setTimeout(r, 500));
-        const op = await api.getOperation(opId);
-        if (op === undefined) continue;
-        if (op.state === "failed") throw new Error(op.error ?? "scoring failed");
-        if (op.state !== "succeeded") continue;
-        const ref = op.result_ref ?? {};
-        return {
-          score: Number(ref.score ?? 0),
-          method: String(ref.method ?? ""),
-          reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : [],
-        };
-      }
-      throw new Error("scoring timed out");
+      onStarted?.(opId);
+      const op = await waitForOperation(opId);
+      if (op.state === "failed") throw new Error(op.error ?? "scoring failed");
+      const ref = op.result_ref ?? {};
+      return {
+        score: Number(ref.score ?? 0),
+        method: String(ref.method ?? ""),
+        reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : [],
+      };
     },
     meta: { errorHandledLocally: true },
   });

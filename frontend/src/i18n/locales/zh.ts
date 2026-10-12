@@ -29,6 +29,11 @@ const zh: DeepPartial<Messages> = {
     about: "关于与更新",
     aboutBlurb: "版本、更新与支持",
   },
+  run: {
+    stop: "停止",
+    stopped: "已停止。不会再为此产生费用。",
+    timedOut: "4 分钟后已停止，以免继续消耗你的密钥额度。",
+  },
   appearance: {
     theme: "主题",
     themeHint: "“跟随系统”将匹配操作系统的浅色/深色设置。",

@@ -16,7 +16,9 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  RunStoppedError,
   useBoard,
+  useCancelOperation,
   useContacts,
   usePromptTest,
   useSetPrompt,
@@ -131,6 +133,9 @@ export function PromptTuningModal({
   const board = useBoard();
   const contacts = useContacts();
   const test = usePromptTest();
+  const cancel = useCancelOperation();
+  // The running test's operation, so Stop can cancel it (audit finding 4).
+  const [runningOp, setRunningOp] = useState<string | null>(null);
   const setPrompt = useSetPrompt();
   const settings = useSettings();
   // By OPERATION kind, not prompt kind: `networker_draft` runs as `draft`,
@@ -161,6 +166,7 @@ export function PromptTuningModal({
     test.mutate(
       {
         kind: prompt.kind,
+        onStarted: setRunningOp,
         input: {
           markdown: draft,
           ...(needsJob && source === "board" ? { job_id: jobId } : {}),
@@ -168,7 +174,18 @@ export function PromptTuningModal({
           ...(needsContact ? { contact_id: contactId } : {}),
         },
       },
-      { onSuccess: setResult, onError: (e) => setResult({ state: "failed", error: String(e) }) },
+      {
+        onSuccess: setResult,
+        onError: (e) =>
+          setResult({
+            state: "failed",
+            error:
+              e instanceof RunStoppedError
+                ? t(e.reason === "timeout" ? "run.timedOut" : "run.stopped")
+                : String(e),
+          }),
+        onSettled: () => setRunningOp(null),
+      },
     );
   }
 
@@ -309,6 +326,17 @@ export function PromptTuningModal({
               ? t("settingsPage.prompts.testRunning")
               : t(RUN_LABEL_KEY[prompt.kind] ?? "settingsPage.prompts.testRun")}
           </button>
+          {test.isPending && runningOp ? (
+            <button
+              type="button"
+              data-testid="prompt-tune-stop"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate(runningOp)}
+              className="rounded-md border border-border-2 px-3 py-2 text-[12.5px] text-ink-2 disabled:opacity-40"
+            >
+              {t("run.stop")}
+            </button>
+          ) : null}
           {/* One line, not two: what it will run on, and what that costs the
               user. The dollar figure is only knowable afterwards, and the
               result panel reports it (url-less-jobs.md section 11.4). */}

@@ -29,6 +29,11 @@ const fr: DeepPartial<Messages> = {
     about: "À propos et mises à jour",
     aboutBlurb: "Version, mises à jour et assistance",
   },
+  run: {
+    stop: "Arrêter",
+    stopped: "Arrêté. Plus rien n'est dépensé pour cela.",
+    timedOut: "Arrêté au bout de 4 minutes pour ne pas continuer à dépenser sur votre clé.",
+  },
   appearance: {
     theme: "Thème",
     themeHint: "« Système » suit le mode clair/sombre de votre OS.",

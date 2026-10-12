@@ -29,6 +29,11 @@ const it: DeepPartial<Messages> = {
     about: "Informazioni e aggiornamenti",
     aboutBlurb: "Versione, aggiornamenti e supporto",
   },
+  run: {
+    stop: "Ferma",
+    stopped: "Fermato. Non si spende altro.",
+    timedOut: "Fermato dopo 4 minuti, così non continua a spendere sulla tua chiave.",
+  },
   appearance: {
     theme: "Tema",
     themeHint: "“Sistema” segue l'impostazione chiaro/scuro del tuo sistema operativo.",

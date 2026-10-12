@@ -66,6 +66,11 @@ const common = {
     days: "{{n}}d ago",
     months: "{{n}}mo ago",
   },
+  run: {
+    stop: "Stop",
+    stopped: "Stopped. Nothing more is spent on it.",
+    timedOut: "Stopped after 4 minutes, so it couldn't keep spending on your key.",
+  },
   appearance: {
     theme: "Theme",
     themeHint: "\u201cSystem\u201d will match your OS light/dark settings.",
