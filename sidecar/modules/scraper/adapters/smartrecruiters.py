@@ -89,10 +89,15 @@ def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
     unexpected."""
     if urlsplit(job.canonical_url).netloc.lower() not in _CAREERS_HOSTS:
         return ""
+    # 2 shapes: the `/<slug>/postings/<id>` this adapter writes, and the
+    # `/<slug>/<id>-<title>` the site itself serves (a pasted link).
     segments = path_segments(job.canonical_url)
-    if len(segments) < 3 or segments[1] != "postings":
+    if len(segments) >= 3 and segments[1] == "postings":
+        slug, posting_id = segments[0], segments[2]
+    elif len(segments) == 2 and segments[1].split("-", 1)[0].isdigit():
+        slug, posting_id = segments[0], segments[1].split("-", 1)[0]
+    else:
         return ""
-    slug, posting_id = segments[0], segments[2]
     payload = fetcher.get_json(f"https://{_API_HOST}/v1/companies/{slug}/postings/{posting_id}")
     if not isinstance(payload, dict):
         return ""
