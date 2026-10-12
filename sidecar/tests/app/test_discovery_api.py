@@ -43,6 +43,9 @@ def _offline_watch_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     a fake fetcher unless a test swaps in its own. The resolved-board memory
     is cleared so no test sees another's cache."""
     monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
+    monkeypatch.setattr(
+        discovery_api, "_read_board", lambda *_: (5, ["Backend Engineer", "SRE", "Data"], "")
+    )
     discovery_api._GUESS_CACHE.clear()
 
 
@@ -600,6 +603,9 @@ def test_watch_company_from_url_and_job_row(
         "source_url": "https://boards.greenhouse.io/totally-new-co",
         "adapter": "greenhouse",
         "company": "NewCo",
+        "openings": 5,
+        "sample_titles": ["Backend Engineer", "SRE", "Data"],
+        "read_error": "",
     }
     # Idempotent — watching again reports added=False, no duplicate entry.
     again = client.post(
@@ -756,26 +762,24 @@ def test_watch_search_source_job_explains_no_board(
     assert ops and ops[0].state == "failed" and "search source" in (ops[0].error or "")
 
 
-def test_watch_pasted_url_is_liveness_probed(
+def test_a_board_that_reads_badly_is_followed_with_the_reason(
     app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Warn, never refuse (watch-company.md section 3): a dead tenant is still
+    followed, and the reason comes back so the UI can show it with the link."""
     _, client = app_client
-    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeDeadFetcher)
-    bad = client.post(
+    monkeypatch.setattr(
+        discovery_api, "_read_board", lambda *_: (None, [], "GET … -> 404")
+    )
+    r = client.post(
         "/api/discovery/watchlist",
         headers=AUTH,
         json={"url": "https://boards.greenhouse.io/no-such-tenant-xyz"},
     )
-    assert bad.status_code == 422
-    assert "doesn't open" in bad.json()["detail"]
-    # A job-derived watch skips the probe (the board was just scanned).
-    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
-    ok = client.post(
-        "/api/discovery/watchlist",
-        headers=AUTH,
-        json={"url": "https://boards.greenhouse.io/live-tenant"},
-    )
-    assert ok.json()["added"] is True
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] is True and body["openings"] is None
+    assert "404" in body["read_error"]
 
 
 def test_slow_watch_probe_never_blocks_the_event_loop(
@@ -789,13 +793,12 @@ def test_slow_watch_probe_never_blocks_the_event_loop(
     import threading
     import time
 
-    class _SlowFetcher(_ProbeOkFetcher):
-        def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
-            time.sleep(1.2)
-            return "<html>board</html>"
+    def _slow_read(*_: object) -> tuple[int, list[str], str]:
+        time.sleep(1.2)
+        return 3, [], ""
 
     _, client = app_client
-    monkeypatch.setattr(discovery_api, "Fetcher", _SlowFetcher)
+    monkeypatch.setattr(discovery_api, "_read_board", _slow_read)
 
     result: dict = {}
 
@@ -835,6 +838,8 @@ def test_watchlist_roster_lists_and_removes_watched_rows_only(
             "url": "https://boards.greenhouse.io/rosterco",
             "company": "RosterCo",
             "adapter": "greenhouse",
+            "openings": 5,
+            "read_error": "",
         }
     ]
     # Seeded (non-watched) registry rows never appear in the roster.

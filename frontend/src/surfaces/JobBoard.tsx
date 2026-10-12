@@ -34,7 +34,13 @@ import {
   useWatchlist,
 } from "../api/queries";
 import { ApiError } from "../api/real";
-import { type BoardPage, type Job, type PlaceChip, type Settings } from "../api/types";
+import {
+  type BoardPage,
+  type Job,
+  type PlaceChip,
+  type Settings,
+  type WatchCompanyResult,
+} from "../api/types";
 import { Avatar } from "../shell/Avatar";
 import { ChipInput } from "../shell/ChipInput";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
@@ -51,6 +57,8 @@ import { RecoveryListModal } from "../shell/RecoveryListModal";
 import { AddJobModal } from "./jobs/AddJobModal";
 import { JobProvenanceChips } from "./jobs/JobProvenanceChips";
 import { AddLinkDialog, type AddLinkMode } from "./jobs/AddLinkDialog";
+import { FollowCompanyDialog } from "./jobs/FollowCompanyDialog";
+import { FollowResult, followLooksRight } from "./jobs/FollowResult";
 import { ScanProgressPill } from "./ScanProgressPill";
 import {
   CADENCE_OPTIONS,
@@ -384,14 +392,17 @@ function JobDetail({
   const unwatchCompany = useUnwatchCompany();
   const { data: watchlist } = useWatchlist();
   const [watchError, setWatchError] = useState<Error | null>(null);
-  // Which door opened the Add-link dialog: the inert "Add link" slot, or the
-  // watch-a-company variant (D12). Null means closed.
+  // What following this company's board found, shown under the actions so the
+  // user can check the link (watch-company.md section 3).
+  const [followResult, setFollowResult] = useState<WatchCompanyResult | null>(null);
+  const [followOpen, setFollowOpen] = useState(false);
   const [linkMode, setLinkMode] = useState<AddLinkMode | null>(null);
   const jobId = job?.id;
   useEffect(() => {
     setToggles({ ...packetDefaults });
     setJustSaved(false);
     setWatchError(null);
+    setFollowResult(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset per job only
   }, [jobId]);
   // Match by board-root URL prefix OR by company (several ATSes publish
@@ -546,15 +557,17 @@ function JobDetail({
         ) : null}
         <div className="flex-1" />
         {watchError && watchError instanceof ApiError && watchError.status === 422 ? (
-          // The board genuinely can't be watched (self-hosted portal, no
-          // adapter) — say so, with the server's verbatim reason on hover.
-          <span
+          // The app can't trace this job to a board (a search source, a
+          // self-hosted portal). The remedy is the careers page, so offer it.
+          <button
+            type="button"
             data-testid="watch-company-unsupported"
             title={watchError.message}
-            className="inline-flex h-[30px] items-center px-3 text-[12px] text-ink-3"
+            onClick={() => setFollowOpen(true)}
+            className="inline-flex h-[30px] items-center px-3 text-[12px] text-ink-3 underline hover:text-ink"
           >
             {t("jobBoard.detail.cantWatchSource")}
-          </span>
+          </button>
         ) : (
           <button
             data-testid="watch-company"
@@ -569,12 +582,10 @@ function JobDetail({
             disabled={watchCompany.isPending || unwatchCompany.isPending}
             onClick={() => {
               setWatchError(null);
-              // D12: `watch_company` reads the job's URL and 422s without one,
-              // which the UI rendered as "Can't watch this source" — false,
-              // the user did give a job id. A careers page is what watching a
-              // board actually needs, so ask for one (9.4).
+              // A job with no link can't be traced to a board: ask for the
+              // careers page, in its own dialog, never as the job's link (D12).
               if (!job.canonical_url && !watchedEntry) {
-                setLinkMode("watch");
+                setFollowOpen(true);
                 return;
               }
               if (watchedEntry) {
@@ -585,6 +596,7 @@ function JobDetail({
                 watchCompany.mutate(
                   { job_id: job.id },
                   {
+                    onSuccess: (r) => setFollowResult(r),
                     onError: (e) => setWatchError(e instanceof Error ? e : new Error(String(e))),
                   },
                 );
@@ -647,6 +659,20 @@ function JobDetail({
           </button>
         )}
       </div>
+      {followResult && watchedEntry && !followLooksRight(followResult) ? (
+        <div className="px-6 pt-2">
+          <FollowResult result={followResult} onChange={() => setFollowOpen(true)} />
+        </div>
+      ) : null}
+      {followOpen ? (
+        <FollowCompanyDialog
+          company={job.company}
+          onClose={() => {
+            setFollowOpen(false);
+            setWatchError(null);
+          }}
+        />
+      ) : null}
       {linkMode !== null ? (
         <AddLinkDialog
           jobId={job.id}
@@ -1280,116 +1306,6 @@ function RadioRow({
   );
 }
 
-// Tracked companies (job-finder-preferences design 2026-07-21): the roster
-// view of the `watched` [[sources]] rows the per-job "Watch company" action
-// writes — same data, now listable/removable/addable from one place.
-function TrackedCompanies() {
-  const { t } = useTranslation();
-  const { data: entries } = useWatchlist();
-  const watchCompany = useWatchCompany();
-  const unwatch = useUnwatchCompany();
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState("");
-
-  async function add() {
-    if (!url.trim()) return;
-    setError("");
-    try {
-      await watchCompany.mutateAsync({ url: url.trim() });
-      setUrl("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  return (
-    <section className="space-y-2" data-testid="fp-tracked-companies">
-      <header>
-        <h3 className="text-[13px] font-semibold text-ink">
-          {t("jobBoard.prefs.tracked.heading")}
-        </h3>
-        <p className="text-[11.5px] text-ink-3">
-          {t("jobBoard.prefs.tracked.hint")}
-        </p>
-      </header>
-      <ul className="space-y-1">
-        {(entries ?? []).map((e) => (
-          <li
-            key={e.url}
-            className="flex items-center justify-between gap-2 rounded-7 border border-border-2 bg-surface px-2.5 py-1.5"
-            data-testid="fp-tracked-row"
-          >
-            <div className="min-w-0">
-              <div className="truncate text-[12.5px] font-medium text-ink">
-                {e.company || e.url}
-              </div>
-              <div className="truncate text-[11px] text-ink-3">
-                {e.adapter ? `${e.adapter} · ` : ""}
-                {e.url}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setError("");
-                unwatch.mutate(e.url, {
-                  // A failed removal was silently swallowed here — the ×
-                  // just did nothing (maintainer 2026-07-22). Reuse the
-                  // section's error line so the reason is visible.
-                  onError: (err) =>
-                    setError(
-                      t("jobBoard.prefs.tracked.removeFailed", {
-                        message: err instanceof Error ? err.message : String(err),
-                      }),
-                    ),
-                });
-              }}
-              className="text-ink-3 hover:text-bad"
-              aria-label={t("jobBoard.prefs.tracked.stopTrackingAria")}
-              data-testid="fp-tracked-remove"
-            >
-              ×
-            </button>
-          </li>
-        ))}
-        {(entries ?? []).length === 0 ? (
-          <li className="rounded-7 border border-dashed border-border-2 px-2.5 py-1.5 text-[12px] text-ink-3">
-            {t("jobBoard.prefs.tracked.empty")}
-          </li>
-        ) : null}
-      </ul>
-      <div className="flex items-center gap-2">
-        <input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void add();
-            }
-          }}
-          placeholder="https://boards.greenhouse.io/…"
-          data-testid="fp-tracked-url"
-          className="h-[30px] flex-1 rounded-7 border border-border-2 bg-surface px-2 text-[12.5px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={() => void add()}
-          disabled={watchCompany.isPending || !url.trim()}
-          data-testid="fp-tracked-add"
-          className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {watchCompany.isPending ? t("jobBoard.prefs.tracked.adding") : t("jobBoard.prefs.tracked.track")}
-        </button>
-      </div>
-      {error ? (
-        <p className="text-[11.5px] text-bad" data-testid="fp-tracked-error">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  );
-}
 
 // "in 5h" / "in 2d" for the next-automatic-scan line; "overdue — any minute"
 // when the tick hasn't caught up yet.
@@ -1544,7 +1460,6 @@ function FinderPrefsModal({
           placeholder={t("jobBoard.prefs.excludedKeywords.placeholder")}
           testid="fp-exclude-keywords"
         />
-        <TrackedCompanies />
         <section className="space-y-2">
           <header>
             <h3 className="text-[13px] font-semibold text-ink">{t("jobBoard.prefs.freshness.heading")}</h3>

@@ -25,6 +25,7 @@ import asyncio
 import re
 from collections import Counter, OrderedDict
 from collections.abc import Callable
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -199,6 +200,43 @@ def _board_root(url: str) -> str:
     return url
 
 
+# Query parameters that are a search's filters or a tracking tag. A followed
+# board must carry none: the scan applies the user's live preferences
+# (watch-company.md section 3, rule 3). Anything else may be what makes the URL
+# a feed, so it stays.
+_FILTER_PARAMS = frozenset(
+    {"location", "locations", "loc", "q", "query", "keyword", "keywords", "search",
+     "department", "departments", "team", "teams", "category", "categories", "office",
+     "offices", "country", "city", "remote", "type", "level", "gh_src", "lever-source",
+     "source", "ref"}
+)
+
+
+def _strip_filters(url: str) -> str:
+    """The URL without search filters and tracking tags."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    kept = [
+        (k, v)
+        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in _FILTER_PARAMS and not k.lower().startswith("utm_")
+    ]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), ""))
+
+
+def _read_board(adapter: Any, source_url: str, company: str) -> tuple[int | None, list[str], str]:
+    """Read a board once, as a scan reads that source: (openings, 3 titles, why it
+    failed). Synchronous network I/O, so callers run it in a worker thread."""
+    try:
+        jobs = adapter.fetch(
+            SourceEntry(url=source_url, company=company), Fetcher(timeout_s=_WATCH_READ_TIMEOUT_S)
+        )
+    except Exception as exc:  # noqa: BLE001 — any failure is reported, never fatal
+        return None, [], str(exc) or type(exc).__name__
+    return len(jobs), [j.title for j in jobs[:3] if j.title], ""
+
+
 def _slugish(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
@@ -268,6 +306,7 @@ def _ledger_watch(repos, snapshot: dict, error: str | None) -> None:
 
 
 _WATCH_PROBE_TIMEOUT_S = 8
+_WATCH_READ_TIMEOUT_S = 20
 
 # Confirmed slug-guess probes, keyed "<adapter>:<company-slug>" → board URL.
 # A rewatch after an unwatch re-ran the live probe every time (1-2 s of real
@@ -321,6 +360,8 @@ async def watch_company(
     # 2026-07-22: every mutation after that failed as WebKit "Load failed"
     # while the UI kept rendering cached data).
     source_url = _board_root(url)
+    if source_url == url:
+        source_url = _strip_filters(url)
     entry = SourceEntry(url=source_url, company=company)
     resolved = adapters.resolve(entry)
     if resolved is None and job_adapter:
@@ -365,8 +406,8 @@ async def watch_company(
             fail = (
                 f"this job came from a search source ({job_adapter}) — there is "
                 "no company board to watch. Paste the company's careers page "
-                "on a supported ATS in Job finder preferences → Tracked "
-                "companies instead"
+                "on a supported ATS in Settings → Discover jobs → Companies you "
+                "follow instead"
             )
         else:
             fail = (
@@ -375,20 +416,18 @@ async def watch_company(
                 "Ashby, Workable, SmartRecruiters, Recruitee, Teamtailor, "
                 "Personio, Workday, BambooHR, Breezy) or an RSS feed"
             )
-    else:
+    openings: int | None = None
+    titles: list[str] = []
+    read_error = ""
+    if resolved is not None:
         adapter_id = resolved[0].ID
-        # Liveness gate for USER-PASTED urls only (a job-derived board was
-        # just scanned — it's known real): one GET, ~a second, catches
-        # typos like a nonexistent tenant before it pollutes the roster
-        # (maintainer 2026-07-22). Existence, not job-content —
-        # deliberately shallow.
-        if not payload.job_id:
-            try:
-                await asyncio.to_thread(
-                    Fetcher(timeout_s=_WATCH_PROBE_TIMEOUT_S).get_text, source_url
-                )
-            except ScraperError as e:
-                fail = f"that URL doesn't open — {e}"
+        # Read the board once, the way a scan will: it proves the board exists,
+        # the app can read it, and its openings are this company's. A board
+        # that reads badly is followed anyway, with the reason and the link
+        # shown (watch-company.md section 3).
+        openings, titles, read_error = await asyncio.to_thread(
+            _read_board, resolved[0], source_url, company
+        )
     if fail is not None:
         # Recorded OUTSIDE the request session: raising through `repos()`
         # rolls its transaction back, which silently discarded the ledger row
@@ -410,19 +449,23 @@ async def watch_company(
                 # managed roster entry (watched=True) — so the watch toggle
                 # reflects it and unwatch can remove it. REPLACE the row dict,
                 # never mutate it in place (see `_portals`).
-                if not raw.get("watched"):
-                    stamped = {**raw, "watched": True}
-                    if company and not raw.get("company"):
-                        stamped["company"] = company
-                    sources[i] = stamped
-                    portals["sources"] = sources
-                    save()
+                stamped = {
+                    **raw, "watched": True, "openings": openings, "read_error": read_error
+                }
+                if company and not raw.get("company"):
+                    stamped["company"] = company
+                sources[i] = stamped
+                portals["sources"] = sources
+                save()
                 break
         if not already:
             # `watched` marks the row as user-tracked so the roster view can
             # tell it apart from the seeded registry. Unknown keys are ignored
             # by the portals parser, so scans are unaffected.
-            row: dict = {"url": source_url, "watched": True}
+            row: dict = {
+                "url": source_url, "watched": True, "openings": openings,
+                "read_error": read_error,
+            }
             if company:
                 row["company"] = company
             sources.append(row)
@@ -430,7 +473,13 @@ async def watch_company(
             save()
         _ledger_watch(repos, snapshot, None)
     return dto.WatchCompanyResult(
-        added=not already, source_url=source_url, adapter=adapter_id, company=company
+        added=not already,
+        source_url=source_url,
+        adapter=adapter_id,
+        company=company,
+        openings=openings,
+        sample_titles=titles,
+        read_error=read_error,
     )
 
 
@@ -464,6 +513,8 @@ def list_watched_companies(request: Request) -> dto.WatchlistDTO:
                 url=str(raw["url"]),
                 company=str(raw.get("company", "")),
                 adapter=resolved[0].ID if resolved else "",
+                openings=raw.get("openings") if isinstance(raw.get("openings"), int) else None,
+                read_error=str(raw.get("read_error") or ""),
             )
         )
     return dto.WatchlistDTO(entries=entries)

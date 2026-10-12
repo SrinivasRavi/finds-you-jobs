@@ -4102,6 +4102,18 @@ export interface components {
             adapter: string;
             /** Company */
             company: string;
+            /** Openings */
+            openings?: number | null;
+            /**
+             * Sample Titles
+             * @default []
+             */
+            sample_titles: string[];
+            /**
+             * Read Error
+             * @default
+             */
+            read_error: string;
         };
         /** WatchRemoveResult */
         WatchRemoveResult: {
@@ -4126,6 +4138,13 @@ export interface components {
             company: string;
             /** Adapter */
             adapter: string;
+            /** Openings */
+            openings?: number | null;
+            /**
+             * Read Error
+             * @default
+             */
+            read_error: string;
         };
         /** ApplyProgressEvent */
         ApplyProgressEvent: {

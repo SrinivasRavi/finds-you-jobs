@@ -16,6 +16,7 @@ import { AIProvidersPanel } from "./settings/AIProvidersPanel";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { AutomationSection } from "./settings/AutomationSection";
 import { DiscoveryKeysSection, DiscoverySourcesSection } from "./settings/DiscoverySources";
+import { FollowedCompaniesSection } from "./settings/FollowedCompaniesSection";
 import { LifecycleSection } from "./settings/LifecycleSection";
 import { LinkedInJobSearchSection, LinkedInRateLimitsSection } from "./settings/LinkedInSections";
 import { ObservabilitySection } from "./settings/ObservabilitySection";
@@ -69,6 +70,12 @@ export function Settings() {
               pipeline everything below feeds on. */}
           <Section title={t("settingsPage.sources.title")}>
             <DiscoverySourcesSection />
+          </Section>
+
+          {/* Boards the user follows: rows of the same sources list
+              (watch-company.md section 3). */}
+          <Section title={t("jobBoard.prefs.tracked.heading")}>
+            <FollowedCompaniesSection />
           </Section>
 
           {/* BYO scraper keys — their own card so the sources list above stays

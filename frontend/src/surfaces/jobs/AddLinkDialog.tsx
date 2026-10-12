@@ -1,8 +1,7 @@
 // The promotion dialog (url-less-jobs.md section 9.5): 1 component behind
 // every surface that needs a posting link it doesn't have. The board detail's
-// Add link, the tracker detail's Add link, the Apply prompt (9.8) and the
-// watch-a-company variant (D12) all open this, so the compound match check of
-// section 5.4 lives in one place and can't drift between them.
+// Add link, the tracker detail's Add link and the Apply prompt (9.8) all open
+// this, so the compound match check of section 5.4 lives in one place.
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,7 +11,7 @@ import type { AttachLinkResult, LinkCandidate } from "../../api/types";
 import { Modal } from "../../shell/Modal";
 
 /** Which door opened it — copy and the primary button, nothing else. */
-export type AddLinkMode = "link" | "apply" | "watch";
+export type AddLinkMode = "link" | "apply";
 
 function SideBySide({ pasted, card }: { pasted: LinkCandidate; card: LinkCandidate | null }) {
   const { t } = useTranslation();
@@ -81,16 +80,10 @@ export function AddLinkDialog({
         ? t("jobBoard.addLink.duplicateTitle")
         : mode === "apply"
           ? t("jobBoard.addLink.applyTitle")
-          : mode === "watch"
-            ? t("jobBoard.addLink.watchTitle")
-            : t("jobBoard.addLink.title");
+          : t("jobBoard.addLink.title");
 
   const primary =
-    mode === "apply"
-      ? t("jobBoard.addLink.applyAttach")
-      : mode === "watch"
-        ? t("jobBoard.addLink.watchAttach")
-        : t("jobBoard.addLink.attach");
+    mode === "apply" ? t("jobBoard.addLink.applyAttach") : t("jobBoard.addLink.attach");
 
   return (
     <Modal title={title} onClose={onClose} size="md">
@@ -181,7 +174,7 @@ export function AddLinkDialog({
               className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
             />
             <p className="text-[11.5px] leading-snug text-ink-4">
-              ↳ {mode === "watch" ? t("jobBoard.addLink.watchHint") : t("jobBoard.addLink.hint")}
+              ↳ {t("jobBoard.addLink.hint")}
             </p>
             {mode === "apply" ? (
               <p className="text-[12.5px] leading-snug text-ink-2">

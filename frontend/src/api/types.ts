@@ -920,10 +920,13 @@ export interface WatchCompanyResult {
   source_url: string;
   adapter: string;
   company: string;
+  /** What reading the board once found (watch-company.md section 3). Null
+   *  with a `read_error` when the read failed; the follow happened anyway. */
+  openings: number | null;
+  sample_titles: string[];
+  read_error: string;
 }
 
-/** One tracked company board (a `watched` [[sources]] row) — the roster view
- *  in Job finder preferences of the same data "Watch company" writes. */
 /** One background schedule row (GET /api/schedules) — surfaced so the
  *  preferences modal can show WHEN the next automatic scan fires (the cadence
  *  was invisible before: it worked, but nothing proved it — 2026-07-22). */
@@ -939,6 +942,10 @@ export interface WatchlistEntry {
   url: string;
   company: string;
   adapter: string;
+  /** Openings found the last time the board was checked; null if never read. */
+  openings: number | null;
+  /** Why the last check couldn't read the board; "" when it could. */
+  read_error: string;
 }
 
 export type ScoringMode = "llm" | "jev" | "local" | "keyword";

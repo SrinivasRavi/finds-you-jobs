@@ -612,6 +612,12 @@ class WatchCompanyResult(BaseModel):
     source_url: str
     adapter: str
     company: str
+    # What reading the board once found (watch-company.md section 3): null
+    # openings with a reason when the read failed. A follow is never refused
+    # for any of these; the UI warns and shows the link.
+    openings: int | None = None
+    sample_titles: list[str] = []
+    read_error: str = ""
 
 
 class WatchlistEntryDTO(BaseModel):
@@ -622,6 +628,10 @@ class WatchlistEntryDTO(BaseModel):
     url: str
     company: str
     adapter: str
+    # Openings found the last time this board was checked; null if never read.
+    openings: int | None = None
+    # Why the last check couldn't read the board; empty when it could.
+    read_error: str = ""
 
 
 class PlaceSuggestionDTO(BaseModel):
