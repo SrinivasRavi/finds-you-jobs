@@ -994,6 +994,40 @@ async def test_reap_idle_never_touches_a_watched_surface(broker: BrowserBroker) 
     assert broker.reap_idle(max_idle=60.0) == []
 
 
+async def test_past_the_cap_the_longest_idle_surface_makes_room(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S-C20: at the cap, a new surface closes the longest-idle one, never a
+    watched one, and launches past the cap rather than close a pane in use."""
+    monkeypatch.setattr(broker_module, "MAX_SURFACES", 2)
+    fakes = {slug: FakeBrowser() for slug in ("pane-a", "pane-b", "pane-c", "pane-d")}
+
+    def opener(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
+        return fakes[profile_dir.parent.name].opener(profile_dir, launch_kwargs)
+
+    broker = BrowserBroker(
+        tmp_path / "data", asyncio.get_running_loop(), opener=opener,
+        user_agent_resolver=lambda: FAKE_UA,
+    )
+    try:
+        a = broker.surface("pane-a")
+        await a.wait_ready()
+        await asyncio.sleep(0.02)
+        b = broker.surface("pane-b")
+        await b.wait_ready()
+        await broker.surface("pane-c").wait_ready()
+        assert broker.live_slugs == frozenset({"pane-b", "pane-c"})
+        assert fakes["pane-a"].context.closed == 1
+
+        b.set_viewer(Viewer())
+        broker.surface("pane-c").set_viewer(Viewer())
+        await broker.surface("pane-d").wait_ready()
+        assert broker.live_slugs == frozenset({"pane-b", "pane-c", "pane-d"})
+        assert fakes["pane-b"].context.closed == 0
+    finally:
+        broker.shutdown()
+
+
 async def test_a_reaped_surface_relaunches_on_the_next_ask(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:

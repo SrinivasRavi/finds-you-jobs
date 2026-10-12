@@ -63,7 +63,8 @@ async def screencast(websocket: WebSocket) -> None:
     slug = websocket.query_params.get("surface") or DEFAULT_SURFACE
     await websocket.accept()
     try:
-        surface = broker.surface(slug)
+        # Off the loop: making room can close another surface and join its thread.
+        surface = await asyncio.to_thread(broker.surface, slug)
     except ValueError as exc:
         await _send_error(websocket, str(exc))
         await websocket.close(code=POLICY_CLOSE)

@@ -83,6 +83,11 @@ GEOMETRY_TIMEOUT_SECONDS = 10.0
 # driving the lane holds it open, so this only elapses when nobody wants it.
 IDLE_SHUTDOWN_SECONDS = 300.0
 
+# How many Chromes may be live at once (backlog S-C20). Past it, launching a
+# new surface first closes the longest-idle one; a surface in use is never
+# closed, so the cap yields rather than take a pane from under the user.
+MAX_SURFACES = 4
+
 # A slug names a surface AND a directory under the data dir, so it stays a
 # single safe path segment.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -789,6 +794,7 @@ class BrowserBroker:
                 # has already been handed out.
                 existing.touch()
                 return existing
+        self._make_room(slug)
         # No surface yet, or a dead one to replace. Take the slug's lifecycle
         # lock: if a reaper is closing this slug right now, this blocks until
         # its Chrome has really gone and the profile directory is free.
@@ -812,6 +818,31 @@ class BrowserBroker:
                 self._surfaces[slug] = surface
             surface.start()
             return surface
+
+    def _make_room(self, slug: str) -> None:
+        """At `MAX_SURFACES`, close the longest-idle other surface, with the
+        same pick-then-recheck locking `reap_idle` uses. Blocking (it joins
+        the closed surface's thread): `surface()` callers are off the loop."""
+        with self._lock:
+            if slug in self._surfaces or len(self._surfaces) < MAX_SURFACES:
+                return
+            idle = [
+                (idle_s, other, surface)
+                for other, surface in self._surfaces.items()
+                if (idle_s := surface.idle_seconds) is not None
+            ]
+        if not idle:
+            self._log.warning("%d browser surfaces in use; launching %r past the cap",
+                              MAX_SURFACES, slug)
+            return
+        _, victim, surface = max(idle, key=lambda t: t[0])
+        with self._lifecycle_lock(victim):
+            with self._lock:
+                if self._surfaces.get(victim) is not surface or surface.idle_seconds is None:
+                    return
+                del self._surfaces[victim]
+            self._log.info("closing idle browser surface %r to make room for %r", victim, slug)
+            surface.shutdown()
 
     def live_surface(self, slug: str) -> BrowserSurface | None:
         """The surface for `slug` if one is already live, else None — a PEEK that

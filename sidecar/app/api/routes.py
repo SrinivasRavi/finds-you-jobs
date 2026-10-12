@@ -3067,7 +3067,7 @@ async def dev_navigate_browser_surface(
     broker = getattr(request.app.state, "browser", None)
     if broker is None:
         raise HTTPException(status_code=503, detail="browser broker unavailable")
-    surface = broker.surface(slug)
+    surface = await asyncio.to_thread(broker.surface, slug)
     try:
         await surface.wait_ready()
         # Optional geometry, same contract as a viewer's `viewport` message —
