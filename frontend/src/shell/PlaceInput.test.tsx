@@ -111,6 +111,16 @@ describe("PlaceInput", () => {
     await waitFor(() => expect(added).toEqual([GB]));
   });
 
+  it("Enter then leaving the box before the list loads adds the place once", async () => {
+    const input = mount();
+    fireEvent.change(input, { target: { value: "london" } });
+    fireEvent.keyDown(input, { key: "Enter" }); // inside the 150 ms debounce
+    fireEvent.blur(input); // the 2nd commit of the same text, still in flight
+    await waitFor(() => expect(added).toEqual([GB]));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(added).toEqual([GB]);
+  });
+
   it("text matching no place is kept as typed", async () => {
     const input = mount();
     fireEvent.change(input, { target: { value: "Moonbase" } });

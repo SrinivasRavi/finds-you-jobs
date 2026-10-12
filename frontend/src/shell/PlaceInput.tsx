@@ -5,7 +5,7 @@
 // never commits, because full names contain commas.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../api";
@@ -58,22 +58,30 @@ export function PlaceInput({
   }
 
   /** The top (or highlighted) suggestion, else the text as typed. Enter can
-   *  beat the debounce, so a stale list is fetched fresh for exactly this text. */
+   *  beat the debounce, so a stale list is fetched fresh for exactly this text.
+   *  While that fetch is out, a 2nd commit of the same text (Enter, then leaving
+   *  the box) is the same commit, so it adds nothing. */
+  const pending = useRef<string | null>(null);
   async function commit() {
     const text = input.trim();
-    if (!text) return;
+    if (!text || pending.current === text) return;
     if (suggestions.length || text.length < 2) {
       add(suggestions[active] ?? suggestions[0] ?? text);
       return;
     }
-    const fresh = await qc
-      .fetchQuery({
-        queryKey: ["placeSuggest", text.toLowerCase()],
-        queryFn: () => api.suggestPlaces(text),
-        staleTime: Infinity,
-      })
-      .catch(() => [] as PlaceSuggestion[]);
-    add(fresh[0] ?? text);
+    pending.current = text;
+    try {
+      const fresh = await qc
+        .fetchQuery({
+          queryKey: ["placeSuggest", text.toLowerCase()],
+          queryFn: () => api.suggestPlaces(text),
+          staleTime: Infinity,
+        })
+        .catch(() => [] as PlaceSuggestion[]);
+      add(fresh[0] ?? text);
+    } finally {
+      pending.current = null;
+    }
   }
 
   const chips = items.map((it) => {
