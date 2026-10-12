@@ -1461,6 +1461,9 @@ const nl: DeepPartial<Messages> = {
     degradedBoot: "Achtergrondwerk is gepauzeerd. De app is 3 keer op rij onverwacht afgesloten, dus deze sessie is zonder gestart.",
     degradedBootResume: "Achtergrondwerk hervatten",
     degradedBootDismiss: "Sluiten",
+    degradedBootTitle: "Achtergrondwerk is gepauzeerd",
+    degradedBootKeepPaused: "Gepauzeerd laten",
+    degradedBootBody: "De app is 3 keer achter elkaar onverwacht afgesloten, dus deze sessie startte zonder. Niets draait vanzelf tot je het hervat.",
     work: {
       remote: "Remote",
       hybrid: "Hybride",

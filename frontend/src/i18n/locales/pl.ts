@@ -1495,6 +1495,9 @@ const pl: DeepPartial<Messages> = {
     degradedBoot: "Praca w tle jest wstrzymana. Aplikacja zamknęła się nieoczekiwanie 3 razy z rzędu, więc ta sesja uruchomiła się bez niej.",
     degradedBootResume: "Wznów pracę w tle",
     degradedBootDismiss: "Zamknij",
+    degradedBootTitle: "Praca w tle jest wstrzymana",
+    degradedBootKeepPaused: "Pozostaw wstrzymane",
+    degradedBootBody: "Aplikacja 3 razy z rzędu nieoczekiwanie się zamknęła, więc ta sesja ruszyła bez niej. Nic nie uruchomi się samo, dopóki jej nie wznowisz.",
     work: {
       remote: "Zdalna",
       hybrid: "Hybrydowa",

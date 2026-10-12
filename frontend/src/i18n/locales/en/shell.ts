@@ -20,11 +20,15 @@ const shell = {
     "Backend stopped: {{message}}. Nothing you do will save until you quit and reopen the app.",
   // Degraded boot (Layout.tsx): the shell saw 3 runs in a row end the same bad
   // way and started the backend without its scheduler, so nothing queues itself
-  // into whatever killed them. Dismissible; the button is the way back.
+  // into whatever killed them. Asked first in a dialog (S-C43), then a banner.
   degradedBoot:
     "Background work is paused. The app closed unexpectedly 3 times in a row, so this session started without it.",
   degradedBootResume: "Resume background work",
   degradedBootDismiss: "Dismiss",
+  degradedBootTitle: "Background work is paused",
+  degradedBootKeepPaused: "Keep it paused",
+  degradedBootBody:
+    "The app closed unexpectedly 3 times in a row, so this session started without it. Nothing runs on its own until you resume it.",
   work: {
     remote: "Remote",
     hybrid: "Hybrid",

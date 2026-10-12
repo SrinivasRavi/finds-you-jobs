@@ -1461,6 +1461,9 @@ const fr: DeepPartial<Messages> = {
     degradedBoot: "Le travail en arrière-plan est en pause. L'application s'est fermée de façon inattendue 3 fois de suite, donc cette session a démarré sans lui.",
     degradedBootResume: "Reprendre le travail en arrière-plan",
     degradedBootDismiss: "Masquer",
+    degradedBootTitle: "Le travail en arrière-plan est en pause",
+    degradedBootKeepPaused: "Laisser en pause",
+    degradedBootBody: "L'application s'est fermée de façon inattendue 3 fois de suite, donc cette session a démarré sans lui. Rien ne tourne tout seul tant que vous ne le relancez pas.",
     work: {
       remote: "Télétravail",
       hybrid: "Hybride",

@@ -1436,6 +1436,9 @@ const ja: DeepPartial<Messages> = {
     degradedBoot: "バックグラウンド処理は一時停止しています。アプリが3回続けて予期せず終了したため、このセッションは処理なしで開始しました。",
     degradedBootResume: "バックグラウンド処理を再開",
     degradedBootDismiss: "閉じる",
+    degradedBootTitle: "バックグラウンド処理は一時停止中です",
+    degradedBootKeepPaused: "一時停止のままにする",
+    degradedBootBody: "アプリが3回続けて予期せず終了したため、このセッションはバックグラウンド処理なしで起動しました。再開するまで何も自動では実行されません。",
     work: {
       remote: "リモート",
       hybrid: "ハイブリッド",

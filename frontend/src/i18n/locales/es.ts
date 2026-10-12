@@ -1461,6 +1461,9 @@ const es: DeepPartial<Messages> = {
     degradedBoot: "El trabajo en segundo plano está en pausa. La aplicación se cerró de forma inesperada 3 veces seguidas, así que esta sesión se inició sin él.",
     degradedBootResume: "Reanudar el trabajo en segundo plano",
     degradedBootDismiss: "Descartar",
+    degradedBootTitle: "El trabajo en segundo plano está en pausa",
+    degradedBootKeepPaused: "Mantener en pausa",
+    degradedBootBody: "La app se cerró inesperadamente 3 veces seguidas, así que esta sesión empezó sin él. Nada se ejecuta por su cuenta hasta que lo reanudes.",
     work: {
       remote: "Remoto",
       hybrid: "Híbrido",

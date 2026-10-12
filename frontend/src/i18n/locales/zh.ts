@@ -1436,6 +1436,9 @@ const zh: DeepPartial<Messages> = {
     degradedBoot: "后台任务已暂停。应用连续 3 次意外关闭，因此本次会话未启动后台任务。",
     degradedBootResume: "恢复后台任务",
     degradedBootDismiss: "关闭",
+    degradedBootTitle: "后台任务已暂停",
+    degradedBootKeepPaused: "保持暂停",
+    degradedBootBody: "应用连续 3 次意外关闭，所以本次会话启动时没有开启后台任务。在你恢复之前，不会有任何任务自动运行。",
     work: {
       remote: "远程",
       hybrid: "混合",

@@ -1461,6 +1461,9 @@ const hi: DeepPartial<Messages> = {
     degradedBoot: "बैकग्राउंड काम रुका हुआ है। ऐप लगातार 3 बार अप्रत्याशित रूप से बंद हुआ, इसलिए यह सत्र इसके बिना शुरू हुआ।",
     degradedBootResume: "बैकग्राउंड काम फिर से शुरू करें",
     degradedBootDismiss: "बंद करें",
+    degradedBootTitle: "बैकग्राउंड काम रुका हुआ है",
+    degradedBootKeepPaused: "रुका रहने दें",
+    degradedBootBody: "ऐप लगातार 3 बार अचानक बंद हुआ, इसलिए यह सत्र इसके बिना शुरू हुआ। जब तक आप इसे फिर से शुरू नहीं करते, कुछ भी अपने-आप नहीं चलेगा।",
     work: {
       remote: "रिमोट",
       hybrid: "हाइब्रिड",

@@ -1520,6 +1520,9 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     degradedBoot: "Фоновая работа приостановлена. Приложение неожиданно закрылось 3 раза подряд, поэтому этот сеанс запущен без неё.",
     degradedBootResume: "Возобновить фоновую работу",
     degradedBootDismiss: "Скрыть",
+    degradedBootTitle: "Фоновая работа приостановлена",
+    degradedBootKeepPaused: "Оставить на паузе",
+    degradedBootBody: "Приложение 3 раза подряд неожиданно закрылось, поэтому этот сеанс запущен без неё. Ничего не запустится само, пока вы её не возобновите.",
     work: {
       remote: "Удалённо",
       hybrid: "Гибрид",

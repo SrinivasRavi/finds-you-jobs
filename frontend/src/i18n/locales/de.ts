@@ -1464,6 +1464,9 @@ const de: DeepPartial<Messages> = {
     degradedBoot: "Hintergrundarbeit ist pausiert. Die App wurde 3-mal hintereinander unerwartet beendet, daher startete diese Sitzung ohne sie.",
     degradedBootResume: "Hintergrundarbeit fortsetzen",
     degradedBootDismiss: "Ausblenden",
+    degradedBootTitle: "Hintergrundarbeit ist pausiert",
+    degradedBootKeepPaused: "Pausiert lassen",
+    degradedBootBody: "Die App wurde 3-mal hintereinander unerwartet beendet, daher startete diese Sitzung ohne sie. Nichts läuft von selbst, bis du sie fortsetzt.",
     work: {
       remote: "Remote",
       hybrid: "Hybrid",
