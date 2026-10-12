@@ -19,6 +19,7 @@ import {
   useRetryOperation,
   useRetryScoring,
 } from "../api/queries";
+import type { components } from "../api/schema";
 import type {
   CostTotals,
   LedgerEntry,
@@ -267,12 +268,16 @@ function RetryScoringButton() {
   );
 }
 
-// Mirrors the backend's CANCELLABLE_RUNNING_KINDS (registry/operations.py):
-// the only kinds that poll the cancel token while RUNNING. Queued ops of any
+// The backend's CANCELLABLE_RUNNING_KINDS (registry/operations.py), checked
+// against it: the only kinds that poll the cancel token while RUNNING. Queued ops of any
 // kind can always be cancelled server-side. This is a render heuristic, not a
 // gate — a race (the op advancing under us) lands a 409 that surfaces through
 // the global MutationErrorBanner and the ledger refresh makes the row honest.
-const CANCELLABLE_RUNNING_KINDS: OperationKind[] = ["score", "tailor", "cover"];
+const CANCELLABLE_RUNNING_ROWS: Record<
+  components["schemas"]["SharedConstants"]["cancellable_running_kind"],
+  true
+> = { score: true, tailor: true, cover: true };
+const CANCELLABLE_RUNNING_KINDS = Object.keys(CANCELLABLE_RUNNING_ROWS) as OperationKind[];
 
 // `apply` cancellation is never a generic ledger Stop — even a queued apply is
 // cancelled through its own apply-run flow (the ApplierPanel's dedicated Cancel,

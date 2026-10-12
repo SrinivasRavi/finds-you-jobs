@@ -48,6 +48,7 @@ from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
 from .security import AppKeyUnavailable, migrate_plaintext_session, resolve_app_key_once
 from .seed import seed_defaults
+from .shared_constants import register_shared_constants
 from .watchdog import watch_parent
 
 # What the Tauri shell allows one /healthz answer (`src-tauri/src/sidecar.rs`).
@@ -479,6 +480,7 @@ def create_app(
     def _openapi_with_sse() -> dict[str, Any]:
         schema = _openapi_default()
         register_sse_schemas(schema)
+        register_shared_constants(schema)
         return schema
 
     app.openapi = _openapi_with_sse  # type: ignore[method-assign]

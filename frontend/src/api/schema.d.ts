@@ -4296,6 +4296,104 @@ export interface components {
          * @enum {string}
          */
         LlmKind: "score" | "tailor" | "cover" | "extract" | "draft" | "apply";
+        SharedConstants: {
+            preset_location_penalty: {
+                /** @enum {number} */
+                balanced: 15;
+                /** @enum {number} */
+                location_first: 35;
+                /** @enum {number} */
+                seniority_first: 15;
+                /** @enum {number} */
+                skills_only: 0;
+            };
+            preset_weights: {
+                balanced: Record<string, never>;
+                location_first: Record<string, never>;
+                seniority_first: {
+                    /** @enum {number} */
+                    hard_requirements: 0.25;
+                    /** @enum {number} */
+                    core_stack: 0.25;
+                    /** @enum {number} */
+                    years: 0.1;
+                    /** @enum {number} */
+                    level: 0.35;
+                    /** @enum {number} */
+                    nice_to_haves: 0.05;
+                };
+                skills_only: {
+                    /** @enum {number} */
+                    hard_requirements: 0.45;
+                    /** @enum {number} */
+                    core_stack: 0.55;
+                    /** @enum {number} */
+                    years: 0;
+                    /** @enum {number} */
+                    level: 0;
+                    /** @enum {number} */
+                    nice_to_haves: 0;
+                };
+            };
+            jev_weights: {
+                /** @enum {number} */
+                hard_requirements: 0.3;
+                /** @enum {number} */
+                core_stack: 0.3;
+                /** @enum {number} */
+                years: 0.15;
+                /** @enum {number} */
+                level: 0.15;
+                /** @enum {number} */
+                nice_to_haves: 0.1;
+            };
+            lifecycle_defaults: {
+                /** @enum {number} */
+                engagement_ghosted_days: 14;
+                /** @enum {number} */
+                sent_ghosted_days: 21;
+                /** @enum {number} */
+                expire_listing_days: 14;
+                /** @enum {number} */
+                contact_purge_days: 60;
+                /** @enum {number} */
+                trashed_jobs_purge_days: 7;
+                /** @enum {number} */
+                archived_applications_purge_days: 30;
+            };
+            /** @enum {string} */
+            claude_cli_default_model: "claude-opus-5-5";
+            /** @enum {string} */
+            scoring_mode: "jev" | "keyword" | "llm" | "local";
+            /** @enum {string} */
+            score_weight_preset: "balanced" | "location_first" | "seniority_first" | "skills_only";
+            /** @enum {string} */
+            cancellable_running_kind: "cover" | "score" | "tailor";
+            /** @enum {string} */
+            browser_lane_kind: "contact_sync" | "discover" | "linkedin_login" | "linkedin_search" | "send" | "view_page";
+            /** @enum {string} */
+            cli_provider: "antigravity-cli" | "claude-cli" | "codex-cli";
+            attach_types: {
+                /** @enum {string} */
+                ".pdf": "application/pdf";
+                /** @enum {string} */
+                ".doc": "application/msword";
+                /** @enum {string} */
+                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                /** @enum {string} */
+                ".odt": "application/vnd.oasis.opendocument.text";
+                /** @enum {string} */
+                ".pages": "application/vnd.apple.pages";
+                /** @enum {string} */
+                ".txt": "text/plain";
+                /** @enum {string} */
+                ".md": "text/markdown";
+                /** @enum {string} */
+                ".rtf": "application/rtf";
+            };
+            /** @enum {string} */
+            extract_suffix: ".doc" | ".docx" | ".markdown" | ".md" | ".odt" | ".pages" | ".pdf" | ".rtf" | ".txt";
+        };
     };
     responses: never;
     parameters: never;

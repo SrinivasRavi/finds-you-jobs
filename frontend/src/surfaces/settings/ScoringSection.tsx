@@ -14,6 +14,7 @@ import type {
   ScoringMode,
   Settings as SettingsT,
 } from "../../api/types";
+import type { components } from "../../api/schema";
 import { WEIGHTED_AXES } from "../../api/types";
 import { InfoDot } from "../../shell/InfoDot";
 import { Section } from "./shared";
@@ -108,7 +109,10 @@ const PRESETS: ScoreWeightPreset[] = [
   "skills_only",
 ];
 
-/** What each preset sets, mirroring `weights.PRESETS`. `balanced` is empty
+// The sidecar's constants as literal types (sidecar/app/shared_constants.py).
+type Shared = components["schemas"]["SharedConstants"];
+
+/** What each preset sets: `weights.PRESETS`, checked against it. `balanced` is empty
  *  because it means "whatever table the method that ran shipped with", so the
  *  sliders show that method's own numbers rather than a second opinion. */
 const PRESET_WEIGHTS: Record<ScoreWeightPreset, Record<string, number>> = {
@@ -128,17 +132,17 @@ const PRESET_WEIGHTS: Record<ScoreWeightPreset, Record<string, number>> = {
     level: 0,
     nice_to_haves: 0,
   },
-};
+} satisfies Shared["preset_weights"];
 
-// The shipped table a `balanced` install actually scores with, so the sliders
-// open showing real numbers instead of 5 zeroes.
+// The shipped table a `balanced` install actually scores with (`JEV_WEIGHTS`),
+// so the sliders open showing real numbers instead of 5 zeroes.
 const BALANCED_FALLBACK: Record<string, number> = {
   hard_requirements: 0.3,
   core_stack: 0.3,
   years: 0.15,
   level: 0.15,
   nice_to_haves: 0.1,
-};
+} satisfies Shared["jev_weights"];
 
 function WeightControls({
   settings,

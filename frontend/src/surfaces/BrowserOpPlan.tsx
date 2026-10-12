@@ -20,20 +20,25 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../api";
+import type { components } from "../api/schema";
 import { eventBus, type SSEEvent } from "../api/events";
 import { useContacts } from "../api/queries";
 
 /** The op kinds that drive the LinkedIn browser surface. `send`/`discover`
  *  carry a full step plan; the rest get an honest kind label + state only.
- *  Mirrors the sidecar's `BROWSER_LANE_KINDS` (runner/policy.py). */
-const TRACKED_KINDS = new Set([
-  "send",
-  "discover",
-  "contact_sync",
-  "linkedin_search",
-  "linkedin_login",
-  "view_page",
-]);
+ *  The sidecar's `BROWSER_LANE_KINDS` (runner/policy.py), checked against it. */
+const TRACKED_ROWS: Record<
+  components["schemas"]["SharedConstants"]["browser_lane_kind"],
+  true
+> = {
+  send: true,
+  discover: true,
+  contact_sync: true,
+  linkedin_search: true,
+  linkedin_login: true,
+  view_page: true,
+};
+const TRACKED_KINDS = new Set<string>(Object.keys(TRACKED_ROWS));
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
 

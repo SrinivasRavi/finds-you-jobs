@@ -19,6 +19,7 @@ import { Trans, useTranslation } from "react-i18next";
 
 import { api } from "../api";
 import { qk } from "../api/queries";
+import type { components } from "../api/schema";
 import type { EngineSaveInput, EngineVerifyResult, PlaceChip } from "../api/types";
 import { ChipInput } from "../shell/ChipInput";
 import { PlaceInput } from "../shell/PlaceInput";
@@ -51,21 +52,19 @@ const PROVIDERS = [
   { id: "antigravity-cli", label: "onboarding.providers.antigravity-cli.label", hint: "onboarding.providers.antigravity-cli.hint" },
 ];
 
-// The subscription-CLI providers (no key, verify-only — mirrors the backend's
-// engine_config.CLI_PROVIDERS). Per-provider guidance for the not_found /
+// The subscription-CLI providers (no key, verify-only): the backend's
+// engine_config.CLI_PROVIDERS, checked against it. Per-provider guidance for the not_found /
 // not_logged_in verify outcomes. The display strings are i18n keys (t() at
 // render) under the locale's onboarding.providers.<id> node.
-const CLI_PROVIDERS: Record<
-  string,
-  {
-    name: string; // i18n key — short name for guidance copy ("Claude CLI", …)
-    verifyHint: string; // i18n key
-    loginCli: "claude" | "codex" | "agy";
-    loginLabel: string; // i18n key
-    installUrl: string;
-    installName: string; // i18n key
-  }
-> = {
+type CliProviderInfo = {
+  name: string; // i18n key — short name for guidance copy ("Claude CLI", …)
+  verifyHint: string; // i18n key
+  loginCli: "claude" | "codex" | "agy";
+  loginLabel: string; // i18n key
+  installUrl: string;
+  installName: string; // i18n key
+};
+const CLI_PROVIDERS: Record<string, CliProviderInfo> = {
   "claude-cli": {
     name: "onboarding.providers.claude-cli.name",
     verifyHint: "onboarding.providers.claude-cli.verifyHint",
@@ -90,13 +89,20 @@ const CLI_PROVIDERS: Record<
     installUrl: "https://antigravity.google/",
     installName: "onboarding.providers.antigravity-cli.installName",
   },
-};
+} satisfies Record<components["schemas"]["SharedConstants"]["cli_provider"], CliProviderInfo>;
 const isCliProvider = (id: string) => id in CLI_PROVIDERS;
 
-// The LLM-backed operation kinds that need a routed engine — mirrors the
-// backend's LLM_KINDS (sidecar/app/registry/engine_config.py). The prior
-// repository's `prep` is retired (applier-as-built.md section 2); `draft`/`apply` route here.
-const LLM_KINDS = ["score", "tailor", "cover", "extract", "draft", "apply"] as const;
+// The LLM-backed operation kinds that need a routed engine: the backend's
+// LLM_KINDS (sidecar/app/registry/engine_config.py), checked against it.
+const LLM_KIND_ROWS: Record<components["schemas"]["LlmKind"], true> = {
+  score: true,
+  tailor: true,
+  cover: true,
+  extract: true,
+  draft: true,
+  apply: true,
+};
+const LLM_KINDS = Object.keys(LLM_KIND_ROWS) as (keyof typeof LLM_KIND_ROWS)[];
 
 const DRAFT_KEY = "fyj-onboarding-draft-v1";
 

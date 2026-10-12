@@ -16,24 +16,35 @@ import type { components } from "./schema";
 import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
 import { JobTombstonedError } from "./types";
 
+// The sidecar's own constants, as literal types (sidecar/app/shared_constants.py):
+// each copy below is checked against them, so drift is a compile error.
+type Shared = components["schemas"]["SharedConstants"];
+
 /** The methods this build knows. A stored value outside this list reads as "llm",
  *  the same fallback the server applies. */
-const SCORING_MODES: ScoringMode[] = ["llm", "jev", "local", "keyword"];
-const SCORE_WEIGHT_PRESETS: ScoreWeightPreset[] = [
-  "balanced",
-  "location_first",
-  "seniority_first",
-  "skills_only",
-];
-// Mirrors `weights.PRESET_LOCATION_PENALTY`. Picking a preset here writes the
-// value rather than leaving the sidecar to infer it, so what the slider shows
-// and what the score used are always the same number.
+const SCORING_MODE_ROWS: Record<Shared["scoring_mode"], true> = {
+  llm: true,
+  jev: true,
+  local: true,
+  keyword: true,
+};
+const SCORING_MODES = Object.keys(SCORING_MODE_ROWS) as ScoringMode[];
+const SCORE_WEIGHT_PRESET_ROWS: Record<Shared["score_weight_preset"], true> = {
+  balanced: true,
+  location_first: true,
+  seniority_first: true,
+  skills_only: true,
+};
+const SCORE_WEIGHT_PRESETS = Object.keys(SCORE_WEIGHT_PRESET_ROWS) as ScoreWeightPreset[];
+// `weights.PRESET_LOCATION_PENALTY`. Picking a preset here writes the value
+// rather than leaving the sidecar to infer it, so what the slider shows and
+// what the score used are always the same number.
 const DEFAULT_LOCATION_PENALTY: Record<ScoreWeightPreset, number> = {
   balanced: 15,
   location_first: 35,
   seniority_first: 15,
   skills_only: 0,
-};
+} satisfies Shared["preset_location_penalty"];
 import type {
   AttachLinkInput,
   AttachLinkResult,
@@ -161,17 +172,17 @@ const STAGE_TO_COLUMN: Record<Stage, string> = {
   Rejected: "rejected",
 };
 
-// Configurable entity-lifecycle windows (FR-SYS-06 / FR-NW-15). Defaults mirror
-// the sidecar's `LIFECYCLE_DEFAULTS` so the UI reads the same values a fresh DB
-// applies; a stored `ui_state.lifecycle` overrides per field.
-const LIFECYCLE_DEFAULTS = {
+// Configurable entity-lifecycle windows (FR-SYS-06 / FR-NW-15). The sidecar's
+// `LIFECYCLE_DEFAULTS`, checked against it, so the UI reads the same values a
+// fresh DB applies; a stored `ui_state.lifecycle` overrides per field.
+const LIFECYCLE_DEFAULTS: Shared["lifecycle_defaults"] = {
   engagement_ghosted_days: 14,
   sent_ghosted_days: 21,
   expire_listing_days: 14,
   contact_purge_days: 60,
   trashed_jobs_purge_days: 7,
   archived_applications_purge_days: 30,
-} as const;
+};
 
 /** A stored location chip: a picked place keeps its shape, anything else is
  *  the plain string it was saved as (place-picker.md section 3). */
