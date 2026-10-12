@@ -664,7 +664,7 @@ def attach_job_link(
         if other is not None and other.id != job.id:
             # 2 rows want 1 URL. Say which one and write nothing: the user
             # deletes the one they don't need, the app never picks (maintainer,
-            # url-less-jobs.md line 409 note).
+            # url-less-jobs.md section 5.5).
             return dto.AttachLinkResultDTO(
                 status="duplicate",
                 pasted=dto.LinkCandidateDTO(

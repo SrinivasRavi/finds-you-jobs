@@ -3,7 +3,7 @@
 // The case: the user pasted an emailed JD on Monday, Wednesday's scan wrote its
 // own row for the same posting, and the board shows the role twice. The app
 // says so and stops there: the user deletes the one they don't need, and the
-// app never merges or picks a survivor (maintainer, url-less-jobs.md line 409).
+// app never merges or picks a survivor (maintainer, url-less-jobs.md section 5.5).
 // "They're different" silences the notice for that pair, from either card.
 
 import { useTranslation } from "react-i18next";

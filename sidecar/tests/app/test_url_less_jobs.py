@@ -404,7 +404,7 @@ def test_a_link_another_job_already_has_is_reported_and_writes_nothing(
 ) -> None:
     """Flow D: pasted Monday, scanned Wednesday, linked Friday. The dialog names
     the other job and changes neither row; the user deletes the one they don't
-    need (maintainer, url-less-jobs.md line 409 note). Both rows tracked or
+    need (maintainer, url-less-jobs.md section 5.5). Both rows tracked or
     not, it's the same answer, so there is no refusal case and no 500."""
     app, client = app_client
     mine = _paste(client, _JD)

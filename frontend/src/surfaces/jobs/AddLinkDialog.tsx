@@ -154,7 +154,7 @@ export function AddLinkDialog({
         ) : result?.status === "duplicate" ? (
           <>
             {/* 2 jobs want 1 link. The user deletes the one they don't need;
-                the app never merges them (url-less-jobs.md line 409 note). */}
+                the app never merges them (url-less-jobs.md section 5.5). */}
             <p className="text-[12.5px] leading-snug text-ink-2" data-testid="add-link-duplicate">
               {t("jobBoard.addLink.duplicateBody")}
             </p>
