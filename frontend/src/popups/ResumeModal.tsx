@@ -228,7 +228,7 @@ const MODE_LABEL: Record<Mode, string> = {
   raw: "popups.resume.mode.raw",
 };
 
-function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+export function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   const { t } = useTranslation();
   return (
     <div className="inline-flex overflow-hidden rounded-7 border border-border text-[11.5px]">

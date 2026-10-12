@@ -50,6 +50,23 @@ test("the resume step explains the master resume, in every language", async ({ p
   await page.evaluate(() => localStorage.removeItem("fyj-language"));
 });
 
+// S-C56: an uploaded resume opens rendered, so the user can see the
+// extraction came out right; Raw shows the markdown.
+test("an uploaded resume shows as a rendered preview", async ({ page }) => {
+  await page.goto("/onboarding");
+  await page.getByTestId("resume-upload").setInputFiles({
+    name: "resume.md",
+    mimeType: "text/markdown",
+    buffer: Buffer.from("# Ada Lovelace\n\n## Experience\n\n- Built the **Analytical Engine** notes\n"),
+  });
+  const preview = page.getByTestId("resume-preview");
+  await expect(preview.locator("h1")).toHaveText("Ada Lovelace", { timeout: 15_000 });
+  await expect(preview.locator("strong")).toHaveText("Analytical Engine");
+  await page.screenshot({ path: `${DIR}/resume-preview.png`, fullPage: true });
+  await page.getByTestId("mode-raw").click();
+  await expect(page.getByTestId("resume-text")).toHaveValue(/# Ada Lovelace/);
+});
+
 // S-C58: a role typed but not yet a chip counts, so Continue isn't greyed out.
 test("a typed role is enough to continue", async ({ page }) => {
   await page.goto("/onboarding");

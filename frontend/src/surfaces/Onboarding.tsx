@@ -27,6 +27,8 @@ import { InfoDot } from "../shell/InfoDot";
 import { LanguageSelect } from "../shell/LanguageSelect";
 import { openLoginTerminal } from "../shell/openExternal";
 import { EXTRACT_ACCEPT } from "../shell/uploadFormats";
+import { MarkdownEditor, type EditorMode } from "../shell/MarkdownEditor";
+import { ModeToggle } from "../popups/ResumeModal";
 import { CADENCE_OPTIONS, FRESHNESS_DAYS, FRESHNESS_OPTIONS } from "./scanPrefs";
 
 // The wizard's interactive steps (i18n keys). The stepper *displays* "Download
@@ -146,6 +148,7 @@ export function Onboarding() {
   // Draft — preferences.
   const [aliases, setAliases] = useState<string[]>(d0.aliases ?? []);
   const [aliasDraft, setAliasDraft] = useState("");
+  const [resumeMode, setResumeMode] = useState<EditorMode>("raw");
   // Skip on the provider step (S-C60): AI stays off until a provider is set up.
   const [aiSkipped, setAiSkipped] = useState(false);
   const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
@@ -237,6 +240,7 @@ export function Onboarding() {
       const res = await api.ingestResume(file);
       setResumeText(res.text);
       setResumeName(res.filename);
+      setResumeMode("preview");
     } catch (e) {
       // Honest failure — surface the verbatim "paste instead" message.
       setIngestError(e instanceof Error ? e.message : String(e));
@@ -440,14 +444,30 @@ export function Onboarding() {
                 </div>
               ) : null}
               <div>
-                <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.resumeTextLabel")}</div>
-                <textarea
-                  value={resumeText}
-                  data-testid="resume-text"
-                  onChange={(e) => setResumeText(e.target.value)}
-                  placeholder={t("onboarding.resumePlaceholder")}
-                  className="h-40 w-full resize-y rounded-md border border-border bg-surface px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
-                />
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-[12px] text-ink-3">{t("onboarding.resumeTextLabel")}</span>
+                  {resumeText.trim() ? <ModeToggle mode={resumeMode} setMode={setResumeMode} /> : null}
+                </div>
+                {/* S-C56: the same editable rendered surface the Master Resume
+                    modal uses, so the user sees the extraction came out right. */}
+                {resumeMode === "preview" && resumeText.trim() ? (
+                  <div className="h-60 overflow-auto rounded-md border border-border bg-surface px-3 py-2">
+                    <MarkdownEditor
+                      value={resumeText}
+                      onChange={setResumeText}
+                      mode="preview"
+                      testid="resume-preview"
+                    />
+                  </div>
+                ) : (
+                  <textarea
+                    value={resumeText}
+                    data-testid="resume-text"
+                    onChange={(e) => setResumeText(e.target.value)}
+                    placeholder={t("onboarding.resumePlaceholder")}
+                    className="h-40 w-full resize-y rounded-md border border-border bg-surface px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
+                  />
+                )}
               </div>
             </div>
           ) : step === 1 ? (
