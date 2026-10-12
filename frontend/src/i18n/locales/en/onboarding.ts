@@ -1,7 +1,7 @@
 // English — the onboarding wizard.
 const onboarding = {
     stepDownload: "Download the app",
-    stepResume: "Resume",
+    stepResume: "Master resume",
     stepPreferences: "Preferences",
     stepProvider: "LLM provider",
     stepAllSet: "All set",
@@ -15,12 +15,11 @@ const onboarding = {
     finishing: "Finishing…",
     pctComplete: "{{pct}}% complete",
     // Resume step.
-    resumeIntro:
-        "Upload a .md / .txt / .pdf, or paste it below. Review the extracted text — this is what the app scores and tailors against. You can refine it later from the Master Resume button in Discover jobs.",
+    resumeIntro: "Your master resume is your resume with everything in it: every role, project and result worth mentioning. The app scores each job against it and builds every tailored resume from it, so more detail means better matches. Upload it or paste it below, then check the text. You can edit it later from Master Resume in Discover jobs.",
     extracting: "Extracting…",
-    resumeLoaded: "{{name}} — loaded, review below",
-    resumeChoose: "Click to choose your resume (PDF, Word, Pages, ODT, RTF, Markdown or text)",
-    resumeTextLabel: "Resume (Markdown) — paste or edit the extracted text",
+    resumeLoaded: "{{name}} loaded. Check the text below.",
+    resumeChoose: "Upload your master resume: PDF, Word, Pages, ODT, RTF, Markdown or text",
+    resumeTextLabel: "Master resume text: paste it, or edit what came from your file",
     resumePlaceholder: "# Your name\n\nPaste your resume here, or upload a file above.",
     // Preferences step.
     aliasLabel: "Role aliases (at least one)",

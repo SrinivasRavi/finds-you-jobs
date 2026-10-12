@@ -24,6 +24,32 @@ test("fresh install gates every route to /onboarding and renders the wizard", as
   await page.screenshot({ path: `${DIR}/onboarding-step0.png`, fullPage: true });
 });
 
+// S-C54, S-C55: the resume step says what a master resume is and lists every
+// format the uploader takes, and the 12 other languages say the same.
+test("the resume step explains the master resume, in every language", async ({ page }) => {
+  await page.goto("/onboarding");
+  await expect(page.getByTestId("onboarding-stepper")).toContainText("Master resume");
+  await expect(page.getByTestId("onboarding-step-0")).toContainText(
+    "Your master resume is your resume with everything in it",
+  );
+  await expect(page.getByTestId("onboarding-step-0")).toContainText(
+    "PDF, Word, Pages, ODT, RTF, Markdown or text",
+  );
+  await page.screenshot({ path: `${DIR}/resume-step-en.png`, fullPage: true });
+
+  for (const [lang, phrase] of [
+    ["de", "Master-Lebenslauf hochladen: PDF, Word"],
+    ["ja", "マスター職務経歴書をアップロード"],
+  ] as const) {
+    await page.evaluate((l) => localStorage.setItem("fyj-language", l), lang);
+    await page.reload();
+    await expect(page.getByTestId("onboarding-step-0")).toContainText(phrase, { timeout: 10_000 });
+    await expect(page.getByTestId("onboarding-step-0")).not.toContainText(".md / .txt / .pdf");
+    await page.screenshot({ path: `${DIR}/resume-step-${lang}.png`, fullPage: true });
+  }
+  await page.evaluate(() => localStorage.removeItem("fyj-language"));
+});
+
 test("provider step offers the subscription-CLI family beside BYOK", async ({ page }) => {
   await page.goto("/onboarding");
   // Step 0 → 1: paste a resume.

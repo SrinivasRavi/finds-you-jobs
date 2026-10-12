@@ -93,3 +93,43 @@ test("the scanned card asks once, and never again once dismissed", async ({ page
     await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
   }
 });
+
+// The trust chip's words are translated: a German board says "neu
+// ausgeschrieben" and why, never the English sentence or a raw flag.
+test("the reposted chip speaks the board's language", async ({ page, request }) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  const jd = JD.replaceAll("Globex", "Initech");
+  const ids: string[] = [];
+  for (const n of [5151, 5152]) {
+    const r = await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: `https://boards.greenhouse.io/initech/jobs/${n}`,
+        title: "Senior Software Engineer",
+        company: "Initech",
+        location: "Pune, India",
+        description: jd,
+        source_adapter: "greenhouse",
+      },
+    });
+    ids.push((await r.json()).id as string);
+  }
+
+  await page.goto("/jobs");
+  await page.evaluate(() => localStorage.setItem("fyj-language", "de"));
+  await page.reload();
+  const chip = page
+    .getByTestId("job-row")
+    .filter({ hasText: "Initech" })
+    .getByTestId("trust-chip")
+    .first();
+  await expect(chip).toHaveText("neu ausgeschrieben", { timeout: 15_000 });
+  await expect(chip).toHaveAttribute("title", /fast identische Anzeige von Initech/);
+  await page.screenshot({ path: `${DIR}/chip-de.png`, fullPage: true });
+  await page.evaluate(() => localStorage.removeItem("fyj-language"));
+
+  for (const id of ids) {
+    await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
+  }
+});
