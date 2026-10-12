@@ -27,7 +27,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from ..registry.engine_config import PROVIDERS, configure_engines, verify_provider
+from ..registry.engine_config import (
+    PROVIDERS,
+    adopt_off_kinds,
+    configure_engines,
+    verify_provider,
+)
 from ..registry.engines_http import HttpTransport
 from ..security import get_app_key, mask_key, seal_secret
 from . import dto
@@ -42,6 +47,15 @@ def _transport(request: Request) -> HttpTransport | None:
     """The verify HTTP transport. None ⇒ the engines' default `UrllibTransport`.
     Tests set `app.state.http_transport` to a fake so no real network call runs."""
     return getattr(request.app.state, "http_transport", None)
+
+
+def _adopt_off_kinds(request: Request, provider: str) -> None:
+    """A provider just set up takes over the kinds onboarding's Skip turned off."""
+    with _db(request).repos() as repos:
+        prefs = repos.preferences.get_or_create()
+        routing = adopt_off_kinds(prefs.engine_routing, provider)
+        if routing is not None:
+            repos.preferences.update(engine_routing=routing)
 
 
 def _reconfigure(request: Request) -> None:
@@ -236,7 +250,11 @@ async def verify_engine(
     # heartbeat and every concurrent request) — the "Load failed" root cause.
     cli_verifier = _CLI_VERIFIERS.get(payload.provider)
     if cli_verifier is not None:
-        return await run_in_threadpool(cli_verifier)
+        verified = await run_in_threadpool(cli_verifier)
+        if verified.ok:
+            await run_in_threadpool(_adopt_off_kinds, request, payload.provider)
+            await run_in_threadpool(_reconfigure, request)
+        return verified
     result = await run_in_threadpool(
         verify_provider,
         payload.provider,
@@ -295,6 +313,7 @@ def save_engine(
         result = dto.engine_setting_dto(row) if row is not None else None
     if result is None:  # pragma: no cover — update-after-existing always finds it
         raise HTTPException(status_code=500, detail="failed to persist engine")
+    _adopt_off_kinds(request, payload.provider)
     _reconfigure(request)
     return result
 

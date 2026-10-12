@@ -27,7 +27,8 @@ class EngineNotConfiguredError(Exception):
     def __init__(self, kind: str) -> None:
         self.kind = kind
         super().__init__(
-            f"no engine configured for operation kind {kind!r} — set one in Settings"
+            f"no engine configured for {kind!r}: AI features stay off until an LLM "
+            "provider is set up in Settings › LLM Providers"
         )
 
 

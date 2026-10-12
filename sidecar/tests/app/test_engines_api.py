@@ -608,3 +608,51 @@ def test_verify_claude_cli_live(app_client: tuple[FastAPI, TestClient]) -> None:
     resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "claude-cli"})
     assert resp.status_code == 200
     assert resp.json()["provider"] == "claude-cli"
+
+
+# ---------------------------------------------------------------------------
+# S-C60: AI off after onboarding's Skip, and on again once a provider is set up
+# ---------------------------------------------------------------------------
+
+_ALL_OFF = {
+    "engine_routing": {
+        k: {"engine": "none", "model": ""}
+        for k in ("score", "tailor", "cover", "extract", "draft", "apply")
+    }
+}
+
+
+def _routing(client: TestClient) -> dict[str, str]:
+    body = client.get("/api/settings", headers=AUTH).json()
+    return {k: v["engine"] for k, v in body["preferences"]["engine_routing"].items()}
+
+
+def test_skipped_ai_leaves_every_kind_unrouted(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    assert client.post("/api/settings", headers=AUTH, json=_ALL_OFF).status_code == 200
+    assert app.state.engines.resolve("tailor") is None
+    # Saving the resume queues no extract that could only fail.
+    client.post("/api/profile", headers=AUTH, json={"resume_markdown": "# A\n\nEngineer."})
+    with app.state.db.repos() as repos:
+        assert not [o for o in repos.operations.list_recent() if o.kind == "extract"]
+
+
+def test_saving_a_provider_turns_ai_back_on(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert set(_routing(client).values()) == {"anthropic"}
+    assert app.state.engines.resolve("tailor") is not None
+
+
+def test_a_verified_cli_turns_ai_back_on(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sidecar.modules._shared.claude_engine as ce
+
+    _app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    monkeypatch.setattr(ce, "resolve_claude", lambda refresh=False: "/usr/local/bin/claude")
+    monkeypatch.setattr(ce, "claude_auth_status", lambda exe=None: {"logged_in": True})
+    client.post("/api/engines/verify", headers=AUTH, json={"provider": "claude-cli"})
+    assert set(_routing(client).values()) == {"claude-cli"}

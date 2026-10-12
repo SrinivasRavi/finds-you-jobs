@@ -162,6 +162,7 @@ const settingsPage = {
     title: "Select the LLM Providers",
     unconfiguredWarning:
       "An operation is routed to a provider that isn't set up yet — verify and save it below, or pick a different engine under Prompts & Models.",
+    aiOffWarning: "AI features are off, because no provider is set up yet. Set one up below and every AI feature turns on.",
     configured: "Configured",
     notSet: "Not set",
     inUse: "In use",
@@ -269,6 +270,7 @@ const settingsPage = {
       + "Regenerate, which rewrites it against your master resume and the posting.",
     modelEngine: "Runs on",
     cliDefaultModel: "CLI default model",
+    engineOff: "Off (no provider yet)",
     providerDefault: "provider default",
     modelTitle:
       "Model this operation uses on {{engineLabel}}. Blank = {{effectiveModel}} (the provider/CLI default).",

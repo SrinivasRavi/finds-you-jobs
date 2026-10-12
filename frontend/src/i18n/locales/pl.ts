@@ -144,6 +144,8 @@ const pl: DeepPartial<Messages> = {
     pasteKey: "Wklej klucz API",
     verify: "Zweryfikuj",
     verifying: "Weryfikowanie…",
+    skipProvider: "Pomiń na razie",
+    skipProviderHint: "Funkcje AI pozostaną wyłączone, dopóki nie dodasz dostawcy w Ustawieniach. Do tego czasu oferty są oceniane według słów kluczowych.",
     verified: "Zweryfikowano ✓",
     verifiedDetail: "{{detail}} — możesz zakończyć konfigurację.",
     verifiedOk: "Dostawca zweryfikowany — możesz zakończyć konfigurację.",
@@ -157,6 +159,7 @@ const pl: DeepPartial<Messages> = {
     allSetAddUrl: "Sam znalazłeś ofertę? Dodaj ją z listy w dowolnej chwili.",
     allSetResume: "Twoje główne CV jest o jedno kliknięcie, pod „Główne CV” na liście.",
     allSetSettings: "Zmień dostawcę lub włącz networking w Ustawieniach.",
+    allSetAiOff: "AI jest na razie wyłączone: oferty są oceniane według słów kluczowych, a dopasowanie czeka, aż dodasz dostawcę w Ustawieniach.",
   },
   jobBoard: {
     scanProgress: {
@@ -1000,6 +1003,7 @@ const pl: DeepPartial<Messages> = {
     providers: {
       title: "Wybierz dostawców LLM",
       unconfiguredWarning: "Jakaś operacja jest kierowana do dostawcy, który nie jest jeszcze skonfigurowany — zweryfikuj i zapisz go poniżej albo wybierz inny silnik w Prompty i modele.",
+      aiOffWarning: "Funkcje AI są wyłączone, bo nie skonfigurowano jeszcze dostawcy. Skonfiguruj go poniżej, a wszystkie się włączą.",
       configured: "Skonfigurowany",
       notSet: "Nieustawiony",
       inUse: "W użyciu",
@@ -1030,6 +1034,7 @@ const pl: DeepPartial<Messages> = {
       title: "Wybierz silniki modeli i edytuj prompty",
       modelEngine: "Działa na",
       cliDefaultModel: "Domyślny model CLI",
+      engineOff: "Wyłączone (brak dostawcy)",
       providerDefault: "domyślny dostawcy",
       modelTitle: "Model używany przez tę operację na {{engineLabel}}. Puste = {{effectiveModel}} (domyślny dostawcy/CLI).",
       resetConfirm: "Wyrzucić Twoją wersję i wrócić do tej, którą dostarczamy? Tego nie da się cofnąć.",

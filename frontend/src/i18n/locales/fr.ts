@@ -139,6 +139,8 @@ const fr: DeepPartial<Messages> = {
     pasteKey: "Collez la clé API",
     verify: "Vérifier",
     verifying: "Vérification…",
+    skipProvider: "Passer pour l'instant",
+    skipProviderHint: "Les fonctions d'IA restent désactivées tant que vous n'ajoutez pas de fournisseur dans les Paramètres. En attendant, les offres sont notées par mots-clés.",
     verified: "Vérifié ✓",
     verifiedDetail: "{{detail}} — vous pouvez terminer la configuration.",
     verifiedOk: "Fournisseur vérifié — vous pouvez terminer la configuration.",
@@ -152,6 +154,7 @@ const fr: DeepPartial<Messages> = {
     allSetAddUrl: "Vous avez trouvé une offre vous-même ? Ajoutez-la depuis la liste quand vous voulez.",
     allSetResume: "Votre CV de référence est à un clic, sous « CV de référence » dans la liste.",
     allSetSettings: "Changez de fournisseur ou activez le networking dans les Paramètres.",
+    allSetAiOff: "L'IA est désactivée pour l'instant : les offres sont notées par mots-clés, et l'adaptation attend que vous ajoutiez un fournisseur dans les Paramètres.",
   },
   jobBoard: {
     scanProgress: {
@@ -973,6 +976,7 @@ const fr: DeepPartial<Messages> = {
     providers: {
       title: "Sélectionnez les fournisseurs LLM",
       unconfiguredWarning: "Une opération est routée vers un fournisseur pas encore configuré — vérifiez-le et enregistrez-le ci-dessous, ou choisissez un autre moteur dans Prompts et modèles.",
+      aiOffWarning: "Les fonctions d'IA sont désactivées, car aucun fournisseur n'est configuré. Configurez-en un ci-dessous et elles s'activent toutes.",
       configured: "Configuré",
       notSet: "Non configuré",
       inUse: "Utilisé",
@@ -1003,6 +1007,7 @@ const fr: DeepPartial<Messages> = {
       title: "Choisissez les moteurs de modèle et modifiez les prompts",
       modelEngine: "S'exécute sur",
       cliDefaultModel: "Modèle par défaut du CLI",
+      engineOff: "Désactivé (pas encore de fournisseur)",
       providerDefault: "défaut du fournisseur",
       modelTitle: "Modèle que cette opération utilise sur {{engineLabel}}. Vide = {{effectiveModel}} (le défaut du fournisseur/CLI).",
       resetConfirm: "Jeter votre version et revenir à celle que nous livrons ? C'est irréversible.",

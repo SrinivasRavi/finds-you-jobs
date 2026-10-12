@@ -24,3 +24,7 @@ export const CLI_ENGINE_OPTIONS = Object.entries(CLI_ENGINE_LABELS).map(([id, la
   label,
 }));
 export const isCliEngine = (id: string) => CLI_ENGINE_OPTIONS.some((o) => o.id === id);
+
+/** The routing value onboarding's Skip writes: no provider yet, AI off
+ *  (engine_config.AI_OFF, S-C60). Saving a provider takes these kinds over. */
+export const AI_OFF = "none";

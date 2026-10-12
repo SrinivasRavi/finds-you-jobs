@@ -67,6 +67,11 @@ CLI_PROVIDERS = (DEFAULT_ENGINE, "codex-cli", "antigravity-cli")
 # is the Applier agent loop.
 LLM_KINDS = ("score", "tailor", "cover", "extract", "draft", "apply")
 
+# The routing value onboarding's Skip writes (S-C60): the kind stays unrouted,
+# so it fails with EngineNotConfiguredError, until a provider is saved or a CLI
+# verified, which takes over every kind still set to it (`adopt_off_kinds`).
+AI_OFF = "none"
+
 
 # ---------------------------------------------------------------------------
 # Provider catalog — the P1 BYOK menu (US-OB-04 / US-SET-07)
@@ -264,6 +269,8 @@ def apply_routing(registry: EngineRegistry, engine_routing: dict[str, Any] | Non
     for kind in LLM_KINDS:
         entry = routing.get(kind)
         entry = entry if isinstance(entry, dict) else {}
+        if entry.get("engine") == AI_OFF:
+            continue
         engine_name = entry.get("engine") or DEFAULT_ENGINE
         model = entry.get("model") or (DEFAULT_MODEL if engine_name == DEFAULT_ENGINE else None)
         registry.route(kind, engine=engine_name, model=model)
@@ -284,3 +291,16 @@ def configure_engines(
     if engine_rows is not None and data_dir is not None:
         register_byok_engines(registry, engine_rows, data_dir)
     apply_routing(registry, engine_routing)
+
+
+def adopt_off_kinds(routing: dict[str, Any] | None, provider: str) -> dict[str, Any] | None:
+    """The routing map with every kind set to `AI_OFF` moved to `provider`, or
+    None when no kind was off. The user who skipped the provider step and later
+    sets one up gets AI on everywhere, without re-routing kind by kind."""
+    current = dict(routing or {})
+    off = [k for k, v in current.items() if isinstance(v, dict) and v.get("engine") == AI_OFF]
+    if not off:
+        return None
+    for k in off:
+        current[k] = {"engine": provider, "model": ""}
+    return current

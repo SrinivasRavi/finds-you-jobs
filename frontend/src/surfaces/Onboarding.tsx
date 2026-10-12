@@ -146,6 +146,8 @@ export function Onboarding() {
   // Draft — preferences.
   const [aliases, setAliases] = useState<string[]>(d0.aliases ?? []);
   const [aliasDraft, setAliasDraft] = useState("");
+  // Skip on the provider step (S-C60): AI stays off until a provider is set up.
+  const [aiSkipped, setAiSkipped] = useState(false);
   const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
@@ -301,14 +303,21 @@ export function Onboarding() {
       // Empty model → the engine row's default_model (BYOK) or the CLI's own
       // configured default (codex-cli / antigravity-cli). claude-cli alone
       // skips this: it IS the routing default.
-      if (provider !== "claude-cli") {
+      if (aiSkipped) {
+        // Every AI kind routes to "none" (engine_config.AI_OFF) and scoring is
+        // keyword, until a provider is saved or a CLI verified in Settings.
+        await api.updateSettings({
+          routing: LLM_KINDS.map((kind) => ({ kind, engine: "none", model: "" })),
+          scoring_mode: "keyword",
+        });
+      } else if (provider !== "claude-cli") {
         await api.updateSettings({
           routing: LLM_KINDS.map((kind) => ({ kind, engine: provider, model: "" })),
         });
       }
       // Scoring mode: committed only when it differs from the backend
       // default (llm).
-      if (scoringMode !== "llm") {
+      if (!aiSkipped && scoringMode !== "llm") {
         await api.updateSettings({ scoring_mode: scoringMode });
       }
       // Cold-start scan (US-JB-09) — fire-and-forget, never blocks the redirect.
@@ -666,6 +675,11 @@ export function Onboarding() {
               <div className="text-[40px]">🎉</div>
               <h1 className="text-[20px] font-semibold text-ink">{t("onboarding.titleAllSet")}</h1>
               <p className="text-[13px] text-ink-3">{t("onboarding.allSetIntro")}</p>
+              {aiSkipped ? (
+                <p className="text-[12.5px] text-warn" data-testid="all-set-ai-off">
+                  {t("onboarding.allSetAiOff")}
+                </p>
+              ) : null}
               <ul className="mx-auto max-w-xs space-y-1 text-left text-[12.5px] text-ink-2">
                 <li>· {t("onboarding.allSetAddUrl")}</li>
                 <li>· {t("onboarding.allSetResume")}</li>
@@ -693,7 +707,21 @@ export function Onboarding() {
               {t("onboarding.back")}
             </button>
           ) : null}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
+            {step === 2 && !canContinue ? (
+              <button
+                type="button"
+                data-testid="onboarding-skip-provider"
+                title={t("onboarding.skipProviderHint")}
+                onClick={() => {
+                  setAiSkipped(true);
+                  setStep(3);
+                }}
+                className="text-[12.5px] text-ink-3 underline hover:text-ink"
+              >
+                {t("onboarding.skipProvider")}
+              </button>
+            ) : null}
             {step < STEP_LABELS.length - 1 ? (
               <button
                 onClick={() => {
@@ -703,6 +731,8 @@ export function Onboarding() {
                     setAliases((a) => (a.includes(draft) ? a : [...a, draft]));
                     setAliasDraft("");
                   }
+                  // A verified provider undoes an earlier Skip.
+                  if (step === 2) setAiSkipped(false);
                   setStep((s) => s + 1);
                 }}
                 disabled={!canContinue}

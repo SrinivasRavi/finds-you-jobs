@@ -139,6 +139,8 @@ const zh: DeepPartial<Messages> = {
     pasteKey: "粘贴 API 密钥",
     verify: "验证",
     verifying: "正在验证…",
+    skipProvider: "暂时跳过",
+    skipProviderHint: "在设置中添加服务商之前，AI 功能保持关闭。在此期间，职位按关键词打分。",
     verified: "已验证 ✓",
     verifiedDetail: "{{detail}} — 你可以完成引导了。",
     verifiedOk: "提供商已验证 — 你可以完成引导了。",
@@ -152,6 +154,7 @@ const zh: DeepPartial<Messages> = {
     allSetAddUrl: "自己找到了职位？随时可以从列表中添加。",
     allSetResume: "你的主简历只需点一下，在列表的「主简历」里。",
     allSetSettings: "可以在设置中更换服务商或开启人脉功能。",
+    allSetAiOff: "AI 暂时关闭：职位按关键词打分，定制简历要等你在设置中添加服务商后才能使用。",
   },
   jobBoard: {
     scanProgress: {
@@ -955,6 +958,7 @@ const zh: DeepPartial<Messages> = {
     providers: {
       title: "选择 LLM 提供商",
       unconfiguredWarning: "有操作被路由到了尚未配置的提供商 — 请在下方验证并保存，或在“提示词与模型”中改用其他引擎。",
+      aiOffWarning: "AI 功能已关闭，因为还没有设置服务商。在下方设置一个，所有 AI 功能都会开启。",
       configured: "已配置",
       notSet: "未设置",
       inUse: "使用中",
@@ -985,6 +989,7 @@ const zh: DeepPartial<Messages> = {
       title: "选择模型引擎并编辑提示词",
       modelEngine: "运行于",
       cliDefaultModel: "CLI 默认模型",
+      engineOff: "关闭（尚无服务商）",
       providerDefault: "提供商默认",
       modelTitle: "该操作在 {{engineLabel}} 上使用的模型。留空 = {{effectiveModel}}（提供商/CLI 默认）。",
       resetConfirm: "丢弃你的版本，回到我们自带的那份？此操作无法撤销。",

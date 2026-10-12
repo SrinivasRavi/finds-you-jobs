@@ -93,6 +93,8 @@ const onboarding = {
     pasteKey: "Paste API key",
     verify: "Verify",
     verifying: "Verifying…",
+    skipProvider: "Skip for now",
+    skipProviderHint: "AI features stay off until you add a provider in Settings. Jobs are scored by keyword in the meantime.",
     verified: "Verified ✓",
     verifiedDetail: "{{detail}} — you can finish onboarding.",
     verifiedOk: "Provider verified — you can finish onboarding.",
@@ -108,6 +110,7 @@ const onboarding = {
     allSetAddUrl: "Found a posting yourself? Add it from the board anytime.",
     allSetResume: "Your master resume is 1 click away, under Master Resume on the board.",
     allSetSettings: "Change providers or turn on networking in Settings.",
+    allSetAiOff: "AI is off for now: jobs are scored by keyword, and tailoring waits until you add a provider in Settings.",
 };
 
 export default onboarding;

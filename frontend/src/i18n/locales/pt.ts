@@ -139,6 +139,8 @@ const pt: DeepPartial<Messages> = {
     pasteKey: "Cole a chave de API",
     verify: "Verificar",
     verifying: "Verificando…",
+    skipProvider: "Saltar por agora",
+    skipProviderHint: "As funções de IA ficam desligadas até adicionar um fornecedor nas Definições. Entretanto, as vagas são avaliadas por palavras-chave.",
     verified: "Verificado ✓",
     verifiedDetail: "{{detail}} — você pode concluir a configuração inicial.",
     verifiedOk: "Provedor verificado — você pode concluir a configuração inicial.",
@@ -152,6 +154,7 @@ const pt: DeepPartial<Messages> = {
     allSetAddUrl: "Encontrou uma vaga por conta própria? Adicione-a a partir da lista quando quiser.",
     allSetResume: "O seu currículo mestre está a um clique, em «Currículo mestre» na lista.",
     allSetSettings: "Mude de fornecedor ou ative o networking nas Definições.",
+    allSetAiOff: "A IA está desligada por agora: as vagas são avaliadas por palavras-chave e a adaptação espera até adicionar um fornecedor nas Definições.",
   },
   jobBoard: {
     scanProgress: {
@@ -973,6 +976,7 @@ const pt: DeepPartial<Messages> = {
     providers: {
       title: "Selecione os provedores LLM",
       unconfiguredWarning: "Uma operação está roteada para um provedor que ainda não foi configurado — verifique e salve abaixo, ou escolha outro engine em Prompts e modelos.",
+      aiOffWarning: "As funções de IA estão desligadas porque ainda não há fornecedor. Configure um abaixo e todas ligam.",
       configured: "Configurado",
       notSet: "Não configurado",
       inUse: "Em uso",
@@ -1003,6 +1007,7 @@ const pt: DeepPartial<Messages> = {
       title: "Escolha os engines de modelo e edite os prompts",
       modelEngine: "Corre em",
       cliDefaultModel: "Modelo padrão do CLI",
+      engineOff: "Desligado (ainda sem fornecedor)",
       providerDefault: "padrão do provedor",
       modelTitle: "Modelo que esta operação usa no {{engineLabel}}. Em branco = {{effectiveModel}} (o padrão do provedor/CLI).",
       resetConfirm: "Deitar fora a sua versão e voltar à que fornecemos? Isto não pode ser desfeito.",

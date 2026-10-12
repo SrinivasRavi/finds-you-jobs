@@ -141,6 +141,8 @@ const de: DeepPartial<Messages> = {
     pasteKey: "API-Schlüssel einfügen",
     verify: "Prüfen",
     verifying: "Wird geprüft…",
+    skipProvider: "Vorerst überspringen",
+    skipProviderHint: "KI-Funktionen bleiben aus, bis du in den Einstellungen einen Anbieter hinzufügst. Bis dahin werden Jobs nach Stichwörtern bewertet.",
     verified: "Geprüft ✓",
     verifiedDetail: "{{detail}} — du kannst das Onboarding abschließen.",
     verifiedOk: "Anbieter geprüft — du kannst das Onboarding abschließen.",
@@ -154,6 +156,7 @@ const de: DeepPartial<Messages> = {
     allSetAddUrl: "Selbst eine Anzeige gefunden? Füge sie jederzeit über die Liste hinzu.",
     allSetResume: "Dein Master-Lebenslauf ist nur einen Klick entfernt, unter „Master-Lebenslauf“ auf der Liste.",
     allSetSettings: "Anbieter ändern oder Networking einschalten kannst du in den Einstellungen.",
+    allSetAiOff: "KI ist vorerst aus: Jobs werden nach Stichwörtern bewertet, und das Anpassen wartet, bis du in den Einstellungen einen Anbieter hinzufügst.",
   },
   jobBoard: {
     scanProgress: {
@@ -975,6 +978,7 @@ const de: DeepPartial<Messages> = {
     providers: {
       title: "LLM-Anbieter wählen",
       unconfiguredWarning: "Ein Vorgang ist auf einen Anbieter geleitet, der noch nicht eingerichtet ist — prüfe und speichere ihn unten oder wähle unter Prompts & Modelle eine andere Engine.",
+      aiOffWarning: "KI-Funktionen sind aus, weil noch kein Anbieter eingerichtet ist. Richte unten einen ein, und alle KI-Funktionen gehen an.",
       configured: "Eingerichtet",
       notSet: "Nicht gesetzt",
       inUse: "In Benutzung",
@@ -1005,6 +1009,7 @@ const de: DeepPartial<Messages> = {
       title: "Modell-Engines wählen und Prompts bearbeiten",
       modelEngine: "Läuft auf",
       cliDefaultModel: "CLI-Standardmodell",
+      engineOff: "Aus (noch kein Anbieter)",
       providerDefault: "Anbieter-Standard",
       modelTitle: "Modell für diesen Vorgang auf {{engineLabel}}. Leer = {{effectiveModel}} (der Anbieter-/CLI-Standard).",
       noModel: "Dieser Prompt hat kein Modell — er wird beim Senden einer Empfehlungsnachricht entworfen.",

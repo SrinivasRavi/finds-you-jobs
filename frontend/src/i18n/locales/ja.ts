@@ -139,6 +139,8 @@ const ja: DeepPartial<Messages> = {
     pasteKey: "APIキーを貼り付け",
     verify: "検証",
     verifying: "検証中…",
+    skipProvider: "今はスキップ",
+    skipProviderHint: "設定でプロバイダーを追加するまで AI 機能はオフのままです。それまで求人はキーワードでスコアリングされます。",
     verified: "検証済み ✓",
     verifiedDetail: "{{detail}} — オンボーディングを完了できます。",
     verifiedOk: "プロバイダーを検証しました — オンボーディングを完了できます。",
@@ -152,6 +154,7 @@ const ja: DeepPartial<Messages> = {
     allSetAddUrl: "自分で求人を見つけたら、いつでもリストから追加できます。",
     allSetResume: "マスター職務経歴書は、リストの「マスター職務経歴書」からワンクリックで開けます。",
     allSetSettings: "プロバイダーの変更やネットワーキングの有効化は設定から行えます。",
+    allSetAiOff: "AI は今はオフです。求人はキーワードでスコアリングされ、カスタマイズは設定でプロバイダーを追加するまで待機します。",
   },
   jobBoard: {
     scanProgress: {
@@ -955,6 +958,7 @@ const ja: DeepPartial<Messages> = {
     providers: {
       title: "LLMプロバイダーを選択",
       unconfiguredWarning: "未設定のプロバイダーにルーティングされているオペレーションがあります — 下で検証して保存するか、「プロンプトとモデル」で別のエンジンを選択してください。",
+      aiOffWarning: "プロバイダーがまだ設定されていないため、AI 機能はオフです。下で設定すると、すべての AI 機能がオンになります。",
       configured: "設定済み",
       notSet: "未設定",
       inUse: "使用中",
@@ -985,6 +989,7 @@ const ja: DeepPartial<Messages> = {
       title: "モデルエンジンを選び、プロンプトを編集",
       modelEngine: "実行先",
       cliDefaultModel: "CLIデフォルトモデル",
+      engineOff: "オフ（プロバイダー未設定）",
       providerDefault: "プロバイダーのデフォルト",
       modelTitle: "{{engineLabel}}でこのオペレーションが使うモデル。空欄 = {{effectiveModel}}(プロバイダー/CLIのデフォルト)。",
       resetConfirm: "あなたの版を破棄して、標準で入っている版に戻しますか。元に戻せません。",

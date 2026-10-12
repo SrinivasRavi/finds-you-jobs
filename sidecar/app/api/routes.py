@@ -982,8 +982,11 @@ def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileD
         mode = scoring_mode(repos.preferences.get_or_create())
     # Always extract the application profile at master-save (FR-APP-01;
     # maintainer removed the toggle — it's one small cheap call and the record
-    # is load-bearing for every form fill).
-    _runner(request).submit("extract", {"profile_version": result.version})
+    # is load-bearing for every form fill), unless AI is off (S-C60): then it
+    # could only fail, and the next save after a provider is set up runs it.
+    engines = _engines(request)
+    if engines is None or engines.resolve("extract") is not None:
+        _runner(request).submit("extract", {"profile_version": result.version})
     # Re-scoring on a resume edit (maintainer 2026-07-23): keyword mode is free,
     # so re-score the whole board now (off the event loop, via Starlette's
     # threadpool). AI mode costs tokens, so it does NOT auto-run and there is no

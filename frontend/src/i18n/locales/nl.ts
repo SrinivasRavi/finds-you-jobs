@@ -139,6 +139,8 @@ const nl: DeepPartial<Messages> = {
     pasteKey: "Plak API-sleutel",
     verify: "Verifiëren",
     verifying: "Verifiëren…",
+    skipProvider: "Nu overslaan",
+    skipProviderHint: "AI-functies blijven uit tot je een provider toevoegt in Instellingen. Tot dan worden vacatures op trefwoorden gescoord.",
     verified: "Geverifieerd ✓",
     verifiedDetail: "{{detail}} — je kunt de onboarding afronden.",
     verifiedOk: "Provider geverifieerd — je kunt de onboarding afronden.",
@@ -152,6 +154,7 @@ const nl: DeepPartial<Messages> = {
     allSetAddUrl: "Zelf een vacature gevonden? Voeg hem op elk moment toe vanuit de lijst.",
     allSetResume: "Je master-cv is 1 klik weg, onder ‘Master-cv’ in de lijst.",
     allSetSettings: "Wijzig providers of zet networking aan in Instellingen.",
+    allSetAiOff: "AI staat voorlopig uit: vacatures worden op trefwoorden gescoord, en aanpassen wacht tot je een provider toevoegt in Instellingen.",
   },
   jobBoard: {
     scanProgress: {
@@ -973,6 +976,7 @@ const nl: DeepPartial<Messages> = {
     providers: {
       title: "Kies de LLM-providers",
       unconfiguredWarning: "Een operatie is gekoppeld aan een provider die nog niet is ingesteld — verifieer en sla hem hieronder op, of kies een andere engine onder Prompts & modellen.",
+      aiOffWarning: "AI-functies staan uit, omdat er nog geen provider is ingesteld. Stel er hieronder een in en alle AI-functies gaan aan.",
       configured: "Ingesteld",
       notSet: "Niet ingesteld",
       inUse: "In gebruik",
@@ -1003,6 +1007,7 @@ const nl: DeepPartial<Messages> = {
       title: "Kies de model-engines en bewerk de prompts",
       modelEngine: "Draait op",
       cliDefaultModel: "CLI-standaardmodel",
+      engineOff: "Uit (nog geen provider)",
       providerDefault: "providerstandaard",
       modelTitle: "Model dat deze operatie gebruikt op {{engineLabel}}. Leeg = {{effectiveModel}} (de standaard van de provider/CLI).",
       resetConfirm: "Jouw versie weggooien en terug naar die van ons? Dit kan niet ongedaan worden gemaakt.",

@@ -139,6 +139,8 @@ const es: DeepPartial<Messages> = {
     pasteKey: "Pega la clave de API",
     verify: "Verificar",
     verifying: "Verificando…",
+    skipProvider: "Omitir por ahora",
+    skipProviderHint: "Las funciones de IA siguen desactivadas hasta que añadas un proveedor en Ajustes. Mientras tanto, los empleos se puntúan por palabras clave.",
     verified: "Verificado ✓",
     verifiedDetail: "{{detail}} — ya puedes terminar la configuración.",
     verifiedOk: "Proveedor verificado — ya puedes terminar la configuración.",
@@ -152,6 +154,7 @@ const es: DeepPartial<Messages> = {
     allSetAddUrl: "¿Encontraste una oferta por tu cuenta? Añádela desde la lista cuando quieras.",
     allSetResume: "Tu currículum maestro está a un clic, en «Currículum maestro» en la lista.",
     allSetSettings: "Cambia de proveedor o activa el networking en Ajustes.",
+    allSetAiOff: "La IA está desactivada por ahora: los empleos se puntúan por palabras clave y la adaptación espera a que añadas un proveedor en Ajustes.",
   },
   jobBoard: {
     scanProgress: {
@@ -973,6 +976,7 @@ const es: DeepPartial<Messages> = {
     providers: {
       title: "Selecciona los proveedores LLM",
       unconfiguredWarning: "Una operación está dirigida a un proveedor aún sin configurar — verifícalo y guárdalo abajo, o elige otro motor en Prompts y modelos.",
+      aiOffWarning: "Las funciones de IA están desactivadas porque aún no hay ningún proveedor. Configura uno abajo y se activarán todas.",
       configured: "Configurado",
       notSet: "Sin configurar",
       inUse: "En uso",
@@ -1003,6 +1007,7 @@ const es: DeepPartial<Messages> = {
       title: "Elige los motores de modelo y edita los prompts",
       modelEngine: "Se ejecuta en",
       cliDefaultModel: "Modelo por defecto de la CLI",
+      engineOff: "Desactivado (aún sin proveedor)",
       providerDefault: "por defecto del proveedor",
       modelTitle: "Modelo que usa esta operación en {{engineLabel}}. En blanco = {{effectiveModel}} (el modelo por defecto del proveedor/CLI).",
       resetConfirm: "¿Tirar tu versión y volver a la que enviamos? Esto no se puede deshacer.",

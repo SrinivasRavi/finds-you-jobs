@@ -194,6 +194,7 @@ def test_unconfigured_engine_fails_cleanly(migrated_db: Database) -> None:
         assert op.error is not None
         assert EngineNotConfiguredError.__name__ in op.error
         assert "no engine configured" in op.error
+        assert "Settings › LLM Providers" in op.error
 
 
 def test_scan_is_single_flight_live(migrated_db: Database) -> None:

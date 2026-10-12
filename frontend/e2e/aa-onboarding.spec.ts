@@ -148,6 +148,53 @@ test("provider step offers the subscription-CLI family beside BYOK", async ({ pa
   await page.screenshot({ path: `${DIR}/onboarding-step2-antigravity-cli.png`, fullPage: true });
 });
 
+// S-C60: Skip on the provider step gets the user in with AI off, says so,
+// and leaves keyword scoring on; Settings then says how to turn AI on.
+test("skipping the provider step finishes with AI off", async ({ page, request }) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  // The cold-start scan reads 1 dead board, not the seeded 315.
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { portals_config: { sources: [{ url: "https://boards.greenhouse.io/e2e-nonexistent-tenant" }] } },
+  });
+  await page.goto("/onboarding");
+  await page.getByTestId("resume-text").fill("# E2E Candidate\n\nBackend engineer.");
+  await page.getByTestId("onboarding-continue").click();
+  await page.getByTestId("alias-input").fill("Backend Engineer");
+  await page.getByTestId("alias-input").press("Enter");
+  await page.getByTestId("location-input").fill("Remote");
+  await page.getByTestId("location-input").press("Enter");
+  await page.getByTestId("onboarding-continue").click();
+  await expect(page.getByTestId("onboarding-continue")).toBeDisabled();
+  await page.getByTestId("onboarding-skip-provider").click();
+  await expect(page.getByTestId("all-set-ai-off")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/all-set-ai-off.png`, fullPage: true });
+  await page.getByTestId("onboarding-finish").click();
+  await expect(page).toHaveURL(/\/jobs$/, { timeout: 15_000 });
+
+  const settings = await (await request.get(`${base}/api/settings`, { headers: auth })).json();
+  const engines = Object.values(settings.preferences.engine_routing).map(
+    (r) => (r as { engine: string }).engine,
+  );
+  expect(new Set(engines)).toEqual(new Set(["none"]));
+  expect(settings.preferences.thresholds.scoring_mode).toBe("keyword");
+
+  await page.goto("/settings");
+  await expect(page.getByTestId("ai-off-warning")).toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${DIR}/settings-ai-off.png`, fullPage: true });
+
+  // Back to the default routing and AI scoring, for the specs after this one.
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: {
+      engine_routing: {},
+      thresholds: { ...settings.preferences.thresholds, scoring_mode: "llm" },
+    },
+  });
+});
+
 test("onboarded install redirects /onboarding back to the board", async ({
   page,
   request,

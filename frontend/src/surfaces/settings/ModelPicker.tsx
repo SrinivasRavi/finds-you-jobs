@@ -9,7 +9,7 @@ import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { OperationKind, Settings as SettingsT } from "../../api/types";
-import { CLAUDE_CLI_DEFAULT_MODEL, CLI_ENGINE_OPTIONS, isCliEngine } from "./engines";
+import { AI_OFF, CLAUDE_CLI_DEFAULT_MODEL, CLI_ENGINE_OPTIONS, isCliEngine } from "./engines";
 
 /** The engine a kind routes to, and the model that engine will actually use
  *  when the kind names none. Exported for the prompt-test modal, which states
@@ -28,6 +28,7 @@ export function useRoute(settings: SettingsT, kind: string) {
     t("settingsPage.prompts.providerDefault");
   const cliEngineLabel = CLI_ENGINE_OPTIONS.find((o) => o.id === engine)?.label;
   const engineLabel =
+    (engine === AI_OFF && t("settingsPage.prompts.engineOff")) ||
     (cliEngineLabel && t(cliEngineLabel)) ||
     settings.providers.find((p) => p.id === engine)?.label ||
     engine;
@@ -52,6 +53,8 @@ export const ModelPicker = memo(function ModelPicker({
   const [modelDraft, setModelDraft] = useState<string | null>(null);
   const { route, engine, effectiveModel, engineLabel } = useRoute(settings, kind);
   const options = [
+    // Shown only while the kind is off, so the select names the state it's in.
+    ...(engine === AI_OFF ? [{ id: AI_OFF, label: t("settingsPage.prompts.engineOff") }] : []),
     ...CLI_ENGINE_OPTIONS.map((o) => ({ id: o.id, label: t(o.label) })),
     ...settings.providers.filter((p) => p.configured).map((p) => ({ id: p.id, label: p.label })),
   ];

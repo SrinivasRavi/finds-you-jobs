@@ -139,6 +139,8 @@ const it: DeepPartial<Messages> = {
     pasteKey: "Incolla la chiave API",
     verify: "Verifica",
     verifying: "Verifica…",
+    skipProvider: "Salta per ora",
+    skipProviderHint: "Le funzioni IA restano spente finché non aggiungi un fornitore nelle Impostazioni. Nel frattempo le offerte sono valutate per parole chiave.",
     verified: "Verificato ✓",
     verifiedDetail: "{{detail}} — puoi completare l'onboarding.",
     verifiedOk: "Provider verificato — puoi completare l'onboarding.",
@@ -152,6 +154,7 @@ const it: DeepPartial<Messages> = {
     allSetAddUrl: "Hai trovato un'offerta da solo? Aggiungila dalla lista quando vuoi.",
     allSetResume: "Il tuo curriculum principale è a un clic, sotto «Curriculum principale» nella lista.",
     allSetSettings: "Cambia fornitore o attiva il networking nelle Impostazioni.",
+    allSetAiOff: "L'IA per ora è spenta: le offerte sono valutate per parole chiave e l'adattamento aspetta che tu aggiunga un fornitore nelle Impostazioni.",
   },
   jobBoard: {
     scanProgress: {
@@ -973,6 +976,7 @@ const it: DeepPartial<Messages> = {
     providers: {
       title: "Seleziona i provider LLM",
       unconfiguredWarning: "Un'operazione è instradata verso un provider non ancora configurato — verificalo e salvalo qui sotto, oppure scegli un altro motore in Prompt e modelli.",
+      aiOffWarning: "Le funzioni IA sono spente perché non c'è ancora un fornitore. Configurane uno qui sotto e si accendono tutte.",
       configured: "Configurato",
       notSet: "Non impostato",
       inUse: "In uso",
@@ -1003,6 +1007,7 @@ const it: DeepPartial<Messages> = {
       title: "Scegli i motori dei modelli e modifica i prompt",
       modelEngine: "Gira su",
       cliDefaultModel: "Modello predefinito della CLI",
+      engineOff: "Spento (ancora nessun fornitore)",
       providerDefault: "predefinito del provider",
       modelTitle: "Modello usato da questa operazione su {{engineLabel}}. Vuoto = {{effectiveModel}} (il predefinito del provider/CLI).",
       resetConfirm: "Buttare via la tua versione e tornare a quella che forniamo noi? Non si può annullare.",
