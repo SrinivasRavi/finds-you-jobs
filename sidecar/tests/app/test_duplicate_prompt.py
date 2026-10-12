@@ -159,7 +159,7 @@ def test_deleting_either_job_takes_the_dismissal_with_it(tmp_path) -> None:
 
 def test_there_is_no_merge_the_user_resolves_a_duplicate_themselves(tmp_path) -> None:
     """The app says 2 rows look like 1 job and stops there (maintainer,
-    url-less-jobs.md line 409 note). Nothing deletes or re-keys either row."""
+    url-less-jobs.md section 5.5). Nothing deletes or re-keys either row."""
     client, app = _client(tmp_path)
     with client:
         monday = _add(client, url="", title="Senior Software Engineer", company="Acme")
@@ -218,3 +218,23 @@ def test_a_row_written_before_fingerprints_existed_is_backfilled(tmp_path) -> No
         pasted = _add(client, url="", title="Senior Software Engineer", company="Acme")
         body = client.get(f"/api/jobs/{pasted}/duplicate", headers=AUTH).json()
         assert body is not None and body["other_job_id"] == old
+
+
+def test_the_backfill_skips_an_expired_job(tmp_path) -> None:
+    """The duplicate check compares active jobs only, so an expired job's
+    fingerprint would never be read. It gets one if it's restored."""
+    from sidecar.app.registry.persistence import backfill_fingerprints
+
+    client, app = _client(tmp_path)
+    with client:
+        db: Database = app.state.db
+        with db.repos() as repos:
+            old = repos.jobs.create(
+                canonical_url="https://ex.co/expired", title="Senior Software Engineer",
+                company="Acme", description=JD, source_adapter="greenhouse",
+            ).id
+            repos.jobs.update(old, feed_state="expired")
+        assert backfill_fingerprints(db) == 0
+        with db.repos() as repos:
+            repos.jobs.update(old, feed_state="active")
+        assert backfill_fingerprints(db) == 1

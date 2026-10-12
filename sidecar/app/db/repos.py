@@ -610,11 +610,17 @@ class JobsRepo:
         return [(r[0], r[1] or 0, r[2], r[3]) for r in rows]
 
     def list_unfingerprinted(self, *, limit: int = 500) -> list[Job]:
-        """Jobs with a description and no fingerprint: rows written before the
-        column existed. The backfill's own query, so it converges."""
+        """Active jobs with a description and no fingerprint: rows written before
+        the column existed. Active only, because the duplicate check compares
+        nothing else; a restored job joins on the next pass. The backfill's own
+        query, so it converges."""
         stmt = (
             select(Job)
-            .where(Job.fingerprint.is_(None), Job.description != "")
+            .where(
+                Job.feed_state == "active",
+                Job.fingerprint.is_(None),
+                Job.description != "",
+            )
             .order_by(Job.ingested_at.desc(), Job.id)
             .limit(limit)
         )
