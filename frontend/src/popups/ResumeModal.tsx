@@ -103,12 +103,14 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
             data-testid="share-export-pdf"
             disabled={exporting}
             onClick={() => {
-              // The webview can't print or download — the sidecar renders the
-              // PDF (real selectable text) straight into ~/Downloads.
+              // The webview can't print or download: the sidecar renders the
+              // PDF (real selectable text) and the app asks where to save it.
               setExporting(true);
               setExportError(null);
               void Promise.resolve(api.exportPdf(getMarkdown(), what))
-                .then((path) => setExported(path))
+                .then((path) => {
+                  if (path) setExported(path);
+                })
                 .catch((e: unknown) =>
                   setExportError(e instanceof Error ? e.message : t("popups.resume.share.exportFailed")),
                 )

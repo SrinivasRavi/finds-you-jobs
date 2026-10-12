@@ -69,6 +69,48 @@ def test_export_pdf_renders_into_downloads(
     assert Path(again["path"]).name == "My-Resume-1.pdf"
 
 
+def test_export_pdf_says_plainly_when_downloads_is_denied(
+    app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S-C53: macOS can deny the app its Downloads folder. That was a raw
+    error; it's now a 403 that says what happened and what to do."""
+    _app, client = app_client
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    downloads.chmod(0o500)
+    from sidecar.app.api import routes as routes_mod
+
+    monkeypatch.setattr(routes_mod, "downloads_dir", lambda: downloads)
+    try:
+        resp = client.post(
+            "/api/export/pdf", headers=AUTH, json={"markdown": "# Ada", "filename": "cv"}
+        )
+    finally:
+        downloads.chmod(0o700)
+    assert resp.status_code == 403, resp.text
+    assert "Downloads" in resp.json()["detail"]
+
+
+def test_export_pdf_to_temp_renders_for_the_shell_to_save(
+    app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S-C53: in the app, the shell asks where to save at export time and
+    copies the file there, so the sidecar renders into its own exports folder."""
+    _app, client = app_client
+    exports = tmp_path / "exports"
+    from sidecar.app.api import routes as routes_mod
+
+    monkeypatch.setattr(routes_mod, "export_temp_dir", lambda: exports)
+    resp = client.post(
+        "/api/export/pdf",
+        headers=AUTH,
+        json={"markdown": "# Ada", "filename": "My Resume", "destination": "temp"},
+    )
+    assert resp.status_code == 200, resp.text
+    path = Path(resp.json()["path"])
+    assert path.parent == exports and path.read_bytes()[:5] == b"%PDF-"
+
+
 def test_export_pdf_rejects_empty(app_client) -> None:
     _app, client = app_client
     resp = client.post(

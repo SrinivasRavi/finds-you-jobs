@@ -14,6 +14,7 @@
 
 import type { components } from "./schema";
 import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
+import { inTauri } from "../shell/host";
 import { JobTombstonedError } from "./types";
 
 // The sidecar's own constants, as literal types (sidecar/app/shared_constants.py):
@@ -1129,13 +1130,21 @@ export class RealApi {
     return this.postForm<ProfileIngestResult>("/api/profile/ingest", form, "ingest");
   }
 
-  /** Render markdown → PDF into ~/Downloads via the sidecar's Chromium
-   *  pipeline (US-RES-03 slice) — the webview can't print or download. */
-  async exportPdf(markdown: string, filename: string): Promise<string> {
-    const d = (await this.json("POST", "/api/export/pdf", { markdown, filename })) as {
-      path: string;
-    };
-    return d.path;
+  /** Render markdown → PDF via the sidecar's Chromium pipeline (US-RES-03
+   *  slice); the webview can't print or download. In the app the shell then
+   *  asks where to save it (S-C53), and `null` means the user cancelled; on
+   *  the browser-only dev path the sidecar saves into ~/Downloads. */
+  async exportPdf(markdown: string, filename: string): Promise<string | null> {
+    const desktop = inTauri();
+    const d = (await this.json("POST", "/api/export/pdf", {
+      markdown,
+      filename,
+      destination: desktop ? "temp" : "downloads",
+    })) as { path: string };
+    if (!desktop) return d.path;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const name = d.path.split(/[\\/]/).pop() ?? `${filename}.pdf`;
+    return invoke<string | null>("save_export", { src: d.path, name });
   }
 
   /** Commit onboarding / Job-finder-preferences edits (FR-OB-05). Merges

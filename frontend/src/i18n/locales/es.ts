@@ -1236,7 +1236,7 @@ const es: DeepPartial<Messages> = {
         exportPdf: "Exportar a PDF",
         exportFailed: "la exportación falló",
         savedTo: "Guardado en {{path}}",
-        exportHint: "Guarda el PDF en tu carpeta de Descargas",
+        exportHint: "Pregunta dónde guardar el PDF",
       },
       doc: {
         master: "currículum maestro",

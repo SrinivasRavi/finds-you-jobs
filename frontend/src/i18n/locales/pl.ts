@@ -1263,7 +1263,7 @@ const pl: DeepPartial<Messages> = {
         exportPdf: "Eksportuj do PDF",
         exportFailed: "eksport nie powiódł się",
         savedTo: "Zapisano w {{path}}",
-        exportHint: "Zapisuje PDF w twoim folderze Pobrane",
+        exportHint: "Pyta, gdzie zapisać PDF",
       },
       doc: {
         master: "główne CV",

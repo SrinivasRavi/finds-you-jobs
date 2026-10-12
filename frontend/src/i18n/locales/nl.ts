@@ -1236,7 +1236,7 @@ const nl: DeepPartial<Messages> = {
         exportPdf: "Exporteren naar PDF",
         exportFailed: "exporteren mislukt",
         savedTo: "Opgeslagen in {{path}}",
-        exportHint: "Slaat de PDF op in je map Downloads",
+        exportHint: "Vraagt waar de pdf moet worden opgeslagen",
       },
       doc: {
         master: "master-cv",

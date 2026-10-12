@@ -1236,7 +1236,7 @@ const fr: DeepPartial<Messages> = {
         exportPdf: "Exporter en PDF",
         exportFailed: "échec de l'export",
         savedTo: "Enregistré dans {{path}}",
-        exportHint: "Enregistre le PDF dans votre dossier Téléchargements",
+        exportHint: "Demande où enregistrer le PDF",
       },
       doc: {
         master: "le CV de référence",

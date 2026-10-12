@@ -1147,6 +1147,9 @@ class ExportPdfRequest(BaseModel):
 
     markdown: str
     filename: str = "document"
+    # `temp` in the app: the shell asks where to save, at export time, and
+    # copies the file there (S-C53). `downloads` on the browser-only dev path.
+    destination: Literal["downloads", "temp"] = "downloads"
 
 
 class ExportPdfResult(BaseModel):

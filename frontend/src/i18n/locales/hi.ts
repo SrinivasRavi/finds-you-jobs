@@ -1236,7 +1236,7 @@ const hi: DeepPartial<Messages> = {
         exportPdf: "PDF में एक्सपोर्ट करें",
         exportFailed: "एक्सपोर्ट विफल",
         savedTo: "{{path}} में सहेजा",
-        exportHint: "PDF आपके डाउनलोड फ़ोल्डर में सहेजता है",
+        exportHint: "पूछता है कि PDF कहाँ सहेजना है",
       },
       doc: {
         master: "मास्टर रेज़्यूमे",

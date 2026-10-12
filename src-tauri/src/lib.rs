@@ -41,6 +41,44 @@ fn open_external(url: String) -> Result<(), String> {
         .map_err(|e| format!("could not open browser: {e}"))
 }
 
+/// Export, step 2 (S-C53): ask where to save a PDF the sidecar rendered into
+/// its exports folder, at the moment of export, and move it there. The copy
+/// runs here, in the process the user granted the folder to by picking it, so
+/// a Downloads folder the sidecar may not write to still works. `None` means
+/// the user cancelled. Only files directly inside the exports folder are moved.
+#[tauri::command]
+async fn save_export(src: String, name: String) -> Result<Option<String>, String> {
+    let src = export_source(&std::env::temp_dir().join("fyj-exports"), &src)?;
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_file_name(&name)
+        .add_filter("PDF", &["pdf"]);
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        dialog = dialog.set_directory(std::path::Path::new(&home).join("Downloads"));
+    }
+    let Some(picked) = dialog.save_file().await else {
+        let _ = std::fs::remove_file(&src);
+        return Ok(None);
+    };
+    let dest = picked.path().to_path_buf();
+    std::fs::copy(&src, &dest).map_err(|e| format!("could not save to {}: {e}", dest.display()))?;
+    let _ = std::fs::remove_file(&src);
+    Ok(Some(dest.display().to_string()))
+}
+
+/// The rendered PDF `save_export` may move: a `.pdf` directly inside `exports`.
+fn export_source(exports: &std::path::Path, src: &str) -> Result<std::path::PathBuf, String> {
+    let src = std::path::Path::new(src)
+        .canonicalize()
+        .map_err(|e| format!("the exported file is gone: {e}"))?;
+    let exports = exports.canonicalize().map_err(|e| format!("no exports folder: {e}"))?;
+    if src.parent() != Some(exports.as_path())
+        || src.extension().and_then(|e| e.to_str()) != Some("pdf")
+    {
+        return Err("refusing to save a file from outside the exports folder".to_string());
+    }
+    Ok(src)
+}
+
 /// Strict validation for untrusted outbound URLs (F-H1): absolute http(s) with
 /// a real host, no embedded credentials, no whitespace or control characters.
 /// Returns the parser's normalized serialization — shell-sensitive bytes like
@@ -203,6 +241,7 @@ pub fn run() {
             get_sidecar_status,
             open_external,
             open_login_terminal,
+            save_export,
         ])
         .setup(|app| {
             // Dev-mode dock icon: the unbundled `tauri dev` binary has no
@@ -255,7 +294,26 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_external_url;
+    use super::{export_source, validate_external_url};
+
+    #[test]
+    fn export_source_takes_only_a_pdf_inside_the_exports_folder() {
+        let root = std::env::temp_dir().join(format!("fyj-export-test-{}", std::process::id()));
+        let exports = root.join("fyj-exports");
+        std::fs::create_dir_all(&exports).unwrap();
+        let pdf = exports.join("cv.pdf");
+        let txt = exports.join("notes.txt");
+        let outside = root.join("secret.pdf");
+        for f in [&pdf, &txt, &outside] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        assert!(export_source(&exports, pdf.to_str().unwrap()).is_ok());
+        assert!(export_source(&exports, txt.to_str().unwrap()).is_err());
+        assert!(export_source(&exports, outside.to_str().unwrap()).is_err());
+        let sneaky = exports.join("..").join("secret.pdf");
+        assert!(export_source(&exports, sneaky.to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn accepts_clean_http_and_https() {

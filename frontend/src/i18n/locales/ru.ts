@@ -1281,7 +1281,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
         exportPdf: "Экспорт в PDF",
         exportFailed: "экспорт не удался",
         savedTo: "Сохранено в {{path}}",
-        exportHint: "Сохраняет PDF в папку «Загрузки»",
+        exportHint: "Спрашивает, куда сохранить PDF",
       },
       doc: {
         master: "мастер-резюме",

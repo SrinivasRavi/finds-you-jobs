@@ -1218,7 +1218,7 @@ const ja: DeepPartial<Messages> = {
         exportPdf: "PDFにエクスポート",
         exportFailed: "エクスポート失敗",
         savedTo: "{{path}} に保存しました",
-        exportHint: "PDFをダウンロードフォルダーに保存します",
+        exportHint: "PDF の保存先を尋ねます",
       },
       doc: {
         master: "マスター職務経歴書",

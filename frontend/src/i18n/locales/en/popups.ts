@@ -31,7 +31,7 @@ const popups = {
       exportPdf: "Export to PDF",
       exportFailed: "export failed",
       savedTo: "Saved to {{path}}",
-      exportHint: "Saves the PDF to your Downloads folder",
+      exportHint: "Asks where to save the PDF",
     },
     doc: {
       master: "master resume",

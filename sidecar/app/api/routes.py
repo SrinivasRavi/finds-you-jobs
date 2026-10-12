@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import re
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -3522,6 +3523,12 @@ def downloads_dir() -> Path:
     return Path.home() / "Downloads"
 
 
+def export_temp_dir() -> Path:
+    """Where an export waits for the shell to copy it to the folder the user
+    picks (S-C53). The shell only copies from here (`save_export` in lib.rs)."""
+    return Path(tempfile.gettempdir()) / "fyj-exports"
+
+
 @router.post("/api/export/pdf")
 def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
     """Render markdown → PDF into ~/Downloads (US-RES-03 slice, 2026-07-12).
@@ -3534,8 +3541,23 @@ def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
     if not payload.markdown.strip():
         raise HTTPException(status_code=422, detail="nothing to export — the document is empty")
     stem = re.sub(r"[^\w\- ]+", "", payload.filename).strip().replace(" ", "-") or "document"
-    target_dir = downloads_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = export_temp_dir() if payload.destination == "temp" else downloads_dir()
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        probe = target_dir / f".fyj-write-check-{os.getpid()}"
+        probe.touch()
+        probe.unlink()
+    except PermissionError as e:
+        # macOS asks before an app may use Downloads, and a "Don't Allow"
+        # lands here (S-C53).
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"finds-you-jobs isn't allowed to save in {target_dir}. Allow it under "
+                "System Settings › Privacy & Security › Files and Folders › Downloads, "
+                "or export from the desktop app, which asks where to save."
+            ),
+        ) from e
     path = target_dir / f"{stem}.pdf"
     n = 1
     while path.exists() and n < 100:

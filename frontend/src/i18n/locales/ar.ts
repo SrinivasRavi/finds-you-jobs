@@ -1311,7 +1311,7 @@ const ar = {
         exportPdf: "صدِّر إلى PDF",
         exportFailed: "فشل التصدير",
         savedTo: "حُفظ في {{path}}",
-        exportHint: "يحفظ ملف PDF في مجلد التنزيلات لديك",
+        exportHint: "يسأل أين تريد حفظ ملف PDF",
       },
       doc: {
         master: "السيرة الرئيسية",

@@ -1218,7 +1218,7 @@ const zh: DeepPartial<Messages> = {
         exportPdf: "导出为 PDF",
         exportFailed: "导出失败",
         savedTo: "已保存到 {{path}}",
-        exportHint: "将 PDF 保存到你的“下载”文件夹",
+        exportHint: "询问 PDF 保存位置",
       },
       doc: {
         master: "主简历",
