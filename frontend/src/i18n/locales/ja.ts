@@ -1489,6 +1489,15 @@ const ja: DeepPartial<Messages> = {
     framesLabel: "フレーム",
     noPage: "まだページがありません",
   },
+  relativeTime: {
+    never: "なし",
+    justNow: "たった今",
+    today: "今日",
+    minutes: "{{n}}分前",
+    hours: "{{n}}時間前",
+    days: "{{n}}日前",
+    months: "{{n}}か月前",
+  },
 };
 
 export default ja;

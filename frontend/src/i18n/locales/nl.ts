@@ -1515,6 +1515,15 @@ const nl: DeepPartial<Messages> = {
     framesLabel: "frames",
     noPage: "nog geen pagina",
   },
+  relativeTime: {
+    never: "nooit",
+    justNow: "zojuist",
+    today: "vandaag",
+    minutes: "{{n}} min geleden",
+    hours: "{{n}} u geleden",
+    days: "{{n}} d geleden",
+    months: "{{n}} mnd geleden",
+  },
 };
 
 export default nl;

@@ -1489,6 +1489,15 @@ const zh: DeepPartial<Messages> = {
     framesLabel: "帧",
     noPage: "还没有页面",
   },
+  relativeTime: {
+    never: "从未",
+    justNow: "刚刚",
+    today: "今天",
+    minutes: "{{n}} 分钟前",
+    hours: "{{n}} 小时前",
+    days: "{{n}} 天前",
+    months: "{{n}} 个月前",
+  },
 };
 
 export default zh;

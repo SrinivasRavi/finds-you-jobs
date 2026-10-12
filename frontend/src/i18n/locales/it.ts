@@ -1515,6 +1515,15 @@ const it: DeepPartial<Messages> = {
     framesLabel: "fotogrammi",
     noPage: "nessuna pagina ancora",
   },
+  relativeTime: {
+    never: "mai",
+    justNow: "proprio ora",
+    today: "oggi",
+    minutes: "{{n}} min fa",
+    hours: "{{n}} h fa",
+    days: "{{n}} g fa",
+    months: "{{n}} mesi fa",
+  },
 };
 
 export default it;

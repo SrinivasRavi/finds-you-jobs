@@ -1515,6 +1515,15 @@ const hi: DeepPartial<Messages> = {
     framesLabel: "फ़्रेम",
     noPage: "अभी कोई पेज नहीं",
   },
+  relativeTime: {
+    never: "कभी नहीं",
+    justNow: "अभी",
+    today: "आज",
+    minutes: "{{n}} मिनट पहले",
+    hours: "{{n}} घंटे पहले",
+    days: "{{n}} दिन पहले",
+    months: "{{n}} महीने पहले",
+  },
 };
 
 export default hi;

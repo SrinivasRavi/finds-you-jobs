@@ -1622,6 +1622,15 @@ const ar = {
     framesLabel: "إطارات",
     noPage: "لا توجد صفحة بعد",
   },
+  relativeTime: {
+    never: "أبدًا",
+    justNow: "الآن",
+    today: "اليوم",
+    minutes: "قبل {{n}} د",
+    hours: "قبل {{n}} س",
+    days: "قبل {{n}} يوم",
+    months: "قبل {{n}} شهر",
+  },
 } as DeepPartial<Messages>;
 
 export default ar;

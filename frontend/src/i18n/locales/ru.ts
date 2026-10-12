@@ -1576,6 +1576,15 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     framesLabel: "кадры",
     noPage: "страницы пока нет",
   },
+  relativeTime: {
+    never: "никогда",
+    justNow: "только что",
+    today: "сегодня",
+    minutes: "{{n}} мин назад",
+    hours: "{{n}} ч назад",
+    days: "{{n}} дн. назад",
+    months: "{{n}} мес. назад",
+  },
 };
 
 export default ru;

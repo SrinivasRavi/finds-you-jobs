@@ -1550,6 +1550,15 @@ const pl: DeepPartial<Messages> = {
     framesLabel: "klatki",
     noPage: "jeszcze brak strony",
   },
+  relativeTime: {
+    never: "nigdy",
+    justNow: "przed chwilą",
+    today: "dzisiaj",
+    minutes: "{{n}} min temu",
+    hours: "{{n}} godz. temu",
+    days: "{{n}} dni temu",
+    months: "{{n}} mies. temu",
+  },
 };
 
 export default pl;
