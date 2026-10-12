@@ -235,11 +235,11 @@ def _record_backoff_no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """Backoff delays are classified and recorded but never slept — semantics
     under test, not wall-clock waits (the wait itself is unit-tested in
     tests/modules/shared/test_completion_retry.py)."""
-    import sidecar.modules.coverletterer.coverletterer as cover_mod
+    import sidecar.modules._shared.completion_retry as retry_mod
 
     waits: list[float] = []
     monkeypatch.setattr(
-        cover_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
+        retry_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
     )
     return waits
 

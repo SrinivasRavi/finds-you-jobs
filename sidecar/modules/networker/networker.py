@@ -29,14 +29,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Callable
 
-from sidecar.modules._shared.claude_engine import EngineError
-from sidecar.modules._shared.completion_retry import (
-    MAX_ATTEMPTS,
-    merge_usage,
-    raise_if_cancelled,
-    retry_delay_s,
-    wait_before_retry,
-)
+from sidecar.modules._shared.completion_retry import complete_and_parse
 from sidecar.modules._shared.job_input import JobInputError
 from sidecar.modules._shared.job_input import resolve_job as _resolve_job
 
@@ -195,45 +188,18 @@ def draft(
 
     scratch = tempfile.TemporaryDirectory(prefix="fyj-draft-")
     try:
-        # A single completion is non-deterministic enough that a transient
-        # engine failure (EngineError) or a contract-drifted response
-        # (NetworkerError, stage="parse") is worth a bounded re-ask before the
-        # whole operation fails onto the user's Retry button. Engine failures
-        # are classified (F-H5): deterministic rejections fail fast; transient
-        # ones back off (jittered, Retry-After honored) before the re-ask.
-        # Parse drift keeps its immediate re-ask. Every attempt that actually
-        # produced billable output — even one that then failed to parse — is
-        # folded into the final usage (cost honesty: a retry must never make
-        # a real spend vanish from the ledger).
-        billed: list[Usage] = []
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            raise_if_cancelled(cancelled)
-            try:
-                raw, usage = engine.complete(system_prompt, user_prompt)
-            except EngineError as e:
-                delay = retry_delay_s(e, attempt)
-                if delay is None:
-                    raise
-                wait_before_retry(delay, cancelled)
-                continue
-            try:
-                message, notes = parse_output(raw)
-            except NetworkerError as e:
-                billed.append(usage)
-                if e.stage != "parse" or attempt == MAX_ATTEMPTS:
-                    raise
-                continue
-            billed.append(usage)
-            return DraftResult(
-                message=message,
-                audience=contact.audience,
-                warmth=warmth,
-                channel=channel,
-                notes=notes,
-                char_count=len(message),
-                usage=Usage(**merge_usage(billed)),
-            )
-        raise AssertionError("unreachable — loop always returns or raises")
+        (message, notes), usage = complete_and_parse(
+            engine, system_prompt, user_prompt, parse_output, NetworkerError, cancelled
+        )
+        return DraftResult(
+            message=message,
+            audience=contact.audience,
+            warmth=warmth,
+            channel=channel,
+            notes=notes,
+            char_count=len(message),
+            usage=Usage(**usage),
+        )
     finally:
         if not keep_scratch:
             scratch.cleanup()
