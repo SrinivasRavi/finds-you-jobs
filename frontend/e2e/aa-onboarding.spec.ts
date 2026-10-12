@@ -50,6 +50,47 @@ test("the resume step explains the master resume, in every language", async ({ p
   await page.evaluate(() => localStorage.removeItem("fyj-language"));
 });
 
+// S-C58: a role typed but not yet a chip counts, so Continue isn't greyed out.
+test("a typed role is enough to continue", async ({ page }) => {
+  await page.goto("/onboarding");
+  await page.getByTestId("resume-text").fill("# E2E Candidate\n\nBackend engineer.");
+  await page.getByTestId("onboarding-continue").click();
+  await page.getByTestId("location-input").fill("Remote");
+  await page.getByTestId("location-input").press("Enter");
+  await page.getByTestId("alias-input").fill("Forward Deployed Engineer");
+  await expect(page.getByTestId("onboarding-continue")).toBeEnabled();
+  await page.screenshot({ path: `${DIR}/typed-role-continue.png`, fullPage: true });
+  await page.getByTestId("onboarding-continue").click();
+  await expect(page.getByTestId("onboarding-step-2")).toBeVisible();
+  // It was kept as a chip, not dropped.
+  await page.getByText("Back").click();
+  await expect(page.getByTestId("alias")).toContainText("Forward Deployed Engineer");
+});
+
+// S-C64, S-C65: the last step says what happens in a line, the button says
+// "Find jobs", and Back is there.
+test("the All set step is short, and Back works from it", async ({ page }) => {
+  await page.goto("/onboarding");
+  await page.evaluate(() =>
+    localStorage.setItem(
+      "fyj-onboarding-draft-v1",
+      JSON.stringify({
+        step: 3,
+        resumeText: "# E2E Candidate\n\nBackend engineer.",
+        aliases: ["Backend Engineer"],
+        locations: ["Remote"],
+      }),
+    ),
+  );
+  await page.reload();
+  await expect(page.getByTestId("onboarding-step-3")).toContainText("You're all set");
+  await expect(page.getByTestId("onboarding-finish")).toHaveText("Find jobs");
+  await page.screenshot({ path: `${DIR}/all-set.png`, fullPage: true });
+  await page.getByText("Back").click();
+  await expect(page.getByTestId("onboarding-step-2")).toBeVisible();
+  await page.evaluate(() => localStorage.removeItem("fyj-onboarding-draft-v1"));
+});
+
 test("provider step offers the subscription-CLI family beside BYOK", async ({ page }) => {
   await page.goto("/onboarding");
   // Step 0 → 1: paste a resume.
@@ -87,7 +128,10 @@ test("provider step offers the subscription-CLI family beside BYOK", async ({ pa
   // A CLI selection swaps the key input for the no-key hint (verify-only path).
   await page.getByTestId("provider-codex-cli").click();
   await expect(page.getByTestId("api-key")).toHaveCount(0);
-  await expect(page.getByText("we verify your Codex CLI is logged in")).toBeVisible();
+  // S-C61: the hint says Verify reads which account is logged in.
+  await expect(
+    page.getByText("Verify asks the Codex CLI whether you're logged in"),
+  ).toBeVisible();
   // Exactly one tile is selected (accent-wash) — and wait out the global
   // 240ms theme-fade transition (index.css) so the screenshot shows settled
   // colors, not the previous tile mid-fade.

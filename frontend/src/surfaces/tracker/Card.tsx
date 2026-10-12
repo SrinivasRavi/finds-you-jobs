@@ -96,6 +96,7 @@ export const Card = memo(function Card({
   onSlot,
   onMenu,
   menuOpen,
+  networkingOn,
 }: {
   app: Application;
   onOpen: (id: string) => void;
@@ -104,6 +105,8 @@ export const Card = memo(function Card({
   onSlot: (app: Application, kind: ResumeModalKind | "refs" | "apply") => void;
   onMenu: (id: string, anchor: DOMRect) => void;
   menuOpen: boolean;
+  /** Networking is default-off; until it's on, the card offers no way in (S-C66). */
+  networkingOn: boolean;
 }) {
   const { t } = useTranslation();
   const tier = app.job.score ? scoreTier(app.job.score.score_0_100) : null;
@@ -198,9 +201,11 @@ export const Card = memo(function Card({
             }
           />
         </button>
-        <button onClick={() => onSlot(app, "refs")} data-testid="card-referrals-slot">
-          <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state] ?? "none"} />
-        </button>
+        {networkingOn ? (
+          <button onClick={() => onSlot(app, "refs")} data-testid="card-referrals-slot">
+            <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state] ?? "none"} />
+          </button>
+        ) : null}
         {/* Apply slot (applier-as-built.md section 8.1/section 8.2) — starts a run (or reopens the
             bound one) and opens the companion panel. A card already past
             application (Applied/Interviewing/Offer/Rejected) with no run can't

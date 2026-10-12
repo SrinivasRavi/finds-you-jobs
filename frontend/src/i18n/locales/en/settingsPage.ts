@@ -179,8 +179,7 @@ const settingsPage = {
     verified: "✓ Verified",
     verifiedCheck: "Verified ✓",
     clisTitle: "Subscription CLIs",
-    clisIntro:
-      "Use a coding CLI you're already logged into — no API key, your subscription pays. Verify checks the login; pick one per operation under Prompts & Models.",
+    clisIntro: "Use a coding CLI you're already logged into: no API key, your subscription pays. Verify asks the CLI which account is logged in; pick one per operation under Prompts & Models.",
     cli: {
       claudeLabel: "Claude subscription (CLI)",
       claudeDesc: "Your logged-in Claude Code CLI.",

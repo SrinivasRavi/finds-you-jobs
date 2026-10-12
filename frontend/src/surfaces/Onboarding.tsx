@@ -145,6 +145,7 @@ export function Onboarding() {
 
   // Draft — preferences.
   const [aliases, setAliases] = useState<string[]>(d0.aliases ?? []);
+  const [aliasDraft, setAliasDraft] = useState("");
   const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
@@ -213,7 +214,7 @@ export function Onboarding() {
     step === 0
       ? resumeText.trim().length > 0
       : step === 1
-        ? aliases.length > 0 && locations.length > 0
+        ? (aliases.length > 0 || aliasDraft.trim().length > 0) && locations.length > 0
         : step === 2
           ? verifyState === "verified"
           : true; // All set — Finish takes over
@@ -450,6 +451,7 @@ export function Onboarding() {
                 items={aliases}
                 onAdd={(v) => setAliases((a) => [...a, v])}
                 onRemove={(v) => setAliases((a) => a.filter((x) => x !== v))}
+                onDraftChange={setAliasDraft}
                 placeholder={t("onboarding.aliasPlaceholder")}
                 hint={t("onboarding.aliasHint")}
               />
@@ -683,7 +685,7 @@ export function Onboarding() {
 
         {/* Footer nav */}
         <div className="mt-6 flex items-center gap-2 border-t border-border pt-4">
-          {step > 0 && step < STEP_LABELS.length - 1 ? (
+          {step > 0 ? (
             <button
               onClick={() => setStep((s) => s - 1)}
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
@@ -694,7 +696,15 @@ export function Onboarding() {
           <div className="ml-auto">
             {step < STEP_LABELS.length - 1 ? (
               <button
-                onClick={() => setStep((s) => s + 1)}
+                onClick={() => {
+                  // A role typed but not yet a chip counts (S-C58).
+                  const draft = aliasDraft.trim();
+                  if (step === 1 && draft) {
+                    setAliases((a) => (a.includes(draft) ? a : [...a, draft]));
+                    setAliasDraft("");
+                  }
+                  setStep((s) => s + 1);
+                }}
                 disabled={!canContinue}
                 data-testid="onboarding-continue"
                 className={

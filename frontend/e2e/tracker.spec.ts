@@ -27,6 +27,11 @@ test("tracker shows a saved card and records activity", async ({
     headers: auth,
     data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
   });
+  // Networking off, as on a fresh install (an earlier spec may have turned it on).
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: false },
+  });
   const job = await (
     await request.post(`${base}/api/jobs`, {
       headers: auth,
@@ -52,6 +57,8 @@ test("tracker shows a saved card and records activity", async ({
   await expect(page.getByText("Staff Engineer").first()).toBeVisible({
     timeout: 15_000,
   });
+  // S-C66: networking is default-off, so the card offers no Referrals slot.
+  await expect(page.getByTestId("card-referrals-slot")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/tracker-saved-card.png`, fullPage: true });
 
   // Detail modal: edit notes → the Activity tab records it.

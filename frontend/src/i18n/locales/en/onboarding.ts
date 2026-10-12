@@ -8,10 +8,10 @@ const onboarding = {
     titleResume: "Add your master resume",
     titlePreferences: "What are you looking for?",
     titleProvider: "Choose your LLM provider",
-    titleAllSet: "All set",
+    titleAllSet: "You're all set",
     back: "Back",
     continue: "Continue",
-    finish: "Finish & go to Discover jobs",
+    finish: "Find jobs",
     finishing: "Finishing…",
     pctComplete: "{{pct}}% complete",
     // Resume step.
@@ -68,7 +68,7 @@ const onboarding = {
             label: "Claude subscription (CLI)",
             hint: "Uses your Claude CLI — no key needed",
             name: "Claude CLI",
-            verifyHint: "No key needed — we verify your Claude CLI is reachable.",
+            verifyHint: "No key needed. Verify asks the Claude CLI which account is logged in, and shows you its email and plan.",
             loginLabel: "Log in to Claude",
             installName: "Claude Code",
         },
@@ -76,7 +76,7 @@ const onboarding = {
             label: "ChatGPT subscription (Codex CLI)",
             hint: "Uses your Codex CLI login — no key needed",
             name: "Codex CLI",
-            verifyHint: "No key needed — we verify your Codex CLI is logged in.",
+            verifyHint: "No key needed. Verify asks the Codex CLI whether you're logged in, and shows you what it says.",
             loginLabel: "Log in to Codex",
             installName: "OpenAI Codex CLI",
         },
@@ -84,8 +84,7 @@ const onboarding = {
             label: "Google subscription (Antigravity CLI)",
             hint: "Experimental — uses your agy login, no key needed",
             name: "Antigravity CLI (agy)",
-            verifyHint:
-                "No key needed — we run a real test prompt through agy. Experimental: agy's non-interactive mode has known rough edges; Verify tells you honestly if it fails.",
+            verifyHint: "No key needed. Verify sends 1 short test prompt through agy, on your subscription. Experimental: agy's non-interactive mode has known rough edges, and Verify tells you plainly if it fails.",
             loginLabel: "Log in to Antigravity",
             installName: "Google Antigravity",
         },
@@ -105,10 +104,10 @@ const onboarding = {
     installFallback: "the CLI",
     retry: "Retry",
     // All-set step.
-    allSetIntro: "On Finish we write your profile and fire the cold-start scrape across every role × location.",
-    allSetAddUrl: "Add a job posting anytime from the board",
-    allSetResume: "Review your master resume from the board's Master Resume button",
-    allSetSettings: "Tune providers + networking in Settings",
+    allSetIntro: "Press Find jobs and the app starts looking for every role and place you picked. New matches land on the board as they're found.",
+    allSetAddUrl: "Found a posting yourself? Add it from the board anytime.",
+    allSetResume: "Your master resume is 1 click away, under Master Resume on the board.",
+    allSetSettings: "Change providers or turn on networking in Settings.",
 };
 
 export default onboarding;

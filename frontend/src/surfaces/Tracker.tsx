@@ -28,6 +28,7 @@ import {
   useRemoveDocument,
   useReturnToBoard,
   useSetPriority,
+  useSettings,
   useStartApply,
   useUpdateApplication,
 } from "../api/queries";
@@ -63,6 +64,7 @@ export function Tracker() {
   const archive = useArchiveApplication();
   const returnToBoard = useReturnToBoard();
   const genPacket = useGeneratePacket();
+  const { data: settings } = useSettings();
   const patchArtifact = usePatchArtifact();
   const attachDocument = useAttachDocument();
   const removeDocument = useRemoveDocument();
@@ -332,6 +334,7 @@ export function Tracker() {
                       onSlot={handleSlot}
                       onMenu={handleMenu}
                       menuOpen={menu?.id === app.id}
+                      networkingOn={settings?.networking_enabled ?? false}
                     />
                   ))
                 )}
