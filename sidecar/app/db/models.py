@@ -334,7 +334,7 @@ class Application(Base):
     column: Mapped[str] = mapped_column(String, nullable=False, default="saved")
     priority: Mapped[str] = mapped_column(String, nullable=False, default="P0")
     # How this card entered the pipeline (FR-TR — manual-add):
-    # `discovered` = created through the fyj flow (scan / add-by-URL → Save);
+    # `discovered` = created through the fyj flow (scan / Add a job posting → Save);
     # `manual` = logged by the user via "Add a job application" for a job they
     # already applied to outside the app. Drives the Tracker source filter.
     origin: Mapped[str] = mapped_column(String, nullable=False, default="discovered")
@@ -591,7 +591,7 @@ class Contact(Base):
     # Lifecycle. `candidate` = discovered but not yet reached (off the kanban);
     # the kanban columns are sent | accepted | pending_our_response |
     # pending_their_response | ghosted | converted (US-NW-01, split S-N5).
-    # Manual add-by-URL sets one of the live columns directly.
+    # A manual add with a link sets one of the live columns directly.
     connection_status: Mapped[str] = mapped_column(String, nullable=False, default="candidate")
     profile_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     added_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)

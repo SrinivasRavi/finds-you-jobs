@@ -5,7 +5,7 @@ runner + seeded-disabled schedules):
 
 - schedule management (A4 flag #2): list, enable/disable + set interval,
   run-now (score_new fan-out; scan single op) — seeded disabled by default;
-- Add-by-URL live path (A4 flag #3, US-JB-07): `/api/jobs/preview` extracts
+- Add a job posting's live path (A4 flag #3, US-JB-07): `/api/jobs/preview` extracts
   editable fields (probe faked — no live network), and `POST /api/jobs` persists
   with dedup + tombstone discipline and enqueues a score.
 """
@@ -23,7 +23,7 @@ from ._support import AUTH
 
 
 def _add_job(client: TestClient, url: str, title: str = "T") -> dict[str, object]:
-    """Create a job via the Add-by-URL route; return its JobDTO json."""
+    """Create a job via the Add a job posting route; return its JobDTO json."""
     return client.post(
         "/api/jobs", headers=AUTH, json={"canonical_url": url, "title": title}
     ).json()
@@ -139,7 +139,7 @@ def test_run_schedule_unknown_404(app_client: tuple[FastAPI, TestClient]) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Add-by-URL live path (A4 flag #3, US-JB-07)
+# Add a job posting's live path (A4 flag #3, US-JB-07)
 # ---------------------------------------------------------------------------
 
 

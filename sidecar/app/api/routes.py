@@ -450,7 +450,7 @@ def _identity(canonical_url: str, description: str) -> tuple[str | None, str | N
 
 @router.post("/api/jobs/preview")
 def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.JobPreviewDTO:
-    """Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
+    """Add a job posting, step 1 (US-JB-07): fetch the pasted URL and extract editable
     fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
     blocking probe runs off the event loop: a plain `def` handler runs in
     Starlette's threadpool automatically.
@@ -495,7 +495,7 @@ def preview_job(request: Request, payload: dto.JobPreviewRequest) -> dto.JobPrev
 
 @router.post("/api/jobs", status_code=201)
 def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
-    """Add-by-URL step 2 (US-JB-07) + programmatic ingest: persist one job with
+    """Add a job posting, step 2 (US-JB-07) + programmatic ingest: persist one job with
     the same dedup/tombstone discipline as scan, then enqueue a score so the new
     row lands on the board with a fit rating."""
     canonical, digest = _identity(payload.canonical_url, payload.description)
@@ -747,7 +747,7 @@ def dismiss_job_duplicate(
 def tombstone_job(request: Request, job_id: str) -> dto.TombstoneResultDTO:
     """Delete forever from Trash (US-JB-11): write a `Tombstone` for the job's
     canonical URL, then hard-delete the row. A tombstone is final — a future
-    scan or Add-by-URL can never re-surface it (FR-SYS-04). A job with no URL
+    scan or Add a job posting can never re-surface it (FR-SYS-04). A job with no URL
     is only deleted, so its description can be pasted again."""
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
@@ -1300,7 +1300,7 @@ async def create_manual_application(
     cover: Annotated[UploadFile | None, File()] = None,
 ) -> dto.ApplicationDTO:
     """Log a job the user already applied to OUTSIDE the app ("Add a job
-    application" — the Tracker sibling of the board's Add-by-URL). Upserts the
+    application" — the Tracker sibling of the board's Add a job posting). Upserts the
     job with the same dedup/tombstone discipline, creates the card as
     `origin=manual` in a post-referral stage (default Applied), and attaches the
     resume/cover the user actually submitted (optional) as content-addressed,
@@ -2764,13 +2764,6 @@ def linkedin_search(
         )
     operation_id = _runner(request).submit("linkedin_search", {"mode": mode})
     return dto.OperationAccepted(id=operation_id, kind="linkedin_search", state="queued")
-
-
-@router.post("/api/linkedin/cancel", status_code=202)
-def linkedin_cancel() -> dict[str, Any]:
-    """Cancel an in-flight headed login (the Cancel button). Closes the browser."""
-    cancelled = LOGIN_CONTROL.cancel_all()
-    return {"status": "cancelling", "cancelled": cancelled}
 
 
 @router.post("/api/linkedin/disconnect")

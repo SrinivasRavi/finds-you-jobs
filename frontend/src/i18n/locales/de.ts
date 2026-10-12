@@ -210,8 +210,6 @@ const de: DeepPartial<Messages> = {
     },
     row: {
       new: "Neu",
-      applicants_one: "{{count}} Bewerber",
-      applicants_other: "{{count}} Bewerber",
       scoring: "wird bewertet…",
       olderListing: "Ältere Anzeige",
       keywordScoreTitle: "Keyword-bewertet (gratis, auf dem Gerät) — grau, kein KI-Score",

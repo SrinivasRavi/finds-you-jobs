@@ -208,8 +208,6 @@ const es: DeepPartial<Messages> = {
     },
     row: {
       new: "Nuevo",
-      applicants_one: "{{count}} candidato",
-      applicants_other: "{{count}} candidatos",
       scoring: "puntuando…",
       olderListing: "Publicación antigua",
       keywordScoreTitle: "Puntuado por palabras clave (gratis, en tu equipo) — gris, no es una puntuación de IA",

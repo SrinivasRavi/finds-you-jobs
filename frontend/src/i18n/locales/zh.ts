@@ -206,7 +206,6 @@ const zh: DeepPartial<Messages> = {
     },
     row: {
       new: "新",
-      applicants_other: "{{count}} 人已申请",
       scoring: "评分中…",
       olderListing: "较早的职位",
       keywordScoreTitle: "关键词评分（免费、本机运行）— 灰色，非 AI 评分",

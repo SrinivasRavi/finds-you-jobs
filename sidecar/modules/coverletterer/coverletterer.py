@@ -27,7 +27,6 @@ from sidecar.modules._shared.completion_retry import (
     retry_delay_s,
     wait_before_retry,
 )
-from sidecar.modules._shared.dry_run import assemble_dry_run
 
 from .engine import ClaudeCliEngine, Engine
 from .job_input import resolve_job
@@ -105,16 +104,3 @@ def cover(
         if not keep_scratch:
             scratch.cleanup()
 
-
-def dry_run_prompt(
-    master_md: str,
-    job: str,
-    guidance: str = "",
-    writing_samples_dir: Path | None = None,
-) -> str:
-    """Assemble and return the full prompt without any LLM call (CLI --dry-run)."""
-    jd_md = resolve_job(job)
-    samples = load_writing_samples(writing_samples_dir)
-    return assemble_dry_run(
-        load_skill(), build_user_prompt(master_md, jd_md, guidance, samples)
-    )

@@ -16,7 +16,7 @@ from sidecar.modules.tailorer.prompt import (
     load_skill,
     load_writing_samples,
 )
-from sidecar.modules.tailorer.tailorer import dry_run_prompt, tailor
+from sidecar.modules.tailorer.tailorer import tailor
 from sidecar.modules.tailorer.types import TailorError, Usage
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
@@ -196,11 +196,6 @@ def test_tailor_retries_parse_contract_failure_and_sums_billed_usage():
     assert result.usage.usd == pytest.approx(0.07)
     assert result.usage.internal_calls == 2
     assert result.usage.model == "fake"
-
-
-def test_dry_run_prompt_contains_skill_and_inputs_without_llm():
-    out = dry_run_prompt(MASTER, str(JD_PATH))
-    assert "SYSTEM (skill)" in out and "Tenet Loader" in out and "Glean" in out or "glean" in out
 
 
 # ---------------------------------------------------------------------------

@@ -221,10 +221,6 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     },
     row: {
       new: "Новая",
-      applicants_one: "{{count}} кандидат",
-      applicants_few: "{{count}} кандидата",
-      applicants_many: "{{count}} кандидатов",
-      applicants_other: "{{count}} кандидата",
       scoring: "оценка…",
       olderListing: "Старое объявление",
       keywordScoreTitle: "Оценка по ключевым словам (бесплатно, на устройстве) — серая, это не ИИ-оценка",

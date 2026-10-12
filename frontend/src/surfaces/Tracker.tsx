@@ -519,7 +519,7 @@ export function Tracker() {
       ) : null}
 
       {/* "Add a job application" (FR-TR manual-add) — the Tracker sibling of the
-          Job Board's Add-by-URL, for a job applied to outside the app. */}
+          Job Board's Add a job posting, for a job applied to outside the app. */}
       {showAddApp ? <AddApplicationModal onClose={() => setShowAddApp(false)} /> : null}
 
       {/* Apply asked for the link (section 9.8): the same dialog as everywhere

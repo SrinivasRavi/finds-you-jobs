@@ -527,7 +527,7 @@ export function useTombstoneJob() {
   });
 }
 
-/** Add-by-URL step 1: fetch the pasted URL → editable draft (no persist).
+/** Add a job posting, step 1: fetch the pasted URL → editable draft (no persist).
  *  Every call site renders the failure inline — no global banner. */
 export function useJobPreview() {
   return useMutation({
@@ -536,7 +536,7 @@ export function useJobPreview() {
   });
 }
 
-/** Add-by-URL step 2: persist the (edited) draft. Failure renders inline. */
+/** Add a job posting, step 2: persist the (edited) draft. Failure renders inline. */
 export function useAddJobByUrl() {
   const qc = useQueryClient();
   return useMutation({
@@ -934,17 +934,15 @@ export function useGeneratePacket() {
   return useMutation({
     mutationFn: ({
       id,
-      fail,
       resume = true,
       cover = true,
       guidance = "",
     }: {
       id: string;
-      fail?: boolean;
       resume?: boolean;
       cover?: boolean;
       guidance?: string;
-    }) => Promise.resolve(api.generatePacket(id, fail, { resume, cover }, guidance)),
+    }) => Promise.resolve(api.generatePacket(id, { resume, cover }, guidance)),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.applications }),
   });
 }

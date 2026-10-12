@@ -206,7 +206,6 @@ const ja: DeepPartial<Messages> = {
     },
     row: {
       new: "新着",
-      applicants_other: "応募者{{count}}人",
       scoring: "スコアリング中…",
       olderListing: "以前の掲載",
       keywordScoreTitle: "キーワードスコア(無料・端末内) — グレー表示、AIスコアではありません",

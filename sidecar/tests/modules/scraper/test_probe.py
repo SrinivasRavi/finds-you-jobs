@@ -1,7 +1,7 @@
-"""Add-by-URL probe tests — probe_url resolves one pasted URL to a job.
+"""Pasted-link probe tests — probe_url resolves one pasted URL to a job.
 
 Covers:
-  US-JB-07 — Add-by-URL escape hatch (best-effort title/company/location/desc)
+  US-JB-07 — a pasted link's autofill (best-effort title/company/location/desc)
   Track M3 / JD-gap — a known ATS job URL comes back fully structured (with the
   JD body the content-in-list params now carry).
 """

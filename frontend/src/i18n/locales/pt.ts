@@ -208,8 +208,6 @@ const pt: DeepPartial<Messages> = {
     },
     row: {
       new: "Nova",
-      applicants_one: "{{count}} candidato",
-      applicants_other: "{{count}} candidatos",
       scoring: "pontuando…",
       olderListing: "Anúncio antigo",
       keywordScoreTitle: "Pontuada por palavras-chave (grátis, no dispositivo) — cinza, não é pontuação de IA",

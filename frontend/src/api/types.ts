@@ -2,7 +2,7 @@
 // module result dataclasses (ROADMAP section 4 / sidecar/modules/*/types.py).
 //
 // This repo's sidecar implements a SUBSET of the prior API surface so far:
-// jobs/board/trash/tombstone/preview/add-by-url, operations, cost totals,
+// jobs/board/trash/tombstone/preview/add-a-job, operations, cost totals,
 // schedules, profile, settings, engines, SSE. Tracker/networking/apply/prep/
 // packet/prompts/spans/ingest/dev-tools types are trimmed until their
 // sidecar surface lands — see schema.d.ts for exactly what's live.
@@ -143,11 +143,6 @@ export type WorkStyle = "REMOTE" | "HYBRID" | "ONSITE" | "";
 /**
  * Job — the NormalizedJob (scraper/types.py) plus the app-side columns the
  * board needs (score, saved, board_state). Snake_case matches the sidecar DTOs.
- *
- * FLAGGED (US-JB-01 row spec vs as-built contract): the story promises
- * `work_style`, skill `tags`, and `N applicants` per row, but the as-built
- * NormalizedJob contract (ROADMAP section 4) carries none of them and no adapter
- * provides `applicants` — they render empty on the live path.
  */
 export interface Job {
   id: string;
@@ -165,10 +160,6 @@ export interface Job {
   trust_score: number;
   trust_flags: string[];
   work_style: WorkStyle;
-  /** Skill chips shown on the list row (US-JB-01). */
-  tags: string[];
-  /** Applicant count — no adapter provides this today (see FLAGGED note). */
-  applicants: number | null;
   /** null while the scorer operation is still in flight. */
   score: ScoreResult | null;
   /** Score lifecycle — resolves a null score to `pending` vs `failed` (US-JB-06). */
@@ -197,7 +188,7 @@ export interface BoardPage {
 }
 
 /**
- * JobDraft — the editable fields the Add-by-URL modal shows (US-JB-07). Step 1
+ * JobDraft — the editable fields the Add a job posting form shows (US-JB-07). Step 1
  * (`previewJob`) fetches the pasted URL and returns this best-effort; the user
  * edits, then step 2 (`addJobByUrl`) persists it.
  */
@@ -328,7 +319,7 @@ export interface Application {
   stage: Stage;
   priority: Priority;
   /** How the card entered the pipeline — drives the Tracker source filter.
-   *  "discovered" = the fyj flow (scan / add-by-URL → Save); "manual" = logged
+   *  "discovered" = the fyj flow (scan / Add a job posting → Save); "manual" = logged
    *  via "Add a job application" for a job applied to outside the app. */
   origin: "discovered" | "manual";
   /** Documents the user attached to a manual card (empty for discovered cards). */

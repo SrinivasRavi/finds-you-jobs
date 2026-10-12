@@ -37,7 +37,6 @@ from sidecar.modules._shared.completion_retry import (
     retry_delay_s,
     wait_before_retry,
 )
-from sidecar.modules._shared.dry_run import assemble_dry_run
 from sidecar.modules._shared.job_input import JobInputError
 from sidecar.modules._shared.job_input import resolve_job as _resolve_job
 
@@ -303,39 +302,6 @@ def _send_result_from_raw(raw: dict, contact: Contact, channel, dry_run: bool) -
     )
 
 
-def probe(
-    contact: Contact,
-    driver: VoyagerDriver | None = None,
-    *,
-    dry_run: bool = False,
-) -> ProbeResult:
-    """Read a contact's live LinkedIn state for the status-sync engine (US-NW-12
-    / FR-NW-15). Zero-LLM, READ-ONLY — delegates to the voyager `contact-sync`
-    subprocess (degree + last-message direction/timestamp). A read miss returns a
-    ProbeResult with empty/None message fields (the host makes no transition).
-
-    A hard failure (subprocess crash / unparseable JSON) raises NetworkerError via
-    the driver, exactly like discover/send — never a silent half-result."""
-    if not contact.public_identifier:
-        raise NetworkerError("probe", "contact.public_identifier is required")
-    drv = driver or DirectVoyagerDriver()
-    try:
-        raw = drv.contact_sync(contact.public_identifier, dry_run=dry_run)
-        degree = raw.get("degree")
-        return ProbeResult(
-            public_identifier=contact.public_identifier,
-            degree=degree,
-            is_first_degree=bool(raw.get("is_first_degree", degree == 1)),
-            last_message_direction=raw.get("last_message_direction") or "",
-            last_message_at=raw.get("last_message_at"),
-            last_message_text=raw.get("last_message_text") or "",
-            last_message_from=raw.get("last_message_from") or "",
-            usage=Usage(internal_calls=1),
-        )
-    finally:
-        drv.close()
-
-
 def probe_batch(
     contacts: list[Contact],
     driver: VoyagerDriver | None = None,
@@ -412,15 +378,3 @@ def quota(driver: VoyagerDriver | None = None) -> dict:
     finally:
         drv.close()
 
-
-def dry_run_prompt(contact: Contact, job: str, master_md: str = "", guidance: str = "") -> str:
-    """Assemble the full draft prompt without any LLM call (CLI --dry-run)."""
-    jd_md = _resolve_jd(job)
-    warmth = warmth_for_degree(contact.connection_degree)
-    channel = channel_for_warmth(warmth)
-    playbook_md = load_playbook(contact.audience)
-    return assemble_dry_run(
-        load_skill(),
-        build_user_prompt(master_md, jd_md, contact, warmth, channel, playbook_md, guidance),
-        "draft skill",
-    )

@@ -215,9 +215,6 @@ const pl: DeepPartial<Messages> = {
     },
     row: {
       new: "Nowe",
-      applicants_one: "{{count}} kandydat",
-      applicants_few: "{{count}} kandydatów",
-      applicants_many: "{{count}} kandydatów",
       scoring: "ocenianie…",
       olderListing: "Starsze ogłoszenie",
       keywordScoreTitle: "Ocenione wg słów kluczowych (darmowo, na urządzeniu) — szara, to nie ocena AI",

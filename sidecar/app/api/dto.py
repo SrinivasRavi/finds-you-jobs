@@ -180,13 +180,13 @@ class JobCreate(BaseModel):
 
 
 class JobPreviewRequest(BaseModel):
-    """Add-by-URL step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist."""
+    """Add a job posting, step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist."""
 
     url: str
 
 
 class JobPreviewDTO(BaseModel):
-    """The editable review payload the Add-by-URL modal shows before submit.
+    """The editable review payload the Add a job posting form shows before submit.
 
     Best-effort — a known ATS URL comes back fully structured; a generic page
     fills what it can and the user edits the rest."""

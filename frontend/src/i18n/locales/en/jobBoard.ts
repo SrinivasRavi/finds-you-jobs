@@ -80,8 +80,6 @@ const jobBoard = {
       insecure:
         "The posting link isn't https, so anything you send through it travels unencrypted.",
     },
-    applicants_one: "{{count}} applicant",
-    applicants_other: "{{count}} applicants",
     scoring: "scoring…",
     olderListing: "Older listing",
     olderListingTitle:

@@ -208,8 +208,6 @@ const nl: DeepPartial<Messages> = {
     },
     row: {
       new: "Nieuw",
-      applicants_one: "{{count}} sollicitant",
-      applicants_other: "{{count}} sollicitanten",
       scoring: "scoren…",
       olderListing: "Oudere vacature",
       keywordScoreTitle: "Op trefwoorden gescoord (gratis, op het apparaat) — grijs, geen AI-score",

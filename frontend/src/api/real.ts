@@ -6,15 +6,11 @@
 // into the frontend view types (src/api/types.ts) the surfaces already consume.
 //
 // This repo's sidecar implements a SUBSET of the prior API surface so far
-// (jobs/board/trash/tombstone/preview/add-by-url, operations, cost totals,
+// (jobs/board/trash/tombstone/preview/add-a-job, operations, cost totals,
 // schedules, profile, settings, engines, SSE, and now the full applications/
 // tracker CRUD + packet/artifact endpoints). Networking/apply/prep/prompts/
 // spans/ingest/dev-tools methods stay trimmed until their sidecar surface
 // lands — see schema.d.ts for exactly what's live.
-//
-// FR-sync (2026-07-07): the live NormalizedJob has no work-style / applicants /
-// skill-chips, so those render empty (work-style filter is best-effort location
-// text per FR-JB-04).
 
 import type { components } from "./schema";
 import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
@@ -216,12 +212,8 @@ function toJob(d: JobDTO, saved: boolean): Job {
     source_adapter: d.source_adapter,
     trust_score: d.trust_score,
     trust_flags: d.trust_flags,
-    // work_style is derived app-side in the DTO (US-JB-01 chip / FR-JB-04 filter);
-    // tags + applicants have no P1 source, so they stay empty on live rows (tags
-    // are P2; applicants is mock-only — see the Job type FLAGGED note).
+    // work_style is derived app-side in the DTO (US-JB-01 chip / FR-JB-04 filter).
     work_style: (d.workStyle as Job["work_style"] | undefined) ?? "",
-    tags: [],
-    applicants: null,
     score: d.score
       ? {
           score_0_100: d.score.score_0_100,
@@ -662,7 +654,7 @@ export class RealApi {
     }
   }
 
-  // Add-by-URL step 1 (US-JB-07): fetch + extract editable fields (no persist).
+  // Add a job posting, step 1 (US-JB-07): fetch + extract editable fields (no persist).
   async previewJob(url: string): Promise<JobDraft> {
     const d = (await this.json("POST", "/api/jobs/preview", { url }).catch((e: unknown) => {
       // 409 = the URL was permanently deleted (tombstoned) — final, not editable.
@@ -680,7 +672,7 @@ export class RealApi {
     };
   }
 
-  // Add-by-URL step 2: persist the (edited) draft. The sidecar dedups against
+  // Add a job posting, step 2: persist the (edited) draft. The sidecar dedups against
   // active URLs, restores a Trashed one, and refuses a tombstoned one (2026-07-09).
   async addJobByUrl(draft: JobDraft): Promise<Job> {
     const d = (await this.json("POST", "/api/jobs", {
@@ -988,12 +980,9 @@ export class RealApi {
 
   /** Manual/regenerate packet build (US-TL-02) — per-artifact: the tailor and
    *  cover modules are independent. `guidance` (FR-TL-02) reaches the Tailorer
-   *  and is persisted with the variant. `_fail` exists only to match the
-   *  MockApi arity (union call sites, restored from the prior repo) — the
-   *  real path never simulates failure. */
+   *  and is persisted with the variant. */
   async generatePacket(
     appId: string,
-    _fail = false,
     kinds: { resume: boolean; cover: boolean } = { resume: true, cover: true },
     guidance = "",
   ): Promise<void> {
@@ -1546,7 +1535,7 @@ export class RealApi {
     }
   }
 
-  async enqueueOperation(kind: OperationKind, _subject = "", _fail = false): Promise<Operation> {
+  async enqueueOperation(kind: OperationKind): Promise<Operation> {
     return stubOperation(
       (await this.json("POST", `/api/operations/${kind}`, {})) as OperationStubDTO,
     );
@@ -1671,10 +1660,6 @@ export class RealApi {
   async connectLinkedIn(): Promise<string> {
     const d = (await this.json("POST", "/api/linkedin/connect", {})) as { id: string };
     return d.id;
-  }
-
-  async cancelLinkedInConnect(): Promise<void> {
-    await this.json("POST", "/api/linkedin/cancel", {});
   }
 
   async disconnectLinkedIn(): Promise<LinkedInSessionState> {

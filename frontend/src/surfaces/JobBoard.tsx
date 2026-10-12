@@ -258,28 +258,17 @@ const JobRow = memo(function JobRow({
             q,
           )}
         </div>
-        {/* salary · time-ago · N applicants */}
+        {/* salary · time-ago */}
         <div className="text-[11.5px] text-ink-3">
           {[
             job.salary,
             relativeTime(timeAgo(job.posted_at)),
-            job.applicants !== null
-              ? t("jobBoard.row.applicants", { count: job.applicants })
-              : "",
           ]
             .filter(Boolean)
             .join(" · ")}
         </div>
-        {/* skill chips + source pill (US-JB-01 + US-JB-10 informational variant) */}
+        {/* source pill (US-JB-10 informational variant) */}
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          {job.tags.map((t) => (
-            <span
-              key={t}
-              className="inline-flex h-[16px] items-center rounded-full bg-surface-3 px-1.5 text-[9.5px] text-ink-2"
-            >
-              {t}
-            </span>
-          ))}
           <span
             className={`inline-flex h-[16px] items-center rounded-full border px-1.5 text-[9.5px] ${sourceClasses(job.source_adapter)}`}
           >

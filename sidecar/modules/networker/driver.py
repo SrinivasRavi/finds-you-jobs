@@ -64,7 +64,6 @@ class VoyagerDriver(Protocol):
         on_step: Callable[[str], None] | None = None,
     ) -> dict: ...
     def status(self, public_identifier: str, *, dry_run: bool) -> dict: ...
-    def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict: ...
     def contact_sync_states(
         self, entries: list[dict], *, dry_run: bool
     ) -> dict: ...
@@ -267,22 +266,6 @@ class DirectVoyagerDriver:
         return self._call(
             self._worker().status,
             public_identifier=public_identifier,
-            storage_state=self.storage_state,
-            user_data_dir=self.user_data_dir,
-            headed=self.headed,
-            surface_provider=self.surface_provider,
-            dry_run=dry_run,
-        )
-
-    def contact_sync(self, public_identifier: str, *, dry_run: bool) -> dict:
-        """Read-only contact-status probe (FR-NW-15): degree + last-message
-        direction/timestamp. Charges the profile-view budget — it is a read, but
-        an authenticated one, and reads are what the restriction ladder watches."""
-        return self._call(
-            self._worker().contact_sync,
-            public_identifier=public_identifier,
-            profile=self.pacing_profile,
-            state_dir=self.state_dir,
             storage_state=self.storage_state,
             user_data_dir=self.user_data_dir,
             headed=self.headed,

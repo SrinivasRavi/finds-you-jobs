@@ -15,7 +15,7 @@ import pytest
 
 from sidecar.modules._shared.claude_engine import EngineError
 from sidecar.modules._shared.completion_retry import MAX_ATTEMPTS
-from sidecar.modules.coverletterer.coverletterer import cover, dry_run_prompt
+from sidecar.modules.coverletterer.coverletterer import cover
 from sidecar.modules.coverletterer.engine import Engine  # noqa: F401  (protocol import sanity)
 from sidecar.modules.coverletterer.job_input import resolve_job
 from sidecar.modules.coverletterer.output_parse import parse_output
@@ -223,13 +223,6 @@ def test_cover_jd_gate_refusal_is_not_retried():
         cover("# Master", "responsibilities " * 20, engine=eng)
     assert ei.value.stage == "jd-gate"
     assert eng.calls == 1  # no retry burned on a deliberate refusal
-
-
-def test_dry_run_prompt_contains_skill_and_inputs_without_llm():
-    p = dry_run_prompt("# Master resume body", "responsibilities " * 20, "lead with Kafka")
-    assert "SYSTEM (skill)" in p and "USER" in p
-    assert "cover-letter writing engine" in p
-    assert "# Master resume body" in p and "lead with Kafka" in p
 
 
 # ---------------------------------------------------------------------------

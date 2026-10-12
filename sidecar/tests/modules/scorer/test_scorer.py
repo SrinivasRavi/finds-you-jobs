@@ -17,7 +17,7 @@ from sidecar.modules.scorer.engine import Engine  # noqa: F401  (protocol import
 from sidecar.modules.scorer.job_input import resolve_job
 from sidecar.modules.scorer.output_parse import parse_output
 from sidecar.modules.scorer.prompt import SKILL_PATH, build_user_prompt, load_skill
-from sidecar.modules.scorer.scorer import dry_run_prompt, score
+from sidecar.modules.scorer.scorer import score
 from sidecar.modules.scorer.types import ScoreError, Usage
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
@@ -265,13 +265,6 @@ def test_score_retries_parse_contract_failure_and_sums_billed_usage():
     assert result.usage.tokens_out == 43
     assert result.usage.internal_calls == 2
     assert result.usage.model == "fake"  # the winning attempt's model
-
-
-def test_dry_run_prompt_contains_skill_and_inputs_without_llm():
-    p = dry_run_prompt("# Master resume body", "responsibilities " * 20)
-    assert "SYSTEM (skill)" in p and "USER" in p
-    assert "job-fit scoring engine" in p
-    assert "# Master resume body" in p
 
 
 def test_parse_output_truncates_excess_reasons_instead_of_failing():

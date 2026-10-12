@@ -12,7 +12,7 @@ import pytest
 
 from sidecar.modules._shared.claude_engine import EngineError
 from sidecar.modules._shared.completion_retry import MAX_ATTEMPTS, CompletionCancelled
-from sidecar.modules.networker.networker import discover, draft, probe, quota, send
+from sidecar.modules.networker.networker import discover, draft, quota, send
 from sidecar.modules.networker.types import (
     Audience,
     Channel,
@@ -286,33 +286,6 @@ def test_send_dry_run_is_planned_and_sends_nothing():
     assert result.status == "planned"
     assert result.sent is False
     assert drv.calls[0][3] is True  # dry_run forwarded
-
-
-# ── probe (read-only contact-status sync, FR-NW-15) ───────────────
-def test_probe_maps_degree_and_last_message_and_closes():
-    drv = FakeVoyagerDriver(contact_sync_result={
-        "ok": True, "degree": 1, "is_first_degree": True,
-        "last_message_direction": "them", "last_message_at": 1_700_000_000.0,
-    })
-    result = probe(Contact(public_identifier="jane"), driver=drv)
-    assert result.is_first_degree is True and result.degree == 1
-    assert result.last_message_direction == "them"
-    assert result.last_message_at == 1_700_000_000.0
-    assert drv.calls[0] == ("contact_sync", "jane", False)
-    assert drv.closed is True
-
-
-def test_probe_read_miss_leaves_message_fields_empty():
-    drv = FakeVoyagerDriver()  # default: degree None, no message
-    result = probe(Contact(public_identifier="jane"), driver=drv)
-    assert result.degree is None
-    assert result.last_message_direction == ""  # no transition signal
-    assert result.last_message_at is None
-
-
-def test_probe_requires_public_identifier():
-    with pytest.raises(NetworkerError):
-        probe(Contact(public_identifier=""), driver=FakeVoyagerDriver())
 
 
 # ── quota ─────────────────────────────────────────────────────────

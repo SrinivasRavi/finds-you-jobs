@@ -219,12 +219,6 @@ const ar = {
     },
     row: {
       new: "جديد",
-      applicants_zero: "لا متقدمين",
-      applicants_one: "متقدم واحد",
-      applicants_two: "متقدمان",
-      applicants_few: "{{count}} متقدمين",
-      applicants_many: "{{count}} متقدمًا",
-      applicants_other: "{{count}} متقدم",
       scoring: "جارٍ التقييم…",
       olderListing: "إعلان أقدم",
       keywordScoreTitle: "مُقيَّمة بالكلمات المفتاحية (مجانًا، على الجهاز) — رمادية، ليست درجة ذكاء اصطناعي",

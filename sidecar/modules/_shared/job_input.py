@@ -21,7 +21,7 @@ from pathlib import Path
 from .url_guard import GuardedRedirects as _GuardedRedirects
 from .url_guard import url_refusal as _url_refusal
 
-_FETCH_TIMEOUT_S = 20  # matches the Add-by-URL contract (FR-JB-09)
+_FETCH_TIMEOUT_S = 20  # matches the pasted-link fetch contract (FR-JB-09)
 _MAX_BYTES = 20 * 1024 * 1024  # same cap as scraper/http.py — refuse absurd pages
 
 

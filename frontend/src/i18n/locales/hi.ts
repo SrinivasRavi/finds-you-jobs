@@ -208,8 +208,6 @@ const hi: DeepPartial<Messages> = {
     },
     row: {
       new: "नई",
-      applicants_one: "{{count}} आवेदक",
-      applicants_other: "{{count}} आवेदक",
       scoring: "स्कोर हो रहा है…",
       olderListing: "पुरानी लिस्टिंग",
       keywordScoreTitle: "कीवर्ड स्कोर (मुफ़्त, ऑन-डिवाइस) — ग्रे, यह AI स्कोर नहीं है",

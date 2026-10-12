@@ -77,7 +77,7 @@ export interface paths {
         put?: never;
         /**
          * Create Job
-         * @description Add-by-URL step 2 (US-JB-07) + programmatic ingest: persist one job with
+         * @description Add a job posting, step 2 (US-JB-07) + programmatic ingest: persist one job with
          *     the same dedup/tombstone discipline as scan, then enqueue a score so the new
          *     row lands on the board with a fit rating.
          */
@@ -167,7 +167,7 @@ export interface paths {
         put?: never;
         /**
          * Preview Job
-         * @description Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
+         * @description Add a job posting, step 1 (US-JB-07): fetch the pasted URL and extract editable
          *     fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
          *     blocking probe runs off the event loop: a plain `def` handler runs in
          *     Starlette's threadpool automatically.
@@ -299,7 +299,7 @@ export interface paths {
          * Tombstone Job
          * @description Delete forever from Trash (US-JB-11): write a `Tombstone` for the job's
          *     canonical URL, then hard-delete the row. A tombstone is final — a future
-         *     scan or Add-by-URL can never re-surface it (FR-SYS-04). A job with no URL
+         *     scan or Add a job posting can never re-surface it (FR-SYS-04). A job with no URL
          *     is only deleted, so its description can be pasted again.
          */
         post: operations["tombstone_job_api_jobs__job_id__tombstone_post"];
@@ -574,7 +574,7 @@ export interface paths {
         /**
          * Create Manual Application
          * @description Log a job the user already applied to OUTSIDE the app ("Add a job
-         *     application" — the Tracker sibling of the board's Add-by-URL). Upserts the
+         *     application" — the Tracker sibling of the board's Add a job posting). Upserts the
          *     job with the same dedup/tombstone discipline, creates the card as
          *     `origin=manual` in a post-referral stage (default Applied), and attaches the
          *     resume/cover the user actually submitted (optional) as content-addressed,
@@ -1265,26 +1265,6 @@ export interface paths {
          *     exhausted. The op re-checks the same precondition (self-gate).
          */
         post: operations["linkedin_search_api_linkedin_search_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Cancel
-         * @description Cancel an in-flight headed login (the Cancel button). Closes the browser.
-         */
-        post: operations["linkedin_cancel_api_linkedin_cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3166,7 +3146,7 @@ export interface components {
         };
         /**
          * JobPreviewDTO
-         * @description The editable review payload the Add-by-URL modal shows before submit.
+         * @description The editable review payload the Add a job posting form shows before submit.
          *
          *     Best-effort — a known ATS URL comes back fully structured; a generic page
          *     fills what it can and the user edits the rest.
@@ -3191,7 +3171,7 @@ export interface components {
         };
         /**
          * JobPreviewRequest
-         * @description Add-by-URL step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist.
+         * @description Add a job posting, step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist.
          */
         JobPreviewRequest: {
             /** Url */
@@ -6120,28 +6100,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    linkedin_cancel_api_linkedin_cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };

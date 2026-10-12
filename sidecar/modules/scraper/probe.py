@@ -1,4 +1,4 @@
-"""Add-by-URL probe — resolve a single pasted job URL to a `NormalizedJob`.
+"""Pasted-link probe — resolve a single pasted job URL to a `NormalizedJob`.
 
 The user escape hatch (US-JB-07): the user pastes one posting URL and we make a
 best-effort extraction of title / company / location / description. This is
