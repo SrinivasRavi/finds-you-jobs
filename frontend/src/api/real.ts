@@ -42,6 +42,8 @@ import type {
   AttachLinkInput,
   AttachLinkResult,
   DuplicatePrompt,
+  PlaceChip,
+  PlaceSuggestion,
   ExplainCost,
   JobFactors,
   PromptTestInput,
@@ -173,6 +175,21 @@ const LIFECYCLE_DEFAULTS = {
   trashed_jobs_purge_days: 7,
   archived_applications_purge_days: 30,
 } as const;
+
+/** A stored location chip: a picked place keeps its shape, anything else is
+ *  the plain string it was saved as (place-picker.md section 3). */
+function asPlaceChip(raw: unknown): PlaceChip {
+  if (raw && typeof raw === "object" && "label" in raw) {
+    const r = raw as Record<string, unknown>;
+    return {
+      label: String(r.label ?? ""),
+      name: String(r.name ?? r.label ?? ""),
+      level: String(r.level ?? "text") as PlaceSuggestion["level"],
+      id: String(r.id ?? ""),
+    };
+  }
+  return String(raw);
+}
 
 function readLifecycle(raw: unknown): Settings["lifecycle"] {
   const stored = (raw ?? {}) as Record<string, unknown>;
@@ -823,8 +840,12 @@ export class RealApi {
     return d.id;
   }
 
-  /** The duplicate this job probably is, or null. Reads a flag written at
-   *  ingest, so it is 1 row by primary key. */
+  /** The location picker's suggestions (place-picker.md section 3). */
+  async suggestPlaces(q: string): Promise<PlaceSuggestion[]> {
+    return this.req<PlaceSuggestion[]>(`/api/geo/suggest?q=${encodeURIComponent(q)}`);
+  }
+
+  /** The duplicate this job probably is, or null (url-less-jobs.md 9.6). */
   async getJobDuplicate(id: string): Promise<DuplicatePrompt | null> {
     return this.req<DuplicatePrompt | null>(`/api/jobs/${id}/duplicate`);
   }
@@ -1216,7 +1237,7 @@ export class RealApi {
       // persisted so the user's choice sticks. Default 50 (2 pages).
       job_prefs: {
         role_aliases: (p.role_aliases ?? []).map(String),
-        locations: (p.locations ?? []).map(String),
+        locations: (p.locations ?? []).map(asPlaceChip),
         freshness_days: p.freshness_days ?? 7,
         scrape_cadence: String(ui.scrape_cadence ?? "Every 24h"),
         excluded_companies: (

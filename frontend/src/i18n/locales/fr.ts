@@ -63,7 +63,7 @@ const fr: DeepPartial<Messages> = {
     aliasHint: "Saisissez un intitulé puis appuyez sur Entrée ou virgule pour l'ajouter. Ajoutez-en plusieurs — chacun devient une étiquette ci-dessous.",
     aliasPlaceholder: "ex. Ingénieur backend",
     locationLabel: "Lieux (au moins un ; « Remote » est valide)",
-    locationHint: "Saisissez un lieu puis appuyez sur Entrée ou virgule pour l'ajouter. « Remote » est valide.",
+    locationHint: "Saisissez un lieu et choisissez-le dans la liste, pour que nous sachions de quel Londres il s'agit. « Remote » est valide.",
     locationPlaceholder: "ex. Paris",
     removeChip: "Supprimer {{value}}",
     freshnessLabel: "Fenêtre de fraîcheur",
@@ -270,8 +270,10 @@ const fr: DeepPartial<Messages> = {
     },
     prefs: {
       title: "Préférences de recherche",
-      intro: "Contrôle le scraper en arrière-plan qui alimente votre flux d'offres. Chaque correspondance est évaluée d'après votre CV de référence à son arrivée. Les modifications sont enregistrées automatiquement — « Relancer un scan » les applique à un scan neuf. Dans tout champ à étiquettes, appuyez sur Entrée ou virgule pour ajouter.",
+      intro: "Contrôle le scraper en arrière-plan qui alimente votre flux d'offres. Chaque correspondance est évaluée d'après votre CV de référence à son arrivée. Les modifications sont enregistrées automatiquement — « Relancer un scan » les applique à un scan neuf. Dans tout champ à étiquettes, appuyez sur Entrée pour ajouter.",
       removeAria: "Supprimer",
+      placeListAria: "Lieux suggérés",
+      placeNoMatch: "Aucun lieu ne correspond. Appuyez sur Entrée pour garder « {{text}} » tel quel.",
       roles: {
         label: "Rôles recherchés",
         hint: "Les intitulés que le scraper interroge.",

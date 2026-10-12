@@ -624,6 +624,16 @@ class WatchlistEntryDTO(BaseModel):
     adapter: str
 
 
+class PlaceSuggestionDTO(BaseModel):
+    """1 row of the location picker (place-picker.md section 3): what the user
+    reads, and what the chip stores when they pick it."""
+
+    label: str
+    name: str
+    level: str
+    id: str
+
+
 class WatchlistDTO(BaseModel):
     entries: list[WatchlistEntryDTO]
 

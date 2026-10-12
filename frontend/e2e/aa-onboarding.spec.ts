@@ -32,8 +32,16 @@ test("provider step offers the subscription-CLI family beside BYOK", async ({ pa
   // Step 1 → 2: one alias + one location.
   await page.getByTestId("alias-input").fill("Backend Engineer");
   await page.getByTestId("alias-input").press("Enter");
+  // The location picker (place-picker.md): "London" offers both, named in full.
+  await page.getByTestId("location-input").fill("London");
+  await expect(page.getByTestId("location-option").nth(1)).toHaveText("London, Ontario, Canada");
+  await page.getByTestId("location-input").press("ArrowDown");
+  await page.getByTestId("location-input").press("Enter");
   await page.getByTestId("location-input").fill("Remote");
   await page.getByTestId("location-input").press("Enter");
+  await expect(page.getByTestId("location")).toContainText("London, Ontario, Canada");
+  await expect(page.getByTestId("location")).toContainText("Remote");
+  await page.screenshot({ path: "e2e/_screenshots/onboarding/onboarding-step1-places.png" });
   await page.getByTestId("onboarding-continue").click();
   await expect(page.getByTestId("onboarding-step-2")).toBeVisible();
 

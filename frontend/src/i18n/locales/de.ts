@@ -65,7 +65,7 @@ const de: DeepPartial<Messages> = {
     aliasHint: "Tippe eine Rolle und drücke Enter oder Komma zum Hinzufügen. Füge mehrere hinzu — jede wird unten ein Chip.",
     aliasPlaceholder: "z. B. Backend Engineer",
     locationLabel: "Orte (mindestens einer; Remote zählt)",
-    locationHint: "Tippe einen Ort und drücke Enter oder Komma zum Hinzufügen. Remote zählt.",
+    locationHint: "Tippe einen Ort und wähle ihn aus der Liste, damit klar ist, welches London du meinst. Remote zählt.",
     locationPlaceholder: "z. B. Berlin",
     removeChip: "{{value}} entfernen",
     freshnessLabel: "Aktualitätsfenster",
@@ -272,8 +272,10 @@ const de: DeepPartial<Messages> = {
     },
     prefs: {
       title: "Jobfinder-Präferenzen",
-      intro: "Steuert den Hintergrund-Scanner, der deinen „Jobs“-Feed füllt. Jeder Treffer wird beim Eintreffen anhand deines Master-Lebenslaufs bewertet. Änderungen hier werden automatisch gespeichert — „Jetzt neu scannen“ wendet sie auf einen frischen Scan an. Drücke in jedem Chip-Feld Enter oder Komma zum Hinzufügen.",
+      intro: "Steuert den Hintergrund-Scanner, der deinen „Jobs“-Feed füllt. Jeder Treffer wird beim Eintreffen anhand deines Master-Lebenslaufs bewertet. Änderungen hier werden automatisch gespeichert — „Jetzt neu scannen“ wendet sie auf einen frischen Scan an. Drücke in jedem Chip-Feld Enter zum Hinzufügen.",
       removeAria: "Entfernen",
+      placeListAria: "Vorgeschlagene Orte",
+      placeNoMatch: "Kein passender Ort gefunden. Drücke die Eingabetaste, um „{{text}}“ so zu übernehmen.",
       roles: {
         label: "Rollen für die Suche",
         hint: "Titel, nach denen der Scanner sucht.",

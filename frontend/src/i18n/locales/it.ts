@@ -63,7 +63,7 @@ const it: DeepPartial<Messages> = {
     aliasHint: "Scrivi un ruolo e premi Invio o virgola per aggiungerlo. Aggiungine diversi — ognuno diventa un chip qui sotto.",
     aliasPlaceholder: "es. Backend Engineer",
     locationLabel: "Località (almeno una; Remoto è valido)",
-    locationHint: "Scrivi una località e premi Invio o virgola per aggiungerla. Remoto è valido.",
+    locationHint: "Scrivi un luogo e sceglilo dall'elenco, così sappiamo quale Londra intendi. Remoto è valido.",
     locationPlaceholder: "es. Milano",
     removeChip: "Rimuovi {{value}}",
     freshnessLabel: "Finestra di freschezza",
@@ -270,8 +270,10 @@ const it: DeepPartial<Messages> = {
     },
     prefs: {
       title: "Preferenze di ricerca offerte",
-      intro: "Controlla lo scraper in background che riempie il tuo feed Scopri offerte. Ogni corrispondenza viene valutata rispetto al tuo curriculum principale appena arriva. Le modifiche qui vengono salvate automaticamente — “Riscansiona ora” le applica a una nuova scansione. In ogni campo a chip, premi Invio o virgola per aggiungere.",
+      intro: "Controlla lo scraper in background che riempie il tuo feed Scopri offerte. Ogni corrispondenza viene valutata rispetto al tuo curriculum principale appena arriva. Le modifiche qui vengono salvate automaticamente — “Riscansiona ora” le applica a una nuova scansione. In ogni campo a chip, premi Invio per aggiungere.",
       removeAria: "Rimuovi",
+      placeListAria: "Luoghi suggeriti",
+      placeNoMatch: "Nessun luogo corrisponde. Premi Invio per tenere «{{text}}» così com'è.",
       roles: {
         label: "Ruoli da cercare",
         hint: "I titoli di ruolo che lo scraper cerca.",

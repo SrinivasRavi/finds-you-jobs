@@ -63,7 +63,7 @@ const pt: DeepPartial<Messages> = {
     aliasHint: "Digite um cargo e pressione Enter ou vírgula para adicionar. Adicione vários — cada um vira um chip abaixo.",
     aliasPlaceholder: "ex.: Engenheiro de backend",
     locationLabel: "Localidades (pelo menos uma; Remoto vale)",
-    locationHint: "Digite uma localidade e pressione Enter ou vírgula para adicionar. Remoto vale.",
+    locationHint: "Digite um lugar e escolha-o na lista, para sabermos de qual Londres você está falando. Remoto vale.",
     locationPlaceholder: "ex.: São Paulo",
     removeChip: "Remover {{value}}",
     freshnessLabel: "Janela de recência",
@@ -270,8 +270,10 @@ const pt: DeepPartial<Messages> = {
     },
     prefs: {
       title: "Preferências de busca de vagas",
-      intro: "Controla a varredura em segundo plano que alimenta seu feed de Descobrir vagas. Cada correspondência é pontuada contra seu currículo mestre assim que chega. As alterações aqui são salvas automaticamente — “Nova varredura” inicia uma varredura nova já com elas. Em qualquer campo de chips, pressione Enter ou vírgula para adicionar.",
+      intro: "Controla a varredura em segundo plano que alimenta seu feed de Descobrir vagas. Cada correspondência é pontuada contra seu currículo mestre assim que chega. As alterações aqui são salvas automaticamente — “Nova varredura” inicia uma varredura nova já com elas. Em qualquer campo de chips, pressione Enter para adicionar.",
       removeAria: "Remover",
+      placeListAria: "Lugares sugeridos",
+      placeNoMatch: "Nenhum lugar corresponde. Pressione Enter para manter “{{text}}” como digitado.",
       roles: {
         label: "Cargos a buscar",
         hint: "Títulos que a varredura consulta.",

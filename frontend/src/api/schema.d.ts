@@ -2039,6 +2039,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/geo/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggest Places
+         * @description The location picker's suggestions (place-picker.md section 3). A plain
+         *     `def`, so the first call's gazetteer load runs in the threadpool, off the
+         *     event loop.
+         */
+        get: operations["suggest_places_api_geo_suggest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/discovery/analytics": {
         parameters: {
             query?: never;
@@ -3507,6 +3529,21 @@ export interface components {
              * @default
              */
             guidance: string;
+        };
+        /**
+         * PlaceSuggestionDTO
+         * @description 1 row of the location picker (place-picker.md section 3): what the user
+         *     reads, and what the chip stores when they pick it.
+         */
+        PlaceSuggestionDTO: {
+            /** Label */
+            label: string;
+            /** Name */
+            name: string;
+            /** Level */
+            level: string;
+            /** Id */
+            id: string;
         };
         /** PreferencesDTO */
         PreferencesDTO: {
@@ -7095,6 +7132,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WatchRemoveResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_places_api_geo_suggest_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceSuggestionDTO"][];
                 };
             };
             /** @description Validation Error */

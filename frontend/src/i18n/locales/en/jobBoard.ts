@@ -153,8 +153,10 @@ const jobBoard = {
   prefs: {
     title: "Job finder preferences",
     intro:
-      "Controls the background scraper that fills your Discover jobs feed. Every match is scored against your master resume when it lands. Changes here are auto saved — “Rescan now” applies them to a fresh scan. In any chip field, press Enter or comma to add.",
+      "Controls the background scraper that fills your Discover jobs feed. Every match is scored against your master resume when it lands. Changes here are auto saved — “Rescan now” applies them to a fresh scan. In any chip field, press Enter to add.",
     removeAria: "Remove",
+    placeListAria: "Suggested places",
+    placeNoMatch: "No place matched. Press Enter to keep “{{text}}” as typed.",
     roles: {
       label: "Roles to search",
       hint: "Titles the scraper queries for.",

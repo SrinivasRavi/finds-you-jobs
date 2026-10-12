@@ -756,9 +756,21 @@ export interface ProfileIngestResult {
  *  the `UserPreferences` columns via `POST /api/settings`; `scrape_cadence`
  *  rides in `ui_state` and the backend threads it into the `scan` schedule
  *  server-side on every save (enables + retimes it — 2026-07-12 audit P0-1). */
+/** A location chip (place-picker.md section 3): a place the user picked from the
+ *  picker, or a plain string saved before the picker or typed as-is. */
+export type PlaceChip = string | PlaceSuggestion;
+export interface PlaceSuggestion {
+  /** The full name people read: "London, Ontario, Canada". */
+  label: string;
+  /** The short word discovery's filter matches: "London". */
+  name: string;
+  level: "city" | "admin1" | "country" | "metro" | "region" | "remote" | "text";
+  id: string;
+}
+
 export interface OnboardingPrefsInput {
   role_aliases: string[];
-  locations: string[];
+  locations: PlaceChip[];
   freshness_days: number;
   scrape_cadence: string;
   /** Omitted → the stored value is left untouched (the job-finder-preferences
@@ -1004,7 +1016,7 @@ export interface Settings {
    *  2026-07-12 audit found it seeded from hardcoded mock chips). */
   job_prefs: {
     role_aliases: string[];
-    locations: string[];
+    locations: PlaceChip[];
     freshness_days: number;
     scrape_cadence: string;
     /** `hard_excludes.companies` / `.keywords` — the personal excludes the

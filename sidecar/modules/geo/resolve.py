@@ -1,14 +1,11 @@
 """Read a posting's location field, and say whether the user can take the job.
 
-A posting's location is 1 free-text field written by whoever configured the board,
-so the same place arrives 6 ways ("Bengaluru-HQ", "IN-Karnataka-Bangalore",
-"Bangalore, India - Remote"). This turns that string into places, and then into
-`MATCH`, `MISS` or `UNVERIFIABLE` against the locations the user asked for.
-
-`UNVERIFIABLE` is a real answer and the honest one for a bare "Remote" beside
-foreign cities: 10 of 115 measured rows state their remote region nowhere at all
-(`docs/internal/evidence/2026-10-01-location-resolution/`). Guessing there is what
-makes a location score worse than no location score.
+The same place arrives 6 ways ("Bengaluru-HQ", "IN-Karnataka-Bangalore",
+"Bangalore, India - Remote"); this turns the string into places, then into
+`MATCH`, `MISS` or `UNVERIFIABLE` against the user's locations. `UNVERIFIABLE`
+is the honest answer for a bare "Remote" beside foreign cities
+(`docs/internal/evidence/2026-10-01-location-resolution/`). Same-name places, and
+why a city is read with the pieces after it: docs/internal/place-picker.md.
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from .gazetteer import Gazetteer, fold, gazetteer
-from .regions import METROS, NOISE, REGIONS
+from .regions import ADMIN1_CODES, METROS, NOISE, REGIONS
 
 SEGMENT_SPLIT = re.compile(r"[;|]|\bor\b")
 TOKEN_SPLIT = re.compile(r"[,/()\[\]•]|\s-\s|\s+-|-\s+|\s{2,}")
@@ -68,6 +65,8 @@ class ResolvedLocation:
     def primary(self) -> Place | None:
         """The 1 place to store beside the job. A field naming several cities has
         no primary, so a caller stores the country they agree on, if they do."""
+        if len(self.places) == 1:
+            return self.places[0]
         cities = [p for p in self.places if p.city_id is not None]
         if len(cities) == 1:
             return cities[0]
@@ -225,6 +224,108 @@ def _resolve_token(token: str, g: Gazetteer, seg: _Segment) -> bool:
     return False
 
 
+def _qualifiers(token: str, cands: list, g: Gazetteer) -> tuple[set[str], set[str]]:
+    """The divisions and countries 1 piece names, for qualifying a city.
+
+    A short alphabetic piece is tried as a division code of each candidate's
+    country ("ME" beside Portland is Maine) before it counts as a country."""
+    divisions = set(g.admin1_keys_named.get(token, ()))
+    for table in ADMIN1_CODES.values():
+        if token in table:
+            divisions.add(table[token])
+    if token.isalpha() and len(token) <= 3:
+        for city in cands:
+            key = f"{city.country}.{token.upper()}"
+            if g.has_admin1(key):
+                divisions.add(key)
+    countries: set[str] = set()
+    country = g.country(token)
+    if country is not None:
+        countries.add(country)
+    region = REGIONS.get(token)
+    if region is not None and len(region) == 1:
+        countries |= region
+    return divisions, countries
+
+
+def _qualified_city(
+    cands: list, following: list[list[str]], g: Gazetteer
+) -> tuple[Place | None, int]:
+    """Read a city with the 1 or 2 pieces after it (place-picker.md section 4).
+
+    Returns the place and how many pieces were used. A candidate inside a named
+    division wins, then one inside a named country; a qualifier naming a place
+    that holds no candidate means the city isn't in our cut, so that division
+    or country is the place. (None, 0) when nothing after it qualifies."""
+    divisions: set[str] = set()
+    countries: set[str] = set()
+    used = 0
+    for group in following[:2]:
+        divs, ctrs = _qualifiers(group[0], cands, g)
+        if not divs and not ctrs:
+            break
+        divisions |= divs
+        countries |= ctrs
+        used += 1
+    if not used:
+        return None, 0
+    for city in cands:
+        if city.admin1_key in divisions:
+            return Place(city.country, city.admin1_key, city.geonameid, city.name), used
+    for city in cands:
+        if city.country in countries and not divisions - {
+            k for k in divisions if k.startswith(f"{city.country}.")
+        }:
+            return Place(city.country, city.admin1_key, city.geonameid, city.name), used
+    for city in cands:
+        if city.country in countries:
+            return Place(city.country, city.admin1_key, city.geonameid, city.name), used
+    if len(divisions) == 1:
+        key = next(iter(divisions))
+        return Place(key.split(".")[0], key), used
+    if len(countries) == 1:
+        return Place(country=next(iter(countries))), used
+    return None, 0
+
+
+def _is_city_name(token: str, g: Gazetteer) -> bool:
+    return token not in REGIONS and token not in METROS and g.country(token) is None
+
+
+def _resolve_segment(chunk: str, g: Gazetteer, seg: _Segment) -> None:
+    """Every piece of 1 segment, each city read with the pieces that follow it."""
+    groups = _candidates(chunk)
+    i = 0
+    while i < len(groups):
+        spellings = groups[i]
+        whole = spellings[0]
+        if _resolve_ats(whole, g, seg):
+            i += 1
+            continue
+        place: Place | None = None
+        skip = 0
+        if _is_city_name(whole, g):
+            cands = g.cities_named(whole)
+            if cands:
+                place, skip = _qualified_city(cands, groups[i + 1 :], g)
+            else:
+                # "Toronto ON": the qualifier is the last word of the same piece.
+                words = whole.split()
+                head = " ".join(words[:-1])
+                if len(words) >= 2 and _is_city_name(head, g) and g.cities_named(head):
+                    place, _ = _qualified_city(g.cities_named(head), [[words[-1]]], g)
+        if place is not None:
+            seg.places.append(place)
+            if place.country:
+                seg.countries.add(place.country)
+            i += 1 + skip
+            continue
+        for spelling in spellings:
+            if _resolve_token(spelling, g, seg):
+                break
+        i += 1
+
+
 def resolve_location(text: str, g: Gazetteer | None = None) -> ResolvedLocation:
     """Parse 1 posting location field. Never raises, never fetches."""
     g = g or gazetteer()
@@ -247,12 +348,7 @@ def resolve_location(text: str, g: Gazetteer | None = None) -> ResolvedLocation:
         if not chunk.strip():
             continue
         seg = _Segment(remote=bool(REMOTE.search(chunk)))
-        for spellings in _candidates(chunk):
-            if _resolve_ats(spellings[0], g, seg):
-                continue
-            for spelling in spellings:
-                if _resolve_token(spelling, g, seg):
-                    break
+        _resolve_segment(chunk, g, seg)
         places.extend(seg.places)
         ambiguous.extend(seg.ambiguous)
         if seg.remote:
@@ -281,13 +377,28 @@ def resolve_location(text: str, g: Gazetteer | None = None) -> ResolvedLocation:
     )
 
 
-def resolve_wanted(chips: Sequence[str], g: Gazetteer | None = None) -> Wanted:
+def chip_name(chip: object) -> str:
+    """The short word a chip stands for: what discovery's word filter matches."""
+    if isinstance(chip, dict):
+        return str(chip.get("name") or chip.get("label") or "")
+    return str(chip)
+
+
+def chip_label(chip: object) -> str:
+    """The full name a person reads, and what a search query and a prompt get."""
+    if isinstance(chip, dict):
+        return str(chip.get("label") or chip.get("name") or "")
+    return str(chip)
+
+
+def resolve_wanted(chips: Sequence[object], g: Gazetteer | None = None) -> Wanted:
     """Resolve the user's preference chips once, into the sets `match` compares.
 
-    A city chip wants that city, not its country: a user who typed Bengaluru did
-    not ask for Mumbai. The country only comes back as a home country, which is
-    what decides whether a region-locked remote posting is reachable.
-    """
+    A picked chip (a dict from the location picker) is the place itself and is
+    never re-guessed; a plain string chip from before the picker is resolved
+    the old way (place-picker.md section 3). A city chip wants that city, not
+    its country; the country only comes back as a home country, which decides
+    whether a region-locked remote posting is reachable."""
     g = g or gazetteer()
     remote = False
     city_ids: set[int] = set()
@@ -295,7 +406,41 @@ def resolve_wanted(chips: Sequence[str], g: Gazetteer | None = None) -> Wanted:
     countries: set[str] = set()
     home: set[str] = set()
     unresolved: list[str] = []
-    for chip in chips:
+    for raw in chips:
+        if isinstance(raw, dict):
+            level, ident = str(raw.get("level") or ""), str(raw.get("id") or "")
+            if level == "remote":
+                remote = True
+                continue
+            if level == "city" and ident.isdigit() and int(ident) in g.cities:
+                city = g.cities[int(ident)]
+                city_ids.add(city.geonameid)
+                home.add(city.country)
+                continue
+            if level == "admin1" and g.has_admin1(ident):
+                admin1_keys.add(ident)
+                home.add(ident.split(".")[0])
+                continue
+            if level == "country" and ident in g.country_name:
+                countries.add(ident)
+                home.add(ident)
+                continue
+            if level == "metro" and ident in METROS:
+                country, names = METROS[ident]
+                for name in names:
+                    found = g.city(fold(name))
+                    if found is not None:
+                        city_ids.add(found.geonameid)
+                home.add(country)
+                continue
+            if level == "region" and ident in REGIONS:
+                covered = REGIONS[ident]
+                if covered is None:
+                    remote = True
+                else:
+                    countries |= covered
+                continue
+        chip = chip_name(raw)
         folded = fold(chip)
         if not folded:
             continue
@@ -305,12 +450,7 @@ def resolve_wanted(chips: Sequence[str], g: Gazetteer | None = None) -> Wanted:
             if bare_remote:
                 continue
         seg = _Segment()
-        for spellings in _candidates(folded):
-            if _resolve_ats(spellings[0], g, seg):
-                continue
-            for spelling in spellings:
-                if _resolve_token(spelling, g, seg):
-                    break
+        _resolve_segment(folded, g, seg)
         if seg.places:
             for place in seg.places:
                 if place.city_id is not None:

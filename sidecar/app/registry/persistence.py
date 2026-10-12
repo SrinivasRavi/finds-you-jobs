@@ -18,7 +18,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
-from sidecar.modules.geo.resolve import resolve_location
+from sidecar.modules.geo.resolve import chip_label, chip_name, resolve_location
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
 from sidecar.modules.scraper.fingerprint import simhash64, to_signed64
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, ScraperError
@@ -159,7 +159,7 @@ def resolve_scan_prefs(
         return None
     row = repos.preferences.get_or_create()
     aliases = [str(a) for a in (row.role_aliases or []) if str(a).strip()]
-    locations = [str(loc) for loc in (row.locations or []) if str(loc).strip()]
+    locations = [chip_name(loc) for loc in (row.locations or []) if chip_name(loc).strip()]
     freshness = row.freshness_days or 0
     hard_excludes = row.hard_excludes or {}
     company_block = [
@@ -517,7 +517,8 @@ def render_preferences_block(prefs: Any) -> str:
     2026-09-28 measurement was taken with.
     """
     roles = [str(r) for r in (getattr(prefs, "role_aliases", None) or []) if str(r).strip()]
-    locations = [str(loc) for loc in (getattr(prefs, "locations", None) or []) if str(loc).strip()]
+    chips = getattr(prefs, "locations", None) or []
+    locations = [chip_label(loc) for loc in chips if chip_label(loc).strip()]
     excludes = getattr(prefs, "hard_excludes", None) or {}
     companies = [str(c) for c in (excludes.get("companies") or []) if str(c).strip()]
     keywords = [str(k) for k in (excludes.get("keywords") or []) if str(k).strip()]

@@ -63,7 +63,7 @@ const es: DeepPartial<Messages> = {
     aliasHint: "Escribe un puesto y pulsa Enter o coma para añadirlo. Añade varios — cada uno se convierte en un chip abajo.",
     aliasPlaceholder: "p. ej. Ingeniero backend",
     locationLabel: "Ubicaciones (al menos una; Remoto es válido)",
-    locationHint: "Escribe una ubicación y pulsa Enter o coma para añadirla. Remoto es válido.",
+    locationHint: "Escribe un lugar y elígelo de la lista, para saber a qué Londres te refieres. Remoto es válido.",
     locationPlaceholder: "p. ej. Madrid",
     removeChip: "Quitar {{value}}",
     freshnessLabel: "Ventana de antigüedad",
@@ -270,8 +270,10 @@ const es: DeepPartial<Messages> = {
     },
     prefs: {
       title: "Preferencias de búsqueda de empleo",
-      intro: "Controla el rastreador en segundo plano que llena tu tablón de Descubrir empleos. Cada coincidencia se puntúa contra tu currículum maestro al llegar. Los cambios se guardan automáticamente — «Reescanear ahora» los aplica a un escaneo nuevo. En cualquier campo de chips, pulsa Enter o coma para añadir.",
+      intro: "Controla el rastreador en segundo plano que llena tu tablón de Descubrir empleos. Cada coincidencia se puntúa contra tu currículum maestro al llegar. Los cambios se guardan automáticamente — «Reescanear ahora» los aplica a un escaneo nuevo. En cualquier campo de chips, pulsa Intro para añadir.",
       removeAria: "Quitar",
+      placeListAria: "Lugares sugeridos",
+      placeNoMatch: "Ningún lugar coincide. Pulsa Intro para conservar «{{text}}» tal como lo escribiste.",
       roles: {
         label: "Puestos a buscar",
         hint: "Títulos que consulta el rastreador.",

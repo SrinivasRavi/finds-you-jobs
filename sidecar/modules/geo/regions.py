@@ -87,3 +87,19 @@ NOISE: frozenset[str] = frozenset(
         "travel required", "travel-required", "flexible", "tbd", "n/a", "na", "none",
     }
 )
+
+# The postal abbreviations for divisions GeoNames keys by number, so the index
+# can't learn them from the key the way it learns "US.CA" (place-picker.md
+# section 4). Canada's provinces and territories, Australia's states and
+# territories; each maps to its GeoNames admin1 key.
+ADMIN1_CODES: dict[str, dict[str, str]] = {
+    "CA": {
+        "ab": "CA.01", "bc": "CA.02", "mb": "CA.03", "nb": "CA.04", "nl": "CA.05",
+        "ns": "CA.07", "on": "CA.08", "pe": "CA.09", "qc": "CA.10", "sk": "CA.11",
+        "yt": "CA.12", "nt": "CA.13", "nu": "CA.14",
+    },
+    "AU": {
+        "act": "AU.01", "nsw": "AU.02", "nt": "AU.03", "qld": "AU.04", "sa": "AU.05",
+        "tas": "AU.06", "vic": "AU.07", "wa": "AU.08",
+    },
+}

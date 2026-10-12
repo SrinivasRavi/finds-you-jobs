@@ -93,6 +93,18 @@ export function useExplainCost(enabled: boolean) {
   });
 }
 
+/** The location picker's suggestions for what's typed (place-picker.md section 3).
+ *  Cached per query, so backspacing re-uses answers instead of re-asking. */
+export function usePlaceSuggestions(q: string) {
+  const query = q.trim();
+  return useQuery({
+    queryKey: ["placeSuggest", query.toLowerCase()],
+    queryFn: () => api.suggestPlaces(query),
+    enabled: query.length >= 2,
+    staleTime: Infinity,
+  });
+}
+
 /** The duplicate notice for one open card (url-less-jobs.md 9.6). Asked only
  *  when the board row says the job has an open pair. */
 export function useJobDuplicate(jobId: string | null, hasNotice: boolean) {

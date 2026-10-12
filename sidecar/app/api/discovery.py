@@ -434,6 +434,19 @@ async def watch_company(
     )
 
 
+@router.get("/api/geo/suggest")
+def suggest_places(q: str = "", limit: int = 8) -> list[dto.PlaceSuggestionDTO]:
+    """The location picker's suggestions (place-picker.md section 3). A plain
+    `def`, so the first call's gazetteer load runs in the threadpool, off the
+    event loop."""
+    from sidecar.modules.geo.suggest import suggest
+
+    return [
+        dto.PlaceSuggestionDTO(label=s.label, name=s.name, level=s.level, id=s.id)
+        for s in suggest(q, limit=max(1, min(limit, 20)))
+    ]
+
+
 @router.get("/api/discovery/watchlist")
 def list_watched_companies(request: Request) -> dto.WatchlistDTO:
     """The tracked-companies roster: user-added (`watched`) board rows from

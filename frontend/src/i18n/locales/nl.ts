@@ -63,7 +63,7 @@ const nl: DeepPartial<Messages> = {
     aliasHint: "Typ een functie en druk op Enter of komma om toe te voegen. Voeg er meerdere toe — elke wordt hieronder een chip.",
     aliasPlaceholder: "bv. Backend Engineer",
     locationLabel: "Locaties (minstens één; Remote is geldig)",
-    locationHint: "Typ een locatie en druk op Enter of komma om toe te voegen. Remote is geldig.",
+    locationHint: "Typ een plaats en kies hem uit de lijst, zodat we weten welk Londen je bedoelt. Remote is geldig.",
     locationPlaceholder: "bv. Amsterdam",
     removeChip: "{{value}} verwijderen",
     freshnessLabel: "Versheid van vacatures",
@@ -270,8 +270,10 @@ const nl: DeepPartial<Messages> = {
     },
     prefs: {
       title: "Zoekvoorkeuren",
-      intro: "Bestuurt de achtergrondscanner die je feed in Vacatures ontdekken vult. Elke match wordt bij binnenkomst gescoord tegen je master-cv. Wijzigingen hier worden automatisch opgeslagen — “Nu opnieuw scannen” past ze toe op een verse scan. Druk in elk chipveld op Enter of komma om toe te voegen.",
+      intro: "Bestuurt de achtergrondscanner die je feed in Vacatures ontdekken vult. Elke match wordt bij binnenkomst gescoord tegen je master-cv. Wijzigingen hier worden automatisch opgeslagen — “Nu opnieuw scannen” past ze toe op een verse scan. Druk in elk chipveld op Enter om toe te voegen.",
       removeAria: "Verwijderen",
+      placeListAria: "Voorgestelde plaatsen",
+      placeNoMatch: "Geen plaats gevonden. Druk op Enter om „{{text}}” te houden zoals getypt.",
       roles: {
         label: "Functies om op te zoeken",
         hint: "Functietitels waarop de scanner zoekt.",

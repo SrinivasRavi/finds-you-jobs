@@ -68,7 +68,7 @@ const pl: DeepPartial<Messages> = {
     aliasHint: "Wpisz rolę i naciśnij Enter lub przecinek, aby ją dodać. Dodaj kilka — każda stanie się etykietą poniżej.",
     aliasPlaceholder: "np. Backend Engineer",
     locationLabel: "Lokalizacje (co najmniej jedna; „Zdalnie” też działa)",
-    locationHint: "Wpisz lokalizację i naciśnij Enter lub przecinek, aby ją dodać. „Zdalnie” jest poprawną lokalizacją.",
+    locationHint: "Wpisz miejsce i wybierz je z listy, abyśmy wiedzieli, o który Londyn chodzi. „Zdalnie” jest poprawną lokalizacją.",
     locationPlaceholder: "np. Warszawa",
     removeChip: "Usuń {{value}}",
     freshnessLabel: "Okno świeżości",
@@ -279,8 +279,10 @@ const pl: DeepPartial<Messages> = {
     },
     prefs: {
       title: "Preferencje wyszukiwania ofert",
-      intro: "Steruje skanerem w tle, który zapełnia twój kanał w zakładce Oferty. Każde dopasowanie jest po znalezieniu oceniane względem twojego głównego CV. Zmiany zapisują się automatycznie — „Skanuj ponownie” stosuje je w świeżym skanie. W każdym polu z etykietami dodawaj Enterem lub przecinkiem.",
+      intro: "Steruje skanerem w tle, który zapełnia twój kanał w zakładce Oferty. Każde dopasowanie jest po znalezieniu oceniane względem twojego głównego CV. Zmiany zapisują się automatycznie — „Skanuj ponownie” stosuje je w świeżym skanie. W każdym polu z etykietami dodawaj Enterem.",
       removeAria: "Usuń",
+      placeListAria: "Proponowane miejsca",
+      placeNoMatch: "Brak pasującego miejsca. Naciśnij Enter, aby zachować „{{text}}” w wpisanej postaci.",
       roles: {
         label: "Wyszukiwane role",
         hint: "Tytuły stanowisk, o które pyta skaner.",

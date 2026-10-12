@@ -63,7 +63,7 @@ const zh: DeepPartial<Messages> = {
     aliasHint: "输入职位名称后按回车或逗号添加。可多添加几个 — 每个都会成为下方的标签。",
     aliasPlaceholder: "例如：后端工程师",
     locationLabel: "地点（至少一个；“远程”也有效）",
-    locationHint: "输入地点后按回车或逗号添加。“远程”也有效。",
+    locationHint: "输入地点并从列表中选择，这样我们就知道你指的是哪个伦敦。“远程”也有效。",
     locationPlaceholder: "例如：上海",
     removeChip: "移除 {{value}}",
     freshnessLabel: "发布时间范围",
@@ -266,8 +266,10 @@ const zh: DeepPartial<Messages> = {
     },
     prefs: {
       title: "职位搜索偏好",
-      intro: "控制为“发现职位”信息流供稿的后台抓取器。每个匹配职位在入库时都会根据你的主简历评分。此处的更改会自动保存 — “立即重新扫描”会用它们启动一次新扫描。在任意标签输入框中，按回车或逗号即可添加。",
+      intro: "控制为“发现职位”信息流供稿的后台抓取器。每个匹配职位在入库时都会根据你的主简历评分。此处的更改会自动保存 — “立即重新扫描”会用它们启动一次新扫描。在任意标签输入框中，按回车即可添加。",
       removeAria: "移除",
+      placeListAria: "建议的地点",
+      placeNoMatch: "没有匹配的地点。按 Enter 键按原样保留“{{text}}”。",
       roles: {
         label: "要搜索的职位",
         hint: "抓取器查询的职位名称。",

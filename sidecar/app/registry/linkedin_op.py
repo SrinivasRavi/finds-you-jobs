@@ -25,6 +25,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from sidecar.modules.geo.resolve import chip_name
 from sidecar.modules.networker.types import NetworkerError
 from sidecar.packages.referral_outreach import MAX_JOBS_PER_SEARCH
 
@@ -327,7 +328,7 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
         prefs = resolve_scan_prefs(snap, repos=repos) or ScanPrefs(
             title_allow=[str(a) for a in (repos.preferences.get_or_create().role_aliases or [])],
             location_allow=[
-                str(loc) for loc in (repos.preferences.get_or_create().locations or [])
+                chip_name(loc) for loc in (repos.preferences.get_or_create().locations or [])
             ],
         )
         cursor_row = repos.linkedin_search_cursor.get()

@@ -27,7 +27,7 @@ const onboarding = {
     aliasHint: "Type a role and press Enter or comma to add it. Add several — each becomes a chip below.",
     aliasPlaceholder: "e.g. Backend Engineer",
     locationLabel: "Locations (at least one; Remote is valid)",
-    locationHint: "Type a location and press Enter or comma to add it. Remote is valid.",
+    locationHint: "Type a place and pick it from the list, so we know which London you mean. Remote is valid.",
     locationPlaceholder: "e.g. Mumbai",
     removeChip: "Remove {{value}}",
     freshnessLabel: "Freshness window",

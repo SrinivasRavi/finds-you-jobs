@@ -19,8 +19,9 @@ import { Trans, useTranslation } from "react-i18next";
 
 import { api } from "../api";
 import { qk } from "../api/queries";
-import type { EngineSaveInput, EngineVerifyResult } from "../api/types";
+import type { EngineSaveInput, EngineVerifyResult, PlaceChip } from "../api/types";
 import { ChipInput } from "../shell/ChipInput";
+import { PlaceInput } from "../shell/PlaceInput";
 import { InfoDot } from "../shell/InfoDot";
 import { LanguageSelect } from "../shell/LanguageSelect";
 import { openLoginTerminal } from "../shell/openExternal";
@@ -104,7 +105,7 @@ interface Draft {
   resumeName: string;
   resumeText: string;
   aliases: string[];
-  locations: string[];
+  locations: PlaceChip[];
   freshness: string;
   cadence: string;
   scoringMode: "llm" | "keyword";
@@ -138,7 +139,7 @@ export function Onboarding() {
 
   // Draft — preferences.
   const [aliases, setAliases] = useState<string[]>(d0.aliases ?? []);
-  const [locations, setLocations] = useState<string[]>(d0.locations ?? []);
+  const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
   // Scoring mode (2026-07-22): "llm" | "keyword" — replaces the retired
@@ -446,7 +447,7 @@ export function Onboarding() {
                 placeholder={t("onboarding.aliasPlaceholder")}
                 hint={t("onboarding.aliasHint")}
               />
-              <ChipInput
+              <PlaceInput
                 variant="plain"
                 label={t("onboarding.locationLabel")}
                 testid="location"

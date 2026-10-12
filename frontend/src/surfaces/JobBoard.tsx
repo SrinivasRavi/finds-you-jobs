@@ -34,11 +34,13 @@ import {
   useWatchlist,
 } from "../api/queries";
 import { ApiError } from "../api/real";
-import { type BoardPage, type Job, type Settings } from "../api/types";
+import { type BoardPage, type Job, type PlaceChip, type Settings } from "../api/types";
 import { Avatar } from "../shell/Avatar";
 import { ChipInput } from "../shell/ChipInput";
 import { HeaderAddButton, HeaderDeletedButton } from "../shell/HeaderAddButton";
 import { FactorBars } from "../shell/FactorBars";
+import { PlaceInput } from "../shell/PlaceInput";
+import { useDebounced } from "../shell/useDebounced";
 import { DuplicatePrompt } from "./jobs/DuplicatePrompt";
 import { Icon } from "../shell/icons";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
@@ -83,15 +85,6 @@ const SPLIT_KEY = "fyj-job-board-split";
 
 /** Debounce a fast-changing value (the search inputs) so each keystroke doesn't
  *  fire a board refetch — the search runs server-side (FR-JB-13). */
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
-
 /** 2 concentric rings (maintainer, 2026-10-07). The OUTER arc is the score:
  *  red at 0 through amber to green at 100, drawn as far round as the number
  *  goes. The INNER ring is the method that produced it, because a board can
@@ -1428,7 +1421,7 @@ function FinderPrefsModal({
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [roles, setRoles] = useState<string[]>(prefs.role_aliases);
-  const [locations, setLocations] = useState<string[]>(prefs.locations);
+  const [locations, setLocations] = useState<PlaceChip[]>(prefs.locations);
   const [freshness, setFreshness] = useState(
     FRESHNESS_LABEL[prefs.freshness_days] ?? "7d",
   );
@@ -1524,7 +1517,7 @@ function FinderPrefsModal({
           placeholder={t("jobBoard.prefs.roles.placeholder")}
           testid="fp-roles"
         />
-        <ChipInput
+        <PlaceInput
           label={t("jobBoard.prefs.locations.label")}
           hint={t("jobBoard.prefs.locations.hint")}
           items={locations}
