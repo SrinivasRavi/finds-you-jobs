@@ -4,7 +4,7 @@
 
 // Mirrors the backend's claude-cli DEFAULT_MODEL (sidecar/modules/_shared/
 // claude_engine.py) — shown as the effective model when a kind routes there.
-export const CLAUDE_CLI_DEFAULT_MODEL = "claude-opus-4-8";
+export const CLAUDE_CLI_DEFAULT_MODEL = "claude-opus-5-5";
 
 // The subscription-CLI engine family — always routable, no EngineSettings row
 // (mirrors the backend's engine_config.CLI_PROVIDERS). codex/agy run their

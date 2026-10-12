@@ -27,14 +27,14 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     label: "OpenRouter",
     kind: "key",
     desc: "settingsPage.providers.openrouterDesc",
-    modelPlaceholder: "e.g. anthropic/claude-opus-4-8",
+    modelPlaceholder: "e.g. anthropic/claude-opus-5.5",
   },
   {
     id: "anthropic",
     label: "Anthropic",
     kind: "key",
     desc: "settingsPage.providers.anthropicDesc",
-    modelChips: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    modelChips: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
   },
   {
     id: "openai",

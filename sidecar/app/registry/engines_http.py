@@ -137,11 +137,15 @@ def _default_transport() -> HttpTransport:
 # `usage.cost` instead (see `_openrouter_cost` below), so this map does not
 # need to track OpenRouter's ever-changing catalog.
 _PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
-    # Anthropic (public list prices, re-checked 2026-08-19)
+    # Anthropic (public list prices, re-checked 2026-10-12)
+    "claude-fable-5-1": (10.0, 50.0),
     "claude-fable-5": (10.0, 50.0),
+    "claude-opus-5-5": (4.0, 20.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-opus-4-8": (5.0, 25.0),
-    "claude-sonnet-5": (3.0, 15.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-sonnet-4-6": (3.0, 15.0),  # superseded id, kept for installs still routed to it
     "claude-haiku-4-5": (1.0, 5.0),
     # OpenAI

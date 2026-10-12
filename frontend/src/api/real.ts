@@ -1200,7 +1200,7 @@ export class RealApi {
       routing: LLM_KINDS.map((kind) => ({
         kind,
         engine: routing[kind]?.engine ?? "claude-cli",
-        model: routing[kind]?.model ?? "claude-opus-4-8",
+        model: routing[kind]?.model ?? "claude-opus-5-5",
       })),
       networking_enabled: p.voyager_risk_marker_on,
       networking_ack_at: (ui.networking_ack_at as string | undefined) ?? null,

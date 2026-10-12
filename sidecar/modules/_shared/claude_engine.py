@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_MODEL = "claude-opus-4-8"
+DEFAULT_MODEL = "claude-opus-5-5"
 
 # Env vars that, when present in the child env, silently flip the `claude` CLI
 # from subscription billing to pay-per-token API billing. The provider is named
