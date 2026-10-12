@@ -1404,13 +1404,13 @@ class WeightLens:
             return None
         from sidecar.modules.scorer.deterministic import RED_FLAG_CAP
         from sidecar.modules.scorer.types import Factor
-        from sidecar.modules.scorer.weights import METHOD_WEIGHTS, user_total
+        from sidecar.modules.scorer.weights import method_weights, user_total
         from sidecar.modules.scraper.quality import RED_FLAG_PREFIX
 
         # No table of the user's own means the method's table with their penalty.
         # AI scoring ships no table, so its own number stands.
-        weights = self._weights or METHOD_WEIGHTS.get(method)
         rows = [r for r in self._by_job.get(job.id, ()) if r.method == method]
+        weights = self._weights or method_weights(method, {r.factor for r in rows})
         if not weights or not rows:
             return None
         total = user_total(

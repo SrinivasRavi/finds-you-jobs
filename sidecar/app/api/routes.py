@@ -794,7 +794,7 @@ def get_job_factors(request: Request, job_id: str) -> dto.JobFactorsDTO:
 
     Read-only and free: every method stores its axes when it scores, so this
     costs a single indexed read and never a model call."""
-    from sidecar.modules.scorer.weights import JEV_WEIGHTS, KEYWORD_WEIGHTS
+    from sidecar.modules.scorer.weights import method_weights
 
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
@@ -802,7 +802,7 @@ def get_job_factors(request: Request, job_id: str) -> dto.JobFactorsDTO:
             job.llm_score_method or "llm" if job.llm_score is not None else "keyword"
         )
         rows = repos.job_score_factors.list_for_job(job_id, method)
-        weights = {"jev": JEV_WEIGHTS, "keyword": KEYWORD_WEIGHTS}.get(method, {})
+        weights = method_weights(method, {r.factor for r in rows})
         return dto.JobFactorsDTO(
             job_id=job_id,
             method=method,

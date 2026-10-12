@@ -321,3 +321,18 @@ def test_the_board_ranks_by_the_number_it_shows_across_pages(tmp_path) -> None:
         assert first[0]["score"]["score_0_100"] == 100
         second = client.get("/api/board?page=1&page_size=1", headers=AUTH).json()["jobs"]
         assert [j["id"] for j in second] == [weak]
+
+
+def test_the_bars_and_the_lens_use_the_weights_the_keyword_scorer_used(tmp_path) -> None:
+    """Audit finding 7: with no seniority in the title the keyword scorer
+    weighs skills and years 60/40. The bars showed 55/30, and the weight lens
+    renormalized 55/30 to 64.7/35.3, so 3 places told 3 different stories."""
+    from sidecar.modules.scorer.types import Factor
+    from sidecar.modules.scorer.weights import method_weights, user_total
+
+    no_level = {"core_stack", "years"}
+    assert dict(method_weights("keyword", no_level)) == {"core_stack": 0.60, "years": 0.40}
+    assert method_weights("keyword", no_level | {"level"})["level"] == 0.15
+    factors = [Factor("core_stack", 0.5), Factor("years", 1.0)]
+    # 0.6 * 50 + 0.4 * 100 = 70, the scorer's own arithmetic.
+    assert user_total(factors, method_weights("keyword", no_level)) == 70

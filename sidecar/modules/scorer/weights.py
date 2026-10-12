@@ -37,6 +37,9 @@ KEYWORD_WEIGHTS: Mapping[str, float] = {
     "years": 0.30,
     "level": 0.15,
 }
+# When a title states no seniority the keyword scorer weighs skills and years
+# 60/40, not 55/30 renormalized (64.7/35.3), which is what it shipped with.
+KEYWORD_WEIGHTS_NO_LEVEL: Mapping[str, float] = {"core_stack": 0.60, "years": 0.40}
 
 # Points subtracted for a location the user did not ask for. The LLM path is
 # instructed to apply -10 to -20 after banding, so every method takes the middle
@@ -118,6 +121,15 @@ METHOD_WEIGHTS: Mapping[str, Mapping[str, float]] = {
     "jev": JEV_WEIGHTS,
     "keyword": KEYWORD_WEIGHTS,
 }
+
+
+def method_weights(method: str, factor_names: set[str]) -> Mapping[str, float]:
+    """The table a method actually used for a job, given the factors it stored:
+    the 1 answer the scorer, the bars and the weight lens all read (audit
+    finding 7). Empty for AI scoring, which asks a model for the total."""
+    if method == "keyword" and "level" not in factor_names:
+        return KEYWORD_WEIGHTS_NO_LEVEL
+    return METHOD_WEIGHTS.get(method, {})
 
 
 def user_total(

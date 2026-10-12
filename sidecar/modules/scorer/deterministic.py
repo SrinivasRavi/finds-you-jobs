@@ -49,7 +49,7 @@ from .types import Factor, ScoreResult, Usage
 
 # The location penalty lives beside the arithmetic that applies it. This module
 # used to restate the number (duplication audit D-M18).
-from .weights import LOCATION_MISS_PENALTY
+from .weights import KEYWORD_WEIGHTS, KEYWORD_WEIGHTS_NO_LEVEL, LOCATION_MISS_PENALTY
 
 _STOPWORDS = frozenset(
     """
@@ -186,10 +186,9 @@ def score_deterministic(
     years_score, required_years, offered_years = _years_match(master_md, job_text)
     level = _level_fit(title, master_md)
 
-    if level is None:
-        skill_weight, years_weight, level_weight = 0.6, 0.4, 0.0
-    else:
-        skill_weight, years_weight, level_weight = 0.55, 0.3, 0.15
+    table = KEYWORD_WEIGHTS if level is not None else KEYWORD_WEIGHTS_NO_LEVEL
+    skill_weight, years_weight = table["core_stack"], table["years"]
+    level_weight = table.get("level", 0.0)
     weighted = round(
         skill_weight * skill_score
         + years_weight * years_score
@@ -225,8 +224,10 @@ def score_deterministic(
     if level is not None:
         level_score, level_why = level
         factors.append(Factor("level", level_score / 100, evidence=level_why))
-        reasons.append(f"Seniority: {level_why} ({level_score}/100, weight 15%).")
-        breakdown_lines.append(f"- Seniority fit: {level_score}/100 (weight 15%), {level_why}")
+        reasons.append(f"Seniority: {level_why} ({level_score}/100, weight {level_weight:.0%}).")
+        breakdown_lines.append(
+            f"- Seniority fit: {level_score}/100 (weight {level_weight:.0%}), {level_why}"
+        )
 
     penalty = 0
     if wanted is not None and location.strip():
