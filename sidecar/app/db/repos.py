@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
 
 from sqlalchemy import case, delete, func, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from sidecar.modules.geo.resolve import resolve_location
 
@@ -33,7 +33,7 @@ from .models import (
     Document,
     EngineSettings,
     Job,
-    JobDuplicateDismissal,
+    JobDuplicate,
     JobScoreFactor,
     LinkedInSearchCursor,
     LinkedInSession,
@@ -1503,60 +1503,89 @@ class ReferralCandidatesRepo:
         return cast("CursorResult[Any]", result).rowcount
 
 
-class JobDuplicateDismissalsRepo:
-    """Pairs the user has said are NOT the same posting (D15).
+class JobDuplicatesRepo:
+    """Pairs of jobs that look like the same posting (url-less-jobs.md 9.6).
 
-    Everything here works on the ORDERED pair, so a caller never has to know
-    which job it is asking from.
-    """
+    1 row per pair whichever side asks; `job_id` is the newer job. A pair whose
+    other job isn't active is not shown, and a dismissed pair is never shown."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    @staticmethod
-    def _pair(a: str, b: str) -> tuple[str, str]:
-        return (a, b) if a < b else (b, a)
-
-    def dismiss(self, job_id: str, other_job_id: str) -> None:
-        """Idempotent: asking twice is the same as asking once."""
-        low, high = self._pair(job_id, other_job_id)
-        existing = self._s.scalars(
-            select(JobDuplicateDismissal).where(
-                JobDuplicateDismissal.low_job_id == low,
-                JobDuplicateDismissal.high_job_id == high,
+    def _row(self, a: str, b: str) -> JobDuplicate | None:
+        return self._s.scalars(
+            select(JobDuplicate).where(
+                or_(
+                    (JobDuplicate.job_id == a) & (JobDuplicate.other_job_id == b),
+                    (JobDuplicate.job_id == b) & (JobDuplicate.other_job_id == a),
+                )
             )
         ).first()
-        if existing is None:
-            self._s.add(JobDuplicateDismissal(low_job_id=low, high_job_id=high))
 
-    def is_dismissed(self, job_id: str, other_job_id: str) -> bool:
-        low, high = self._pair(job_id, other_job_id)
+    def record(self, job_id: str, other_ids: list[str]) -> int:
+        """Record `job_id` as a probable copy of each of `other_ids`, skipping
+        pairs already known from either side. Returns how many were new."""
+        added = 0
+        for other in other_ids:
+            if other != job_id and self._row(job_id, other) is None:
+                self._s.add(JobDuplicate(job_id=job_id, other_job_id=other))
+                added += 1
+        if added:
+            self._s.flush()
+        return added
+
+    def dismiss(self, job_id: str, other_job_id: str) -> None:
+        """"They're different." Idempotent, and it records the pair if the
+        check never did, so the notice can't come back for it."""
+        row = self._row(job_id, other_job_id)
+        if row is None:
+            row = JobDuplicate(job_id=job_id, other_job_id=other_job_id)
+            self._s.add(row)
+        if row.dismissed_at is None:
+            row.dismissed_at = now_utc()
+
+    def _open(self):
+        other = aliased(Job)
+        me = aliased(Job)
         return (
-            self._s.scalars(
-                select(JobDuplicateDismissal).where(
-                    JobDuplicateDismissal.low_job_id == low,
-                    JobDuplicateDismissal.high_job_id == high,
-                )
-            ).first()
-            is not None
-        )
-
-    def dismissed_pairs(self, job_ids: list[str]) -> set[tuple[str, str]]:
-        """Every dismissed pair touching these jobs, in 1 query.
-
-        The board calls this ONLY for the handful of rows carrying a duplicate
-        flag, so a page with no flagged pair never reaches this table."""
-        if not job_ids:
-            return set()
-        rows = self._s.scalars(
-            select(JobDuplicateDismissal).where(
-                or_(
-                    JobDuplicateDismissal.low_job_id.in_(job_ids),
-                    JobDuplicateDismissal.high_job_id.in_(job_ids),
-                )
+            select(JobDuplicate)
+            .join(other, other.id == JobDuplicate.other_job_id)
+            .join(me, me.id == JobDuplicate.job_id)
+            .where(
+                JobDuplicate.dismissed_at.is_(None),
+                other.feed_state == "active",
+                me.feed_state == "active",
             )
         )
-        return {(row.low_job_id, row.high_job_id) for row in rows}
+
+    def open_for(self, job_id: str) -> tuple[str, JobDuplicate] | None:
+        """The other job of this job's oldest open pair, from either side."""
+        row = self._s.scalars(
+            self._open()
+            .where(or_(JobDuplicate.job_id == job_id, JobDuplicate.other_job_id == job_id))
+            .order_by(JobDuplicate.detected_at)
+        ).first()
+        if row is None:
+            return None
+        return (row.other_job_id if row.job_id == job_id else row.job_id), row
+
+    def open_summary(self, job_ids: list[str]) -> tuple[dict[str, int], set[str]]:
+        """For a page of jobs, in 1 query: how many open pairs each job is the
+        newer copy in (the card's "reposted" chip), and which jobs have any open
+        pair at all (whether the detail pane asks for the notice)."""
+        copies: dict[str, int] = {}
+        noticed: set[str] = set()
+        if not job_ids:
+            return copies, noticed
+        rows = self._s.scalars(
+            self._open().where(
+                or_(JobDuplicate.job_id.in_(job_ids), JobDuplicate.other_job_id.in_(job_ids))
+            )
+        )
+        for row in rows:
+            copies[row.job_id] = copies.get(row.job_id, 0) + 1
+            noticed.update((row.job_id, row.other_job_id))
+        return copies, noticed & set(job_ids)
 
 
 class JobScoreFactorsRepo:
@@ -1865,7 +1894,7 @@ class Repos:
         self.company_resolutions = CompanyResolutionsRepo(session)
         self.referral_candidates = ReferralCandidatesRepo(session)
         self.job_score_factors = JobScoreFactorsRepo(session)
-        self.duplicate_dismissals = JobDuplicateDismissalsRepo(session)
+        self.duplicates = JobDuplicatesRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)

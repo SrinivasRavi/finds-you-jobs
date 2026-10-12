@@ -120,6 +120,11 @@ class JobDTO(BaseModel):
     # "NEW" badge (maintainer 2026-07-23). Stamped by the board/list routes from
     # that scan op's recorded new_job_ids; manual adds are never flagged.
     is_new: bool = Field(default=False, serialization_alias="isNew")
+    # From `job_duplicates` (url-less-jobs.md 9.6), stamped by the list routes:
+    # how many open pairs this job is the newer copy in (the "reposted" chip),
+    # and whether it has any open pair (the detail pane asks for the notice).
+    duplicates: int = 0
+    duplicate_notice: bool = Field(default=False, serialization_alias="duplicateNotice")
 
 
 class BoardPageDTO(BaseModel):

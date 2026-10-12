@@ -217,6 +217,8 @@ function toJob(d: JobDTO, saved: boolean): Job {
       : null,
     score_status: (d.scoreStatus as Job["score_status"] | undefined) ?? (d.score ? "scored" : "pending"),
     is_new: d.isNew ?? false,
+    duplicates: d.duplicates ?? 0,
+    duplicate_notice: d.duplicateNotice ?? false,
     saved,
     board_state:
       d.feed_state === "removed"
@@ -248,6 +250,8 @@ function placeholderJob(jobId: string): JobDTO {
     score: null,
     scoreStatus: "pending",
     isNew: false,
+    duplicates: 0,
+    duplicateNotice: false,
   };
 }
 

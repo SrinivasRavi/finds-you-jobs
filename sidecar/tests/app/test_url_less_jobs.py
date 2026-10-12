@@ -191,18 +191,44 @@ def test_a_scan_is_never_blocked_by_a_deleted_typed_in_job(
     assert ref["scan"]["tombstoned"] == 0
 
 
-def test_delete_forever_on_a_linked_job_still_tombstones_its_url(
+def test_delete_forever_on_a_scanned_job_tombstones_its_url(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
+    from sidecar.app.registry.persistence import persist_scan
+    from sidecar.modules.scraper.types import ScanResult
+
+    app, client = app_client
+    scanned = NormalizedJob(
+        canonical_url=_URL, title="Senior Software Engineer", company="Acme",
+        location="", description=_JD, source_adapter="greenhouse",
+    )
+    persist_scan(app.state.db, ScanResult(jobs=[scanned], per_source={}))
+    with app.state.db.repos() as repos:
+        job = repos.jobs.get_by_canonical_url(_URL)
+        assert job is not None and job.origin == "scan"
+        job_id = job.id
+    client.patch(f"/api/jobs/{job_id}", headers=AUTH, json={"feed_state": "removed"})
+    result = client.post(f"/api/jobs/{job_id}/tombstone", headers=AUTH)
+    assert result.json() == {"tombstoned": 1, "canonical_urls": [_URL]}
+    with app.state.db.repos() as repos:
+        assert repos.tombstones.exists(_URL)
+
+
+def test_delete_forever_on_a_hand_added_link_is_only_a_delete(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Only a scanned job is tombstoned (maintainer, 2026-10-12), including a
+    hand-added link that autofilled from a board and so carries its name."""
     app, client = app_client
     created = _paste(client, _JD, canonical_url=_URL, source_adapter="greenhouse")
     client.patch(
         f"/api/jobs/{created['id']}", headers=AUTH, json={"feed_state": "removed"}
     )
     result = client.post(f"/api/jobs/{created['id']}/tombstone", headers=AUTH)
-    assert result.json() == {"tombstoned": 1, "canonical_urls": [_URL]}
+    assert result.json() == {"tombstoned": 0, "canonical_urls": []}
     with app.state.db.repos() as repos:
-        assert repos.tombstones.exists(_URL)
+        assert not repos.tombstones.exists(_URL)
+        assert repos.jobs.get(created["id"]) is None
 
 
 def test_a_trashed_paste_comes_back_on_a_re_paste(

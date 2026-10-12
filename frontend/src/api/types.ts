@@ -175,6 +175,10 @@ export interface Job {
   score_status: ScoreStatus;
   /** True when this row was inserted by the LATEST succeeded scan — the "NEW" badge. */
   is_new: boolean;
+  /** Open duplicate pairs this job is the newer copy in: the "reposted" chip. */
+  duplicates: number;
+  /** Whether any open duplicate pair touches this job: the detail pane's notice. */
+  duplicate_notice: boolean;
   saved: boolean;
   board_state: BoardState;
 }

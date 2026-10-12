@@ -183,10 +183,19 @@ def list_jobs(request: Request, feed_state: str = "active") -> list[dto.JobDTO]:
             for j in jobs
         ]
         new_ids = _scan_new_ids(repos.operations.latest_succeeded_by_kind("scan"))
+        _stamp_duplicates(repos, dtos)
     for d in dtos:
         d.is_new = d.id in new_ids
     _sort_board(dtos)
     return dtos
+
+
+def _stamp_duplicates(repos: Any, dtos: list[dto.JobDTO]) -> None:
+    """Fill each job's duplicate count and notice flag in 1 query."""
+    copies, noticed = repos.duplicates.open_summary([d.id for d in dtos])
+    for d in dtos:
+        d.duplicates = copies.get(d.id, 0)
+        d.duplicate_notice = d.id in noticed
 
 
 def _display_score_value(job: Any, lens: dto.WeightLens | None = None) -> int:
@@ -342,6 +351,8 @@ def board(
         dto.job_dto(j, score_op_states=score_op_states.get(j.id), lens=lens)
         for j in page_rows
     ]
+    with _db(request).repos() as repos:
+        _stamp_duplicates(repos, window)
     for d in window:
         d.is_new = d.id in new_ids
 
@@ -546,6 +557,7 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
                 posted_at=payload.posted_at,
                 salary=payload.salary,
                 source_adapter=payload.source_adapter,
+                origin="manual",
                 trust_score=trust_score,
                 trust_flags=trust_flags,
             )
@@ -700,32 +712,18 @@ def _link_verdict(
 @router.get("/api/jobs/{job_id}/duplicate")
 def get_job_duplicate(request: Request, job_id: str) -> dto.DuplicatePromptDTO | None:
     """The other job this one probably duplicates, or null (url-less-jobs.md 9.6).
-
-    Reads the flag the ingest pass already wrote, so this is 1 row by primary
-    key plus, only when a flag is actually there, 1 dismissal lookup. A job with
-    no flag never touches the dismissals table."""
-    from ..registry.persistence import DUPLICATE_FLAG
-
+    1 indexed read of `job_duplicates`, from either side of the pair."""
     with _db(request).repos() as repos:
-        job = _found(repos.jobs.get(job_id), "job", job_id)
-        other_id = next(
-            (
-                flag[len(DUPLICATE_FLAG) :]
-                for flag in (job.trust_flags or [])
-                if flag.startswith(DUPLICATE_FLAG)
-            ),
-            "",
-        )
-        if not other_id:
+        _found(repos.jobs.get(job_id), "job", job_id)
+        found = repos.duplicates.open_for(job_id)
+        if found is None:
             return None
-        other = repos.jobs.get(other_id)
-        if other is None or other.feed_state != "active":
-            return None
-        if repos.duplicate_dismissals.is_dismissed(job_id, other_id):
+        other = repos.jobs.get(found[0])
+        if other is None:
             return None
         return dto.DuplicatePromptDTO(
             job_id=job_id,
-            other_job_id=other_id,
+            other_job_id=other.id,
             other=dto.LinkCandidateDTO(
                 title=other.title, company=other.company, location=other.location
             ),
@@ -737,12 +735,11 @@ def get_job_duplicate(request: Request, job_id: str) -> dto.DuplicatePromptDTO |
 def dismiss_job_duplicate(
     request: Request, job_id: str, payload: dto.DuplicateActionRequest
 ) -> dto.JobDTO:
-    """"They're different." Remembered on the PAIR, so it never asks again from
-    either card (D15)."""
+    """"They're different." Stamped on the pair, so neither card asks again."""
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
         _found(repos.jobs.get(payload.other_job_id), "job", payload.other_job_id)
-        repos.duplicate_dismissals.dismiss(job_id, payload.other_job_id)
+        repos.duplicates.dismiss(job_id, payload.other_job_id)
         return dto.job_dto(job)
 
 
@@ -1352,6 +1349,16 @@ async def create_manual_application(
                     ),
                 )
         else:
+            # The same checks the board's form runs: the scam check, so a
+            # red-flag job is flagged and capped here too, and the duplicate
+            # check, so a later board copy says it's already in the tracker.
+            trust_score, trust_flags = quality_evaluate(
+                title=title or canonical or "",
+                location=location,
+                description=description,
+                canonical_url=canonical or "",
+                posted_at=posted_at or None,
+            )
             job = repos.jobs.create(
                 canonical_url=canonical,
                 content_hash=digest,
@@ -1363,7 +1370,13 @@ async def create_manual_application(
                 posted_at=posted_at or None,
                 salary=salary or None,
                 source_adapter=source_adapter or "paste-url",
+                origin="manual",
+                trust_score=trust_score,
+                trust_flags=trust_flags,
             )
+            from ..registry.persistence import flag_near_duplicate
+
+            flag_near_duplicate(repos, job)
         app = repos.applications.create(
             job.id,
             column=stage,

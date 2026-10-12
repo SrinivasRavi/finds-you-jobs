@@ -255,10 +255,7 @@ export interface paths {
         /**
          * Get Job Duplicate
          * @description The other job this one probably duplicates, or null (url-less-jobs.md 9.6).
-         *
-         *     Reads the flag the ingest pass already wrote, so this is 1 row by primary
-         *     key plus, only when a flag is actually there, 1 dismissal lookup. A job with
-         *     no flag never touches the dismissals table.
+         *     1 indexed read of `job_duplicates`, from either side of the pair.
          */
         get: operations["get_job_duplicate_api_jobs__job_id__duplicate_get"];
         put?: never;
@@ -280,8 +277,7 @@ export interface paths {
         put?: never;
         /**
          * Dismiss Job Duplicate
-         * @description "They're different." Remembered on the PAIR, so it never asks again from
-         *     either card (D15).
+         * @description "They're different." Stamped on the pair, so neither card asks again.
          */
         post: operations["dismiss_job_duplicate_api_jobs__job_id__duplicate_dismiss_post"];
         delete?: never;
@@ -3114,6 +3110,16 @@ export interface components {
              * @default false
              */
             isNew: boolean;
+            /**
+             * Duplicates
+             * @default 0
+             */
+            duplicates: number;
+            /**
+             * Duplicatenotice
+             * @default false
+             */
+            duplicateNotice: boolean;
         };
         /**
          * JobFactorsDTO

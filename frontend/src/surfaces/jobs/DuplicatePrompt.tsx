@@ -9,11 +9,13 @@
 import { useTranslation } from "react-i18next";
 
 import { useDismissJobDuplicate, useJobDuplicate } from "../../api/queries";
+import type { Job } from "../../api/types";
 import { daysBetween } from "../jobFormat";
 
-export function DuplicatePrompt({ jobId }: { jobId: string }) {
+export function DuplicatePrompt({ job }: { job: Job }) {
   const { t } = useTranslation();
-  const { data } = useJobDuplicate(jobId);
+  const jobId = job.id;
+  const { data } = useJobDuplicate(jobId, job.duplicate_notice);
   const dismiss = useDismissJobDuplicate();
   if (!data) return null;
   const days = daysBetween(data.other_added_at, "round");

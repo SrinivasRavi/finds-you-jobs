@@ -667,7 +667,7 @@ function JobDetail({
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
         <div className="px-6 pt-4">
-          <DuplicatePrompt jobId={job.id} />
+          <DuplicatePrompt job={job} />
         </div>
         {/* JD | Scoring as equal columns (maintainer, 2026-07-11) — the scoring
             table needs real width, matching the detail modal's Scoring tab. */}

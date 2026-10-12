@@ -69,12 +69,10 @@ def test_the_second_row_is_flagged_when_it_is_written(tmp_path) -> None:
             title="Senior Software Engineer",
             company="Acme",
         )
-        # The flag is on the row BEFORE anything renders, which is what keeps
-        # the board's own read free of this feature.
+        # The pair is recorded at write, before anything renders.
         with app.state.db.repos() as repos:
-            job = repos.jobs.get(wednesday)
-            assert job is not None
-            assert f"probable-duplicate:{monday}" in job.trust_flags
+            found = repos.duplicates.open_for(wednesday)
+            assert found is not None and found[0] == monday
 
         body = client.get(f"/api/jobs/{wednesday}/duplicate", headers=AUTH).json()
         assert body is not None
@@ -131,7 +129,7 @@ def test_a_dismissal_holds_from_either_card_and_asking_twice_is_idempotent(tmp_p
             json={"other_job_id": wednesday},
         )
         with app.state.db.repos() as repos:
-            assert len(repos.duplicate_dismissals.dismissed_pairs([monday, wednesday])) == 1
+            assert repos.duplicates.open_summary([monday, wednesday]) == ({}, set())
 
 
 def test_deleting_either_job_takes_the_dismissal_with_it(tmp_path) -> None:
@@ -151,10 +149,13 @@ def test_deleting_either_job_takes_the_dismissal_with_it(tmp_path) -> None:
         )
         db: Database = app.state.db
         with db.repos() as repos:
-            assert repos.duplicate_dismissals.is_dismissed(monday, wednesday)
             delete_job_cascade(repos, wednesday)
         with db.repos() as repos:
-            assert repos.duplicate_dismissals.dismissed_pairs([monday]) == set()
+            from sqlalchemy import select
+
+            from sidecar.app.db.models import JobDuplicate
+
+            assert repos.duplicates._s.scalars(select(JobDuplicate)).first() is None  # noqa: SLF001
 
 
 def test_there_is_no_merge_the_user_resolves_a_duplicate_themselves(tmp_path) -> None:
@@ -238,3 +239,59 @@ def test_the_backfill_skips_an_expired_job(tmp_path) -> None:
         with db.repos() as repos:
             repos.jobs.update(old, feed_state="active")
         assert backfill_fingerprints(db) == 1
+
+
+def _board(client: TestClient) -> dict[str, Any]:
+    return {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+
+
+def test_the_card_stops_saying_reposted_once_the_pair_is_dismissed(tmp_path) -> None:
+    """The chip and the notice read the same row, so "They're different" clears
+    both. When the chip read a JSON flag the dismissal never touched, the card
+    kept warning about a pair the user had just called 2 jobs."""
+    client, _ = _client(tmp_path)
+    with client:
+        monday = _add(client, url="", title="Senior Software Engineer", company="Acme")
+        wednesday = _add(
+            client, url="https://ex.co/w", title="Senior Software Engineer", company="Acme"
+        )
+        board = _board(client)
+        assert board[wednesday]["duplicates"] == 1
+        assert board[wednesday]["duplicateNotice"] and board[monday]["duplicateNotice"]
+        assert board[monday]["duplicates"] == 0  # the original isn't the repost
+
+        client.post(
+            f"/api/jobs/{wednesday}/duplicate/dismiss", headers=AUTH, json={"other_job_id": monday}
+        )
+        board = _board(client)
+        assert board[wednesday]["duplicates"] == 0
+        assert not board[wednesday]["duplicateNotice"] and not board[monday]["duplicateNotice"]
+
+
+def test_the_notice_shows_from_both_sides(tmp_path) -> None:
+    client, _ = _client(tmp_path)
+    with client:
+        monday = _add(client, url="", title="Senior Software Engineer", company="Acme")
+        wednesday = _add(
+            client, url="https://ex.co/w", title="Senior Software Engineer", company="Acme"
+        )
+        body = client.get(f"/api/jobs/{monday}/duplicate", headers=AUTH).json()
+        assert body is not None and body["other_job_id"] == wednesday
+
+
+def test_a_third_copy_is_noticed_after_the_second_is_deleted(tmp_path) -> None:
+    """The JSON flag was written once and never again, so once copy 2 was
+    deleted, copy 3 of the same posting went unnoticed."""
+    client, app = _client(tmp_path)
+    with client:
+        first = _add(client, url="", title="Senior Software Engineer", company="Acme")
+        second = _add(
+            client, url="https://ex.co/2", title="Senior Software Engineer", company="Acme"
+        )
+        with app.state.db.repos() as repos:
+            delete_job_cascade(repos, second)
+        third = _add(
+            client, url="https://ex.co/3", title="Senior Software Engineer", company="Acme"
+        )
+        body = client.get(f"/api/jobs/{third}/duplicate", headers=AUTH).json()
+        assert body is not None and body["other_job_id"] == first

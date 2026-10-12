@@ -140,6 +140,9 @@ class Job(Base):
     posted_at: Mapped[str | None] = mapped_column(String, nullable=True)
     salary: Mapped[str | None] = mapped_column(String, nullable=True)
     source_adapter: Mapped[str] = mapped_column(String, nullable=False)
+    # `scan` or `manual`: who added it, which `source_adapter` can't say once a
+    # hand-added link autofills from a board. Only a scanned job is tombstoned.
+    origin: Mapped[str] = mapped_column(String, nullable=False, default="scan")
     trust_score: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     trust_flags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     ingested_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
@@ -243,44 +246,40 @@ class JobScoreFactor(Base):
     )
 
 
-class JobDuplicateDismissal(Base):
-    """A pair of jobs the user said are NOT the same posting (D15).
+class JobDuplicate(Base):
+    """2 jobs that look like the same posting (url-less-jobs.md section 9.6).
 
-    Stored as an ORDERED pair, `low_job_id` < `high_job_id`, so one row answers
-    the question from either side and there is exactly one write site. Both
-    sides are real foreign keys with ON DELETE CASCADE, so deleting either job
-    takes the dismissal with it rather than leaving an id pointing at nothing.
-    """
+    `job_id` is the newer row, the one written when the match was found. Both
+    sides cascade, so deleting either job removes the pair; `dismissed_at` is
+    "They're different". 1 row per pair, never 1 per direction."""
 
-    __tablename__ = "job_duplicate_dismissals"
+    __tablename__ = "job_duplicates"
 
     id: Mapped[str] = _pk()
-    low_job_id: Mapped[str] = mapped_column(
+    job_id: Mapped[str] = mapped_column(
         String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
     )
-    high_job_id: Mapped[str] = mapped_column(
+    other_job_id: Mapped[str] = mapped_column(
         String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    detected_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    dismissed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("low_job_id", "high_job_id", name="uq_job_duplicate_pair"),
-        Index("ix_job_duplicate_dismissals_high", "high_job_id"),
+        UniqueConstraint("job_id", "other_job_id", name="uq_job_duplicates_pair"),
+        Index("ix_job_duplicates_other", "other_job_id"),
     )
 
 
 class Tombstone(Base):
-    """A permanently-discarded job identity — never re-ingested (FR-SYS-04).
+    """A deleted-forever URL that no scan may bring back (FR-SYS-04).
 
-    Keyed on whichever identity the deleted job had, so delete forever works
-    on a pasted JD as well as on a scanned URL. On a text tombstone that means
-    the same description can't be pasted back in; the confirm copy says so."""
+    Only a scanned job is tombstoned (url-less-jobs.md section 8.2)."""
 
     __tablename__ = "tombstones"
 
     id: Mapped[str] = _pk()
-    canonical_url: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
-    content_hash: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    canonical_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     reason: Mapped[str] = mapped_column(String, nullable=False, default="manual")
 
 

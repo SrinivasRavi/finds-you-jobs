@@ -34,7 +34,7 @@ _EXPECTED = {
     "apply_runs",
     "documents",
     "job_score_factors",
-    "job_duplicate_dismissals",
+    "job_duplicates",
 }
 
 
@@ -203,10 +203,8 @@ def test_url_less_identity_preserves_existing_rows(tmp_path: Path) -> None:
         assert row[0] == "https://boards.greenhouse.io/acme/jobs/1"
         assert row[1] is None  # no backfill: this row is keyed on its URL
         assert row[2] is None
-        assert (
-            conn.execute(text("SELECT content_hash FROM tombstones")).scalar()
-            is None
-        )
+        # The URL tombstone survives; the text column it once had is gone (e3a8c51f7d20).
+        assert conn.execute(text("SELECT canonical_url FROM tombstones")).scalar()
 
         # Both populations coexist: NULLs are distinct in a unique index, so
         # any number of URL-less rows and URL rows live side by side.
@@ -226,3 +224,65 @@ def test_url_less_identity_preserves_existing_rows(tmp_path: Path) -> None:
                 {"id": f"j{i}", "hash": f"hash-{i}"},
             )
         assert conn.execute(text("SELECT count(*) FROM jobs")).scalar() == 3
+
+
+def test_duplicate_flags_and_dismissals_become_1_row_per_pair(tmp_path: Path) -> None:
+    """e3a8c51f7d20 copies the JSON flags and the dismissals into job_duplicates,
+    strips the flags, and marks hand-added rows `manual`. A legacy flag today's
+    compound gate rejects is dropped rather than carried over."""
+    import json
+
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'dup.db'}"
+    command.upgrade(make_alembic_config(url), "d1c5f83a9b27")
+    engine = create_engine(url)
+    cols = (
+        "id, canonical_url, title, company, location, description, source_adapter, "
+        "trust_score, trust_flags, ingested_at, feed_state, feed_since"
+    )
+    rows = [
+        ("a", "https://ex.co/a", "greenhouse", []),
+        ("b", None, "paste-text", ["probable-duplicate:a", "duplicate-batch:1", "stale-posting"]),
+        ("c", "https://ex.co/c", "lever", ["probable-cross-listing:https://ex.co/a"]),
+        ("d", "https://ex.co/d", "lever", ["probable-cross-listing:https://ex.co/a"]),
+    ]
+    jd = (
+        "Senior Software Engineer at Acme. You will own distributed Python services, "
+        "design PostgreSQL schemas, run workloads on AWS and mentor other engineers."
+    )
+    with engine.begin() as conn:
+        for job_id, link, source, flags in rows:
+            conn.execute(
+                text(
+                    f"INSERT INTO jobs ({cols}) VALUES (:id, :url, 'SWE', 'Acme', '', :jd, "  # noqa: S608 — fixed column list
+                    ":src, 100, :flags, '2026-10-01', 'active', '2026-10-01')"
+                ),
+                {"id": job_id, "url": link, "src": source, "flags": json.dumps(flags), "jd": jd},
+            )
+        # Written by the old bare threshold: same text, a different level.
+        conn.execute(text("UPDATE jobs SET title = 'Principal SWE' WHERE id = 'd'"))
+        conn.execute(
+            text(
+                "INSERT INTO job_duplicate_dismissals (id, low_job_id, high_job_id, created_at) "
+                "VALUES ('d1', 'a', 'c', '2026-10-02')"
+            )
+        )
+    upgrade_to_head(url)
+    with engine.begin() as conn:
+        pairs = {
+            (r[0], r[1], r[2] is not None)
+            for r in conn.execute(
+                text("SELECT job_id, other_job_id, dismissed_at FROM job_duplicates")
+            )
+        }
+        assert pairs == {("b", "a", False), ("c", "a", True)}
+        flag_rows = conn.execute(text("SELECT id, trust_flags FROM jobs"))
+        flags = {str(r[0]): str(r[1]) for r in flag_rows}
+        assert json.loads(flags["b"]) == ["stale-posting"]
+        assert json.loads(flags["c"]) == []
+        origins = {str(r[0]): str(r[1]) for r in conn.execute(text("SELECT id, origin FROM jobs"))}
+        assert origins == {"a": "scan", "b": "manual", "c": "scan", "d": "scan"}

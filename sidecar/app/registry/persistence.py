@@ -557,47 +557,23 @@ def scan_usage(result: ScanResult) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-DUPLICATE_FLAG = "probable-duplicate:"
-# How many peers the gate matched, written beside the id of the first one. The
-# chip says the count, because batch size is the part of this signal that
-# separates: on the bench corpus a batch of 5 was 5 of 5 withdrawn and a pair
-# 5 of 6, against 22% for everything the gate didn't flag (url-less-jobs.md
-# 15.3, n=11, suggestive and not proof).
-DUPLICATE_BATCH_FLAG = "duplicate-batch:"
-
-
 def flag_near_duplicate(
     repos: Repos, job: Job, *, rows: list[tuple[str, int, str, str]] | None = None
 ) -> str | None:
-    """Mark a freshly-written job as a probable duplicate of one already here.
-
-    This is the cross-SCAN case the board could never catch: the user pasted an
-    emailed JD on Monday and Wednesday's scan wrote its own row for the same
-    posting. `_flag_cross_listings` only ever compared jobs inside one scan, and
-    it keyed the flag on the counterpart's URL, which a pasted job does not have.
-    This keys on the job id, so both directions work.
-
-    Done HERE, at write, on purpose: the board renders `trust_flags` out of a
-    column it already loads, so the duplicate prompt costs the main flow nothing
-    (url-less-jobs.md 9.6, D15).
+    """Record a freshly written job as a probable copy of every active job it
+    matches (url-less-jobs.md 9.6). Runs on both write paths, the add form and
+    every scan row, so pasted-Monday, scanned-Wednesday is always noticed.
 
     `rows` is `fingerprint_rows()` read once by a caller flagging many jobs.
-    Returns the id it flagged against, or None.
-    """
+    Returns the first matching id, or None."""
     others = repos.jobs.near_duplicate_ids(
         job.fingerprint, company=job.company, title=job.title, exclude_id=job.id,
         rows=rows,
     )
     if not others:
         return None
-    other_id = others[0]
-    flags = list(job.trust_flags or [])
-    if any(f.startswith(DUPLICATE_FLAG) for f in flags):
-        return None
-    flags.append(f"{DUPLICATE_FLAG}{other_id}")
-    flags.append(f"{DUPLICATE_BATCH_FLAG}{len(others)}")
-    repos.jobs.update(job.id, trust_flags=flags)
-    return other_id
+    repos.duplicates.record(job.id, others)
+    return others[0]
 
 
 def load_job_and_master(
@@ -722,12 +698,10 @@ def age_expired_jobs(
 
 
 def tombstone_url(repos: Repos, job: Job, *, reason: str) -> bool:
-    """Tombstone the job's URL so no scan re-adds it (FR-SYS-04). True if it had one.
-
-    A job with no URL gets no tombstone: a tombstone exists to stop a scan
-    bringing a deleted posting back, and no scan can produce a job the user
-    typed in, so its text stays free to paste again (maintainer, 2026-10-10)."""
-    if not job.canonical_url:
+    """Tombstone a scanned job's URL so no scan re-adds it (FR-SYS-04). True if
+    it wrote or found one. A job the user added by hand is only deleted, link or
+    not (url-less-jobs.md section 8.2)."""
+    if not job.canonical_url or job.origin != "scan":
         return False
     if not repos.tombstones.exists(job.canonical_url):
         repos.tombstones.create(job.canonical_url, reason=reason)

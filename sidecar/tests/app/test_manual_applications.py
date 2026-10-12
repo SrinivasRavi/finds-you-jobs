@@ -361,3 +361,29 @@ def test_manual_application_delete_removes_card(
     }
     # Idempotence guard: a second delete is a clean 404, not a 500.
     assert client.delete(f"/api/applications/{app_id}", headers=AUTH).status_code == 404
+
+
+def test_the_tracker_form_runs_the_scam_check_and_marks_the_job_manual(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Audit finding 9: the tracker's form skipped the ingest checks, so a
+    red-flag phrase got no trust flag and lost its 40-point cap under custom
+    weights. And the job is `manual`, so delete forever never tombstones it."""
+    app, client = app_client
+    r = client.post(
+        "/api/applications/manual",
+        data={
+            "canonical_url": "https://ex.co/careers/eng-43",
+            "title": "Backend Engineer",
+            "company": "Acme",
+            "description": "Great role. Note: there is a training fee before you start.",
+            "column": "applied",
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 201, r.text
+    with app.state.db.repos() as repos:
+        job = repos.jobs.get(r.json()["job"]["id"])
+        assert job is not None
+        assert "red-flag-term:training fee" in job.trust_flags
+        assert job.origin == "manual"

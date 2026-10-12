@@ -3,7 +3,7 @@
 // this turns it into 1 label plus a list of sentences, worst first.
 //
 // 2 rules it exists to enforce. A flag family with no sentence here renders
-// nothing, so a raw `probable-duplicate:019f6ea2-…` can never reach a user.
+// nothing, so a raw machine string can never reach a user.
 // And the repost sentence claims only what the corpus measured: that batches
 // like this get withdrawn, never that the employer meant to ghost anybody.
 
@@ -11,9 +11,6 @@ import type { TFunction } from "i18next";
 
 import type { Job } from "../../api/types";
 
-const DUPLICATE = "probable-duplicate:";
-const CROSS_LISTING = "probable-cross-listing:";
-const BATCH = "duplicate-batch:";
 const RED_FLAG = "red-flag-term:";
 
 export type TrustRead = { label: string; lines: string[] };
@@ -33,14 +30,10 @@ export function readTrust(job: Job, t: TFunction): TrustRead | null {
     label ||= t("jobBoard.row.trust.labelRisk");
     lines.push(t("jobBoard.row.trust.redFlag", { term: value(RED_FLAG) }));
   }
-  if (has(DUPLICATE) || has(CROSS_LISTING)) {
+  // From `job_duplicates`, so "They're different" clears it (url-less-jobs.md 9.6).
+  if (job.duplicates > 0) {
     label ||= t("jobBoard.row.trust.labelReposted");
-    const count = Number.parseInt(value(BATCH), 10);
-    lines.push(
-      Number.isFinite(count) && count > 0
-        ? t("jobBoard.row.trust.reposted", { count, company: job.company })
-        : t("jobBoard.row.trust.repostedUncounted"),
-    );
+    lines.push(t("jobBoard.row.trust.reposted", { count: job.duplicates, company: job.company }));
   }
   if (flags.includes("stale-posting")) {
     label ||= t("jobBoard.row.trust.labelStale");

@@ -93,13 +93,13 @@ export function useExplainCost(enabled: boolean) {
   });
 }
 
-/** The duplicate prompt for one open card (url-less-jobs.md 9.6). Only the open
- *  card asks, and the answer is a flag the ingest pass already wrote. */
-export function useJobDuplicate(jobId: string | null) {
+/** The duplicate notice for one open card (url-less-jobs.md 9.6). Asked only
+ *  when the board row says the job has an open pair. */
+export function useJobDuplicate(jobId: string | null, hasNotice: boolean) {
   return useQuery({
     queryKey: [...qk.jobDuplicate, jobId],
     queryFn: () => api.getJobDuplicate(jobId!),
-    enabled: !!jobId,
+    enabled: !!jobId && hasNotice,
   });
 }
 
@@ -111,6 +111,8 @@ export function useDismissJobDuplicate() {
       api.dismissJobDuplicate(jobId, otherJobId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.jobDuplicate });
+      // The board's "reposted" chip reads the same pair.
+      void qc.invalidateQueries({ queryKey: qk.board });
     },
   });
 }

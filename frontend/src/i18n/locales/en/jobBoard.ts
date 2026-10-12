@@ -75,8 +75,6 @@ const jobBoard = {
         "{{count}} other near-identical posting from {{company}} is already on your board. Batches like this usually get withdrawn, so the role may already be gone.",
       reposted_other:
         "{{count}} other near-identical postings from {{company}} are already on your board. Batches like this usually get withdrawn, so the role may already be gone.",
-      repostedUncounted:
-        "The same job description appears on another posting. Batches like this usually get withdrawn, so the role may already be gone.",
       stale:
         "Posted more than 60 days ago. Roles that actually get filled usually close in 30 to 45 days.",
       insecure:
