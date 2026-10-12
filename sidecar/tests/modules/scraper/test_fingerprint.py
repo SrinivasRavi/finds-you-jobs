@@ -13,8 +13,6 @@ from sidecar.modules.scraper.fingerprint import (
     simhash64,
     similarity,
 )
-from sidecar.modules.scraper.scraper import _flag_cross_listings
-from sidecar.modules.scraper.types import NormalizedJob
 
 _JD = (
     "We are looking for a Senior Backend Engineer to join our platform team. "
@@ -88,30 +86,6 @@ def test_different_postings_do_not_flag():
 def test_short_text_has_no_fingerprint():
     assert simhash64("Go engineer") == 0
     assert similarity(0, simhash64(_JD)) == 0.0
-
-
-def test_flag_cross_listings_annotates_both_rows_never_drops():
-    a = NormalizedJob(
-        title="Senior Backend Engineer",
-        canonical_url="https://boards.greenhouse.io/acme/jobs/1",
-        description=_JD,
-    )
-    b = NormalizedJob(
-        title="Senior Backend Engineer",
-        canonical_url="https://www.linkedin.com/jobs/view/123",
-        description=_JD + " Posted via LinkedIn.",
-    )
-    c = NormalizedJob(
-        title="Product Designer",
-        canonical_url="https://jobs.lever.co/acme/2",
-        description=_OTHER_JD,
-    )
-    jobs = [a, b, c]
-    _flag_cross_listings(jobs)
-    assert len(jobs) == 3  # annotate, never drop
-    assert f"probable-cross-listing:{b.canonical_url}" in a.trust_flags
-    assert f"probable-cross-listing:{a.canonical_url}" in b.trust_flags
-    assert not c.trust_flags
 
 
 def test_adjacent_seniority_at_one_company_does_not_flag():

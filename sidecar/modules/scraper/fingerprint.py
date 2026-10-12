@@ -10,9 +10,8 @@ career-ops's `fingerprint-core.mjs` (MIT) — reimplemented from its design
 (Python `hashlib` in place of Node `crypto`), no upstream code carried; see
 `UPSTREAMS.md`.
 
-Flag, never drop: a cross-listing *annotation* rides `trust_flags` and the
-user decides — silently merging risks collapsing genuinely distinct postings
-(the exact failure the dedup doc warns about). Zero deps, zero LLM.
+Flag, never drop: a match becomes a row in `job_duplicates` and the user
+decides (url-less-jobs.md section 5.5). Zero deps, zero LLM.
 """
 
 from __future__ import annotations

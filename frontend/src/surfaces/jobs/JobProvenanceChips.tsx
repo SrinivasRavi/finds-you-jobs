@@ -36,11 +36,7 @@ export function NoLinkChip({ job, onClick }: { job: Job; onClick?: () => void })
   );
 }
 
-/** `trust_score` and `trust_flags` have been computed at ingest, stored and
- *  serialized to the frontend since the first scan, and rendered nowhere
- *  (section 8.4). This is their first reader, which also surfaces the
- *  cross-listing flags nobody has ever seen.
- *
+/** The trust chip: the scam, repost, stale and unverified signals (section 8.4).
  *  It says the worst thing it knows, in words, and `readTrust` owns both the
  *  severity order and the rule that an untranslated flag family says nothing
  *  (section 15.5). A job whose only flags are scraper notes renders no chip. */
