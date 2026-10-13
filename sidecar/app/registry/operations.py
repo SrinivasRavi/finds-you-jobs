@@ -220,7 +220,6 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from .persistence import (
         age_expired_jobs,
         backfill_fingerprints,
-        backfill_resolved_locations,
         evict_stale_trash,
         purge_archived_applications,
     )
@@ -236,11 +235,8 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     purged_apps = purge_archived_applications(
         ctx.db, retention_days=settings["archived_applications_purge_days"]
     )
-    # Rows that predate the location resolver. Bounded per tick and converging:
-    # a row it touches stops matching its own query.
-    resolved_locations = backfill_resolved_locations(ctx.db)
-    # Same shape for the duplicate check's fingerprint: bounded, converging,
-    # and a no-op once every pre-migration row has one.
+    # Rows from before the duplicate check's fingerprint: bounded per tick,
+    # converging, and a no-op once every pre-migration row has one.
     fingerprinted = backfill_fingerprints(ctx.db)
     return OperationOutcome(
         result_ref={
@@ -252,7 +248,6 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
             "expired_deleted_ids": aged["deleted"],
             "purged_applications_count": len(purged_apps),
             "purged_application_ids": purged_apps,
-            "resolved_locations_count": resolved_locations,
             "fingerprinted_count": fingerprinted,
         }
     )

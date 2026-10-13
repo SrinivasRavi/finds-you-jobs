@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
-from sidecar.modules.geo.resolve import chip_label, chip_name, resolve_location
+from sidecar.modules.geo.resolve import chip_label, chip_name
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
 from sidecar.modules.scraper.fingerprint import simhash64, to_signed64
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, ScraperError
@@ -406,34 +406,12 @@ def _job_columns(job: NormalizedJob) -> dict[str, Any]:
     }
 
 
-BACKFILL_LOCATION_BATCH = 500
+BACKFILL_FINGERPRINT_BATCH = 500
 
 
-def backfill_resolved_locations(
-    db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH
+def backfill_fingerprints(
+    db: Database | None, *, limit: int = BACKFILL_FINGERPRINT_BATCH
 ) -> int:
-    """Resolve locations for rows that predate the resolver; returns the count.
-    Converges, since `location_remote IS NULL` stops matching once touched. Bounded
-    per call: the maintenance tick has other stages."""
-    if db is None:
-        return 0
-    with db.repos() as repos:
-        pending = repos.jobs.list_unresolved_locations(limit=limit)
-        for job in pending:
-            resolved = resolve_location(job.location or "")
-            primary = resolved.primary
-            repos.jobs.update(
-                job.id,
-                location_country=primary.country if primary else None,
-                location_admin1=primary.admin1_key if primary else None,
-                location_city_id=primary.city_id if primary else None,
-                location_remote=resolved.remote_scope,
-                location_attendance=str(resolved.attendance) if resolved.attendance else None,
-            )
-        return len(pending)
-
-
-def backfill_fingerprints(db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH) -> int:
     """Fingerprint rows from before migration `c9e4a71b3f02`; returns the count.
     Too-short text stores 0, so it converges. Flags nothing itself."""
     if db is None:

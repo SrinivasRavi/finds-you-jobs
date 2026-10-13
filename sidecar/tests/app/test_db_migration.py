@@ -444,3 +444,40 @@ def test_duplicate_migration_hashes_only_the_jobs_a_flag_names(
         pairs = set(conn.execute(text("SELECT job_id, other_job_id FROM job_duplicates")))
     assert pairs == {("b", "a"), ("c", "a")}
 
+
+def test_the_5_location_columns_go_and_come_back_empty(tmp_path: Path) -> None:
+    """c5f1a8d3e6b2 (B6, place-picker.md 10.5 item 2): the columns nothing read are
+    dropped with the job kept; the downgrade restores them as NULL, which the old
+    daily pass reads as "never resolved" and refills."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'loc.db'}"
+    cfg = make_alembic_config(url)
+    command.upgrade(cfg, "b3e9c4a1d7f2")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO jobs (id, canonical_url, title, company, location, description,"
+            " source_adapter, trust_score, trust_flags, ingested_at, feed_state, feed_since,"
+            " location_country, location_admin1, location_city_id, location_remote,"
+            " location_attendance) VALUES ('j', 'https://ex.co/j', 'SWE', 'Acme',"
+            " 'Bengaluru (Hybrid)', 'JD', 'lever', 100, '[]', '2026-10-01', 'active',"
+            " '2026-10-01', 'IN', 'IN.19', 1277333, '', 'hybrid')"
+        ))
+    names = ("location_country", "location_admin1", "location_city_id", "location_remote",
+             "location_attendance")
+
+    command.upgrade(cfg, "c5f1a8d3e6b2")
+    cols = {c["name"] for c in inspect(engine).get_columns("jobs")}
+    assert not cols & set(names)
+    with engine.connect() as conn:
+        location = conn.execute(text("SELECT location FROM jobs WHERE id = 'j'")).scalar()
+    assert location == "Bengaluru (Hybrid)"
+
+    command.downgrade(cfg, "b3e9c4a1d7f2")
+    with engine.connect() as conn:
+        back = conn.execute(text(f"SELECT {', '.join(names)} FROM jobs WHERE id = 'j'")).one()  # noqa: S608 — fixed names
+    assert tuple(back) == (None,) * 5

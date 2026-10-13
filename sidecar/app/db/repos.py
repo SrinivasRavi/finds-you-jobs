@@ -17,8 +17,6 @@ if TYPE_CHECKING:
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
-from sidecar.modules.geo.resolve import resolve_location
-
 from .base import now_utc
 from .models import (
     APPLY_RUN_ACTIVE_STATUSES,
@@ -468,25 +466,6 @@ class SchedulesRepo:
         return _update_row(self._s, Schedule, schedule_id, "schedule", fields)
 
 
-def resolved_location_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    """Fill a new job's resolved-location columns from its location string, here so
-    no job-creating call site forgets. A caller that already resolved is left
-    alone; no location keeps `location_remote` NULL."""
-    location = str(fields.get("location") or "").strip()
-    if not location or "location_remote" in fields:
-        return fields
-    resolved = resolve_location(location)
-    primary = resolved.primary
-    return {
-        **fields,
-        "location_country": primary.country if primary else None,
-        "location_admin1": primary.admin1_key if primary else None,
-        "location_city_id": primary.city_id if primary else None,
-        "location_remote": resolved.remote_scope,
-        "location_attendance": str(resolved.attendance) if resolved.attendance else None,
-    }
-
-
 class JobsRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -533,17 +512,6 @@ class JobsRepo:
         if feed_state is not None:
             stmt = stmt.where(Job.feed_state == feed_state)
         stmt = stmt.order_by(Job.ingested_at.desc(), Job.id).limit(limit)
-        return list(self._s.scalars(stmt))
-
-    def list_unresolved_locations(self, *, limit: int = 500) -> list[Job]:
-        """Jobs the location resolver has never seen (`location_remote IS NULL`),
-        in any feed state: an expired job can come back."""
-        stmt = (
-            select(Job)
-            .where(Job.location_remote.is_(None), Job.location != "")
-            .order_by(Job.ingested_at.desc(), Job.id)
-            .limit(limit)
-        )
         return list(self._s.scalars(stmt))
 
     def list_active_without_llm_score(
@@ -690,7 +658,7 @@ class JobsRepo:
         return list(self._s.scalars(stmt))
 
     def create(self, **fields: Any) -> Job:
-        job = Job(**resolved_location_fields(fields))
+        job = Job(**fields)
         self._s.add(job)
         self._s.flush()
         return job

@@ -168,17 +168,6 @@ class Job(Base):
     llm_score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     llm_score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # The location, read once at ingest by `modules/geo/resolve.py`, so no consumer
-    # re-parses it. Facts about the posting only; the match verdict depends on prefs,
-    # so it's computed. `location_remote`: NULL is unresolved, "" is not remote,
-    # otherwise the scope ("global", "unscoped", or "US,CA"). No index until a query
-    # needs one (D30).
-    location_country: Mapped[str | None] = mapped_column(String, nullable=True)
-    location_admin1: Mapped[str | None] = mapped_column(String, nullable=True)
-    location_city_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    location_remote: Mapped[str | None] = mapped_column(String, nullable=True)
-    location_attendance: Mapped[str | None] = mapped_column(String, nullable=True)
-
     __table_args__ = (
         Index("ix_jobs_feedstate_ingested", "feed_state", "ingested_at"),
         # The planner's eligibility read: active jobs still worth an attempt.
