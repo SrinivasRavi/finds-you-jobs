@@ -230,6 +230,26 @@ export function useExplainJob() {
   });
 }
 
+/** Rescore 1 row. Pending until the operation ends, so the row can say so while
+ *  it waits in its queue and runs; the board refetches on the terminal event. */
+export function useRescoreJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      const { id } = await api.rescoreJob(jobId);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const op = await api.getOperation(id);
+        if (op && ["succeeded", "failed", "cancelled"].includes(op.state)) return op;
+      }
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.ledger });
+      void qc.invalidateQueries({ queryKey: qk.costTotals });
+    },
+  });
+}
+
 export function useToggleDiscoverySource() {
   const qc = useQueryClient();
   return useMutation({

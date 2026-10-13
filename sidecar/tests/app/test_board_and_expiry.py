@@ -310,7 +310,7 @@ def _filler(repos: object, n: int = 60) -> None:
     for i in range(n):
         repos.jobs.create(  # type: ignore[attr-defined]
             canonical_url=f"f{i}", title=f"F{i}", location="Berlin", description="Office role.",
-            source_adapter="lever", keyword_score=90,
+            source_adapter="lever", score=90, score_method="keyword",
         )
 
 
@@ -328,27 +328,29 @@ def test_board_filters_run_on_the_whole_board_before_pagination(
         remote = repos.jobs.create(
             canonical_url="t-remote", title="Remote Role", location="Remote",
             description="Fully remote.",
-            source_adapter="lever", keyword_score=10, posted_at=old,
+            source_adapter="lever", score=10, score_method="keyword", posted_at=old,
         ).id
         ashby = repos.jobs.create(
             canonical_url="t-ashby", title="Ashby Role", location="Berlin",
             description="Office role.",
-            source_adapter="ashby", keyword_score=10, posted_at=old,
+            source_adapter="ashby", score=10, score_method="keyword", posted_at=old,
         ).id
         ai = repos.jobs.create(
             canonical_url="t-ai", title="AI Scored", location="Berlin",
             description="Office role.",
-            source_adapter="lever", llm_score=10, llm_score_method="llm", posted_at=recent,
+            source_adapter="lever", score=10, score_method="llm", posted_at=recent,
         ).id
         paid = repos.jobs.create(
             canonical_url="t-paid", title="Paid Role", location="Berlin",
             description="Office role.",
-            source_adapter="lever", keyword_score=10, salary="$150k - $180k", posted_at=old,
+            source_adapter="lever", score=10, score_method="keyword", salary="$150k - $180k",
+            posted_at=old,
         ).id
         low = repos.jobs.create(
             canonical_url="t-low", title="Low Role", location="Berlin",
             description="Office role.",
-            source_adapter="lever", keyword_score=10, salary="$30k - $40k", posted_at=old,
+            source_adapter="lever", score=10, score_method="keyword", salary="$30k - $40k",
+            posted_at=old,
         ).id
 
     def ids(query: str) -> tuple[set[str], int]:
@@ -377,7 +379,8 @@ def test_board_recency_sort_runs_before_pagination(
     with _db(app).repos() as repos:
         _filler(repos)
         newest = repos.jobs.create(
-            canonical_url="t-new", title="Newest", source_adapter="lever", keyword_score=1,
+            canonical_url="t-new", title="Newest", source_adapter="lever", score=1,
+            score_method="keyword",
             posted_at=now_utc().isoformat(),
         ).id
     body = client.get("/api/board?sort=recency", headers=AUTH).json()

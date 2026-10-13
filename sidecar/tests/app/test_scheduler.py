@@ -156,7 +156,8 @@ def test_plan_score_new_reaches_past_the_newest_1000_active_jobs(
         # Every job EXCEPT the oldest `unscored_count` already has an AI score.
         for i, row in enumerate(rows):
             if i >= unscored_count:
-                row["llm_score"] = 80
+                row["score"] = 80
+                row["score_method"] = "llm"
         repos.session.execute(insert(Job), rows)
 
     planned = plan_score_new(db)

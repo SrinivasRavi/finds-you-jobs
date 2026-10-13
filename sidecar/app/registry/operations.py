@@ -288,10 +288,12 @@ def _persist_score(
     feed_priority_stats: bool,
     method: str | None = None,
     factors: list[dict[str, Any]] | None = None,
+    profile_version: int | None = None,
 ) -> None:
     """Write one scorer's rating onto the job; optionally feed the running
     priority distribution (FR-TR-09) exactly once per *new* rating of that
-    scorer — a recompute must not double count."""
+    scorer — a recompute must not double count. A Rescore (`rescore` in the
+    snapshot) may replace a real score with a Keyword one."""
     if ctx.db is None:
         return
     from ..priority import STATS_KEY, welford_update
@@ -305,6 +307,8 @@ def _persist_score(
             breakdown_md=breakdown_md,
             method=method,
             factors=factors,
+            profile_version=profile_version,
+            rescore=bool(ctx.input_snapshot.get("rescore")),
         )
         if feed_priority_stats and is_new_score:
             prefs = repos.preferences.get_or_create()
@@ -321,6 +325,7 @@ def _ensure_keyword_floor(
     job_id: str | None,
     master_md: str,
     job_text: str,
+    profile_version: int | None = None,
 ) -> None:
     """Guarantee this job carries a keyword rating — idempotent: a no-op if the
     floor is already there (the usual case, since the post-scan and boot floor
@@ -335,7 +340,7 @@ def _ensure_keyword_floor(
         return
     with ctx.db.repos() as repos:
         job = repos.jobs.get(job_id)
-        if job is None or job.keyword_score is not None:
+        if job is None or job.score is not None:
             return
         title, location = job.title, job.location
         wanted = _wanted_locations(repos)
@@ -353,6 +358,7 @@ def _ensure_keyword_floor(
             method="keyword",
             factors=_factor_rows(det),
             feed_priority_stats=False,
+            profile_version=profile_version,
         )
     except Exception:
         import logging
@@ -464,6 +470,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 scorer_impl=SCORER_IMPL_DETERMINISTIC,
                 method="keyword",
                 factors=_factor_rows(det),
+                profile_version=profile_version,
                 # In keyword mode these ARE the displayed scores — they drive
                 # the priority distribution. A too-thin-to-score 0 is excluded:
                 # it's a missing-data marker, not a fit measurement, and feeding
@@ -510,6 +517,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 feed_priority_stats=True,
                 method="jev",
                 factors=_factor_rows(jev),
+                profile_version=profile_version,
             )
         return OperationOutcome(
             result_ref=_score_result_ref(jev.score, job_id, "jev", list(jev.reasons)),
@@ -536,7 +544,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         # The keyword floor is the fallback; guarantee it exists (idempotent)
         # then re-raise so the op stays failed.
         _ensure_keyword_floor(
-            ctx, job_id=job_id, master_md=master_md, job_text=job_text
+            ctx, job_id=job_id, master_md=master_md, job_text=job_text,
+            profile_version=profile_version,
         )
         # Spend an attempt only when the call reached the provider. A
         # `ProviderCircuitOpen` rejection means the runner refused to dispatch, so the job
@@ -560,6 +569,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             feed_priority_stats=True,
             method="llm",
             factors=_factor_rows(result),
+            profile_version=profile_version,
         )
     return llm_outcome(
         _score_result_ref(result.score, job_id, "llm", list(result.reasons)),
@@ -591,8 +601,8 @@ def _score_result_ref(
 def _keyword_sweep(db: Database, *, refresh: bool) -> int:
     """The 1 keyword sweep over the active board (about 0.5 ms per job).
     `refresh=False` is the floor: only unrated jobs get a keyword rating.
-    `refresh=True` recomputes every job against the new resume; the AI score lives in
-    its own column, so it's never buried."""
+    `refresh=True` recomputes every Keyword score against the new resume; `set_score`
+    never lets it replace a real score."""
     from sidecar.modules.scorer.deterministic import score_deterministic
 
     from .persistence import SCORER_IMPL_DETERMINISTIC, compose_job_text
@@ -601,7 +611,7 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
         profile = repos.profile.get_current()
         if profile is None:
             return 0
-        master_md = profile.resume_markdown
+        master_md, version = profile.resume_markdown, profile.version
         jobs = repos.jobs.list(feed_state="active")
         if not refresh:
             unscored = repos.jobs.ids_without_any_score([j.id for j in jobs])
@@ -624,6 +634,7 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
                     breakdown_md=det.breakdown_md,
                     method="keyword",
                     factors=_factor_rows(det),
+                    profile_version=version,
                 )
             done += 1
         except Exception:  # noqa: BLE001 — one bad job never aborts the sweep

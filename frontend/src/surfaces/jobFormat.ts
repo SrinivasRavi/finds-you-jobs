@@ -23,7 +23,7 @@ export function scoreTier(score: number): { text: string; ring: string; wash: st
   return { text: "text-bad", ring: "#dc2626", wash: "bg-bad-wash" };
 }
 
-/** The 4 scoring methods, in the vocabulary `Job.llm_score_method` stores.
+/** The 4 scoring methods, in the vocabulary `Job.score_method` stores.
  *  Theme tokens, not hexes, so both themes are right for free. */
 export const SCORE_METHODS = ["llm", "jev", "local", "keyword"] as const;
 export type ScoreMethod = (typeof SCORE_METHODS)[number];

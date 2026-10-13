@@ -580,9 +580,8 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
                 # source's average down for having no description.
                 if len(job.description or "") < MIN_JD_CHARS:
                     continue
-                # The rating the board would show: AI if it has one, else the
-                # keyword floor.
-                score = job.llm_score if job.llm_score is not None else job.keyword_score
+                # The rating the board shows.
+                score = job.score
                 if score is not None:
                     b["scored"] += 1
                     b["score_sum"] += float(score)

@@ -55,10 +55,13 @@ class JobScoreDTO(BaseModel):
     # method's. The card says so, because a 72 under "skills only" and a 72 as
     # the model scored it are not the same claim.
     weighted: bool = False
+    # Made against a resume older than its last major edit: the card shows a
+    # rescore-due mark; nothing rescores on its own (maintainer, 2026-10-13).
+    stale: bool = False
 
 
 class ScoreFactorDTO(BaseModel):
-    """One axis of one job's score (`JobScoreFactor`). `value` is 0 to 1, and
+    """One axis of one job's score (an entry of `Job.score_factors`). `value` is 0 to 1, and
     `kind` says what it means: a `graded` position on a stated rubric, or a
     `probability` that the factor holds. The bar chart draws the 2 differently
     because a user weight may multiply the first and must never multiply the
@@ -1232,28 +1235,22 @@ class CostTotalsDTO(BaseModel):
     by_kind: dict[str, float]
 
 
-def job_score_dto(job: Job) -> JobScoreDTO | None:
-    """The rating a job displays: the AI one, else the keyword floor, else nothing,
-    with no ranking to get backwards (S-C34). `scorer_impl` keeps its old values for
-    the frontend's grey styling. `method` defaults to `llm` only for rows written
-    before the column (migration `b4d8e2a7c531`)."""
-    if job.llm_score is not None:
-        return JobScoreDTO(
-            score_0_100=job.llm_score,
-            reasons=list(job.llm_reasons),
-            breakdown_md=job.llm_breakdown_md,
-            scorer_impl="scorer-llm",
-            method=job.llm_score_method or "llm",
-        )
-    if job.keyword_score is not None:
-        return JobScoreDTO(
-            score_0_100=job.keyword_score,
-            reasons=list(job.keyword_reasons),
-            breakdown_md=job.keyword_breakdown_md,
-            scorer_impl="scorer-deterministic",
-            method="keyword",
-        )
-    return None
+def job_score_dto(job: Job, major_version: int = 0) -> JobScoreDTO | None:
+    """The job's 1 score, or nothing (score-storage.md 4.1). `scorer_impl` keeps its
+    old values for the frontend's grey styling. `stale` when it was made against a
+    resume older than the last major edit; old rows with no version never are."""
+    if job.score is None:
+        return None
+    method = job.score_method or "llm"
+    return JobScoreDTO(
+        score_0_100=job.score,
+        reasons=list(job.score_reasons),
+        breakdown_md=job.score_breakdown_md,
+        scorer_impl="scorer-deterministic" if method == "keyword" else "scorer-llm",
+        method=method,
+        stale=job.scored_profile_version is not None
+        and job.scored_profile_version < major_version,
+    )
 
 
 def derive_score_status(
@@ -1301,19 +1298,20 @@ class WeightLens:
     """The user's axis weights, re-totaling a page of jobs on read (scoring.md 7.4).
     Never stored: an AI score is the model's number, and overwriting it would lose
     "balanced". Uses `weights.user_total`. Build once per request; an empty table
-    is inert and costs 1 lookup."""
+    is inert and costs 1 lookup. Also carries the resume's last major version, so
+    the same per-request read marks a score that predates it (audit A3)."""
 
-    __slots__ = ("_by_job", "_penalty", "_weights")
+    __slots__ = ("_penalty", "_weights", "major_version")
 
     def __init__(
         self,
         weights: dict[str, float],
         location_penalty: int,
-        factors_by_job: dict[str, list[Any]],
+        major_version: int = 0,
     ) -> None:
         self._weights = weights
         self._penalty = location_penalty
-        self._by_job = factors_by_job
+        self.major_version = major_version
 
     @property
     def active(self) -> bool:
@@ -1334,12 +1332,15 @@ class WeightLens:
 
         # No table of the user's own means the method's table with their penalty.
         # AI scoring ships no table, so its own number stands.
-        rows = [r for r in self._by_job.get(job.id, ()) if r.method == method]
-        weights = self._weights or method_weights(method, {r.factor for r in rows})
+        rows = (job.score_factors or []) if job.score_method == method else []
+        weights = self._weights or method_weights(method, {r["factor"] for r in rows})
         if not weights or not rows:
             return None
         total = user_total(
-            [Factor(r.factor, r.value, r.kind, r.evidence) for r in rows],
+            [
+                Factor(r["factor"], r["value"], r.get("kind", "graded"), r.get("evidence", ""))
+                for r in rows
+            ],
             weights,
             location_penalty=self._penalty,
         )
@@ -1353,18 +1354,13 @@ class WeightLens:
 
 
 def build_weight_lens(repos: Any, job_ids: list[str]) -> WeightLens:
-    """One lens for a page of jobs: 1 preferences read and 1 indexed factor
-    read, never one per card (the F-H2 lesson). Skips the factor read entirely
-    when the user has set no weights, which is every install by default."""
+    """One lens for a page of jobs: 1 preferences read and 1 profile read, never
+    one per card (the F-H2 lesson). The factors ride on each job row."""
     from ..registry.persistence import scoring_weights
 
     weights, penalty = scoring_weights(repos.preferences.get_or_create())
-    if not job_ids or not WeightLens(weights, penalty, {}).active:
-        return WeightLens(weights, penalty, {})
-    by_job: dict[str, list[Any]] = {}
-    for row in repos.job_score_factors.list_for_jobs(job_ids):
-        by_job.setdefault(row.job_id, []).append(row)
-    return WeightLens(weights, penalty, by_job)
+    profile = repos.profile.get_current()
+    return WeightLens(weights, penalty, profile.major_version if profile is not None else 0)
 
 
 def job_dto(
@@ -1380,8 +1376,12 @@ def job_dto(
     holding an empty table, the stored number is served unchanged."""
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
-    dto = JobDTO.model_validate(job)
-    dto.score = job_score_dto(job)
+    # `jobs.score` is the bare number; the DTO's `score` is the built object below.
+    dto = JobDTO.model_validate(
+        {name: getattr(job, name) for name in JobDTO.model_fields if name != "score"
+         and hasattr(job, name)}
+    )
+    dto.score = job_score_dto(job, lens.major_version if lens is not None else 0)
     if dto.score is not None and lens is not None:
         reweighted = lens.total_for(job, dto.score.method)
         if reweighted is not None:

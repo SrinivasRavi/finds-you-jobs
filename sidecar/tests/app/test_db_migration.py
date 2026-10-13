@@ -33,7 +33,6 @@ _EXPECTED = {
     "linkedin_search_cursors",
     "apply_runs",
     "documents",
-    "job_score_factors",
     "job_duplicates",
 }
 
@@ -214,12 +213,9 @@ def test_url_less_identity_preserves_existing_rows(tmp_path: Path) -> None:
                     "INSERT INTO jobs (id, canonical_url, content_hash, title,"
                     " company, location, description, source_adapter,"
                     " trust_score, trust_flags, ingested_at, feed_state,"
-                    " feed_since, llm_reasons, llm_breakdown_md,"
-                    " keyword_reasons, keyword_breakdown_md,"
-                    " llm_score_attempts) VALUES (:id, NULL, :hash, 'SWE',"
-                    " 'Acme', 'Pune', 'JD', 'paste-text', 100, '[]',"
-                    " '2026-10-07T00:00:00', 'active', '2026-10-07T00:00:00',"
-                    " '[]', '', '[]', '', 0)"
+                    " feed_since, llm_score_attempts) VALUES (:id, NULL, :hash,"
+                    " 'SWE', 'Acme', 'Pune', 'JD', 'paste-text', 100, '[]',"
+                    " '2026-10-07T00:00:00', 'active', '2026-10-07T00:00:00', 0)"
                 ),
                 {"id": f"j{i}", "hash": f"hash-{i}"},
             )
@@ -311,3 +307,65 @@ def test_existing_operations_read_as_started_by_the_app(tmp_path: Path) -> None:
     command.downgrade(cfg, "f7c2d4e9a1b6")
     cols = {c["name"] for c in inspect(engine).get_columns("operations")}
     assert "requested_by" not in cols
+
+
+def test_one_score_per_job_keeps_the_shown_score_and_its_factors(tmp_path: Path) -> None:
+    """b3e9c4a1d7f2 (audit A3): the AI score wins over the keyword floor, a keyword-only
+    job keeps its keyword score, only the shown method's factors move onto the row,
+    and the downgrade rebuilds both column sets."""
+    import json
+
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'score.db'}"
+    cfg = make_alembic_config(url)
+    command.upgrade(cfg, "a1c7e5d2b9f4")
+    engine = create_engine(url)
+    base = (
+        "INSERT INTO jobs (id, canonical_url, title, company, location, description,"
+        " source_adapter, trust_score, trust_flags, ingested_at, feed_state, feed_since,"
+        " llm_score, llm_score_method, llm_reasons, llm_breakdown_md, keyword_score,"
+        " keyword_reasons, keyword_breakdown_md, llm_score_attempts) VALUES (:id, :id,"
+        " 'SWE', 'Acme', 'Pune', 'JD', 'lever', 100, '[]', '2026-10-01T00:00:00',"
+        " 'active', '2026-10-01T00:00:00', :llm, :m, '[\"ai\"]', 'ai md', :kw,"
+        " '[\"kw\"]', 'kw md', 0)"
+    )
+    factor = (
+        "INSERT INTO job_score_factors (id, job_id, method, factor, value, kind, evidence,"
+        " created_at) VALUES (:id, :job, :m, :f, :v, 'graded', '', '2026-10-02 00:00:00')"
+    )
+    with engine.begin() as conn:
+        conn.execute(text(base), {"id": "ai", "llm": 81, "m": "jev", "kw": 40})
+        conn.execute(text(base), {"id": "kw", "llm": None, "m": None, "kw": 33})
+        conn.execute(text(base), {"id": "none", "llm": None, "m": None, "kw": None})
+        for i, (job, m, f, v) in enumerate([
+            ("ai", "jev", "core_stack", 0.9), ("ai", "keyword", "core_stack", 0.2),
+            ("kw", "keyword", "years", 0.5),
+        ]):
+            conn.execute(text(factor), {"id": f"f{i}", "job": job, "m": m, "f": f, "v": v})
+    command.upgrade(cfg, "b3e9c4a1d7f2")
+    with engine.connect() as conn:
+        rows = {
+            r[0]: r[1:]
+            for r in conn.execute(text(
+                "SELECT id, score, score_method, score_reasons, score_factors, scored_at"
+                " FROM jobs"
+            ))
+        }
+    assert rows["ai"][:2] == (81, "jev")
+    assert json.loads(rows["ai"][2]) == ["ai"]
+    assert [f["value"] for f in json.loads(rows["ai"][3])] == [0.9]
+    assert rows["ai"][4] is not None
+    assert rows["kw"][:2] == (33, "keyword")
+    assert rows["none"][:2] == (None, None)
+    assert "job_score_factors" not in inspect(engine).get_table_names()
+    command.downgrade(cfg, "a1c7e5d2b9f4")
+    with engine.connect() as conn:
+        back = conn.execute(text(
+            "SELECT llm_score, llm_score_method, keyword_score FROM jobs WHERE id = 'ai'"
+        )).one()
+        assert tuple(back) == (81, "jev", None)
+        assert conn.execute(text("SELECT count(*) FROM job_score_factors")).scalar() == 2

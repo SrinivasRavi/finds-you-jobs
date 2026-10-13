@@ -34,7 +34,6 @@ from .models import (
     EngineSettings,
     Job,
     JobDuplicate,
-    JobScoreFactor,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
@@ -136,6 +135,11 @@ class _SingleRowRepo[M]:
         for key, value in fields.items():
             setattr(row, key, value)
         return row
+
+
+# No score, or only the Keyword floor: what the method in Settings may score on its
+# own (score-storage.md 4.3). `score_method` is NULL exactly when `score` is.
+_NO_REAL_SCORE = or_(Job.score_method.is_(None), Job.score_method == "keyword")
 
 
 class OperationsRepo:
@@ -545,8 +549,9 @@ class JobsRepo:
     def list_active_without_llm_score(
         self, *, limit: int | None = None, max_attempts: int | None = None
     ) -> list[Job]:
-        """Active jobs that can still earn an AI score, newest first; the exclusion is in
-        SQL, so every job is eventually reached. A keyword floor doesn't count. Jobs
+        """Active jobs with no score or only a Keyword one, newest first: the only jobs the
+        method in Settings scores on its own (score-storage.md 4.3). The exclusion is in
+        SQL, so every job is eventually reached. Jobs
         under `MIN_JD_CHARS` are excluded (they can never earn one) until a scan fills
         the description (S-A6). `max_attempts` drops jobs that failed against a live
         provider; outages never count. `limit=None` is uncapped."""
@@ -554,7 +559,7 @@ class JobsRepo:
 
         stmt = select(Job).where(
             Job.feed_state == "active",
-            Job.llm_score.is_(None),
+            _NO_REAL_SCORE,
             func.length(func.coalesce(Job.description, "")) >= MIN_JD_CHARS,
         )
         if max_attempts is not None:
@@ -651,7 +656,7 @@ class JobsRepo:
         is NOT counted: it comes back on the next tick on its own."""
         stmt = select(func.count()).select_from(Job).where(
             Job.feed_state == "active",
-            Job.llm_score.is_(None),
+            _NO_REAL_SCORE,
             Job.llm_score_attempts >= max_attempts,
         )
         return int(self._s.scalar(stmt) or 0)
@@ -808,23 +813,35 @@ class JobsRepo:
         breakdown_md: str,
         method: str | None = None,
         factors: Sequence[Mapping[str, Any]] | None = None,
+        profile_version: int | None = None,
+        rescore: bool = False,
     ) -> bool:
-        """Write 1 scorer's rating onto the job; True when it's that scorer's first, so
-        the priority stats don't double count. `method` and `factors` are written here,
-        the 1 place scores are written, so they always land together."""
+        """Replace the job's 1 score; True when the method changed, so the priority
+        stats count a method's number once. Every part lands together. A Keyword write
+        never replaces a real score unless the user asked (`rescore`); then it returns
+        False and writes nothing (score-storage.md 4.2)."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        prefix = "llm" if scorer_impl == "scorer-llm" else "keyword"
-        method = method or prefix
-        is_new = getattr(job, f"{prefix}_score") is None
-        setattr(job, f"{prefix}_score", score_0_100)
-        setattr(job, f"{prefix}_reasons", list(reasons))
-        setattr(job, f"{prefix}_breakdown_md", breakdown_md)
-        if prefix == "llm":
-            job.llm_score_method = method
-        if factors is not None:
-            JobScoreFactorsRepo(self._s).replace(job_id, method, factors)
+        method = method or ("llm" if scorer_impl == "scorer-llm" else "keyword")
+        if method == "keyword" and job.score_method not in (None, "keyword") and not rescore:
+            return False
+        is_new = job.score_method != method
+        job.score = score_0_100
+        job.score_method = method
+        job.score_reasons = list(reasons)
+        job.score_breakdown_md = breakdown_md
+        job.score_factors = [
+            {
+                "factor": str(f["factor"]),
+                "value": float(f["value"]),
+                "kind": str(f.get("kind") or "graded"),
+                "evidence": str(f.get("evidence") or ""),
+            }
+            for f in factors or []
+        ]
+        job.scored_at = now_utc()
+        job.scored_profile_version = profile_version
         self._s.flush()
         return is_new
 
@@ -833,9 +850,7 @@ class JobsRepo:
         fills so no board row is ever stuck on Pending."""
         if not job_ids:
             return set()
-        stmt = select(Job.id).where(
-            Job.id.in_(job_ids), Job.llm_score.is_(None), Job.keyword_score.is_(None)
-        )
+        stmt = select(Job.id).where(Job.id.in_(job_ids), Job.score.is_(None))
         return set(self._s.scalars(stmt))
 
 
@@ -1131,8 +1146,14 @@ class ProfileRepo:
             # version, so a phantom bump would mark every score stale and
             # trigger a pointless "Re-score N jobs?" prompt (2026-07-23).
             return current
+        from sidecar.modules.profiler.resume_change import is_major_edit
+
+        major = is_major_edit(current.resume_markdown, resume_markdown)
         current.resume_markdown = resume_markdown
         current.version += 1
+        if major:
+            # Scores made before this version show a rescore-due mark (audit A3).
+            current.major_version = current.version
         return current
 
     def set_application_profile(self, profile: dict[str, Any] | None) -> MasterProfile:
@@ -1514,61 +1535,6 @@ class JobDuplicatesRepo:
         return copies, noticed & set(job_ids)
 
 
-class JobScoreFactorsRepo:
-    """Per-axis score detail, 1 row per (job, method, factor). A rescore replaces
-    the set, so an axis a method stops emitting disappears."""
-
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def list_for_job(self, job_id: str, method: str | None = None) -> list[JobScoreFactor]:
-        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id == job_id)
-        if method is not None:
-            stmt = stmt.where(JobScoreFactor.method == method)
-        return list(self._s.scalars(stmt.order_by(JobScoreFactor.factor)))
-
-    def list_for_jobs(self, job_ids: list[str], method: str | None = None) -> list[JobScoreFactor]:
-        """Every factor for a page of jobs in 1 query, so the board never asks
-        per card (the F-H2 lesson)."""
-        if not job_ids:
-            return []
-        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id.in_(job_ids))
-        if method is not None:
-            stmt = stmt.where(JobScoreFactor.method == method)
-        return list(self._s.scalars(stmt))
-
-    def replace(
-        self, job_id: str, method: str, factors: Sequence[Mapping[str, Any]]
-    ) -> list[JobScoreFactor]:
-        """Drop this method's rows for the job and write the given ones."""
-        self._s.execute(
-            delete(JobScoreFactor).where(
-                JobScoreFactor.job_id == job_id, JobScoreFactor.method == method
-            )
-        )
-        rows = [
-            JobScoreFactor(
-                job_id=job_id,
-                method=method,
-                factor=str(f["factor"]),
-                value=float(f["value"]),
-                kind=str(f.get("kind") or "graded"),
-                evidence=str(f.get("evidence") or ""),
-            )
-            for f in factors
-        ]
-        for row in rows:
-            self._s.add(row)
-        self._s.flush()
-        return rows
-
-    def delete_for_job(self, job_id: str) -> int:
-        """Remove every factor row for a job (`foreign_keys=ON` forbids orphans
-        when the job is deleted). Returns the row count."""
-        result = self._s.execute(delete(JobScoreFactor).where(JobScoreFactor.job_id == job_id))
-        return cast("CursorResult[Any]", result).rowcount
-
-
 class OutreachLogsRepo:
     """Per-message audit (database-design section 5)."""
 
@@ -1772,7 +1738,6 @@ class Repos:
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)
         self.referral_candidates = ReferralCandidatesRepo(session)
-        self.job_score_factors = JobScoreFactorsRepo(session)
         self.duplicates = JobDuplicatesRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)

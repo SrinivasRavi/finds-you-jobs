@@ -38,6 +38,9 @@ export interface ScoreResult {
    *  board's inner ring (maintainer, 2026-10-07). Finer than `scorer_impl`,
    *  which reads a Fast score as an AI one. */
   method: string;
+  /** Made against a resume older than its last major edit: the row shows a
+   *  rescore-due mark (score-storage.md, audit A3). */
+  stale: boolean;
 }
 
 /** The per-axis breakdown behind one job's score (`JobFactorsDTO`).

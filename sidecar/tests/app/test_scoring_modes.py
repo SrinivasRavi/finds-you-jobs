@@ -8,6 +8,7 @@ retryable; a successful retry outranks it (display precedence LLM > keyword).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -96,17 +97,23 @@ def _ctx(db: Database, job_id: str, engine: Any | None) -> OperationContext:
 
 
 def _scores(db: Database, job_id: str) -> dict[str, int]:
-    """Every scorer's rating on this job, keyed by impl — the columns read back
+    """The job's 1 score, keyed by the impl that wrote it (score-storage.md 4.1),
     under the enum names the rest of the suite already speaks."""
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
         assert job is not None
-        out = {}
-        if job.llm_score is not None:
-            out[SCORER_IMPL] = job.llm_score
-        if job.keyword_score is not None:
-            out[SCORER_IMPL_DETERMINISTIC] = job.keyword_score
-        return out
+        if job.score is None:
+            return {}
+        impl = SCORER_IMPL_DETERMINISTIC if job.score_method == "keyword" else SCORER_IMPL
+        return {impl: job.score}
+
+
+def _factors(db: Database, job_id: str) -> dict[str, SimpleNamespace]:
+    """The job's factors, by axis, as attribute objects."""
+    with db.repos() as repos:
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        return {f["factor"]: SimpleNamespace(**f) for f in job.score_factors}
 
 
 def _settle_ops(db: Database) -> None:
@@ -145,8 +152,7 @@ def test_keyword_mode_writes_its_factor_rows_and_reads_the_users_locations(
             thresholds={"scoring_mode": "keyword"}, locations=["Bengaluru", "Remote"]
         )
     score_entrypoint(_ctx(db, job_id, engine=None))
-    with db.repos() as repos:
-        rows = {f.factor: f for f in repos.job_score_factors.list_for_job(job_id)}
+    rows = _factors(db, job_id)
     # No level axis: neither the seeded title nor the seeded resume states a rung,
     # and an unassessed axis is absent rather than a middle value.
     assert set(rows) == {"core_stack", "years", "location_preference"}
@@ -169,8 +175,10 @@ def test_a_rescore_replaces_the_factor_rows_rather_than_piling_up(
     _settle_ops(db)
     rescore_all_keyword(db)
     with db.repos() as repos:
-        rows = repos.job_score_factors.list_for_job(job_id)
-    assert len(rows) == len({row.factor for row in rows})
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        rows = job.score_factors
+    assert len(rows) == len({row["factor"] for row in rows})
 
 
 def test_llm_failure_persists_keyword_fallback_and_still_fails(
@@ -185,11 +193,9 @@ def test_llm_failure_persists_keyword_fallback_and_still_fails(
         score_entrypoint(_ctx(db, job_id, engine=_DeadEngine()))
     scores = _scores(db, job_id)
     assert SCORER_IMPL_DETERMINISTIC in scores and SCORER_IMPL not in scores
-    # Retry succeeds → the LLM score lands beside the fallback (display
-    # precedence LLM > keyword is the API's job, asserted below).
+    # Retry succeeds → the AI score replaces the keyword floor (1 score per job).
     score_entrypoint(_ctx(db, job_id, engine=_OkEngine()))
-    scores = _scores(db, job_id)
-    assert scores[SCORER_IMPL] == 77 and SCORER_IMPL_DETERMINISTIC in scores
+    assert _scores(db, job_id) == {SCORER_IMPL: 77}
 
 
 def test_keyword_mode_plans_no_llm_the_floor_scores(migrated_db: Database) -> None:
@@ -263,16 +269,16 @@ def test_ai_score_survives_a_resume_edit_and_its_keyword_sweep(
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
         assert job is not None
-        ai_score = job.llm_score
+        ai_score = job.score
         assert ai_score == 77
         assert dto_mod.job_score_dto(job).scorer_impl == SCORER_IMPL  # type: ignore[union-attr]
         repos.profile.upsert("# Test Candidate\n\nBackend engineer. Now with Go.")
-    # The sweep writes a keyword rating into its own column. The AI one shows.
+    # The sweep never replaces a real score with a Keyword one (score-storage.md 4.2).
     rescore_all_keyword(db)
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
         assert job is not None
-        assert job.keyword_score is not None
+        assert job.score_method == "llm"
         shown = dto_mod.job_score_dto(job)
         assert shown is not None
         assert shown.scorer_impl == SCORER_IMPL
@@ -315,7 +321,7 @@ def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) 
         with db.repos() as repos:
             job = repos.jobs.get(job_id)
             assert job is not None
-            assert job.llm_score is None and job.keyword_score is None
+            assert job.score is None
 
         # Switch to keyword mode, edit again → the board is re-scored for free.
         client.post(
@@ -327,7 +333,7 @@ def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) 
             job = repos.jobs.get(job_id)
             assert job is not None
             assert v_new > v0
-            assert job.keyword_score is not None and job.llm_score is None
+            assert job.score_method == "keyword"
 
         # Back in AI mode, the route that used to re-score the board is gone
         # (405: the path now resolves to GET/PATCH `/api/jobs/{job_id}`).
@@ -677,9 +683,9 @@ def test_an_ai_score_carries_its_method_and_its_factors(migrated_db: Database) -
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
         assert job is not None
-        assert job.llm_score == 77
-        assert job.llm_score_method == "llm"
-        rows = {f.factor: f for f in repos.job_score_factors.list_for_job(job_id, "llm")}
+        assert job.score == 77
+        assert job.score_method == "llm"
+    rows = _factors(db, job_id)
     assert set(rows) == {"core_stack", "years", "location_preference"}
     assert rows["core_stack"].value == 0.9
     assert rows["core_stack"].evidence == "Java and Python evidenced"
@@ -742,9 +748,9 @@ def test_jev_mode_scores_through_the_decisions_client(tmp_path) -> None:
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
         assert job is not None
-        assert job.llm_score_method == "jev"
-        assert job.llm_score is not None and 0 <= job.llm_score <= 100
-        rows = {f.factor for f in repos.job_score_factors.list_for_job(job_id, "jev")}
+        assert job.score_method == "jev"
+        assert job.score is not None and 0 <= job.score <= 100
+        rows = {f["factor"] for f in job.score_factors}
     assert rows == {
         "hard_requirements",
         "core_stack",
@@ -807,8 +813,7 @@ def test_picking_the_local_method_scores_by_keyword_and_says_so(migrated_db: Dat
     assert outcome.result_ref["fell_back_from"] == "local"
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
-        assert job is not None and job.keyword_score is not None
-        assert job.llm_score is None
+        assert job is not None and job.score_method == "keyword"
 
 
 # --- which method ran, on the wire -------------------------------------------
@@ -860,16 +865,15 @@ def test_the_dto_names_the_method_that_actually_ran(migrated_db: Database) -> No
         assert job is not None
         shown = dto_mod.job_score_dto(job)
         assert shown is not None
-        # The keyword rating is still in its own column; the AI one displays,
-        # and it says AI.
-        assert job.keyword_score is not None
+        # The AI score replaced the keyword floor, and it says AI.
+        assert job.score_method == "llm"
         assert shown.method == "llm"
 
 
 def test_a_fast_score_says_jev_and_not_llm(
     migrated_db: Database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The defect this pins: Fast scoring writes `jobs.llm_score`, so every
+    """The defect this pins: Fast scoring once wrote `jobs.llm_score`, so every
     AI-or-not test in the app reads it as an AI score. Only `method` can tell
     the user they are looking at a $0.0002 number rather than a $0.24 one."""
     from sidecar.app.api import dto as dto_mod
@@ -887,7 +891,7 @@ def test_a_fast_score_says_jev_and_not_llm(
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
         assert job is not None
-        assert job.llm_score is not None
+        assert job.score is not None
         shown = dto_mod.job_score_dto(job)
         assert shown is not None
         assert shown.method == "jev"
@@ -965,8 +969,8 @@ def test_explain_runs_the_ai_path_even_while_the_board_is_on_keyword(
         job = repos.jobs.get(job_id)
         assert job is not None
         # It ADOPTS the score it paid for, and the row says which method ran.
-        assert job.llm_score == 77
-        assert job.llm_score_method == "llm"
+        assert job.score == 77
+        assert job.score_method == "llm"
 
 
 def test_explain_refuses_a_posting_with_too_little_to_explain(tmp_path) -> None:

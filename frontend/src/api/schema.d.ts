@@ -550,8 +550,8 @@ export interface paths {
          * Get Job Factors
          * @description The bars behind one job's number (scoring.md 7.3).
          *
-         *     Read-only and free: every method stores its axes when it scores, so this
-         *     costs a single indexed read and never a model call.
+         *     Read-only and free: every method stores its axes on the job row when it
+         *     scores, so this never calls a model.
          */
         get: operations["get_job_factors_api_jobs__job_id__factors_get"];
         put?: never;
@@ -599,6 +599,28 @@ export interface paths {
          *     4 choice 1, pending). It can run again; both spends are in the ledger.
          */
         post: operations["explain_job_api_jobs__job_id__explain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/rescore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rescore Job
+         * @description Rescore on a board row (score-storage.md 4.4): 1 `score` op with the method in
+         *     Settings, as the user's request. It always runs, whatever score the job has, and
+         *     its result replaces the stored one, Keyword included.
+         */
+        post: operations["rescore_job_api_jobs__job_id__rescore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3003,6 +3025,11 @@ export interface components {
              * @default false
              */
             weighted: boolean;
+            /**
+             * Stale
+             * @default false
+             */
+            stale: boolean;
         };
         /**
          * JobUpdate
@@ -4935,6 +4962,37 @@ export interface operations {
         };
     };
     explain_job_api_jobs__job_id__explain_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rescore_job_api_jobs__job_id__rescore_post: {
         parameters: {
             query?: never;
             header?: never;

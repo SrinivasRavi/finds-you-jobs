@@ -50,8 +50,8 @@ def _seed(db: Database, *, method: str = "jev", score: int = 50) -> str:
             reasons=["because"],
             breakdown_md="| a | b |",
             method=method,
+            factors=FACTORS,
         )
-        repos.job_score_factors.replace(job_id, method, FACTORS)
     return job_id
 
 
@@ -121,7 +121,7 @@ def test_balanced_returns_to_the_model_s_own_number(tmp_path) -> None:
         with db.repos() as repos:
             job = repos.jobs.get(job_id)
             assert job is not None
-            assert job.llm_score == 50
+            assert job.score == 50
 
 
 def test_custom_slider_values_outrank_the_preset(tmp_path) -> None:
@@ -191,15 +191,13 @@ def _seed_with_location_miss(db: Database, *, method: str, score: int) -> str:
     """The FACTORS job, plus a location the user did not ask for."""
     job_id = _seed(db, method=method, score=score)
     with db.repos() as repos:
-        repos.job_score_factors.replace(
-            job_id,
-            method,
-            [
-                *FACTORS,
-                {"factor": "location_preference", "value": 0.0, "kind": "probability",
-                 "evidence": ""},
-            ],
-        )
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        job.score_factors = [
+            *FACTORS,
+            {"factor": "location_preference", "value": 0.0, "kind": "probability",
+             "evidence": ""},
+        ]
     return job_id
 
 
@@ -305,12 +303,11 @@ def test_the_board_ranks_by_the_number_it_shows_across_pages(tmp_path) -> None:
             repos.jobs.set_score(
                 strong, scorer_impl="scorer-llm", score_0_100=50, reasons=[],
                 breakdown_md="", method="jev",
-            )
-            repos.job_score_factors.replace(
-                strong, "jev",
-                [{"factor": "core_stack", "value": 1.0, "kind": "graded", "evidence": ""},
-                 {"factor": "hard_requirements", "value": 1.0, "kind": "graded",
-                  "evidence": ""}],
+                factors=[
+                    {"factor": "core_stack", "value": 1.0, "kind": "graded", "evidence": ""},
+                    {"factor": "hard_requirements", "value": 1.0, "kind": "graded",
+                     "evidence": ""},
+                ],
             )
         client.post(
             "/api/settings", headers=AUTH,

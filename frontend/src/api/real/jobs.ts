@@ -314,6 +314,11 @@ export class JobsApi extends Transport {
     return this.json("POST", `/api/jobs/${id}/explain`, {}) as Promise<{ id: string }>;
   }
 
+  /** Rescore on a row: the method in Settings, always runs, replaces the score. */
+  async rescoreJob(id: string): Promise<{ id: string }> {
+    return this.json("POST", `/api/jobs/${id}/rescore`, {}) as Promise<{ id: string }>;
+  }
+
   /** The bars behind a job's number. Read-only and free — every method stores
    *  its axes when it scores, so nothing here costs a model call. */
   async getJobFactors(id: string): Promise<JobFactors> {

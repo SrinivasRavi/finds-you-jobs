@@ -85,6 +85,10 @@ const jobBoard = {
     olderListingTitle:
       "On your board longer than your feed-aging window (14 days by default — Settings › Privacy & Data). Greyed listings are removed from the feed about a month later; Save the job or use Restore listing to keep it.",
     keywordScoreTitle: "Keywords scored (free, on-device) — grey, not an AI score",
+    rescore: "Rescore",
+    rescoreTitle: "Score this job again with the method in Settings › Scoring.",
+    rescoring: "Rescoring…",
+    staleTitle: "Scored before a major edit to your resume. Rescore to update it.",
     unscorableTitle:
       "No job description was captured for this listing, so it can't be AI-scored. The grey 0 means missing data, not a bad match.",
   },

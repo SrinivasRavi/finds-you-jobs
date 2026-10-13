@@ -178,7 +178,7 @@ def test_a_score_test_run_never_touches_the_job_s_real_score(tmp_path) -> None:
             assert "Backend Engineer" in op.input_snapshot["job"]
             job = repos.jobs.get(job_id)
             assert job is not None
-            assert job.llm_score == 42
+            assert job.score == 42
 
 
 def test_a_pasted_description_works_with_nothing_on_the_board(tmp_path) -> None:

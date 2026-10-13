@@ -177,6 +177,7 @@ export function toJob(d: JobDTO, saved: boolean): Job {
           scorer_impl: d.score.scorer_impl ?? "scorer-llm",
           weighted: d.score.weighted ?? false,
           method: d.score.method ?? "llm",
+          stale: d.score.stale ?? false,
         }
       : null,
     score_status: (d.scoreStatus as Job["score_status"] | undefined) ?? (d.score ? "scored" : "pending"),

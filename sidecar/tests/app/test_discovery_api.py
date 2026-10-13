@@ -497,12 +497,12 @@ def test_discovery_analytics_all_unscorable_source_reports_no_score(
         repos.jobs.create(
             canonical_url="https://boards.greenhouse.io/acme/jobs/1",
             title="Backend Engineer", company="Acme", location="Remote",
-            description="", source_adapter="greenhouse", keyword_score=0,
+            description="", source_adapter="greenhouse", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://boards.greenhouse.io/acme/jobs/2",
             title="Frontend Engineer", company="Acme", location="Remote",
-            description="", source_adapter="greenhouse", keyword_score=0,
+            description="", source_adapter="greenhouse", score=0, score_method="keyword",
         )
 
     data = client.get("/api/discovery/analytics", headers=AUTH).json()
@@ -523,17 +523,17 @@ def test_discovery_analytics_mixed_source_averages_only_scorable_jobs(
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/1",
             title="No description", company="Acme", location="Remote",
-            description="", source_adapter="lever", keyword_score=0,
+            description="", source_adapter="lever", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/2",
             title="AI scored", company="Acme", location="Remote",
-            description=_LONG_JD, source_adapter="lever", llm_score=80,
+            description=_LONG_JD, source_adapter="lever", score=80, score_method="llm",
         )
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/3",
             title="Keyword scored", company="Acme", location="Remote",
-            description=_LONG_JD, source_adapter="lever", keyword_score=60,
+            description=_LONG_JD, source_adapter="lever", score=60, score_method="keyword",
         )
 
     data = client.get("/api/discovery/analytics", headers=AUTH).json()
@@ -555,12 +555,12 @@ def test_discovery_analytics_row_counts_ignore_the_score_exclusion(
         saved_job = repos.jobs.create(
             canonical_url="https://apply.workable.com/acme/j/1",
             title="No description, saved", company="Acme", location="Remote",
-            description="", source_adapter="workable", keyword_score=0,
+            description="", source_adapter="workable", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://apply.workable.com/acme/j/2",
             title="No description, not saved", company="Acme", location="Remote",
-            description="", source_adapter="workable", keyword_score=0,
+            description="", source_adapter="workable", score=0, score_method="keyword",
         )
         repos.applications.create(saved_job.id)
         repos.operations.create("scan", {})
