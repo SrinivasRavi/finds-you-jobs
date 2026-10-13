@@ -165,7 +165,9 @@ class ApplierWindow:
     async def _launch(self) -> Any:
         pw = await self.playwright()
         # A fresh profile per window: nothing of one session outlives it
-        # (window.md section 4.3).
+        # (window.md section 4.3), including a window the user quit.
+        if self._profile is not None:
+            shutil.rmtree(self._profile, ignore_errors=True)
         self._profile = tempfile.mkdtemp(prefix="fyj-applier-")
         kwargs: dict[str, Any] = {"headless": self.headless}
         if not self.headless:
@@ -200,8 +202,13 @@ class ApplierWindow:
 
     async def _close_if_idle(self) -> None:
         self._close_timer = None
-        if not self._tabs:
-            await self._close_window()
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        # Under the tab lock: a run starting mid-close would launch on the Playwright
+        # this close is about to stop.
+        async with self._lock:
+            if not self._tabs:
+                await self._close_window()
 
     async def _close_window(self) -> None:
         context, self._context = self._context, None
