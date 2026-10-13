@@ -146,6 +146,7 @@ class Job(Base):
     # The 2 fit ratings as columns (d2f7a91b8c46); `<x>_score IS NULL` means that
     # scorer hasn't run. The board shows `llm_score ?? keyword_score`, a rule with no
     # ranking to get wrong (S-C34). Reasons and breakdown_md are display-only.
+    # The 1-score redesign: docs/internal/score-storage.md (audit A3).
     llm_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     llm_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     llm_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
