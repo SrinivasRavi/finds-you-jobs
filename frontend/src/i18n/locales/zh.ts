@@ -254,6 +254,7 @@ const zh: DeepPartial<Messages> = {
     detail: {
       pickJob: "选择一个职位查看详情。",
       workStyleNA: "工作方式：暂无",
+      asPosted: "原文：{{text}}",
       salaryNA: "薪资：暂无",
       sourcePillTitle: "点击将列表筛选为该来源",
       posted: "发布于：{{date}}",

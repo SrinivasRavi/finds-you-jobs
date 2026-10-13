@@ -258,6 +258,7 @@ const fr: DeepPartial<Messages> = {
     detail: {
       pickJob: "Sélectionnez une offre pour voir les détails.",
       workStyleNA: "Mode de travail : N/A",
+      asPosted: "Tel que publié : {{text}}",
       salaryNA: "Salaire : N/A",
       sourcePillTitle: "Cliquez pour filtrer la liste sur cette source",
       posted: "Publiée : {{date}}",

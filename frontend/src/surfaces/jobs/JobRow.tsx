@@ -10,8 +10,9 @@ import {
   scoreRingColor,
   scoreTier,
   sourceClasses,
+  placeLine,
+  placeTitle,
   timeAgo,
-  workLabel,
 } from "../jobFormat";
 
 /** 2 concentric rings: the outer arc is the score, red through green, drawn as
@@ -162,12 +163,9 @@ export const JobRow = memo(function JobRow({
             </span>
           ) : null}
         </div>
-        {/* US-JB-01 row: company · location · work-style */}
-        <div className="truncate text-[11.5px] text-ink-2">
-          {highlight(
-            [job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · "),
-            q,
-          )}
+        {/* US-JB-01 row: company · place (work style), as place-picker.md 8.3 prints it */}
+        <div className="truncate text-[11.5px] text-ink-2" title={placeTitle(job)}>
+          {highlight([job.company, placeLine(job)].filter(Boolean).join(" · "), q)}
         </div>
         {/* salary · time-ago */}
         <div className="text-[11.5px] text-ink-3">

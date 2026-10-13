@@ -258,6 +258,7 @@ const nl: DeepPartial<Messages> = {
     detail: {
       pickJob: "Kies een vacature om details te zien.",
       workStyleNA: "Werkvorm: n.v.t.",
+      asPosted: "Zoals geplaatst: {{text}}",
       salaryNA: "Salaris: n.v.t.",
       sourcePillTitle: "Klik om de lijst op deze bron te filteren",
       posted: "Geplaatst: {{date}}",

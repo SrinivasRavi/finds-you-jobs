@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .gazetteer import Gazetteer, fold, gazetteer
 from .regions import METROS, REGIONS
+from .resolve import resolve_location
 
 LIMIT = 8
 # A suggestion ranks by population: a city's own, and for a division or a
@@ -84,6 +86,18 @@ def place_label(g: Gazetteer, place: Any) -> str:
     if place.admin1_key:
         return ", ".join(p for p in (g.admin1_name.get(place.admin1_key, ""), country) if p)
     return country
+
+
+@lru_cache(maxsize=4096)
+def posting_labels(location: str) -> tuple[str, ...]:
+    """A posting's location as the picker names its places, in order, each once:
+    27 spellings of Bengaluru print 1 label (place-picker.md section 8.3). Empty when
+    the text names no place, so the caller shows it as posted."""
+    g = gazetteer()
+    found = (place_label(g, p) for p in resolve_location(location or "", g).places)
+    labels = list(dict.fromkeys(label for label in found if label))
+    # "India - Bangalore": India contains Bengaluru, so only the city is named.
+    return tuple(a for a in labels if not any(b.endswith(f", {a}") for b in labels))
 
 
 def suggest(query: str, limit: int = LIMIT, g: Gazetteer | None = None) -> list[Suggestion]:

@@ -755,3 +755,26 @@ def test_board_is_new_absent_result_ref_is_graceful(
         job_id = job.id
     rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
     assert rows[job_id]["isNew"] is False
+
+
+def test_the_board_names_a_postings_places_the_way_the_picker_does(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """place-picker.md 8.3: 4 spellings of Bengaluru print 1 label, a containing
+    country is not repeated, and text naming no place keeps an empty list."""
+    app, client = app_client
+    spellings = ["Bangalore", "Bengaluru, IN", "India - Bangalore", "Bangalore - Engineering"]
+    ids: dict[str, str] = {}
+    with _db(app).repos() as repos:
+        for i, where in enumerate([*spellings, "Remote"]):
+            job = repos.jobs.create(
+                canonical_url=f"p{i}", title="A", description=REALISTIC_JD,
+                source_adapter="lever", location=where,
+            )
+            ids[where] = job.id
+
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    for where in spellings:
+        assert rows[ids[where]]["places"] == ["Bengaluru, Karnataka, India"]
+        assert rows[ids[where]]["location"] == where  # the text as posted stays
+    assert rows[ids["Remote"]]["places"] == []

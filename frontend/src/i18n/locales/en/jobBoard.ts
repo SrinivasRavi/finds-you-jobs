@@ -114,6 +114,7 @@ const jobBoard = {
   detail: {
     pickJob: "Pick a job to see details.",
     workStyleNA: "Work style: N/A",
+    asPosted: "As posted: {{text}}",
     salaryNA: "Salary: N/A",
     sourcePillTitle: "Click to filter the list to this source",
     posted: "Posted: {{date}}",

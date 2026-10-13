@@ -18,7 +18,7 @@ import { Markdown } from "../../shell/Markdown";
 import { AddLinkDialog, type AddLinkMode } from "./AddLinkDialog";
 import { FollowCompanyDialog } from "./FollowCompanyDialog";
 import { FollowResult, followLooksRight } from "./FollowResult";
-import { sourceClasses, workLabel } from "../jobFormat";
+import { placeLine, placeTitle, sourceClasses } from "../jobFormat";
 import { MatchRing, RescoreControl, highlight } from "./JobRow";
 
 /** "Explain this one": 1 click, 1 job, 1 AI call, priced on the button (vision.md,
@@ -130,8 +130,8 @@ export function JobDetail({
   }
   const subtitle = [
     job.company,
-    job.location,
-    workLabel(job.work_style) || t("jobBoard.detail.workStyleNA"),
+    placeLine(job),
+    job.work_style ? "" : t("jobBoard.detail.workStyleNA"),
     job.salary || t("jobBoard.detail.salaryNA"),
   ]
     .filter(Boolean)
@@ -158,7 +158,15 @@ export function JobDetail({
               {job.source_adapter}
             </button>
           </div>
-          <div className="mt-1 text-[12.5px] text-ink-2">{subtitle}</div>
+          <div className="mt-1 text-[12.5px] text-ink-2" title={placeTitle(job)}>
+            {subtitle}
+          </div>
+          {/* Nothing the board wrote is hidden (place-picker.md 8.3 item 3). */}
+          {job.places.length > 0 && job.location ? (
+            <div className="text-[11.5px] text-ink-3" data-testid="job-location-as-posted">
+              {t("jobBoard.detail.asPosted", { text: job.location })}
+            </div>
+          ) : null}
           <div className="text-[11.5px] text-ink-3">
             {t("jobBoard.detail.posted", { date: job.posted_at || t("jobBoard.detail.na") })}
           </div>

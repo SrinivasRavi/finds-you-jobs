@@ -87,3 +87,48 @@ test("the picker asks which London, and stores the one picked", async ({ page, r
     "Moonbase Alpha",
   ]);
 });
+
+test("the board prints a posting's place the way the picker names it", async ({
+  page,
+  request,
+}) => {
+  // place-picker.md 8.3: 2 spellings of Bengaluru print 1 label, with the work
+  // style after it; the job pane keeps the text as posted.
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  const jd =
+    "Placeco builds payment rails. You will run Python services and PostgreSQL from our " +
+    "Bengaluru office three days a week in a hybrid setup, with the platform team.";
+  const ids: string[] = [];
+  for (const [n, location] of [[1, "Bangalore - Engineering"], [2, "India - Bangalore"]] as const) {
+    const r = await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: `https://example.com/placeco-${n}`,
+        title: `Placeco Engineer ${n}`,
+        company: "Placeco",
+        location,
+        description: jd,
+        source_adapter: "greenhouse",
+      },
+    });
+    ids.push((await r.json()).id as string);
+  }
+
+  await page.goto("/jobs");
+  await page.getByTestId("board-text-search").fill("placeco");
+  const rows = page.getByTestId("job-row");
+  await expect(rows).toHaveCount(2, { timeout: 15_000 });
+  for (const row of await rows.all()) {
+    await expect(row).toContainText("Placeco · Bengaluru, Karnataka, India (Hybrid)");
+  }
+  await rows.filter({ hasText: "Placeco Engineer 1" }).click();
+  await expect(page.getByTestId("job-location-as-posted")).toHaveText(
+    "As posted: Bangalore - Engineering",
+  );
+  await page.screenshot({ path: `${DIR}/04-board-resolved-places.png`, fullPage: true });
+
+  for (const id of ids) {
+    await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
+  }
+});

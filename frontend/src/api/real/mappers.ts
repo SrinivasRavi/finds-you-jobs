@@ -169,6 +169,7 @@ export function toJob(d: JobDTO, saved: boolean): Job {
     trust_flags: d.trust_flags,
     // work_style is derived app-side in the DTO (US-JB-01 chip / FR-JB-04 filter).
     work_style: (d.workStyle as Job["work_style"] | undefined) ?? "",
+    places: d.places ?? [],
     score: d.score
       ? {
           score_0_100: d.score.score_0_100,
@@ -212,6 +213,7 @@ export function placeholderJob(jobId: string): JobDTO {
     feed_state: "expired",
     ingested_at: new Date().toISOString(),
     workStyle: "",
+    places: [],
     score: null,
     scoreStatus: "pending",
     isNew: false,

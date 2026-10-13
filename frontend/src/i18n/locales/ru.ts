@@ -275,6 +275,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     detail: {
       pickJob: "Выберите вакансию, чтобы увидеть детали.",
       workStyleNA: "Формат работы: н/д",
+      asPosted: "Как в объявлении: {{text}}",
       salaryNA: "Зарплата: н/д",
       sourcePillTitle: "Нажмите, чтобы отфильтровать список по этому источнику",
       posted: "Опубликовано: {{date}}",

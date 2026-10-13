@@ -154,6 +154,9 @@ export interface Job {
   trust_score: number;
   trust_flags: string[];
   work_style: WorkStyle;
+  /** The posting's places as the picker names them, computed by the sidecar from
+   *  `location`; empty when the text names no place (place-picker.md section 8.3). */
+  places: string[];
   /** null while the scorer operation is still in flight. */
   score: ScoreResult | null;
   /** Score lifecycle — resolves a null score to `pending` vs `failed` (US-JB-06). */

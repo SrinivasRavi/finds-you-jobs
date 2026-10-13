@@ -595,7 +595,7 @@ export interface paths {
          * Explain Job
          * @description 1 click, 1 job, 1 AI call (scoring-build.md T13): prose for the jobs a user
          *     opens, at about $0.24 each. An ordinary `score` op, so the ledger, concurrency
-         *     cap, Stop and Retry apply. The job adopts the AI score (scoring-build.md section
+         *     cap, Stop and Retry apply. The job adopts the LLM score (scoring-build.md section
          *     4 choice 1, pending). It can run again; both spends are in the ledger.
          */
         post: operations["explain_job_api_jobs__job_id__explain_post"];
@@ -724,9 +724,10 @@ export interface paths {
         head?: never;
         /**
          * Patch Application Profile
-         * @description Persist manual edits to the application profile (Settings editor).
-         *     The payload replaces the stored record verbatim, stamped `source: edited`
-         *     — deterministic user edits always win over extraction.
+         * @description Save Applicant details (Settings > Applying, or the dialog before the first
+         *     apply). The payload replaces the stored record, stamped `source: edited` and
+         *     `confirmed_at`: saving is the review Apply waits for (audit A5), and a later
+         *     resume read never overwrites what was saved here.
          */
         patch: operations["patch_application_profile_api_profile_application_profile_patch"];
         trace?: never;
@@ -1889,6 +1890,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/geo/countries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Countries
+         * @description Every country in the shipped gazetteer, by name, for Applicant details' work
+         *     authorizations. A plain `def`, so the first load runs off the event loop.
+         */
+        get: operations["list_countries_api_geo_countries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/discovery/analytics": {
         parameters: {
             query?: never;
@@ -2573,6 +2595,16 @@ export interface components {
             };
         };
         /**
+         * CountryDTO
+         * @description 1 country, for the work-authorization editor (audit A5).
+         */
+        CountryDTO: {
+            /** Code */
+            code: string;
+            /** Name */
+            name: string;
+        };
+        /**
          * DiscoverReferralsRequest
          * @description Start or resume referral discovery (US-REF-01 / FR-NW-02). `limit` grows with
          *     "find 10 more". `company_urn` and its details are set only after a
@@ -2798,7 +2830,7 @@ export interface components {
          * ExplainCostDTO
          * @description What "Explain this one" will run and what it has cost this user. `avg_usd` is
          *     measured off their own score ops on that model, never a price list; None means
-         *     they've never paid for an AI score.
+         *     they've never paid for an LLM score.
          */
         ExplainCostDTO: {
             /** Engine */
@@ -2926,6 +2958,8 @@ export interface components {
              * @default
              */
             workStyle: string;
+            /** Places */
+            places?: string[];
             score?: components["schemas"]["JobScoreDTO"] | null;
             /**
              * Scorestatus
@@ -2951,7 +2985,7 @@ export interface components {
         /**
          * JobFactorsDTO
          * @description The per-axis breakdown behind a job's displayed score. `weights` is the table
-         *     the total used; empty for AI scoring, which asks the model for the total, so the
+         *     the total used; empty for LLM scoring, which asks the model for the total, so the
          *     bars show no invented weight.
          */
         JobFactorsDTO: {
@@ -3738,7 +3772,7 @@ export interface components {
         };
         /**
          * ScoreFactorDTO
-         * @description One axis of one job's score (`JobScoreFactor`). `value` is 0 to 1, and
+         * @description One axis of one job's score (an entry of `Job.score_factors`). `value` is 0 to 1, and
          *     `kind` says what it means: a `graded` position on a stated rubric, or a
          *     `probability` that the factor holds. The bar chart draws the 2 differently
          *     because a user weight may multiply the first and must never multiply the
@@ -3757,7 +3791,7 @@ export interface components {
         /**
          * ScoreRetryDTO
          * @description The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
-         *     many active jobs have spent the whole attempt budget with no AI score, so
+         *     many active jobs have spent the whole attempt budget with no LLM score, so
          *     the button hides when pressing it would do nothing; `reset` on the POST is
          *     how many got their budget back. Jobs with no usable description are in
          *     neither number — they never spent an attempt (S-A6).
@@ -7092,6 +7126,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_countries_api_geo_countries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CountryDTO"][];
                 };
             };
         };

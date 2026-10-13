@@ -109,6 +109,9 @@ class JobDTO(BaseModel):
     # guessed). The same keyword logic backs FR-JB-04's work-style filter, so the
     # chip and the filter always agree.
     work_style: str = Field(default="", serialization_alias="workStyle")
+    # The posting's places named the way the picker names them, computed on read
+    # from `location` (place-picker.md section 8.3); empty shows the text as posted.
+    places: list[str] = Field(default_factory=list)
     # The board serves jobs *with* their score (null while unscored).
     score: JobScoreDTO | None = None
     # Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): `scored` (a real 0–100) /
@@ -1381,6 +1384,7 @@ def job_dto(
 
     `lens` re-totals the score under the user's own axis weights. Omitted, or
     holding an empty table, the stored number is served unchanged."""
+    from sidecar.modules.geo.suggest import posting_labels
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
     # `jobs.score` is the bare number; the DTO's `score` is the built object below.
@@ -1404,6 +1408,7 @@ def job_dto(
         attempts=job.llm_score_attempts,
     )
     dto.work_style = derive_work_style(job.location, job.description)
+    dto.places = list(posting_labels(job.location or ""))
     return dto
 
 

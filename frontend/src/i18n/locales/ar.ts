@@ -277,6 +277,7 @@ const ar = {
     detail: {
       pickJob: "اختر وظيفة لعرض التفاصيل.",
       workStyleNA: "أسلوب العمل: غير متوفر",
+      asPosted: "كما نُشر: {{text}}",
       salaryNA: "الراتب: غير متوفر",
       sourcePillTitle: "انقر لترشيح القائمة على هذا المصدر",
       posted: "نُشرت: {{date}}",

@@ -254,6 +254,7 @@ const ja: DeepPartial<Messages> = {
     detail: {
       pickJob: "求人を選択すると詳細が表示されます。",
       workStyleNA: "勤務形態: N/A",
+      asPosted: "掲載時の表記: {{text}}",
       salaryNA: "給与: N/A",
       sourcePillTitle: "クリックでこのソースの求人だけを表示",
       posted: "掲載日: {{date}}",

@@ -15,6 +15,26 @@ export function workLabel(ws: WorkStyle): string {
   return map[ws] ?? "";
 }
 
+/** Where a job is, in 1 format on every surface (place-picker.md section 8.3):
+ *  "Bengaluru, Karnataka, India (Hybrid)", "+N" for more places, "Remote (United
+ *  States, Canada)". Text that names no place is shown as posted. */
+export function placeLine(job: Pick<Job, "location" | "places" | "work_style">): string {
+  const work = workLabel(job.work_style);
+  const places = job.places ?? [];
+  if (places.length === 0) return [job.location, work].filter(Boolean).join(" · ");
+  if (job.work_style === "REMOTE" && places.length <= 3) return `${work} (${places.join(", ")})`;
+  const first = places.length > 1 ? `${places[0]} +${places.length - 1}` : places[0];
+  if (!work) return first;
+  return job.work_style === "REMOTE" ? `${work} (${first})` : `${first} (${work})`;
+}
+
+/** The hover text behind `placeLine`: every place, then the text as posted. */
+export function placeTitle(job: Pick<Job, "location" | "places">): string {
+  const places = job.places ?? [];
+  if (places.length === 0) return job.location;
+  return [...places, i18n.t("jobBoard.detail.asPosted", { text: job.location })].join("\n");
+}
+
 /** Score → color tier (jobs.html matchScoreBadge). */
 export function scoreTier(score: number): { text: string; ring: string; wash: string } {
   if (score >= 85) return { text: "text-good", ring: "#059669", wash: "bg-good-wash" };
