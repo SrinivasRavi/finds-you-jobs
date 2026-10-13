@@ -1328,6 +1328,10 @@ const hi: DeepPartial<Messages> = {
         exportFailed: "एक्सपोर्ट विफल",
         savedTo: "{{path}} में सहेजा",
         exportHint: "पूछता है कि PDF कहाँ सहेजना है",
+        browserMissing: "एक्सपोर्ट के लिए Chromium चाहिए, यह एक बार का डाउनलोड है।",
+        downloadBrowser: "Chromium डाउनलोड करें",
+        downloadingBrowser: "Chromium डाउनलोड हो रहा है… इसमें एक-दो मिनट लगते हैं",
+        browserReady: "Chromium तैयार है। फिर से एक्सपोर्ट करें।",
       },
       doc: {
         master: "मास्टर रेज़्यूमे",

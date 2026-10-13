@@ -1355,6 +1355,10 @@ const pl: DeepPartial<Messages> = {
         exportFailed: "eksport nie powiódł się",
         savedTo: "Zapisano w {{path}}",
         exportHint: "Pyta, gdzie zapisać PDF",
+        browserMissing: "Eksport wymaga Chromium, jednorazowego pobrania.",
+        downloadBrowser: "Pobierz Chromium",
+        downloadingBrowser: "Pobieranie Chromium… to potrwa minutę lub dwie",
+        browserReady: "Chromium jest gotowy. Wyeksportuj ponownie.",
       },
       doc: {
         master: "główne CV",

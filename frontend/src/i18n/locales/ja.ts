@@ -1310,6 +1310,10 @@ const ja: DeepPartial<Messages> = {
         exportFailed: "エクスポート失敗",
         savedTo: "{{path}} に保存しました",
         exportHint: "PDF の保存先を尋ねます",
+        browserMissing: "エクスポートには Chromium が必要です（初回のみのダウンロード）。",
+        downloadBrowser: "Chromium をダウンロード",
+        downloadingBrowser: "Chromium をダウンロード中… 1〜2 分かかります",
+        browserReady: "Chromium の準備ができました。もう一度エクスポートしてください。",
       },
       doc: {
         master: "マスター職務経歴書",

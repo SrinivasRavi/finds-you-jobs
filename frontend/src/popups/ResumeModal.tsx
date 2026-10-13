@@ -7,7 +7,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { eventBus } from "../api/events";
 import { api } from "../api/index";
+import { ApiError } from "../api/real/transport";
 
 import type { Application, ApplicationDocument, PacketState, Profile } from "../api/types";
 import { Icon } from "../shell/icons";
@@ -62,6 +64,30 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
   const [exported, setExported] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // Chromium isn't bundled; a coded refusal offers the download (A16).
+  const [browser, setBrowser] = useState<"missing" | "downloading" | "ready" | null>(null);
+  const [browserError, setBrowserError] = useState<string | null>(null);
+  const downloadBrowser = () => {
+    setBrowser("downloading");
+    setBrowserError(null);
+    const stop = eventBus.subscribe((ev) => {
+      if (ev.type !== "browser_install") return;
+      if (ev.payload.state === "done") {
+        stop();
+        setBrowser("ready");
+        setExportError(null);
+      } else if (ev.payload.state === "failed") {
+        stop();
+        setBrowser("missing");
+        setBrowserError(ev.payload.message ?? t("popups.resume.share.exportFailed"));
+      }
+    });
+    void api.installBrowser().catch((e: unknown) => {
+      stop();
+      setBrowser("missing");
+      setBrowserError(e instanceof Error ? e.message : t("popups.resume.share.exportFailed"));
+    });
+  };
   return (
     <div className="relative">
       <button
@@ -101,10 +127,16 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
               void Promise.resolve(api.exportPdf(getMarkdown(), what))
                 .then((path) => {
                   if (path) setExported(path);
+                  setBrowser(null);
                 })
-                .catch((e: unknown) =>
-                  setExportError(e instanceof Error ? e.message : t("popups.resume.share.exportFailed")),
-                )
+                .catch((e: unknown) => {
+                  if (e instanceof ApiError && e.coded?.code === "browser_missing") {
+                    setBrowser("missing");
+                    setExportError(t("popups.resume.share.browserMissing"));
+                    return;
+                  }
+                  setExportError(e instanceof Error ? e.message : t("popups.resume.share.exportFailed"));
+                })
                 .finally(() => setExporting(false));
             }}
             className="block w-full px-3 py-2 text-left text-[12.5px] text-ink-2 hover:bg-surface-2 disabled:opacity-50"
@@ -114,7 +146,7 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
               : exported
                 ? t("popups.resume.share.exported")
                 : t("popups.resume.share.exportPdf")}
-            <span className="mt-0.5 block break-all text-[10.5px] text-ink-4" data-testid="share-export-result">
+            <span className="mt-0.5 block break-words text-[10.5px] text-ink-4" data-testid="share-export-result">
               {exportError
                 ? exportError
                 : exported
@@ -122,6 +154,24 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
                   : t("popups.resume.share.exportHint")}
             </span>
           </button>
+          {browser ? (
+            <div className="border-t border-border px-3 py-2 text-[11px] text-ink-3" data-testid="share-browser">
+              {browser === "missing" ? (
+                <button
+                  data-testid="share-download-browser"
+                  onClick={downloadBrowser}
+                  className="inline-flex h-[24px] items-center rounded-7 border border-border-2 bg-surface px-2 text-[11.5px] font-medium text-ink-2 hover:bg-surface-3"
+                >
+                  {t("popups.resume.share.downloadBrowser")}
+                </button>
+              ) : browser === "downloading" ? (
+                t("popups.resume.share.downloadingBrowser")
+              ) : (
+                t("popups.resume.share.browserReady")
+              )}
+              {browserError ? <span className="mt-1 block break-words text-ink-4">{browserError}</span> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

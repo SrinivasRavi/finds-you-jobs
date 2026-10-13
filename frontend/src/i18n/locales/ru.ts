@@ -1373,6 +1373,10 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
         exportFailed: "экспорт не удался",
         savedTo: "Сохранено в {{path}}",
         exportHint: "Спрашивает, куда сохранить PDF",
+        browserMissing: "Для экспорта нужен Chromium, его нужно скачать один раз.",
+        downloadBrowser: "Скачать Chromium",
+        downloadingBrowser: "Скачиваем Chromium… это займёт минуту-другую",
+        browserReady: "Chromium готов. Экспортируйте ещё раз.",
       },
       doc: {
         master: "мастер-резюме",

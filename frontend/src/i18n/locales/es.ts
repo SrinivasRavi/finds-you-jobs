@@ -1328,6 +1328,10 @@ const es: DeepPartial<Messages> = {
         exportFailed: "la exportación falló",
         savedTo: "Guardado en {{path}}",
         exportHint: "Pregunta dónde guardar el PDF",
+        browserMissing: "Exportar necesita Chromium, una descarga única.",
+        downloadBrowser: "Descargar Chromium",
+        downloadingBrowser: "Descargando Chromium… tarda uno o dos minutos",
+        browserReady: "Chromium está listo. Exporta de nuevo.",
       },
       doc: {
         master: "currículum maestro",

@@ -1403,6 +1403,10 @@ const ar = {
         exportFailed: "فشل التصدير",
         savedTo: "حُفظ في {{path}}",
         exportHint: "يسأل أين تريد حفظ ملف PDF",
+        browserMissing: "يحتاج التصدير إلى Chromium، وهو تنزيل لمرة واحدة.",
+        downloadBrowser: "نزِّل Chromium",
+        downloadingBrowser: "جارٍ تنزيل Chromium… يستغرق ذلك دقيقة أو دقيقتين",
+        browserReady: "Chromium جاهز. صدِّر مرة أخرى.",
       },
       doc: {
         master: "السيرة الرئيسية",

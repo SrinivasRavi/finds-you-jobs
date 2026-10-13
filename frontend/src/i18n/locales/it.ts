@@ -1328,6 +1328,10 @@ const it: DeepPartial<Messages> = {
         exportFailed: "esportazione non riuscita",
         savedTo: "Salvato in {{path}}",
         exportHint: "Chiede dove salvare il PDF",
+        browserMissing: "L’esportazione richiede Chromium, un download una tantum.",
+        downloadBrowser: "Scarica Chromium",
+        downloadingBrowser: "Download di Chromium in corso… ci vuole un minuto o due",
+        browserReady: "Chromium è pronto. Esporta di nuovo.",
       },
       doc: {
         master: "curriculum principale",

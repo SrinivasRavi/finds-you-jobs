@@ -1328,6 +1328,10 @@ const nl: DeepPartial<Messages> = {
         exportFailed: "exporteren mislukt",
         savedTo: "Opgeslagen in {{path}}",
         exportHint: "Vraagt waar de pdf moet worden opgeslagen",
+        browserMissing: "Exporteren heeft Chromium nodig, een eenmalige download.",
+        downloadBrowser: "Chromium downloaden",
+        downloadingBrowser: "Chromium wordt gedownload… dit duurt een minuut of twee",
+        browserReady: "Chromium is klaar. Exporteer opnieuw.",
       },
       doc: {
         master: "master-cv",

@@ -1310,6 +1310,10 @@ const zh: DeepPartial<Messages> = {
         exportFailed: "导出失败",
         savedTo: "已保存到 {{path}}",
         exportHint: "询问 PDF 保存位置",
+        browserMissing: "导出需要 Chromium，只需下载一次。",
+        downloadBrowser: "下载 Chromium",
+        downloadingBrowser: "正在下载 Chromium… 需要一两分钟",
+        browserReady: "Chromium 已就绪。请再次导出。",
       },
       doc: {
         master: "主简历",

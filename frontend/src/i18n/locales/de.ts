@@ -1331,6 +1331,10 @@ const de: DeepPartial<Messages> = {
         exportFailed: "Export fehlgeschlagen",
         savedTo: "Gespeichert unter {{path}}",
         exportHint: "Fragt, wo das PDF gespeichert werden soll",
+        browserMissing: "Für den Export wird Chromium benötigt, ein einmaliger Download.",
+        downloadBrowser: "Chromium herunterladen",
+        downloadingBrowser: "Chromium wird heruntergeladen… das dauert ein bis zwei Minuten",
+        browserReady: "Chromium ist bereit. Exportiere erneut.",
       },
       doc: {
         master: "Master-Lebenslauf",

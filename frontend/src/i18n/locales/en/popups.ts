@@ -32,6 +32,10 @@ const popups = {
       exportFailed: "export failed",
       savedTo: "Saved to {{path}}",
       exportHint: "Asks where to save the PDF",
+      browserMissing: "Export needs Chromium, a one-time download.",
+      downloadBrowser: "Download Chromium",
+      downloadingBrowser: "Downloading Chromium… this takes a minute or two",
+      browserReady: "Chromium is ready. Export again.",
     },
     doc: {
       master: "master resume",

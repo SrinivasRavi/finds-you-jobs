@@ -10,16 +10,45 @@ automatic, silent download (US-APP-01 stance). Progress is coarse by design
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 
+from ..db.database import resolve_data_dir
 from ..events import make_event
 from ..logging_setup import get_logger
 
 _INSTALL_TIMEOUT_S = 600
 _lock = threading.Lock()
 _running = False
+
+
+# Playwright's own wording when the browser it wants isn't on disk.
+_MISSING_MARKER = "Executable doesn't exist"
+
+
+def is_browser_missing(error_text: str) -> bool:
+    return _MISSING_MARKER in error_text
+
+
+def pin_browsers_path() -> None:
+    """A frozen Playwright looks for browsers inside the bundle, which is signed
+    and can't change, so a bundled app keeps them in its app-data folder (A16).
+    Unfrozen keeps Playwright's shared cache. Call before Playwright starts."""
+    if getattr(sys, "frozen", False):
+        os.environ.setdefault(
+            "PLAYWRIGHT_BROWSERS_PATH", str(resolve_data_dir() / "ms-playwright")
+        )
+
+
+def install_command() -> tuple[list[str], dict[str, str]]:
+    """Playwright's own driver and its env. Never `sys.executable -m playwright`:
+    frozen, that's the sidecar, which ignores the args and boots again (A16)."""
+    from playwright._impl._driver import compute_driver_executable, get_driver_env
+
+    node, cli = compute_driver_executable()
+    return [node, cli, "install", "chromium"], get_driver_env()
 
 
 def _publish_install(publish, state: str, message: str) -> None:  # type: ignore[no-untyped-def]
@@ -32,8 +61,10 @@ def _run_install(publish) -> None:  # type: ignore[no-untyped-def]
     log = get_logger()
     _publish_install(publish, "started", "Downloading Chromium for Playwright…")
     try:
+        argv, env = install_command()
         proc = subprocess.run(  # noqa: S603 — fixed args, no shell
-            [sys.executable, "-m", "playwright", "install", "chromium"],
+            argv,
+            env=env,
             capture_output=True,
             text=True,
             timeout=_INSTALL_TIMEOUT_S,

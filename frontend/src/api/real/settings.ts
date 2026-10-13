@@ -96,6 +96,13 @@ export class SettingsApi extends ApplicationsApi {
     return invoke<string | null>("save_export", { src: d.path, name });
   }
 
+  /** Start the one-time Chromium download (A16). Progress arrives on the SSE
+   *  stream as `browser_install` events; a second call while one runs is a no-op. */
+  async installBrowser(): Promise<string> {
+    const d = (await this.json("POST", "/api/system/install-browser", {})) as { status: string };
+    return d.status;
+  }
+
   /** Commit onboarding / Job-finder-preferences edits (FR-OB-05). Merges
    *  `scrape_cadence` into `ui_state` without clobbering the rest of the map. */
   async savePreferences(input: OnboardingPrefsInput): Promise<void> {
