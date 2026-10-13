@@ -59,10 +59,9 @@ NO_POSTING_URL_DETAIL = (
 # The Applier fills forms from the facts extracted from the master resume. Without
 # them it would fill blind, so Apply refuses (audit A5).
 NO_APPLICATION_PROFILE_DETAIL = (
-    "Your name, contact details and work authorization haven't been read from your "
-    "resume yet, so the Applier has nothing to fill forms with. If an AI provider is "
-    "set up, reading them has started: try Apply again in a minute. If not, set one "
-    "up in Settings first."
+    "Check your applicant details before your first application: your name, contact "
+    "details and work authorization, in Settings > Applying > Applicant details. The "
+    "Applier fills forms from them."
 )
 
 _REVIEW_WAIT_S = 10 * 60.0
@@ -129,10 +128,19 @@ def _publish(ctx: OperationContext, run_id: str, event: ApplyEvent) -> None:
     )
 
 
-def has_application_profile(repos: Any) -> bool:
-    """Whether the facts the Applier fills forms from exist (audit A5)."""
+def has_extracted_profile(repos: Any) -> bool:
+    """Whether a master resume exists and its facts were read or typed at all."""
     profile = repos.profile.get_current()
     return profile is not None and isinstance(profile.application_profile, dict)
+
+
+def has_application_profile(repos: Any) -> bool:
+    """Whether the user has confirmed the facts the Applier fills forms from: read
+    from the resume or typed, then saved once in Applicant details (audit A5)."""
+    from .applicant import details_confirmed
+
+    profile = repos.profile.get_current()
+    return profile is not None and details_confirmed(profile.application_profile)
 
 
 def _run_dir(run_id: str) -> Path:
@@ -204,6 +212,7 @@ async def _apply_async(
         job_url = job.canonical_url or dev_form_url
         company = job.company
         role = job.title
+        job_location = job.location or ""
         jd_text = (job.description or "")[:12_000]
 
     # Late-failure finalize (F-M3): any exception after adoption (packet wait, PDF
@@ -223,14 +232,12 @@ async def _apply_async(
             raise CompletionCancelled("cancelled by the user")
 
         with db.repos() as repos:
+            from .applicant import apply_facts
+
             profile = repos.profile.get_current()
-            facts: dict[str, str] = {}
-            if profile is not None and isinstance(profile.application_profile, dict):
-                facts = {
-                    str(k): str(v)
-                    for k, v in profile.application_profile.items()
-                    if isinstance(v, str | int | float) and str(v)
-                }
+            facts = apply_facts(
+                profile.application_profile if profile is not None else None, job_location
+            )
             prefs_row = repos.preferences.get_or_create()
             ui_state = prefs_row.ui_state or {}
             preferences = {

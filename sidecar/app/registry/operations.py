@@ -702,6 +702,26 @@ def _persist_artifact(
         return artifact.id
 
 
+def _resume_location(repos: Repos, job_id: Any) -> tuple[str, str, str]:
+    """(mode, posting place, master's location line) for the tailored resume's
+    header: Settings > Resume & cover letter, the job's first resolved place, and
+    the location read from the master resume (audit A5)."""
+    from sidecar.modules.tailorer.location import RESUME_LOCATION_MODES
+
+    from .applicant import posting_place
+
+    prefs = repos.preferences.get_or_create()
+    mode = str((prefs.thresholds or {}).get("resume_location") or "posting")
+    if mode not in RESUME_LOCATION_MODES:
+        mode = "posting"
+    profile = repos.profile.get_current()
+    record = profile.application_profile if profile is not None else None
+    master = str((record or {}).get("location") or "") if isinstance(record, dict) else ""
+    job = repos.jobs.get(str(job_id)) if job_id else None
+    place = posting_place(job.location or "") if job is not None else None
+    return mode, place[0] if place is not None else "", master
+
+
 def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Tailor a resume (Tailorer module) → its `Artifact`. Routed engine."""
     resolved = _require_engine(ctx)
@@ -709,7 +729,9 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
     snap = ctx.input_snapshot
-    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
+    job_text, master_md, profile_version, location = _load_job_inputs(
+        ctx, also=lambda repos: _resume_location(repos, snap.get("job_id"))
+    )
 
     result = tailor(
         master_md,
@@ -718,6 +740,7 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
         engine=resolved.engine,
         skill_md=prompt_for(ctx, "tailor"),
         cancelled=ctx.cancelled,
+        location=location,
     )
     if is_prompt_test(ctx):
         # The output goes in the ledger row and nowhere else, so the modal can
@@ -824,8 +847,14 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
             usage=result.usage,
             resolved=resolved,
         )
-    record = {**result.profile, "profile_version": version, "source": "extracted"}
+    from .applicant import merge_extracted
+
     with ctx.db.repos() as repos:
+        current = repos.profile.get_current()
+        record = merge_extracted(
+            current.application_profile if current is not None else None,
+            {**result.profile, "profile_version": version, "source": "extracted"},
+        )
         repos.profile.set_application_profile(record)
     return llm_outcome(
         {

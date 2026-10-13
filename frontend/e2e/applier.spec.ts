@@ -133,7 +133,7 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
   await page.screenshot({ path: `${DIR}/attested-submitted.png`, fullPage: true });
 });
 
-test("Apply with no facts read from the resume says why and offers to read them", async ({
+test("before the first apply, Applicant details open, and saving them continues the apply", async ({
   page,
   request,
 }) => {
@@ -150,7 +150,7 @@ test("Apply with no facts read from the resume says why and offers to read them"
         canonical_url: "https://example.com/e2e-no-facts-job",
         title: "No Facts Engineer",
         company: "Initech",
-        location: "Remote",
+        location: "London, ON",
         description: "Own the monolith.",
         source_adapter: "paste-url",
       },
@@ -160,8 +160,8 @@ test("Apply with no facts read from the resume says why and offers to read them"
     headers: auth,
     data: { job_id: job.id, generate_resume: false, generate_cover: false },
   });
-  // The API can't clear facts once set, so the profile read is served with none
-  // (audit A5). Apply must not be called; reading the facts must be.
+  // Read from the resume but never reviewed (audit A5). The API can't store an
+  // unconfirmed record once a save confirmed one, so the profile read is served.
   await page.route("**/api/profile", (route) =>
     route.fulfill({
       status: 200,
@@ -169,22 +169,22 @@ test("Apply with no facts read from the resume says why and offers to read them"
       body: JSON.stringify({
         resume_markdown: "# E2E Candidate\n\nBackend engineer.",
         version: 1,
-        application_profile: null,
+        application_profile: {
+          first_name: "E2E",
+          last_name: "Candidate",
+          email: "e2e@example.com",
+          location: "Bengaluru, Karnataka, India",
+          source: "extracted",
+        },
       }),
     }),
   );
+  // The apply itself is the next step's business; here it only has to be asked for.
   const applyCalls: string[] = [];
-  page.on("request", (r) => {
-    if (r.method() === "POST" && /\/apply$/.test(r.url())) applyCalls.push(r.url());
-  });
-  let extractCalls = 0;
-  await page.route("**/api/profile/extract", (route) => {
-    extractCalls += 1;
-    return route.fulfill({
-      status: 202,
-      contentType: "application/json",
-      body: JSON.stringify({ id: "op-e2e", kind: "extract", state: "queued" }),
-    });
+  await page.route("**/api/applications/*/apply", (route) => {
+    applyCalls.push(route.request().url());
+    return route.fulfill({ status: 409, contentType: "application/json",
+      body: JSON.stringify({ detail: "stubbed in e2e" }) });
   });
   await page.goto("/applications");
   const slot = page
@@ -193,11 +193,27 @@ test("Apply with no facts read from the resume says why and offers to read them"
     .getByTestId("card-apply-slot");
   await expect(slot).toBeVisible({ timeout: 15_000 });
   await slot.click();
-  const dialog = page.getByTestId("confirm-dialog");
-  await expect(dialog).toContainText("haven't been read yet");
-  await page.screenshot({ path: `${DIR}/apply-no-facts-dialog.png`, fullPage: true });
-  await page.getByTestId("confirm-ok").click();
-  await expect(dialog).toBeHidden();
-  await expect.poll(() => extractCalls).toBe(1);
+  const dialog = page.getByTestId("applicant-dialog");
+  await expect(dialog).toBeVisible();
   expect(applyCalls).toEqual([]);
+  await expect(dialog.getByTestId("applicant-first_name")).toHaveValue("E2E");
+  await dialog.getByTestId("applicant-phone").fill("+91 98450 00000");
+  await dialog.getByTestId("applicant-add-auth").click();
+  await dialog.getByTestId("applicant-auth-country").last().selectOption("India");
+  await dialog.getByTestId("applicant-add-auth").click();
+  await dialog.getByTestId("applicant-auth-country").last().selectOption("United States");
+  await dialog.getByTestId("applicant-auth-status").last().selectOption("needs_sponsorship");
+  await page.screenshot({ path: `${DIR}/applicant-details-dialog.png`, fullPage: true });
+  await dialog.getByTestId("applicant-save").click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => applyCalls.length).toBe(1);
+  const saved = (
+    await (await request.get(`${base}/api/profile`, { headers: auth })).json()
+  ).application_profile;
+  expect(saved.confirmed_at).toBeTruthy();
+  expect(saved.phone).toBe("+91 98450 00000");
+  expect(saved.work_authorizations).toEqual([
+    { country: "India", status: "citizen" },
+    { country: "United States", status: "needs_sponsorship" },
+  ]);
 });

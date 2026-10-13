@@ -456,6 +456,19 @@ def suggest_places(q: str = "", limit: int = 8) -> list[dto.PlaceSuggestionDTO]:
     ]
 
 
+@router.get("/api/geo/countries")
+def list_countries() -> list[dto.CountryDTO]:
+    """Every country in the shipped gazetteer, by name, for Applicant details' work
+    authorizations. A plain `def`, so the first load runs off the event loop."""
+    from sidecar.modules.geo.gazetteer import gazetteer
+
+    names = gazetteer().country_name
+    return [
+        dto.CountryDTO(code=code, name=name)
+        for code, name in sorted(names.items(), key=lambda kv: kv[1])
+    ]
+
+
 @router.get("/api/discovery/watchlist")
 def list_watched_companies(request: Request) -> dto.WatchlistDTO:
     """The tracked-companies roster: user-added (`watched`) board rows from

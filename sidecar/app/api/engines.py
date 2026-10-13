@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from ..registry.apply_op import has_application_profile
+from ..registry.apply_op import has_extracted_profile
 from ..registry.engine_config import (
     PROVIDERS,
     adopt_off_kinds,
@@ -48,7 +48,7 @@ def _adopt_off_kinds(request: Request, provider: str) -> None:
         if routing is None:
             return
         repos.preferences.update(engine_routing=routing)
-        needs_extract = repos.profile.get_current() is not None and not has_application_profile(
+        needs_extract = repos.profile.get_current() is not None and not has_extracted_profile(
             repos
         )
     _reconfigure(request)

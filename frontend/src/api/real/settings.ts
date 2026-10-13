@@ -5,6 +5,7 @@
 import { inTauri } from "../../shell/host";
 import type {
   ApplicationProfile,
+  Country,
   EngineSaveInput,
   EngineVerifyResult,
   OnboardingPrefsInput,
@@ -50,6 +51,11 @@ export class SettingsApi extends ApplicationsApi {
   async patchApplicationProfile(fields: ApplicationProfile): Promise<Profile> {
     await this.json("PATCH", "/api/profile/application-profile", fields);
     return this.getProfile();
+  }
+
+  /** Every country, by name, for the work-authorization editor. */
+  async getCountries(): Promise<Country[]> {
+    return this.req<Country[]>("/api/geo/countries");
   }
 
   async updateProfile(master_md: string): Promise<Profile> {
@@ -159,6 +165,10 @@ export class SettingsApi extends ApplicationsApi {
       llm_concurrency:
         typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
       ai_queue_mode: thresholds.ai_queue_mode === "shared" ? "shared" : "per_kind",
+      resume_location:
+        thresholds.resume_location === "master" || thresholds.resume_location === "none"
+          ? thresholds.resume_location
+          : "posting",
       score_new_batch: scoreNewBatch,
       score_weight_preset: SCORE_WEIGHT_PRESETS.includes(
         thresholds.score_weight_preset as ScoreWeightPreset,
@@ -233,6 +243,8 @@ export class SettingsApi extends ApplicationsApi {
     if (patch.llm_concurrency !== undefined)
       thresholdPatch.llm_concurrency = patch.llm_concurrency;
     if (patch.ai_queue_mode !== undefined) thresholdPatch.ai_queue_mode = patch.ai_queue_mode;
+    if (patch.resume_location !== undefined)
+      thresholdPatch.resume_location = patch.resume_location;
     if (patch.auto_referrals_on_save !== undefined)
       thresholdPatch.auto_referrals_on_save = patch.auto_referrals_on_save;
     if (patch.auto_packet_on_save !== undefined) thresholdPatch.auto_packet_on_save = patch.auto_packet_on_save;

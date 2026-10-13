@@ -13,10 +13,11 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def seed_application_profile(db) -> None:  # noqa: ANN001 (a Database; kept import-free)
-    """A master resume plus the facts read from it, which Apply needs (audit A5)."""
+    """A master resume plus confirmed Applicant details, which Apply needs (audit A5)."""
     with db.repos() as repos:
         if repos.profile.get_current() is None:
             repos.profile.upsert("# Ada Lovelace\n\nBackend engineer.")
         repos.profile.set_application_profile(
-            {"name": "Ada Lovelace", "email": "ada@example.com", "source": "edited"}
+            {"name": "Ada Lovelace", "email": "ada@example.com", "source": "edited",
+             "confirmed_at": "2026-10-13T00:00:00+00:00"}
         )

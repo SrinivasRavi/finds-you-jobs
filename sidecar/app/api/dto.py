@@ -634,6 +634,13 @@ class WatchlistEntryDTO(BaseModel):
     read_error: str = ""
 
 
+class CountryDTO(BaseModel):
+    """1 country, for the work-authorization editor (audit A5)."""
+
+    code: str
+    name: str
+
+
 class PlaceSuggestionDTO(BaseModel):
     """1 row of the location picker (place-picker.md section 3): what the user
     reads, and what the chip stores when they pick it."""

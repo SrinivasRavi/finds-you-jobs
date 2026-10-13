@@ -384,7 +384,9 @@ def test_post_packet_failure_lands_the_run_row_terminal_failed(
     monkeypatch.setenv("FYJ_DATA_DIR", str(tmp_path / "data"))
     with migrated_db.repos() as repos:
         repos.profile.upsert("# Ada Lovelace — master resume")
-        repos.profile.set_application_profile({"name": "Ada Lovelace"})
+        repos.profile.set_application_profile(
+            {"name": "Ada Lovelace", "confirmed_at": "2026-10-13T00:00:00+00:00"}
+        )
         job = repos.jobs.create(
             canonical_url="https://example.com/late-fail",
             title="Staff Engineer",
@@ -572,7 +574,9 @@ def test_finalize_failure_does_not_mask_original_error(
     monkeypatch.setenv("FYJ_DATA_DIR", str(tmp_path / "data"))
     with migrated_db.repos() as repos:
         repos.profile.upsert("# Ada — master resume")
-        repos.profile.set_application_profile({"name": "Ada"})
+        repos.profile.set_application_profile(
+            {"name": "Ada", "confirmed_at": "2026-10-13T00:00:00+00:00"}
+        )
         job = repos.jobs.create(
             canonical_url="https://example.com/mask",
             title="Eng",
@@ -886,7 +890,7 @@ def test_a_retried_apply_without_facts_fails_before_any_run_row(migrated_db) -> 
         kind="apply", input_snapshot={"application_id": card_id}, db=migrated_db,
         operation_id="op-a5",
     )
-    with pytest.raises(ValueError, match="haven't been read"):
+    with pytest.raises(ValueError, match="applicant details"):
         asyncio.run(apply_op._apply_async(ctx, card_id, ApplyControl()))
     with migrated_db.repos() as repos:
         assert repos.apply_runs.latest_for_application(card_id) is None

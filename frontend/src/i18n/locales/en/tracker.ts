@@ -30,13 +30,6 @@ const tracker = {
     retry: "Retry",
     applied: "Applied",
   },
-  applyNoFacts: {
-    title: "Your details aren't read yet",
-    body: "The Applier fills forms with your name, contact details and work authorization, read from your master resume. They haven't been read yet. Reading them is 1 small AI call and takes about a minute; then press Apply again.",
-    bodyAiOff: "The Applier fills forms with your name, contact details and work authorization, which AI reads from your master resume. AI is off, so set up a provider in Settings first.",
-    read: "Read them now",
-    settings: "Open Settings",
-  },
   card: {
     menu: "Card menu",
     manual: "Manual",

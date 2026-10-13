@@ -5,12 +5,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import {
   useApplications,
   useArchived,
-  useExtractApplicationProfile,
   useArchiveApplication,
   useAttachDocument,
   useGeneratePacket,
@@ -36,11 +35,10 @@ import { ApplierPanel } from "../popups/ApplierPanel";
 import { GuidanceDialog, type GuidanceKind } from "../popups/GuidanceDialog";
 import { ReferralsModal } from "../popups/ReferralsModal";
 import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
-import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 import { AddLinkDialog } from "./jobs/AddLinkDialog";
-import { AI_OFF } from "./settings/engines";
+import { ApplicantDetailsDialog } from "./settings/ApplicantDetails";
 import { AddApplicationModal } from "./tracker/AddApplicationModal";
 import { ArchiveModal } from "./tracker/ArchiveModal";
 import { Card } from "./tracker/Card";
@@ -63,9 +61,7 @@ export function Tracker() {
   const attachDocument = useAttachDocument();
   const removeDocument = useRemoveDocument();
   const startApply = useStartApply();
-  const extractFacts = useExtractApplicationProfile();
-  const navigate = useNavigate();
-  const [applyNoFacts, setApplyNoFacts] = useState(false);
+  const [applyDetailsFor, setApplyDetailsFor] = useState<Application | null>(null);
 
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "ALL">("ALL");
@@ -167,10 +163,10 @@ export function Tracker() {
         setApplyLink(app);
         return;
       }
-      // The Applier fills forms from facts read off the master resume; with none it
-      // would fill blind, and the sidecar refuses (audit A5). Say why here instead.
-      if (profile && !profile.application_profile) {
-        setApplyNoFacts(true);
+      // Applicant details are confirmed once before the first apply (audit A5); the
+      // sidecar refuses until then, so the form opens here instead.
+      if (profile && !profile.application_profile?.confirmed_at) {
+        setApplyDetailsFor(app);
         return;
       }
       // Failure is logged + bannered by the global MutationCache hook — this
@@ -550,24 +546,20 @@ export function Tracker() {
         />
       ) : null}
 
-      {applyNoFacts
-        ? (() => {
-            const aiOff = settings?.routing.some((r) => r.engine === AI_OFF) ?? false;
-            return (
-              <ConfirmDialog
-                title={t("tracker.applyNoFacts.title")}
-                body={t(aiOff ? "tracker.applyNoFacts.bodyAiOff" : "tracker.applyNoFacts.body")}
-                confirmLabel={t(aiOff ? "tracker.applyNoFacts.settings" : "tracker.applyNoFacts.read")}
-                onCancel={() => setApplyNoFacts(false)}
-                onConfirm={() => {
-                  setApplyNoFacts(false);
-                  if (aiOff) navigate("/settings");
-                  else extractFacts.mutate();
-                }}
-              />
-            );
-          })()
-        : null}
+      {applyDetailsFor ? (
+        <ApplicantDetailsDialog
+          onCancel={() => setApplyDetailsFor(null)}
+          onSaved={() => {
+            const app = applyDetailsFor;
+            setApplyDetailsFor(null);
+            void Promise.resolve(startApply.mutateAsync({ applicationId: app.id }))
+              .then((run) => {
+                if (run) setApplierPanel({ appId: app.id, runId: run.id });
+              })
+              .catch(() => undefined);
+          }}
+        />
+      ) : null}
 
       {/* Applier companion panel (applier-as-built.md section 8.2) — off the Apply slot. Bound
           to one Apply Run; Retry rebinds it to the fresh run (section 8.3). Closing it

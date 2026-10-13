@@ -30,6 +30,7 @@ from ..registry.apply_op import (
     finalize_run_failed,
     finalize_run_interrupted,
     has_application_profile,
+    has_extracted_profile,
     purge_run_dirs,
 )
 from ..registry.persistence import (
@@ -692,11 +693,15 @@ def start_apply(
         job_url = job.canonical_url or dev_form_url
         has_master = repos.profile.get_current() is not None
         has_facts = has_application_profile(repos)
+        has_read = has_extracted_profile(repos)
 
     if not has_facts:
-        # Start reading the facts now, so the next Apply works (audit A5).
+        # Applicant details must be confirmed once before the first apply (audit A5).
+        # With nothing read yet, start reading the resume so the form arrives prefilled.
         engines = _engines(request)
-        if has_master and (engines is None or engines.resolve("extract") is not None):
+        if has_master and not has_read and (
+            engines is None or engines.resolve("extract") is not None
+        ):
             runner.submit("extract", {}, requested_by="user")
         raise HTTPException(status_code=409, detail=NO_APPLICATION_PROFILE_DETAIL)
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from .gazetteer import Gazetteer, fold, gazetteer
 from .regions import METROS, REGIONS
@@ -72,6 +73,17 @@ def city_label(g: Gazetteer, geonameid: int) -> str:
     division = g.admin1_name.get(city.admin1_key, "")
     parts = [city.name, division, g.country_name.get(city.country, "")]
     return ", ".join(dict.fromkeys(p for p in parts if p))
+
+
+def place_label(g: Gazetteer, place: Any) -> str:
+    """1 resolved place, named the way the picker names it: "City, Division,
+    Country", "Division, Country" or "Country"; "" when nothing was resolved."""
+    if place.city_id is not None and place.city_id in g.cities:
+        return city_label(g, place.city_id)
+    country = g.country_name.get(place.country or "", "")
+    if place.admin1_key:
+        return ", ".join(p for p in (g.admin1_name.get(place.admin1_key, ""), country) if p)
+    return country
 
 
 def suggest(query: str, limit: int = LIMIT, g: Gazetteer | None = None) -> list[Suggestion]:

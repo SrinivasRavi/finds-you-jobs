@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
+  ApplicationProfile,
   BoardFilters,
   Application,
   Operation,
@@ -729,6 +730,24 @@ export function useUpdateProfile() {
 export function useExtractApplicationProfile() {
   return useMutation({
     mutationFn: () => Promise.resolve(api.extractApplicationProfile()),
+  });
+}
+
+/** Save Applicant details; saving is the review Apply waits for (audit A5). */
+export function useSaveApplicantDetails() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fields: ApplicationProfile) =>
+      Promise.resolve(api.patchApplicationProfile(fields)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.profile }),
+  });
+}
+
+export function useCountries() {
+  return useQuery({
+    queryKey: ["countries"] as const,
+    queryFn: () => api.getCountries(),
+    staleTime: Infinity,
   });
 }
 

@@ -76,13 +76,16 @@ def extract_application_profile(request: Request) -> dto.OperationAccepted:
 def patch_application_profile(
     request: Request, payload: dict[str, Any]
 ) -> dto.ProfileDTO:
-    """Persist manual edits to the application profile (Settings editor).
-    The payload replaces the stored record verbatim, stamped `source: edited`
-    — deterministic user edits always win over extraction."""
+    """Save Applicant details (Settings > Applying, or the dialog before the first
+    apply). The payload replaces the stored record, stamped `source: edited` and
+    `confirmed_at`: saving is the review Apply waits for (audit A5), and a later
+    resume read never overwrites what was saved here."""
+    from ..db.base import now_utc
+
     with _db(request).repos() as repos:
         if repos.profile.get_current() is None:
             raise HTTPException(status_code=404, detail="no master profile yet")
-        record = {**payload, "source": "edited"}
+        record = {**payload, "source": "edited", "confirmed_at": now_utc().isoformat()}
         profile = repos.profile.set_application_profile(record)
         return dto.profile_dto(profile)
 

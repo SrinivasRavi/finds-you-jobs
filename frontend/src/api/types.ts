@@ -685,7 +685,10 @@ export interface ApplicationProfile {
   phone?: string;
   location?: string;
   country?: string;
+  /** Legacy free text, read from the resume; superseded by `work_authorizations`. */
   work_authorization?: string;
+  /** 1 entry per country (audit A5); the Applier picks the job's country. */
+  work_authorizations?: WorkAuthorization[];
   links?: Record<string, string>;
   education?: {
     school?: string;
@@ -697,6 +700,21 @@ export interface ApplicationProfile {
   /** "extracted" (LLM at save) or "edited" (manual Settings edits — win). */
   source?: "extracted" | "edited";
   profile_version?: number;
+  /** Set when the user saved Applicant details; Apply waits for it (audit A5). */
+  confirmed_at?: string;
+}
+
+export type WorkAuthStatus = "citizen" | "permanent_resident" | "visa" | "needs_sponsorship";
+
+export interface WorkAuthorization {
+  country: string;
+  status: WorkAuthStatus;
+  note?: string;
+}
+
+export interface Country {
+  code: string;
+  name: string;
 }
 
 export interface Profile {
@@ -921,6 +939,8 @@ export interface Settings {
   scoring_methods: ScoringMethod[];
   // 0 = unlimited (runner ceiling applies); otherwise 2-20.
   llm_concurrency: number;
+  /** The tailored resume's header location: the job's, the master's, or none. */
+  resume_location: ResumeLocation;
   /** How AI work queues (queueing.md section 5): a lane per kind, or 1 shared. */
   ai_queue_mode: AiQueueMode;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
@@ -1073,6 +1093,7 @@ export interface LedgerSubject {
 }
 
 export type AiQueueMode = "per_kind" | "shared";
+export type ResumeLocation = "posting" | "master" | "none";
 
 export interface LedgerEntry {
   id: string;
