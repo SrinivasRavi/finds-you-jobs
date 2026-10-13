@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from sidecar.app.db import Database
 
 
@@ -84,3 +86,16 @@ def test_operation_failure_keeps_error_verbatim(migrated_db: Database) -> None:
         assert op is not None
         assert op.state == "failed"
         assert op.error == "ValueError: exact text 42"
+
+
+@pytest.mark.parametrize(
+    "repo", ["schedules", "jobs", "applications", "artifacts", "engine_settings", "contacts",
+             "apply_runs"],
+)
+def test_every_id_keyed_update_raises_keyerror_on_a_missing_row(
+    migrated_db: Database, repo: str
+) -> None:
+    """Audit finding 18: 1 way to say a row is gone. 3 repos used to raise
+    ValueError or return None, so callers had to know which."""
+    with migrated_db.repos() as repos, pytest.raises(KeyError):
+        getattr(repos, repo).update("no-such-id", notes="x")

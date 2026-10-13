@@ -100,6 +100,45 @@ def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
     return merged
 
 
+
+def _update_row[M](session: Session, model: type[M], row_id: str, label: str, fields: dict) -> M:
+    """The 1 way an id-keyed repo updates a row: `KeyError` when it's gone
+    (audit finding 18; 3 repos used to raise `ValueError` or return None)."""
+    row = session.get(model, row_id)
+    if row is None:
+        raise KeyError(f"{label} {row_id!r} not found")
+    for key, value in fields.items():
+        setattr(row, key, value)
+    return row
+
+
+class _SingleRowRepo[M]:
+    """A table that holds 1 row, created on first read (preferences, the
+    LinkedIn session, the LinkedIn search cursor)."""
+
+    model: type[M]
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self) -> M | None:
+        return self._s.scalars(select(self.model).limit(1)).first()
+
+    def get_or_create(self) -> M:
+        row = self.get()
+        if row is None:
+            row = self.model()
+            self._s.add(row)
+            self._s.flush()
+        return row
+
+    def update(self, **fields: Any) -> M:
+        row = self.get_or_create()
+        for key, value in fields.items():
+            setattr(row, key, value)
+        return row
+
+
 class OperationsRepo:
     """The runner's durable queue + the cost ledger."""
 
@@ -363,28 +402,10 @@ class OperationsRepo:
             return None, 0
         return sum(costs) / len(costs), len(costs)
 
-class PreferencesRepo:
+class PreferencesRepo(_SingleRowRepo[UserPreferences]):
     """User preferences — single row in P1."""
 
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self) -> UserPreferences | None:
-        return self._s.scalars(select(UserPreferences).limit(1)).first()
-
-    def get_or_create(self) -> UserPreferences:
-        prefs = self.get()
-        if prefs is None:
-            prefs = UserPreferences()
-            self._s.add(prefs)
-            self._s.flush()
-        return prefs
-
-    def update(self, **fields: Any) -> UserPreferences:
-        prefs = self.get_or_create()
-        for key, value in fields.items():
-            setattr(prefs, key, value)
-        return prefs
+    model = UserPreferences
 
     def get_cost_totals(self) -> CostTotals:
         """The persisted lifetime aggregate of *pruned* ledger spend (empty when
@@ -451,12 +472,7 @@ class SchedulesRepo:
         sched.next_due_at = next_due_at
 
     def update(self, schedule_id: str, **fields: Any) -> Schedule:
-        sched = self._s.get(Schedule, schedule_id)
-        if sched is None:
-            raise KeyError(f"schedule {schedule_id!r} not found")
-        for key, value in fields.items():
-            setattr(sched, key, value)
-        return sched
+        return _update_row(self._s, Schedule, schedule_id, "schedule", fields)
 
 
 def resolved_location_fields(fields: dict[str, Any]) -> dict[str, Any]:
@@ -730,12 +746,7 @@ class JobsRepo:
         return self.create(canonical_url=canonical_url, **fields)
 
     def update(self, job_id: str, **fields: Any) -> Job:
-        job = self._s.get(Job, job_id)
-        if job is None:
-            raise KeyError(f"job {job_id!r} not found")
-        for key, value in fields.items():
-            setattr(job, key, value)
-        return job
+        return _update_row(self._s, Job, job_id, "job", fields)
 
     def set_trash_state(
         self, job_id: str, *, trashed: bool, now: datetime | None = None
@@ -941,12 +952,7 @@ class ApplicationsRepo:
         return app
 
     def update(self, application_id: str, **fields: Any) -> Application:
-        app = self._s.get(Application, application_id)
-        if app is None:
-            raise KeyError(f"application {application_id!r} not found")
-        for key, value in fields.items():
-            setattr(app, key, value)
-        return app
+        return _update_row(self._s, Application, application_id, "application", fields)
 
     def delete(self, application_id: str) -> bool:
         app = self._s.get(Application, application_id)
@@ -1001,12 +1007,8 @@ class ArtifactsRepo:
         self._s.flush()
         return artifact
 
-    def update(self, artifact_id: str, **fields: Any) -> Artifact | None:
-        artifact = self._s.get(Artifact, artifact_id)
-        if artifact is None:
-            return None
-        for key, value in fields.items():
-            setattr(artifact, key, value)
+    def update(self, artifact_id: str, **fields: Any) -> Artifact:
+        artifact = _update_row(self._s, Artifact, artifact_id, "artifact", fields)
         self._s.flush()
         return artifact
 
@@ -1211,12 +1213,8 @@ class EngineSettingsRepo:
         self._s.flush()
         return row
 
-    def update(self, settings_id: str, **fields: Any) -> EngineSettings | None:
-        row = self._s.get(EngineSettings, settings_id)
-        if row is None:
-            return None
-        for k, v in fields.items():
-            setattr(row, k, v)
+    def update(self, settings_id: str, **fields: Any) -> EngineSettings:
+        row = _update_row(self._s, EngineSettings, settings_id, "engine settings", fields)
         self._s.flush()
         return row
 
@@ -1377,12 +1375,7 @@ class ContactsRepo:
         return self.create(linkedin_url, **fields)
 
     def update(self, contact_id: str, **fields: Any) -> Contact:
-        contact = self._s.get(Contact, contact_id)
-        if contact is None:
-            raise KeyError(f"contact {contact_id!r} not found")
-        for key, value in fields.items():
-            setattr(contact, key, value)
-        return contact
+        return _update_row(self._s, Contact, contact_id, "contact", fields)
 
     def list_never_accepted_before(self, cutoff: datetime) -> list[Contact]:
         """Sent-but-never-accepted connections older than `cutoff` (US-NW-11)."""
@@ -1742,53 +1735,17 @@ class OutreachLogsRepo:
         return cast("CursorResult[Any]", result).rowcount
 
 
-class LinkedInSessionRepo:
+class LinkedInSessionRepo(_SingleRowRepo[LinkedInSession]):
     """Single-row LinkedIn session state (database-design section 5)."""
 
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self) -> LinkedInSession | None:
-        return self._s.scalars(select(LinkedInSession).limit(1)).first()
-
-    def get_or_create(self) -> LinkedInSession:
-        row = self.get()
-        if row is None:
-            row = LinkedInSession()
-            self._s.add(row)
-            self._s.flush()
-        return row
-
-    def update(self, **fields: Any) -> LinkedInSession:
-        row = self.get_or_create()
-        for key, value in fields.items():
-            setattr(row, key, value)
-        return row
+    model = LinkedInSession
 
 
-class LinkedInSearchCursorRepo:
+class LinkedInSearchCursorRepo(_SingleRowRepo[LinkedInSearchCursor]):
     """Single-row pagination cursor for the logged-in job search (Fresh search /
     Next page). Same single-row pattern as `LinkedInSessionRepo`."""
 
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self) -> LinkedInSearchCursor | None:
-        return self._s.scalars(select(LinkedInSearchCursor).limit(1)).first()
-
-    def get_or_create(self) -> LinkedInSearchCursor:
-        row = self.get()
-        if row is None:
-            row = LinkedInSearchCursor()
-            self._s.add(row)
-            self._s.flush()
-        return row
-
-    def update(self, **fields: Any) -> LinkedInSearchCursor:
-        row = self.get_or_create()
-        for key, value in fields.items():
-            setattr(row, key, value)
-        return row
+    model = LinkedInSearchCursor
 
     def clear(self) -> None:
         """Drop the cursor (Fresh search resets it; Disconnect clears it)."""
@@ -1820,11 +1777,7 @@ class ApplyRunsRepo:
         return self._s.scalars(stmt).first()
 
     def update(self, run_id: str, **fields: Any) -> ApplyRun:
-        run = self._s.get(ApplyRun, run_id)
-        if run is None:
-            raise ValueError(f"apply run {run_id!r} not found")
-        for key, value in fields.items():
-            setattr(run, key, value)
+        run = _update_row(self._s, ApplyRun, run_id, "apply run", fields)
         self._s.flush()
         return run
 

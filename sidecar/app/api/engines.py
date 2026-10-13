@@ -310,9 +310,7 @@ def save_engine(
             row = repos.engine_settings.create(payload.provider, **fields)
         else:
             row = repos.engine_settings.update(existing.id, **fields)
-        result = dto.engine_setting_dto(row) if row is not None else None
-    if result is None:  # pragma: no cover — update-after-existing always finds it
-        raise HTTPException(status_code=500, detail="failed to persist engine")
+        result = dto.engine_setting_dto(row)
     _adopt_off_kinds(request, payload.provider)
     _reconfigure(request)
     return result
