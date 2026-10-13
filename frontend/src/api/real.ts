@@ -116,12 +116,10 @@ type BoardPageDTO = components["schemas"]["BoardPageDTO"];
 type JobPreviewDTO = components["schemas"]["JobPreviewDTO"];
 type AttachLinkResultDTO = components["schemas"]["AttachLinkResultDTO"];
 type LinkCandidateDTO = components["schemas"]["LinkCandidateDTO"];
-type TombstoneResultDTO = components["schemas"]["TombstoneResultDTO"];
 type SettingsDTO = components["schemas"]["SettingsDTO"];
 type ProfileDTO = components["schemas"]["ProfileDTO"];
 type OperationDTO = components["schemas"]["OperationDTO"];
 type ApplicationDTO = components["schemas"]["ApplicationDTO"];
-type CostTotalsDTO = components["schemas"]["CostTotalsDTO"];
 type SpanDTO = components["schemas"]["SpanDTO"];
 type ActivityEntryDTO = components["schemas"]["ActivityEntryDTO"];
 // Networking DTOs (restored 2026-07-16 — the referral-outreach backend now exists).
@@ -805,12 +803,12 @@ export class RealApi {
 
   // Empty Trash (US-JB-11 / FR-SYS-04): tombstone + remove every Trashed job.
   async emptyTrash(): Promise<TombstoneResult> {
-    return (await this.json("POST", "/api/jobs/trash/empty", {})) as TombstoneResultDTO;
+    return (await this.json("POST", "/api/jobs/trash/empty", {})) as TombstoneResult;
   }
 
   // Delete forever (US-JB-11): tombstone + remove one Trashed job.
   async tombstoneJob(id: string): Promise<TombstoneResult> {
-    return (await this.json("POST", `/api/jobs/${id}/tombstone`, {})) as TombstoneResultDTO;
+    return (await this.json("POST", `/api/jobs/${id}/tombstone`, {})) as TombstoneResult;
   }
 
   // Restored (`/api/applications` now exists): Save = POST an application row;
@@ -1469,15 +1467,7 @@ export class RealApi {
    *  aggregate. Nothing is pruned today, so the aggregate is empty and the live
    *  sum carries every operation ever recorded. */
   async getCostTotals(): Promise<CostTotals> {
-    const d = await this.req<CostTotalsDTO>("/api/cost/totals");
-    return {
-      usd: d.usd,
-      tokens_in: d.tokens_in,
-      tokens_out: d.tokens_out,
-      operations: d.operations,
-      failed: d.failed,
-      by_kind: d.by_kind,
-    };
+    return this.req<CostTotals>("/api/cost/totals");
   }
 
   /** The Logfire spans for an operation — the Logs drill-down (US-SYS-05). Reads
@@ -1523,19 +1513,12 @@ export class RealApi {
    *  is not. The shell starts the backend without its scheduler after 3 runs in
    *  a row end the same bad way (D27). */
   async schedulerStatus(): Promise<SchedulerStatus> {
-    const d = await this.req<{ running: boolean; degradedBoot?: boolean }>(
-      "/api/system/scheduler",
-    );
-    return { running: d.running, degradedBoot: d.degradedBoot ?? false };
+    return this.req<SchedulerStatus>("/api/system/scheduler");
   }
 
   /** Turn background work back on after a degraded boot. Idempotent. */
   async resumeScheduler(): Promise<SchedulerStatus> {
-    const d = (await this.json("POST", "/api/system/scheduler/resume", {})) as {
-      running: boolean;
-      degradedBoot?: boolean;
-    };
-    return { running: d.running, degradedBoot: d.degradedBoot ?? false };
+    return (await this.json("POST", "/api/system/scheduler/resume", {})) as SchedulerStatus;
   }
 
   /** Re-run a failed op with its original inputs (US-LOG-01 Retry). */
@@ -1765,8 +1748,6 @@ export class RealApi {
 }
 
 function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
-  const c = d.search_cursor ?? null;
-  const rl = d.rate_limits ?? null;
   return {
     enabled: d.enabled,
     status: d.status as LinkedInSessionState["status"],
@@ -1775,17 +1756,10 @@ function toLinkedInSession(d: LinkedInSessionDTO): LinkedInSessionState {
     last_validated_at: d.last_validated_at ?? null,
     paused_until: d.paused_until ?? null,
     paused_reason: d.paused_reason ?? "",
-    // The DTO shapes match the app types field-for-field — pass through.
-    search_cursor: c
-      ? { expired: c.expired, exhausted: c.exhausted, next_page_available: c.next_page_available }
-      : null,
-    rate_limits: rl
-      ? { ...rl, memberships: [...rl.memberships], caps: rl.caps.map((x) => ({ ...x })) }
-      : null,
+    search_cursor: d.search_cursor ?? null,
+    rate_limits: d.rate_limits ?? null,
     contact_sync_last_at: d.contact_sync_last_at ?? null,
-    contact_sync_last_outcome: d.contact_sync_last_outcome
-      ? { ...d.contact_sync_last_outcome }
-      : null,
+    contact_sync_last_outcome: d.contact_sync_last_outcome ?? null,
   };
 }
 

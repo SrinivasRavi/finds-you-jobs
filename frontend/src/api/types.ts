@@ -7,6 +7,13 @@
 // packet/prompts/spans/ingest/dev-tools types are trimmed until their
 // sidecar surface lands — see schema.d.ts for exactly what's live.
 
+import type { components } from "./schema";
+
+/** A shape the sidecar's generated schema already states exactly is aliased
+ *  here instead of restated, so a server-side change can't drift from it
+ *  (audit D-F31). */
+type Schemas = components["schemas"];
+
 // ─── Module result shapes (sidecar/modules/*/types.py) ──────────────────────
 
 /** Usage/cost record every module call returns (the ledger row source).
@@ -98,12 +105,7 @@ export interface DuplicatePrompt {
   other_added_at: string;
 }
 
-export interface JobFactors {
-  job_id: string;
-  method: string;
-  factors: { factor: string; value: number; kind: string; evidence: string }[];
-  weights: Record<string, number>;
-}
+export type JobFactors = Schemas["JobFactorsDTO"];
 
 // ─── /api/jobs ──────────────────────────────────────────────────────────────
 
@@ -133,10 +135,7 @@ export class JobTombstonedError extends Error {
 }
 
 /** Result of Empty Trash / Delete forever (US-JB-11 / FR-SYS-04). */
-export interface TombstoneResult {
-  tombstoned: number;
-  canonical_urls: string[];
-}
+export type TombstoneResult = Schemas["TombstoneResultDTO"];
 
 export type WorkStyle = "REMOTE" | "HYBRID" | "ONSITE" | "";
 
@@ -605,35 +604,17 @@ export interface ReferralQuota {
  *  button gates on `next_page_available`; the rest explains why. The 12 h TTL
  *  is a host freshness policy (result coherence) — LinkedIn's own pagination
  *  is stateless and never expires. */
-export interface LinkedInSearchCursorState {
-  expired: boolean;
-  exhausted: boolean;
-  next_page_available: boolean;
-}
+export type LinkedInSearchCursorState = Schemas["LinkedInSearchCursorDTO"];
 
 /** One self-imposed cap the user can override. `effective` is the enforced
  *  number (override, or ceiling × risk%); `ceiling` is the estimated LinkedIn
  *  limit (100% reference); `overridden` flags a manual pin. */
-export interface LinkedInCap {
-  key: string;
-  meter: string;
-  window: string;
-  label: string;
-  effective: number;
-  ceiling: number;
-  overridden: boolean;
-}
+export type LinkedInCap = Schemas["LinkedInCapDTO"];
 
 /** The self-imposed LinkedIn rate-limit profile (2026-08-01): membership picks
  *  the estimated ceilings, `risk_pct` (10–100) scales them (100% = at the
  *  estimated real limit), each cap independently overridable. */
-export interface LinkedInRateLimitsState {
-  membership_type: string;
-  risk_pct: number;
-  memberships: string[];
-  caps: LinkedInCap[];
-  job_search_hour_remaining: number;
-}
+export type LinkedInRateLimitsState = Schemas["LinkedInRateLimitsDTO"];
 
 /** LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
  *  The send path unlocks only when `enabled` AND `status === "valid"`. The
@@ -663,13 +644,7 @@ export interface LinkedInSessionState {
 /** Outcome of the newest contact-sync attempt (US-NW-12 honesty). `stopped`
  *  is "" for a clean sweep, else cap_or_backoff | rate_limited | auth_error |
  *  batch_failed, with `unprobed` sizing the untouched tail. */
-export interface ContactSyncOutcome {
-  at: string;
-  synced: number;
-  failed: number;
-  stopped: string;
-  unprobed: number;
-}
+export type ContactSyncOutcome = Schemas["ContactSyncOutcomeDTO"];
 
 /** Result of a Sync-button contact-status refresh (FR-NW-15, manual-only).
  *  `queued` — a sync started. `already_running` — joined the one in flight.
@@ -890,34 +865,12 @@ export interface DiscoverySource {
 }
 
 /** A BYO scraper key row (Apify / Brave) — masked hint only, never the key. */
-export interface DiscoveryCredential {
-  id: string;
-  label: string;
-  has_key: boolean;
-  key_hint: string | null;
-}
+export type DiscoveryCredential = Schemas["DiscoveryCredentialDTO"];
 
 /** Per-source efficacy row (Analytics → Discovery). */
-export interface DiscoverySourceStats {
-  id: string;
-  label: string;
-  kind: string;
-  jobs: number;
-  saved: number;
-  scored: number;
-  avg_score: number | null;
-  fetched: number;
-  kept: number;
-  http_calls: number;
-  latency_ms: number;
-  errors: number;
-}
+export type DiscoverySourceStats = Schemas["DiscoverySourceStatsDTO"];
 
-export interface DiscoveryAnalytics {
-  sources: DiscoverySourceStats[];
-  scans: number;
-  last_scan_at: string | null;
-}
+export type DiscoveryAnalytics = Schemas["DiscoveryAnalyticsDTO"];
 
 export interface WatchCompanyResult {
   added: boolean;
@@ -1069,10 +1022,7 @@ export type OperationState = "queued" | "running" | "succeeded" | "failed" | "ca
 
 /** Whether the 60 s tick loop that plans background work is running, and
  *  whether a degraded boot is why it is not (D27). */
-export interface SchedulerStatus {
-  running: boolean;
-  degradedBoot: boolean;
-}
+export type SchedulerStatus = Schemas["SchedulerStatus"];
 
 export interface Operation {
   id: string;
@@ -1181,14 +1131,7 @@ export interface DevResult {
 /** All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
  *  Live-ledger sum + the pruned-ops aggregate, so the figures stay honest as an
  *  install ages even if operations are deleted. Mirrors CostTotalsDTO. */
-export interface CostTotals {
-  usd: number;
-  tokens_in: number;
-  tokens_out: number;
-  operations: number;
-  failed: number;
-  by_kind: Record<string, number>;
-}
+export type CostTotals = Schemas["CostTotalsDTO"];
 
 /** Board-level scan + scoring progress (observed-issue #2) — the source for the
  *  Job Board's Rescan status pill. Derived server-side from the operations
