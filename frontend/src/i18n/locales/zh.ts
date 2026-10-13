@@ -1001,6 +1001,7 @@ const zh: DeepPartial<Messages> = {
       weightsReset: "重置",
       weightsShow: "逐项微调",
       weightsHide: "隐藏滑块",
+      weightsFromJev: "LLM 评分直接让模型给出总分，因此没有自己的权重表。这里从 Jev 评分的表开始。",
       preset_balanced: "均衡",
       preset_location_first: "地点优先",
       preset_seniority_first: "职级优先",

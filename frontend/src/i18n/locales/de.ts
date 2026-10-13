@@ -1021,6 +1021,7 @@ const de: DeepPartial<Messages> = {
       weightsReset: "Zurücksetzen",
       weightsShow: "Jeden einzeln feinjustieren",
       weightsHide: "Regler ausblenden",
+      weightsFromJev: "Die LLM-Bewertung lässt das Modell die Gesamtzahl nennen, hat also keine eigene Tabelle. Diese Werte beginnen bei der Tabelle der Jev-Bewertung.",
       preset_balanced: "Ausgewogen",
       preset_location_first: "Standort zuerst",
       preset_seniority_first: "Senioritätsstufe zuerst",

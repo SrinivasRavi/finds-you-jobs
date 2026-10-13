@@ -1019,6 +1019,7 @@ const fr: DeepPartial<Messages> = {
       weightsReset: "Réinitialiser",
       weightsShow: "Régler chacun",
       weightsHide: "Masquer les curseurs",
+      weightsFromJev: "La notation par LLM demande le total au modèle, elle n'a donc pas de table propre. Ces valeurs partent de celle de la notation Jev.",
       preset_balanced: "Équilibré",
       preset_location_first: "Le lieu d'abord",
       preset_seniority_first: "Le niveau d'abord",

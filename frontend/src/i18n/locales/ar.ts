@@ -1094,6 +1094,7 @@ const ar = {
       weightsReset: "إعادة الضبط",
       weightsShow: "اضبط كلًا منها",
       weightsHide: "إخفاء المؤشرات",
+      weightsFromJev: "يطلب تقييم LLM المجموع من النموذج مباشرة، لذا ليس له جدول خاص به. تبدأ هذه القيم من جدول تقييم Jev.",
       preset_balanced: "متوازن",
       preset_location_first: "الموقع أولًا",
       preset_seniority_first: "المستوى أولًا",

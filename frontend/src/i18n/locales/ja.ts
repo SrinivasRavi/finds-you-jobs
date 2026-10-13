@@ -1001,6 +1001,7 @@ const ja: DeepPartial<Messages> = {
       weightsReset: "リセット",
       weightsShow: "個別に調整する",
       weightsHide: "スライダーを隠す",
+      weightsFromJev: "LLMスコアリングは合計をモデルに直接求めるため、独自の配分表がありません。ここではJevスコアリングの表から始まります。",
       preset_balanced: "バランス重視",
       preset_location_first: "勤務地優先",
       preset_seniority_first: "職位優先",

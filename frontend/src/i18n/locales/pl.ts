@@ -1046,6 +1046,7 @@ const pl: DeepPartial<Messages> = {
       weightsReset: "Zresetuj",
       weightsShow: "Dostrój każdy z osobna",
       weightsHide: "Ukryj suwaki",
+      weightsFromJev: "Ocena LLM prosi model o wynik łączny, więc nie ma własnej tabeli. Te wartości zaczynają od tabeli oceny Jev.",
       preset_balanced: "Zrównoważone",
       preset_location_first: "Najpierw lokalizacja",
       preset_seniority_first: "Najpierw poziom",

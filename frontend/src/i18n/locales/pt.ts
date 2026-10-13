@@ -1019,6 +1019,7 @@ const pt: DeepPartial<Messages> = {
       weightsReset: "Repor",
       weightsShow: "Afinar cada um",
       weightsHide: "Ocultar os cursores",
+      weightsFromJev: "A pontuação por LLM pede o total ao modelo, por isso não tem tabela própria. Estes valores partem da tabela da pontuação Jev.",
       preset_balanced: "Equilibrado",
       preset_location_first: "Localização primeiro",
       preset_seniority_first: "Senioridade primeiro",

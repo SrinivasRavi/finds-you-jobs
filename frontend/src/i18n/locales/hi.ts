@@ -1019,6 +1019,7 @@ const hi: DeepPartial<Messages> = {
       weightsReset: "रीसेट",
       weightsShow: "हर एक को बारीकी से सेट करें",
       weightsHide: "स्लाइडर छिपाएँ",
+      weightsFromJev: "LLM स्कोरिंग कुल अंक सीधे मॉडल से लेती है, इसलिए उसकी अपनी कोई तालिका नहीं है। ये मान Jev स्कोरिंग की तालिका से शुरू होते हैं।",
       preset_balanced: "संतुलित",
       preset_location_first: "पहले स्थान",
       preset_seniority_first: "पहले वरिष्ठता",

@@ -162,6 +162,7 @@ const settingsPage = {
     weightsReset: "Reset",
     weightsShow: "Fine-tune each one",
     weightsHide: "Hide the sliders",
+    weightsFromJev: "LLM scoring asks the model for the total, so it has no table of its own. These start from Jev scoring's.",
     preset_balanced: "Balanced",
     preset_location_first: "Location first",
     preset_seniority_first: "Seniority first",

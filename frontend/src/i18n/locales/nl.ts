@@ -1019,6 +1019,7 @@ const nl: DeepPartial<Messages> = {
       weightsReset: "Herstellen",
       weightsShow: "Elk apart fijnregelen",
       weightsHide: "Schuifregelaars verbergen",
+      weightsFromJev: "LLM-scoring vraagt het model om het totaal en heeft dus geen eigen tabel. Deze waarden beginnen bij die van Jev-scoring.",
       preset_balanced: "In balans",
       preset_location_first: "Locatie eerst",
       preset_seniority_first: "Niveau eerst",

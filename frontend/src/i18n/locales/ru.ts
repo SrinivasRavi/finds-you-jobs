@@ -1064,6 +1064,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       weightsReset: "Сбросить",
       weightsShow: "Настроить каждый",
       weightsHide: "Скрыть ползунки",
+      weightsFromJev: "Оценка LLM получает итог прямо от модели, поэтому своей таблицы у неё нет. Эти значения взяты из таблицы оценки Jev.",
       preset_balanced: "Сбалансированно",
       preset_location_first: "Сначала локация",
       preset_seniority_first: "Сначала уровень",

@@ -4188,6 +4188,14 @@ export interface components {
                 /** @enum {number} */
                 nice_to_haves: 0.1;
             };
+            keyword_weights: {
+                /** @enum {number} */
+                core_stack: 0.55;
+                /** @enum {number} */
+                years: 0.3;
+                /** @enum {number} */
+                level: 0.15;
+            };
             lifecycle_defaults: {
                 /** @enum {number} */
                 engagement_ghosted_days: 14;

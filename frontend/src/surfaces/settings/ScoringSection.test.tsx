@@ -193,3 +193,43 @@ describe("ScoringSection, what costs money", () => {
     expect(screen.queryByTestId("scoring-prompt-pointer")).toBeNull();
   });
 });
+
+describe("ScoringSection weights start from the selected method's table (audit A10)", () => {
+  const open = () => act(() => screen.getByTestId("score-weights-disclosure").click());
+  const value = (axis: string) =>
+    (screen.getByTestId(`score-weight-${axis}`) as HTMLInputElement).value;
+
+  it("shows Keyword scoring's 55/30/15 on a Keyword board", () => {
+    render(<ScoringSection settings={settings({ scoring_mode: "keyword" })} patch={() => {}} />);
+    open();
+    expect([value("core_stack"), value("years"), value("level")]).toEqual(["55", "30", "15"]);
+    expect(value("hard_requirements")).toBe("0");
+    expect(screen.queryByTestId("score-weights-from-jev")).toBeNull();
+  });
+
+  it("a nudge to Years changes only Years in the saved table", () => {
+    const patch = vi.fn();
+    render(<ScoringSection settings={settings({ scoring_mode: "keyword" })} patch={patch} />);
+    open();
+    const years = screen.getByTestId("score-weight-years") as HTMLInputElement;
+    act(() => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(years, "35");
+      years.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(patch).toHaveBeenCalledWith({
+      score_weights: {
+        hard_requirements: 0, core_stack: 0.55, years: 0.35, level: 0.15, nice_to_haves: 0,
+      },
+    });
+  });
+
+  it("says LLM scoring has no table and starts from Jev scoring's", () => {
+    render(<ScoringSection settings={settings({ scoring_mode: "llm" })} patch={() => {}} />);
+    open();
+    expect(value("hard_requirements")).toBe("30");
+    expect(screen.getByTestId("score-weights-from-jev").textContent).toBe(
+      "settingsPage.scoring.weightsFromJev",
+    );
+  });
+});

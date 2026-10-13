@@ -128,15 +128,26 @@ const PRESET_WEIGHTS: Record<ScoreWeightPreset, Record<string, number>> = {
   },
 } satisfies Shared["preset_weights"];
 
-// The shipped table a `balanced` install actually scores with (`JEV_WEIGHTS`),
-// so the sliders open showing real numbers instead of 5 zeroes.
-const BALANCED_FALLBACK: Record<string, number> = {
+// The tables the methods ship with, so the sliders open on the numbers the
+// selected method really scores with (audit A10). Keyword weighs 3 axes; Laya
+// runs the keyword floor until its pack exists; LLM scoring has no table, so
+// it starts from Jev's and says so.
+const JEV_TABLE: Record<string, number> = {
   hard_requirements: 0.3,
   core_stack: 0.3,
   years: 0.15,
   level: 0.15,
   nice_to_haves: 0.1,
 } satisfies Shared["jev_weights"];
+const KEYWORD_TABLE: Record<string, number> = {
+  core_stack: 0.55,
+  years: 0.3,
+  level: 0.15,
+} satisfies Shared["keyword_weights"];
+
+function methodTable(mode: SettingsT["scoring_mode"]): Record<string, number> {
+  return mode === "keyword" || mode === "local" ? KEYWORD_TABLE : JEV_TABLE;
+}
 
 function WeightControls({
   settings,
@@ -155,11 +166,8 @@ function WeightControls({
     ? settings.score_weight_preset
     : "balanced";
   const presetTable = PRESET_WEIGHTS[preset];
-  const shown = customised
-    ? custom
-    : Object.keys(presetTable).length > 0
-      ? presetTable
-      : BALANCED_FALLBACK;
+  const fromMethod = !customised && Object.keys(presetTable).length === 0;
+  const shown = customised ? custom : fromMethod ? methodTable(settings.scoring_mode) : presetTable;
   const dirty = customised || preset !== "balanced";
   return (
     <div data-testid="score-weights">
@@ -216,6 +224,11 @@ function WeightControls({
       </button>
       {open ? (
         <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-3">
+          {fromMethod && settings.scoring_mode === "llm" ? (
+            <div className="text-[11.5px] text-ink-3" data-testid="score-weights-from-jev">
+              {t("settingsPage.scoring.weightsFromJev")}
+            </div>
+          ) : null}
           {WEIGHTED_AXES.map((axis) => (
             <label key={axis} className="flex items-center gap-3 text-[12px]">
               <span className="w-36 shrink-0 text-ink-2">{t(`scoreFactor.${axis}`)}</span>
