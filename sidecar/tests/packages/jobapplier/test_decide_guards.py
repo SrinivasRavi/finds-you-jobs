@@ -28,7 +28,9 @@ from sidecar.packages.jobapplier.decide import (
 from sidecar.packages.jobapplier.observe import ObservedElement
 
 
-def _field(label: str = "", *, interactable: bool = True, **attrs: Any) -> Field:
+def _field(
+    label: str = "", *, interactable: bool = True, extra: dict[str, str] | None = None, **attrs: Any
+) -> Field:
     """A text field built the way `_collect_fields` builds one."""
     el = ObservedElement(
         element_id="e1",
@@ -37,7 +39,7 @@ def _field(label: str = "", *, interactable: bool = True, **attrs: Any) -> Field
         interactable=interactable,
         frame_index=0,
         label=label,
-        attributes={"type": "text", **attrs},
+        attributes={"type": "text", **attrs, **(extra or {})},
     )
     return Field(
         key="k#0",
@@ -70,7 +72,7 @@ def test_password_and_one_time_code_fields_are_refused(field: Field, expected: b
     ("field", "expected"),
     [
         (_field("x", type="hidden"), True),
-        (_field("x", **{"aria-hidden": "true"}), True),
+        (_field("x", extra={"aria-hidden": "true"}), True),
         (_field("x", interactable=False), True),
         (_field("x", style="display: none"), True),
         (_field("x", style="visibility:hidden;"), True),
