@@ -109,6 +109,8 @@ const jobBoard = {
   },
   duplicate: {
     looksLike: "This looks like \"{{title}}\", which you added {{days}} days ago.",
+    looksLikeToday: "This looks like \"{{title}}\", which you added today.",
+    looksLikeYesterday: "This looks like \"{{title}}\", which you added yesterday.",
     different: "They're different",
     resolveHint: "If it is the same job, delete the one you don't need.",
   },

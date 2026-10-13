@@ -15,17 +15,20 @@ export function DuplicatePrompt({ job }: { job: Job }) {
   const { data } = useJobDuplicate(jobId, job.duplicate_notice);
   const dismiss = useDismissJobDuplicate();
   if (!data) return null;
-  const days = daysBetween(data.other_added_at, "round");
+  const raw = daysBetween(data.other_added_at, "round");
+  const days = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+  // "0 days ago" and "1 days ago" read wrong in every language.
+  const looksLikeKey =
+    days === 0 ? "jobBoard.duplicate.looksLikeToday"
+    : days === 1 ? "jobBoard.duplicate.looksLikeYesterday"
+    : "jobBoard.duplicate.looksLike";
   return (
     <div
       data-testid="duplicate-prompt"
       className="mb-3 rounded-md border border-warn bg-warn-wash px-3 py-2"
     >
       <p className="text-[12px] text-ink">
-        {t("jobBoard.duplicate.looksLike", {
-          title: data.other.title,
-          days: Number.isFinite(days) ? days : 0,
-        })}{" "}
+        {t(looksLikeKey, { title: data.other.title, days })}{" "}
         {t("jobBoard.duplicate.resolveHint")}
       </p>
       <div className="mt-1.5 flex gap-2">

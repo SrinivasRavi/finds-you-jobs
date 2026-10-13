@@ -388,6 +388,8 @@ const it: DeepPartial<Messages> = {
     },
     duplicate: {
       looksLike: "Sembra «{{title}}», che hai aggiunto {{days}} giorni fa.",
+      looksLikeToday: "Sembra «{{title}}», che hai aggiunto oggi.",
+      looksLikeYesterday: "Sembra «{{title}}», che hai aggiunto ieri.",
       different: "Sono diverse",
       resolveHint: "Se è la stessa offerta, elimina quella che non ti serve.",
     },

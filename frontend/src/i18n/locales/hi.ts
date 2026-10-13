@@ -388,6 +388,8 @@ const hi: DeepPartial<Messages> = {
     },
     duplicate: {
       looksLike: "यह \"{{title}}\" जैसा लगता है, जिसे आपने {{days}} दिन पहले जोड़ा था।",
+      looksLikeToday: "यह \"{{title}}\" जैसा लगता है, जिसे आपने आज जोड़ा था।",
+      looksLikeYesterday: "यह \"{{title}}\" जैसा लगता है, जिसे आपने कल जोड़ा था।",
       different: "ये अलग हैं",
       resolveHint: "अगर यह वही नौकरी है, तो जिसकी ज़रूरत नहीं है उसे हटा दें।",
     },

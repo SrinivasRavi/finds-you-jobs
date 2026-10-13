@@ -388,6 +388,8 @@ const nl: DeepPartial<Messages> = {
     },
     duplicate: {
       looksLike: "Dit lijkt op \"{{title}}\", die je {{days}} dagen geleden toevoegde.",
+      looksLikeToday: "Dit lijkt op \"{{title}}\", die je vandaag toevoegde.",
+      looksLikeYesterday: "Dit lijkt op \"{{title}}\", die je gisteren toevoegde.",
       different: "Ze zijn verschillend",
       resolveHint: "Als het dezelfde vacature is, verwijder dan de vacature die je niet nodig hebt.",
     },

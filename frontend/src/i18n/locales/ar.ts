@@ -411,6 +411,8 @@ const ar = {
     },
     duplicate: {
       looksLike: "يبدو هذا مثل «{{title}}» التي أضفتها قبل {{days}} يومًا.",
+      looksLikeToday: "يبدو هذا مثل «{{title}}» التي أضفتها اليوم.",
+      looksLikeYesterday: "يبدو هذا مثل «{{title}}» التي أضفتها أمس.",
       different: "هما مختلفتان",
       resolveHint: "إن كانت الوظيفة نفسها، فاحذف التي لا تحتاجها.",
     },

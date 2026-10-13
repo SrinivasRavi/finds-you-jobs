@@ -383,6 +383,8 @@ const ja: DeepPartial<Messages> = {
     },
     duplicate: {
       looksLike: "これは {{days}} 日前に追加した「{{title}}」に似ています。",
+      looksLikeToday: "これは今日追加した「{{title}}」に似ています。",
+      looksLikeYesterday: "これは昨日追加した「{{title}}」に似ています。",
       different: "別の求人です",
       resolveHint: "同じ求人なら、不要なほうを削除してください。",
     },

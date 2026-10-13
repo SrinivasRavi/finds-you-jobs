@@ -383,6 +383,8 @@ const zh: DeepPartial<Messages> = {
     },
     duplicate: {
       looksLike: "这看起来像你 {{days}} 天前添加的“{{title}}”。",
+      looksLikeToday: "这看起来像你今天添加的“{{title}}”。",
+      looksLikeYesterday: "这看起来像你昨天添加的“{{title}}”。",
       different: "它们不一样",
       resolveHint: "如果是同一个职位，请删除不需要的那个。",
     },

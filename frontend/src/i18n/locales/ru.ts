@@ -407,6 +407,8 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
     },
     duplicate: {
       looksLike: "Похоже на «{{title}}», добавленную {{days}} дн. назад.",
+      looksLikeToday: "Похоже на «{{title}}», добавленную сегодня.",
+      looksLikeYesterday: "Похоже на «{{title}}», добавленную вчера.",
       different: "Это разные",
       resolveHint: "Если это та же вакансия, удалите ту, что вам не нужна.",
     },
