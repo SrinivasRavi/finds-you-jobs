@@ -10,7 +10,9 @@ Revises: d1c5f83a9b27
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -23,6 +25,36 @@ branch_labels = None
 depends_on = None
 
 _PAIR_PREFIXES = ("probable-duplicate:", "duplicate-batch:", "probable-cross-listing:")
+
+# The duplicate gate as it stood on 2026-10-12, copied from
+# `sidecar/modules/scraper/fingerprint.py` so a later change there can't change
+# what this migration did (audit A12).
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_CHUNK = 500
+
+
+def _simhash64(text: str) -> int:
+    tokens = _TOKEN_RE.findall(text.lower())
+    if len(tokens) < 3:
+        return 0
+    counts = [0] * 64
+    for i in range(len(tokens) - 2):
+        shingle = " ".join(tokens[i : i + 3])
+        h = int.from_bytes(hashlib.blake2b(shingle.encode("utf-8"), digest_size=8).digest(), "big")
+        for bit in range(64):
+            counts[bit] += 1 if (h >> bit) & 1 else -1
+    return sum(1 << bit for bit in range(64) if counts[bit] > 0)
+
+
+def _label(value: str) -> str:
+    return " ".join(_TOKEN_RE.findall((value or "").lower()))
+
+
+def _same_listing(a: tuple[int, str, str], b: tuple[int, str, str]) -> bool:
+    """Same company, same title, and descriptions agreeing on 90% of bits."""
+    if not a[0] or not b[0] or 1.0 - ((a[0] ^ b[0]).bit_count() / 64) < 0.90:
+        return False
+    return _label(a[1]) == _label(b[1]) and _label(a[2]) == _label(b[2])
 
 
 def upgrade() -> None:
@@ -66,21 +98,8 @@ def upgrade() -> None:
     }
     # Old flags include some written before the compound gate (S-C69), which
     # called a Senior and a Principal the same job; only pairs today's gate
-    # still matches are carried over.
-    from sidecar.modules.scraper.fingerprint import is_probable_cross_listing, simhash64
-
-    jobs = {
-        str(r[0]): (simhash64(str(r[1] or "")), str(r[2] or ""), str(r[3] or ""))
-        for r in bind.execute(sa.text("SELECT id, description, company, title FROM jobs"))
-    }
-
-    def still_matches(a: str, b: str) -> bool:
-        (fp_a, co_a, ti_a), (fp_b, co_b, ti_b) = jobs[a], jobs[b]
-        return bool(fp_a and fp_b) and is_probable_cross_listing(
-            fp_a, fp_b, company_a=co_a, company_b=co_b, title_a=ti_a, title_b=ti_b
-        )
-
-    pairs: set[tuple[str, str]] = set()
+    # still matches are carried over. Only the jobs a flag names are hashed.
+    candidates: list[tuple[str, str]] = []
     for job_id, raw in bind.execute(sa.text("SELECT id, trust_flags FROM jobs")).all():
         flags = json.loads(raw) if isinstance(raw, str) else (raw or [])
         kept = [f for f in flags if not str(f).startswith(_PAIR_PREFIXES)]
@@ -91,19 +110,35 @@ def upgrade() -> None:
                 other = flag[len("probable-duplicate:") :]
             elif flag.startswith("probable-cross-listing:"):
                 other = by_url.get(flag[len("probable-cross-listing:") :])
-            if (
-                other
-                and other in jobs
-                and other != job_id
-                and (other, job_id) not in pairs
-                and still_matches(job_id, other)
-            ):
-                pairs.add((job_id, other))
+            if other and other != job_id:
+                candidates.append((str(job_id), other))
         if len(kept) != len(flags):
             bind.execute(
                 sa.text("UPDATE jobs SET trust_flags = :f WHERE id = :id"),
                 {"f": json.dumps(kept), "id": job_id},
             )
+
+    named = sorted({job for pair in candidates for job in pair})
+    jobs: dict[str, tuple[int, str, str]] = {}
+    for i in range(0, len(named), _CHUNK):
+        rows = bind.execute(
+            sa.text("SELECT id, description, company, title FROM jobs WHERE id IN :ids").bindparams(
+                sa.bindparam("ids", expanding=True)
+            ),
+            {"ids": named[i : i + _CHUNK]},
+        )
+        for r in rows:
+            jobs[str(r[0])] = (_simhash64(str(r[1] or "")), str(r[2] or ""), str(r[3] or ""))
+
+    pairs: set[tuple[str, str]] = set()
+    for job_id, other in candidates:
+        if (
+            job_id in jobs
+            and other in jobs
+            and (other, job_id) not in pairs
+            and _same_listing(jobs[job_id], jobs[other])
+        ):
+            pairs.add((job_id, other))
 
     dismissed = bind.execute(
         sa.text("SELECT low_job_id, high_job_id, created_at FROM job_duplicate_dismissals")

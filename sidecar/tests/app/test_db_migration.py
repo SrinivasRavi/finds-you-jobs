@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, inspect
 
 from sidecar.app.db.migrate import downgrade_to_base, upgrade_to_head
@@ -369,3 +370,77 @@ def test_one_score_per_job_keeps_the_shown_score_and_its_factors(tmp_path: Path)
         )).one()
         assert tuple(back) == (81, "jev", None)
         assert conn.execute(text("SELECT count(*) FROM job_score_factors")).scalar() == 2
+
+
+def test_duplicate_migration_hashes_only_the_jobs_a_flag_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """e3a8c51f7d20 (audit A12): 1,000 unflagged jobs cost the boot nothing; only the 3
+    jobs named in a pair flag are fingerprinted. Alembic re-imports a revision on each
+    run, so the module is loaded here and its own `upgrade()` run, to count the calls."""
+    import importlib.util
+    import json
+
+    from alembic import command
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'hash.db'}"
+    command.upgrade(make_alembic_config(url), "d1c5f83a9b27")
+    engine = create_engine(url)
+    jd = (
+        "Senior Software Engineer at Acme. You will own distributed Python services, "
+        "design PostgreSQL schemas, run workloads on AWS and mentor other engineers."
+    )
+    insert = text(
+        "INSERT INTO jobs (id, canonical_url, title, company, location, description,"
+        " source_adapter, trust_score, trust_flags, ingested_at, feed_state, feed_since)"
+        " VALUES (:id, :url, 'SWE', 'Acme', '', :jd, 'lever', 100, :flags, '2026-10-01',"
+        " 'active', '2026-10-01')"
+    )
+    flagged = {
+        "a": [],
+        "b": ["probable-duplicate:a", "duplicate-batch:1"],
+        "c": ["probable-cross-listing:https://ex.co/a", "probable-duplicate:gone"],
+    }
+    with engine.begin() as conn:
+        for job_id, flags in flagged.items():
+            conn.execute(
+                insert,
+                {"id": job_id, "url": f"https://ex.co/{job_id}", "jd": jd,
+                 "flags": json.dumps(flags)},
+            )
+        for i in range(1000):
+            conn.execute(
+                insert,
+                {"id": f"plain-{i}", "url": f"https://ex.co/p{i}", "jd": f"{jd} {i}",
+                 "flags": "[]"},
+            )
+
+    path = (
+        Path(__file__).parents[2]
+        / "app/db/alembic/versions/20261012_e3a8c51f7d20_job_duplicates_and_origin.py"
+    )
+    spec = importlib.util.spec_from_file_location("e3a8c51f7d20", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    hashed: list[str] = []
+    real = module._simhash64
+
+    def counting(description: str) -> int:
+        hashed.append(description)
+        return real(description)
+
+    monkeypatch.setattr(module, "_simhash64", counting)
+    with engine.begin() as conn, Operations.context(MigrationContext.configure(conn)):
+        module.upgrade()
+
+    assert len(hashed) == 3
+    with engine.connect() as conn:
+        pairs = set(conn.execute(text("SELECT job_id, other_job_id FROM job_duplicates")))
+    assert pairs == {("b", "a"), ("c", "a")}
+
