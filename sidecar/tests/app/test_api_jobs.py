@@ -164,7 +164,7 @@ def test_preview_extracts_editable_fields(
     app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _app, client = app_client
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _fake_probe_ok)
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _fake_probe_ok)
     resp = client.post(
         "/api/jobs/preview", headers=AUTH, json={"url": "https://job-boards.greenhouse.io/acme"}
     )
@@ -184,7 +184,7 @@ def test_preview_fetch_failure_is_422_verbatim(
     def _boom(_url: str, *_a: object, **_k: object) -> NormalizedJob:
         raise ScraperError("fetch", "could not fetch: timed out")
 
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _boom)
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _boom)
     resp = client.post("/api/jobs/preview", headers=AUTH, json={"url": "https://x.test/j"})
     assert resp.status_code == 422
     assert "timed out" in resp.json()["detail"]  # verbatim underlying message

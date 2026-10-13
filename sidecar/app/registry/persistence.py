@@ -711,7 +711,7 @@ def tombstone_url(repos: Repos, job: Job, *, reason: str) -> bool:
 
 def saved_job_ids(repos: Repos) -> set[str]:
     """Job ids rescued by a Saved application: never auto-expired or deleted, and
-    excluded from the board server-side (US-JB-06). Public because `api/routes`
+    excluded from the board server-side (US-JB-06). Public because `api/jobs`
     reads it too (duplication audit D-A17)."""
     return set(repos.applications.job_ids())
 

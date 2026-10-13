@@ -35,14 +35,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import event
 
+from sidecar.app.api import applications, jobs, networking
 from sidecar.app.api import dto as dto_module
-from sidecar.app.api import routes
-from sidecar.app.api import routes as routes_module
 from sidecar.app.db import Database
 from sidecar.app.db.base import now_utc
 from sidecar.app.db.models import Job
 
 from ._support import AUTH
+
+
+def _endpoint(name: str) -> Any:
+    """The handler named `name`, from whichever api module owns it."""
+    return next(getattr(m, name) for m in (jobs, applications, networking) if hasattr(m, name))
 
 
 def _db(app: FastAPI) -> Database:
@@ -284,7 +288,7 @@ def test_board_and_applications_assemble_off_loop(
     assert client.get("/api/jobs", headers=AUTH).status_code == 200
     assert client.get("/api/scan/progress", headers=AUTH).status_code == 200
     for name in ("board", "list_applications", "list_jobs", "scan_progress"):
-        handler = getattr(routes_module, name)
+        handler = _endpoint(name)
         assert not inspect.iscoroutinefunction(handler), (
             f"{name} touches the database, so it must be a plain def handler"
         )
@@ -360,7 +364,7 @@ def test_trash_analytics_and_contacts_run_off_loop(
     assert client.post("/api/jobs/trash/empty", headers=AUTH).status_code == 200
     assert any(name.startswith("discovery_analytics.") for name in offloaded)
     for name in ("list_contacts", "empty_trash"):
-        handler = getattr(routes_module, name)
+        handler = _endpoint(name)
         assert not inspect.iscoroutinefunction(handler), (
             f"{name} touches the database, so it must be a plain def handler"
         )
@@ -430,7 +434,7 @@ def test_contacts_list_matches_single_contact_build(
         for card in listed:
             contact = repos.contacts.get(card["id"])
             assert contact is not None
-            single = routes._contact_dto(repos, contact)
+            single = networking._contact_dto(repos, contact)
             assert single.model_dump(mode="json") == card
             assert card["last_message"] is not None
             assert card["last_message_direction"] == "me"

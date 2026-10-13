@@ -1,7 +1,6 @@
 """Discovery-source controls (Settings → Discovery sources).
 
-A dedicated router (engines.py precedent — kept out of the contested
-`routes.py`). Every adapter family the scraper ships is ON by default; the
+A dedicated router, like engines.py. Every adapter family the scraper ships is ON by default; the
 user opts *out* per family (or per entry, for actor-granular sources like
 Apify). The opt-out list lives in `UserPreferences.portals_config
 ["disabled_sources"]` — the same JSON document `scan()` already reads, so a
@@ -347,7 +346,7 @@ async def watch_company(
         sources = list(_portals(repos).get("sources", []))
 
     # Network probes run OUTSIDE any DB session and OFF the event loop
-    # (asyncio.to_thread — the routes.py `probe_url` pattern). A synchronous
+    # (asyncio.to_thread — the api/jobs.py `probe_url` pattern). A synchronous
     # probe here blocked the loop, so /healthz went dark and the shell's
     # supervisor kill-restarted a healthy sidecar mid-session (found
     # 2026-07-22: every mutation after that failed as WebKit "Load failed"

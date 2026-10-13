@@ -1,6 +1,6 @@
 """BYOK provider surface — verify + CRUD (FR-SET-06 / US-SET-07 / US-OB-04).
 
-A dedicated router (kept out of the contested `routes.py`). It backs both the
+A dedicated router. It backs both the
 Settings → AI Providers panel and the Onboarding Verify gate:
 
 - `POST /api/engines/verify` — a provider-appropriate real check. Anthropic /

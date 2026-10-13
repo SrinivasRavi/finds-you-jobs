@@ -329,7 +329,7 @@ def test_an_exact_text_match_attaches_silently(
 ) -> None:
     app, client = app_client
     job = _paste(client, _JD)
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _probe(_JD))
 
     resp = client.post(f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL})
     assert resp.status_code == 200
@@ -354,7 +354,7 @@ def test_promotion_keeps_the_application_and_its_documents(
         headers=AUTH,
         json={"job_id": job["id"], "generate_resume": False, "generate_cover": False},
     ).json()
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _probe(_JD))
 
     client.post(f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL})
 
@@ -370,7 +370,7 @@ def test_adjacent_seniority_comes_back_as_a_mismatch(
     _app, client = app_client
     job = _paste(client, _JD)
     monkeypatch.setattr(
-        "sidecar.app.api.routes.probe_url",
+        "sidecar.app.api.jobs.probe_url",
         _probe(_JD + " Equity included.", title="Principal Software Engineer"),
     )
 
@@ -390,7 +390,7 @@ def test_confirm_attaches_a_mismatch_anyway(
     _app, client = app_client
     job = _paste(client, _JD)
     monkeypatch.setattr(
-        "sidecar.app.api.routes.probe_url",
+        "sidecar.app.api.jobs.probe_url",
         _probe("Something else entirely.", title="Product Designer"),
     )
 
@@ -417,7 +417,7 @@ def test_an_unreadable_page_says_so_instead_of_refusing(
     def _boom(_url: str, *_a: object, **_k: object) -> NormalizedJob:
         raise ScraperError("fetch", "likely a JS-only page")
 
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _boom)
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _boom)
     body = client.post(
         f"/api/jobs/{job['id']}/link", headers=AUTH, json={"url": _URL}
     ).json()
@@ -442,7 +442,7 @@ def test_a_link_another_job_already_has_is_reported_and_writes_nothing(
         headers=AUTH,
         json={"job_id": scanned["id"], "generate_resume": False, "generate_cover": False},
     )
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _probe(_JD))
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _probe(_JD))
 
     for confirm in (False, True):
         body = client.post(

@@ -1,7 +1,7 @@
 """Resume ingestion for onboarding (FR-OB-04 / US-OB-02).
 
-A dedicated router (kept out of the concurrently-edited `routes.py`, wired via
-`include_router` in `main.py` exactly like `api/engines.py`). It backs the
+A dedicated router, wired via `include_router` in `main.py` like every other
+`api/` router. It backs the
 onboarding Resume step's upload affordance:
 
 - `POST /api/profile/ingest` — takes a multipart file and returns the extracted

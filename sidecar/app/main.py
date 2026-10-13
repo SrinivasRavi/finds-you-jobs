@@ -24,11 +24,16 @@ from fastapi.responses import JSONResponse
 
 from sidecar.modules.geo.gazetteer import warm as warm_gazetteer
 
+from .api.applications import router as applications_router
 from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
-from .api.routes import router
+from .api.jobs import router as jobs_router
+from .api.networking import router as networking_router
+from .api.operations import router as operations_router
 from .api.screencast_ws import router as screencast_router
+from .api.settings import router as settings_router
+from .api.system import router as system_router
 from .auth import BearerAuthMiddleware
 from .browser import BrowserBroker
 from .db import Database, resolve_db_url
@@ -466,7 +471,12 @@ def create_app(
         allow_headers=["*"],
     )
 
-    app.include_router(router)
+    app.include_router(system_router)
+    app.include_router(jobs_router)
+    app.include_router(settings_router)
+    app.include_router(applications_router)
+    app.include_router(operations_router)
+    app.include_router(networking_router)
     app.include_router(engines_router)
     app.include_router(discovery_router)
     app.include_router(ingest_router)

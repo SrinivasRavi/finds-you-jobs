@@ -4,7 +4,7 @@ The observability settings (content logging + OTLP export opt-in + retention)
 live under `ui_state` alongside theme — there is no separate observability table
 in P1 (US-SYS-05: the SDK owns its own log; the *config* is a handful of prefs).
 One parser, shared by app startup (main.py) and the Settings-change reconfigure
-path (routes.py), so the two never drift.
+path (api/settings.py), so the two never drift.
 """
 
 from __future__ import annotations

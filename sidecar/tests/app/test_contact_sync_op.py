@@ -456,7 +456,7 @@ def test_contact_dto_prefers_the_thread_snapshot(db: Database) -> None:
     """`_contact_dto` serves the REAL thread message once a sync stored it:
     a `them` snapshot yields direction `them` + the sender's display name,
     even when a later OutreachLog of ours exists."""
-    from sidecar.app.api.routes import _contact_dto
+    from sidecar.app.api.networking import _contact_dto
 
     cid = _make_contact(db, status="pending_our_response", accepted_at=now_utc(),
                         profile_payload={"last_thread_message": {
@@ -480,7 +480,7 @@ def test_contact_dto_falls_back_to_the_outreach_log_pre_sync(db: Database) -> No
     """No synced snapshot yet ⇒ the latest OutreachLog fills in, honestly
     attributed as OURS (direction `me`, no from_name) — a card with outreach
     history is never blank."""
-    from sidecar.app.api.routes import _contact_dto
+    from sidecar.app.api.networking import _contact_dto
 
     cid = _make_contact(db, status="sent", sent_at=now_utc())
     with db.repos() as repos:

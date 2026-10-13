@@ -46,7 +46,7 @@ def test_export_pdf_renders_into_downloads(
 ) -> None:
     _app, client = app_client
     downloads = tmp_path / "downloads"
-    from sidecar.app.api import routes as routes_mod
+    from sidecar.app.api import system as routes_mod
 
     monkeypatch.setattr(routes_mod, "downloads_dir", lambda: downloads)
 
@@ -78,7 +78,7 @@ def test_export_pdf_says_plainly_when_downloads_is_denied(
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     downloads.chmod(0o500)
-    from sidecar.app.api import routes as routes_mod
+    from sidecar.app.api import system as routes_mod
 
     monkeypatch.setattr(routes_mod, "downloads_dir", lambda: downloads)
     try:
@@ -98,7 +98,7 @@ def test_export_pdf_to_temp_renders_for_the_shell_to_save(
     copies the file there, so the sidecar renders into its own exports folder."""
     _app, client = app_client
     exports = tmp_path / "exports"
-    from sidecar.app.api import routes as routes_mod
+    from sidecar.app.api import system as routes_mod
 
     monkeypatch.setattr(routes_mod, "export_temp_dir", lambda: exports)
     resp = client.post(
