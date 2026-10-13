@@ -43,6 +43,7 @@ from .policy import (
     DISPATCH_PRIORITY,
     ConcurrencyPolicy,
     can_start,
+    fit_to_pool,
     with_llm_limit,
     with_queue_mode,
 )
@@ -81,10 +82,10 @@ class OperationRunner:
         on_success: OnSuccessFn | None = None,
         observability: ObservabilityHandle | None = None,
         # Worker threads bound REAL parallelism; the per-group policy bounds
-        # intended parallelism. Sized generously so a raised llm_concurrency
-        # setting isn't silently capped — idle threads cost nothing. 32 is the
-        # practical ceiling for the "Unlimited" setting.
-        max_workers: int = 32,
+        # intended parallelism. Scoring gets what the other lanes' caps leave
+        # (`fit_to_pool`, audit A19), so this is sized for every lane at its cap
+        # plus the top Parallel AI calls (20). Idle threads cost nothing.
+        max_workers: int = 64,
         # Injectable for tests (short cooldowns); production uses the default.
         circuit: EngineCircuitBreaker | None = None,
     ) -> None:
@@ -253,10 +254,14 @@ class OperationRunner:
                     limit=DISPATCH_SCAN_LIMIT,
                 )
                 running = list(self._running.values())
+                policy = fit_to_pool(self._policy, self._max_workers, self._registry.kinds())
                 for op in queued:
                     if op.id in self._running:
                         continue
-                    if can_start(op.kind, running, self._policy, op.requested_by):
+                    # Marked running means it has a thread, never a wait in the pool's queue.
+                    if len(running) >= self._max_workers:
+                        break
+                    if can_start(op.kind, running, policy, op.requested_by):
                         snapshot = dict(op.input_snapshot or {})
                         to_start.append((op.id, op.kind, snapshot))
                         running.append((op.kind, op.requested_by))

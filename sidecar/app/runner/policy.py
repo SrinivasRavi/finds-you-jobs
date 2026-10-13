@@ -3,7 +3,7 @@
 Defaults: AI kinds wait in lanes picked by `group_for` (1 per kind of work, or
 1 shared); app scoring is capped by thresholds.llm_concurrency (default 4,
 0 = unlimited); `scan` and the
-networking ops are single-flight; `apply` is single-flight but runs BESIDE
+networking ops are single-flight; `apply` runs APPLY_PARALLEL tabs BESIDE
 the LLM pool (its packet wait depends on tailor); only the headed
 `linkedin_login` is exclusive. Dispatch is priority-ordered so interactive
 work never starves behind bulk fan-outs. `can_start` is a pure decision
@@ -25,6 +25,9 @@ QUEUE_SHARED = "shared"
 # Lanes other than scoring have no setting yet (maintainer, 2026-10-13: "for now
 # only scoring has the parallelization"), so they keep today's default width.
 FIXED_LANE_LIMIT = 4
+# Applications filled at once, each in its own tab of the Applier window
+# (applier.md Want 22, "something like 10 or 20"; applier/window.md section 4.7).
+APPLY_PARALLEL = 10
 
 
 @dataclass(frozen=True)
@@ -58,9 +61,9 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         "scan": "scan",
         # Trash-TTL eviction (FR-SYS-04): zero-LLM, DB-only, single-flight.
         "cleanup_trash": "cleanup_trash",
-        # One apply run at a time — but NOT exclusive: the agentic apply op
-        # WAITS for a still-generating tailored resume (applier-as-built.md section 8.1), so
-        # the `tailor` op must be able to run beside it. Making apply
+        # APPLY_PARALLEL runs at once, 1 tab each — but NOT exclusive: the agentic
+        # apply op WAITS for a still-generating tailored resume (applier-as-built.md
+        # section 8.1), so the `tailor` op must be able to run beside it. Making apply
         # exclusive dead-locked that wait until the packet timeout
         # (2026-07-17 dogfood: "Waiting for résumé" for 15 minutes).
         "apply": "apply",
@@ -79,7 +82,7 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         # 4 = DEFAULT_LLM_CONCURRENCY below; the boot wiring overrides from
         # thresholds.llm_concurrency (Settings → Scoring → Parallel AI calls).
         "llm": 4, "ai_writing": FIXED_LANE_LIMIT, "ai_requests": FIXED_LANE_LIMIT,
-        "extract": 1, "scan": 1, "cleanup_trash": 1, "apply": 1,
+        "extract": 1, "scan": 1, "cleanup_trash": 1, "apply": APPLY_PARALLEL,
         "networker_discover": 1, "networker_send": 1,
         "linkedin_login": 1, "archive_stale_contacts": 1, "view_page": 1,
     },
@@ -143,6 +146,18 @@ def with_llm_limit(policy: ConcurrencyPolicy, limit: int) -> ConcurrencyPolicy:
     limits = dict(policy.group_limits)
     limits["llm"] = limit
     return replace(policy, group_limits=limits)
+
+
+def fit_to_pool(
+    policy: ConcurrencyPolicy, pool_size: int, kinds: Iterable[str]
+) -> ConcurrencyPolicy:
+    """Cap scoring at the threads every other lane leaves free, so a full scoring
+    lane can never hold a thread a click needs. Unlimited means exactly that
+    many (queueing.md section 8, audit A19)."""
+    others = {policy.group_for(k, by) for k in kinds for by in ("app", "user")} - {"llm"}
+    reserved = sum(policy.limit_for_group(g) for g in others)
+    ceiling = max(1, pool_size - reserved)
+    return with_llm_limit(policy, min(policy.limit_for_group("llm"), ceiling))
 
 
 def ai_queue_mode_from(thresholds: dict | None) -> str:

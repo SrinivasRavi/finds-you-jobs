@@ -29,8 +29,10 @@ from sidecar.app.runner import (
     can_start,
 )
 from sidecar.app.runner.policy import (
+    APPLY_PARALLEL,
     QUEUE_PER_KIND,
     QUEUE_SHARED,
+    fit_to_pool,
     policy_from,
     with_queue_mode,
 )
@@ -120,13 +122,15 @@ def test_can_start_scan_is_single_flight() -> None:
     assert can_start("scan", ["scan"], DEFAULT_POLICY) is False
 
 
-def test_apply_runs_beside_llm_ops_but_single_flight() -> None:
+def test_apply_runs_beside_llm_ops_up_to_its_tab_cap() -> None:
     # The agentic apply op WAITS for a still-generating tailored resume
     # (applier-as-built.md section 8.1), so `tailor` MUST be startable while apply runs —
     # exclusivity here dead-locked the packet wait (2026-07-17 dogfood).
     assert can_start("apply", ["score"], DEFAULT_POLICY) is True
     assert can_start("tailor", ["apply"], DEFAULT_POLICY) is True
-    assert can_start("apply", ["apply"], DEFAULT_POLICY) is False  # one run at a time
+    # 1 tab per application in the shared window (applier/window.md section 4.7).
+    assert can_start("apply", ["apply"] * (APPLY_PARALLEL - 1), DEFAULT_POLICY) is True
+    assert can_start("apply", ["apply"] * APPLY_PARALLEL, DEFAULT_POLICY) is False
     assert can_start("apply", [], DEFAULT_POLICY) is True
 
 
@@ -325,6 +329,63 @@ def test_a_user_request_starts_while_background_scoring_fills_its_lane(
             runner.shutdown(drain_timeout=3)
 
 
+def test_scoring_gets_only_the_threads_other_lanes_leave() -> None:
+    """Audit A19: every lane at its cap still fits the pool, so Unlimited (and 20)
+    means what's left after the others, never a thread a click needs."""
+    from sidecar.app.registry.operations import default_operation_registry
+
+    kinds = default_operation_registry().kinds()
+    for mode in (QUEUE_PER_KIND, QUEUE_SHARED):
+        for setting in (0, 20, 4):
+            policy = fit_to_pool(
+                policy_from({"llm_concurrency": setting, "ai_queue_mode": mode}), 64, kinds
+            )
+            groups = {policy.group_for(k, by) for k in kinds for by in ("app", "user")}
+            assert sum(policy.limit_for_group(g) for g in groups) <= 64, (mode, setting)
+            if setting:
+                assert policy.limit_for_group("llm") == setting, (mode, setting)
+    # A pool too small for the other lanes still leaves scoring 1 thread.
+    assert fit_to_pool(policy_from({"llm_concurrency": 0}), 8, kinds).limit_for_group("llm") == 1
+
+
+def test_unlimited_scoring_never_queues_a_click_behind_it(migrated_db: Database) -> None:
+    """Audit A19, live: Unlimited plus 60 queued batch scores, then 1 "Score it
+    first". The click's code starts at once, and nothing marked running waits."""
+    from sidecar.app.registry.operations import default_operation_registry
+
+    db = migrated_db
+    started: list[str] = []
+    gate = threading.Event()
+
+    def entry(ctx: OperationContext) -> OperationOutcome:
+        started.append(ctx.input_snapshot.get("tag", ""))
+        gate.wait(timeout=10)
+        return OperationOutcome()
+
+    kinds = default_operation_registry().kinds()
+    runner = OperationRunner(
+        db,
+        policy=policy_from({"llm_concurrency": 0}),
+        registry=OperationRegistry({k: entry for k in kinds}),
+    )
+    runner.start()
+    try:
+        for i in range(60):
+            runner.submit("score", {"tag": f"batch{i}"})
+        user = runner.submit("score", {"tag": "user"}, requested_by="user")
+        deadline = time.monotonic() + 3
+        while "user" not in started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert "user" in started
+        wait_for_state(db, user, "running")
+        # Every op marked running is executing its code: none sits in the pool's queue.
+        time.sleep(0.3)
+        assert _running_count(db) == len(started) <= 64
+    finally:
+        gate.set()
+        runner.shutdown(drain_timeout=5)
+
+
 def test_on_success_hook_fires_on_success_only_and_is_contained(
     migrated_db: Database,
 ) -> None:
@@ -476,8 +537,8 @@ def test_llm_concurrency_setting_parses_and_clamps() -> None:
     assert llm_concurrency_from({"llm_concurrency": 999}) == 20  # clamp high
     assert llm_concurrency_from({"llm_concurrency": -3}) == 1  # clamp low
     assert llm_concurrency_from({"llm_concurrency": "junk"}) == DEFAULT_LLM_CONCURRENCY
-    # 0 = Unlimited: effectively uncapped by policy (the worker pool is the
-    # practical ceiling).
+    # 0 = Unlimited: uncapped here; the runner's `fit_to_pool` caps it at the
+    # threads the other lanes leave (audit A19).
     unlimited = llm_concurrency_from({"llm_concurrency": 0})
     assert unlimited >= 1_000_000
 
