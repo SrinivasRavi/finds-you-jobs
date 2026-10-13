@@ -744,15 +744,20 @@ class JobsRepo:
         return list(self._s.scalars(stmt))
 
     def list_expired_before(self, cutoff: datetime) -> list[Job]:
-        """Expired rows past the hard-delete cutoff (same null rule as above)."""
+        """Scanned expired rows past the hard-delete cutoff (same null rule as above)."""
         stmt = select(Job).where(
-            Job.feed_state == "expired", Job.expired_at.is_not(None), Job.expired_at <= cutoff
+            Job.feed_state == "expired",
+            Job.expired_at.is_not(None),
+            Job.expired_at <= cutoff,
+            Job.origin == "scan",
         )
         return list(self._s.scalars(stmt))
 
     def list_active_before(self, cutoff: datetime) -> list[Job]:
-        """Active rows whose freshness window has run out."""
-        stmt = select(Job).where(Job.feed_state == "active", Job.feed_since <= cutoff)
+        """Scanned active rows whose freshness window has run out."""
+        stmt = select(Job).where(
+            Job.feed_state == "active", Job.feed_since <= cutoff, Job.origin == "scan"
+        )
         return list(self._s.scalars(stmt))
 
     def stamp_missing_lifecycle_dates(self, *, now: datetime | None = None) -> int:

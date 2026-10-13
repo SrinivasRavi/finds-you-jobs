@@ -244,32 +244,56 @@ def test_a_trashed_paste_comes_back_on_a_re_paste(
 # ---------------------------------------------------------------------------
 
 
-def test_a_typed_in_job_never_ages_out(
+def test_a_hand_added_job_never_ages_out_link_or_not(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
     app, client = app_client
     typed = _paste(client, _JD)
-    scanned = _paste(
+    linked = _paste(
         client,
-        _JD + " Different text so this is its own row.",
-        canonical_url="https://boards.greenhouse.io/acme/jobs/7",
+        _JD + " Pasted with its link, from a board no scan reads.",
+        canonical_url="https://careers.smallco.example/jobs/42",
     )
+    with app.state.db.repos() as repos:
+        scanned = repos.jobs.create(
+            canonical_url="https://boards.greenhouse.io/acme/jobs/7", title="Eng",
+            company="Acme", description=_JD + " A scanned row.", source_adapter="greenhouse",
+        )
+        scanned_id = scanned.id
     old = now_utc() - timedelta(days=400)
     with app.state.db.repos() as repos:
-        for job_id in (typed["id"], scanned["id"]):
+        for job_id in (typed["id"], linked["id"], scanned_id):
             repos.jobs.update(job_id, feed_since=old, ingested_at=old)
 
     result = age_expired_jobs(app.state.db)
-    assert result["expired"] == [scanned["id"]]
+    assert result["expired"] == [scanned_id]
 
     with app.state.db.repos() as repos:
-        repos.jobs.update(scanned["id"], expired_at=old)
+        for job_id in (typed["id"], linked["id"], scanned_id):
+            repos.jobs.update(job_id, expired_at=old)
     result = age_expired_jobs(app.state.db)
-    assert result["deleted"] == [scanned["id"]]
+    assert result["deleted"] == [scanned_id]
 
     with app.state.db.repos() as repos:
-        assert repos.jobs.get(typed["id"]) is not None
-        assert repos.jobs.get(typed["id"]).feed_state == "active"
+        for job_id in (typed["id"], linked["id"]):
+            assert repos.jobs.get(job_id).feed_state == "active"
+
+
+def test_a_job_given_its_link_later_stays_hand_added(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, client = app_client
+    typed = _paste(client, _JD)
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _probe(_JD))
+    resp = client.post(f"/api/jobs/{typed['id']}/link", headers=AUTH, json={"url": _URL})
+    assert resp.status_code == 200, resp.text
+    old = now_utc() - timedelta(days=400)
+    with app.state.db.repos() as repos:
+        repos.jobs.update(typed["id"], feed_since=old, ingested_at=old)
+    assert age_expired_jobs(app.state.db)["expired"] == []
+    with app.state.db.repos() as repos:
+        job = repos.jobs.get(typed["id"])
+        assert job.canonical_url and job.origin == "manual" and job.feed_state == "active"
 
 
 # ---------------------------------------------------------------------------

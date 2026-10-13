@@ -593,8 +593,9 @@ def age_expired_jobs(
 ) -> dict[str, list[str]]:
     """TTL aging for feed jobs (FR-SYS-03), daily: active to expired after
     `expire_after_days` from `feed_since`, then hard-deleted after
-    `delete_after_days`, with no tombstone so a scan can bring it back. Skips saved
-    jobs and URL-less ones, which no scan can replace (url-less-jobs.md 5.6, 8.3).
+    `delete_after_days`, with no tombstone so a scan can bring it back. Ages only
+    scanned jobs: a hand-added one, link or not, is no scan's to replace, the same
+    test `tombstone_url` asks (url-less-jobs.md 5.6, 8.3). Skips saved jobs.
     Returns `{"expired": [...], "deleted": [...]}`."""
     if db is None:
         return {"expired": [], "deleted": []}
@@ -611,14 +612,14 @@ def age_expired_jobs(
 
         # Stage 2 first: hard-delete stale Expired rows (no tombstone).
         for job in repos.jobs.list_expired_before(delete_cutoff):
-            if job.id in saved or not job.canonical_url:
-                continue  # Saved, or no feed to replace it — never auto-delete
+            if job.id in saved:
+                continue  # Saved — never auto-delete
             delete_job_cascade(repos, job.id)  # no Tombstone — FR-SYS-03
             deleted.append(job.id)
 
         # Stage 1: grey out active jobs past the freshness window.
         for job in repos.jobs.list_active_before(expire_cutoff):
-            if job.id in saved or not job.canonical_url:
+            if job.id in saved:
                 continue
             repos.jobs.set_expired(job.id, now=now)
             expired.append(job.id)
