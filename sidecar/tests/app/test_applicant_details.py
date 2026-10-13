@@ -171,3 +171,27 @@ def test_the_countries_list_is_named_and_sorted(tmp_path) -> None:
     assert names == sorted(names)
     assert {"code": "IN", "name": "India"} in rows
     assert len(rows) > 200
+
+
+def test_tailored_documents_keep_the_masters_location_by_default() -> None:
+    """D65: with no saved choice, the resume and cover letter keep the master's line."""
+    from types import SimpleNamespace
+
+    from sidecar.app.registry.operations import _resume_location
+
+    def repos(thresholds: dict[str, Any]) -> Any:
+        return SimpleNamespace(
+            preferences=SimpleNamespace(
+                get_or_create=lambda: SimpleNamespace(thresholds=thresholds)
+            ),
+            profile=SimpleNamespace(
+                get_current=lambda: SimpleNamespace(application_profile=RECORD)
+            ),
+            jobs=SimpleNamespace(get=lambda _id: SimpleNamespace(location="London, ON")),
+        )
+
+    assert _resume_location(repos({}), "j1") == (
+        "master", "London, Ontario, Canada", RECORD["location"]
+    )
+    assert _resume_location(repos({"resume_location": "bogus"}), "j1")[0] == "master"
+    assert _resume_location(repos({"resume_location": "posting"}), "j1")[0] == "posting"

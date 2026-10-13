@@ -166,9 +166,9 @@ export class SettingsApi extends ApplicationsApi {
         typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
       ai_queue_mode: thresholds.ai_queue_mode === "shared" ? "shared" : "per_kind",
       resume_location:
-        thresholds.resume_location === "master" || thresholds.resume_location === "none"
+        thresholds.resume_location === "posting" || thresholds.resume_location === "none"
           ? thresholds.resume_location
-          : "posting",
+          : "master",
       score_new_batch: scoreNewBatch,
       score_weight_preset: SCORE_WEIGHT_PRESETS.includes(
         thresholds.score_weight_preset as ScoreWeightPreset,

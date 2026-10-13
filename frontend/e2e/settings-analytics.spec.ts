@@ -65,8 +65,11 @@ test("settings renders every restored section across its panes", async ({ page }
   // Resume & cover letter — the 2 generate-on-save toggles and both models.
   await page.getByTestId("settings-nav-documents").click();
   await expect(page.getByTestId("auto-resume-toggle")).toBeVisible();
-  // The tailored resume's header location defaults to the job's (audit A5).
-  await expect(page.getByTestId("resume-location-select")).toHaveValue("posting");
+  // The tailored documents' header location defaults to the master resume's (D65),
+  // and it's 1 setting shown in 2 places, each saying so (audit B3).
+  await expect(page.getByTestId("resume-location-select")).toHaveValue("master");
+  await expect(page.getByTestId("resume-location-shared")).toContainText("1 setting");
+  await page.getByTestId("resume-location-select").selectOption("posting");
   await expect(page.getByTestId("auto-cover-toggle")).toBeVisible();
   await expect(page.getByTestId("model-picker-tailor")).toBeVisible();
   await expect(page.getByTestId("model-picker-cover")).toBeVisible();
@@ -77,6 +80,11 @@ test("settings renders every restored section across its panes", async ({ page }
   await page.getByTestId("settings-nav-applying").click();
   // Applicant details (audit A5): the facts every form is filled from.
   await expect(page.getByTestId("applicant-details")).toBeVisible();
+  // The same setting, already showing the value picked in the other category.
+  await expect(page.getByTestId("resume-location-select")).toHaveValue("posting");
+  await page.getByTestId("resume-location-applying").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-resume-location-applying.png` });
+  await page.getByTestId("resume-location-select").selectOption("master");
   await expect(page.getByTestId("applicant-add-auth")).toBeVisible();
   await expect(page.getByTestId("model-picker-apply")).toBeVisible();
   await expect(page.getByTestId("prompt-textarea-extract")).toBeVisible();

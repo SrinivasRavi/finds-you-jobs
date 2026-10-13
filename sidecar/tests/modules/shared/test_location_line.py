@@ -1,9 +1,9 @@
-"""The tailored resume's location line: the posting's, the master's, or none
-(maintainer, 2026-10-13, audit A5)."""
+"""The location line on a tailored resume and its cover letter: the posting's, the
+master's, or none (maintainer, 2026-10-13, audit A5 and B3)."""
 
 from __future__ import annotations
 
-from sidecar.modules.tailorer.location import enforce_location, location_instruction
+from sidecar.modules._shared.location_line import enforce_location, location_instruction
 from sidecar.modules.tailorer.prompt import build_user_prompt
 
 MASTER = "Bengaluru, Karnataka, India"
@@ -41,3 +41,9 @@ def test_the_model_is_told_the_rule() -> None:
     assert "=== LOCATION" in prompt and "London, Ontario, Canada" in prompt
     assert "Remove the person's location" in location_instruction("none", "", MASTER)
     assert MASTER in location_instruction("posting", "", MASTER)
+
+
+def test_the_rule_names_the_document_it_governs() -> None:
+    assert "cover letter header" in location_instruction(
+        "posting", "London", MASTER, document="cover letter"
+    )

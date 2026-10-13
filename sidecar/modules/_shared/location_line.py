@@ -1,6 +1,7 @@
-"""The location line on a tailored resume: the posting's, the master's, or none
-(maintainer, 2026-10-13, audit A5). The model is told the rule; the header is
-then checked, because a rule a model may ignore is not a rule."""
+"""The location line on a tailored resume and its cover letter: the posting's, the
+master's, or none (maintainer, 2026-10-13, audit A5 and B3; 1 setting for both).
+The model is told the rule; the header is then checked, because a rule a model
+may ignore is not a rule."""
 
 from __future__ import annotations
 
@@ -15,26 +16,36 @@ _SEPARATORS = re.compile(r"\s*([|·•,]\s*){2,}")
 _EDGE = re.compile(r"^[\s|·•,]+|[\s|·•,]+$")
 
 
-def location_instruction(mode: str, posting: str, master: str) -> str:
+def location_instruction(mode: str, posting: str, master: str, document: str = "resume") -> str:
     """1 sentence for the prompt saying what the header's location must be."""
     if mode == "none":
-        return "Remove the person's location (city, region, country, address) from the resume."
+        return (
+            f"Remove the person's location (city, region, country, address) from the {document}."
+        )
     if mode == "posting" and posting:
-        return f"Write the person's location in the resume header as exactly: {posting}"
+        return f"Write the person's location in the {document} header as exactly: {posting}"
     if master:
-        return f"Keep the person's location in the resume header as: {master}"
+        return f"Keep the person's location in the {document} header as: {master}"
     return ""
 
 
-def enforce_location(resume_md: str, mode: str, posting: str, master: str) -> str:
+def enforce_location(
+    resume_md: str, mode: str, posting: str, master: str, *, block_only: bool = False
+) -> str:
     """Put the chosen location where the master's sits in the header lines. A
-    posting with no readable place keeps the master's; so does `master` mode."""
+    posting with no readable place keeps the master's; so does `master` mode.
+    `block_only` ends the header at the first blank line: a cover letter's next
+    block names the company's city, which is not the person's."""
     if not master or mode == "master" or (mode == "posting" and not posting):
         return resume_md
     lines = resume_md.splitlines()
     out: list[str] = []
     in_header = True
+    seen_text = False
     for i, line in enumerate(lines):
+        if block_only and seen_text and not line.strip():
+            in_header = False
+        seen_text = seen_text or bool(line.strip())
         in_header = in_header and i < _HEADER_LINES and not _SECTION.match(line)
         if in_header and master in line:
             if mode == "posting":

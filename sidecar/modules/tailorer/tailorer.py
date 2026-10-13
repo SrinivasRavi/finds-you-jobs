@@ -11,10 +11,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from sidecar.modules._shared.completion_retry import complete_and_parse
+from sidecar.modules._shared.location_line import enforce_location, location_instruction
 
 from .engine import ClaudeCliEngine, Engine
 from .job_input import resolve_job
-from .location import enforce_location, location_instruction
 from .output_parse import parse_output
 from .prompt import build_user_prompt, load_skill, load_writing_samples
 from .types import TailorError, TailorResult, Usage

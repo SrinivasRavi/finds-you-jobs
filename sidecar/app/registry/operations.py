@@ -703,17 +703,18 @@ def _persist_artifact(
 
 
 def _resume_location(repos: Repos, job_id: Any) -> tuple[str, str, str]:
-    """(mode, posting place, master's location line) for the tailored resume's
-    header: Settings > Resume & cover letter, the job's first resolved place, and
-    the location read from the master resume (audit A5)."""
-    from sidecar.modules.tailorer.location import RESUME_LOCATION_MODES
+    """(mode, posting place, master's location line) for the header of a tailored
+    resume and its cover letter: the 1 setting shown in Settings > Applying and
+    Settings > Resume & cover letter (default the master's, D65), the job's first
+    resolved place, and the location read from the master resume."""
+    from sidecar.modules._shared.location_line import RESUME_LOCATION_MODES
 
     from .applicant import posting_place
 
     prefs = repos.preferences.get_or_create()
-    mode = str((prefs.thresholds or {}).get("resume_location") or "posting")
+    mode = str((prefs.thresholds or {}).get("resume_location") or "master")
     if mode not in RESUME_LOCATION_MODES:
-        mode = "posting"
+        mode = "master"
     profile = repos.profile.get_current()
     record = profile.application_profile if profile is not None else None
     master = str((record or {}).get("location") or "") if isinstance(record, dict) else ""
@@ -781,7 +782,9 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
     snap = ctx.input_snapshot
-    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
+    job_text, master_md, profile_version, location = _load_job_inputs(
+        ctx, also=lambda repos: _resume_location(repos, snap.get("job_id"))
+    )
 
     result = cover(
         master_md,
@@ -790,6 +793,7 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         engine=resolved.engine,
         skill_md=prompt_for(ctx, "cover"),
         cancelled=ctx.cancelled,
+        location=location,
     )
     if is_prompt_test(ctx):
         return llm_outcome(

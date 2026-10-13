@@ -19,6 +19,7 @@ import { ObservabilitySection } from "./settings/ObservabilitySection";
 import { ModelPicker } from "./settings/ModelPicker";
 import { PromptCard } from "./settings/PromptsSection";
 import { ReferralOutreachSection } from "./settings/ReferralOutreachSection";
+import { ResumeLocationSetting } from "./settings/ResumeLocationSetting";
 import { ScoringSection } from "./settings/ScoringSection";
 import { SETTINGS_CATS, SettingsNav, type SettingsCat } from "./settings/SettingsNav";
 import { Section } from "./settings/shared";
@@ -124,28 +125,12 @@ export function Settings() {
           <AutomationSection settings={settings} patch={patch} />
           <Section title={t("settingsPage.prompts.titleTailor")}>
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="text-[13px] font-medium text-ink">
-                    {t("settingsPage.applicant.resumeLocation")}
-                  </div>
-                  <div className="text-[12px] text-ink-3">
-                    {t("settingsPage.applicant.resumeLocationHint")}
-                  </div>
-                </div>
-                <select
-                  data-testid="resume-location-select"
-                  value={settings.resume_location}
-                  onChange={(e) =>
-                    patch({ resume_location: e.target.value as SettingsT["resume_location"] })
-                  }
-                  className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
-                >
-                  <option value="posting">{t("settingsPage.applicant.rl_posting")}</option>
-                  <option value="master">{t("settingsPage.applicant.rl_master")}</option>
-                  <option value="none">{t("settingsPage.applicant.rl_none")}</option>
-                </select>
-              </div>
+              <ResumeLocationSetting
+                settings={settings}
+                patch={patch}
+                alsoIn="applying"
+                onGo={() => setCat("applying")}
+              />
               <ModelPicker kind="tailor" settings={settings} patch={patch} />
               <PromptCard kind="tailor" />
             </div>
@@ -167,6 +152,14 @@ export function Settings() {
           <div className="space-y-8">
           <Section title={t("settingsPage.applicant.title")}>
             <ApplicantDetailsForm />
+          </Section>
+          <Section title={t("settingsPage.applicant.resumeLocationSection")}>
+            <ResumeLocationSetting
+              settings={settings}
+              patch={patch}
+              alsoIn="documents"
+              onGo={() => setCat("documents")}
+            />
           </Section>
           <Section title={t("settingsPage.prompts.titleApplyModel")}>
             <ModelPicker
