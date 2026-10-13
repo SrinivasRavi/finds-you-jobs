@@ -13,6 +13,7 @@ from sidecar.app.registry.applicant import (
     apply_facts,
     details_confirmed,
     merge_extracted,
+    missing_required,
     work_authorization_line,
 )
 
@@ -39,9 +40,38 @@ def test_the_form_gets_the_postings_location_not_the_users() -> None:
     facts = apply_facts(RECORD, "London, ON")
     assert facts["location"] == "London, Ontario, Canada"
     assert facts["country"] == "Canada"
-    assert facts["first_name"] == "Asha"
+    assert facts["first name"] == "Asha"
     # Bookkeeping never reaches the model.
     assert not {"source", "confirmed_at", "work_authorizations"} & set(facts)
+
+
+def test_only_a_name_and_a_location_are_required() -> None:
+    assert missing_required(RECORD) == []
+    assert missing_required({"name": "Asha", "location": "Pune"}) == []
+    assert missing_required({"first_name": " ", "location": ""}) == ["name", "location"]
+    assert missing_required(None) == ["name", "location"]
+
+
+def test_the_optional_fields_reach_the_model_by_their_names() -> None:
+    record = {**RECORD, "salary_expectation": "INR 4,000,000 / year", "notice_period": "30 days",
+              "years_of_experience": 9, "citizenship": "India",
+              "veteran_status": "no", "disability_status": "yes", "gender": "Woman"}
+    facts = apply_facts(record, "Remote")
+    assert facts["salary expectation"] == "INR 4,000,000 / year"
+    assert facts["notice period"] == "30 days"
+    assert facts["years of experience"] == "9"
+    assert facts["citizenship"] == "India"
+    assert facts["veteran status"] == "not a protected veteran"
+    assert facts["disability status"] == "has a disability"
+    assert facts["gender"] == "Woman"
+
+
+def test_an_unset_self_identification_answer_is_a_decline() -> None:
+    facts = apply_facts({**RECORD, "veteran_status": "decline"}, "Remote")
+    for key in ("gender", "race ethnicity", "veteran status", "disability status"):
+        assert facts[key].startswith("I don't wish to answer")
+    # Anything else unset is simply absent: the Applier leaves it for review.
+    assert "salary expectation" not in facts
 
 
 def test_a_posting_with_no_place_keeps_the_users_own_location() -> None:
@@ -116,6 +146,20 @@ def test_apply_waits_for_confirmed_details_and_saving_them_is_the_confirmation(
         )
         r = client.post(f"/api/applications/{card_id}/apply", headers=AUTH, json={})
         assert r.status_code != 409, r.text
+
+
+def test_saving_without_a_name_or_location_is_refused(tmp_path) -> None:
+    app = create_app(token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
+                     enable_scheduler=False)
+    with TestClient(app) as client:
+        client.post("/api/profile", headers=AUTH, json={"resume_markdown": "# Asha"})
+        r = client.patch("/api/profile/application-profile", headers=AUTH,
+                         json={"first_name": "Asha", "email": "a@example.com"})
+        assert r.status_code == 422
+        assert "location" in r.json()["detail"]
+        r = client.patch("/api/profile/application-profile", headers=AUTH,
+                         json={"first_name": "Asha", "location": "Pune"})
+        assert r.status_code == 200
 
 
 def test_the_countries_list_is_named_and_sorted(tmp_path) -> None:

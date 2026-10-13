@@ -83,7 +83,13 @@ def patch_application_profile(
     `confirmed_at`: saving is the review Apply waits for (audit A5), and a later
     resume read never overwrites what was saved here."""
     from ..db.base import now_utc
+    from ..registry.applicant import missing_required
 
+    missing = missing_required(payload)
+    if missing:
+        raise HTTPException(
+            status_code=422, detail=f"applicant details need: {', '.join(missing)}"
+        )
     with _db(request).repos() as repos:
         if repos.profile.get_current() is None:
             raise HTTPException(status_code=404, detail="no master profile yet")

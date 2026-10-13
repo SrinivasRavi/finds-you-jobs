@@ -31,7 +31,7 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
   // Apply refuses without the facts read from the resume (audit A5).
   await request.patch(`${base}/api/profile/application-profile`, {
     headers: auth,
-    data: { name: "E2E Candidate", email: "e2e@example.com" },
+    data: { name: "E2E Candidate", email: "e2e@example.com", location: "Bengaluru, Karnataka, India" },
   });
   const job = await (
     await request.post(`${base}/api/jobs`, {
@@ -197,13 +197,23 @@ test("before the first apply, Applicant details open, and saving them continues 
   await expect(dialog).toBeVisible();
   expect(applyCalls).toEqual([]);
   await expect(dialog.getByTestId("applicant-first_name")).toHaveValue("E2E");
+  // Only a name and a location are required (D66): without one, Save waits.
+  await dialog.getByTestId("applicant-location").fill("");
+  await expect(dialog.getByTestId("applicant-save")).toBeDisabled();
+  await expect(dialog.getByTestId("applicant-missing")).toBeVisible();
+  await dialog.getByTestId("applicant-location").fill("Bengaluru, Karnataka, India");
+  await expect(dialog.getByTestId("applicant-save")).toBeEnabled();
   await dialog.getByTestId("applicant-phone").fill("+91 98450 00000");
+  await dialog.getByTestId("applicant-notice_period").fill("30 days");
+  await dialog.getByTestId("applicant-veteran_status").selectOption("no");
   await dialog.getByTestId("applicant-add-auth").click();
   await dialog.getByTestId("applicant-auth-country").last().selectOption("India");
   await dialog.getByTestId("applicant-add-auth").click();
   await dialog.getByTestId("applicant-auth-country").last().selectOption("United States");
   await dialog.getByTestId("applicant-auth-status").last().selectOption("needs_sponsorship");
   await page.screenshot({ path: `${DIR}/applicant-details-dialog.png`, fullPage: true });
+  await dialog.getByTestId("applicant-save").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/applicant-details-optional.png` });
   await dialog.getByTestId("applicant-save").click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => applyCalls.length).toBe(1);
@@ -212,6 +222,9 @@ test("before the first apply, Applicant details open, and saving them continues 
   ).application_profile;
   expect(saved.confirmed_at).toBeTruthy();
   expect(saved.phone).toBe("+91 98450 00000");
+  expect(saved.notice_period).toBe("30 days");
+  expect(saved.veteran_status).toBe("no");
+  expect(saved.disability_status ?? "").toBe("");
   expect(saved.work_authorizations).toEqual([
     { country: "India", status: "citizen" },
     { country: "United States", status: "needs_sponsorship" },

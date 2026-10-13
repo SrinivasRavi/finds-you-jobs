@@ -690,6 +690,16 @@ export interface ApplicationProfile {
   /** 1 entry per country (audit A5); the Applier picks the job's country. */
   work_authorizations?: WorkAuthorization[];
   links?: Record<string, string>;
+  /** Optional answers forms ask for (audit B4); an empty one stays out of the facts. */
+  salary_expectation?: string;
+  notice_period?: string;
+  years_of_experience?: string;
+  citizenship?: string;
+  /** Voluntary self-identification: empty means "I don't wish to answer". */
+  gender?: string;
+  race_ethnicity?: string;
+  veteran_status?: SelfIdAnswer;
+  disability_status?: SelfIdAnswer;
   education?: {
     school?: string;
     degree?: string;
@@ -703,6 +713,8 @@ export interface ApplicationProfile {
   /** Set when the user saved Applicant details; Apply waits for it (audit A5). */
   confirmed_at?: string;
 }
+
+export type SelfIdAnswer = "" | "yes" | "no";
 
 export type WorkAuthStatus = "citizen" | "permanent_resident" | "visa" | "needs_sponsorship";
 

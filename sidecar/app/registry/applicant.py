@@ -20,6 +20,28 @@ _STATUS_WORDS = {
 }
 # Keys the user owns once they've saved the record; a later resume read keeps them.
 _USER_KEYS = ("work_authorizations", "confirmed_at")
+# Voluntary self-identification: an unset one is answered "I don't wish to answer"
+# (maintainer, 2026-10-13). The value words the model reads for each select.
+SELF_ID_KEYS = ("gender", "race_ethnicity", "veteran_status", "disability_status")
+_SELF_ID_WORDS = {
+    "veteran_status": {"yes": "a protected veteran", "no": "not a protected veteran"},
+    "disability_status": {"yes": "has a disability", "no": "has no disability"},
+}
+_DECLINE = "I don't wish to answer (pick the form's decline option)"
+_SKIP = {"source", "profile_version", "confirmed_at", "work_authorization"}
+
+
+def missing_required(record: Any) -> list[str]:
+    """The required fields still empty: a name and a location, nothing else
+    (maintainer, 2026-10-13). The Applier leaves anything else it can't answer
+    for the user at review."""
+    rec = record if isinstance(record, dict) else {}
+    missing = []
+    if not str(rec.get("first_name") or rec.get("name") or "").strip():
+        missing.append("name")
+    if not str(rec.get("location") or "").strip():
+        missing.append("location")
+    return missing
 
 
 def details_confirmed(record: Any) -> bool:
@@ -88,11 +110,17 @@ def apply_facts(record: Any, job_location: str) -> dict[str, str]:
     if not isinstance(record, dict):
         return {}
     facts = {
-        str(k): str(v)
+        str(k).replace("_", " "): str(v).strip()
         for k, v in record.items()
-        if isinstance(v, str | int | float) and str(v)
-        and k not in ("source", "profile_version", "confirmed_at", "work_authorization")
+        if isinstance(v, str | int | float) and str(v).strip()
+        and k not in _SKIP and k not in SELF_ID_KEYS
     }
+    for key in SELF_ID_KEYS:
+        value = str(record.get(key) or "").strip()
+        words = _SELF_ID_WORDS.get(key, {})
+        facts[key.replace("_", " ")] = (
+            _DECLINE if value in ("", "decline") else words.get(value, value)
+        )
     auth = work_authorization_line(record)
     if auth:
         facts["work authorization"] = auth

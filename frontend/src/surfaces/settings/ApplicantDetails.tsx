@@ -1,6 +1,7 @@
 // Applicant details (audit A5, maintainer 2026-10-13): what the Applier types into
 // forms, read from the master resume and confirmed by the user once before the
-// first apply. 1 form, shown in Settings > Applying and as the dialog Apply opens.
+// first apply. Only a name and a location are required (D66). 1 form, shown in
+// Settings > Applying and as the dialog Apply opens.
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,11 +14,27 @@ import {
 } from "../../api/queries";
 import type {
   ApplicationProfile,
+  SelfIdAnswer,
   WorkAuthStatus,
   WorkAuthorization,
 } from "../../api/types";
 import { Modal } from "../../shell/Modal";
 
+type TextKey =
+  | "first_name" | "last_name" | "email" | "phone" | "location"
+  | "salary_expectation" | "notice_period" | "years_of_experience" | "citizenship"
+  | "gender" | "race_ethnicity";
+/** Field key to its string key, where the 2 differ. */
+const LABEL_KEY: Partial<Record<TextKey | "veteran_status" | "disability_status", string>> = {
+  first_name: "firstName",
+  last_name: "lastName",
+  salary_expectation: "salaryExpectation",
+  notice_period: "noticePeriod",
+  years_of_experience: "yearsOfExperience",
+  race_ethnicity: "raceEthnicity",
+  veteran_status: "veteranStatus",
+  disability_status: "disabilityStatus",
+};
 const STATUSES: WorkAuthStatus[] = ["citizen", "permanent_resident", "visa", "needs_sponsorship"];
 const INPUT =
   "h-[30px] w-full rounded-md border border-border-2 bg-surface px-2 text-[12.5px] text-ink";
@@ -79,19 +96,40 @@ export function ApplicantDetailsForm({
         j === i ? { ...a, ...part } : a,
       ),
     }));
-  const field = (key: "first_name" | "last_name" | "email" | "phone" | "location") => (
+  const field = (key: TextKey, placeholder?: string) => (
     <label className="block">
       <span className="mb-1 block text-[11.5px] text-ink-3">
-        {t(`settingsPage.applicant.${key === "first_name" ? "firstName" : key === "last_name" ? "lastName" : key}`)}
+        {t(`settingsPage.applicant.${LABEL_KEY[key] ?? key}`)}
+        {key === "first_name" || key === "location" ? <span className="text-bad"> *</span> : null}
       </span>
       <input
         data-testid={`applicant-${key}`}
         className={INPUT}
+        placeholder={placeholder}
         value={String(draft[key] ?? "")}
         onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
       />
     </label>
   );
+  const selfId = (key: "veteran_status" | "disability_status") => (
+    <label className="block">
+      <span className="mb-1 block text-[11.5px] text-ink-3">
+        {t(`settingsPage.applicant.${LABEL_KEY[key]}`)}
+      </span>
+      <select
+        data-testid={`applicant-${key}`}
+        className={INPUT}
+        value={draft[key] ?? ""}
+        onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value as SelfIdAnswer }))}
+      >
+        <option value="">{t("settingsPage.applicant.sid_decline")}</option>
+        <option value="yes">{t(`settingsPage.applicant.${key === "veteran_status" ? "vet" : "dis"}_yes`)}</option>
+        <option value="no">{t(`settingsPage.applicant.${key === "veteran_status" ? "vet" : "dis"}_no`)}</option>
+      </select>
+    </label>
+  );
+  const missing =
+    !String(draft.first_name ?? draft.name ?? "").trim() || !String(draft.location ?? "").trim();
 
   const submit = async () => {
     const work = auths.filter((a) => a.country.trim());
@@ -212,14 +250,39 @@ export function ApplicantDetailsForm({
           {t("settingsPage.applicant.addCountry")}
         </button>
       </div>
+      <div>
+        <div className="text-[12.5px] font-medium text-ink">{t("settingsPage.applicant.moreTitle")}</div>
+        <p className="mb-2 text-[11px] text-ink-4">{t("settingsPage.applicant.moreHint")}</p>
+        <div className="grid grid-cols-2 gap-3">
+          {field("salary_expectation", t("settingsPage.applicant.salaryPlaceholder"))}
+          {field("notice_period", t("settingsPage.applicant.noticePlaceholder"))}
+          {field("years_of_experience")}
+          {field("citizenship")}
+        </div>
+      </div>
+      <div>
+        <div className="text-[12.5px] font-medium text-ink">{t("settingsPage.applicant.selfIdTitle")}</div>
+        <p className="mb-2 text-[11px] text-ink-4">{t("settingsPage.applicant.selfIdHint")}</p>
+        <div className="grid grid-cols-2 gap-3">
+          {field("gender")}
+          {field("race_ethnicity")}
+          {selfId("veteran_status")}
+          {selfId("disability_status")}
+        </div>
+      </div>
       <div className="flex items-center justify-end gap-3">
+        {missing ? (
+          <span className="text-[11.5px] text-ink-3" data-testid="applicant-missing">
+            {t("settingsPage.applicant.requiredMissing")}
+          </span>
+        ) : null}
         {savedOnce && !save.isPending ? (
           <span className="text-[11.5px] text-ink-3">{t("settingsPage.applicant.saved")}</span>
         ) : null}
         <button
           type="button"
           data-testid="applicant-save"
-          disabled={save.isPending}
+          disabled={save.isPending || missing}
           onClick={() => void submit().catch(() => undefined)}
           className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
