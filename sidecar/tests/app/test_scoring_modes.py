@@ -8,6 +8,7 @@ retryable; a successful retry outranks it (display precedence LLM > keyword).
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -309,6 +310,11 @@ def test_api_a_major_edit_rescores_keyword_jobs_under_any_method(tmp_path) -> No
         enable_scheduler=False,
     )
     with TestClient(app) as client:
+        # The boot keyword floor must finish on the empty board first, or it can score
+        # kw_job at version 1 before the edit below (PR #11 CI).
+        for thread in threading.enumerate():
+            if thread.name == "keyword-floor":
+                thread.join(timeout=10)
         db = app.state.db
         kw_job = _seed(db)
         ai_job = _seed(db, url="https://ex.co/j/mode-2")

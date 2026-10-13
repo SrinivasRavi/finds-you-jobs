@@ -792,8 +792,20 @@ class JobsRepo:
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
         method = method or ("llm" if scorer_impl == "scorer-llm" else "keyword")
-        if method == "keyword" and job.score_method not in (None, "keyword") and not rescore:
-            return False
+        if method == "keyword" and not rescore:
+            # The guard runs inside the UPDATE, which takes the write lock, so a real score
+            # or a newer resume's score committed after this session's read still wins (A26).
+            guard = [Job.id == job_id, or_(Job.score_method.is_(None), Job.score_method == method)]
+            if profile_version is not None:
+                guard.append(func.coalesce(Job.scored_profile_version, 0) <= profile_version)
+            claim = update(Job).where(*guard).values(score_method=Job.score_method)
+            result = cast(
+                "CursorResult[Any]",
+                self._s.execute(claim.execution_options(synchronize_session=False)),
+            )
+            if not result.rowcount:
+                return False
+            self._s.refresh(job)
         is_new = job.score_method != method
         job.score = score_0_100
         job.score_method = method

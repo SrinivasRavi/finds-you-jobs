@@ -85,6 +85,35 @@ def test_a_keyword_write_never_replaces_a_real_score_unless_the_user_asked(
     assert _row(migrated_db, job_id)[:2] == (12, "keyword")
 
 
+def test_a_keyword_write_loses_to_a_real_score_that_lands_after_its_read(
+    migrated_db: Database,
+) -> None:
+    """Audit A26: the keyword floor read the job as unscored, an LLM score committed,
+    then the floor's write replaced it (CI, PR #11)."""
+    job_id = _job(migrated_db, "u-factors-race-1")
+    with migrated_db.repos() as floor:
+        seen = floor.jobs.get(job_id)  # held, as a session that loaded it would
+        assert seen is not None and seen.score_method is None
+        _score(migrated_db, job_id, "llm", 77, [])
+        assert floor.jobs.set_score(
+            job_id, scorer_impl="scorer-deterministic", score_0_100=12,
+            reasons=[], breakdown_md="", method="keyword",
+        ) is False
+    assert _row(migrated_db, job_id)[:2] == (77, "llm")
+
+
+def test_a_keyword_write_from_an_older_resume_never_replaces_a_newer_one(
+    migrated_db: Database,
+) -> None:
+    """Audit A26: a sweep that read resume version 1 wrote after a version 2 rescore."""
+    job_id = _job(migrated_db, "u-factors-race-2")
+    _score(migrated_db, job_id, "keyword", 40, [], profile_version=2)
+    assert _score(migrated_db, job_id, "keyword", 12, [], profile_version=1) is False
+    assert _row(migrated_db, job_id)[:2] == (40, "keyword")
+    _score(migrated_db, job_id, "keyword", 12, [], profile_version=1, rescore=True)
+    assert _row(migrated_db, job_id)[:2] == (12, "keyword")
+
+
 def test_a_factor_carries_its_kind_and_empty_evidence_by_default(
     migrated_db: Database,
 ) -> None:
