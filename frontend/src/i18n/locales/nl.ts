@@ -1317,7 +1317,7 @@ const nl: DeepPartial<Messages> = {
       quotaTooltip: "Rollende vensters, geen kalenderdag/-week — elke verzending komt 24 uur (dag) of 7 dagen (week) na het versturen weer vrij. Voorzichtige limieten, ruim onder die van LinkedIn.",
       automatedQuota: "Automatisch quotum — laatste 24u: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> laatste 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "Handmatige modus — houd je eigen LinkedIn-limieten zelf bij",
-      dailyLimitReached: "Daglimiet bereikt. Nieuwe verzoeken wachten in de rij tot morgen.",
+      dailyLimitReached: "Daglimiet bereikt. Er wordt niets in de wachtrij gezet; morgen kun je weer versturen.",
       closeToLimit_one: "Bijna bij je daglimiet — vandaag nog {{count}} verzoek over.",
       closeToLimit_other: "Bijna bij je daglimiet — vandaag nog {{count}} verzoeken over.",
       bannerNotConnected: "LinkedIn niet verbonden — verbind het via Instellingen → LinkedIn om automatisch te vinden en te versturen. Tot die tijd kun je contacten toevoegen via URL en je outreach hier handmatig bijhouden.",

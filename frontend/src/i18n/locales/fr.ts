@@ -1317,7 +1317,7 @@ const fr: DeepPartial<Messages> = {
       quotaTooltip: "Fenêtres glissantes, pas de jour/semaine calendaire — chaque envoi se libère 24 heures (quotidien) ou 7 jours (hebdomadaire) après son départ. Plafonds prudents, bien en dessous des limites de LinkedIn.",
       automatedQuota: "Quota automatisé — dernières 24 h : <strong>{{dailyUsed}}/{{dailyLimit}}</strong> derniers 7 j : <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "Mode manuel — suivez vos propres limites LinkedIn",
-      dailyLimitReached: "Limite quotidienne atteinte. Les nouvelles demandes sont mises en file jusqu'à demain.",
+      dailyLimitReached: "Limite quotidienne atteinte. Rien n'est mis en attente ; l'envoi reprend demain.",
       closeToLimit_one: "Proche de votre limite quotidienne — {{count}} demande restante aujourd'hui.",
       closeToLimit_other: "Proche de votre limite quotidienne — {{count}} demandes restantes aujourd'hui.",
       bannerNotConnected: "LinkedIn non connecté — connectez-le dans Réglages → LinkedIn pour découvrir et envoyer automatiquement. D'ici là, ajoutez des contacts par URL et suivez vos prises de contact ici manuellement.",

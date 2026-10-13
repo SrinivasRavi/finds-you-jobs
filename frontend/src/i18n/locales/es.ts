@@ -1317,7 +1317,7 @@ const es: DeepPartial<Messages> = {
       quotaTooltip: "Ventanas móviles, no día/semana naturales — cada envío libera cupo 24 horas (diario) o 7 días (semanal) después de enviarse. Topes conservadores, muy por debajo de los límites de LinkedIn.",
       automatedQuota: "Cupo automatizado — últimas 24h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> últimos 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "Modo manual — controla tú los límites de tu propio LinkedIn",
-      dailyLimitReached: "Tope diario alcanzado. Las nuevas invitaciones esperan en cola hasta mañana.",
+      dailyLimitReached: "Límite diario alcanzado. No queda nada en cola; podrás volver a enviar mañana.",
       closeToLimit_one: "Cerca de tu tope diario — te queda {{count}} invitación hoy.",
       closeToLimit_other: "Cerca de tu tope diario — te quedan {{count}} invitaciones hoy.",
       bannerNotConnected: "LinkedIn no está conectado — conéctalo en Ajustes → LinkedIn para autodescubrir y enviar. Mientras tanto puedes añadir contactos por URL y llevar aquí tu seguimiento a mano.",

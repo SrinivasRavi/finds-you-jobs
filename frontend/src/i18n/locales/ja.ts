@@ -1297,7 +1297,7 @@ const ja: DeepPartial<Messages> = {
       quotaTooltip: "暦の日/週ではなくローリングウィンドウです — 各送信の枠は、送信から24時間(日次)または7日(週次)経つと戻ります。LinkedInの制限より十分低い、控えめな上限です。",
       automatedQuota: "自動送信の枠 — 過去24時間: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> 過去7日: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "手動モード — ご自身のLinkedIn制限に照らして管理してください",
-      dailyLimitReached: "日次上限に達しました。新しいリクエストは明日まで待機します。",
+      dailyLimitReached: "1日の上限に達しました。何も予約されません。送信は明日から再開できます。",
       closeToLimit_other: "日次上限が近づいています — 本日はあと{{count}}件です。",
       bannerNotConnected: "LinkedInが未接続です — 自動発見と送信には、設定 → LinkedInで接続してください。それまでは、URLでコンタクトを追加し、ここで手動でアウトリーチを管理できます。",
       bannerManualOff: "手動モード — リファラルアウトリーチはオフです。連絡する相手をURLで追加してここで管理してください。設定でリファラルアウトリーチをオンにすると、人の自動発見と送信ができます。",

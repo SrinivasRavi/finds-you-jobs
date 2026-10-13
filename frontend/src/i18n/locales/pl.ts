@@ -1346,7 +1346,7 @@ const pl: DeepPartial<Messages> = {
       quotaTooltip: "Okna kroczące, nie dni/tygodnie kalendarzowe — każda wysyłka zwalnia miejsce 24 godziny (limit dzienny) lub 7 dni (tygodniowy) po tym, jak została wysłana. Konserwatywne limity trzymane wyraźnie poniżej limitów LinkedIn.",
       automatedQuota: "Limit automatyczny — ostatnie 24h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> ostatnie 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "Tryb ręczny — pilnuj własnych limitów LinkedIn",
-      dailyLimitReached: "Osiągnięto dzienny limit. Nowe zaproszenia czekają w kolejce do jutra.",
+      dailyLimitReached: "Osiągnięto dzienny limit. Nic nie trafia do kolejki; wysyłanie wróci jutro.",
       closeToLimit_one: "Zbliżasz się do dziennego limitu — na dziś pozostało {{count}} zaproszenie.",
       closeToLimit_few: "Zbliżasz się do dziennego limitu — na dziś pozostały {{count}} zaproszenia.",
       closeToLimit_many: "Zbliżasz się do dziennego limitu — na dziś pozostało {{count}} zaproszeń.",

@@ -1320,7 +1320,7 @@ const de: DeepPartial<Messages> = {
       quotaTooltip: "Rollierende Fenster, kein Kalendertag / keine Kalenderwoche — jeder Versand wird 24 Stunden (täglich) bzw. 7 Tage (wöchentlich) nach dem Senden wieder frei. Konservative Limits, deutlich unter LinkedIns Grenzen.",
       automatedQuota: "Automatisiertes Kontingent — letzte 24 h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> letzte 7 Tage: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "Manueller Modus — behalte deine eigenen LinkedIn-Limits im Blick",
-      dailyLimitReached: "Tageslimit erreicht. Neue Anfragen warten bis morgen.",
+      dailyLimitReached: "Tageslimit erreicht. Nichts wird vorgemerkt; morgen kannst du wieder senden.",
       closeToLimit_one: "Nah am Tageslimit — heute noch {{count}} Anfrage.",
       closeToLimit_other: "Nah am Tageslimit — heute noch {{count}} Anfragen.",
       bannerNotConnected: "LinkedIn nicht verbunden — verbinde es unter Einstellungen → LinkedIn für Auto-Suche und Senden. Bis dahin kannst du Kontakte per URL hinzufügen und dein Outreach hier manuell verfolgen.",

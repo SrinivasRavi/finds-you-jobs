@@ -1400,7 +1400,7 @@ const ar = {
       quotaTooltip: "نوافذ متحركة، لا يوم/أسبوع تقويمي — كل إرسال يتحرر بعد 24 ساعة (اليومي) أو 7 أيام (الأسبوعي) من وقت إرساله. حدود متحفظة تبقى أدنى بكثير من حدود LinkedIn.",
       automatedQuota: "حصة الأتمتة — آخر 24 ساعة: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> آخر 7 أيام: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "الوضع اليدوي — تابع حدود LinkedIn الخاصة بك بنفسك",
-      dailyLimitReached: "بلغت الحد اليومي. الطلبات الجديدة تنتظر حتى الغد.",
+      dailyLimitReached: "تم بلوغ الحد اليومي. لا يُوضع شيء في قائمة الانتظار؛ يمكنك الإرسال مجددًا غدًا.",
       closeToLimit_zero: "اقتربت من حدك اليومي — لم يتبقَّ أي طلبات اليوم.",
       closeToLimit_one: "اقتربت من حدك اليومي — تبقّى طلب واحد اليوم.",
       closeToLimit_two: "اقتربت من حدك اليومي — تبقّى طلبان اليوم.",

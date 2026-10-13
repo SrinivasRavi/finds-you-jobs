@@ -1317,7 +1317,7 @@ const pt: DeepPartial<Messages> = {
       quotaTooltip: "Janelas móveis, não dia/semana de calendário — cada envio libera espaço 24 horas (diário) ou 7 dias (semanal) depois de feito. Limites conservadores, bem abaixo dos do LinkedIn.",
       automatedQuota: "Cota automática — últimas 24h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> últimos 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "Modo manual — acompanhe contra seus próprios limites do LinkedIn",
-      dailyLimitReached: "Limite diário atingido. Novos convites ficam na fila até amanhã.",
+      dailyLimitReached: "Limite diário atingido. Nada fica em fila; pode voltar a enviar amanhã.",
       closeToLimit_one: "Perto do seu limite diário — resta {{count}} convite hoje.",
       closeToLimit_other: "Perto do seu limite diário — restam {{count}} convites hoje.",
       bannerNotConnected: "LinkedIn não conectado — conecte em Ajustes → LinkedIn para descobrir pessoas e enviar automaticamente. Até lá, você pode adicionar contatos por URL e acompanhar sua abordagem aqui manualmente.",

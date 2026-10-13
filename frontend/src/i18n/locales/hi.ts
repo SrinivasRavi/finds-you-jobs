@@ -1317,7 +1317,7 @@ const hi: DeepPartial<Messages> = {
       quotaTooltip: "रोलिंग विंडो, कैलेंडर दिन/सप्ताह नहीं — हर भेजा संदेश भेजे जाने के 24 घंटे (दैनिक) या 7 दिन (साप्ताहिक) बाद जगह खाली करता है। सीमाएँ जान-बूझकर LinkedIn की सीमाओं से काफ़ी नीचे रखी गई हैं।",
       automatedQuota: "स्वचालित कोटा — पिछले 24h: <strong>{{dailyUsed}}/{{dailyLimit}}</strong> पिछले 7d: <strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "मैनुअल मोड — अपनी LinkedIn सीमाएँ ख़ुद ट्रैक करें",
-      dailyLimitReached: "दैनिक सीमा पूरी। नए अनुरोध कल तक कतार में रहेंगे।",
+      dailyLimitReached: "दैनिक सीमा पूरी हुई। कुछ भी कतार में नहीं रखा गया है; भेजना कल फिर शुरू होगा।",
       closeToLimit_one: "दैनिक सीमा के क़रीब — आज {{count}} अनुरोध बचा।",
       closeToLimit_other: "दैनिक सीमा के क़रीब — आज {{count}} अनुरोध बचे।",
       bannerNotConnected: "LinkedIn जुड़ा नहीं — स्वतः-खोज और भेजने के लिए इसे सेटिंग्स → LinkedIn से जोड़ें। तब तक URL से संपर्क जोड़कर अपना आउटरीच यहाँ हाथ से ट्रैक कर सकते हैं।",

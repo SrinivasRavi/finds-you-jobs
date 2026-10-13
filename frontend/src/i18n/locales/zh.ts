@@ -1297,7 +1297,7 @@ const zh: DeepPartial<Messages> = {
       quotaTooltip: "按滚动窗口计算，而非自然日/周 — 每条消息在发出 24 小时（每日）或 7 天（每周）后释放额度。上限设置保守，远低于 LinkedIn 的限制。",
       automatedQuota: "自动化额度 — 过去 24 小时：<strong>{{dailyUsed}}/{{dailyLimit}}</strong> 过去 7 天：<strong>{{weeklyUsed}}/{{weeklyLimit}}</strong>",
       manualModeQuota: "手动模式 — 请自行留意你的 LinkedIn 限额",
-      dailyLimitReached: "已达每日上限。新请求将排队至明天。",
+      dailyLimitReached: "已达每日上限。不会排队等待；明天可以继续发送。",
       closeToLimit_other: "即将达到每日上限 — 今天还剩 {{count}} 个请求。",
       bannerNotConnected: "LinkedIn 未连接 — 在“设置 → LinkedIn”中连接后即可自动发现并发送。在此之前，你可以通过 URL 添加联系人并在此手动跟踪你的联络。",
       bannerManualOff: "手动模式 — 内推联络已关闭。通过 URL 添加你正在联系的人并在此跟踪；在设置中开启内推联络即可自动发现并发送。",
