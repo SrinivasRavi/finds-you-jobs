@@ -918,6 +918,8 @@ export interface Settings {
   scoring_methods: ScoringMethod[];
   // 0 = unlimited (runner ceiling applies); otherwise 2-20.
   llm_concurrency: number;
+  /** How AI work queues (queueing.md section 5): a lane per kind, or 1 shared. */
+  ai_queue_mode: AiQueueMode;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
    *  the human — the default) or "auto" (legacy fill-and-submit). */
   /** Save-time form prep (FR-APP-01, 2026-07-11): visit the job's real form,
@@ -1067,6 +1069,8 @@ export interface LedgerSubject {
   artifact: { application_id: string; kind: "tailored" | "cover" } | null;
 }
 
+export type AiQueueMode = "per_kind" | "shared";
+
 export interface LedgerEntry {
   id: string;
   kind: OperationKind;
@@ -1080,6 +1084,9 @@ export interface LedgerEntry {
   error: string | null;
   created_at: string;
   started_at: string | null; // when the op went running (US-LOG-01 timestamp)
+  finished_at: string | null;
+  /** "user" when a click started it, "app" otherwise (queueing.md section 4). */
+  requested_by: "user" | "app";
   /** Absent on rows whose snapshot/result refs don't resolve (historical rows,
    *  deleted entities) — the row then renders kind-only, nothing fabricated. */
   subject: LedgerSubject | null;

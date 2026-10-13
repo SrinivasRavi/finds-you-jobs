@@ -57,6 +57,11 @@ class Operation(Base):
     job_id: Mapped[str | None] = mapped_column(String, nullable=True)
     contact_id: Mapped[str | None] = mapped_column(String, nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # `user` when a click created it and someone waits on it, else `app`. The
+    # runner orders and lanes by it (docs/internal/queueing.md section 4).
+    requested_by: Mapped[str] = mapped_column(
+        String, nullable=False, default="app", server_default="app"
+    )
     # Everything else the kind needs. Opaque: read back whole, never queried in.
     input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     result_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -70,6 +75,7 @@ class Operation(Base):
 
     __table_args__ = (
         Index("ix_operations_state_created", "state", "created_at"),
+        Index("ix_operations_state_requested_created", "state", "requested_by", "created_at"),
         Index("ix_operations_kind_created", "kind", "created_at"),
         Index("ix_operations_finished", "finished_at"),
         Index("ix_operations_job_kind", "job_id", "kind"),

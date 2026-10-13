@@ -158,6 +158,7 @@ export class SettingsApi extends ApplicationsApi {
       })),
       llm_concurrency:
         typeof thresholds.llm_concurrency === "number" ? thresholds.llm_concurrency : 4,
+      ai_queue_mode: thresholds.ai_queue_mode === "shared" ? "shared" : "per_kind",
       score_new_batch: scoreNewBatch,
       score_weight_preset: SCORE_WEIGHT_PRESETS.includes(
         thresholds.score_weight_preset as ScoreWeightPreset,
@@ -231,6 +232,7 @@ export class SettingsApi extends ApplicationsApi {
     if (patch.scoring_mode !== undefined) thresholdPatch.scoring_mode = patch.scoring_mode;
     if (patch.llm_concurrency !== undefined)
       thresholdPatch.llm_concurrency = patch.llm_concurrency;
+    if (patch.ai_queue_mode !== undefined) thresholdPatch.ai_queue_mode = patch.ai_queue_mode;
     if (patch.auto_referrals_on_save !== undefined)
       thresholdPatch.auto_referrals_on_save = patch.auto_referrals_on_save;
     if (patch.auto_packet_on_save !== undefined) thresholdPatch.auto_packet_on_save = patch.auto_packet_on_save;

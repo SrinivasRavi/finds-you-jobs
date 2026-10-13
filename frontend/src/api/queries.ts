@@ -579,10 +579,12 @@ export class RunStoppedError extends Error {
 /** Wait for an operation to finish. It keeps asking for as long as the run
  *  lasts, and at the limit it cancels the run itself rather than abandoning it. */
 async function waitForOperation(opId: string): Promise<Operation> {
-  const started = Date.now();
+  // The limit counts running time only: a queued run spends nothing
+  // (queueing.md section 6, audit A1).
+  let runningSince: number | null = null;
   for (;;) {
     await new Promise((r) => setTimeout(r, 500));
-    if (Date.now() - started >= RUN_LIMIT_MS) {
+    if (runningSince !== null && Date.now() - runningSince >= RUN_LIMIT_MS) {
       await api.cancelOperation(opId).catch(() => undefined);
       throw new RunStoppedError("timeout");
     }
@@ -590,6 +592,7 @@ async function waitForOperation(opId: string): Promise<Operation> {
     if (op === undefined) continue;
     if (op.state === "cancelled") throw new RunStoppedError("stopped");
     if (op.state === "succeeded" || op.state === "failed") return op;
+    if (op.state === "running" && runningSince === null) runningSince = Date.now();
   }
 }
 

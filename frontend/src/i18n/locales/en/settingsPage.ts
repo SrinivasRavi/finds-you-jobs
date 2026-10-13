@@ -139,6 +139,12 @@ const settingsPage = {
     parallelHint: "How many AI calls run at once.",
     atOnce: "{{n}} at once",
     unlimited: "Unlimited",
+    queueMode: "How AI work waits",
+    queueModeInfo: "1 queue per kind of work: your own requests never wait behind background scoring, but several kinds of work can call your provider at once, so a rate limit or a subscription's 5-hour window arrives sooner. 1 shared queue: never more than Parallel AI calls at once, but a request can wait for 1 running call to finish.",
+    queueModeHint: "Your own requests always go first.",
+    queuePerKind: "1 queue per kind of work",
+    queueShared: "1 shared queue",
+    parallelHintPerKind: "How many jobs score at once in the background.",
   },
   automation: {
     title: "Automation on Save",

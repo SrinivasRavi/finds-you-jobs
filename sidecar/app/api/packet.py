@@ -65,7 +65,7 @@ def enqueue_packet(
             "guidance": guidance,
             "profile_version": profile_version,
         }
-        op_id = runner.submit(op_kind, snapshot)
+        op_id = runner.submit(op_kind, snapshot, requested_by="user")
         op_ids.append(op_id)
         artifact_kind = _ARTIFACT_KIND[op_kind]
         with db.repos() as repos:

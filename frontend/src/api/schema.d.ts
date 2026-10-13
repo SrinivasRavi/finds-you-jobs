@@ -3242,6 +3242,11 @@ export interface components {
             /** Model */
             model: string | null;
             /**
+             * Requested By
+             * @default app
+             */
+            requested_by: string;
+            /**
              * Created At
              * Format: date-time
              */

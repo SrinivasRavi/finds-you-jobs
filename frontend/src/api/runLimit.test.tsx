@@ -62,6 +62,30 @@ describe("long runs", () => {
     expect((err as RunStoppedError).reason).toBe("timeout");
   });
 
+  it("never counts time spent queued against the limit", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(api, "scoreJobText").mockResolvedValue("op1");
+    let polls = 0;
+    // 300 s queued, then 10 s running, then done.
+    vi.spyOn(api, "getOperation").mockImplementation(async () => {
+      polls += 1;
+      if (polls <= 600) return op("queued");
+      if (polls <= 620) return op("running");
+      return op("succeeded", { result_ref: { score: 61 } } as never);
+    });
+    const cancel = vi.spyOn(api, "cancelOperation").mockResolvedValue(op("cancelled"));
+    const { result } = renderHook(useTriageScore, { wrapper });
+    let out: unknown;
+    act(() => {
+      result.current.mutate({ description: "jd" }, { onSuccess: (r) => (out = r) });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(625 * 500);
+    });
+    expect(cancel).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ score: 61 });
+  });
+
   it("reports a Stop as stopped, with the operation id handed over first", async () => {
     vi.spyOn(api, "scoreJobText").mockResolvedValue("op1");
     vi.spyOn(api, "getOperation").mockResolvedValue(op("cancelled"));

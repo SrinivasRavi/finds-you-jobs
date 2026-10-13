@@ -144,7 +144,9 @@ class OperationsRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def create(self, kind: str, input_snapshot: dict[str, Any]) -> Operation:
+    def create(
+        self, kind: str, input_snapshot: dict[str, Any], *, requested_by: str = "app"
+    ) -> Operation:
         """The one place the subject ids are lifted out of the snapshot, so no
         call site has to remember to pass them twice. Empty string becomes NULL:
         the retired `watch_company` kind wrote `job_id: ""`, and "" is not a
@@ -155,6 +157,7 @@ class OperationsRepo:
             job_id=input_snapshot.get("job_id") or None,
             contact_id=input_snapshot.get("contact_id") or None,
             batch_id=input_snapshot.get("batch_id") or None,
+            requested_by=requested_by,
             input_snapshot=input_snapshot,
         )
         self._s.add(op)
@@ -186,12 +189,14 @@ class OperationsRepo:
         """Queued ops in dispatch order, most urgent first, capped. Reading every queued
         row made enqueueing quadratic; the cap fixes that, and ordering in SQL keeps it
         safe, so a watched `apply` never hides behind bulk scores. FIFO by
-        `created_at, id` within a band."""
+        `created_at, id` within a band. A user's request comes first whatever its kind, so
+        a backlog deeper than `limit` can never hide it (queueing.md section 4)."""
         priority = case(priority_by_kind, value=Operation.kind, else_=default_priority)
+        user_first = case((Operation.requested_by == "user", 0), else_=1)
         stmt = (
             select(Operation)
             .where(Operation.state == "queued")
-            .order_by(priority, Operation.created_at, Operation.id)
+            .order_by(user_first, priority, Operation.created_at, Operation.id)
             .limit(limit)
         )
         return list(self._s.scalars(stmt))

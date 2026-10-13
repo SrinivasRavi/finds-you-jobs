@@ -44,6 +44,20 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
   await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
+  // Audit A1: the queue choice defaults to 1 queue per kind; the parallel hint
+  // says what the cap covers under each choice, and the choice persists.
+  const queueMode = page.getByTestId("ai-queue-mode-select");
+  await expect(queueMode).toHaveValue("per_kind");
+  await expect(page.getByText("How many jobs score at once in the background.")).toBeVisible();
+  await queueMode.selectOption("shared");
+  await expect(page.getByText("How many AI calls run at once.")).toBeVisible();
+  await page.reload();
+  await page.getByTestId("settings-nav-scoring").click();
+  await expect(page.getByTestId("ai-queue-mode-select")).toHaveValue("shared");
+  await page.getByTestId("ai-queue-mode-select").selectOption("per_kind");
+  await expect(page.getByTestId("ai-queue-mode-select")).toHaveValue("per_kind");
+  await page.getByTestId("ai-queue-mode-select").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-queue-mode.png` });
   await expect(page.getByTestId("model-picker-score")).toBeVisible();
   await expect(page.getByTestId("prompt-textarea-score")).toBeVisible();
   await page.screenshot({ path: `${DIR}/settings-scoring.png`, fullPage: true });
@@ -242,6 +256,18 @@ test("analytics shows cost tiles and a real ledger row; /logs redirects", async 
   const row = page.getByTestId("log-row").filter({ hasText: "cleanup_trash" }).first();
   await expect(row.locator("td").last()).toHaveText("—");
   await page.screenshot({ path: `${DIR}/analytics-ledger.png`, fullPage: true });
+
+  // Audit A1: the Time column shows the end time; the row's timeline holds
+  // when it was queued, started and finished, and who started it.
+  await expect(page.getByRole("columnheader", { name: "Time" })).toBeVisible();
+  await expect(row.getByTestId("log-time")).toHaveAttribute("title", /Queued: .*\nStarted: .*\nFinished: /);
+  await row.getByTestId("log-time").click();
+  const timeline = page.getByTestId("log-timeline").first();
+  await expect(timeline).toContainText("Queued:");
+  await expect(timeline).toContainText("Finished:");
+  await expect(timeline).toContainText(/Ran \d/);
+  await expect(timeline).toContainText("You started this");
+  await page.screenshot({ path: `${DIR}/analytics-ledger-timeline.png`, fullPage: true });
 });
 
 test("a queued operation row offers Stop and cancels to `cancelled` (F-M7)", async ({
@@ -442,7 +468,7 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
     // …and the full DM text lives in the EXPANDED detail, not the row.
     await expect(wideRow).not.toContainText("would love a referral");
     // Expand via the Started cell — the subject link swallows clicks (external).
-    await wideRow.getByTestId("log-started").click();
+    await wideRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-detail")).toContainText("would love a referral");
 
     // The failed scan's COLLAPSED row: counts only ("37 new jobs" · "12
@@ -469,12 +495,12 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
 
     // EXPANDED, the bulk payloads appear as labeled blocks: the full source
     // list and the FULL verbatim error text.
-    await errRow.getByTestId("log-started").click();
+    await errRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-sources")).toContainText("greenhouse");
     await expect(page.getByTestId("log-sources")).toContainText("jobvite");
     await expect(page.getByTestId("log-error-full")).toContainText(longToken);
     // The query list too, on the linkedin_search row.
-    await searchRow.getByTestId("log-started").click();
+    await searchRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-sources")).toContainText("python developer remote");
 
     // The container never scrolls sideways — with the expanded row open too.

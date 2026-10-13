@@ -398,6 +398,8 @@ export function toLedgerEntry(d: OperationDTO): LedgerEntry {
     error: d.error ?? null,
     created_at: d.created_at,
     started_at: d.started_at ?? null,
+    finished_at: d.finished_at ?? null,
+    requested_by: d.requested_by === "user" ? "user" : "app",
     subject: toSubject(d.subject),
     // Old→new retry link, stamped into the failed row's result_ref JSON.
     retried_as: ((d.result_ref as { retried_as?: string } | null)?.retried_as ?? null) as

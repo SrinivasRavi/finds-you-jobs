@@ -28,6 +28,12 @@ from sidecar.app.runner import (
     ProviderCircuitOpen,
     can_start,
 )
+from sidecar.app.runner.policy import (
+    QUEUE_PER_KIND,
+    QUEUE_SHARED,
+    policy_from,
+    with_queue_mode,
+)
 from sidecar.modules._shared.claude_engine import EngineError
 from sidecar.modules._shared.completion_retry import CompletionCancelled
 
@@ -76,10 +82,37 @@ def _running_count(db: Database) -> int:
 # -- pure policy -----------------------------------------------------------
 
 
-def test_can_start_llm_group_caps_at_default() -> None:
-    # Default parallelism is 4 (user-tunable via thresholds.llm_concurrency).
-    assert can_start("score", ["score", "cover", "draft"], DEFAULT_POLICY) is True
-    assert can_start("tailor", ["score", "cover", "draft", "score"], DEFAULT_POLICY) is False
+def test_can_start_shared_queue_caps_every_ai_kind_together() -> None:
+    # queueing.md 5.2: 1 lane for all AI work, capped by Parallel AI calls (4).
+    shared = with_queue_mode(DEFAULT_POLICY, QUEUE_SHARED)
+    assert can_start("score", ["score", "cover", "draft"], shared) is True
+    assert can_start("tailor", ["score", "cover", "draft", "score"], shared) is False
+    assert can_start("extract", ["score"] * 4, shared) is False
+
+
+def test_can_start_per_kind_queue_lanes_each_kind_of_work() -> None:
+    # queueing.md 5.1, the default: background scoring fills only its own lane.
+    four_scores = ["score"] * 4
+    assert can_start("score", four_scores, DEFAULT_POLICY) is False
+    assert can_start("tailor", four_scores, DEFAULT_POLICY) is True
+    assert can_start("extract", four_scores, DEFAULT_POLICY) is True
+    assert can_start("score", four_scores, DEFAULT_POLICY, "user") is True
+    # A user's request is never counted against the background lane, either.
+    user_scores = [("score", "user")] * 4
+    assert can_start("score", user_scores, DEFAULT_POLICY) is True
+    assert can_start("score", user_scores, DEFAULT_POLICY, "user") is False
+    # Writing has its own lane; the app's extract is single-flight.
+    assert can_start("cover", ["tailor", "cover", "draft", "tailor"], DEFAULT_POLICY) is False
+    assert can_start("extract", ["extract"], DEFAULT_POLICY) is False
+
+
+def test_policy_from_reads_the_saved_cap_and_queue_choice() -> None:
+    assert policy_from({}).ai_queue_mode == QUEUE_PER_KIND
+    assert policy_from({}).limit_for_group("llm") == 4
+    saved = policy_from({"llm_concurrency": 2, "ai_queue_mode": "shared"})
+    assert saved.ai_queue_mode == QUEUE_SHARED
+    assert saved.limit_for_group("llm") == 2
+    assert policy_from({"ai_queue_mode": "nonsense"}).ai_queue_mode == QUEUE_PER_KIND
 
 
 def test_can_start_scan_is_single_flight() -> None:
@@ -229,9 +262,10 @@ def test_llm_group_caps_at_two_live(migrated_db: Database) -> None:
     )
     runner.start()
     try:
+        # Background scoring's lane is the one Parallel AI calls caps.
         runner.submit("score", {})
-        runner.submit("tailor", {})
-        runner.submit("cover", {})
+        runner.submit("score", {})
+        runner.submit("score", {})
         assert blocking.started.acquire(timeout=3)
         assert blocking.started.acquire(timeout=3)  # two started
         assert blocking.started.acquire(timeout=0.4) is False  # third held back
@@ -240,6 +274,55 @@ def test_llm_group_caps_at_two_live(migrated_db: Database) -> None:
         blocking.release.set()
         runner.shutdown(drain_timeout=3)
     assert blocking.max_concurrent == 2
+
+
+def test_a_user_request_starts_while_background_scoring_fills_its_lane(
+    migrated_db: Database,
+) -> None:
+    """Audit A1: "Score it first" queued after 5 batch scores, with 1 scoring slot,
+    starts at once under the default (per kind) and first under the shared queue."""
+    from sidecar.app.runner.policy import with_llm_limit
+
+    for mode, user_starts_at_once in ((QUEUE_PER_KIND, True), (QUEUE_SHARED, False)):
+        db = migrated_db
+        with db.repos() as repos:
+            for op in repos.operations.list_by_state("queued"):
+                repos.operations.mark_cancelled(op.id)
+        order: list[str] = []
+        gate = threading.Event()
+
+        def entry(ctx: OperationContext, order: list[str] = order,
+                  gate: threading.Event = gate) -> OperationOutcome:
+            order.append(ctx.input_snapshot.get("tag", ""))
+            gate.wait(timeout=5)
+            return OperationOutcome()
+
+        runner = OperationRunner(
+            db,
+            policy=with_queue_mode(with_llm_limit(DEFAULT_POLICY, 1), mode),
+            registry=OperationRegistry({"score": entry}),
+        )
+        runner.start()
+        try:
+            for i in range(5):
+                runner.submit("score", {"tag": f"batch{i}"})
+            runner.submit("score", {"tag": "user"}, requested_by="user")
+            deadline = time.monotonic() + 3
+            want = 2 if user_starts_at_once else 1
+            while len(order) < want and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if user_starts_at_once:
+                assert sorted(order) == ["batch0", "user"], mode
+            else:
+                assert order == ["batch0"], mode
+                gate.set()
+                deadline = time.monotonic() + 3
+                while len(order) < 2 and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                assert order[1] == "user", mode  # next in line, ahead of batch1
+        finally:
+            gate.set()
+            runner.shutdown(drain_timeout=3)
 
 
 def test_on_success_hook_fires_on_success_only_and_is_contained(
@@ -399,8 +482,8 @@ def test_llm_concurrency_setting_parses_and_clamps() -> None:
     assert unlimited >= 1_000_000
 
     raised = with_llm_limit(DEFAULT_POLICY, 6)
-    assert can_start("tailor", ["score"] * 5, raised) is True
-    assert can_start("tailor", ["score"] * 6, raised) is False
+    assert can_start("score", ["score"] * 5, raised) is True
+    assert can_start("score", ["score"] * 6, raised) is False
     # Only the llm group changed; scan stays single-flight.
     assert can_start("scan", ["scan"], raised) is False
 

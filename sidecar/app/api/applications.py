@@ -697,7 +697,7 @@ def start_apply(
         # Start reading the facts now, so the next Apply works (audit A5).
         engines = _engines(request)
         if has_master and (engines is None or engines.resolve("extract") is not None):
-            runner.submit("extract", {})
+            runner.submit("extract", {}, requested_by="user")
         raise HTTPException(status_code=409, detail=NO_APPLICATION_PROFILE_DETAIL)
 
     snapshot: dict[str, Any] = {"application_id": application_id}
@@ -723,7 +723,7 @@ def start_apply(
         run_id = run.id
     snapshot["run_id"] = run_id
     try:
-        operation_id = runner.submit("apply", snapshot)
+        operation_id = runner.submit("apply", snapshot, requested_by="user")
     except Exception as exc:
         # Enqueue failed (2026-07-25): the just-created row would strand
         # `queued` until boot sweep — land it terminal-failed, then let the

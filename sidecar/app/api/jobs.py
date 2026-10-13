@@ -483,7 +483,11 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
     # Score the freshly-added (or restored-but-unscored) job so it sorts into the
     # feed (US-JB-07 → FR-JB-01).
     if enqueue_score and job_id is not None:
-        _runner(request).submit("score", {"job_id": job_id, "profile_version": profile_version})
+        _runner(request).submit(
+            "score",
+            {"job_id": job_id, "profile_version": profile_version},
+            requested_by="user",
+        )
     return result
 
 
@@ -749,7 +753,9 @@ def explain_job(request: Request, job_id: str) -> dto.OperationAccepted:
             )
         version = profile.version
     operation_id = _runner(request).submit(
-        "score", {"job_id": job_id, "profile_version": version, "force_mode": "llm"}
+        "score",
+        {"job_id": job_id, "profile_version": version, "force_mode": "llm"},
+        requested_by="user",
     )
     return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
 

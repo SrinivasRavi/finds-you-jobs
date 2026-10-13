@@ -49,6 +49,7 @@ from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
 from .registry.operations import backfill_keyword_scores
 from .runner import OperationRunner
+from .runner.policy import policy_from
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
 from .security import AppKeyUnavailable, migrate_plaintext_session, resolve_app_key_once
@@ -246,10 +247,15 @@ def create_app(
         except Exception:  # noqa: BLE001 — recovery must never block boot
             log.exception("apply-run boot recovery failed")
 
+        # The saved Parallel AI calls and queue choice apply from the first pump, not
+        # only after the next Settings save.
+        with db.repos() as repos:
+            saved_thresholds = dict(repos.preferences.get_or_create().thresholds or {})
         runner = OperationRunner(
             db,
             registry=operation_registry,
             engines=engines,
+            policy=policy_from(saved_thresholds),
             publish=hub.publish,
             observability=observability,
         )

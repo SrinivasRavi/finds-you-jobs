@@ -286,3 +286,28 @@ def test_duplicate_flags_and_dismissals_become_1_row_per_pair(tmp_path: Path) ->
         assert json.loads(flags["c"]) == []
         origins = {str(r[0]): str(r[1]) for r in conn.execute(text("SELECT id, origin FROM jobs"))}
         assert origins == {"a": "scan", "b": "manual", "c": "scan", "d": "scan"}
+
+
+def test_existing_operations_read_as_started_by_the_app(tmp_path: Path) -> None:
+    """a1c7e5d2b9f4 (audit A1): every operation that predates `requested_by` reads
+    `app`, so nothing old jumps the queue; the downgrade drops the column."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'ops.db'}"
+    cfg = make_alembic_config(url)
+    command.upgrade(cfg, "f7c2d4e9a1b6")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO operations (id, kind, state, input_snapshot, created_at) "
+            "VALUES ('o1', 'score', 'queued', '{}', '2026-10-01 00:00:00')"
+        ))
+    command.upgrade(cfg, "a1c7e5d2b9f4")
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT requested_by FROM operations")).scalar() == "app"
+    command.downgrade(cfg, "f7c2d4e9a1b6")
+    cols = {c["name"] for c in inspect(engine).get_columns("operations")}
+    assert "requested_by" not in cols

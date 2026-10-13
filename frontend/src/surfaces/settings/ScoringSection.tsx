@@ -5,6 +5,7 @@ import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
+  AiQueueMode,
   ScoreWeightPreset,
   ScoringMethod,
   ScoringMode,
@@ -430,7 +431,9 @@ export const ScoringSection = memo(function ScoringSection({
               </InfoDot>
             </div>
             <div className="text-[12px] text-ink-3">
-              {t("settingsPage.scoring.parallelHint")}
+              {settings.ai_queue_mode === "shared"
+                ? t("settingsPage.scoring.parallelHint")
+                : t("settingsPage.scoring.parallelHintPerKind")}
             </div>
           </div>
           <div className="flex items-center gap-1.5" data-testid="llm-concurrency-row">
@@ -448,6 +451,28 @@ export const ScoringSection = memo(function ScoringSection({
               <option value={0}>{t("settingsPage.scoring.unlimited")}</option>
             </select>
           </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <div className="flex items-center text-[13px] font-medium text-ink">
+              {t("settingsPage.scoring.queueMode")}
+              <InfoDot label={t("settingsPage.scoring.queueMode")}>
+                {t("settingsPage.scoring.queueModeInfo")}
+              </InfoDot>
+            </div>
+            <div className="text-[12px] text-ink-3">
+              {t("settingsPage.scoring.queueModeHint")}
+            </div>
+          </div>
+          <select
+            value={settings.ai_queue_mode}
+            data-testid="ai-queue-mode-select"
+            onChange={(e) => patch({ ai_queue_mode: e.target.value as AiQueueMode })}
+            className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+          >
+            <option value="per_kind">{t("settingsPage.scoring.queuePerKind")}</option>
+            <option value="shared">{t("settingsPage.scoring.queueShared")}</option>
+          </select>
         </div>
       </div>
     </Section>

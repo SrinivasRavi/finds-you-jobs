@@ -1190,6 +1190,8 @@ class OperationDTO(BaseModel):
     error: str | None
     engine: str | None
     model: str | None
+    # `user` (a click, someone waiting) or `app`; queueing.md section 4.
+    requested_by: str = "app"
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

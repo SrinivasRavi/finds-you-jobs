@@ -44,6 +44,7 @@ from .policy import (
     ConcurrencyPolicy,
     can_start,
     with_llm_limit,
+    with_queue_mode,
 )
 
 RESTART_NOTE = (
@@ -102,7 +103,8 @@ class OperationRunner:
         self._max_workers = max_workers
         self._executor: ThreadPoolExecutor | None = None
         self._lock = RLock()
-        self._running: dict[str, str] = {}  # operation_id -> kind (in-flight)
+        # operation_id -> (kind, requested_by), in flight; the lane needs both.
+        self._running: dict[str, tuple[str, str]] = {}
         # Per-running-op cooperative cancel tokens (F-M7): created at dispatch,
         # exposed to the entrypoint via ctx.cancelled, dropped on completion.
         self._cancels: dict[str, Event] = {}
@@ -145,10 +147,13 @@ class OperationRunner:
         """The operation kinds this runner can dispatch (registry keys)."""
         return self._registry.kinds()
 
-    def submit(self, kind: str, input_snapshot: dict[str, Any]) -> str:
-        """Create a `queued` operation, publish, and pump. Returns the id now."""
+    def submit(
+        self, kind: str, input_snapshot: dict[str, Any], *, requested_by: str = "app"
+    ) -> str:
+        """Create a `queued` operation, publish, and pump. Returns the id now.
+        `requested_by="user"` when a click created it and someone is waiting."""
         with self._db.repos() as repos:
-            op = repos.operations.create(kind, input_snapshot)
+            op = repos.operations.create(kind, input_snapshot, requested_by=requested_by)
             operation_id = op.id
         self._log.info("operation %s enqueued (kind=%s)", operation_id, kind)
         self._publish(operation_id, kind, "queued")
@@ -204,6 +209,12 @@ class OperationRunner:
             self._policy = with_llm_limit(self._policy, limit)
         self._pump()
 
+    def set_queue_mode(self, mode: str) -> None:
+        """Switch the AI queue choice live (queueing.md section 5); running ops finish."""
+        with self._lock:
+            self._policy = with_queue_mode(self._policy, mode)
+        self._pump()
+
     # -- boot recovery -----------------------------------------------------
 
     def recover(self) -> None:
@@ -241,17 +252,17 @@ class OperationRunner:
                     default_priority=DEFAULT_DISPATCH_PRIORITY,
                     limit=DISPATCH_SCAN_LIMIT,
                 )
-                running_kinds = list(self._running.values())
+                running = list(self._running.values())
                 for op in queued:
                     if op.id in self._running:
                         continue
-                    if can_start(op.kind, running_kinds, self._policy):
+                    if can_start(op.kind, running, self._policy, op.requested_by):
                         snapshot = dict(op.input_snapshot or {})
                         to_start.append((op.id, op.kind, snapshot))
-                        running_kinds.append(op.kind)
-                for op_id, kind, _snap in to_start:
+                        running.append((op.kind, op.requested_by))
+                        self._running[op.id] = (op.kind, op.requested_by)
+                for op_id, _kind, _snap in to_start:
                     repos.operations.mark_running(op_id)
-                    self._running[op_id] = kind
                     self._cancels[op_id] = Event()
             executor = self._executor
         for op_id, kind, snapshot in to_start:

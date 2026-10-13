@@ -68,7 +68,7 @@ def extract_application_profile(request: Request) -> dto.OperationAccepted:
     with _db(request).repos() as repos:
         if repos.profile.get_current() is None:
             raise HTTPException(status_code=404, detail="no master profile to extract from")
-    operation_id = _runner(request).submit("extract", {})
+    operation_id = _runner(request).submit("extract", {}, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind="extract", state="queued")
 
 
@@ -195,9 +195,10 @@ def update_settings(
     # LLM parallelism is re-capped live (2026-07-17): the runner swaps its
     # policy on the next pump; running ops are never interrupted.
     if "thresholds" in fields:
-        from ..runner.policy import llm_concurrency_from
+        from ..runner.policy import ai_queue_mode_from, llm_concurrency_from
 
         _runner(request).set_llm_limit(llm_concurrency_from(prefs_thresholds))
+        _runner(request).set_queue_mode(ai_queue_mode_from(prefs_thresholds))
     # A6: an observability change (content logging / OTLP opt-in / retention) is
     # re-applied live — turning OTLP export ON adds the exporter, OFF removes it
     # entirely (no exporter at all — the no-network-by-default invariant).
@@ -380,7 +381,7 @@ def test_prompt(
     # cap, Stop and Retry come for free and its spend compares with a real run's
     # (url-less-jobs.md section 11.4).
     op_kind = spec.operation_kind()
-    operation_id = _runner(request).submit(op_kind, snap)
+    operation_id = _runner(request).submit(op_kind, snap, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind=op_kind, state="queued")
 
 

@@ -4,6 +4,7 @@
 // and a retry offer over the boot-recovery note.
 
 import { Fragment, useMemo, useState, type ReactNode } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
@@ -520,6 +521,30 @@ function ExpandedBlock({
  *  2026-08-04): the scan source list / linkedin_search query list as chip
  *  blocks, the long detail text (the DM/note sent, a contact_sync transition
  *  summary), and the FULL verbatim error a failed row only previews. */
+/** Seconds between 2 timestamps, worded; null when either is missing. */
+function between(from: string | null, to: string | null, t: TFunction): string | null {
+  if (!from || !to) return null;
+  const s = Math.max(0, (new Date(to).getTime() - new Date(from).getTime()) / 1000);
+  if (s < 60) return t("analytics.ledger.seconds", { value: s.toFixed(1) });
+  return t("analytics.ledger.minutes", { m: Math.floor(s / 60), s: Math.round(s % 60) });
+}
+
+/** Queued, started and finished, with the wait and the run between them
+ *  (maintainer, 2026-10-13: no task should wait too long unseen). */
+function timelineLines(e: LedgerEntry, t: TFunction): string[] {
+  const lines = [
+    `${t("analytics.ledger.timeQueued")}: ${formatWhen(e.created_at, "timestamp")}`,
+    `${t("analytics.ledger.timeStarted")}: ${formatWhen(e.started_at, "timestamp")}`,
+    `${t("analytics.ledger.timeFinished")}: ${formatWhen(e.finished_at, "timestamp")}`,
+  ];
+  const waited = between(e.created_at, e.started_at, t);
+  const ran = between(e.started_at, e.finished_at, t);
+  if (waited) lines.push(t("analytics.ledger.timeWaited", { value: waited }));
+  if (ran) lines.push(t("analytics.ledger.timeRan", { value: ran }));
+  lines.push(t(e.requested_by === "user" ? "analytics.ledger.byUser" : "analytics.ledger.byApp"));
+  return lines;
+}
+
 function ExpandedBlocks({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
   const list =
@@ -532,6 +557,16 @@ function ExpandedBlocks({ entry }: { entry: LedgerEntry }) {
     Boolean(entry.error) && !entry.error!.includes(RESTART_NOTE_MARKER);
   return (
     <>
+      <ExpandedBlock heading={t("analytics.ledger.timelineHeading")}>
+        <div
+          className="rounded-lg border border-border bg-surface-2 p-3 text-[12px] text-ink-2"
+          data-testid="log-timeline"
+        >
+          {timelineLines(entry, t).map((line) => (
+            <div key={line}>{line}</div>
+          ))}
+        </div>
+      </ExpandedBlock>
       {list.length > 0 ? (
         <ExpandedBlock
           heading={
@@ -743,7 +778,7 @@ export function Analytics() {
                   <th className="w-7 px-2 py-2" />
                   <th className="px-3 py-2 font-medium">{t("analytics.ledger.operation")}</th>
                   <th className="w-[96px] px-3 py-2 font-medium">{t("analytics.ledger.state")}</th>
-                  <th className="w-[104px] px-3 py-2 font-medium">{t("analytics.ledger.started")}</th>
+                  <th className="w-[104px] px-3 py-2 font-medium">{t("analytics.ledger.time")}</th>
                   <th className="w-[116px] px-3 py-2 font-medium">{t("analytics.ledger.model")}</th>
                   <th className="w-[88px] px-3 py-2 text-right font-medium">{t("analytics.ledger.cost")}</th>
                 </tr>
@@ -785,9 +820,10 @@ export function Analytics() {
                         </td>
                         <td
                           className="px-3 py-2 text-[11px] text-ink-3"
-                          data-testid="log-started"
+                          data-testid="log-time"
+                          title={timelineLines(e, t).join("\n")}
                         >
-                          {formatWhen(e.started_at ?? e.created_at, "timestamp")}
+                          {formatWhen(e.finished_at ?? e.started_at ?? e.created_at, "timestamp")}
                         </td>
                         <td
                           className="truncate px-3 py-2 text-ink-2"

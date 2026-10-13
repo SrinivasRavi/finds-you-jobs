@@ -428,7 +428,7 @@ def test_submit_failure_finalizes_route_created_run(app_client, monkeypatch) -> 
     app, client = app_client
     _job_id, app_id = _seed_card(client, app)
 
-    def rejecting_submit(kind: str, snapshot: dict) -> str:
+    def rejecting_submit(kind: str, snapshot: dict, *, requested_by: str = "app") -> str:
         raise RuntimeError("executor rejected the dispatch")
 
     monkeypatch.setattr(app.state.runner, "submit", rejecting_submit)
