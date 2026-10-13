@@ -46,6 +46,9 @@ from .models import (
     UserPreferences,
 )
 
+# The feed states the board shows: live jobs and greyed (expired) ones.
+ON_BOARD_STATES = ("active", "expired")
+
 # Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07). All-time totals are the
 # live ledger plus a persistent aggregate in ui_state["cost_totals"], so deleting
 # an op can't forget its spend. Nothing deletes ops yet (S-C22), so it's 0; a
@@ -570,21 +573,22 @@ class JobsRepo:
         )
 
     def fingerprint_rows(self) -> list[tuple[str, int, str, str]]:
-        """`(id, fingerprint, company, title)` for every active fingerprinted job:
-        the 4 narrow columns `near_duplicate_ids` compares. A scan reads them once
-        for all the rows it writes rather than once per row."""
+        """`(id, fingerprint, company, title)` for every fingerprinted job on the
+        board, greyed ones included, since a repost after 14 days is the ghost-job
+        signal (audit A6): the 4 narrow columns `near_duplicate_ids` compares. A scan
+        reads them once for all the rows it writes rather than once per row."""
         rows = self._s.execute(
             select(Job.id, Job.fingerprint, Job.company, Job.title).where(
-                Job.feed_state == "active", Job.fingerprint.is_not(None)
+                Job.feed_state.in_(ON_BOARD_STATES), Job.fingerprint.is_not(None)
             )
         )
         return [(r[0], r[1] or 0, r[2], r[3]) for r in rows]
 
     def list_unfingerprinted(self, *, limit: int = 500) -> list[Job]:
         """Active jobs with a description and no fingerprint: rows written before
-        the column existed. Active only, because the duplicate check compares
-        nothing else; a restored job joins on the next pass. The backfill's own
-        query, so it converges."""
+        the column existed. Active only, by the maintainer's 2026-10-12 note; a
+        restored job joins on the next pass. The backfill's own query, so it
+        converges."""
         stmt = (
             select(Job)
             .where(
@@ -606,7 +610,7 @@ class JobsRepo:
         exclude_id: str,
         rows: list[tuple[str, int, str, str]] | None = None,
     ) -> list[str]:
-        """Active jobs that are probably the same posting, checked at ingest so the board
+        """Board jobs that are probably the same posting, checked at ingest so the board
         pays nothing. A narrow 4-column scan, since Hamming distance over a simhash has
         no index. The gate is compound (same company, title, similarity at threshold):
         bare similarity was 57% precise (S-C69, url-less-jobs.md 6.4)."""
@@ -1470,8 +1474,8 @@ class JobDuplicatesRepo:
             .join(me, me.id == JobDuplicate.job_id)
             .where(
                 JobDuplicate.dismissed_at.is_(None),
-                other.feed_state == "active",
-                me.feed_state == "active",
+                other.feed_state.in_(ON_BOARD_STATES),
+                me.feed_state.in_(ON_BOARD_STATES),
             )
         )
 
