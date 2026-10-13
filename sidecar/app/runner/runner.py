@@ -366,9 +366,19 @@ class OperationRunner:
                     # parse drift or our own bugs say nothing about the
                     # provider, and a ProviderCircuitOpen rejection must never
                     # feed the breaker that produced it (it isn't EngineError).
-                    if resolved is not None and isinstance(exc, EngineError):
-                        self._circuit.record_failure(resolved.name, str(exc))
-                        probe_engine = None  # lease transferred (probe verdict: still down)
+                    # Charged to the service that failed: Fast scoring calls
+                    # OpenRouter whatever engine the kind routes to, and its
+                    # spent key must not pause the Claude CLI.
+                    failed = (
+                        (getattr(exc, "provider", None) or (resolved.name if resolved else None))
+                        if isinstance(exc, EngineError)
+                        else None
+                    )
+                    if failed is not None:
+                        self._circuit.record_failure(failed, str(exc))
+                        if probe_engine is not None and probe_engine != failed:
+                            self._circuit.abandon_probe(probe_engine)
+                        probe_engine = None  # lease settled
                     elif probe_engine is not None:
                         self._circuit.abandon_probe(probe_engine)
                         probe_engine = None  # lease abandoned (no verdict)

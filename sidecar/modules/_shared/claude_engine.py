@@ -145,6 +145,9 @@ class EngineError(RuntimeError):
       None (default) defers to the status-based table.
     - `retry_after_s` — the provider's `Retry-After` hint in seconds, when
       it sent one (429/503); honored (capped) over computed backoff.
+    - `provider` — which service failed, when it isn't the engine routed for
+      the operation (Fast scoring's OpenRouter call); the circuit breaker
+      charges the failure to it.
     """
 
     def __init__(
@@ -154,11 +157,13 @@ class EngineError(RuntimeError):
         status: int | None = None,
         retryable: bool | None = None,
         retry_after_s: float | None = None,
+        provider: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.retryable = retryable
         self.retry_after_s = retry_after_s
+        self.provider = provider
 
 
 def _kill_process_group(proc: subprocess.Popen[str]) -> None:

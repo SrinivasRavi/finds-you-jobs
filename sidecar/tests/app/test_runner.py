@@ -591,6 +591,36 @@ def test_circuit_breaker_fails_fast_after_consecutive_engine_failures(
         runner.shutdown(drain_timeout=3)
 
 
+def test_a_failure_is_charged_to_the_service_that_failed(migrated_db: Database) -> None:
+    """Fast scoring calls OpenRouter whatever engine the kind routes to. Its
+    spent key used to open the ROUTED engine's circuit, pausing every kind
+    routed there (seen 2026-10: 42 scores failed "provider 'claude-cli'
+    paused" on OpenRouter 403s)."""
+    db = migrated_db
+    calls = {"n": 0}
+
+    def _entry(ctx: OperationContext) -> OperationOutcome:
+        calls["n"] += 1
+        raise EngineError("decisions API 403: Key limit exceeded", status=403,
+                          provider="openrouter")
+
+    circuit = EngineCircuitBreaker(threshold=2, cooldown_s=60.0)
+    runner = OperationRunner(
+        db, registry=OperationRegistry({"score": _entry}), engines=_routed_engines(),
+        circuit=circuit,
+    )
+    runner.start()
+    try:
+        for _ in range(3):
+            op_id = runner.submit("score", {})
+            assert wait_for_state(db, op_id, "failed") == "failed"
+        assert calls["n"] == 3  # the routed engine's circuit never opened
+        with pytest.raises(ProviderCircuitOpen):
+            circuit.check("openrouter")
+    finally:
+        runner.shutdown(drain_timeout=3)
+
+
 def test_non_engine_failures_never_feed_the_breaker(migrated_db: Database) -> None:
     """Module bugs / parse drift say nothing about provider health — ops keep
     reaching the entrypoint no matter how many fail."""

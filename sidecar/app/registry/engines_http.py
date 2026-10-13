@@ -220,10 +220,13 @@ class DecisionsHttpClient:
                 f"decisions API {resp.status}: {_verbatim(resp)}",
                 status=resp.status,
                 retry_after_s=_retry_after_s(resp),
+                provider="openrouter",
             )
         data = resp.json()
         if not isinstance(data, dict):
-            raise EngineError("decisions API returned a non-object response")
+            raise EngineError(
+                "decisions API returned a non-object response", provider="openrouter"
+            )
         return data
 
 
