@@ -42,11 +42,13 @@ async def test_hub_delivers_published_event_to_subscriber() -> None:
     frames: list[str] = []
 
     async def consume() -> None:
-        async for frame in hub.stream(heartbeat_interval=0.05, limit=1):
+        # A heartbeat counts toward `limit`, so it must never beat the publish (A17).
+        async for frame in hub.stream(heartbeat_interval=30, limit=1):
             frames.append(frame)
 
     task = asyncio.create_task(consume())
-    await asyncio.sleep(0.01)  # let the subscriber register
+    # 1 yield runs `consume` up to its first await, which is after the subscribe.
+    await asyncio.sleep(0)
     assert hub.subscriber_count == 1
     hub.publish(operation_event("op1", "score", "succeeded"))
     await asyncio.wait_for(task, timeout=2)
