@@ -64,6 +64,10 @@ const nl: DeepPartial<Messages> = {
     resumeChoose: "Upload je master-cv: PDF, Word, Pages, ODT, RTF, Markdown of tekst",
     resumeTextLabel: "Tekst van je master-cv: plak hem, of bewerk wat uit je bestand kwam",
     resumePlaceholder: "# Je naam\n\nPlak hier je cv, of upload hierboven een bestand.",
+    resumeCheck: {
+      not_a_resume: "Dit lijkt geen cv: bijna geen jaartallen en geen kopje Ervaring, Opleiding of Vaardigheden. Controleer of je het juiste bestand koos. Je kunt toch doorgaan.",
+      instructions: "Deze tekst bevat instructies aan een AI. Elke score en elk aangepast cv leest hem, dus haal ze weg voordat je doorgaat.",
+    },
     aliasLabel: "Functienamen (minstens één)",
     aliasHint: "Typ een functie en druk op Enter of komma om toe te voegen. Voeg er meerdere toe — elke wordt hieronder een chip.",
     aliasPlaceholder: "bv. Backend Engineer",

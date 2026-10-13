@@ -25,6 +25,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..doc_extract import ExtractionError, extract_markdown
+from ..resume_check import resume_warnings
 
 router = APIRouter()
 
@@ -39,6 +40,8 @@ class ProfileIngestResult(BaseModel):
     text: str
     filename: str
     chars: int
+    # `not_a_resume` / `instructions` (resume_check.py, S-C57); shown, never blocking.
+    warnings: list[str] = []
 
 
 @router.post("/api/profile/ingest")
@@ -65,4 +68,6 @@ async def ingest_resume(file: UploadFile = File(...)) -> ProfileIngestResult:  #
     except ExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return ProfileIngestResult(text=text, filename=filename, chars=len(text))
+    return ProfileIngestResult(
+        text=text, filename=filename, chars=len(text), warnings=resume_warnings(text)
+    )

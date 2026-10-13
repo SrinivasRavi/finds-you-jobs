@@ -66,6 +66,10 @@ const de: DeepPartial<Messages> = {
     resumeChoose: "Master-Lebenslauf hochladen: PDF, Word, Pages, ODT, RTF, Markdown oder Text",
     resumeTextLabel: "Text des Master-Lebenslaufs: einfügen oder das aus deiner Datei Übernommene bearbeiten",
     resumePlaceholder: "# Dein Name\n\nFüge hier deinen Lebenslauf ein oder lade oben eine Datei hoch.",
+    resumeCheck: {
+      not_a_resume: "Das sieht nicht nach einem Lebenslauf aus: kaum Jahreszahlen und kein Abschnitt zu Berufserfahrung, Ausbildung oder Kenntnissen. Prüfe, ob du die richtige Datei gewählt hast. Du kannst trotzdem weitermachen.",
+      instructions: "Dieser Text enthält Anweisungen an eine KI. Jede Bewertung und jeder angepasste Lebenslauf liest ihn, also entferne sie, bevor du weitermachst.",
+    },
     aliasLabel: "Rollen-Aliasse (mindestens einer)",
     aliasHint: "Tippe eine Rolle und drücke Enter oder Komma zum Hinzufügen. Füge mehrere hinzu — jede wird unten ein Chip.",
     aliasPlaceholder: "z. B. Backend Engineer",

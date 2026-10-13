@@ -64,6 +64,10 @@ const ja: DeepPartial<Messages> = {
     resumeChoose: "マスター職務経歴書をアップロード：PDF, Word, Pages, ODT, RTF, Markdown、テキスト",
     resumeTextLabel: "マスター職務経歴書のテキスト：貼り付けるか、ファイルから取り込んだ内容を編集",
     resumePlaceholder: "# あなたの名前\n\nここに職務経歴書を貼り付けるか、上でファイルをアップロードしてください。",
+    resumeCheck: {
+      not_a_resume: "職務経歴書には見えません。日付がほとんどなく、職歴・学歴・スキルの項目もありません。正しいファイルを選んだか確認してください。このまま続けることもできます。",
+      instructions: "このテキストには AI に向けた指示が含まれています。すべてのスコアとカスタマイズされた職務経歴書がこれを読むため、続ける前に削除してください。",
+    },
     aliasLabel: "希望職種(1つ以上)",
     aliasHint: "職種を入力し、Enter またはカンマで追加します。複数追加してください — それぞれが下にチップとして表示されます。",
     aliasPlaceholder: "例: バックエンドエンジニア",

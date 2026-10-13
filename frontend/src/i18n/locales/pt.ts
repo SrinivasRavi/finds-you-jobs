@@ -64,6 +64,10 @@ const pt: DeepPartial<Messages> = {
     resumeChoose: "Carregue o seu currículo mestre: PDF, Word, Pages, ODT, RTF, Markdown ou texto",
     resumeTextLabel: "Texto do currículo mestre: cole-o ou edite o que veio do seu ficheiro",
     resumePlaceholder: "# Seu nome\n\nCole seu currículo aqui ou envie um arquivo acima.",
+    resumeCheck: {
+      not_a_resume: "Isto não parece um currículo: quase não tem datas nem secções de experiência, formação ou competências. Confirme que escolheu o ficheiro certo. Pode continuar na mesma.",
+      instructions: "Este texto contém instruções dirigidas a uma IA. Cada avaliação e cada currículo adaptado o leem, por isso remova-as antes de continuar.",
+    },
     aliasLabel: "Nomes de cargo (pelo menos um)",
     aliasHint: "Digite um cargo e pressione Enter ou vírgula para adicionar. Adicione vários — cada um vira um chip abaixo.",
     aliasPlaceholder: "ex.: Engenheiro de backend",

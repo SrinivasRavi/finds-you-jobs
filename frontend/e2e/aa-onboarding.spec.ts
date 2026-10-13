@@ -67,6 +67,19 @@ test("an uploaded resume shows as a rendered preview", async ({ page }) => {
   await expect(page.getByTestId("resume-text")).toHaveValue(/# Ada Lovelace/);
 });
 
+// S-C57: a file that isn't a resume gets a plain warning, never a block.
+test("an upload that isn't a resume is flagged, and the user can continue", async ({ page }) => {
+  await page.goto("/onboarding");
+  await page.getByTestId("resume-upload").setInputFiles({
+    name: "lease.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("This lease agreement is made between the landlord and the tenant. ".repeat(3)),
+  });
+  await expect(page.getByTestId("resume-warning-not_a_resume")).toBeVisible({ timeout: 15_000 });
+  await page.screenshot({ path: `${DIR}/resume-warning.png`, fullPage: true });
+  await expect(page.getByTestId("onboarding-continue")).toBeEnabled();
+});
+
 // S-C58: a role typed but not yet a chip counts, so Continue isn't greyed out.
 test("a typed role is enough to continue", async ({ page }) => {
   await page.goto("/onboarding");

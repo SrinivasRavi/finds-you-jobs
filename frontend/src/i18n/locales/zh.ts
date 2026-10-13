@@ -64,6 +64,10 @@ const zh: DeepPartial<Messages> = {
     resumeChoose: "上传你的主简历：PDF, Word, Pages, ODT, RTF, Markdown 或纯文本",
     resumeTextLabel: "主简历文本：粘贴进来，或编辑从文件中提取的内容",
     resumePlaceholder: "# 你的姓名\n\n在此粘贴你的简历，或在上方上传文件。",
+    resumeCheck: {
+      not_a_resume: "这看起来不像简历：几乎没有日期，也没有工作经历、教育或技能部分。请确认选对了文件。你仍然可以继续。",
+      instructions: "这段文本包含写给 AI 的指令。每次打分和每份定制简历都会读取它，请在继续之前删除这些指令。",
+    },
     aliasLabel: "目标职位（至少一个）",
     aliasHint: "输入职位名称后按回车或逗号添加。可多添加几个 — 每个都会成为下方的标签。",
     aliasPlaceholder: "例如：后端工程师",

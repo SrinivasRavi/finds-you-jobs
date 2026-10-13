@@ -64,6 +64,10 @@ const fr: DeepPartial<Messages> = {
     resumeChoose: "Importez votre CV de référence : PDF, Word, Pages, ODT, RTF, Markdown ou texte",
     resumeTextLabel: "Texte du CV de référence : collez-le, ou modifiez ce qui vient de votre fichier",
     resumePlaceholder: "# Votre nom\n\nCollez votre CV ici, ou importez un fichier ci-dessus.",
+    resumeCheck: {
+      not_a_resume: "Cela ne ressemble pas à un CV : presque aucune date et aucune section Expérience, Formation ou Compétences. Vérifiez que vous avez choisi le bon fichier. Vous pouvez quand même continuer.",
+      instructions: "Ce texte contient des instructions adressées à une IA. Chaque note et chaque CV adapté le lisent, retirez-les donc avant de continuer.",
+    },
     aliasLabel: "Intitulés de poste (au moins un)",
     aliasHint: "Saisissez un intitulé puis appuyez sur Entrée ou virgule pour l'ajouter. Ajoutez-en plusieurs — chacun devient une étiquette ci-dessous.",
     aliasPlaceholder: "ex. Ingénieur backend",

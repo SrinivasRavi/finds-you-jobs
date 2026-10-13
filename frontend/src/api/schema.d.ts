@@ -3013,6 +3013,12 @@ export interface components {
              * @default document
              */
             filename: string;
+            /**
+             * Destination
+             * @default downloads
+             * @enum {string}
+             */
+            destination: "downloads" | "temp";
         };
         /** ExportPdfResult */
         ExportPdfResult: {
@@ -3640,6 +3646,11 @@ export interface components {
             filename: string;
             /** Chars */
             chars: number;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
         };
         /** ProfileUpsert */
         ProfileUpsert: {

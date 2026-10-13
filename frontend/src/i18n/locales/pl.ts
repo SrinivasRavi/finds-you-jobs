@@ -69,6 +69,10 @@ const pl: DeepPartial<Messages> = {
     resumeChoose: "Prześlij główne CV: PDF, Word, Pages, ODT, RTF, Markdown lub tekst",
     resumeTextLabel: "Tekst głównego CV: wklej go albo popraw to, co przyszło z pliku",
     resumePlaceholder: "# Twoje imię i nazwisko\n\nWklej tutaj swoje CV albo prześlij plik powyżej.",
+    resumeCheck: {
+      not_a_resume: "To nie wygląda na CV: prawie brak dat i brak sekcji Doświadczenie, Wykształcenie lub Umiejętności. Sprawdź, czy wybrałeś właściwy plik. Możesz mimo to kontynuować.",
+      instructions: "Ten tekst zawiera polecenia skierowane do AI. Czyta go każda ocena i każde dopasowane CV, więc usuń je, zanim przejdziesz dalej.",
+    },
     aliasLabel: "Nazwy roli (co najmniej jedna)",
     aliasHint: "Wpisz rolę i naciśnij Enter lub przecinek, aby ją dodać. Dodaj kilka — każda stanie się etykietą poniżej.",
     aliasPlaceholder: "np. Backend Engineer",

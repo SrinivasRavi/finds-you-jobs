@@ -752,6 +752,8 @@ export interface ProfileIngestResult {
   text: string;
   filename: string;
   chars: number;
+  /** `not_a_resume` / `instructions` (resume_check.py, S-C57): shown, never blocking. */
+  warnings?: string[];
 }
 
 /** Onboarding/job-finder preferences (FR-OB-05 / US-OB-03 / US-SET-01). Maps to

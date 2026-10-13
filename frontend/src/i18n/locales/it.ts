@@ -64,6 +64,10 @@ const it: DeepPartial<Messages> = {
     resumeChoose: "Carica il curriculum principale: PDF, Word, Pages, ODT, RTF, Markdown o testo",
     resumeTextLabel: "Testo del curriculum principale: incollalo o modifica ciò che è arrivato dal file",
     resumePlaceholder: "# Il tuo nome\n\nIncolla qui il tuo curriculum, oppure carica un file qui sopra.",
+    resumeCheck: {
+      not_a_resume: "Non sembra un curriculum: quasi nessuna data e nessuna sezione Esperienza, Istruzione o Competenze. Controlla di aver scelto il file giusto. Puoi comunque continuare.",
+      instructions: "Questo testo contiene istruzioni rivolte a un'IA. Ogni valutazione e ogni curriculum su misura lo leggono, quindi rimuovile prima di continuare.",
+    },
     aliasLabel: "Varianti del ruolo (almeno una)",
     aliasHint: "Scrivi un ruolo e premi Invio o virgola per aggiungerlo. Aggiungine diversi — ognuno diventa un chip qui sotto.",
     aliasPlaceholder: "es. Backend Engineer",

@@ -21,6 +21,10 @@ const onboarding = {
     resumeChoose: "Upload your master resume: PDF, Word, Pages, ODT, RTF, Markdown or text",
     resumeTextLabel: "Master resume text: paste it, or edit what came from your file",
     resumePlaceholder: "# Your name\n\nPaste your resume here, or upload a file above.",
+    resumeCheck: {
+      not_a_resume: "This doesn't look like a resume: it has hardly any dates and no Experience, Education or Skills section. Check you picked the right file. You can still continue.",
+      instructions: "This text contains instructions addressed to an AI. Every score and tailored resume reads it, so remove them before you continue.",
+    },
     // Preferences step.
     aliasLabel: "Role aliases (at least one)",
     aliasHint: "Type a role and press Enter or comma to add it. Add several — each becomes a chip below.",

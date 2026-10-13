@@ -149,6 +149,7 @@ export function Onboarding() {
   const [aliases, setAliases] = useState<string[]>(d0.aliases ?? []);
   const [aliasDraft, setAliasDraft] = useState("");
   const [resumeMode, setResumeMode] = useState<EditorMode>("raw");
+  const [resumeWarnings, setResumeWarnings] = useState<string[]>([]);
   // Skip on the provider step (S-C60): AI stays off until a provider is set up.
   const [aiSkipped, setAiSkipped] = useState(false);
   const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
@@ -241,6 +242,7 @@ export function Onboarding() {
       setResumeText(res.text);
       setResumeName(res.filename);
       setResumeMode("preview");
+      setResumeWarnings(res.warnings ?? []);
     } catch (e) {
       // Honest failure — surface the verbatim "paste instead" message.
       setIngestError(e instanceof Error ? e.message : String(e));
@@ -444,6 +446,15 @@ export function Onboarding() {
                 </div>
               ) : null}
               <div>
+                {resumeWarnings.map((w) => (
+                  <p
+                    key={w}
+                    data-testid={`resume-warning-${w}`}
+                    className="mb-2 rounded-md border border-warn/40 bg-warn-wash px-3 py-2 text-[12px] text-warn"
+                  >
+                    {t(`onboarding.resumeCheck.${w}`, { defaultValue: "" })}
+                  </p>
+                ))}
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="text-[12px] text-ink-3">{t("onboarding.resumeTextLabel")}</span>
                   {resumeText.trim() ? <ModeToggle mode={resumeMode} setMode={setResumeMode} /> : null}
