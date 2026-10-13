@@ -272,6 +272,7 @@ class OperationRunner:
         with self._lock:
             cancel_token = self._cancels.get(operation_id)
         resolved = None
+        service: str | None = None  # the provider this op calls; the breaker's key
         # Half-open probe lease (F-H5): when `check` admits this op as the circuit's 1
         # probe, the lease must settle on every path or the circuit wedges open.
         # record_success and record_failure transfer it; the outer finally abandons it for
@@ -289,13 +290,16 @@ class OperationRunner:
                         self._engines.resolve(kind) if self._engines is not None else None
                     )
                     if resolved is not None:
-                        # Circuit breaker (F-H5): a provider that keeps failing
-                        # rejects fast here instead of burning an llm slot on
-                        # retries/timeouts. Raises ProviderCircuitOpen → the
-                        # generic failure path lands its message in the ledger.
-                        # True ⇒ this op holds the half-open probe lease.
-                        if self._circuit.check(resolved.name):
-                            probe_engine = resolved.name
+                        service = self._registry.service_for(
+                            kind, snapshot, self._db, resolved.name
+                        )
+                    if service is not None:
+                        # Circuit breaker (F-H5), keyed by the service the op calls,
+                        # which Fast scoring makes OpenRouter whatever `score` routes
+                        # to. Raises ProviderCircuitOpen; True ⇒ this op holds the
+                        # half-open probe lease.
+                        if self._circuit.check(service):
+                            probe_engine = service
                     ctx = OperationContext(
                         kind=kind,
                         input_snapshot=snapshot,
@@ -333,7 +337,7 @@ class OperationRunner:
                     # OpenRouter whatever the kind routes to, and its spent key mustn't pause the
                     # Claude CLI.
                     failed = (
-                        (getattr(exc, "provider", None) or (resolved.name if resolved else None))
+                        (getattr(exc, "provider", None) or service)
                         if isinstance(exc, EngineError)
                         else None
                     )
@@ -367,8 +371,8 @@ class OperationRunner:
                     )
                     self._publish(operation_id, kind, "failed", error=message)
                 else:
-                    if resolved is not None:
-                        self._circuit.record_success(resolved.name)
+                    if service is not None:
+                        self._circuit.record_success(service)
                         probe_engine = None  # lease transferred (probe verdict: healthy)
                     if outcome.error:
                         # The entrypoint finished and reports the user's request didn't happen (an

@@ -66,9 +66,27 @@ class UnknownOperationKind(Exception):
         super().__init__(f"no entrypoint registered for operation kind {kind!r}")
 
 
+# (snapshot, db, routed engine name) -> the service an op will call, or None
+# when it calls none. The runner's circuit breaker gates and credits that service.
+ServiceFn = Callable[[dict[str, Any], Any, str | None], str | None]
+
+
 class OperationRegistry:
-    def __init__(self, entries: dict[str, Entrypoint] | None = None) -> None:
+    def __init__(
+        self,
+        entries: dict[str, Entrypoint] | None = None,
+        services: dict[str, ServiceFn] | None = None,
+    ) -> None:
         self._entries: dict[str, Entrypoint] = dict(entries or {})
+        self._services: dict[str, ServiceFn] = dict(services or {})
+
+    def service_for(
+        self, kind: str, snapshot: dict[str, Any], db: Any, routed: str | None
+    ) -> str | None:
+        """The service this op will call: the routed engine unless the kind
+        says otherwise (Fast scoring calls OpenRouter whatever `score` routes to)."""
+        fn = self._services.get(kind)
+        return routed if fn is None else fn(snapshot, db, routed)
 
     def register(self, kind: str, entrypoint: Entrypoint) -> None:
         self._entries[kind] = entrypoint
@@ -342,6 +360,24 @@ def _ensure_keyword_floor(
         logging.getLogger(__name__).exception(
             "keyword floor failed for job_id=%s", job_id
         )
+
+
+def score_service(snapshot: dict[str, Any], db: Any, routed: str | None) -> str | None:
+    """Which service a `score` op calls, by the same mode rule as the entrypoint:
+    Fast scoring calls OpenRouter, Keyword and On-device call nothing."""
+    from .persistence import SCORING_MODES, scoring_mode
+
+    forced = str(snapshot.get("force_mode") or "")
+    if forced in SCORING_MODES:
+        mode = forced
+    elif db is None:
+        mode = str(snapshot.get("scoring_mode") or "llm")
+    else:
+        with db.repos() as repos:
+            mode = scoring_mode(repos.preferences.get_or_create())
+    if mode == "jev":
+        return "openrouter"
+    return None if mode in ("keyword", "local") else routed
 
 
 def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
@@ -822,5 +858,6 @@ def default_operation_registry() -> OperationRegistry:
             **contact_sync_entrypoints(),  # contact_sync
             **apply_entrypoints(),  # apply (the Applier agent)
             **view_page_entrypoints(),  # view_page (queued watch-surface show)
-        }
+        },
+        services={"score": score_service},
     )

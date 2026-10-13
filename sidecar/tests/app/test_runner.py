@@ -617,6 +617,98 @@ def test_a_failure_is_charged_to_the_service_that_failed(migrated_db: Database) 
         runner.shutdown(drain_timeout=3)
 
 
+def _set_scoring_mode(db: Database, mode: str) -> None:
+    with db.repos() as repos:
+        repos.preferences.get_or_create()
+        repos.preferences.update(thresholds={"scoring_mode": mode})
+
+
+def test_an_open_openrouter_circuit_stops_the_next_fast_score(migrated_db: Database) -> None:
+    """Audit A4: the circuit was charged to OpenRouter but only the routed
+    engine's was checked, so every Fast score still called a spent key and
+    spent 1 of the job's 3 attempts."""
+    from sidecar.app.registry.operations import score_service
+
+    db = migrated_db
+    _set_scoring_mode(db, "jev")
+    calls = {"n": 0}
+
+    def _jev(ctx: OperationContext) -> OperationOutcome:
+        calls["n"] += 1
+        raise EngineError("decisions API 403: Key limit exceeded", status=403,
+                          provider="openrouter")
+
+    circuit = EngineCircuitBreaker(threshold=2, cooldown_s=60.0)
+    runner = OperationRunner(
+        db, registry=OperationRegistry({"score": _jev}, services={"score": score_service}),
+        engines=_routed_engines(), circuit=circuit,
+    )
+    runner.start()
+    try:
+        ops = [runner.submit("score", {}) for _ in range(5)]
+        for op_id in ops:
+            assert wait_for_state(db, op_id, "failed") == "failed"
+    finally:
+        runner.shutdown(drain_timeout=3)
+    assert calls["n"] == 2  # the 3rd to 5th never reached OpenRouter
+    with db.repos() as repos:
+        error = repos.operations.get(ops[-1]).error or ""
+    assert "provider 'openrouter' paused" in error
+    circuit.check("deadprov")  # the routed engine was never charged
+
+
+def test_a_fast_score_success_leaves_the_routed_engines_count_alone(
+    migrated_db: Database,
+) -> None:
+    from sidecar.app.registry.operations import score_service
+
+    db = migrated_db
+    _set_scoring_mode(db, "jev")
+    circuit = EngineCircuitBreaker(threshold=2, cooldown_s=60.0)
+    circuit.record_failure("deadprov", "timeout")
+    runner = OperationRunner(
+        db,
+        registry=OperationRegistry(
+            {"score": lambda ctx: OperationOutcome(result_ref={})},
+            services={"score": score_service},
+        ),
+        engines=_routed_engines(), circuit=circuit,
+    )
+    runner.start()
+    try:
+        assert wait_for_state(db, runner.submit("score", {}), "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=3)
+    circuit.record_failure("deadprov", "timeout")  # 2nd in a row: Fast never reset it
+    with pytest.raises(ProviderCircuitOpen):
+        circuit.check("deadprov")
+
+
+def test_keyword_scoring_is_never_gated_by_an_open_circuit(migrated_db: Database) -> None:
+    """Keyword scoring calls no provider, so a paused routed engine must not stop it."""
+    from sidecar.app.registry.operations import score_service
+
+    db = migrated_db
+    _set_scoring_mode(db, "keyword")
+    circuit = EngineCircuitBreaker(threshold=1, cooldown_s=60.0)
+    circuit.record_failure("deadprov", "down")
+    runner = OperationRunner(
+        db,
+        registry=OperationRegistry(
+            {"score": lambda ctx: OperationOutcome(result_ref={})},
+            services={"score": score_service},
+        ),
+        engines=_routed_engines(), circuit=circuit,
+    )
+    runner.start()
+    try:
+        assert wait_for_state(db, runner.submit("score", {}), "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=3)
+    with pytest.raises(ProviderCircuitOpen):
+        circuit.check("deadprov")  # still open: a keyword score is no verdict on it
+
+
 def test_non_engine_failures_never_feed_the_breaker(migrated_db: Database) -> None:
     """Module bugs / parse drift say nothing about provider health — ops keep
     reaching the entrypoint no matter how many fail."""
