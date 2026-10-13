@@ -8,6 +8,15 @@ import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/rescore";
 
+// The spec runs in keyword mode; later specs expect the default, AI scoring.
+test.afterEach(async ({ request }) => {
+  const { base, token } = sidecarInfo();
+  await request.post(`${base}/api/settings`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { thresholds: { scoring_mode: "llm" } },
+  });
+});
+
 test("a row rescores on request and shows when its score predates a major resume edit", async ({
   page,
   request,
