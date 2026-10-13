@@ -21,7 +21,12 @@ export function workLabel(ws: WorkStyle): string {
 export function placeLine(job: Pick<Job, "location" | "places" | "work_style">): string {
   const work = workLabel(job.work_style);
   const places = job.places ?? [];
-  if (places.length === 0) return [job.location, work].filter(Boolean).join(" · ");
+  if (places.length === 0) {
+    // "Remote" posted on a remote job would print twice: the label already says it.
+    const bare = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+    const posted = work && bare(job.location) === bare(job.work_style) ? "" : job.location;
+    return [posted, work].filter(Boolean).join(" · ");
+  }
   if (job.work_style === "REMOTE" && places.length <= 3) return `${work} (${places.join(", ")})`;
   const first = places.length > 1 ? `${places[0]} +${places.length - 1}` : places[0];
   if (!work) return first;

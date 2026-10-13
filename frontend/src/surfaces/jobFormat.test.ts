@@ -68,6 +68,12 @@ describe("placeLine", () => {
     expect(placeLine(job("Anywhere on Earth", [], "REMOTE"))).toBe("Anywhere on Earth · Remote");
   });
 
+  it("prints a posted work style once, not beside its own label", () => {
+    expect(placeLine(job("Remote", [], "REMOTE"))).toBe("Remote");
+    expect(placeLine(job("On-site", [], "ONSITE"))).toBe("Onsite");
+    expect(placeLine(job("Remote", [], ""))).toBe("Remote");
+  });
+
   it("hovers every place and the text as posted", () => {
     expect(placeTitle(job("Bangalore", ["Bengaluru, Karnataka, India"])))
       .toBe("Bengaluru, Karnataka, India\nAs posted: Bangalore");
