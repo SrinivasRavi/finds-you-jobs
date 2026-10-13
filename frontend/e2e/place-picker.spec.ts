@@ -132,3 +132,34 @@ test("the board prints a posting's place the way the picker names it", async ({
     await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
   }
 });
+
+test("a posting that only says Remote prints it once", async ({ page, request }) => {
+  // The text names no place and repeats the work-style label, which was
+  // "Remote · Remote" on the row before 4e7265b.
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  const r = await request.post(`${base}/api/jobs`, {
+    headers: auth,
+    data: {
+      canonical_url: "https://example.com/remoteco-1",
+      title: "Remoteco Engineer",
+      company: "Remoteco",
+      location: "Remote",
+      description:
+        "Remoteco builds billing software. This is a fully remote role: you will run Python " +
+        "services and PostgreSQL from home, with the platform team.",
+      source_adapter: "greenhouse",
+    },
+  });
+  const id = (await r.json()).id as string;
+
+  await page.goto("/jobs");
+  await page.getByTestId("board-text-search").fill("remoteco");
+  const row = page.getByTestId("job-row");
+  await expect(row).toHaveCount(1, { timeout: 15_000 });
+  await expect(row).toContainText("Remoteco · Remote");
+  await expect(row).not.toContainText("Remote · Remote");
+  await page.screenshot({ path: `${DIR}/05-board-remote-once.png`, fullPage: true });
+
+  await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
+});
