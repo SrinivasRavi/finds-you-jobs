@@ -421,6 +421,8 @@ const es: DeepPartial<Messages> = {
       needTitle: "Añade un puesto y una descripción para guardar este empleo.",
     },
     follow: {
+      errSearchSource: "Este empleo viene de {{source}}, una fuente de búsqueda, así que no hay un tablón de la empresa que seguir. Pega la página de empleo de la empresa en {{heading}}.",
+      errUnrecognised: "Ningún lector de tablones reconoce este enlace. Pega una página de empleo en {{vendors}}, o un feed RSS.",
       following_one: "Sigues a {{company}}: {{count}} vacante abierta.",
       following_other: "Sigues a {{company}}: {{count}} vacantes abiertas.",
       single: "Solo se encontró 1 vacante. Puede que sea una oferta suelta y no la página de empleo de la empresa.",

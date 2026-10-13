@@ -421,6 +421,8 @@ const fr: DeepPartial<Messages> = {
       needTitle: "Ajoutez un intitulé et une description pour enregistrer cette offre.",
     },
     follow: {
+      errSearchSource: "Cette offre vient de {{source}}, une source de recherche : il n'y a donc pas de page carrières de l'entreprise à suivre. Collez plutôt sa page carrières dans {{heading}}.",
+      errUnrecognised: "Aucun lecteur de tableau ne reconnaît ce lien. Collez une page carrières sur {{vendors}}, ou un flux RSS.",
       following_one: "Vous suivez {{company}} : {{count}} offre ouverte.",
       following_other: "Vous suivez {{company}} : {{count}} offres ouvertes.",
       single: "Une seule offre trouvée. Il s'agit peut-être d'une annonce isolée plutôt que de la page carrières de l'entreprise.",

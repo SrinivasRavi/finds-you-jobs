@@ -415,6 +415,8 @@ const zh: DeepPartial<Messages> = {
       needTitle: "填写职位名和描述才能保存这个职位。",
     },
     follow: {
+      errSearchSource: "这个职位来自搜索来源 {{source}}，没有可关注的公司招聘页。请改为把公司的招聘页面粘贴到“{{heading}}”中。",
+      errUnrecognised: "没有任何招聘页读取器能识别这个链接。请粘贴 {{vendors}} 上的招聘页面，或一个 RSS 订阅源。",
       following_other: "正在关注 {{company}}：{{count}} 个在招职位。",
       single: "只找到 1 个职位。这可能是单个职位页面，而不是公司的招聘页面。",
       none: "这个职位板今天没有在招职位。可能确实没有职位，也可能链接有误。",

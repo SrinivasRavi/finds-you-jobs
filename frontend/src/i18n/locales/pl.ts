@@ -433,6 +433,8 @@ const pl: DeepPartial<Messages> = {
       needTitle: "Dodaj stanowisko i opis, aby zapisać tę ofertę.",
     },
     follow: {
+      errSearchSource: "Ta oferta pochodzi z {{source}}, czyli źródła wyszukiwania, więc nie ma tablicy firmy do obserwowania. Wklej zamiast tego stronę kariery firmy w sekcji {{heading}}.",
+      errUnrecognised: "Żaden czytnik tablic nie rozpoznaje tego linku. Wklej stronę kariery na {{vendors}} albo kanał RSS.",
       following_one: "Obserwujesz {{company}}: {{count}} otwarta oferta.",
       following_few: "Obserwujesz {{company}}: {{count}} otwarte oferty.",
       following_many: "Obserwujesz {{company}}: {{count}} otwartych ofert.",

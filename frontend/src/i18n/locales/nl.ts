@@ -421,6 +421,8 @@ const nl: DeepPartial<Messages> = {
       needTitle: "Voeg een functie en een omschrijving toe om deze vacature op te slaan.",
     },
     follow: {
+      errSearchSource: "Deze vacature komt van {{source}}, een zoekbron, dus er is geen bedrijfsvacaturebord om te volgen. Plak in plaats daarvan de vacaturepagina van het bedrijf onder {{heading}}.",
+      errUnrecognised: "Geen enkele bordlezer herkent deze link. Plak een vacaturepagina op {{vendors}}, of een RSS-feed.",
       following_one: "Je volgt {{company}}: {{count}} open vacature.",
       following_other: "Je volgt {{company}}: {{count}} open vacatures.",
       single: "Maar 1 vacature gevonden. Dit is misschien een losse vacature in plaats van de vacaturepagina van het bedrijf.",

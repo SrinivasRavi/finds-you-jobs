@@ -421,6 +421,8 @@ const it: DeepPartial<Messages> = {
       needTitle: "Aggiungi un ruolo e una descrizione per salvare questa offerta.",
     },
     follow: {
+      errSearchSource: "Questa offerta viene da {{source}}, una fonte di ricerca, quindi non c'è una bacheca aziendale da seguire. Incolla invece la pagina carriere dell'azienda in {{heading}}.",
+      errUnrecognised: "Nessun lettore di bacheche riconosce questo link. Incolla una pagina carriere su {{vendors}}, o un feed RSS.",
       following_one: "Segui {{company}}: {{count}} posizione aperta.",
       following_other: "Segui {{company}}: {{count}} posizioni aperte.",
       single: "Trovata solo 1 posizione. Potrebbe essere un singolo annuncio anziché la pagina lavora con noi dell'azienda.",

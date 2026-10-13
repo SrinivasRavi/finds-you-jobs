@@ -17,7 +17,7 @@ import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
 import { AddLinkDialog, type AddLinkMode } from "./AddLinkDialog";
 import { FollowCompanyDialog } from "./FollowCompanyDialog";
-import { FollowResult, followLooksRight } from "./FollowResult";
+import { FollowResult, followErrorText, followLooksRight } from "./FollowResult";
 import { placeLine, placeTitle, sourceClasses } from "../jobFormat";
 import { MatchRing, RescoreControl, highlight } from "./JobRow";
 
@@ -275,7 +275,7 @@ export function JobDetail({
           <button
             type="button"
             data-testid="watch-company-unsupported"
-            title={watchError.message}
+            title={followErrorText(watchError, t)}
             onClick={() => setFollowOpen(true)}
             className="inline-flex h-[30px] items-center px-3 text-[12px] text-ink-3 underline hover:text-ink"
           >
@@ -287,7 +287,7 @@ export function JobDetail({
             data-on={!!watchedEntry}
             title={
               watchError
-                ? t("jobBoard.detail.watchFailedTitle", { message: watchError.message })
+                ? t("jobBoard.detail.watchFailedTitle", { message: followErrorText(watchError, t) })
                 : watchedEntry
                   ? t("jobBoard.detail.watchOnTitle")
                   : t("jobBoard.detail.watchOffTitle")

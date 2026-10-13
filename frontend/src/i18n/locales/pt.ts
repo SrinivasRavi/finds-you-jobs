@@ -421,6 +421,8 @@ const pt: DeepPartial<Messages> = {
       needTitle: "Adicione um cargo e uma descrição para guardar esta vaga.",
     },
     follow: {
+      errSearchSource: "Esta vaga veio de {{source}}, uma fonte de busca, então não há um quadro da empresa para seguir. Cole a página de carreiras da empresa em {{heading}}.",
+      errUnrecognised: "Nenhum leitor de quadros reconhece este link. Cole uma página de carreiras em {{vendors}}, ou um feed RSS.",
       following_one: "Seguindo {{company}}: {{count}} vaga aberta.",
       following_other: "Seguindo {{company}}: {{count}} vagas abertas.",
       single: "Só 1 vaga encontrada. Pode ser um anúncio isolado em vez da página de carreiras da empresa.",

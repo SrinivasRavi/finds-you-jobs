@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import { useUnwatchCompany, useWatchCompany, useWatchlist } from "../../api/queries";
 import type { WatchCompanyResult, WatchlistEntry } from "../../api/types";
-import { FollowResult } from "../jobs/FollowResult";
+import { FollowResult, followErrorText } from "../jobs/FollowResult";
 
 const INPUT =
   "h-[30px] flex-1 rounded-7 border border-border-2 bg-surface px-2 text-[12.5px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none";
@@ -24,7 +24,7 @@ export function FollowedCompaniesSection() {
   const [result, setResult] = useState<WatchCompanyResult | null>(null);
   // The row whose link is being changed: the old link, and the new one typed.
   const [changing, setChanging] = useState<{ from: WatchlistEntry; to: string } | null>(null);
-  const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
+  const fail = (e: unknown) => setError(followErrorText(e, t));
 
   async function follow(next: string, company?: string): Promise<WatchCompanyResult | null> {
     setError("");

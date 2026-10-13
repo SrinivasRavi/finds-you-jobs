@@ -423,6 +423,8 @@ const de: DeepPartial<Messages> = {
       needTitle: "Füge einen Titel und eine Beschreibung hinzu, um diesen Job zu speichern.",
     },
     follow: {
+      errSearchSource: "Dieser Job stammt aus {{source}}, einer Suchquelle, daher gibt es keine Firmen-Jobseite zum Folgen. Füge stattdessen die Karriereseite der Firma unter {{heading}} ein.",
+      errUnrecognised: "Kein Board-Leser erkennt diesen Link. Füge eine Karriereseite auf {{vendors}} oder einen RSS-Feed ein.",
       following_one: "Du folgst {{company}}: {{count}} offene Stelle.",
       following_other: "Du folgst {{company}}: {{count}} offene Stellen.",
       single: "Nur 1 Stelle gefunden. Das ist vielleicht eine einzelne Ausschreibung statt der Karriereseite des Unternehmens.",

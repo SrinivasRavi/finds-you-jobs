@@ -5,13 +5,31 @@ import { apiFetch, getSidecarInfo, type SidecarInfo } from "../client";
 
 /** An HTTP error carrying the sidecar status code, so callers can branch on it
  * (e.g. 409 → tombstoned URL → `JobTombstonedError`). */
+/** A refusal the sidecar sends as a code and its facts, so the screen writes the
+ *  sentence in the user's language (audit A8). `message` is the English. */
+export interface CodedDetail {
+  code: string;
+  message: string;
+  [fact: string]: unknown;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly coded: CodedDetail | null = null,
   ) {
     super(message);
     this.name = "ApiError";
+  }
+}
+
+function codedDetail(body: string): CodedDetail | null {
+  try {
+    const d = (JSON.parse(body) as { detail?: unknown }).detail as Partial<CodedDetail> | undefined;
+    return d && typeof d === "object" && typeof d.code === "string" ? (d as CodedDetail) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -46,7 +64,12 @@ export class Transport {
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new ApiError(res.status, `${init.method ?? "GET"} ${path} → ${res.status}: ${body}`);
+      const coded = codedDetail(body);
+      throw new ApiError(
+        res.status,
+        coded ? coded.message : `${init.method ?? "GET"} ${path} → ${res.status}: ${body}`,
+        coded,
+      );
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;

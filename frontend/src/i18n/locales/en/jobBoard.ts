@@ -261,6 +261,8 @@ const jobBoard = {
     needTitle: "Add a title and a description to save this job.",
   },
   follow: {
+    errSearchSource: "This job came from {{source}}, a search source, so there's no company board to follow. Paste the company's careers page under {{heading}} instead.",
+    errUnrecognised: "No board reader recognises this link. Paste a careers page on {{vendors}}, or an RSS feed.",
     following_one: "Following {{company}}: {{count}} open role.",
     following_other: "Following {{company}}: {{count}} open roles.",
     single: "Only 1 opening found. This may be a single posting rather than the company's careers page.",

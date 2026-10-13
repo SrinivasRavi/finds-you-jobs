@@ -359,23 +359,33 @@ async def watch_company(
                         source_url, resolved = cand, cand_resolved
                         _guess_cache_put(cache_key, cand)
                         break
-    fail: str | None = None
+    fail: dict[str, Any] | None = None
     adapter_id = ""
     if resolved is None:
+        # A code and its facts, so the screen writes the sentence in the user's
+        # language; `message` is the English the ledger keeps (audit A8).
+        vendors = [a.LABEL for a in adapters.ADAPTERS if a.KIND == "ats"]
         if _source_kind(job_adapter) == "search":
-            fail = (
-                f"this job came from a search source ({job_adapter}) — there is "
-                "no company board to watch. Paste the company's careers page "
-                "on a supported ATS in Settings → Discover jobs → Companies you "
-                "follow instead"
-            )
+            fail = {
+                "code": "search_source",
+                "source": job_adapter,
+                "vendors": vendors,
+                "message": (
+                    f"this job came from a search source ({job_adapter}), so there is "
+                    "no company board to follow; paste the company's careers page instead"
+                ),
+            }
         else:
-            fail = (
-                "no adapter recognizes this URL as a scannable board — paste the "
-                "company's careers page on a supported ATS (Greenhouse, Lever, "
-                "Ashby, Workable, SmartRecruiters, Recruitee, Teamtailor, "
-                "Personio, Workday, BambooHR, Breezy) or an RSS feed"
-            )
+            # A followed row no adapter can read would scan nothing forever, so
+            # this refuses (watch-company.md section 3, row 5).
+            fail = {
+                "code": "unrecognised_board",
+                "vendors": vendors,
+                "message": (
+                    "no adapter recognizes this URL as a scannable board; paste a careers "
+                    f"page on {', '.join(vendors)}, or an RSS feed"
+                ),
+            }
     openings: int | None = None
     titles: list[str] = []
     read_error = ""
@@ -393,7 +403,7 @@ async def watch_company(
         # rolls its transaction back, which silently discarded the ledger row
         # (found 2026-07-22).
         with _db(request).repos() as ledger_repos:
-            _ledger_watch(ledger_repos, snapshot, fail)
+            _ledger_watch(ledger_repos, snapshot, fail["message"])
         raise HTTPException(status_code=422, detail=fail)
     with _db(request).repos() as repos:
         portals, save = _portals_for_update(repos)

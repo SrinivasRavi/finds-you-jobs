@@ -642,7 +642,15 @@ def test_watch_company_from_url_and_job_row(
         json={"url": "https://example.com/careers"},
     )
     assert bad.status_code == 422
-    assert "no adapter recognizes" in bad.json()["detail"]
+    detail = bad.json()["detail"]
+    assert detail["code"] == "unrecognised_board"
+    assert "no adapter recognizes" in detail["message"]
+    # The vendor list is the registry's, so a new board reader joins it by itself (A8).
+    from sidecar.modules.scraper import adapters
+
+    assert detail["vendors"] == [a.LABEL for a in adapters.ADAPTERS if a.KIND == "ats"]
+    assert "Greenhouse" in detail["vendors"]
+    assert "Brave Search (your own key)" not in detail["vendors"]
 
 
 def test_watch_company_domain_url_falls_back_to_covering_source(
@@ -755,7 +763,10 @@ def test_watch_search_source_job_explains_no_board(
         )
     bad = client.post("/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id})
     assert bad.status_code == 422
-    assert "search source (naukri)" in bad.json()["detail"]
+    detail = bad.json()["detail"]
+    assert detail["code"] == "search_source" and detail["source"] == "naukri"
+    # It no longer names a Settings heading that was renamed (A8).
+    assert "Companies you follow" not in detail["message"]
     # The refusal is durable: Analytics → Logs (operations ledger) has it.
     with app.state.db.repos() as repos:
         ops = [o for o in repos.operations.list_recent() if o.kind == "watch_company"]
