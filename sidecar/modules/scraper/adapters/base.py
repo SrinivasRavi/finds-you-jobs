@@ -1,44 +1,12 @@
-"""Adapter contract — the career-ops provider model, typed.
+"""Adapter contract: the career-ops provider model, typed.
 
-An adapter is a module (not a class) exposing:
-
-    ID: str                                   # source_adapter value on every job
-    def detect(entry: SourceEntry) -> str     # claim key ("" = not mine)
-    def fetch(entry, fetcher) -> list[NormalizedJob]
-
-`detect` returns the tenant/host part of the source key (e.g. the Greenhouse
-board slug) so diagnostics read `greenhouse:gleanwork`. Adapters normalize and
-nothing else: no filtering, no dedup, no quality scoring — the shared pipeline
-(`scraper.scan`) does that for every source. A description is a hard
-requirement (maintainer decision, description-gap closure, 2026-09): every
-adapter either lands the JD in the same list request (declared with the
-module-level `INLINE_DESCRIPTION = True` flag — Greenhouse `content=true`,
-Workable `details=true`, Lever/Ashby native `descriptionPlain`, ...) or
-implements `fetch_detail(job, fetcher) -> str` for the scan's enrich phase to
-call per row (BambooHR, Breezy, SmartRecruiters, Workday, LinkedIn guest).
-`provides_description()` below checks every registered adapter does one or
-the other.
-
-**One pasted URL (`probe_url`).** An adapter whose vendor exposes a single-job
-endpoint may add `fetch_posting(url, fetcher) -> NormalizedJob | None`, and the
-probe prefers it over reading the whole board. None means "not a single job on
-my board", so the probe falls back to the list and then to generic extraction.
-
-**Two source shapes (discovery-expansion 2026-07-17).**
-
-- *Enumerate* sources (every ATS + keyless board) list a company's or board's
-  whole feed with `fetch(entry, fetcher)`. The shared pipeline's title/location
-  filters then narrow the result.
-- *Search* sources (LinkedIn/Indeed/Naukri) can't enumerate the whole site —
-  the query IS the filter, applied server-side. They additionally expose
-  `search(entry, prefs, fetcher) -> list[NormalizedJob]`, building queries from
-  the user's role aliases (`prefs.title_allow`) × locations
-  (`prefs.location_allow`). `scan()` calls `search` when present, else `fetch`.
-  The same downstream filter chain still runs — the query reduces volume; the
-  local filters refine — so behavior stays consistent across shapes.
-
-Registry + auto-detection live in `adapters/__init__.py`.
-"""
+An adapter is a module exposing `ID`, `LABEL`, `KIND`, `detect(entry) -> str`
+(the claim key, "" for not mine) and `fetch(entry, fetcher)`. Adapters only
+normalize; `scraper.scan` filters and dedups. Each either sets
+`INLINE_DESCRIPTION = True` or implements `fetch_detail` (checked by
+`provides_description`). Optional `fetch_posting(url, fetcher)` serves 1 pasted
+URL. Search sources (LinkedIn, Indeed, Naukri) add `search(entry, prefs,
+fetcher)`, built from role aliases × locations; `scan()` prefers it."""
 
 from __future__ import annotations
 

@@ -71,12 +71,9 @@ class ScoreFactorDTO(BaseModel):
 
 
 class JobFactorsDTO(BaseModel):
-    """The per-axis breakdown behind a job's displayed score.
-
-    `weights` is the table the total was computed with, per axis. It is EMPTY
-    for AI scoring, which asks a model for the total directly rather than
-    weighting its own axes, and an empty table draws bars with no weight beside
-    them rather than inventing one."""
+    """The per-axis breakdown behind a job's displayed score. `weights` is the table
+    the total used; empty for AI scoring, which asks the model for the total, so the
+    bars show no invented weight."""
 
     job_id: str
     method: str
@@ -156,16 +153,10 @@ class BoardPageDTO(BaseModel):
 
 
 class ScanProgressDTO(BaseModel):
-    """Board-level scan + scoring progress (observed-issue #2 backend). A small,
-    schema-free read the board polls while a scan runs — derived entirely from
-    the operations ledger, no new persisted state.
-
-    `scan_running` — a scan op is queued/in-flight. `last_scan_at` — the latest
-    succeeded scan's finish time (null before any scan lands). `new_found` — how
-    many jobs that scan inserted (its recorded `new_job_ids`), the "N" of the
-    board's "M of N scored". `score_pending` — the live (queued/running) score-op
-    count. `score_done` — how many of THIS scan's new jobs have reached a
-    terminal score, the "M"."""
+    """Board scan and scoring progress, derived from the operations ledger.
+    `scan_running`, `last_scan_at` (latest succeeded scan), `new_found` (its
+    inserted ids, the board's N), `score_pending` (live score ops) and `score_done`
+    (this scan's new jobs with a terminal score, the M)."""
 
     scan_running: bool
     last_scan_at: datetime | None = None
@@ -251,16 +242,10 @@ class DuplicatePromptDTO(BaseModel):
 
 
 class AttachLinkResultDTO(BaseModel):
-    """What the Add-link dialog renders next.
-
-    - `attached`: the check passed (or the user confirmed), the row is re-keyed.
-    - `mismatch`: the compound gate said no; `pasted` and `card` fill the
-      side-by-side and `confirm` attaches anyway.
-    - `unreadable`: `probe_url` failed, so there's nothing to compare.
-    - `duplicate`: another job already holds this URL, named in `pasted` and
-      `other_job_id`. Nothing is written; the user deletes the one they don't
-      need and attaches again.
-    """
+    """What the Add-link dialog renders next: `attached` (passed or confirmed),
+    `mismatch` (`pasted` and `card` fill the side-by-side; confirm attaches anyway),
+    `unreadable` (nothing to compare), or `duplicate` (another job holds the URL,
+    named in `pasted` and `other_job_id`; nothing is written)."""
 
     status: Literal["attached", "mismatch", "unreadable", "duplicate"]
     job: JobDTO | None = None
@@ -703,12 +688,9 @@ class EngineSettingDTO(BaseModel):
 
 
 class ScoringMethodDTO(BaseModel):
-    """One row of the scoring menu, and whether it can run right now.
-
-    The server reports facts; the client owns the copy and the prices. A method is
-    never hidden or disabled for a missing prerequisite (`talk.md` D44), so `ready`
-    drives an inline "add a key" or "download" affordance, never a greyed-out row.
-    """
+    """One scoring-menu row and whether it can run now. The server reports facts, the
+    client owns copy and prices; a method is never hidden for a missing
+    prerequisite (talk.md D44), so `ready` drives an inline fix."""
 
     id: str
     ready: bool
@@ -718,13 +700,9 @@ class ScoringMethodDTO(BaseModel):
 
 
 class ExplainCostDTO(BaseModel):
-    """What "Explain this one" will run, and what it has cost this user.
-
-    `avg_usd` is MEASURED off their own succeeded score operations on the same
-    model, never a figure from a price list: the app cannot know what a model
-    costs, and quoting one would be wrong the first time someone switched. None
-    means they have never paid for an AI score, and the button says so rather
-    than guessing."""
+    """What "Explain this one" will run and what it has cost this user. `avg_usd` is
+    measured off their own score ops on that model, never a price list; None means
+    they've never paid for an AI score."""
 
     engine: str
     model: str
@@ -734,19 +712,10 @@ class ExplainCostDTO(BaseModel):
 
 
 class PromptTestRequest(BaseModel):
-    """Run an UNSAVED prompt draft once (url-less-jobs.md section 11.3).
-
-    What each kind needs differs, so the route validates per kind rather than
-    making every field required:
-
-    - `score`, `tailor`, `cover`: a job. Either one off the board (`job_id`),
-      which is the useful case because the output is comparable against what the
-      committed prompt produced for that same job, or a pasted description
-      (`job_description`), which is what works on a board with nothing on it yet.
-    - `extract`: nothing. It reads the master resume alone.
-    - `networker_draft`: a real `contact_id`. A made-up contact would test the
-      prompt against input that never occurs.
-    """
+    """Run an unsaved prompt draft once (url-less-jobs.md section 11.3), validated per
+    kind. score, tailor, cover: a board job (`job_id`, comparable with the saved
+    prompt's output) or a pasted `job_description`. extract: nothing.
+    networker_draft: a real `contact_id`."""
 
     markdown: str
     job_id: str | None = None
@@ -885,12 +854,9 @@ class ReachOutContact(BaseModel):
 
 
 class DiscoverReferralsRequest(BaseModel):
-    """Kick off / resume referral discovery for a role (US-REF-01 / FR-NW-02).
-
-    `limit` bumps for the "find 10 more" control. `company_urn` (+ name/vanity/
-    industry) is set only when re-calling after a `needs_company_confirm` event —
-    it's the company the user picked in the confirm popup; the op caches + uses
-    it, skipping resolution."""
+    """Start or resume referral discovery (US-REF-01 / FR-NW-02). `limit` grows with
+    "find 10 more". `company_urn` and its details are set only after a
+    `needs_company_confirm`: the company the user picked, cached and used."""
 
     limit: int = 10
     page: int = 1  # "find 10 more" fetches the next results page
@@ -904,15 +870,10 @@ class DiscoverReferralsRequest(BaseModel):
 
 
 class ReachOutRequest(BaseModel):
-    """Reach-out (US-NW-09). Each contact gets ITS audience/warmth template
-    (fanned out per person, not one string). The pre-send confirmation gate
-    lives in the UI (per contact since 2026-07-30 — each row's Connect/Message
-    button confirms and sends one person); `dry_run` plans without touching
-    LinkedIn.
-
-    `contacts` is hard-capped: an unbounded list meant one HTTP request could
-    authorise arbitrarily many real sends (posture doc section 5.1 — a user-control
-    ceiling, not a compliance claim). The UI sends one contact per confirm."""
+    """Reach-out (US-NW-09): each contact gets its own audience and warmth template.
+    The confirm lives in the UI, 1 contact per confirm; `dry_run` plans without
+    LinkedIn. `contacts` is hard-capped so 1 request can't authorise unbounded sends
+    (posture doc section 5.1)."""
 
     job_id: str | None = None
     application_id: str | None = None
@@ -996,12 +957,9 @@ class LinkedInRateLimitsDTO(BaseModel):
 
 
 class BrowserViewRequest(BaseModel):
-    """POST /api/browser/view — queue a `view_page` operation that shows `url`
-    on a watch-only broker surface once the lane is free (2026-08-16; the
-    queued successor to the immediate /api/browser/open). `width`/`height`/
-    `dpr` are the caller's display metrics (fail-closed geometry);
-    `contact_id` links the ledger row to the contact whose button was
-    clicked."""
+    """POST /api/browser/view: queue a `view_page` op that shows `url` on a
+    watch-only surface once the lane is free. `width`, `height` and `dpr` are the
+    caller's display metrics; `contact_id` links the ledger row."""
 
     url: str
     surface: str | None = None
@@ -1026,15 +984,10 @@ class ContactSyncOutcomeDTO(BaseModel):
 
 
 class LinkedInSessionDTO(BaseModel):
-    """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
-
-    `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
-    `status` is the session validity. The popup send path unlocks only when
-    enabled AND status == 'valid'. N4 adds the session-capture metadata the
-    Settings → LinkedIn session UI renders (connected-as, expiry, backoff);
-    `search_cursor` (2026-08-01) is the job-search pagination state — None
-    until a Fresh search has run; `rate_limits` is the self-imposed
-    membership/risk/override profile."""
+    """LinkedIn session and master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+    `enabled` is the networking toggle, `status` the session validity; sends unlock
+    only when enabled and valid. Plus connected-as, expiry and backoff;
+    `search_cursor` (None until a Fresh search) and `rate_limits`."""
 
     enabled: bool
     status: str        # valid | expired | never_set | connecting | backing_off
@@ -1204,13 +1157,9 @@ class OperationArtifactDTO(BaseModel):
 
 
 class OperationSubjectDTO(BaseModel):
-    """What one ledger row acted ON — its human subject (US-LOG-01 legibility,
-    maintainer directive 2026-08-03). Every field is verbatim entity data
-    (a contact's name, "title · company", the note text) — never localized
-    here; the frontend adds its own chrome (count nouns, mode names) via i18n.
-    Computed batched in the ledger route from the row's snapshot/result refs;
-    absent whenever those refs don't resolve (historical rows, deleted
-    entities) — the row then renders as before, nothing is fabricated."""
+    """What 1 ledger row acted on (US-LOG-01). Verbatim entity data, never localized
+    here. Computed in batch from the row's refs; absent when they don't resolve,
+    and nothing is invented."""
 
     label: str = ""  # primary line ("Jane Doe", "Backend Engineer") — may be ""
     href: str | None = None  # external link (LinkedIn profile / posting URL)
@@ -1269,12 +1218,9 @@ class ContactSyncAccepted(BaseModel):
 
 
 class CostTotalsDTO(BaseModel):
-    """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
-
-    Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime
-    totals that survive any deletion of an operation row. Nothing deletes one
-    today, so the aggregate is empty and the live sum carries it all. `by_kind`
-    maps each operation kind to its all-time usd spend."""
+    """All-time cost totals for the Analytics tiles (FR-SET-07 / US-LOG-01 #2): the
+    live ledger plus the deleted-ops aggregate (0 today; nothing deletes).
+    `by_kind` maps each kind to its all-time spend."""
 
     usd: float
     tokens_in: int
@@ -1285,19 +1231,10 @@ class CostTotalsDTO(BaseModel):
 
 
 def job_score_dto(job: Job) -> JobScoreDTO | None:
-    """The rating a job DISPLAYS: the AI one if it has it, otherwise the keyword
-    floor, otherwise nothing. The whole rule, and there is no ranking in it to
-    get backwards. It replaced a version-ranked pick over a `job_scores` table
-    that showed a keyword number over a higher AI one on 36 jobs (S-C34).
-
-    `scorer_impl` stays on the wire under its old values so the frontend's grey
-    styling keeps working; nothing stores that string any more, so renaming it
-    to `keyword` is now a frontend change with no data migration behind it.
-
-    `method` is the finer answer, and the `llm` default covers a row written
-    before the column existed: migration `b4d8e2a7c531` set exactly those rows
-    to `llm`, so the default only ever fires for a row written between that
-    migration and a scorer that tags its work."""
+    """The rating a job displays: the AI one, else the keyword floor, else nothing,
+    with no ranking to get backwards (S-C34). `scorer_impl` keeps its old values for
+    the frontend's grey styling. `method` defaults to `llm` only for rows written
+    before the column (migration `b4d8e2a7c531`)."""
     if job.llm_score is not None:
         return JobScoreDTO(
             score_0_100=job.llm_score,
@@ -1320,18 +1257,10 @@ def job_score_dto(job: Job) -> JobScoreDTO | None:
 def derive_score_status(
     has_score: bool, op_states: set[str], *, scorable: bool = True, attempts: int = 0
 ) -> str:
-    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02), in precedence
-    order: `unscorable` (no usable description, so no tick will ever pick it up,
-    S-C24 D5), `scored`, `pending` while an op is in flight, `failed` once the
-    attempt budget is spent, `pending` otherwise.
-
-    `unscorable` outranks `scored` because such a job does carry a score: the
-    keyword floor writes a 0 with a missing-data reason, so "scored" would read
-    as a real rating of a job we know nothing about.
-
-    `failed` counts attempts rather than asking the ledger for a failed op,
-    because a failed op with budget left is not failed — the next tick retries
-    it, and the pill used to say dead while the system said pending."""
+    """The board's score lifecycle (FR-JB-07), in order: `unscorable` (no usable
+    description; its keyword 0 isn't a rating), `scored`, `pending` while an op is
+    in flight, `failed` once the attempt budget is spent, else `pending`. Attempts,
+    not a failed op: budget left means the next tick retries."""
     if not scorable:
         return "unscorable"
     if has_score:
@@ -1367,18 +1296,10 @@ def derive_work_style(location: str, description: str) -> str:
 
 
 class WeightLens:
-    """The user's own axis weights, ready to re-total a page of jobs on read.
-
-    Computed on read and never stored (scoring.md 7.4): a weight is a preference
-    that changes, and an AI score is the model's own number, so writing a
-    re-weighted total over it would destroy the thing "balanced" has to return
-    to. The arithmetic is `weights.user_total`, the same function every scorer
-    already totals with.
-
-    Build it once per request and hand it to `job_dto`. With an empty table
-    (every install until someone opens the control) it is inert by construction,
-    so the default path costs one dict lookup and changes no number.
-    """
+    """The user's axis weights, re-totaling a page of jobs on read (scoring.md 7.4).
+    Never stored: an AI score is the model's number, and overwriting it would lose
+    "balanced". Uses `weights.user_total`. Build once per request; an empty table
+    is inert and costs 1 lookup."""
 
     __slots__ = ("_by_job", "_penalty", "_weights")
 
@@ -1762,23 +1683,10 @@ def derive_referrals_state(
     has_candidates: bool,
     latest_batch_outcomes: list[str],
 ) -> str:
-    """The canonical `referralsState` for a role's Tracker card (FR-NW-01).
-
-    Precedence (transient in-flight states win so a spinner never goes stale):
-
-    - `sending`  — a send op of the current batch is queued/running.
-    - `finding`  — a discover op for this role is queued/running (and nothing is
-      sending).
-    - Otherwise the resting state comes from the *latest reach-out batch*
-      (`latest_batch_outcomes`, one entry per OutreachLog row sharing the newest
-      `batch_id`):
-        - all members `sent`     → `reachedOut`
-        - ≥1 sent, not all       → `pending`    (partial / cap-stopped batch)
-        - a batch exists, 0 sent → `failed`     (all-failed — an honest extension
-          of the 5-state spec)
-    - No batch yet but candidates were discovered for the role → `pending`.
-    - Nothing discovered or sent → `none` (frontend `notStarted`).
-    """
+    """The card's `referralsState` (FR-NW-01). In-flight wins: `sending`, then
+    `finding`. Otherwise the latest batch: all sent is `reachedOut`, some is
+    `pending`, none is `failed`. No batch but candidates found: `pending`. Nothing
+    at all: `none`."""
     if any(state in OP_ACTIVE_STATES for state in send_op_states):
         return "sending"
     if discover_in_flight:

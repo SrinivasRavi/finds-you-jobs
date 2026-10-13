@@ -242,13 +242,10 @@ async def create_manual_application(
     resume: Annotated[UploadFile | None, File()] = None,
     cover: Annotated[UploadFile | None, File()] = None,
 ) -> dto.ApplicationDTO:
-    """Log a job the user already applied to OUTSIDE the app ("Add a job
-    application" — the Tracker sibling of the board's Add a job posting). Upserts the
-    job with the same dedup/tombstone discipline, creates the card as
-    `origin=manual` in a post-referral stage (default Applied), and attaches the
-    resume/cover the user actually submitted (optional) as content-addressed,
-    deduped documents. No score is enqueued — they already applied, so fit
-    ranking is moot."""
+    """Log a job the user already applied to outside the app ("Add a job
+    application"). Upserts the job with the same dedup and tombstone rules, creates
+    the card as `origin=manual` (default Applied), and attaches any submitted resume
+    or cover as deduped documents. No score is enqueued: they already applied."""
     db = _db(request)
     canonical, digest = _identity(canonical_url, description)
     if canonical is None and digest is None:
@@ -360,12 +357,10 @@ async def attach_application_document(
     kind: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
 ) -> dto.ApplicationDTO:
-    """Attach a resume/cover FILE to an EXISTING application — the Upload button
-    on the Tailored resume / Cover letter editors. Stores it content-addressed
-    (deduped) and links it as the application's `kind` slot, replacing any prior
-    file for that kind (one resume + one cover per card). This is the exact
-    document the user submits on Apply / the record for a manual card logged
-    without a file. `kind` ∈ {'tailored_resume', 'cover_letter'}."""
+    """Attach a resume or cover file to an existing application (Upload in the
+    tailored and cover editors). Stored content-addressed and linked as the card's
+    `kind` slot, replacing any prior file for that kind; it's the document submitted
+    on Apply. `kind` is 'tailored_resume' or 'cover_letter'."""
     if kind not in PACKET_KINDS:
         raise HTTPException(
             status_code=422, detail=f"kind must be one of {list(PACKET_KINDS)}"
@@ -467,12 +462,9 @@ def generate_packet(
 def patch_artifact(
     request: Request, application_id: str, kind: str, payload: dto.ArtifactPatch
 ) -> dto.ApplicationDTO:
-    """Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
-
-    Targets the head (non-superseded) artifact of `kind` for this application.
-    `markdown` overwrites the text (edits apply only to this variant — the master
-    is untouched); `approved` stamps/clears `approved_at` (the `ready ⇄ approved`
-    flip). Per-artifact, so the resume and cover letter are approved separately."""
+    """Persist an edited variant and the Approve flip (US-RES-02 / FR-RES-02) on the
+    head artifact of `kind`. `markdown` overwrites this variant only; `approved`
+    stamps or clears `approved_at`. Resume and cover are approved separately."""
     if kind not in PACKET_KINDS:
         raise HTTPException(status_code=400, detail=f"unknown artifact kind {kind!r}")
     with _db(request).repos() as repos:
@@ -801,15 +793,10 @@ def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
 
 @router.post("/api/apply-runs/{run_id}/submit", status_code=202)
 def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
-    """Click the form's Submit once, because the USER asked (S-A5).
-
-    P1 keeps every irreversible action behind the human: the model's tool
-    vocabulary has no submit, and this route is the only thing that can reach
-    `submit_application`. It needs the run's own browser still open, which is
-    the review window after `ready_for_human`, so a run outside that window is
-    a 409 rather than a silent no-op. The click itself happens on the op's
-    thread; the outcome arrives on the `apply` SSE stream and on the run row.
-    """
+    """Click the form's Submit once, because the user asked (S-A5). The model has no
+    submit tool, so this route is the only way to `submit_application`. It needs the
+    run's browser still open (the review window after `ready_for_human`), else 409.
+    The outcome arrives on the `apply` SSE stream and the run row."""
     from ..registry.apply_op import APPLY_CONTROL
 
     with _db(request).repos() as repos:

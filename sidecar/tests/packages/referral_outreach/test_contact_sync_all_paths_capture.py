@@ -1,22 +1,12 @@
 # voyager_py/tests/test_contact_sync_all_paths_capture.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""`actions.get_contact_sync_state` end-to-end, wire-cold: the sweep-shared
-GraphQL inbox read + the ALL-PATHS probe capture (FR-NW-15, 2026-08-15).
+"""`actions.get_contact_sync_state` end to end, wire-cold (FR-NW-15).
 
-The live 2026-08-14 sweep returned `synced: 5, transitions: {}` with ZERO
-capture files (success-only capture, dead endpoint underneath). These tests pin
-the replacement contract end to end: the probe answers the last-message
-question from the sweep's ONE inbox request (session-cached — a 2-contact
-sweep fires exactly 1 messaging request), a real reply reads `them` (rule c:
-Accepted → Engagement upstream), our own last message reads `me` (the card
-stays), a contact without a thread gets honest nulls, and with
-`FYJ_LINKEDIN_CAPTURE_DIR` set ONE redacted JSON lands per probed contact on
-EVERY path — success, urn-less skip, profile failure, throttle (which
-propagates to the worker's backoff instead of dying in the blanket except).
-
-Zero live LinkedIn traffic — profile reads are monkeypatched, /me and the
-GraphQL inbox run against the in-memory fake page with SYNTHETIC fixtures.
-"""
+A live sweep once reported 5 synced with 0 transitions and no captures. Pinned:
+the last message comes from the sweep's 1 cached inbox read (2 contacts, 1
+request); a reply reads `them`, ours `me`, no thread nulls; with
+`FYJ_LINKEDIN_CAPTURE_DIR` set, 1 redacted capture per contact on every path,
+and a throttle propagates to the backoff. Synthetic fixtures only."""
 
 from __future__ import annotations
 

@@ -1,15 +1,8 @@
-"""Covers: Track N4 — LinkedIn session capture + lifecycle (through the real app).
+"""Covers: Track N4, LinkedIn session capture and lifecycle, through the real app.
 
-- US-SET-06 — connect (headed login op) / disconnect / validate / status DTO
-- FR-NW-05 / US-REF-09 — backoff surfacing on a rate-limited send + manual resume
-- US-NW-11 / FR-NW-13 — auto-archive never-accepted connections after 60 days
-- US-NW-10 / US-REF-08 — account-tier selection passed to voyager
-
-ZERO live LinkedIn traffic: the voyager driver factory is monkeypatched to the
-in-memory `FakeVoyagerDriver` (no subprocess, no browser, no network). The real
-headed-login *plumbing* is verified separately against a LOCAL fixture in
-`voyager_py/tests/test_login_capture.py`.
-"""
+US-SET-06 connect, disconnect, validate and status; FR-NW-05 backoff and manual
+resume; US-NW-11 auto-archive after 60 days; US-NW-10 the account tier passed to
+voyager. The driver is FakeVoyagerDriver: 0 LinkedIn traffic."""
 
 from __future__ import annotations
 
@@ -414,14 +407,9 @@ def test_linkedin_search_fills_the_missing_job_descriptions(search_client) -> No
 def test_linkedin_search_drops_a_row_whose_jd_fetch_failed(
     search_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A posting that is authwalled or gone is dropped, not kept (D23).
-
-    It used to land on the board as an unscorable husk: a row that can never be
-    ranked, never explains itself, and dilutes its source's analytics. Both the
-    verbatim fetch error and the discarded URL are recorded on the scan
-    operation, so the row's absence is explained rather than silent. No
-    tombstone is written, so a later search can find the same posting once the
-    description is reachable."""
+    """An authwalled or gone posting is dropped, not kept as an unscorable husk
+    (D23). The fetch error and URL are recorded on the scan op; no tombstone, so a
+    later search can find it."""
     from sidecar.modules.scraper.adapters import linkedin_guest
 
     def _boom(job, fetcher):  # type: ignore[no-untyped-def]

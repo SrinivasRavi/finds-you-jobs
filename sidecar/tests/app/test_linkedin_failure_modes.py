@@ -49,13 +49,8 @@ def _make_client(tmp_path: Path) -> Generator[tuple[FastAPI, TestClient]]:
 
 @pytest.fixture
 def own_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A pacing ledger of this test's own.
-
-    `conftest` points `FYJ_DATA_DIR` at ONE tmp dir for the whole session, so
-    `linkedin_state_dir()` is shared by every test in a run and a pause written
-    by one is still there for the next. These tests write pauses deliberately,
-    so they get their own file or they read each other's.
-    """
+    """A pacing ledger of this test's own: FYJ_DATA_DIR is 1 dir per session, and
+    these tests write pauses that would leak into each other."""
     state = tmp_path / "ledger"
     monkeypatch.setattr(ops, "linkedin_state_dir", lambda: state)
     return state
@@ -166,13 +161,9 @@ def test_the_backoff_clears_from_the_same_ledger_it_was_read_from(app_client) ->
 def test_a_failed_send_always_writes_its_audit_row(
     wired: Wired, exc: Exception, label: str  # noqa: F811
 ) -> None:
-    """Every send attempt owes an OutreachLog row (FR-REF / NFR-SIDE-04).
-
-    Only `NetworkerError` was caught until 2026-09-20, and the driver wraps
-    nothing else, so a browser that never launched (RuntimeError) or an
-    exhausted 5xx retry (OSError) left no row, emitted no `send_failed`, and
-    left the referrals modal spinning on "Sending" until it was closed.
-    """
+    """Every send attempt owes an OutreachLog row (NFR-SIDE-04), including a browser
+    that never launched or an exhausted retry, which once left no row and a
+    spinning "Sending"."""
     ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
     _seed(wired, with_job=False)
     with wired.db.repos() as repos:

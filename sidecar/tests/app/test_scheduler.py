@@ -126,15 +126,9 @@ def test_plan_score_new_ignores_retired_auto_score_opt_out(migrated_db: Database
 def test_plan_score_new_reaches_past_the_newest_1000_active_jobs(
     migrated_db: Database,
 ) -> None:
-    """Regression: the planner used to fetch `jobs.list(feed_state="active",
-    limit=1000)` and only THEN filter that page down to the unscored, so on an
-    install with more than 1,000 active jobs the oldest could never be planned
-    at any tick — they sat unscored with nothing to show for it. Measured
-    before the fix: 1,200 active jobs, 200 genuinely unscored, 0 planned.
-
-    The exclusion happens in SQL now, so a scored job leaves the result set on
-    its own and every job is eventually reached.
-    """
+    """Regression: the planner filtered a 1,000-row page, so on a bigger install the
+    oldest jobs were never planned (1,200 active, 200 unscored, 0 planned). The
+    exclusion is in SQL now."""
     from sqlalchemy import insert
 
     from sidecar.app.db.models import Job

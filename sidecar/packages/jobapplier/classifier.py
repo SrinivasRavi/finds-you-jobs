@@ -169,16 +169,10 @@ def _is_external(current_url: str, href: str) -> bool:
 
 
 def _has_active_challenge(obs: Observation) -> bool:
-    """A rendered, interactive anti-bot challenge is present — not merely a
-    passive badge or bot-management telemetry the markup mentions.
-
-    Three concrete signals, any one is enough: a full-page interstitial title
-    ("just a moment", "checking your browser"); a challenge iframe pointing at a
-    known challenge host and NOT flagged invisible (the reCAPTCHA bframe, an
-    hcaptcha/turnstile frame); or an interactable challenge control ("I'm not a
-    robot", "select all images"). A reCAPTCHA v3 badge or a ``__cf_bm`` cookie
-    has none of these, so it no longer walls the run (the bug this fixes fired
-    on the word alone and aborted 81% of measured forms)."""
+    """A rendered, interactive anti-bot challenge, not a passive badge: an
+    interstitial title, a visible challenge iframe on a known host, or an
+    interactable challenge control. A v3 badge or `__cf_bm` cookie has none, so it no
+    longer aborts runs (it once walled 81% of forms)."""
     if _CHALLENGE_INTERSTITIAL.search(obs.title or ""):
         return True
     for element in obs.elements:

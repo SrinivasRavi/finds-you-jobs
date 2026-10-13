@@ -180,15 +180,10 @@ class OperationsRepo:
     def list_queued_for_dispatch(
         self, *, priority_by_kind: dict[str, int], default_priority: int, limit: int
     ) -> list[Operation]:
-        """Queued operations in dispatch order, most urgent first, capped.
-
-        The runner used to read EVERY queued row and sort in Python, so
-        enqueueing N operations cost n(n+1)/2 row loads. The cap is what fixes
-        that, and the ordering has to move into SQL for the cap to be safe: with
-        a date-ordered read, a `LIMIT` would hide an `apply` the user is watching
-        behind hundreds of bulk `score` rows. Sorted here, the first `limit` rows
-        are always the most urgent ones. `created_at, id` keeps it FIFO within a
-        priority band, matching the stable Python sort this replaced."""
+        """Queued ops in dispatch order, most urgent first, capped. Reading every queued
+        row made enqueueing quadratic; the cap fixes that, and ordering in SQL keeps it
+        safe, so a watched `apply` never hides behind bulk scores. FIFO by
+        `created_at, id` within a band."""
         priority = case(priority_by_kind, value=Operation.kind, else_=default_priority)
         stmt = (
             select(Operation)
@@ -203,14 +198,9 @@ class OperationsRepo:
         return list(self._s.scalars(stmt))
 
     def live_cost_totals(self) -> CostTotals:
-        """The cost aggregate over every operation still in the table (all states;
-        in-flight rows carry no usage and contribute only to the op count). Added
-        to the pruned aggregate to yield the all-time totals.
-
-        Reads 3 columns rather than building an ORM object per row, which is the
-        difference between 95 ms and 1.2 s at 100k operations. Still linear:
-        summing every row is inherently linear, and at 24 operations a day it
-        stays under a millisecond for years."""
+        """The cost aggregate over every op still in the table; added to the deleted-ops
+        aggregate for all-time totals. Reads 3 columns, not ORM rows: 95 ms versus 1.2 s
+        at 100k ops."""
         agg = _empty_cost_totals()
         stmt = select(Operation.kind, Operation.state, Operation.usage)
         for kind, state, usage in self._s.execute(stmt):
@@ -370,13 +360,8 @@ class OperationsRepo:
 
 
     def recent_score_cost(self, model: str | None, limit: int = 20) -> tuple[float | None, int]:
-        """What an AI score has actually cost THIS user, and over how many runs.
-
-        Measured, never estimated: the price of a model is not something the app
-        can know, and quoting a number off a doc would be a cost-honesty problem
-        the first time a user switched model. `None` means they have never paid
-        for one, which the button says rather than guessing.
-        """
+        """What an AI score has actually cost this user, over how many runs. Measured,
+        never estimated; None means they've never paid for one."""
         stmt = (
             select(Operation.usage)
             .where(
@@ -472,13 +457,9 @@ class SchedulesRepo:
 
 
 def resolved_location_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    """Fill a new job's resolved-location columns from its location string.
-
-    Here rather than at the 4 call sites that create a job, because a 5th would
-    forget. A caller that already resolved (the backfill pass) passes the columns
-    itself and is left alone, and a job with no location keeps `location_remote`
-    NULL, which is the "resolver has not seen this" state.
-    """
+    """Fill a new job's resolved-location columns from its location string, here so
+    no job-creating call site forgets. A caller that already resolved is left
+    alone; no location keeps `location_remote` NULL."""
     location = str(fields.get("location") or "").strip()
     if not location or "location_remote" in fields:
         return fields
@@ -556,33 +537,11 @@ class JobsRepo:
     def list_active_without_llm_score(
         self, *, limit: int | None = None, max_attempts: int | None = None
     ) -> list[Job]:
-        """Active jobs that can still earn an AI score, newest first.
-
-        The AI planner used to page the newest 1,000 active jobs and only THEN
-        filter that page down to the unscored, so on an install with more than
-        1,000 active jobs the oldest could never be planned at any tick — they
-        sat unscored with nothing to show for it. Doing the exclusion in SQL
-        makes a scored job leave the result set on its own, so every job is
-        eventually reached, and the read is O(unscored) instead of O(all
-        active). `limit=None` means no cap, which is the planner's default.
-
-        A keyword floor does NOT count: `scorer_impl` is matched so the LLM can
-        still upgrade a job the on-device floor already scored.
-
-        A job whose description is under `MIN_JD_CHARS` is excluded outright. It
-        can never earn an LLM score (`score_entrypoint` refuses it and writes a
-        0 without calling the engine — see that constant for why), so leaving it
-        in would re-plan the same job on every tick forever, each pass writing
-        another operation row. On the maintainer's install that's 248 jobs, so
-        it would be 248 pointless operations per tick. The predicate is on the
-        description rather than on the presence of a refusal row, which means a
-        later scan that fills the description in makes the job eligible again on
-        its own, with nothing to reset (S-A6).
-
-        `max_attempts` drops jobs that have already failed that many times
-        against a live provider (`Job.llm_score_attempts`). A provider outage
-        never increments that counter, so an expired key costs no job an attempt
-        and the whole backlog returns on the next tick."""
+        """Active jobs that can still earn an AI score, newest first; the exclusion is in
+        SQL, so every job is eventually reached. A keyword floor doesn't count. Jobs
+        under `MIN_JD_CHARS` are excluded (they can never earn one) until a scan fills
+        the description (S-A6). `max_attempts` drops jobs that failed against a live
+        provider; outages never count. `limit=None` is uncapped."""
         from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
         stmt = select(Job).where(
@@ -647,21 +606,10 @@ class JobsRepo:
         exclude_id: str,
         rows: list[tuple[str, int, str, str]] | None = None,
     ) -> list[str]:
-        """Active jobs that are probably the SAME posting as this one.
-
-        Run at INGEST, never at render, so the board pays nothing for this and
-        the answer is already on the row by the time anybody looks at it.
-
-        Deliberately a narrow scan rather than an index lookup: similarity here
-        is Hamming distance over a simhash, which no equality index can answer.
-        So it reads 4 columns and never the descriptions, which is what keeps a
-        1,000-job board at roughly 100 KB and a few thousand popcounts per
-        inserted row instead of a multi-megabyte load.
-
-        The gate is the compound one (same company, same title, similarity at or
-        above the threshold), because bare similarity was 57% precise on the
-        bench corpus and called a Senior and a Principal at one employer the
-        same job (S-C69, url-less-jobs.md 6.4)."""
+        """Active jobs that are probably the same posting, checked at ingest so the board
+        pays nothing. A narrow 4-column scan, since Hamming distance over a simhash has
+        no index. The gate is compound (same company, title, similarity at threshold):
+        bare similarity was 57% precise (S-C69, url-less-jobs.md 6.4)."""
         from sidecar.modules.scraper.fingerprint import (
             from_signed64,
             is_probable_cross_listing,
@@ -847,14 +795,9 @@ class JobsRepo:
         method: str | None = None,
         factors: Sequence[Mapping[str, Any]] | None = None,
     ) -> bool:
-        """Write one scorer's rating onto the job. Returns True when this is the
-        FIRST rating that scorer has produced for this job, which is what the
-        priority distribution counts: a recompute must not double count.
-
-        `method` is the named method behind the number (`llm`, `jev`, `local`,
-        `keyword`) and `factors` its per-axis detail. Both are written here, in
-        the one place a score is ever written, so a method cannot land a score
-        without its factors or leave a previous method's factors behind it."""
+        """Write 1 scorer's rating onto the job; True when it's that scorer's first, so
+        the priority stats don't double count. `method` and `factors` are written here,
+        the 1 place scores are written, so they always land together."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
@@ -1293,20 +1236,10 @@ class ContactsRepo:
         include_candidates: bool = True,
         limit: int = 10_000,
     ) -> list[Contact]:
-        """The kanban roster, most-recently-touched first and capped (S-C8).
-
-        Every filter the roster route applies is in SQL, because a LIMIT on top
-        of a Python filter bounds the wrong population: the "Deleted Contacts"
-        view could show nothing while archived rows existed past the cap, and a
-        big `candidate` pile (discovery writes one row per person found) could
-        eat the whole budget before a single kanban card was reached.
-
-        10,000, matching the board's `list_by_states`. The first cut capped at
-        1,000 and nothing in the UI says "1,000 of 1,240", so a discovery-grown
-        roster (about 10 candidate rows per company watched) would silently drop
-        people past 100 companies — the same class of defect as the scoring
-        window it shipped beside. The batched last-message query removed the
-        real cost of a big roster; this cap now bounds DTO building only."""
+        """The kanban roster, most recently touched first, capped at 10,000 like the
+        board (S-C8). Every filter is in SQL, since a LIMIT over a Python filter bounds
+        the wrong population. With the batched last-message query, the cap bounds only
+        DTO building."""
         stmt = select(Contact)
         if archived_only:
             stmt = stmt.where(Contact.archived_at.is_not(None))
@@ -1322,15 +1255,9 @@ class ContactsRepo:
     def list_for_referrals(
         self, *, company_names: set[str], contact_ids: set[str]
     ) -> list[Contact]:
-        """The find-referrals popup roster for a role (US-NW-09 / FR-NW-02).
-
-        A contact belongs on it if it is at the target company — matched
-        **case-insensitively against ANY of `company_names`** (the raw ATS
-        `job.company` AND the resolved LinkedIn entity name, which often differ,
-        e.g. `hopper` vs `Hopper`) — OR it is already associated with this job
-        (`contact_ids`, the reliable link discovery writes regardless of how the
-        employer string is spelled). Excludes archived. This replaces a brittle
-        exact-match on `job.company` that could hide a whole discovered roster."""
+        """The popup's roster for a role (US-NW-09 / FR-NW-02): contacts at the company,
+        matched case-insensitively against any of `company_names` (ATS name and LinkedIn
+        name differ), or already linked to the job (`contact_ids`). Archived excluded."""
         lowered = {n.strip().lower() for n in company_names if n and n.strip()}
         conds = []
         if lowered:
@@ -1391,12 +1318,8 @@ class ContactsRepo:
     _SYNCABLE_STATUSES = CONTACT_SYNCABLE_STATUSES
 
     def list_syncable(self, *, limit: int) -> list[Contact]:
-        """The next `limit` contacts due for a status-sync probe (US-NW-12).
-
-        Ordered by `last_touched_at` ASC (least-recently-touched first): each
-        probe bumps `last_touched_at`, so the probed contacts rotate to the back
-        and the whole live set is swept fairly over successive ticks — a natural
-        round-robin cursor with no extra bookkeeping column."""
+        """The next `limit` contacts due for a sync probe (US-NW-12), least recently
+        touched first; each probe bumps `last_touched_at`, a round-robin cursor for free."""
         stmt = (
             select(Contact)
             .where(Contact.archived_at.is_(None))
@@ -1578,12 +1501,8 @@ class JobDuplicatesRepo:
 
 
 class JobScoreFactorsRepo:
-    """Per-axis score detail, one row per (job, method, factor).
-
-    A rescore `replace` instead of upserting row by row: a method that stops
-    emitting a factor must stop having it, or the bar chart would show an axis
-    the current rubric no longer scores.
-    """
+    """Per-axis score detail, 1 row per (job, method, factor). A rescore replaces
+    the set, so an axis a method stops emitting disappears."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1695,12 +1614,9 @@ class OutreachLogsRepo:
         return list(self._s.scalars(stmt))
 
     def latest_batches_for_jobs(self, job_ids: list[str]) -> dict[str, list[OutreachLog]]:
-        """The OutreachLog rows of the *latest* reach-out batch per role, used
-        to derive `referralsState` (FR-NW-01) — one IN query for a batch of
-        roles (F-H2). The batch is keyed by `batch_id`; a NULL batch_id
-        (legacy/manual single send) is its own settled batch. The latest batch =
-        the one containing the most-recently-created log. Roles with no logs are
-        absent from the map."""
+        """The OutreachLog rows of each role's latest batch, for `referralsState`
+        (FR-NW-01), in 1 IN query (F-H2). A NULL batch_id is its own batch; latest means
+        the newest log. Roles with no logs are absent."""
         if not job_ids:
             return {}
         stmt = select(OutreachLog).where(OutreachLog.job_id.in_(job_ids))

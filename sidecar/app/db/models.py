@@ -1,14 +1,8 @@
-"""SQLAlchemy 2.0 models — the core-storage slice of the first-migration schema
-(database-design section 7, carried per `docs/internal/roadmap.md` section 7.2 #3).
+"""SQLAlchemy 2.0 models (database-design section 7, as amended by the rebuild).
 
-This commit carries orchestration only: `operations` (the runner's durable
-queue + cost ledger) and `user_preferences` (whose `ui_state["cost_totals"]`
-aggregate keeps all-time spend intact across ledger retention). The remaining
-section 7 tables (jobs, applications, profile, artifacts, …) land with their feature
-commits as follow-up migrations. Enum-valued columns are plain TEXT (string
-enums — "new kinds need no migration", section 2); JSON columns use SQLAlchemy's
-cross-dialect JSON type.
-"""
+Enum-valued columns are plain TEXT, so a new kind needs no migration (section 2);
+JSON columns use SQLAlchemy's cross-dialect JSON type and hold payload that is
+only read back whole (CLAUDE.md, boring schema)."""
 
 from __future__ import annotations
 
@@ -110,14 +104,10 @@ SCORE_MAX_ATTEMPTS = 3
 
 
 class Job(Base):
-    """One discovered posting, keyed on its URL or, failing that, its text.
-
-    `canonical_url` is the dedup key for anything a scan found (FR-SYS-01).
-    A job the user typed in has no URL, so `content_hash` keys it instead
-    (url-less-jobs.md section 5.2). Exactly one of the 2 is set on any row, and
-    SQLite's NULLs-are-distinct rule lets each population keep its own unique
-    index. Promotion fills the URL in later and keeps the hash, so a re-paste
-    of the same text still lands on the promoted row."""
+    """1 discovered posting, keyed on its URL or, failing that, its text. A scanned
+    job keys on `canonical_url` (FR-SYS-01); a typed-in one on `content_hash`
+    (url-less-jobs.md section 5.2). Exactly 1 is set; NULLs are distinct, so each
+    keeps its own unique index. Promotion adds the URL and keeps the hash."""
 
     __tablename__ = "jobs"
 
@@ -199,15 +189,9 @@ class Job(Base):
 
 
 class JobScoreFactor(Base):
-    """One axis of one job's score, as one scorer judged it (`scoring.md` 7.2).
-
-    Every method writes the same factor keys, so the bar chart, a user weight and
-    a "what failed on location" query all read one shape whichever scorer ran.
-    `value` is 0 to 1 and `kind` says what it means: a `graded` position on a
-    stated rubric, which a user weight may multiply, or a `probability` that the
-    factor holds, which it may not. The weight itself is NOT stored: it is a
-    preference that changes, and the total is computed on read.
-    """
+    """1 axis of 1 job's score, as 1 scorer judged it (scoring.md 7.2). Every method
+    writes the same keys. `value` is 0 to 1; `kind` is `graded` (a user weight may
+    multiply it) or `probability` (it may not). The weight isn't stored."""
 
     __tablename__ = "job_score_factors"
 
@@ -299,13 +283,9 @@ class MasterProfile(Base):
 
 
 class Application(Base):
-    """A pipeline card (database-design section 4). `packetState` is *not* stored here —
-    it's derived from this app's Artifact rows + their operations' states.
-
-    The prior repository also stored `apply_state` (latest Applier run summary)
-    and `form_prep` (the Save-time answer cache) here; both are retired in this
-    rebuild (`docs/internal/archived/applier-as-built.md` section 2) — the durable ApplyRun
-    model arrives with the applier commits instead."""
+    """A pipeline card (database-design section 4). `packetState` isn't stored: it
+    derives from the card's Artifacts and their ops. Apply attempts live in ApplyRun
+    (applier-as-built.md section 2)."""
 
     __tablename__ = "applications"
 
@@ -392,17 +372,10 @@ class ApplicationEvent(Base):
 
 
 class Document(Base):
-    """An uploaded file attached to a card as its resume or cover letter (a
-    document the user actually submitted for a manually-logged application,
-    FR-TR manual-add).
-
-    The blob is stored once on disk at `<data_dir>/documents/<sha256>`, so the
-    filename IS the hash and identical bytes are written once however many cards
-    use them. This row is per attachment, not per blob: the `documents` +
-    `application_documents` pair it replaces (d2f7a91b8c46) modelled a
-    many-to-many that never occurred in practice and made detaching leak the row
-    and the file, because no reference count existed to make the delete safe.
-    Row dedup is gone; blob dedup, the part that saves disk, is untouched."""
+    """A file attached to a card as its submitted resume or cover (FR-TR manual-add).
+    The blob lives once at `<data_dir>/documents/<sha256>`; this row is per
+    attachment. The many-to-many it replaced (d2f7a91b8c46) never occurred and made
+    detaching leak the row and the file."""
 
     __tablename__ = "documents"
 
@@ -452,13 +425,10 @@ CONTACT_ENGAGED_STATUSES: frozenset[str] = frozenset(
 
 
 class ApplyRun(Base):
-    """One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1) — the
-    first-class replacement for the prior repository's `applications.apply_state`
-    overload. A retry/reopen NEVER mutates an old run: it creates a fresh row
-    linked by `retry_of_run_id`, and the old run stays immutable evidence
-    (section 8.3). P1 terminal statuses come from the jobapplier package — there is
-    no `submitted` written by the agent; Applied requires confirmation
-    evidence or explicit user attestation (section 8.4), recorded by the API layer."""
+    """1 durable Applier attempt (applier-as-built.md section 9.1). A retry creates
+    a fresh row linked by `retry_of_run_id`; old runs stay immutable evidence
+    (section 8.3). The agent never writes `submitted`: Applied needs confirmation
+    evidence or the user's attestation (section 8.4), recorded by the API."""
 
     __tablename__ = "apply_runs"
 
@@ -550,13 +520,10 @@ class UserPreferences(Base):
 
 
 class Contact(Base):
-    """One person discovered as (or added as) an outreach target (US-REF-05).
-
-    Person-level, not job-level: the same person is reused across every role at
-    their company (US-REF-04 "one connection per contact, ever"). `linkedin_url`
-    is the identity key (same person + new URL = new row in P1 — database-design
-    section 8 Q4). `audience_tag`/`warmth` are auto-assigned at discovery (US-REF-02/10);
-    `connection_status` is the kanban column (US-NW-07)."""
+    """1 person discovered or added as an outreach target (US-REF-05), reused across
+    every role at their company (US-REF-04). `linkedin_url` is the identity key.
+    `audience_tag` and `warmth` are set at discovery; `connection_status` is the
+    kanban column (US-NW-07)."""
 
     __tablename__ = "contacts"
 
@@ -593,14 +560,10 @@ class Contact(Base):
 
 
 class CompanyResolution(Base):
-    """A cached name → LinkedIn company-entity resolution (FR-NW-02).
-
-    Keyed by a stable per-employer key (`domain:…` > `<adapter>:<slug>` >
-    `name:…`, see `registry/company_anchor.py`) so every job of the same employer
-    reuses ONE typeahead call + ONE user confirm choice — no re-prompting, no
-    inconsistent picks across a company's jobs. `source` records how the URN was
-    chosen: `domain` (silent — the employer website matched), `single` (the only
-    candidate), or `user` (confirmed in the find-referrals popup)."""
+    """A cached company name to LinkedIn entity resolution (FR-NW-02), keyed per
+    employer (`domain:` > `<adapter>:<slug>` > `name:`; registry/company_anchor.py)
+    so a company's jobs share 1 lookup and 1 confirm. `source`: `domain`, `single`
+    or `user`."""
 
     __tablename__ = "company_resolutions"
 
@@ -614,18 +577,10 @@ class CompanyResolution(Base):
 
 
 class ReferralCandidate(Base):
-    """One person put forward as a referral candidate for one role (US-REF-05).
-
-    `Contact` holds the person once, reusable across every role at their
-    employer; this row holds the per-role fact, so someone asked about 3 jobs is
-    1 contact and 3 rows. The per-role ask status is deliberately distinct from
-    the person-level connection status on `Contact`. `audience_tag` is copied
-    here at add-time so a job-scoped view keeps its own tag even if the person's
-    role later changes.
-
-    Never rendered as itself: it drives the Find referrals candidate list, the
-    checkbox state that survives closing the popup, and whether a Tracker card
-    shows a referrals affordance at all."""
+    """1 person put forward for 1 role (US-REF-05); `Contact` holds the person once.
+    The per-role ask status is separate from the connection status, and
+    `audience_tag` is copied at add time. It drives the popup's candidates, its
+    remembered picks, and whether a card offers referrals."""
 
     __tablename__ = "referral_candidates"
 
@@ -726,17 +681,10 @@ class LinkedInSession(Base):
 
 
 class LinkedInSearchCursor(Base):
-    """Single-row pagination cursor for "Scan LinkedIn jobs" (Fresh search /
-    Next page). A Fresh search snapshots the queries it ran (role alias ×
-    location as they were at click time) with each pair's next page offset;
-    Next page resumes the SNAPSHOT — never live preferences, so editing prefs
-    mid-pagination can't make "page 2" mean page 2 of a search that never ran.
-
-    The cursor is honoured only within `SEARCH_CURSOR_TTL` of `fresh_at`
-    (host policy, `linkedin_op.py`). LinkedIn's own pagination is stateless —
-    offset in the URL, nothing server-side to expire — so the TTL exists for
-    result coherence (rankings drift between requests), not to mirror any
-    LinkedIn timeout."""
+    """Single-row cursor for Fresh search and Next page. Next resumes the snapshot of
+    queries the Fresh search ran, never live prefs, so "page 2" always continues a
+    search that ran. Honoured within `SEARCH_CURSOR_TTL` (linkedin_op.py), for
+    result coherence."""
 
     __tablename__ = "linkedin_search_cursors"
 

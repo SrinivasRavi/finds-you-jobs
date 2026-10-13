@@ -1,18 +1,10 @@
 """The exception router for logged-in LinkedIn runs (section 11, Our Claim 12).
 
-finds-you-jobs-owned (AGPL-3.0-only). A router, not a decision-maker. It maps a
-recognized worker error onto the coded handler that already knows how to act on
-it, and an UNRECOGNIZED error onto `unknown`, which hard-stops, captures the DOM
-and a screenshot so the surprise becomes the next fixture, and asks the model for
-exactly one diagnosis. The model returns a label, never an action; the coded
-handlers act (Our Claim 12). Safety lives in the handler; accuracy is all the
-model is asked for, and it runs only on the unrecognized path.
-
-It imports (never copies) the GPLv3 upstream error TYPES for classification —
-through the AGPL facade (`referral_outreach.facade`), never `upstream.*`
-directly, so the F-P10 one-way rule holds (`test_upstream_import_boundary`). No
-upstream code is carried here, so this file stays AGPL-3.0-only.
-"""
+A router, not a decision-maker: a recognized worker error maps to its coded
+handler; an unrecognized one to `unknown`, which hard-stops, captures the DOM and
+a screenshot, and asks the model for 1 diagnosis label. Handlers act. Imports
+the GPLv3 error types through the AGPL facade, never `upstream.*` (F-P10), so
+this file stays AGPL-3.0-only."""
 
 from __future__ import annotations
 

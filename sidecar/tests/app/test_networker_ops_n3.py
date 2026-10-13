@@ -1,16 +1,9 @@
-"""Covers: Track N3 networking app-integration.
+"""Covers: Track N3 networking app integration.
 
-  US-REF-01 — discover potential referrers → persisted candidate contacts
-  US-REF-02 — auto-tag discovered contacts by audience
-  US-REF-03 — grounded referral draft (FakeEngine — no live LLM)
-  US-REF-04 — send via voyager (fake driver — no live LinkedIn) + audit log
-  US-NW-09  — reach-out flips contact onto kanban + moves Saved → Seeking Referral
-  US-NW-11  — never-accepted-after-cutoff query
-  FR-REF-*  — persistence into Contact / ReferralCandidate / OutreachLog
-
-ZERO live LinkedIn traffic: every discover/send goes through FakeVoyagerDriver
-(the `DRIVER_FACTORY` seam), every draft through FakeEngine. The wire stays cold.
-"""
+Discover persists tagged candidate contacts (US-REF-01/02); draft is grounded
+(US-REF-03); send goes through voyager with an audit log (US-REF-04), flips the
+contact onto the kanban and moves Saved to Seeking Referral (US-NW-09); the
+US-NW-11 cutoff query. FakeVoyagerDriver and FakeEngine: 0 LinkedIn, 0 LLM."""
 
 from __future__ import annotations
 
@@ -505,12 +498,9 @@ def test_send_first_degree_lands_accepted(wired: Wired) -> None:
 
 
 def test_send_publishes_sending_then_real_steps_then_sent(wired: Wired) -> None:
-    """The Messenger queue panel keys off the send's honest narration: the
-    `sending` phase (with the routed channel) fires first, each completed step
-    follows as a `send_step` event with the plan's key — REAL progress from
-    the code driving the page (2026-08-16) — and the terminal phase closes it.
-    The DM plan's last step (the audit-log write) is app-side, so the host
-    appends `dm5` itself."""
+    """The queue panel follows the send's narration: `sending` with the channel
+    first, then each step as `send_step` from the driving code, then the terminal
+    phase. The DM plan's last step is app-side, so the host appends `dm5`."""
     ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
     _seed(wired, with_job=False)
     with wired.db.repos() as repos:

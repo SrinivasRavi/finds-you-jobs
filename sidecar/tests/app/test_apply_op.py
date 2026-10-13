@@ -1,16 +1,9 @@
-"""Covers: the Applier app integration
-(docs/internal/archived/applier-as-built.md section 8/section 9).
+"""Covers: the Applier's app integration (applier-as-built.md sections 8 and 9).
 
-  US-level behavior — Apply off the Tracker card creates a durable ApplyRun
-  immediately (no pre-confirm modal), the op drives the jobapplier agent
-  against a LOCAL fixture form, and the run lands ready_for_human with
-  redacted field outcomes + on-disk screenshot evidence. Attestation moves
-  the card to Applied; the generic operations endpoint refuses `apply`.
-
-ZERO model calls, zero external traffic: the engine is the scripted
-FakeApplyEngine injected through the op's dev knobs (FYJ_APPLY_DEV=1), the
-job URL is a file:// fixture, and the browser is headless Chromium.
-"""
+Apply creates a durable ApplyRun at once, the op drives the agent against a local
+fixture form, and the run lands ready_for_human with redacted outcomes and
+screenshots; attestation moves the card. 0 model calls: FakeApplyEngine via
+FYJ_APPLY_DEV=1, a file:// job, headless Chromium."""
 
 from __future__ import annotations
 
@@ -57,12 +50,8 @@ def _action(tool: str, **args: object) -> str:
 
 
 def _seed_fixture_job(app: FastAPI, fixture: str, **over: str) -> str:
-    """A job pointing at a local fixture page, seeded through the repo.
-
-    `POST /api/jobs` only accepts an http(s) link now — anything else is not a
-    usable identity and is dropped rather than stored (url-less-jobs.md section
-    9.1 item 5). The Applier itself is happy to drive a `file://` page, so the
-    fixture rides in through the repo instead of through the public door."""
+    """A job pointing at a local fixture page, seeded through the repo, since `POST
+    /api/jobs` accepts only http(s) links (url-less-jobs.md section 9.1 item 5)."""
     fields = {
         "title": "Staff Engineer",
         "company": "Acme",

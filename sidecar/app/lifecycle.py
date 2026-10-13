@@ -1,18 +1,9 @@
-"""Configurable entity-lifecycle windows (US-SYS-06 / FR-SYS-06, 2026-07-15).
+"""Configurable entity-lifecycle windows (US-SYS-06 / FR-SYS-06).
 
-Every auto-lifecycle timer in the app — contact kanban ghosting, deleted-contact
-/ trashed-job / archived-application purge, and the contact-sync cadence — reads
-its window from here instead of a hard-coded constant, so the user owns them from
-Settings (maintainer directive 2026-07-15: "keep ALL entities' lifecycle
-user-configurable, including deleted jobs and applications").
-
-Home: `UserPreferences.ui_state["lifecycle"]` — a JSON sub-dict (no schema
-migration; `ui_state` is the established settings bag that already holds the OTLP
-/ retention config). `resolve_lifecycle(prefs)` merges the stored values over
-`LIFECYCLE_DEFAULTS`; the defaults preserve the pre-2026-07-15 behavior (trashed
-jobs still purge at 7 days, etc.) so nothing changes for a user who never opens
-the new Settings section.
-"""
+Every auto-lifecycle timer (ghosting, purges, the sync cadence) reads its window
+here, so the user owns them from Settings. Stored in
+`UserPreferences.ui_state["lifecycle"]`; `resolve_lifecycle(prefs)` merges it
+over `LIFECYCLE_DEFAULTS`, which keep the original behavior."""
 
 from __future__ import annotations
 

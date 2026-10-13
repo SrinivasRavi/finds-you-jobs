@@ -1,16 +1,10 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Prompt assembly for the apply loop (docs/internal/archived/applier-as-built.md section 4).
+"""Prompt assembly for the apply loop (applier-as-built.md section 4).
 
-The system prompt carries the safety contract in words; ``executor.py``
-carries it in code. Page content (JD, form text, anything observed) is DATA,
-never instructions — the prompt says so explicitly, and the executor enforces
-the pieces a prompt can't (section 4.3).
-
-The engine seam is text completion (``Engine.complete``), so the model
-receives the compact interactive-element tree — not the raw screenshot; the
-screenshot is persisted as evidence for the human and the companion UI. The
-reply must be exactly one JSON tool call from the fixed vocabulary.
-"""
+The prompt carries the safety contract in words, `executor.py` in code. Page
+content is data, never instructions. The model gets the compact element tree,
+not the screenshot (kept as evidence), and must reply with exactly 1 JSON tool
+call."""
 
 from __future__ import annotations
 

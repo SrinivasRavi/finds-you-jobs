@@ -1,22 +1,10 @@
-"""Engine wiring from Settings (architecture section 5.4/section 9).
+"""Engine wiring from Settings (architecture sections 5.4 and 9).
 
-`claude-cli` (the shared `ClaudeCliEngine`) stays the **default** engine of
-record — no routing default is flipped here. It is registered as a per-model
-**factory** so a per-kind model override in `UserPreferences.engine_routing` is
-honored.
-
-On top of that, the BYOK direct-API engines (`anthropic`, `openrouter`,
-`openai`, `local` — the last three are OpenAI-compatible) are registered from
-the persisted `EngineSettings` rows: a row that carries a usable config (a
-sealed key where one is required, a base URL where one is required) becomes a
-routable engine under its provider id, so routing a kind to it in Settings just
-works. A routing entry naming an engine we have *not* registered resolves to
-`None`, and the operation wrapper then raises the typed
-`EngineNotConfiguredError` — never a silent hang, never a silent fallback.
-
-The one-way rule holds: this is `app/` code reusing the module's shared
-`_shared/claude_engine.py` (via `engines_http`); the module never imports back.
-"""
+`claude-cli` stays the default engine, registered as a per-model factory so a
+per-kind model override works. The BYOK engines (`anthropic`, and the
+OpenAI-compatible `openrouter`, `openai`, `local`) register from EngineSettings
+rows with a usable config. Routing to an unregistered engine raises
+`EngineNotConfiguredError`: never a hang or a silent fallback."""
 
 from __future__ import annotations
 
@@ -163,16 +151,9 @@ def verify_provider(
 
 
 class FakeInstantEngine:
-    """FYJ_FAKE_LLM's engine: instant canned completion, zero subprocesses.
-
-    Exists because the Playwright suite was discovered (2026-07-18) making REAL
-    `claude -p` calls on the dev machine's logged-in subscription — every
-    spec's profile save enqueues an `extract` op, default-routed to claude-cli.
-    That broke the suite's zero-model contract, spent real tokens per run, and
-    the ~10s child subprocesses were the root of teardown hangs and shutdown-
-    drain flakes. Same dev-seam philosophy as FYJ_APPLY_DEV: env-gated, never
-    set by the shell, honest to the ledger (zero tokens recorded).
-    """
+    """FYJ_FAKE_LLM's engine: an instant canned completion, 0 subprocesses. The
+    Playwright suite once made real `claude -p` calls on every profile save. Env-gated
+    like FYJ_APPLY_DEV, never set by the shell, 0 tokens recorded."""
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model or "fake-instant"
@@ -186,13 +167,9 @@ class FakeInstantEngine:
 
 
 def register_builtin_engines(registry: EngineRegistry) -> None:
-    """Register the always-present subscription-CLI engines. `claude-cli` keeps
-    its pinned default model; the other CLIs run their own configured default
-    when the routing entry names no model (`model=None` omits the flag).
-
-    FYJ_FAKE_LLM=1 (dev/e2e only) swaps every builtin CLI engine for
-    `FakeInstantEngine` so no test run ever drives a real subscription CLI.
-    BYOK rows are untouched — the e2e environment persists none."""
+    """Register the always-present CLI engines: `claude-cli` at its pinned default,
+    the others at their own default when no model is routed. FYJ_FAKE_LLM=1 swaps
+    them for `FakeInstantEngine`."""
     if os.environ.get("FYJ_FAKE_LLM"):
         for name in CLI_PROVIDERS:
             registry.register_factory(name, lambda model: FakeInstantEngine(model))
@@ -251,12 +228,8 @@ def register_byok_engines(
 
 
 def apply_routing(registry: EngineRegistry, engine_routing: dict[str, Any] | None) -> None:
-    """(Re)apply the per-kind routing map from settings onto the registry.
-
-    Each LLM kind routes to its configured `(engine, model)` or, absent an
-    entry, to `claude-cli` at the default model. Non-LLM kinds (`scan`) need no
-    engine and are left unrouted.
-    """
+    """(Re)apply the per-kind routing map: each LLM kind to its `(engine, model)`, or
+    `claude-cli` at the default. Non-LLM kinds stay unrouted."""
     routing = engine_routing or {}
     registry.clear_routing()
     for kind in LLM_KINDS:

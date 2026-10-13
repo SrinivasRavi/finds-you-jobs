@@ -1,18 +1,11 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""The constrained tool vocabulary (docs/internal/archived/applier-as-built.md section 4.2).
+"""The constrained tool vocabulary (applier-as-built.md section 4.2).
 
-These are the ONLY things the model can ask for. There is deliberately no
-``submit`` here — it must not exist in the P1 schema so that no prompt
-mistake can ever expose a submit capability. There is also no JavaScript
-eval, no CSS/XPath injection, no filesystem path, no cookie access: an
-action references an opaque per-observation element id and a value, nothing
-else.
-
-``parse_action`` is strict: the model's reply must be one JSON object with a
-known ``tool`` and exactly the arguments that tool takes. Anything else is a
-``DisallowedActionError`` — the loop reports it and re-prompts rather than
-guessing.
-"""
+The only things the model can ask for, and deliberately no submit, no JS eval,
+no selectors, paths or cookies: an action names an opaque per-observation
+element id and a value. `parse_action` is strict, 1 JSON object with a known
+tool and exactly its arguments; anything else is `DisallowedActionError`, and
+the loop re-prompts."""
 
 from __future__ import annotations
 

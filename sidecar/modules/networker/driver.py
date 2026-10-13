@@ -1,24 +1,10 @@
-"""Voyager driver — the DIRECT in-process seam behind the `VoyagerDriver` protocol.
+"""Voyager driver: the direct in-process seam behind `VoyagerDriver`.
 
-The orchestrator (`networker.py`) talks only to the `VoyagerDriver` interface,
-so discover/send/status are tested against an in-memory fake, while
-`DirectVoyagerDriver` calls the GPLv3 OpenOutreach-derived worker
-(`sidecar.packages.referral_outreach.upstream.worker`) DIRECTLY, in-process.
-
-This replaces the prior repository's `SubprocessVoyagerDriver`, which spawned
-`python -m voyager_py <command>` and parsed JSON over stdout to keep GPL code
-off an MIT host. finds-you-jobs is AGPL-3.0-only, so GPLv3 + AGPLv3 combine
-directly and the subprocess firewall is retired
-(`docs/internal/referral-outreach.md` section 2). The `upstream.worker` functions
-already return the exact dict envelopes this protocol expects, so this driver is
-a thin faithful adapter — it translates a worker `VoyagerError` into the
-module's typed `NetworkerError`, exactly as the subprocess driver did.
-
-The typed `ReferralAutomation` facade (`sidecar.packages.referral_outreach`) is
-the package's narrow public contract for external callers; the app's Networker
-path uses this dict driver, which matches the module's existing seam with zero
-reconciliation drift.
-"""
+The orchestrator (`networker.py`) talks only to the protocol, so tests use a
+fake; `DirectVoyagerDriver` calls the GPLv3 worker
+(`referral_outreach.upstream.worker`) in-process, since an AGPL host can combine
+with it (referral-outreach.md section 2). A thin adapter: the worker's dicts
+pass through, and `VoyagerError` becomes `NetworkerError`."""
 
 from __future__ import annotations
 
@@ -81,22 +67,10 @@ class VoyagerDriver(Protocol):
 
 
 class DirectVoyagerDriver:
-    """In-process driver: one `upstream.worker.<op>()` call per method.
-
-    Config the host owns and passes in: the saved cookie file (`storage_state`),
-    the persistent Chromium profile dir (`user_data_dir`), the pacing-ledger dir
-    (`state_dir`), the pacing profile, and `headed`. The session-store encryption
-    key is read by `upstream.secure_store` from the `FYJ_SESSION_KEY` env var
-    (NFR-SEC-01) — the host sets it in the process env before a browser op.
-    `dry_run` on any call forwards to the worker so no browser/network is touched.
-
-    `surface_provider` (optional) hooks the worker to the core browser broker:
-    when set, every page-driving action runs on the broker's single serialized
-    surface lane rather than launching this driver's own Chromium (the `page`
-    is the broker surface's own). It is a `(slug) -> ready surface` callable; the
-    slug is a runtime argument owned inside the GPL package, so this core module
-    never names the vendor. None keeps the self-launch path.
-    """
+    """In-process driver, 1 `upstream.worker.<op>()` call per method. The host passes
+    `storage_state`, `user_data_dir`, `state_dir`, the pacing profile and `headed`;
+    the session key comes from `FYJ_SESSION_KEY` (NFR-SEC-01). `surface_provider`
+    runs page actions on the broker's lane instead of its own Chromium."""
 
     def __init__(
         self,
@@ -276,13 +250,9 @@ class DirectVoyagerDriver:
     def contact_sync_states(
         self, entries: list[dict], *, dry_run: bool
     ) -> dict:
-        """Batched read-only contact-status probes in ONE browser session (the
-        sync sweep — one `contact_sync` op per contact launched and quit a full
-        Chromium per contact). Each entry is `{public_identifier, urn,
-        thread_only}`: a thread-only entry with a cached urn is answered from
-        the sweep's one inbox read and charges nothing; the rest are full
-        probes with the same per-probe charges/pacing as `contact_sync`,
-        enforced inside the worker."""
+        """Batched read-only status probes in 1 browser session. Each entry is
+        `{public_identifier, urn, thread_only}`: thread-only with a cached urn is free
+        from the sweep's inbox read; the rest are charged full probes."""
         return self._call(
             self._worker().contact_sync_states,
             entries=entries,
@@ -324,14 +294,9 @@ class DirectVoyagerDriver:
         timeout_s: float = 300.0,
         cancel_check: Callable[[], bool] | None = None,
     ) -> dict:
-        """Open a **headed** browser and wait (up to `timeout_s`) for the user to
-        finish logging in, then persist the storage-state. The password is never
-        handled here.
-
-        `cancel_check` is accepted for protocol symmetry; a blocking in-process
-        headed login is bounded by `timeout_s` rather than an interrupting poll
-        (a token-based cancel is a follow-on — see `referral-outreach.md` section 3.2).
-        """
+        """Open a headed browser and wait up to `timeout_s` for the user to log in, then
+        save the storage state; the password is never handled here. `cancel_check` is
+        for protocol symmetry (referral-outreach.md section 3.2)."""
         if not self.storage_state:
             raise NetworkerError(
                 "voyager", "login requires a storage_state path to save the session"

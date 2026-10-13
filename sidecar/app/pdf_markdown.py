@@ -1,26 +1,10 @@
-"""Layout-aware PDF → markdown reconstruction (resume ingest, FR-OB-04).
+"""Layout-aware PDF to markdown (resume ingest, FR-OB-04).
 
-pypdf's flat ``extract_text()`` loses what a resume's layout actually says —
-and on some generators (Google-Docs exports notably) it even drops the spaces
-between words. This module takes pdfplumber's *word* extraction (each word with
-its position, font size, and font name) and rebuilds the document:
-
-- words cluster into visual lines by vertical position and join with single
-  spaces — inter-word spacing survives by construction;
-- the largest-font line(s) become ``#`` (the name), noticeably-larger or
-  bold-and-larger lines become ``##`` (section headers);
-- bullet glyphs (● • ▪ ◦ ‣ ○) start ``- `` list items, and a wrapped bullet's
-  continuation line merges back into its item;
-- a fully-bold body line (role · company · dates rows) is kept bold;
-- consecutive plain lines with normal line spacing merge into one paragraph;
-  larger vertical gaps become paragraph breaks.
-
-The output is *best-effort structure*, not a pixel-perfect conversion — the
-user reviews and edits the result in the resume editor before saving (the
-ingest endpoint never persists). The heuristics are pure functions over plain
-word dicts so the whole pass is unit-testable without a PDF in sight
-(``sidecar/tests/app/test_pdf_markdown.py``).
-"""
+pypdf's flat extraction loses layout and sometimes inter-word spaces. This
+rebuilds from pdfplumber words: lines by position, the largest font as `#`,
+larger or bold lines as `##`, bullet glyphs as list items, bold rows kept bold,
+gaps as paragraph breaks. Best effort; the user edits before saving. Pure
+functions over word dicts (tests/app/test_pdf_markdown.py)."""
 
 from __future__ import annotations
 

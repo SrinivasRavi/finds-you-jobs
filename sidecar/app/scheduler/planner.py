@@ -36,23 +36,11 @@ def plan_schedule(db: Database, kind: str) -> list[tuple[str, dict[str, Any]]]:
 
 
 def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
-    """Plan `("score", snapshot)` for jobs that still need an AI score.
-
-    Scoring is always on (the old auto_score_on_scan opt-out is retired). The
-    cost lever is Settings → Scoring's MODE:
-    - **keyword** — nothing to plan here; the instant on-device keyword floor
-      (`ensure_keyword_floor`, run on scan + boot) already scores every job.
-    - **llm** — plan an LLM score for every active job that can still earn one.
-      A keyword floor does NOT count as done (the LLM upgrades it); an in-flight
-      op is not double-enqueued; a job that has failed `SCORE_MAX_ATTEMPTS` times
-      against a live provider is dropped; and a job with no usable description
-      is never offered at all (`list_active_without_llm_score`).
-
-      A failed attempt IS re-planned, unlike before. The bound is
-      `Job.score_attempts`, not the presence of a failed operation row, so a
-      provider outage that failed 800 jobs in seconds costs none of them an
-      attempt and all 800 come back on the next tick once the provider does.
-    """
+    """Plan `("score", snapshot)` for jobs that still need an AI score. Keyword mode
+    plans nothing: the floor already scores every job. AI mode plans every active
+    job that can still earn one: the floor doesn't count, in-flight ops aren't
+    doubled, and jobs past `SCORE_MAX_ATTEMPTS` or with no description are skipped.
+    An outage costs no job an attempt, so the backlog returns next tick."""
     with db.repos() as repos:
         if repos.profile.get_current() is None:
             return []

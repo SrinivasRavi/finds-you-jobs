@@ -1,10 +1,8 @@
 """Re-resolve every job's location with the place-reading fix.
 
-The stored location columns were written by a resolver that read "London, ON"
-as London, England (docs/internal/place-picker.md section 2). Clearing the
-"never resolved" marker hands every row back to the daily maintenance pass,
-which re-resolves 500 a run in its worker thread; this migration only flips the
-marker, so startup stays instant.
+The old resolver read "London, ON" as England (place-picker.md section 2). This
+only clears the "never resolved" marker; the daily pass re-resolves 500 a run,
+so startup stays instant.
 
 Revision ID: f7c2d4e9a1b6
 Revises: e3a8c51f7d20

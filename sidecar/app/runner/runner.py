@@ -124,12 +124,9 @@ class OperationRunner:
         self.recover()
 
     def shutdown(self, *, drain_timeout: float | None = None) -> None:
-        """Stop accepting dispatches; wait for in-flight workers to drain.
-
-        `drain_timeout` mirrors the section 4.4 10 s shutdown window; None waits fully.
-        The Tauri shell force-kills after its own window, so overshooting here is
-        capped upstream — this just gives in-flight operations a clean chance.
-        """
+        """Stop dispatching and wait for in-flight workers. `drain_timeout` mirrors the
+        10 s window (section 4.4); None waits fully. The shell force-kills after its own
+        window anyway."""
         with self._lock:
             self._closing = True
             executor = self._executor
@@ -159,13 +156,9 @@ class OperationRunner:
         return operation_id
 
     def submit_many(self, items: list[tuple[str, dict[str, Any]]]) -> list[str]:
-        """Enqueue a batch and pump ONCE. Returns the ids, in order.
-
-        `submit` in a loop was quadratic: each call pumped, and each pump re-read
-        the whole queue. Measured at 3.21 s of blocked event loop for 1,000
-        operations, half a million rows loaded to start a handful. One
-        transaction for the inserts and one pump at the end removes the
-        multiplier; the dispatch read below removes the rest."""
+        """Enqueue a batch and pump once; returns the ids in order. `submit` in a loop
+        was quadratic (3.21 s of blocked loop for 1,000 ops); 1 transaction and 1 pump
+        remove the multiplier."""
         if not items:
             return []
         created: list[tuple[str, str]] = []
@@ -179,20 +172,10 @@ class OperationRunner:
         return [operation_id for operation_id, _ in created]
 
     def cancel(self, operation_id: str) -> bool:
-        """Cancel an operation. A still-`queued` op (any kind) is cancelled
-        immediately.
-
-        A `running` op gets a cooperative cancel REQUEST (F-M7) — but only for
-        the kinds that actually POLL the token (`CANCELLABLE_RUNNING_KINDS`,
-        kept next to the entrypoint registry): the LLM modules check between
-        retry attempts and mid-backoff. Other kinds never observe the token
-        while running (`apply` checks once at dispatch; its real cancel is the
-        apply-run route), so accepting the request would be a lie — they
-        return False (honesty fix, 2026-07-25). A call already blocked inside
-        an engine (subprocess / HTTP read) runs to its own timeout first — we
-        never kill a live worker thread mid-syscall. Returns True when the
-        cancel was applied (queued) or genuinely accepted (running + polling
-        kind); False for unknown, already-terminal, or non-polling running ops."""
+        """Cancel an op: a queued one at once; a running one only as a cooperative
+        request for kinds that poll (`CANCELLABLE_RUNNING_KINDS`), since accepting it
+        for others would be a lie. A call blocked in an engine runs to its own timeout.
+        True when applied or accepted; False for unknown, terminal or non-polling."""
         with self._lock:
             with self._db.repos() as repos:
                 op = repos.operations.get(operation_id)
@@ -280,14 +263,9 @@ class OperationRunner:
             future.add_done_callback(self._forget_future)
 
     def _run(self, operation_id: str, kind: str, snapshot: dict[str, Any]) -> None:
-        """Worker body: call the entrypoint, persist outcome + usage, publish.
-
-        The whole execution is wrapped in a per-operation Logfire span (US-SYS-05)
-        carrying id / kind / engine / model / latency / cost / outcome. A failure
-        lands in all three legs — the operations row, the span, and the SSE event
-        (NFR-SIDE-04). The span is the *only* new artifact; row + event are the
-        pre-existing legs, kept exactly as before.
-        """
+        """Worker body: call the entrypoint, persist outcome and usage, publish, all
+        inside a per-op Logfire span (US-SYS-05). A failure lands in the row, the span
+        and the SSE event (NFR-SIDE-04)."""
         content_logging = (
             self._observability.content_logging if self._observability is not None else False
         )

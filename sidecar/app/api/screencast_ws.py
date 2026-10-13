@@ -1,20 +1,11 @@
 """Live browser surface over a websocket (`GET /api/browser/screencast`).
 
-Binary messages are one JPEG screencast frame each. Text messages are JSON
-control in both directions: the server sends `status` and `error` (a
-`status{url}` is pushed on EVERY committed main-frame URL change — driver-driven
-and in-page SPA navigations included, plus the echo after a typed navigate), the
-client sends `viewport` (once, on open, carrying its real display geometry),
-`navigate` and `resize`. Which surface a socket attaches to is a `?surface=` slug the client
-passes, never a name this file knows
-(`docs/internal/plugin-architecture.md` section 8.1 rule 5).
-
-Auth is checked here rather than in the middleware, and both halves of that are
-deliberate. `BearerAuthMiddleware` returns early for any non-`http` scope, so a
-websocket never reaches it; and a browser's websocket handshake can't set an
-`Authorization` header anyway, which is why the token rides in `?token=` the way
-the SSE stream's already does. Loopback-only surface (NFR-SEC-03).
-"""
+Binary messages are JPEG frames. Text messages are JSON: the server sends
+`status` (pushed on every main-frame URL change) and `error`; the client sends
+`viewport`, `navigate` and `resize`. The surface is a `?surface=` slug the client
+passes (plugin-architecture.md section 8.1 rule 5). Auth is checked here: the
+middleware skips non-http scopes, and a browser's websocket handshake can't set
+a header, so the token rides `?token=` like SSE (NFR-SEC-03)."""
 
 from __future__ import annotations
 

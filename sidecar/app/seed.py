@@ -1,16 +1,9 @@
-"""First-run seeding (ROADMAP A4, architecture section 7).
+"""First-run seeding (architecture section 7).
 
-On a fresh DB: seed `UserPreferences.portals_config` from the shipped verified
-source registry (`scraper/registry/portals-all.toml`) so the user has an
-out-of-box source set they can trim, and create the recurring `scan` /
-`score_new` schedules.
-
-The schedules are seeded **disabled** on purpose: an unattended full-registry
-scan (315 boards) followed by scoring every discovered job would spend real LLM
-budget with no user in the loop, and budget *enforcement* is a G7 item (usage is
-recorded, never enforced — ROADMAP section 4). Onboarding/Settings flips them on with
-the user's chosen cadence + batch cap. Idempotent — safe to call every boot.
-"""
+On a fresh DB: seed `portals_config` from the shipped source registry
+(`scraper/registry/portals-all.toml`) and create the `scan` and `score_new`
+schedules, disabled, so nothing spends LLM budget unattended until onboarding or
+Settings turns them on. Idempotent; runs every boot."""
 
 from __future__ import annotations
 

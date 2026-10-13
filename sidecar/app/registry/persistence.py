@@ -1,16 +1,9 @@
 """Operation-entrypoint persistence helpers.
 
-The wrappers call the modules; this file makes them persist their results into
-the DB the app owns (architecture section 5.3/section 5.6, database-design section 3–section 4):
-
-- scan → `Job` rows, identity dedup (first-seen wins) + `Tombstone`
-  suppression + a per-source report into `result_ref`;
-- score → a cached `JobScore` row for `(job_id, profile_version, scorer_impl)`;
-- tailor/cover → an `Artifact` row (lands with the applications-schema commit).
-
-This is `app/` code — using `Repos` and importing `modules/` is exactly the
-one-way rule's allowed direction; modules never import back.
-"""
+The wrappers call the modules; this persists their results into the app's DB
+(architecture sections 5.3 and 5.6): scan writes Job rows (first-seen dedup,
+tombstone suppression, a per-source report), score writes the job's score
+columns, tailor and cover fill their Artifact."""
 
 from __future__ import annotations
 
@@ -55,17 +48,10 @@ def scoring_mode(prefs: Any) -> str:
 
 
 def scoring_weights(prefs: Any) -> tuple[dict[str, float], int]:
-    """The user's own axis weights and location penalty, or the empty table.
-
-    The ONE reader of `thresholds["score_weight_preset"]` and
-    `thresholds["score_weights"]`, for the same reason `scoring_mode` is the one
-    reader of its key. An empty table means "use whatever the method that ran
-    shipped with", which is what the `balanced` preset is and what every install
-    gets until someone opens the control (scoring.md 7.4).
-
-    Custom slider values outrank the preset: moving a slider is a more specific
-    statement than picking a preset, and the UI only ever stores one of them.
-    """
+    """The user's axis weights and location penalty, or the empty table, the 1
+    reader of `score_weight_preset` and `score_weights`. Empty means each method's
+    own weights, which is `balanced` (scoring.md 7.4). Custom sliders outrank the
+    preset."""
     from sidecar.modules.scorer.weights import (
         LOCATION_MISS_PENALTY,
         PRESET_LOCATION_PENALTY,
@@ -136,22 +122,10 @@ def resolve_scan_prefs(
     repos: Repos | None = None,
     portals: str | PortalsConfig | None = None,
 ) -> ScanPrefs | None:
-    """The scan's effective filters, in precedence order:
-
-    1. An explicit `prefs` override in the operation snapshot (tests/CLI).
-    2. The user's onboarding preferences (US-OB-03 — "so the cold-start scrape
-       knows what to look for") merged over the config's own filter tables:
-       role aliases → `title_allow`; locations → `location_allow` **and**
-       `location_always_allow` (the multi-location rescue names the user's
-       places, not the shipped defaults); freshness window → `max_age_days`;
-       `hard_excludes.companies`/`.keywords` → `company_block`/`content_block`,
-       **unioned** with the config's own block lists rather than replacing them
-       — a personal exclude should never silently drop a registry's own
-       curated blocks (job-finder-preferences design, docs/internal/discovery.md).
-       Dimensions the user left empty keep the config's values.
-    3. None — the config's own filters as-is (the seeded registry's tuned
-       defaults; only reached when the user set no preferences at all).
-    """
+    """The scan's effective filters: an explicit snapshot `prefs` override; else the
+    onboarding preferences merged over the config's tables (roles, locations,
+    freshness, and excludes unioned with the config's own blocks; empty dimensions
+    keep the config); else None, the config as-is."""
     prefs_data = snapshot.get("prefs")
     if isinstance(prefs_data, dict):
         return ScanPrefs(**prefs_data)
@@ -237,16 +211,9 @@ SCRAPER_ENGINE_PREFIX = "scraper:"
 
 
 def load_scraper_credentials(repos: Repos) -> dict[str, str]:
-    """Open the sealed BYO scraper keys (Apify/Brave) for THIS scan only.
-
-    The keys live as `scraper:<id>` rows in `engine_settings` (same sealed-BLOB
-    discipline as BYOK LLM keys — NFR-SEC-01) but are invisible to the engine
-    registry (`PROVIDERS.get` skips unknown ids) and to the Settings engines
-    list. The opened secrets go into the in-memory `ScanPrefs.credentials`
-    only — never into the durable operation snapshot, a result_ref, or a log.
-
-    Key resolution uses `resolve_data_dir()` (env/platform), matching the boot
-    path; hermetic tests set `FYJ_SESSION_KEY` so no keychain is touched."""
+    """Open the sealed Apify and Brave keys for this scan only. Stored as
+    `scraper:<id>` rows (NFR-SEC-01), invisible to the engine registry; opened keys
+    go to `ScanPrefs.credentials`, never a snapshot, result or log."""
     from ..db.database import resolve_data_dir
     from ..security import get_app_key, open_secret
 
@@ -431,13 +398,9 @@ BACKFILL_LOCATION_BATCH = 500
 def backfill_resolved_locations(
     db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH
 ) -> int:
-    """Resolve the location of rows that predate the resolver. Returns the count.
-
-    `location_remote IS NULL` is the "never seen" marker, so this converges: a
-    row it touches stops matching, whatever the resolver concluded. Bounded per
-    call because it runs inside the maintenance tick, which has other stages
-    waiting behind it.
-    """
+    """Resolve locations for rows that predate the resolver; returns the count.
+    Converges, since `location_remote IS NULL` stops matching once touched. Bounded
+    per call: the maintenance tick has other stages."""
     if db is None:
         return 0
     with db.repos() as repos:
@@ -457,12 +420,8 @@ def backfill_resolved_locations(
 
 
 def backfill_fingerprints(db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH) -> int:
-    """Fingerprint rows written before the column existed. Returns the count.
-
-    The duplicate check skips a NULL fingerprint, so until this runs a board
-    from before migration `c9e4a71b3f02` is invisible to it. A description too
-    short to shingle stores 0 rather than NULL, so this converges; 0 matches
-    nothing. It flags nothing itself: a notice comes when a new row arrives."""
+    """Fingerprint rows from before migration `c9e4a71b3f02`; returns the count.
+    Too-short text stores 0, so it converges. Flags nothing itself."""
     if db is None:
         return 0
     with db.repos() as repos:
@@ -509,13 +468,9 @@ def load_decisions_client(repos: Repos) -> Any:
 
 
 def render_preferences_block(prefs: Any) -> str:
-    """The user's job-finder preferences as the Scorer's third prompt block.
-
-    Empty when the user has set nothing, so the prompt stays 2 blocks and the
-    skill file says nothing about preferences. The wording is the bench's
-    (`evidence/2026-09-25-scoring-bench/preferences.py`), which is the text the
-    2026-09-28 measurement was taken with.
-    """
+    """The user's preferences as the Scorer's third prompt block, empty when none
+    are set. The wording is the bench's (evidence/2026-09-25-scoring-bench), the
+    text the 2026-09-28 measurement used."""
     roles = [str(r) for r in (getattr(prefs, "role_aliases", None) or []) if str(r).strip()]
     chips = getattr(prefs, "locations", None) or []
     locations = [chip_label(loc) for loc in chips if chip_label(loc).strip()]
@@ -561,12 +516,9 @@ def scan_usage(result: ScanResult) -> dict[str, Any]:
 def flag_near_duplicate(
     repos: Repos, job: Job, *, rows: list[tuple[str, int, str, str]] | None = None
 ) -> str | None:
-    """Record a freshly written job as a probable copy of every active job it
-    matches (url-less-jobs.md 9.6). Runs on both write paths, the add form and
-    every scan row, so pasted-Monday, scanned-Wednesday is always noticed.
-
-    `rows` is `fingerprint_rows()` read once by a caller flagging many jobs.
-    Returns the first matching id, or None."""
+    """Record a new job as a probable copy of every active job it matches
+    (url-less-jobs.md 9.6), on both write paths. `rows` is `fingerprint_rows()`
+    read once by a batch caller. Returns the first match, or None."""
     others = repos.jobs.near_duplicate_ids(
         job.fingerprint, company=job.company, title=job.title, exclude_id=job.id,
         rows=rows,
@@ -580,12 +532,9 @@ def flag_near_duplicate(
 def load_job_and_master(
     repos: Repos, snapshot: dict[str, Any]
 ) -> tuple[str, str, int]:
-    """Resolve `(job_text, master_md, profile_version)` for an LLM operation.
-
-    Inline `master_md`/`job` in the snapshot win (direct-API callers/tests);
-    otherwise both are loaded from the DB by `job_id` + the current master
-    profile. Raises `LookupError` (surfaced verbatim on the operation row) when
-    a required input is missing."""
+    """Resolve `(job_text, master_md, profile_version)` for an LLM op: inline snapshot
+    values win, else the DB by `job_id` and the current profile. Raises
+    `LookupError` when an input is missing."""
     master_md = snapshot.get("master_md")
     profile_version = snapshot.get("profile_version")
     if master_md is None or profile_version is None:
@@ -618,13 +567,9 @@ def load_job_and_master(
 def evict_stale_trash(
     db: Database | None, *, now: datetime | None = None, ttl_days: int = TRASH_TTL_DAYS
 ) -> list[str]:
-    """Tombstone + hard-delete every Trashed job past the TTL (US-SYS-04).
-
-    "Let it go stale = not meant to be" — a job left in Trash past `ttl_days`
-    is tombstoned (its `canonical_url` suppressed from future scrapes, per
-    FR-SYS-04) and removed, exactly as if the user emptied Trash. Rows that
-    entered Trash before the stamp existed are lazily stamped and skipped this
-    tick, so the clock only ever starts once. Returns the tombstoned job ids."""
+    """Tombstone and delete every trashed job past the TTL (US-SYS-04), as if the
+    user emptied Trash. Unstamped rows are stamped and skipped this tick, so the
+    clock starts once. Returns the tombstoned ids."""
     if db is None:
         return []
     now = now or now_utc()
@@ -646,29 +591,11 @@ def age_expired_jobs(
     expire_after_days: int = EXPIRE_AFTER_DAYS,
     delete_after_days: int = EXPIRED_DELETE_AFTER_DAYS,
 ) -> dict[str, list[str]]:
-    """TTL aging for feed jobs (FR-SYS-03), run by the daily maintenance tick.
-
-    Two stages, both **skipping any job that has an Application** (Saving rescues
-    it) and both **skipping any job with no `canonical_url`**.
-
-    The URL-less exemption is the sweep's own reasoning applied honestly: the
-    freshness clock exists because the feed is a feed, and the hard delete
-    writes no tombstone specifically because a later scrape may bring the
-    posting back. Neither premise holds for a row no scan can ever produce, so
-    the rule is "age what the feed can replace" and a job the user typed in by
-    hand is outside it (url-less-jobs.md sections 5.6 and 8.3). It leaves the
-    board the way it arrived: by hand, through Trash.
-
-    1. **active → expired** once a job is older than `expire_after_days`,
-       measured from `feed_since` (which starts at `ingested_at` and is reset by
-       an explicit un-expire).
-    2. **expired → hard-delete** once it has sat in Expired for
-       `delete_after_days`, measured from `expired_at`. The delete writes **no
-       tombstone** — a later scrape may re-surface the same posting.
-
-    Rows that entered Expired before the stamp existed are lazily stamped and
-    skipped this tick, so their 30-day clock only ever starts once. Returns
-    `{"expired": [...ids], "deleted": [...ids]}`."""
+    """TTL aging for feed jobs (FR-SYS-03), daily: active to expired after
+    `expire_after_days` from `feed_since`, then hard-deleted after
+    `delete_after_days`, with no tombstone so a scan can bring it back. Skips saved
+    jobs and URL-less ones, which no scan can replace (url-less-jobs.md 5.6, 8.3).
+    Returns `{"expired": [...], "deleted": [...]}`."""
     if db is None:
         return {"expired": [], "deleted": []}
     now = now or now_utc()
@@ -731,18 +658,10 @@ def delete_job_cascade(repos: Repos, job_id: str) -> bool:
 def delete_application_cascade(
     repos: Repos, application_id: str
 ) -> tuple[bool, list[str], list[str]]:
-    """Delete one application row and every FK child (`foreign_keys=ON`):
-    events, uploaded documents (manual cards — 2026-07-24 bug class), and apply
-    runs — an archived manual card used to IntegrityError here and wedge the
-    whole retention pass. Artifacts cascade via the ORM relationship.
-
-    The ONE implementation of the cascade (D-A3): the unsave route and the
-    retention pass both call it, so a new FK child can never wedge one path
-    while the other keeps working. Returns `(deleted, apply_run_ids,
-    orphaned_document_hashes)` — both sets of on-disk bytes are the caller's to
-    purge, because the two callers do it in different contexts (off-loop vs
-    sync).
-    """
+    """Delete 1 application and every FK child (events, documents, apply runs), the
+    1 cascade (D-A3) both callers use, so a new child can't wedge one path. Returns
+    `(deleted, apply_run_ids, orphaned_document_hashes)`; purging the files is the
+    caller's job."""
     run_ids = [r.id for r in repos.apply_runs.list_for_application(application_id)]
     repos.application_events.delete_for_application(application_id)
     orphaned = repos.documents.delete_for_application(application_id)

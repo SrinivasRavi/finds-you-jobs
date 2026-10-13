@@ -1,35 +1,8 @@
 """A job can have no posting URL, so identity moves to its content.
 
-url-less-jobs.md section 5.3, decision D8, Shape B.
-
-`canonical_url` does 3 unrelated jobs today: identity, content source and
-action target. Dropping the URL requirement only breaks the first one, so this
-gives identity its own column rather than minting a fake URL to put in the old
-one. A fake value would satisfy the unique index and lie to every reader that
-parses it as a URL, which is exactly the defect 7.1 fixed in the Networker.
-
-4 changes:
-
-- `jobs.canonical_url` becomes nullable. A row with no URL now says so,
-  instead of carrying `fyj-local:<uuid>` or the prose a failed fetch wrote.
-- `jobs.content_hash`, unique: SHA-256 of the normalized token stream of the
-  description (`modules/scraper/identity.py`). The dedup key for a URL-less
-  row, and kept across a promotion so a later re-paste still finds the row.
-- `jobs.fingerprint`, indexed: the 64-bit SimHash `fingerprint.py` already
-  computes per scan and throws away. It answers "nearly the same text?", which
-  is the duplicate prompt, the promotion check and the repost signal.
-- `tombstones.content_hash`, unique, with `canonical_url` nullable: so delete
-  forever works on a job that never had a URL. `tombstones.exists` looks up
-  whichever key the row has.
-
-No backfill of `content_hash`: every existing row has a URL and is keyed on
-it, and hashing 133 descriptions to fill a column nothing would read for them
-buys nothing. `fingerprint` backfills on the next scan for the same reason.
-
-Each population keeps its own unique key. SQLite treats NULLs as distinct in a
-unique index, so any number of URL-less rows coexist under
-`canonical_url IS NULL` and any number of URL rows under
-`content_hash IS NULL`.
+url-less-jobs.md section 5.3 (D8, Shape B): `canonical_url` nullable, unique
+`content_hash`, indexed `fingerprint`, and tombstones keyed either way. SQLite
+NULLs are distinct in a unique index, so each population keeps its own key.
 
 Revision ID: c9e4a71b3f02
 Revises: b4d8e2a7c531

@@ -1,41 +1,12 @@
-"""The zero-LLM fit scorer: Settings > Scoring "Keyword scoring", and the grey
-floor behind a failed AI score. Free, 1 ms a job, and honest about what word
-overlap can and cannot tell you.
+"""The zero-LLM fit scorer: "Keyword scoring", and the grey floor behind a failed
+AI score. Free, 1 ms a job.
 
-**Not a port.** JustHireMe's `ranking/scoring_engine.py` was read in full as a
-structural reference before writing this — weighted criteria plus a hard-cap
-floor is a sound shape, worth learning from. Its actual vocabulary is not:
-it's calibrated for freelance-gig postings ("Gig Title", parsing a `$` figure
-as a project *budget*, red flags like "lowest bidder"/"commission only"), not
-W2 job postings, and porting it directly would import irrelevant signal into
-this context (docs/internal/discovery.md, "JustHireMe scoring" entry,
-2026-07-21). This rubric is written fresh and deliberately simple — a real v0
-second opinion, not a claim of parity with the LLM scorer.
-
-Reuses what the codebase already has instead of re-detecting it: red-flag
-terms come straight from `scraper.quality.RED_FLAG_TERMS`, which already runs
-live in the discovery pipeline, rather than a second hand-maintained list.
-
-Weighted criteria, one modifier, one hard cap:
-- Skill/keyword overlap (55%, or 60% when no level is readable): normalized
-  word overlap between the resume and the JD text. No taxonomy, no embeddings.
-- Years-of-experience match (30%, or 40%): the JD's stated "N+ years"
-  requirement (if any) against the resume's own stated tenure (if any).
-- Level fit (15%): the rung the title states against the best rung the resume
-  states. Dropped from the weighting entirely when either side states none,
-  which is 23 of 93 real titles, so an unstated level is never scored as a bad
-  one.
-- Location modifier (-15): a posting in a location the user did not ask for,
-  from `modules/geo`. The same policy the LLM path applies, so the 2 stay
-  comparable, and a location that cannot be read from the field costs nothing.
-- Red-flag cap — a `quality.RED_FLAG_TERMS` hit clamps the score to 40
-  regardless of the weighted total (a real fabrication/scam-risk floor, not a
-  soft nudge).
-
-Tagged `scorer_impl="scorer-deterministic"` at the caller (`JobScore` is
-already schema-ready for more than one scorer implementation per job — no
-migration needed) so it is never confused with `scorer-llm` output.
-"""
+Written fresh: JustHireMe's engine was read as a structural reference, but its
+vocabulary is for freelance gigs (discovery.md, 2026-07-21). Weighted: skill
+overlap 55% (60% with no level), years 30% (40%), level 15% (dropped when either
+side states none); a -15 location modifier from `modules/geo`; and a
+`quality.RED_FLAG_TERMS` hit caps the score at 40. Tagged
+`scorer-deterministic` by the caller."""
 
 from __future__ import annotations
 
@@ -143,14 +114,9 @@ def score_deterministic(
     location: str = "",
     wanted: Wanted | None = None,
 ) -> ScoreResult:
-    """Score `master_md` against raw `job_text` with zero LLM calls.
-
-    `title`, `location` and `wanted` are optional so every existing caller keeps
-    working: without them the level and location axes are simply not assessed,
-    which is the same honest absence as a posting that states neither.
-
-    A JD under `MIN_JD_CHARS` scores 0 — see that constant for why rating one is
-    worse than refusing to."""
+    """Score `master_md` against `job_text` with 0 LLM calls. Without `title`,
+    `location` and `wanted` those axes aren't assessed. A JD under `MIN_JD_CHARS`
+    scores 0 (see that constant)."""
     if len((job_text or "").strip()) < MIN_JD_CHARS:
         return ScoreResult(
             score=0,

@@ -1,16 +1,8 @@
-"""Covers: the "Add a job application" vertical (FR-TR manual-add).
+"""Covers: "Add a job application" (FR-TR manual-add), through the real app.
 
-Through the real app (TestClient → lifespan → real migration):
-
-- POST /api/applications/manual creates a job + an `origin=manual` card in a
-  post-referral stage, with optional resume/cover uploads.
-- Uploaded documents are content-addressed and deduped (identical bytes → one
-  `documents` row and ONE blob on disk), downloadable verbatim.
-- The Tracker source filter's discriminator: `origin` on the ApplicationDTO
-  ("manual" vs "discovered").
-- Guards: already-tracked job → 409; bad stage / unsupported type / too-large
-  upload → 422; unknown document → 404.
-"""
+POST /api/applications/manual creates a job and an `origin=manual` card with
+optional uploads; documents are content-addressed and deduped; `origin`
+distinguishes manual from discovered; guards return 409, 422 and 404."""
 
 from __future__ import annotations
 

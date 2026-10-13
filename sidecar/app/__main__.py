@@ -1,14 +1,9 @@
 """Sidecar entrypoint: `python -m sidecar.app`.
 
 Binds 127.0.0.1 on a random free port, mints a bearer token, and prints the
-handshake the shell reads:
-
-    PORT=<n>
-    TOKEN=<uuid>
-
-as two flushed stdout lines (architecture section 4.4 step 1). Then serves the FastAPI
-app until `/shutdown`, the orphan watchdog, or a signal ends it.
-"""
+handshake the shell reads as 2 flushed stdout lines, `PORT=<n>` and
+`TOKEN=<uuid>` (architecture section 4.4 step 1). Then serves until `/shutdown`,
+the orphan watchdog or a signal ends it."""
 
 from __future__ import annotations
 

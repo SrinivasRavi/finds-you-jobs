@@ -36,13 +36,9 @@ EventSink = Callable[[dict], None]
 
 
 class ReferralAutomation(Protocol):
-    """The one surface the app uses to reach the LinkedIn browser core.
-
-    Every request/result is a plain dataclass (`types.py`); no browser, DB, or
-    web types cross this line. Concrete implementations own their own Chromium
-    lifecycle (launched per bounded operation, except a headed login that stays
-    open while the user logs in) and enforce pacing/caps internally — the app
-    mirrors the reported quota, never re-implements it."""
+    """The 1 surface the app uses to reach the LinkedIn browser core. Plain
+    dataclasses only; implementations own their Chromium lifecycle and enforce pacing
+    and caps, which the app mirrors, never re-implements."""
 
     def capture_session(
         self, request: SessionCaptureRequest, on_event: EventSink

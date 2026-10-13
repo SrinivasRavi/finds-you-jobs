@@ -3,24 +3,13 @@
 # the patterns across lines hurts readability more than the width does.
 """Deterministic decider: fills a job-application form with no LLM.
 
-The code rung of the ladder (applier.md Option 11). Called once per loop turn in
-place of the model. It walks the observation in document order, classifies the
-first eligible unfilled field against an ordered rule table (semantics ported
-from the proven interpreter under
-``docs/internal/applier/evidence/2026-08-12-deterministic-repair/``), grounds the
-value in ``ApplyRequest.profile_facts`` / ``preferences`` / ``approved_links``,
-and emits exactly one Action from the same vocabulary the model uses — there is
-still no submit tool anywhere.
-
-A field no rule can ground is reported (when required) or skipped (when
-optional), never filled with a first option or a default yes: the wrong fills in
-the deterministic baseline were all fallback-to-first or default-to-yes. No
-persona literal lives in this module; every value flows from the request.
-
-Each field gets exactly one decision, recorded in ``done`` at decision time —
-one attempt per field, ever. That is the livelock fix by construction: the
-decider never re-issues an action, so it never re-verifies a settled field.
-"""
+The code rung of the ladder (applier.md Option 11), called per turn in place of
+the model. It classifies the first eligible unfilled field against an ordered
+rule table (ported from evidence/2026-08-12-deterministic-repair), grounds the
+value in the request's facts, preferences and links, and emits 1 Action; no
+submit. An ungroundable field is reported if required, skipped if not; never a
+first option or default yes. 1 decision per field, ever, which fixes the
+livelock by construction."""
 
 from __future__ import annotations
 

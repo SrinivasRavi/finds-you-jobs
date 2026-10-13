@@ -1,15 +1,9 @@
-"""Arbeitnow adapter — public job-board JSON API (no auth, no key).
+"""Arbeitnow adapter: public job-board JSON API, no key.
 
-Claims `board = "arbeitnow"` and `arbeitnow.com` URLs. One request:
-`GET arbeitnow.com/api/job-board-api` → `{"data": [...]}` with `title`,
-`company_name`, `location`, `remote`, `url`, `description` (HTML, carried in
-the list payload — no per-job fetch) and `created_at` (unix seconds → ISO).
-A remote row gets ", Remote" appended to its location so the shared location
-filters can match it.
-
-Re-derived from the public payload shape (JustHireMe carries the same keyless
-board — behavioral precedent only, no code seen or copied).
-"""
+Claims `board = "arbeitnow"` and arbeitnow.com URLs. 1 request to
+`/api/job-board-api`; the JD is in the list; remote rows get ", Remote"
+appended for the location filters. Re-derived from the payload (JustHireMe as
+precedent only)."""
 
 from __future__ import annotations
 

@@ -1,15 +1,8 @@
-"""How per-axis factors become one 0-to-100 number, in one place.
+"""How per-axis factors become 1 number from 0 to 100, in 1 place.
 
-A method emits typed factors (`types.Factor`); this turns them into the score the
-board sorts on. 2 rules the arithmetic obeys, both from `scoring.md` section 7.4:
-
-- **An axis the method could not assess drops out of the weighting**, and the
-  remaining weights renormalize. Scoring an unassessed axis as 0 would punish a
-  posting for what it failed to say.
-- **A blocker is a flag, not a weight.** Work authorization and the like are
-  reported beside the score and never deflate it, because the score ranks skill
-  fit and the obstacle is its own axis (rank, don't gate).
-"""
+2 rules (scoring.md 7.4): an axis the method couldn't assess drops out and the
+rest renormalize, so silence isn't punished; and a blocker (work authorization)
+is a flag beside the score, never a deflating weight (rank, don't gate)."""
 
 from __future__ import annotations
 
@@ -134,13 +127,8 @@ def user_total(
     *,
     location_penalty: int = LOCATION_MISS_PENALTY,
 ) -> int | None:
-    """The score these factors deserve under the user's own weights.
-
-    `None` when the factors can't answer: no graded axis the table names is
-    present, so there is nothing to weight and the stored score stands. That is
-    the honest outcome for a job whose method recorded no factors, and it is why
-    this returns an option rather than a 0.
-    """
+    """The score these factors earn under the user's weights, or None when no graded
+    axis the table names is present, so the stored score stands."""
     by_key = {f.factor: f for f in factors}
     present = {
         key: w

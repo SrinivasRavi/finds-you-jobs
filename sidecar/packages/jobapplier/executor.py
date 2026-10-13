@@ -1,21 +1,11 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Action executor (docs/internal/archived/applier-as-built.md section 4.2/section 4.3/section 5.3).
+"""Action executor (applier-as-built.md sections 4.2, 4.3, 5.3).
 
-The executor is the enforcement layer: it re-checks everything the prompt
-promises, so a prompt-injected or confused model still cannot step outside
-the contract. Independently of what the model asks for:
-
-- an action must reference an element id from the CURRENT observation —
-  stale ids raise ``StaleElementError`` instead of guessing (section 4.1);
-- ``navigate`` obeys a scheme/host policy — private/loopback redirect targets
-  are rejected (section 4.3);
-- only user-approved artifacts can be uploaded, chosen by artifact_id — the
-  model never sees or supplies a filesystem path (section 5.3);
-- password/TOTP inputs cannot be filled — the product holds no site
-  credentials (section 4.3);
-- every mutating action is verified by read-back where the control supports
-  it, and the outcome is reported honestly (section 4.2).
-"""
+The enforcement layer, so a confused or injected model still can't step outside
+the contract: element ids must come from the current observation (4.1);
+`navigate` obeys a scheme and host policy (4.3); only approved artifacts upload,
+by id, never a path (5.3); password and TOTP fields can't be filled; every
+mutation is verified by read-back where possible (4.2)."""
 
 from __future__ import annotations
 
@@ -117,17 +107,10 @@ class ExecOutcome:
 
 
 class UrlPolicy:
-    """Scheme/host policy for navigate + redirect checks (section 4.3).
-
-    Literal IPs only, on purpose: Playwright resolves inside the browser, so a
-    resolve-then-navigate check here would be a second lookup proving nothing.
-    The fetch layer's guard (`modules/_shared/url_guard.url_refusal`) DOES
-    resolve; the two are pinned against one shared case table in
-    `sidecar/tests/modules/shared/test_url_guard_corpus.py`, which is where that
-    divergence is recorded (duplication audit D-M10).
-
-    ``allow_local`` exists ONLY so tests can drive local fixture pages
-    (file:// and loopback); the production loop constructs the default."""
+    """Scheme and host policy for navigate and redirects (section 4.3). Literal IPs
+    only: Playwright resolves in the browser, so a pre-check lookup proves nothing.
+    The fetch guard resolves; both are pinned to 1 case table (D-M10).
+    `allow_local` exists only for test fixtures."""
 
     def __init__(self, *, allow_local: bool = False) -> None:
         self.allow_local = allow_local
@@ -199,12 +182,9 @@ class Executor:
         )
 
     async def _locator(self, element: ObservedElement):
-        """Locate by the per-scan ``unique_id`` attribute, searching the main
-        frame first and then every child frame. The ids are globally unique
-        per observation, so the first hit is THE element — this deliberately
-        does not trust ``frame_index`` positions, because the observation
-        numbers only the frames it walked (filtered), not ``page.frames``
-        order. Not found anywhere → the observation is stale (section 4.1)."""
+        """Locate by the per-scan `unique_id`, main frame first, then every child frame;
+        ids are unique per observation, so the first hit is the element. Not found
+        means the observation is stale (section 4.1)."""
         selector = f'[{SKYVERN_ID_ATTR}="{element.unique_id}"]'
         main = self._page.locator(selector).first
         if await main.count():

@@ -89,16 +89,10 @@ SLOW_REQUEST_INFO_SECONDS = SLOW_REQUEST_SECONDS / 10
 
 
 class _RequestObserverMiddleware:
-    """Time every request, name the slow ones, and log any exception escaping a
-    route before RE-RAISING it (the 500 and its propagation are unchanged).
-
-    Two bars: INFO at SLOW_REQUEST_INFO_SECONDS (this route got slow), WARNING
-    at SLOW_REQUEST_SECONDS (this will cost a restart) — only the higher one
-    that's crossed logs, so a genuinely slow request logs once, not twice.
-
-    Pure ASGI on purpose: BaseHTTPMiddleware buffers response streams and breaks
-    SSE. `/api/events` is excluded from timing because an SSE stream is supposed
-    to stay open."""
+    """Time every request, name the slow ones, and log any exception escaping a route
+    before re-raising it. INFO past SLOW_REQUEST_INFO_SECONDS, WARNING past
+    SLOW_REQUEST_SECONDS, only the higher. Pure ASGI (BaseHTTPMiddleware breaks
+    SSE); `/api/events` isn't timed."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -140,16 +134,9 @@ def create_app(
     operation_registry: OperationRegistry | None = None,
     enable_scheduler: bool = True,
 ) -> FastAPI:
-    """Build the sidecar FastAPI app.
-
-    `token` guards every non-open route. `original_ppid` (the shell's pid at
-    spawn) arms the orphan watchdog; when None (tests, standalone curl) the
-    watchdog is skipped. `data_dir` overrides the DB/app-data location (tests
-    point it at a tmp dir); None falls back to FYJ_DATA_DIR / the platform dir.
-    `operation_registry` overrides the default kind table (tests register fake
-    entrypoints); None uses `default_operation_registry()`. `enable_scheduler`
-    runs the 60 s tick loop (off for isolated route tests).
-    """
+    """Build the sidecar app. `token` guards non-open routes; `original_ppid` arms
+    the orphan watchdog; `data_dir` overrides the data location; tests pass an
+    `operation_registry` of fakes; `enable_scheduler` runs the 60 s tick loop."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -437,12 +424,9 @@ def create_app(
     async def _app_key_unavailable(
         _request: Request, exc: AppKeyUnavailable
     ) -> JSONResponse:
-        """Say what happened instead of a bare 500. The message names the
-        keychain, the key file path, and the recovery, and it is the only thing
-        standing between the user and silently unreadable API keys — without
-        this handler it reached them as "Internal Server Error" and lived only
-        in `logs/sidecar.log`. 503, because the install is fine and the secret
-        store is what's unavailable; the frontend renders `detail` verbatim."""
+        """Name the keychain, the key file and the recovery instead of a bare 500, so
+        unreadable API keys are never silent. 503: the install is fine, the secret store
+        isn't; the frontend shows `detail` verbatim."""
         return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     app.state.token = token

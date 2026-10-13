@@ -1,29 +1,11 @@
-"""Apify BYO-key adapter family — actor-backed search sources.
+"""Apify BYO-key adapter family: actor-backed search sources.
 
-Covers the boards a first-party adapter cleanly can't (decision record in
-`docs/internal/discovery.md`): Indeed (Cloudflare-walled; the only direct API
-needs Indeed's own lifted mobile-app credential), Naukri (reCAPTCHA-walled),
-Seek — plus LinkedIn as an optional deeper-JD complement to the guest adapter.
-The credential is the **user's own Apify account token** (free tier ≈ $5/mo of
-credit, no card) — squarely inside the header/credential policy line
-(`http.BROWSER_HEADERS` docstring): we never embed or lift anyone else's key.
-
-Search shape (adapters/base.py): claims `board = "apify"` rows whose `actor`
-names a supported actor. `search()` builds actor input from the same
-`build_queries()` prefs as every search source, runs the actor synchronously
-on the user's account (`run-sync-get-dataset-items` — blocks until the actor
-finishes, hence the long per-call timeout), and normalizes dataset rows into
-the shared funnel. Same filters, same dedup, same per-source diagnostics.
-
-The token travels in an `Authorization: Bearer` header, NEVER a query param:
-fetch errors quote the URL verbatim and land in persisted per-source
-diagnostics. Complement, not substitute — first-party adapters stay primary
-wherever a clean path exists (free, faster, key-less).
-
-Input/output field shapes live-verified against each actor's published schema
-on apify.com, 2026-07-18. An actor changing its schema degrades to "0 rows
-parsed" + a per-source error, never a crash.
-"""
+Covers boards a first-party adapter can't (discovery.md): Indeed and Naukri
+(walled), Seek, and LinkedIn as a deeper-JD complement, on the user's own Apify
+token. Claims `board = "apify"` rows naming a supported actor; `search()` runs
+the actor synchronously (`run-sync-get-dataset-items`) and feeds the shared
+funnel. The token rides a Bearer header, never the URL. Field shapes verified
+2026-07-18; a schema change degrades to 0 rows and an error."""
 
 from __future__ import annotations
 

@@ -1,22 +1,12 @@
-"""Discovery-source controls (Settings → Discovery sources).
+"""Discovery-source controls (Settings › Discover jobs).
 
-A dedicated router, like engines.py. Every adapter family the scraper ships is ON by default; the
-user opts *out* per family (or per entry, for actor-granular sources like
-Apify). The opt-out list lives in `UserPreferences.portals_config
-["disabled_sources"]` — the same JSON document `scan()` already reads, so a
-toggle takes effect on the next scan with no schema change and no restart.
-
-- `GET /api/discovery/sources` — the full catalog: id, label, kind, how many
-  of the user's `[[sources]]` entries resolve to it, enabled state.
-- `POST /api/discovery/sources` — flip one family/entry on or off; returns
-  the updated catalog.
-- `GET/POST/DELETE /api/discovery/credentials` — the BYO scraper keys
-  (Apify / Brave). Sealed with the app Fernet key into `scraper:<id>` rows in
-  `engine_settings` (same NFR-SEC-01 discipline as BYOK LLM keys; invisible
-  to the engine registry and the Settings engines list). Saving the Apify key
-  also seeds the default actor `[[sources]]` entries so the sources appear in
-  the catalog, toggleable per actor.
-"""
+Every source family is on by default; the user opts out per family or per entry
+(Apify actors). The opt-out list is `portals_config["disabled_sources"]`, the
+document `scan()` reads, so a toggle applies on the next scan. Routes: GET/POST
+/api/discovery/sources (the catalog, and flipping entries), and GET/POST/DELETE
+/api/discovery/credentials (the Apify and Brave keys, sealed with the app Fernet
+key into `scraper:<id>` rows, NFR-SEC-01). Saving the Apify key seeds the default
+actor sources."""
 
 from __future__ import annotations
 
@@ -57,14 +47,9 @@ ACTOR_LABELS: dict[str, str] = {
 
 
 def _portals(repos) -> dict:  # noqa: ANN001 — Repos
-    """A fresh shallow COPY of the stored `portals_config` document.
-
-    The ONE place that reads it (D-A1). Copy, never mutate the stored document
-    in place: the loaded JSON shares its nested dicts/lists with the ORM row, so
-    an in-place edit changes "old" and "new" alike and SQLAlchemy sees no change
-    to flush (found 2026-07-22 — the silent "toggle never turns on" bug). A row
-    inside `sources` must likewise be REPLACED (`{**raw, ...}`), never edited.
-    """
+    """A fresh shallow copy of the stored `portals_config`, the 1 place that reads it
+    (D-A1). Never mutate the stored document: its nested JSON is shared with the ORM
+    row, so an in-place edit flushes nothing. Replace a `sources` row, never edit it."""
     return dict(repos.preferences.get_or_create().portals_config or {})
 
 
@@ -241,15 +226,10 @@ def _slugish(s: str) -> str:
 
 
 def _find_source_by_company(sources: list, company: str, source_adapter: str) -> dict | None:
-    """The `[[sources]]` row already covering `company`, matched by company
-    name or URL tenant slug against rows the job's own adapter family claims.
-
-    Why: several ATSes publish postings on the COMPANY's domain (Greenhouse
-    `absolute_url` → `www.coupang.jobs/…`), so the job's canonical URL can't
-    be walked back to a board root — but the board that FOUND the job is
-    already in the sources list; watching should find it there, not 422
-    (maintainer 2026-07-22, the Coupang/Roku "Can't watch this source" bug).
-    """
+    """The `[[sources]]` row already covering `company`, matched by name or tenant
+    slug among rows the job's adapter family claims. Some ATSes post on the
+    company's own domain, so the URL can't be walked back to a board, but the board
+    that found the job is already a source (the Coupang and Roku watch bug)."""
     want = _slugish(company)
     if not want:
         return None
@@ -565,21 +545,10 @@ def _analytics_bucket_id(source_key: str) -> str:
 
 @router.get("/api/discovery/analytics")
 async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
-    """Aggregates existing records only (no migration): stored `jobs` ×
-    `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
-    scans' `result_ref.per_source` fetch/keep/error/latency numbers.
-
-    `scored` and `avg_score` exclude `unscorable` jobs (no usable
-    description — the board's own rule, dto.py `job_dto`), so a source with
-    no description-bearing rows reports no score rather than a 0-dragged
-    one. Every other count (`jobs`, `saved`, `fetched`, `kept`, ...) still
-    counts them: the source did return those rows.
-
-    Off the event loop (S-C7): the fold walks every job the board can hold
-    (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
-    install could hold it past the shell's 2 s /healthz window and cost a
-    sidecar restart. `board` and `list_jobs` got this in the F-H2 pass; this
-    route is the one it missed."""
+    """Per-source analytics from existing records: jobs by `source_adapter`, scores,
+    applications, and the last `_RECENT_SCANS` scans' per-source numbers. `scored`
+    and `avg_score` skip unscorable jobs, as the board does. Off the event loop
+    (S-C7): the fold walks up to 10,000 jobs."""
 
     def _assemble() -> dto.DiscoveryAnalyticsDTO:
         from sidecar.modules.scorer.deterministic import MIN_JD_CHARS

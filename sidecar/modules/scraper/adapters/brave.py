@@ -1,19 +1,10 @@
-"""Brave Search meta-discovery — BYO-key candidate-URL search source.
+"""Brave Search meta-discovery: a BYO-key candidate-URL source.
 
-Approved-plan commit 5 (2026-07-17): one Brave Web Search query per
-(ATS-domain × role-alias × location), `freshness=pw` (past week), the user's
-own Brave Search API key (free tier ≈ 2,000 queries/mo — the app keeps a
-monthly ledger and stops querying at the cap). Results are job-posting URLs
-on ATS domains we already parse; each becomes a lean candidate row that rides
-the normal funnel — title/location filters refine it, canonical dedup
-collapses it with rows the first-party adapters found, and the JD arrives via
-enrichment. Complement, not substitute: this catches boards *not in the
-user's registry* (a company on Greenhouse we never listed).
-
-The key travels in the `X-Subscription-Token` header (Brave's scheme), never
-in the URL. Query volume per scan is bounded: `MAX_PAIRS` alias×location
-pairs × the ATS domain list.
-"""
+1 query per ATS domain × role alias × location, past week, on the user's key
+(the app keeps a monthly ledger and stops at the cap). Results are posting URLs
+on ATS domains we parse, riding the normal funnel; it finds boards not in the
+user's registry. The key rides `X-Subscription-Token`; `MAX_PAIRS` bounds a
+scan."""
 
 from __future__ import annotations
 

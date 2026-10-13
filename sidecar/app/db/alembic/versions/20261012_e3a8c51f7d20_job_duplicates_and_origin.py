@@ -1,10 +1,8 @@
 """1 table for duplicate pairs, who added each job, and the dead tombstone column.
 
-`job_duplicates` replaces the `probable-duplicate:` JSON flags and the
-dismissals table with 1 row per pair (url-less-jobs.md section 9.6).
-`jobs.origin` is `scan` or `manual`, because only a scanned job is tombstoned
-(section 8.2) and `source_adapter` can't tell an autofilled hand-added job from
-a scanned one. `tombstones.content_hash` has been unused since fd611f5.
+`job_duplicates` replaces the JSON flags and the dismissals table (section 9.6).
+`jobs.origin` is `scan` or `manual`: only a scanned job is tombstoned (8.2).
+`tombstones.content_hash` has been unused since fd611f5.
 
 Revision ID: e3a8c51f7d20
 Revises: d1c5f83a9b27

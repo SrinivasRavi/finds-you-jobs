@@ -1,14 +1,11 @@
-"""core operations — the orchestration baseline (database-design.md section 2/section 4 slice).
+"""core operations: the orchestration baseline.
 
-Creates the core-storage commit's tables (`docs/internal/roadmap.md` section 7.2 #3):
-`operations` (the runner's durable queue + cost ledger) and `user_preferences`
-(whose ui_state carries the pruned-spend lifetime aggregate). The remaining section 7
-tables land with their feature commits as follow-up revisions.
+Creates `operations` (the runner's durable queue and cost ledger) and
+`user_preferences` (archived roadmap.md section 7.2 #3).
 
 Revision ID: 5c01e8a4f2b7
 Revises:
 Create Date: 2026-07-16
-
 """
 # ruff: noqa: E501 — Alembic DDL; long create_index/constraint lines are boilerplate.
 from __future__ import annotations

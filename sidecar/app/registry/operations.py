@@ -1,16 +1,9 @@
-"""Operation registry: `kind → entrypoint` (architecture section 5.4).
+"""Operation registry: `kind -> entrypoint` (architecture section 5.4).
 
-An entrypoint is the thin app-side wrapper over one `sidecar.modules.*` bounded
-operation. It receives an `OperationContext` (the durable input snapshot + a
-resolved engine for LLM kinds) and returns an `OperationOutcome` (result_ref +
-usage + engine/model for the ledger). The runner never knows what a kind *does*
-— only this contract.
-
-**Core-storage boundary.** This commit ships the contract and an empty default
-registry: real kinds (scan/score/tailor/cover/…) register here as their module
-commits land (`docs/internal/roadmap.md` section 7.2 #5+). The core tests exercise the
-runner with fake entrypoints only.
-"""
+An entrypoint is the thin app-side wrapper over 1 module operation: it takes an
+`OperationContext` (the input snapshot and, for LLM kinds, a resolved engine)
+and returns an `OperationOutcome` (result_ref, usage, engine and model). The
+runner knows only this contract."""
 
 from __future__ import annotations
 
@@ -28,12 +21,8 @@ PublishFn = Callable[[dict[str, Any]], None]
 
 @dataclass
 class OperationContext:
-    """Everything an entrypoint needs to run one operation.
-
-    `db` + `operation_id` let entrypoints persist their results — scan writes
-    `Job` rows, score writes a `JobScore`, tailor/cover fill their pre-created
-    `Artifact` (found by `operation_id`). Both are `None` under the
-    fake-entrypoint runner tests, which never touch storage."""
+    """Everything an entrypoint needs. `db` and `operation_id` let it persist results;
+    both are None in the fake-entrypoint runner tests."""
 
     kind: str
     input_snapshot: dict[str, Any]
@@ -116,14 +105,9 @@ def _require_engine(ctx: OperationContext) -> ResolvedEngine:
 
 
 def prompt_for(ctx: OperationContext, kind: str) -> str | None:
-    """The system prompt this operation runs with.
-
-    Normally the user's saved override, or None for the module's shipped
-    default. A prompt-tuning test run carries its UNSAVED draft in the snapshot
-    instead (url-less-jobs.md section 11.2), which is the whole point of the
-    feature: the draft runs, and the committed prompt is untouched until the
-    user presses the one button that commits it.
-    """
+    """The system prompt this op runs with: the saved override, or None for the
+    shipped default. A prompt-tuning test carries its unsaved draft in the snapshot
+    instead (url-less-jobs.md section 11.2)."""
     from ..prompt_overrides import get_override
 
     draft = ctx.input_snapshot.get("prompt_draft_md")
@@ -133,27 +117,18 @@ def prompt_for(ctx: OperationContext, kind: str) -> str | None:
 
 
 def is_prompt_test(ctx: OperationContext) -> bool:
-    """A test run writes nothing. It must not overwrite the job's real score,
-    its artifacts, or the application profile, because the user is trying a
-    prompt out rather than asking for work.
-
-    The flag rides `input_snapshot` rather than becoming its own operation kind
-    (url-less-jobs.md P3): `Operation.kind` drives the Analytics grouping in 3
-    places, and a test run IS a tailor, which is what makes its cost comparable
-    to a real one."""
+    """A test run writes nothing (no score, artifacts or profile). A snapshot flag,
+    not its own kind (url-less-jobs.md P3): a test run is a tailor, so its cost
+    groups and compares like one."""
     return bool(ctx.input_snapshot.get("prompt_test"))
 
 
 def _load_job_inputs(
     ctx: OperationContext, *, also: Callable[[Repos], Any] | None = None
 ) -> tuple[str, str, int, Any]:
-    """The ONE load-job block of the job-shaped LLM entrypoints (score / tailor /
-    cover): `(job_text, master_md, profile_version)` out of the DB, or straight
-    off the snapshot on the DB-free fake-entrypoint path.
-
-    `also` runs inside the SAME repos context (score reads its scoring mode
-    there — one session, as before) and comes back as the 4th element; it is
-    None whenever there is no DB."""
+    """The 1 job-loading block for score, tailor and cover: `(job_text, master_md,
+    profile_version)` from the DB, or the snapshot when there's none. `also` runs in
+    the same repos context and returns as the 4th element."""
     from .persistence import load_job_and_master
 
     snap = ctx.input_snapshot
@@ -172,14 +147,9 @@ def llm_outcome(
     resolved: ResolvedEngine,
     model: str | None = None,
 ) -> OperationOutcome:
-    """The ONE usage/outcome tail every routed-engine entrypoint returns: the
-    ledger's usage dict plus the engine/model audit pair. A usage-accounting
-    change lands here, not once per kind.
-
-    `model` overrides the model precedence for a caller that computes it its own
-    way — `draft` (networker_ops) reads `result.usage.model` off the dataclass
-    where the kinds here read it out of the usage dict. Passed through verbatim
-    rather than silently aligned (D-A2)."""
+    """The 1 usage and outcome tail every routed entrypoint returns. `model`
+    overrides the model precedence for `draft`, which reads it off the dataclass,
+    passed through verbatim (D-A2)."""
     usage_dict = _usage_to_dict(usage)
     if model is None:
         model = (usage_dict or {}).get("model") or resolved.model
@@ -224,20 +194,10 @@ def scan_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
 def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
-    """The daily entity-lifecycle maintenance tick (zero-LLM, zero-network,
-    DB-only). Every window reads the user-configurable lifecycle settings
-    (FR-SYS-05); the defaults preserve prior behavior:
-
-    - **Trash TTL** (FR-SYS-04): tombstone + delete Trashed jobs past the window
-      (default 7 days).
-    - **Expired aging** (FR-SYS-03): grey active jobs at the configured window
-      (default 14 days), hard-delete Expired ones (no tombstone) at 30 days.
-    - **Archived-application purge** (FR-SYS-06): permanently remove archived
-      tracker cards past the window (default 30 days).
-
-    The prior repository also purges archived contacts here; that stage returns
-    with the Referral Outreach commits.
-    """
+    """The daily lifecycle tick, DB-only, windows from the lifecycle settings
+    (FR-SYS-05): the Trash TTL (FR-SYS-04, 7 days), expired aging (FR-SYS-03, grey
+    at 14 days, delete at 30), and the archived-application purge (FR-SYS-06, 30
+    days)."""
     from ..lifecycle import LIFECYCLE_DEFAULTS, resolve_lifecycle
     from .persistence import (
         age_expired_jobs,
@@ -385,19 +345,10 @@ def _ensure_keyword_floor(
 
 
 def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
-    """Fit-score one job → a cached `JobScore`.
-
-    Two modes (Settings → Scoring, maintainer design 2026-07-22):
-    - "keyword": the zero-LLM keyword scorer — free, instant, keyless. This IS
-      the score.
-    - "llm" (default): the routed-engine Scorer, an UPGRADE over the keyword
-      floor every job already carries (`_ensure_keyword_floor`, run post-scan
-      and at boot). On success the LLM score outranks the floor (display
-      precedence LLM > keyword). On FAILURE the op raises — it stays failed and
-      retryable in Logs, is not auto-retried, and the grey keyword floor is the
-      fallback the board shows (ensured here in case this op raced the floor
-      pass). No hidden re-scoring; nothing to fall back below keyword.
-    """
+    """Fit-score 1 job. "keyword": the free on-device scorer, which is the score.
+    "llm" (default): an upgrade over the keyword floor every job has; on failure the
+    op fails, retryable in Logs, never auto-retried, and the board shows the floor
+    (ensured here in case the floor pass hasn't run)."""
     from .persistence import (
         SCORER_IMPL,
         SCORER_IMPL_DETERMINISTIC,
@@ -589,20 +540,10 @@ def _score_result_ref(
     *,
     fell_back_from: str | None = None,
 ) -> dict[str, Any]:
-    """The score op's ledger payload.
-
-    `method` is always there: a thin JD is silently downgraded to keyword even
-    in LLM mode, and the user who paid for a model deserves to be told which
-    one actually ran (url-less-jobs.md section 8.7).
-
-    `fell_back_from` names the method the user actually picked when something
-    else ran it, which today is only On-device falling back to keyword
-    (scoring-build.md T10).
-
-    `reasons` rides along only on the triage path. With a job id they are
-    already on the job row, and a second copy of them here would drift from
-    it; with no job id there is no row and the operation is their only home
-    (section 9.1.1)."""
+    """The score op's ledger payload. `method` always: a thin JD silently runs
+    keyword (url-less-jobs.md section 8.7). `fell_back_from` names the picked method
+    when another ran (On-device to keyword, T10). `reasons` only on the triage path,
+    where there's no job row (section 9.1.1)."""
     ref: dict[str, Any] = {"score": score_0_100, "job_id": job_id, "method": method}
     if job_id is None:
         ref["reasons"] = reasons
@@ -612,16 +553,10 @@ def _score_result_ref(
 
 
 def _keyword_sweep(db: Database, *, refresh: bool) -> int:
-    """The ONE keyword sweep over the active board (~0.5 ms/job, no LLM) —
-    both policies below share this walker so their loop bodies can't drift:
-
-    - `refresh=False` — the FLOOR: only jobs NO scorer has rated get a keyword
-      rating, so no board row is ever stuck on Pending. A job that already has
-      one is left alone; nothing is ever overwritten.
-    - `refresh=True` — recompute every active job's keyword rating against the
-      new resume. It can never bury an AI score: the 2 live in separate columns
-      and the board prefers the AI one outright.
-    """
+    """The 1 keyword sweep over the active board (about 0.5 ms per job).
+    `refresh=False` is the floor: only unrated jobs get a keyword rating.
+    `refresh=True` recomputes every job against the new resume; the AI score lives in
+    its own column, so it's never buried."""
     from sidecar.modules.scorer.deterministic import score_deterministic
 
     from .persistence import SCORER_IMPL_DETERMINISTIC, compose_job_text

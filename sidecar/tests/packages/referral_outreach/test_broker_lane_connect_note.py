@@ -1,24 +1,12 @@
 # voyager_py/tests/test_broker_lane_connect_note.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""Phase-3 integration: the verbatim GPL connect-with-note flow runs on the CORE
-browser broker's serialized surface lane — not on a Chromium this package
-launched — against a LOCAL fixture shaped like the connect-with-note DOM.
+"""Phase 3: the verbatim GPL connect-with-note flow runs on the broker's lane,
+against a local fixture (`fixtures/profiles/invite_classic_modal.html`), never
+linkedin.com.
 
-This is the load-bearing proof that a broker-backed `AccountSession` binds the
-surface's own `page` inside a `run_on_lane` callable and drives the unchanged
-`actions._click_with_note` there: the note is typed and Send is clicked on the
-surface thread (where Playwright is greenlet-bound), and the note textarea ends
-up holding the exact composed message. ZERO linkedin.com — the surface is pointed
-at `fixtures/profiles/invite_classic_modal.html` (whose DOM matches
-`actions.CONNECT_SELECTORS`), never the network.
-
-The synchronous worker→lane bridge is exercised authentically: `run_browser` is
-invoked from a worker thread (`asyncio.to_thread`, as the operation runner does),
-so it `.result()`s the surface's `concurrent.futures.Future` off the serving loop.
-
-Anchors: FR-NW-03 (referral ask rides in the connect note); the broker's
-`run_on_lane` hook (section 5.4, "one account, one lane").
-"""
+The note is typed and Send clicked on the surface thread, and the textarea holds
+the exact message. `run_browser` is called from a worker thread, as the runner
+does. Anchors: FR-NW-03; the broker's `run_on_lane` (section 5.4)."""
 
 from __future__ import annotations
 

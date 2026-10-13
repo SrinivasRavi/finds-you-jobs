@@ -1,16 +1,8 @@
-"""The CoverLetterer black box: cover(master, job, ...) → CoverResult.
+"""The CoverLetterer black box: cover(master, job, ...) to CoverResult.
 
-One bounded operation at the interface (ROADMAP section 4). Internals (engine, step
-count, interim artifacts) are free to change without touching callers.
-Independent of any tailored resume — the letter stands on the master alone
-(FR-CL-01).
-
-Storage stance (ROADMAP section 4): the module owns no persistent storage. Interim
-artifacts, if any step needs them, live in a per-operation scratch directory
-that is deleted when the operation returns (pass keep_scratch=True to debug).
-The final artifact is returned as a value; the caller (CLI now, app later)
-decides where it lives.
-"""
+1 bounded operation; internals can change freely. The letter stands on the
+master alone (FR-CL-01). The module owns no storage: interim files live in a
+per-operation scratch dir deleted on return (`keep_scratch=True` to debug)."""
 
 from __future__ import annotations
 
@@ -38,13 +30,9 @@ def cover(
     skill_md: str | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> CoverResult:
-    """Write a cover letter from `master_md` for `job` (raw JD text, a .md/.txt
-    path, or a URL).
-
-    `skill_md`, when provided, replaces the on-disk skill file as the system
-    prompt (the app's user-editable-prompt override, section 5). None → the default.
-    `cancelled`, when provided, is polled at the retry checkpoints (loop top,
-    mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7)."""
+    """Write a cover letter from `master_md` for `job` (JD text, a path or a URL).
+    `skill_md` replaces the skill file (the user's prompt override). `cancelled` is
+    polled at retry checkpoints and raises `CompletionCancelled` (F-M7)."""
     engine = engine or ClaudeCliEngine()
     jd_md = resolve_job(job)
     samples = load_writing_samples(writing_samples_dir)

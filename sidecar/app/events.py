@@ -150,13 +150,9 @@ SSE_ENVELOPE_ADAPTER: TypeAdapter[Any] = TypeAdapter(SSEEnvelope)
 
 
 def register_sse_schemas(openapi_schema: dict[str, Any]) -> None:
-    """Inject the SSE envelope union (+ `LlmKind`, F-L3) into an OpenAPI schema.
-
-    `/api/events` is a `text/event-stream` route FastAPI can't type on its own,
-    so `main.py` calls this on the generated schema — the frontend then gets
-    `components["schemas"]["SSEEnvelope"]` / `["LlmKind"]` from `pnpm codegen`.
-    Idempotent (the schema dict FastAPI hands back is cached).
-    """
+    """Inject the SSE envelope union and `LlmKind` (F-L3) into the OpenAPI schema,
+    since FastAPI can't type an event-stream route; codegen then types the frontend.
+    Idempotent."""
     components = openapi_schema.setdefault("components", {}).setdefault("schemas", {})
     if "SSEEnvelope" in components:
         return
@@ -186,14 +182,9 @@ def _strict_envelopes() -> bool:
 
 
 def make_event(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """A typed SSE envelope. Every event on the stream has this shape.
-
-    Single choke point for the F-M2 drift-proofing: every publisher builds its
-    envelope here, so each one is validated against the `SSEEnvelope`
-    discriminated union the frontend's codegen types are emitted from. A key
-    rename at a publish site now fails loudly in dev/test instead of silently
-    killing UI invalidation; in production it is logged and still published.
-    """
+    """A typed SSE envelope, the 1 choke point (F-M2): every publisher's envelope is
+    validated against `SSEEnvelope`, so a key rename fails in dev and test; in
+    production it's logged and still published."""
     event = {"type": event_type, "payload": payload}
     try:
         SSE_ENVELOPE_ADAPTER.validate_python(event)
@@ -261,13 +252,9 @@ def _deliver_drop_oldest(queue: asyncio.Queue[dict[str, Any]], event: dict[str, 
 
 
 class EventHub:
-    """Thread-safe SSE fan-out (architecture section 5.3 "publishes to the SSE hub").
-
-    The runner's worker threads and the scheduler's coroutine both call
-    `publish`. Delivery into each subscriber's `asyncio.Queue` is marshalled
-    onto the bound event loop when publishing from another thread; when no loop
-    is bound (unit tests on the same thread) it delivers inline.
-    """
+    """Thread-safe SSE fan-out (architecture section 5.3). Workers and the scheduler
+    publish; delivery is marshalled onto the bound loop, or inline when none is
+    bound (same-thread tests)."""
 
     def __init__(self) -> None:
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()

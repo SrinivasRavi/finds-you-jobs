@@ -19,12 +19,9 @@ from ._support import TOKEN
 
 @pytest.fixture(autouse=True)
 def _no_real_llm_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Background ops enqueued by routes (extract at profile-save) resolve the
-    default claude-cli engine — never let a unit test spawn the real `claude -p`
-    subprocess (cost + nondeterminism). Ops that hit this fail fast with a typed
-    EngineError, which is harmless: route tests assert enqueueing, not op
-    outcomes. A test that needs a working engine overrides this with its own
-    fake."""
+    """Never let a unit test spawn a real `claude -p`. Background ops that hit this
+    fail fast with an EngineError, which is harmless; a test needing an engine
+    overrides it."""
     from sidecar.modules._shared import claude_engine
 
     def _refuse(self, system_prompt: str, user_prompt: str):  # noqa: ANN001, ANN202, ARG001
@@ -72,13 +69,8 @@ def wait_for_state(
 
 @pytest.fixture
 def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    """A booted app plus its client, on a throwaway data dir and with the
-    scheduler off so a test drives ticks itself.
-
-    10 modules carried this fixture verbatim (duplication audit D-T2). The 9
-    that genuinely need more (an env var, a session key, a fake driver) keep
-    their own, because that divergence is real.
-    """
+    """A booted app and its client on a throwaway data dir, scheduler off. Shared by
+    10 modules (D-T2); the 9 that need more keep their own."""
     app = create_app(
         token=TOKEN,
         original_ppid=None,

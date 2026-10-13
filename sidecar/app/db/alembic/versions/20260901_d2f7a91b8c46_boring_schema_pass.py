@@ -1,21 +1,8 @@
-"""The boring-schema pass: 4 changes the maintainer settled on 2026-09-01.
-
-1. `job_scores` collapses into 6 columns on `jobs`. The 3-part key carried a
-   `profile_version` dimension that never distinguished anything (1,238 rows,
-   614 distinct `(job_id, scorer_impl)` pairs, 0 pairs holding 2 payloads) and
-   made 2 selection defects possible. Display becomes `llm_score ?? keyword_score`,
-   a rule with no ranking in it. `score_attempts` / `score_last_error` gain their
-   `llm_` prefix, which is the scope they always had.
-2. `applications.job_id` becomes unique. One tracker card per role; the reads
-   already assumed it and nothing enforced it.
-3. `documents` + `application_documents` merge. The many-to-many was never
-   exercised and is what made the detach path leak the row and the blob.
-4. `contact_job_assocs` becomes `referral_candidates`. A row means "this person
-   is a referral candidate for this role"; `assoc` named the mechanism.
-
-Every collapse is lossless on the maintainer's install, verified before writing:
-no `(job_id, scorer_impl)` pair holds 2 different payloads, no job carries 2
-applications, and all 3 documents are linked exactly once.
+"""The boring-schema pass (2026-09-01): `job_scores` collapses into 6 `jobs`
+columns (display is `llm_score ?? keyword_score`); `applications.job_id` becomes
+unique; `documents` and its link table merge; `contact_job_assocs` becomes
+`referral_candidates`. Each collapse verified lossless on the maintainer's
+install first.
 
 Revision ID: d2f7a91b8c46
 Revises: b6e2f04a7d13

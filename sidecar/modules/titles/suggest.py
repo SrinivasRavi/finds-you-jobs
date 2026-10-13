@@ -35,13 +35,9 @@ def _rows() -> list[tuple[str, str]]:
 
 
 class TitleIndex:
-    """Titles pre-sorted by the display rank (shorter, then alphabetical).
-
-    A prefix match always outranks a substring match, so once a scan collects
-    `limit` prefix hits in rank order they're already the winners; the scan can
-    stop without ever looking at substrings. That early exit is what keeps a
-    2-letter query (thousands of possible hits) fast, not a cleverer index.
-    """
+    """Titles pre-sorted by display rank (shorter, then alphabetical). A prefix match
+    outranks a substring, so the scan stops once it has `limit` prefix hits, which
+    keeps a 2-letter query fast."""
 
     __slots__ = ("titles", "folded", "known")
 

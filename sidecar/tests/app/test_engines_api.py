@@ -1,15 +1,8 @@
 """Covers: the BYOK provider router (FR-SET-06 / US-SET-07 / US-OB-04).
 
-Drives `sidecar/app/api/engines.py` through the real app (TestClient → lifespan
-→ real migration + engine registry):
-
-- save seals the key (never plaintext on disk), list returns a masked hint only;
-- verify makes a provider-appropriate call against a **fake** HTTP transport
-  (no network), surfacing a 401's verbatim body;
-- a saved + routed BYOK engine registers so `resolve(kind)` returns it;
-- delete removes the config and 404s when absent;
-- the claude-cli live verify is env-guarded (FYJ_LIVE_E2E).
-"""
+Save seals the key and list shows a masked hint; verify calls a fake transport
+and surfaces a 401's body; a routed BYOK engine resolves; delete removes it (404
+when absent); the live claude-cli verify needs FYJ_LIVE_E2E."""
 
 from __future__ import annotations
 

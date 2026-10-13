@@ -1,14 +1,8 @@
-"""The 2 tables no gazetteer carries: multi-country regions, and metro nicknames.
+"""The 2 tables no gazetteer carries: multi-country regions and metro nicknames.
 
-Both are editorial and both are small on purpose. GeoNames knows cities, divisions
-and countries; it does not know that "EMEA" is a hiring region or that "Bay Area"
-is a place people put in a job posting (`search_cities("Bay Area")` returns 0).
-
-A region maps to the countries a remote posting scoped to it is open to. `None`
-means every country, which is what "global" and "anywhere" mean. The country sets
-are deliberately the places a remote role in that region is actually offered to,
-not the full membership of any political body.
-"""
+Editorial and small on purpose: GeoNames doesn't know "EMEA" or "Bay Area". A
+region maps to the countries a remote role there is actually offered to; `None`
+means every country ("global", "anywhere")."""
 
 from __future__ import annotations
 

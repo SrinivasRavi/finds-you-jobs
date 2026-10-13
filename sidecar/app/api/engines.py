@@ -1,23 +1,11 @@
-"""BYOK provider surface — verify + CRUD (FR-SET-06 / US-SET-07 / US-OB-04).
+"""BYOK provider surface: verify and CRUD (FR-SET-06 / US-SET-07 / US-OB-04).
 
-A dedicated router. It backs both the
-Settings → AI Providers panel and the Onboarding Verify gate:
-
-- `POST /api/engines/verify` — a provider-appropriate real check. Anthropic /
-  OpenAI / OpenRouter / Local use the free authenticated models-list call;
-  `claude-cli` runs a minimal real completion. Returns `{ok, detail, provider}`
-  with the provider's **verbatim** failure text on `ok=False`.
-- `GET /api/engines` — the persisted engine configs, masked (`key_hint`, never
-  the key).
-- `POST /api/engines` — save/replace a provider config. A sent `key` is
-  **sealed** with the app Fernet key (`get_app_key`) into
-  `EngineSettings.key_encrypted`; `key_ref` carries only a masked hint. Omitting
-  `key` leaves an existing sealed key intact. After the write the engine
-  registry is rebuilt so routing to the provider works immediately.
-- `DELETE /api/engines/{provider}` — remove a provider config + rebuild.
-
-Keys never appear in a response (masked only), a log line, or an error message.
-"""
+Backs Settings › AI providers and onboarding's Verify. POST /api/engines/verify
+runs a real check (a free models-list call, or a minimal completion for a CLI)
+and returns the provider's verbatim failure. GET lists configs, masked. POST
+saves one, sealing a sent key with the app Fernet key; omitting `key` keeps the
+old one, and the registry rebuilds at once. DELETE removes one. Keys never
+appear in a response, a log line or an error."""
 
 from __future__ import annotations
 
@@ -110,12 +98,9 @@ def _cli_not_found(provider: str, detail: str) -> dto.EngineVerifyResult:
 def _verify_by_completion(
     engine_cls: Callable[..., Any], *, timeout_s: int, provider: str, ok_detail: str
 ) -> dto.EngineVerifyResult:
-    """The shared fallback tail: prove a subscription CLI with one minimal REAL
-    completion. An `EngineError` comes back verbatim, classified `not_logged_in`
-    when its text reads like an auth failure and `error` otherwise. Only the
-    engine class, its timeout, and the two strings are per-provider.
-
-    Blocking (subprocess); callers must run it off the event loop."""
+    """The shared fallback: prove a subscription CLI with 1 minimal real completion.
+    An `EngineError` comes back verbatim, classed `not_logged_in` when it reads like
+    auth, else `error`. Blocking; run it off the event loop."""
     from sidecar.modules._shared.claude_engine import EngineError
 
     try:
@@ -135,18 +120,10 @@ def _verify_by_completion(
 
 
 def _verify_claude_cli() -> dto.EngineVerifyResult:
-    """Verify the Claude-subscription CLI, cheapest-first. Distinguishes 'not
-    installed' from 'not logged in' so onboarding can guide the exact fix.
-
-    1. Resolve the binary (login-shell PATH, so a GUI launch finds it).
-    2. `claude auth status` — an instant, free auth probe that also names the
-       account (email + plan), matching how the API providers verify (a free
-       authenticated check, not a completion).
-    3. Older CLI without `auth status` → fall back to a minimal real completion.
-
-    Blocking (subprocesses, up to 60s on the fallback); callers must run it off
-    the event loop.
-    """
+    """Verify the Claude CLI, cheapest first, telling "not installed" from "not
+    logged in": resolve the binary (login-shell PATH), then `claude auth status`
+    (free, names the account), else fall back to a minimal completion. Blocking (up
+    to 60 s); run it off the event loop."""
     from sidecar.modules._shared.claude_engine import (
         ClaudeCliEngine,
         claude_auth_status,

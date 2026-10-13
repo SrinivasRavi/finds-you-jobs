@@ -1,17 +1,9 @@
-"""Search-query construction shared by the search adapters (LinkedIn/Indeed/
-Naukri) — turn the user's preferences into a bounded set of (keyword, location)
-queries.
+"""Search-query construction for the search adapters: preferences to a bounded
+set of (keyword, location) queries.
 
-A search source can't enumerate a whole site, so it queries per role alias ×
-location. Left unbounded that is a combinatorial fetch explosion, so the count
-is capped: at most `MAX_ALIASES` × `MAX_LOCATIONS` pairs per source per scan.
-This is a *fetch* budget (per-IP courtesy + latency), distinct from the
-never-throttle rule on *application* volume — see the vision ethos.
-
-An empty alias list yields no queries: a keyword-less search would pull an
-entire job board, which is neither useful nor kind to the endpoint. The caller
-surfaces that as a clear per-source diagnostic rather than fetching blindly.
-"""
+Capped at `MAX_ALIASES` × `MAX_LOCATIONS` per source per scan, a fetch budget
+distinct from the never-throttle rule on applications. No aliases means no
+queries, surfaced as a per-source diagnostic."""
 
 from __future__ import annotations
 

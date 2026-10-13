@@ -31,12 +31,8 @@ async def monitor_loop_lag(
     clock: Callable[[], float] = time.perf_counter,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
-    """Loop forever, warning whenever a sleep wakes up later than asked.
-
-    `clock`/`sleep` are injectable so tests use small values instead of real
-    waits (mirrors `watch_parent`'s `poll_interval` injection in
-    `watchdog.py`). Runs until cancelled by the caller.
-    """
+    """Loop forever, warning whenever a sleep wakes later than asked. `clock` and
+    `sleep` are injectable for tests, like `watch_parent`."""
     log = get_logger()
     while True:
         started = clock()

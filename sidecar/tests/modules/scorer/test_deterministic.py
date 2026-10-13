@@ -8,12 +8,9 @@ from sidecar.modules.scorer.deterministic import MIN_JD_CHARS, score_determinist
 
 
 def jd(body: str) -> str:
-    """A JD fixture of realistic length. The rubric cases below used 77-char
-    one-liners, which is shorter than any real posting (the shortest description
-    on the maintainer's install is 464 chars) and now sits under `MIN_JD_CHARS`,
-    where scoring refuses. `body` carries the signal each test is about; the
-    filler is deliberately generic so it adds no skills, no years, and no
-    red-flag terms of its own."""
+    """A JD fixture of realistic length: the old 77-char cases now sit under
+    `MIN_JD_CHARS`. `body` carries each test's signal; the filler adds no skills,
+    years or red flags."""
     filler = (
         " The team ships to production continuously and reviews each other's work. "
         "You will collaborate with product and design, take part in on-call, and "

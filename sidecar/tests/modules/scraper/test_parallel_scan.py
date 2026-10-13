@@ -1,14 +1,8 @@
-"""Covers: the parallel fetch phase of scan() (discovery-expansion 2026-07-18,
-user directive — parallelism is the foundation the rest of discovery builds on).
+"""Covers: the parallel fetch phase of scan().
 
-The guarantees under test:
-- concurrency is real — a slow source does not serialize the others (total
-  wall-clock ≈ the slowest source, not the sum);
-- results are deterministic and identical to the sequential path, regardless
-  of which worker finishes first (dedup is first-occurrence-wins in SOURCE
-  order, not completion order);
-- `max_workers <= 1` forces the sequential path.
-"""
+Concurrency is real (wall-clock is about the slowest source); results match the
+sequential path whichever worker finishes first (dedup is first-wins in source
+order); `max_workers <= 1` runs sequentially."""
 
 from __future__ import annotations
 

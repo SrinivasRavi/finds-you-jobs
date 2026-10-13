@@ -1,17 +1,9 @@
 """F-P10 boundary guard: core never imports the GPLv3 `upstream/` subtree.
 
-New finds-you-jobs-owned test (not carried from upstream). The one-way import
-rule says `sidecar.app.*` and `sidecar.modules.*` reach the LinkedIn browser
-core only through the AGPL-owned facade
-(`sidecar.packages.referral_outreach` / `.facade`), never
-`sidecar.packages.referral_outreach.upstream.*` directly. This walks the AST of
-every core module and fails loudly if one imports `upstream.*` again.
-
-AST-only on purpose: docstrings and comments that name `upstream.worker` (the
-driver's own module docstring does) are prose, not imports, so they never trip
-the guard. Runs in the standard `uv run pytest` suite, which CI already gates,
-so no extra tool or dependency is needed.
-"""
+`sidecar.app.*` and `sidecar.modules.*` reach the LinkedIn core only through
+the AGPL facade; this walks every core module's AST and fails on an
+`upstream.*` import. AST only, so prose naming `upstream.worker` doesn't trip
+it."""
 
 from __future__ import annotations
 

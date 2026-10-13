@@ -1,15 +1,11 @@
-"""tracker applications — the pipeline slice (database-design.md section 4 slice).
+"""tracker applications: the pipeline slice.
 
-Creates the tracker tables for the saved/optional-referral/ready-to-apply
-commit (`docs/internal/roadmap.md` section 7.2 #8): applications (with the section 5.1
-exclusive `intent` column folded into the initial DDL; the prior repository's
-retired `apply_state`/`form_prep` columns are deliberately absent), artifacts
-(with `approved_at` folded in), and application_events.
+Creates applications (with the section 5.1 `intent` column), artifacts (with
+`approved_at`) and application_events (roadmap.md 7.2 #8).
 
 Revision ID: e5a7c2d9b1f6
 Revises: c7e91d3f5a24
 Create Date: 2026-07-16
-
 """
 # ruff: noqa: E501 — Alembic DDL; long create_index/constraint lines are boilerplate.
 from __future__ import annotations

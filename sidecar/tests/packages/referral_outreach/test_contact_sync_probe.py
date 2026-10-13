@@ -1,24 +1,11 @@
 # voyager_py/tests/test_contact_sync_probe.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""Covers the READ-ONLY contact-status sync probe's pure parsers (FR-NW-15 /
-US-NW-12), locked to the GraphQL messenger inbox shape captured verbatim from
-LinkedIn's own client (headed DevTools, 2026-08-15) after the legacy
-LEGACY_INBOX REST finder proved dead on the live wire:
+"""Covers: the read-only sync probe's pure parsers (FR-NW-15 / US-NW-12), locked
+to the GraphQL inbox shape captured from LinkedIn's own client (2026-08-15).
 
-  - `parse_inbox_last_messages` — the sweep's ONE inbox page → {contact tail:
-    InboxThread(last-sender tail, deliveredAt seconds, message text, other
-    participant's display name)}, 1:1 threads only.
-  - `inbox_direction_for` — one contact's direction + display pair (text,
-    from_name) against that map.
-  - `summarize_inbox_payload` — the capture's body-shape counts.
-  - `parse_self_member_urns` — self identities off `/voyager/api/me` (the
-    mailbox urn's source).
-  - `redact_urn_string` / `redact_voyager_payload` — the capture redaction:
-    shape survives, identities and message bodies do not.
-
-Zero live LinkedIn traffic — the fixtures are SYNTHETIC, built to the captured
-shape (no real payload data is kept anywhere in the repo).
-"""
+`parse_inbox_last_messages` (1:1 threads only), `inbox_direction_for`,
+`summarize_inbox_payload`, `parse_self_member_urns`, and the capture redaction,
+which keeps shape and drops identities and bodies. Synthetic fixtures only."""
 
 from __future__ import annotations
 

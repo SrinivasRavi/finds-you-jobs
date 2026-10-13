@@ -1,14 +1,9 @@
 """Covers: a job with no posting URL, end to end (url-less-jobs.md).
 
-Layer 1, identity. The migration gives a URL-less row its own key, so these
-tests are the layer's acceptance bar: post the same JD twice and get 1 row.
-
-- identity: a URL row keys on its URL, a URL-less row on its description hash,
-  and neither population collides with the other;
-- the dedup branch, the tombstone lookup and Trash restore all read whichever
-  key the row has;
-- `age_expired_jobs` never touches a row the feed can't replace (section 5.6).
-"""
+Identity: post the same JD twice, get 1 row. A URL row keys on its URL, a
+URL-less row on its description hash, and the 2 never collide; dedup, tombstone
+lookup and Trash restore read whichever key a row has; `age_expired_jobs` skips
+rows the feed can't replace (section 5.6)."""
 
 from __future__ import annotations
 
@@ -490,14 +485,9 @@ def test_apply_refuses_a_url_less_card_before_writing_a_run(
 def test_a_dev_run_may_carry_its_own_form_because_a_fixture_is_not_a_posting(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
-    """A local fixture form is a `file://` URL, and `canonicalize_url` rejects
-    any scheme that is not http(s), because a posting's identity cannot be a
-    path on this machine. So the Applier's own end-to-end gate stores its job
-    URL-less, and the no-link refusal silently took that whole test with it.
-
-    The fixture travels in the dev knobs instead, where `allow_local` and the
-    scripted engine already live. Production is untouched: the test above still
-    gets its 409, because no dev knobs means no override."""
+    """A fixture form is a file:// URL, which `canonicalize_url` rejects, so the
+    no-link guard took the Applier's end-to-end test with it. The fixture rides the
+    dev knobs instead; production still gets its 409."""
     app, client = app_client
     job = _paste(client, _JD)
     saved = client.post(

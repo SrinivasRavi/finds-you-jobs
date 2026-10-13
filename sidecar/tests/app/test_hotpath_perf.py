@@ -1,23 +1,9 @@
-"""F-H2 regression coverage: board + applications hot-path scaling.
+"""F-H2 regression coverage: board and applications hot paths.
 
-Pins the three load-bearing properties of the 2026-07-25 fix:
-
-- `/api/applications` issues a CONSTANT number of SQL statements regardless of
-  card count (it was ~12-15 queries PER card, including a full score-op table
-  scan each — ~2500+ statements at 200 cards).
-- `/api/board` builds the JobDTO (three regexes over the full JD text each)
-  only for the returned page — never for every eligible row — and a large feed
-  answers fast.
-- Both assemblies run off the event loop via `asyncio.to_thread`, so the shell's
-  2 s /healthz window can never be crossed by feed size (async-first rule).
-
-Plus repo-level parity: each new batch helper agrees with its per-row
-equivalent, so the list endpoints can't drift from the single-card endpoints.
-
-The 2026-08-24 sweep adds the 3 routes that pass missed, same properties:
-`POST /api/jobs/trash/empty` (S-C6), `GET /api/discovery/analytics` (S-C7), and
-`GET /api/contacts` (S-C8, which was also an unbounded N+1).
-"""
+`/api/applications` issues a constant number of statements whatever the card
+count; `/api/board` builds DTOs only for the returned page; both run off the
+loop. Batch helpers agree with their per-row versions. Also trash/empty (S-C6),
+discovery analytics (S-C7) and contacts (S-C8)."""
 
 from __future__ import annotations
 
@@ -272,14 +258,9 @@ def test_board_large_feed_answers_fast(
 def test_board_and_applications_assemble_off_loop(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
-    """The hot paths never hold the event loop for feed-sized work.
-
-    They used to prove this by handing an inner `_assemble()` to
-    `asyncio.to_thread`. They are plain `def` handlers now (S-C35), which
-    Starlette runs in its own threadpool, so the guarantee is the framework's
-    and the assertion is about the handler's shape rather than about a call it
-    makes. Flipping one back to `async def` would silently put the whole
-    assembly on the loop, which is what this catches."""
+    """The hot paths never hold the loop: they're plain `def` handlers (S-C35), run in
+    Starlette's threadpool. Flipping one to `async def` would put the assembly on
+    the loop, which this catches."""
     app, client = app_client
     _seed_jobs(app, 5)
 
@@ -339,13 +320,9 @@ def _seed_contacts(
 def test_trash_analytics_and_contacts_run_off_loop(
     app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S-C6 / S-C7 / S-C8: none of the 3 can cross the shell's 2 s /healthz
-    window with Trash depth, job count, or roster size.
-
-    2 of them are plain `def` now and get Starlette's threadpool for free;
-    `discovery_analytics` is still `async def` around an inner `_assemble()`
-    handed to `asyncio.to_thread`, so it is checked the way it actually
-    works."""
+    """S-C6, S-C7, S-C8: none can cross the 2 s /healthz window. 2 are plain `def`;
+    `discovery_analytics` is `async def` around `asyncio.to_thread`, and is checked
+    that way."""
     app, client = app_client
     _seed_jobs(app, 5)
     _seed_trash(app, 5)
@@ -443,13 +420,8 @@ def test_contacts_list_matches_single_contact_build(
 def test_contacts_roster_is_bounded_and_filtered_in_sql(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
-    """S-C8: the roster read has a LIMIT, and every filter is in the query.
-
-    A LIMIT on top of a Python filter bounds the wrong population, which is why
-    both filters moved into SQL: 1,200 `candidate` rows (discovery writes one
-    per person found) would otherwise fill the cap before a single kanban card
-    was reached, and the Deleted-Contacts view would come back empty while the
-    archived rows sat past the cap."""
+    """S-C8: the roster read has a LIMIT and every filter is in SQL, so candidates
+    can't fill the cap and the Deleted Contacts view can't come back empty."""
     app, client = app_client
     _seed_contacts(app, 1200, status="candidate", logs=False)
     _seed_contacts(app, 5, status="accepted", start=2000)

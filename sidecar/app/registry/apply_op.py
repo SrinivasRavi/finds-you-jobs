@@ -1,26 +1,11 @@
-"""The Applier operation (docs/internal/archived/applier-as-built.md section 8) — one direct `apply`
-op from the Tracker, driving the jobapplier package's agent loop.
+"""The Applier operation (applier-as-built.md section 8): 1 `apply` op from the
+Tracker, driving `jobapplier.run_apply`.
 
-Lifecycle (section 8.1): the route creates the durable ApplyRun immediately; this
-entrypoint waits for the packet (a still-generating tailored resume) if
-needed, freezes the exact artifact used, renders it to PDF, opens the
-browser, and hands off to `jobapplier.run_apply`. The loop cannot submit —
-its tool vocabulary has no submit tool (section 4.2).
-
-P1 handoff (section 8.4): on `ready_for_human` the HEADED browser stays open for a
-bounded review window while we watch for a confirmation page. A detected
-confirmation records `submitted` with `submit_evidence=confirmation_detected`
-and moves the card to Applied; otherwise the run stays `ready_for_human` and
-the user may attest via the API. Closing the browser is an interruption,
-never a success.
-
-**Test seam.** `ENGINE_FACTORY` builds the model engine (tests inject
-`FakeApplyEngine`); `FYJ_APPLY_DEV=1` additionally honors the dev knobs in
-`input_snapshot` (`dev_engine_script`, `dev_allow_local`, `dev_headed=false`,
-`dev_review_wait_s`) so e2e can drive a real run against a local fixture form
-with zero model calls and zero external traffic. Without that env the knobs
-are ignored.
-"""
+The route creates the ApplyRun; this waits for the packet, freezes the
+artifact, renders the PDF and opens the browser. The loop has no submit tool
+(4.2). On `ready_for_human` the headed browser stays open for review (8.4): a
+confirmation page records `submitted`, else the user may attest. Tests inject
+`ENGINE_FACTORY`; `FYJ_APPLY_DEV=1` honors the snapshot's dev knobs."""
 
 from __future__ import annotations
 
@@ -141,16 +126,9 @@ def _run_dir(run_id: str) -> Path:
 
 
 def purge_run_dirs(run_ids: Iterable[str]) -> None:
-    """F-M8: remove `apply_runs/<run_id>/` artifact dirs (frozen resume PDF +
-    per-step PNGs) when their rows are purged — card delete and retention purge
-    both call this, or the evidence outlives the record forever.
-
-    Best-effort by design: a missing dir is fine, and an unremovable one must
-    never fail the delete/purge that triggered it — it is only logged. Path
-    safety: a target is removed only when its resolved path is a strict child
-    of the resolved `apply_runs` base (a hostile/corrupt run id can never walk
-    out of it). Blocking (shutil.rmtree) — call via `asyncio.to_thread` from
-    async request paths."""
+    """F-M8: remove `apply_runs/<run_id>/` dirs when their rows are purged. Best
+    effort: a failure is only logged. A target must resolve strictly inside the
+    `apply_runs` base. Blocking; use `asyncio.to_thread` from async paths."""
     log = logging.getLogger("fyj.sidecar")
     base = (resolve_data_dir() / "apply_runs").resolve()
     for run_id in run_ids:
@@ -525,12 +503,9 @@ async def _review_window(
 
 
 def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
-    """Land the run row terminal (`failed`) when the entrypoint dies before
-    `_finalize` owns the row — or when the route's enqueue itself fails (the
-    start_apply strand, 2026-07-25). Mirrors `_finalize_cancel`'s mechanics,
-    guarded to ACTIVE rows only. The OPERATION failure (row + ledger + SSE) is
-    the runner's job; this only keeps the durable run from sitting in a live
-    status forever."""
+    """Land the run row `failed` when the entrypoint dies before `_finalize` owns it,
+    or the route's enqueue fails. Guarded to active rows; the op failure itself is
+    the runner's job. This keeps the run from sitting live forever."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
         if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
@@ -545,16 +520,9 @@ def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
 
 
 def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
-    """Land the run row terminal (`interrupted`) when a QUEUED `apply` op is
-    cancelled before its entrypoint ever runs (the start_apply single-flight
-    strand, 2026-07-25): the generic operations-cancel route marks the queued
-    op `cancelled`, but nothing else finalizes the durable run — it would sit
-    in an ACTIVE status forever, so `start_apply`'s single-flight would keep
-    returning the dead run on every later Apply click for that card. A user
-    cancel lands `interrupted`, never `failed`. Mirrors `finalize_run_failed`'s
-    mechanics, guarded to ACTIVE rows only (double-finalize impossible: a row
-    that already landed terminal is left untouched — so this is a no-op if the
-    entrypoint raced ahead and finalized the run itself)."""
+    """Land the run row `interrupted` when a queued `apply` op is cancelled before
+    its entrypoint runs; otherwise it stays active and Apply keeps returning it.
+    Guarded to active rows, so a no-op if the entrypoint finalized it first."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
         if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
@@ -569,13 +537,9 @@ def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
 
 
 def advance_card_to_applied(repos: Repos, application_id: str, *, by: str) -> None:
-    """Move a pre-submission card to Applied and record the move (section 8.4).
-
-    The ONE implementation of the transition (D-A7): the applier's own
-    confirmation detection (`by="applier"`) and the human's attestation
-    (`by="user_attested"`) differ only in who is credited in the event detail —
-    they must never diverge in *what* they write. A card already past
-    Saved/Seeking Referral is left alone (never dragged backward)."""
+    """Move a pre-submission card to Applied and record it (section 8.4), the 1
+    implementation (D-A7): the applier's detection and the user's attestation differ
+    only in who's credited. A card past Seeking Referral is never dragged back."""
     app_row = repos.applications.get(application_id)
     if app_row is None or app_row.column not in ("saved", "seeking_referral"):
         return

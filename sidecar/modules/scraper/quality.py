@@ -53,14 +53,9 @@ def evaluate(
     posted_at: str | None = None,
     now: datetime | None = None,
 ) -> tuple[int, list[str]]:
-    """The checks themselves, over plain fields: `(trust_score, trust_flags)`.
-
-    Split out of `assess` so the paste path can run them too. A job the user
-    typed in never reached a scan, so until 2026-10-08 the red-flag terms were
-    never checked on the 1 ingest path where the text arrived by hand out of an
-    email (url-less-jobs.md 15.3). The URL checks no-op on an empty
-    `canonical_url`, so the same rules serve both callers.
-    """
+    """The checks over plain fields: `(trust_score, trust_flags)`. Split out so the
+    paste path runs them too (url-less-jobs.md 15.3); URL checks no-op without a
+    `canonical_url`."""
     score = 100
     flags: list[str] = []
 

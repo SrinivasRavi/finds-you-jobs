@@ -120,12 +120,8 @@ class _Segment:
 
 
 def _candidates(segment: str) -> list[list[str]]:
-    """One group per token in the segment, each group widest spelling first.
-
-    A caller stops at the first spelling that resolves, because a sub-word of a
-    name that already resolved is noise: "north america" is a region, while its
-    word "north" is a village in Cameroon.
-    """
+    """1 group per token, each widest spelling first. A caller stops at the first
+    that resolves: "north america" is a region; "north" is a village in Cameroon."""
     segment = REMOTE.sub(",", HYBRID.sub(",", ONSITE.sub(",", segment)))
     groups: list[list[str]] = []
     for part in TOKEN_SPLIT.split(segment):
@@ -142,12 +138,8 @@ def _candidates(segment: str) -> list[list[str]]:
 
 
 def _resolve_ats(part: str, g: Gazetteer, seg: _Segment) -> bool:
-    """An ATS location code, where position carries meaning: country, then
-    division, then city ("US-CA-Menlo Park", "IN-Karnataka-Bangalore").
-
-    Reading those parts positionally is what stops "US-CA" resolving CA as
-    Canada, which it does as a bare name.
-    """
+    """An ATS location code read by position: country, division, city ("US-CA-Menlo
+    Park"), which stops "US-CA" reading CA as Canada."""
     prefix = ATS_PREFIX.match(part)
     if prefix is None:
         return False
@@ -251,12 +243,9 @@ def _qualifiers(token: str, cands: list, g: Gazetteer) -> tuple[set[str], set[st
 def _qualified_city(
     cands: list, following: list[list[str]], g: Gazetteer
 ) -> tuple[Place | None, int]:
-    """Read a city with the 1 or 2 pieces after it (place-picker.md section 4).
-
-    Returns the place and how many pieces were used. A candidate inside a named
-    division wins, then one inside a named country; a qualifier naming a place
-    that holds no candidate means the city isn't in our cut, so that division
-    or country is the place. (None, 0) when nothing after it qualifies."""
+    """Read a city with up to 2 pieces after it (place-picker.md section 4); returns
+    the place and pieces used. A candidate in a named division wins, then in a named
+    country; a qualifier holding no candidate becomes the place. (None, 0) if none."""
     divisions: set[str] = set()
     countries: set[str] = set()
     used = 0
@@ -392,13 +381,9 @@ def chip_label(chip: object) -> str:
 
 
 def resolve_wanted(chips: Sequence[object], g: Gazetteer | None = None) -> Wanted:
-    """Resolve the user's preference chips once, into the sets `match` compares.
-
-    A picked chip (a dict from the location picker) is the place itself and is
-    never re-guessed; a plain string chip from before the picker is resolved
-    the old way (place-picker.md section 3). A city chip wants that city, not
-    its country; the country only comes back as a home country, which decides
-    whether a region-locked remote posting is reachable."""
+    """Resolve the user's chips once into the sets `match` compares. A picked chip is
+    the place itself; an old string chip resolves the old way (place-picker.md
+    section 3). A city chip wants the city; its country only counts as home."""
     g = g or gazetteer()
     remote = False
     city_ids: set[int] = set()

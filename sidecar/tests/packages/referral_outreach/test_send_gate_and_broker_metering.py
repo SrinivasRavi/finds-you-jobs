@@ -1,25 +1,12 @@
 # voyager_py/tests/test_send_gate_and_broker_metering.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""Phase 6: the referral send path over the broker-backed driver.
+"""Phase 6: the send path over the broker-backed driver, gated inside the GPL
+package either way, with 0 account use.
 
-The full send path is metered and gated INSIDE the GPL package, whether the page
-action self-launches its own Chromium or runs on the core browser broker's
-serialized surface lane. This proves the account-safety contract holds identically
-across both, with ZERO account use (fakes + a fake surface — the wire stays cold):
-
-  1. a send REFUSES before touching the surface when a cap is spent or a backoff
-     is active — no session is built, no lane action runs (charge-on-attempt only
-     charges an attempt that actually reaches the surface);
-  4. a 429 / RateLimited maps to a lane STOP, never a retry ladder: the blocked
-     send calls the action exactly once, refunds, and enters backoff, and the
-     next send in the batch refuses up front (invariant 6);
-  5. the metering is byte-identical self-launched vs broker-backed — the caps and
-     charge/refund live in the worker, OUTSIDE `run_browser`, so routing the page
-     action onto the broker lane changes nothing the ledger sees;
-  - the concurrency-lock probe: two concurrent broker-backed sends share ONE
-    file ledger guarded by `pacing._ledger_lock`; the broker rewiring must not
-    open a second writer that routes around the load-merge-write.
-"""
+A spent cap or active backoff refuses before the surface is touched; a 429 is a
+lane stop (1 call, refund, backoff, next send refuses); metering is identical
+self-launched and broker-backed, since caps live outside `run_browser`; and 2
+concurrent broker sends share 1 locked ledger."""
 
 from __future__ import annotations
 
@@ -304,12 +291,9 @@ def test_metering_is_identical_self_launched_and_broker_backed(
 def test_concurrent_broker_backed_sends_share_the_locked_ledger(
     tmp_path, no_jitter, monkeypatch
 ):
-    """The pacing ledger is a shared file guarded by an inter-process lock
-    (`pacing._ledger_lock`) around load-merge-write. The broker rewiring moved the
-    page action onto a lane but left the pacer's `save()` — and its lock — in the
-    worker thread, so two concurrent sends must not lose a charge (drifting low is
-    the unsafe direction). Both sends are broker-backed here, to prove the broker
-    path opens NO second writer that routes around the lock."""
+    """2 concurrent broker-backed sends must not lose a charge: the ledger's
+    `_ledger_lock` stays around load-merge-write in the worker thread, and the broker
+    path opens no second writer."""
     monkeypatch.setattr(
         actions, "send_connection_request", lambda s, p, note="", on_step=None: ("pending", "")
     )
@@ -406,12 +390,9 @@ def test_voyager_fetch_asserts_origin_before_the_inpage_fetch():
 
 
 def test_send_connection_popup_handler_survives_playwrights_sync_wrapper(monkeypatch):
-    """Playwright's sync `wrap_handler` setattr's an impl handle on any handler
-    given to `page.on`, which a bound builtin (`popups.append`) cannot carry —
-    the first live invite failed exactly there (2026-08-14), a line the
-    wire-cold fixture flow never reaches (it enters below
-    `send_connection_request`). The page stand-in performs the same setattr, so
-    a regression back to a builtin handler fails here, wire-cold."""
+    """Playwright's sync `wrap_handler` setattrs on any `page.on` handler, which a
+    bound builtin can't carry (the first live invite failed there). The stand-in does
+    the same setattr, so a builtin handler fails here."""
 
     class _Bail(Exception):
         pass

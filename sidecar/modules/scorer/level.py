@@ -1,14 +1,9 @@
 """Deterministic seniority-level extractor for job titles.
 
-Measured 2026-10-01 over the 93 distinct titles on the maintainer's install
-(docs/internal/evidence/2026-10-01-location-resolution/README.md, "Titles"):
-an 11-rung word ladder labels 70 of 93. Word tokens (Senior, Staff, Principal,
-...) and standalone roman-numeral/digit tokens (Engineer II) both carry a
-level; when a title has both, the word wins, because a company that writes
-"Senior ... II" means a senior engineer on its own ladder. Among word matches,
-the longest matched text wins, then the higher level, which is why "Senior
-Staff" reads as `SENIOR_STAFF` and not `SENIOR`. No I/O, no model, pure regex.
-"""
+An 11-rung word ladder labels 70 of 93 real titles
+(evidence/2026-10-01-location-resolution, "Titles"). Words and roman or digit
+tokens both carry a level; a word wins, then the longest match, then the higher
+level ("Senior Staff" is `SENIOR_STAFF`). Pure regex."""
 
 from __future__ import annotations
 

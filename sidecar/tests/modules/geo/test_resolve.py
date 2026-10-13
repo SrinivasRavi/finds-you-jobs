@@ -1,15 +1,9 @@
 """The resolver against every location string on the maintainer's install.
 
-The 58 cases below are the distinct `jobs.location` values on that install, each
-hand-labelled 2026-10-01 under the rule written up in
-`docs/internal/evidence/2026-10-01-location-resolution/README.md`: a remote token
-with a region qualifier in its own segment is decided by that region, and a bare
-"Remote" beside foreign cities is unverifiable. 19 match, 22 miss, 17 unverifiable.
-
-The bar this holds is the one the spike measured: 0 match-versus-miss errors. A
-case moving between match and miss is a regression; a case moving to or from
-unverifiable is a policy change and needs its label changed here on purpose.
-"""
+58 distinct values, hand-labelled 2026-10-01
+(evidence/2026-10-01-location-resolution): 19 match, 22 miss, 17 unverifiable.
+The bar is 0 match-versus-miss errors; moving a case to or from unverifiable is
+a policy change, made here on purpose."""
 
 from __future__ import annotations
 

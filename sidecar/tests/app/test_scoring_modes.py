@@ -135,12 +135,9 @@ def test_keyword_mode_scores_without_any_engine(migrated_db: Database) -> None:
 def test_keyword_mode_writes_its_factor_rows_and_reads_the_users_locations(
     migrated_db: Database,
 ) -> None:
-    """The bars and the user weights read these rows, so a score that lands
-    without them is a score the UI cannot explain (`scoring.md` section 7.2).
-
-    The seeded job is in Bengaluru and the preference says Bengaluru, so the
-    location axis must come back a match: the op has to carry the user's own
-    chips down to a scorer that knows nothing about the database."""
+    """A score must land with its factor rows, or the UI can't explain it (scoring.md
+    7.2). The job and the preference are both Bengaluru, so the location axis must
+    match: the op carries the user's chips down to the scorer."""
     db = migrated_db
     job_id = _seed(db)
     with db.repos() as repos:
@@ -209,14 +206,9 @@ def test_keyword_mode_plans_no_llm_the_floor_scores(migrated_db: Database) -> No
 def test_llm_planner_upgrades_keyword_floored_jobs_and_retries_failures(
     migrated_db: Database,
 ) -> None:
-    """AI mode: a keyword-floored job is still planned for an LLM upgrade (the
-    floor doesn't count as done), and a job whose LLM attempt failed IS planned
-    again while its attempt budget lasts.
-
-    That second half used to be the opposite. A `failed` score op excluded the
-    job from every future tick, so a fan-out that died on an expired key left
-    every job in it permanently unscored. The bound is `Job.score_attempts` now
-    (see `test_a_real_provider_failure_spends_an_attempt_and_stops_at_the_cap`)."""
+    """AI mode: a keyword-floored job is still planned for an upgrade, and a failed
+    attempt is planned again while the budget lasts (it once excluded the job for
+    good). The bound is `Job.score_attempts`."""
     db = migrated_db
     a = _seed(db, url="https://ex.co/j/up-a")
     with db.repos() as repos:

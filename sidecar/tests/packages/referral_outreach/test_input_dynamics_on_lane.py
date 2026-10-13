@@ -1,40 +1,15 @@
 # voyager_py/tests/test_input_dynamics_on_lane.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
 # ruff: noqa: S311 — seeded PRNGs make the typing/scroll schedules reproducible.
-"""Phase-4 integration: the human-input dynamics run END TO END on the CORE
-browser broker's serialized surface lane, against a LOCAL fixture — never a
-Chromium this package launched, and never the network.
+"""Phase 4: human-input dynamics end to end on the broker's lane, against a
+local fixture, never the network.
 
-The dynamics themselves (per-keystroke timing, keystroke rollover, the wheel
-cascade, the Weibull inter-send gap) are already unit-tested in isolation
-(`test_typing_dynamics.py`, `test_scroll_dynamics.py`, `test_pacing.py`). What
-those cannot reach is the greenlet-thread coupling: Playwright's sync objects
-are bound to the thread that made them, so `human_type` and `read_profile` are
-correct only if they touch the surface's OWN page on the surface thread. This
-file drives them through `BrowserSurface.run_on_lane` — the one thread where
-that Chrome's Playwright lives — and reads the result back off the real page:
-
-1. `human_type` types a message with uppercase runs, shifted punctuation, digits
-   and rollover-prone digraphs into the fixture textarea; the rendered
-   `textarea.value` must equal the drafted message character for character, and a
-   broker `screenshot()` must return non-empty bytes (the text is on screen).
-3. Every keydown the fixture saw carries `isTrusted === true` — CDP `Input.*`
-   events are trusted, the property a page's own bot checks read.
-2. `read_profile` fires real `wheel` events on the page (Our Finding 6: we used
-   to emit zero wheel events in 100% of detected agent sessions), counted by a
-   listener on the fixture and read back with `evaluate`.
-4. `Pacer.wait_before_send` sleeps a gap DERIVED FROM THE LEDGER for a permitted
-   send, and does not sleep when no send is owed. Asserted deterministically (a
-   pinned delay + a recording sleep), never on the flaky 30-90 s real band.
-
-Both `human_type` and `read_profile` drive the surface through Playwright's own
-high-level page API (`locator`/`keyboard`, `page.mouse`); neither opens a second
-CDP session, so neither fights the broker's screencast session and no upstream
-fork edit was needed for this phase (see `provenance.md`).
-
-Anchors: the broker's `run_on_lane` hook (section 5.4, "one account, one lane");
-NFR-LI-01 (inter-send spacing); the keystroke/scroll dynamics digest.
-"""
+The unit tests can't reach the greenlet-thread coupling, so this runs through
+`run_on_lane`: `human_type` renders the exact message with trusted keydowns,
+`read_profile` fires real wheel events (Our Finding 6), and
+`Pacer.wait_before_send` sleeps a ledger-derived gap, asserted with a pinned
+delay. Both use Playwright's page API, opening no second CDP session. Anchors:
+`run_on_lane`, NFR-LI-01."""
 
 from __future__ import annotations
 

@@ -128,18 +128,10 @@ def with_llm_limit(policy: ConcurrencyPolicy, limit: int) -> ConcurrencyPolicy:
 
 
 def can_start(kind: str, running_kinds: Iterable[str], policy: ConcurrencyPolicy) -> bool:
-    """True if an operation of `kind` may start given what is already running.
-
-    Rules, in order:
-      1. If an exclusive operation is running, nothing else may start.
-      2. If `kind` is exclusive, it may start only when nothing is running.
-      3. A `view_page` and any other browser-lane kind are mutually exclusive
-         (both directions: a view must not interleave a running lane op's
-         actions, and there is a window between a view being marked running
-         and its lane action landing that a fresh lane op must not enter).
-         `send` ↔ `discover` admission is deliberately untouched.
-      4. Otherwise `kind` may start while its concurrency group is under limit.
-    """
+    """True if `kind` may start given what's running: nothing beside an exclusive op;
+    an exclusive kind only when idle; `view_page` and other browser-lane kinds never
+    together, either way (`send` and `discover` admission untouched); otherwise
+    while its group is under its limit."""
     running = list(running_kinds)
     if any(k in policy.exclusive_kinds for k in running):
         return False

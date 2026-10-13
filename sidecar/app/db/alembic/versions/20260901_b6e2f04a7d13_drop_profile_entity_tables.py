@@ -1,9 +1,7 @@
-"""Drop the 3 profile-entity tables — no writer, no reader, empty everywhere.
+"""Drop the 3 profile-entity tables: no writer, no reader, empty everywhere.
 
-`profile_entities` and its `experience_skills` / `project_skills` join tables were
-added for the FR-TL-01 fabrication guard, which was never built. Nothing outside
-`models.py` ever constructed one and every install carries 0 rows, so the drop is
-lossless. `downgrade` rebuilds the exact shape for when the guard lands.
+Added for the never-built FR-TL-01 fabrication guard; 0 rows on every install.
+`downgrade` rebuilds the exact shape.
 
 Revision ID: b6e2f04a7d13
 Revises: c41b7e0d9a35

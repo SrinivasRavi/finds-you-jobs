@@ -1,17 +1,9 @@
-"""Breezy adapter — public positions JSON API (no auth, no key).
+"""Breezy adapter: public positions JSON API, no key.
 
-Claims `{company}.breezy.hr` URLs. One request: `GET {company}.breezy.hr/json`
-→ a JSON list of open positions with `name`, `url` (full posting URL),
-`published_date`, and a nested `location {city, state {name}, country {name}}`
-(live-verified 2026-07-18 against forge-nano/compass-datacenters — there is no
-flat `location.name`; some tenants may still send one, kept as the preferred
-fallback). No JD body in the list payload, and no per-position JSON endpoint
-exists — `fetch_detail` fetches the position page HTML at `job.canonical_url`
-and extracts the `<div class="description">` block (approved-plan #8).
-
-Re-derived from the public payload shape; career-ops's MIT provider is the
-behavioral reference (no code copied — see THIRD_PARTY_NOTICES.md).
-"""
+Claims `{company}.breezy.hr`. `/json` lists positions with a nested location
+(verified 2026-07-18; a flat `location.name` is still accepted). No JD and no
+per-position JSON, so `fetch_detail` reads the page's description block.
+career-ops's MIT provider as behavioral reference."""
 
 from __future__ import annotations
 

@@ -1,23 +1,11 @@
-"""LinkedIn session-capture + lifecycle operations (Track N4).
+"""LinkedIn session capture and lifecycle operations (Track N4).
 
-Two bounded ops beyond the N3 discover/draft/send core:
-
-- `linkedin_login` — the headed-browser session capture (US-SET-06 as-built).
-  Opens LinkedIn's own login page in a **visible** Chromium (driven by the GPL
-  `voyager_py login` subprocess), waits for the user to finish logging in (incl.
-  2FA), detects the `li_at` auth cookie, and persists the Playwright
-  storage-state under the app-data dir. **The password never passes through
-  finds-you-jobs** — the human logs in themselves. Long-running + user-interactive,
-  cancellable via `LOGIN_CONTROL` (mirrors the Applier's takeover latch, section A5b).
-  Streams typed `linkedin` SSE events for the connect UI + pill.
-
-- `archive_stale_contacts` — the US-NW-11 / FR-NW-13 scheduler tick: auto-archive
-  connections that stayed `Sent` (never `Accepted`) for 60 days. Zero-LLM,
-  zero-network, non-destructive (the same restorable Archive as a manual one).
-
-**License firewall.** `voyager_py` is reached ONLY through the silo's subprocess
-driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; section 2).
-"""
+`linkedin_login`: the headed capture (US-SET-06). A visible Chromium opens
+LinkedIn's login, the user signs in themselves (2FA included; the password never
+passes through us), and the storage state is saved once `li_at` appears.
+Cancellable via `LOGIN_CONTROL`; streams `linkedin` events.
+`archive_stale_contacts`: the US-NW-11 tick, archiving contacts still `Sent`
+after 60 days; restorable, 0 network."""
 
 from __future__ import annotations
 
@@ -235,20 +223,10 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
 def _fill_descriptions(
     jobs: list[NormalizedJob], report: SourceReport
 ) -> list[NormalizedJob]:
-    """Fetch the real JD for rows the logged-in search leaves empty (S-A6), and
-    return only the rows that ended up with a scorable one.
-
-    The search returns cards: title, company, location, url, no body. `scan()`
-    has an enrich phase for exactly this and the logged-in path never had one,
-    which is why 248 of 248 rows on the maintainer's install had a 0-char
-    description and could not be AI-scored at all. Same helper the guest adapter
-    uses, and it is an ANONYMOUS request that carries no session, so it costs the
-    LinkedIn account nothing; the bound is HTTP politeness, not account safety,
-    which is why every row is filled rather than the first 20 (D24).
-
-    A row still under the scorer's floor is dropped with its URL recorded (D23):
-    keeping it would put a permanently unrankable husk on the board. No
-    tombstone, so a later search can find the same posting with a real body."""
+    """Fetch the real JD for rows the logged-in search leaves empty (S-A6), keeping
+    only rows that end up scorable. An anonymous request, so it costs the account
+    nothing; every row is filled (D24). A row still under the floor is dropped with
+    its URL recorded, no tombstone (D23)."""
     from sidecar.modules.scraper.adapters import linkedin_guest
     from sidecar.modules.scraper.http import Fetcher
     from sidecar.modules.scraper.scraper import MIN_JD_CHARS, SEARCH_ENRICH_CAP
@@ -271,31 +249,11 @@ def _fill_descriptions(
 
 
 def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
-    """One-shot logged-in LinkedIn job search (discovery-expansion #6).
-
-    A **user-clicked** operation — never a scheduled scan source (a scheduled
-    scan must never touch a logged-in session; that isolation is the whole
-    point of the guest adapter). Gated on the networking toggle + a valid
-    session (the route checks the toggle; here we fail clearly if the session
-    is not connected). Read-only against LinkedIn (no send, no caps decrement).
-
-    Queries come from the same `build_queries()` prefs as every search source
-    (role aliases × locations, bounded). Results map into the **shared
-    discovery funnel** via `persist_scan` — same canonical-URL dedup (so a job
-    also found by the guest adapter or Apify collapses to one row), tombstone
-    suppression, and per-source diagnostics. `source_adapter="linkedin"` keeps
-    it indistinguishable downstream from a guest-found LinkedIn row.
-
-    **Fresh search / Next page (2026-08-01).** `mode: "fresh"` (default) runs
-    page 0 of every query pair and snapshots them into the single-row cursor;
-    `mode: "next"` resumes the SNAPSHOT — each pair from its own `next_start`,
-    exhausted pairs skipped (no request wasted on a list LinkedIn already
-    ended). Next page self-gates on the cursor being younger than
-    `SEARCH_CURSOR_TTL` and not fully exhausted — the route pre-checks the
-    same for a fast 409, but this op re-checks its own precondition rather
-    than trusting whoever enqueued it. Every request is still exactly one
-    page of 25 (the package clamp is untouched).
-    """
+    """One-shot logged-in LinkedIn job search, user-clicked only. Queries come from
+    `build_queries()`; results go through the shared funnel (`persist_scan`) as
+    `source_adapter="linkedin"`. `fresh` runs page 0 and snapshots the cursor;
+    `next` resumes each pair's offset, skipping exhausted ones, and re-checks the
+    TTL itself. Always 1 page of 25 per request."""
     if ctx.db is None:
         raise RuntimeError("linkedin_search requires a database context")
     from datetime import UTC, datetime
@@ -446,12 +404,8 @@ def linkedin_search_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
 def archive_stale_contacts_entrypoint(ctx: OperationContext) -> OperationOutcome:
-    """Auto-archive never-accepted connections older than 60 days (US-NW-11).
-
-    Scope: `connection_status == 'sent'` AND `accepted_at IS NULL` AND the
-    connection's `sent_at` is ≥ 60 days ago. An `Accepted` contact (incl.
-    1st-degree, who start Accepted) is never touched; the archive is the same
-    restorable state as a manual one (no delete, no tombstone)."""
+    """Auto-archive contacts still `sent`, never accepted, 60+ days after `sent_at`
+    (US-NW-11). Accepted contacts are never touched; the archive is restorable."""
     if ctx.db is None:
         raise RuntimeError("archive_stale_contacts requires a database context")
     now = now_utc()

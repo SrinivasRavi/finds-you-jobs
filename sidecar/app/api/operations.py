@@ -96,13 +96,10 @@ def retry_operation(request: Request, operation_id: str) -> dto.OperationAccepte
 
 @router.post("/api/operations/{operation_id}/cancel", status_code=202)
 def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccepted:
-    """Cancel an operation (F-M7): a still-`queued` op (any kind) is cancelled
-    outright; a `running` one is accepted ONLY for the kinds that cooperatively
-    poll the cancel token (score/tailor/cover — `CANCELLABLE_RUNNING_KINDS`),
-    landing `cancelled` at the entrypoint's next checkpoint. 404 for an unknown
-    id; 409 when there is nothing this endpoint can honestly cancel — the op is
-    already terminal, or it is running a kind that never observes the token
-    (a running `apply` is cancelled via POST /api/apply-runs/{id}/cancel)."""
+    """Cancel an op (F-M7): any queued op outright; a running one only for kinds that
+    poll the token (`CANCELLABLE_RUNNING_KINDS`). 404 for an unknown id; 409 when
+    it's terminal or running a kind that never polls (a running apply cancels via
+    POST /api/apply-runs/{id}/cancel)."""
     runner = _runner(request)
     db = _db(request)
     with db.repos() as repos:
@@ -348,17 +345,9 @@ def list_operations(request: Request, limit: int = 100) -> list[dto.OperationDTO
 
 @router.get("/api/cost/totals")
 def cost_totals(request: Request) -> dto.CostTotalsDTO:
-    """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
-
-    Live-ledger sum + the persisted pruned-ops aggregate (NFR-COST-02: the
-    running spend total stays honest as an install ages). Since 2026-08-24
-    nothing prunes, so the aggregate sits at zero and the live sum carries every
-    operation ever recorded; the addition stays because a future S-C22 deletion
-    policy has to be able to fold spend forward again.
-
-    Off the loop: summing every operation is inherently linear, so however cheap
-    the read gets it must not be the thing holding a 2 s health poll (S-C23) —
-    a plain `def` handler runs in Starlette's threadpool automatically."""
+    """All-time cost totals (FR-SET-07 / US-LOG-01 #2): the live ledger plus the
+    deleted-ops aggregate (NFR-COST-02), which stays for a future S-C22 policy.
+    Off the loop: the sum is linear (S-C23)."""
     with _db(request).repos() as repos:
         return dto.cost_totals_dto(repos.all_time_cost_totals())
 

@@ -50,13 +50,9 @@ def token_ok(presented: str | None, expected: str) -> bool:
 
 
 class BearerAuthMiddleware:
-    """Rejects any non-open request lacking a valid bearer token with 401.
-
-    Pure ASGI on purpose (F-M10): BaseHTTPMiddleware wraps every response in a
-    per-request task group that buffers streams and has documented quirks around
-    client-disconnect propagation — wrapping the app-lifetime `/api/events` SSE
-    stream in it could delay unsubscribe after the webview drops. Same reason
-    `main.py`'s flight-recorder middleware is pure ASGI."""
+    """Rejects any non-open request without a valid bearer token, 401. Pure ASGI
+    (F-M10): BaseHTTPMiddleware buffers streams and could delay the SSE stream's
+    unsubscribe after the webview drops."""
 
     def __init__(self, app: ASGIApp, *, token: str) -> None:
         self.app = app

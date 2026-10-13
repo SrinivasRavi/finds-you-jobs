@@ -1,18 +1,9 @@
-"""Phase 6: the reach-out → send path over the broker-backed driver, at the route.
+"""Phase 6: the reach-out to send path at the route, with 0 account use.
 
-Proves the route-level guarantees of a referral send batch, with ZERO account use
-(FakeVoyagerDriver via the `DRIVER_FACTORY` seam — no browser, no LinkedIn):
-
-  - the per-action confirm gate (US-NW-09): reach-out enqueues exactly ONE
-    discrete `send` op per selected contact, each carrying its own message and
-    all tied by one batch id — the UI confirms one contact per send;
-  - the single-flight idempotency guard skips a contact whose send for this role
-    is already queued/running, and a duplicate contact inside one request;
-  - the server-side networking gate refuses the whole route when Referral
-    Outreach is off (audit P2-4), independent of the UI;
-  - the popup's quota snapshot reads the SAME package ledger the send path
-    enforces — the counter can never show head-room a send would refuse.
-"""
+Reach-out enqueues 1 `send` op per contact, each with its own message, tied by 1
+batch id (US-NW-09); a contact already queued or duplicated is skipped; the
+server gate refuses the route while Referral Outreach is off (P2-4); the quota
+reads the same ledger the send path enforces."""
 
 from __future__ import annotations
 

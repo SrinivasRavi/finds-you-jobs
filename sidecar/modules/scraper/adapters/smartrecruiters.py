@@ -1,16 +1,8 @@
-"""SmartRecruiters adapter — public postings API (no auth, no key).
+"""SmartRecruiters adapter: public postings API, no key.
 
-Claims `careers.smartrecruiters.com/<slug>` / `jobs.smartrecruiters.com/<slug>`.
-Postings come from `api.smartrecruiters.com/v1/companies/<slug>/postings`, which
-caps at 100 rows/page, so this adapter pages with a bounded loop (unlike the
-single-request ATS adapters). The `ref` on each posting is the API URL; we
-rewrite it to the public `jobs.smartrecruiters.com/<slug>/postings/<id>`
-careers URL — the list payload carries no JD body, so `fetch_detail` fills it
-per row from the single-posting API (approved-plan #8).
-
-Ported from career-ops `providers/smartrecruiters.mjs` (MIT) — see
-THIRD_PARTY_NOTICES.md.
-"""
+Claims `careers.` and `jobs.smartrecruiters.com/<slug>`. Pages the postings API
+(100 per page) in a bounded loop and rewrites each `ref` to the public careers
+URL; `fetch_detail` fills the JD. Ported from career-ops (MIT)."""
 
 from __future__ import annotations
 

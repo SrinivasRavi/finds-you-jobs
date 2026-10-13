@@ -1,22 +1,8 @@
 """Engagement splits into 2 columns: who owes the next message (S-N5).
 
-The board could not tell "they replied once and we answered" from "they never
-replied at all": both sat in Engagement. The column splits by whose message is
-last, which is the only fact that decides what the user should do next.
-
-- `pending_our_response` — their message is last, so the reply is owed by us.
-- `pending_their_response` — they have written back at least once and ours is
-  last, so the wait is theirs.
-
-Existing `engagement` rows are re-homed by the direction already stored in
-`profile_payload.last_thread_message.direction`: `them` owes us a reply,
-anything else (including a missing stamp) waits on them. A row with no stamp
-at all reached Engagement through a reply we saw, so it is treated as answered
-and waits on them, which is also the status that can ghost.
-
-No new column: the split is 2 more values in `contacts.connection_status`,
-and the sticky `first_replied_at` rides `profile_payload`, the same
-no-migration seam as `fsd_urn` and `last_thread_message`.
+`pending_our_response` (their message is last) and `pending_their_response`
+(they've replied before, ours is last). Rows re-home by the stored
+`last_thread_message.direction`; no stamp waits on them. No new column.
 
 Revision ID: f3a9c1d8e527
 Revises: e7b1c95d2a48

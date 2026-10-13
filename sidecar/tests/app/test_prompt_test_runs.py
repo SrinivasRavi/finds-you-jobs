@@ -1,17 +1,9 @@
-"""Running a prompt draft without committing it (url-less-jobs.md section 11, S-C70).
+"""Running a prompt draft without committing it (url-less-jobs.md 11, S-C70).
 
-The problem it closes: Save was the only way to run a prompt, so the only way to
-try one was to overwrite the shipped default, generate on a real job, read it,
-and edit again, with the user's working default broken for the whole loop. The
-tailoring prompt is 16,285 characters and the output it governs is a resume that
-goes to an employer.
-
-The 3 invariants, each tested rather than argued:
-
-1. The draft runs. The committed prompt does not.
-2. The run writes nothing: no score on the job, no artifact, no profile.
-3. The run is an ordinary operation, so its spend reaches the ledger.
-"""
+Save was the only way to run a prompt, breaking the working default for the
+whole loop. Tested invariants: the draft runs and the committed prompt doesn't;
+the run writes nothing (no score, artifact or profile); it's an ordinary op, so
+its spend reaches the ledger."""
 
 from __future__ import annotations
 

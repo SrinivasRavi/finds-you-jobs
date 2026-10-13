@@ -20,12 +20,8 @@ def load_skill() -> str:
 
 
 def build_user_prompt(master_md: str, jd_md: str, preferences_md: str | None = None) -> str:
-    """The 3 input blocks, in the order the skill file reads them.
-
-    Preferences come last and are optional: the resume is evidence, the posting is
-    requirements, and the preferences are intent. A caller with no preferences
-    stored sends 2 blocks and the skill file says nothing about them.
-    """
+    """The 3 input blocks in the order the skill file reads them: resume (evidence),
+    posting (requirements), then optional preferences (intent)."""
     blocks = [
         "=== MASTER RESUME (sole candidate evidence) ===",
         master_md.strip(),

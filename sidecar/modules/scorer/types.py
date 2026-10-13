@@ -27,13 +27,9 @@ class Usage:
 
 @dataclass(frozen=True)
 class Factor:
-    """One axis of a score, in the shape every method writes (`scoring.md` 7.2).
-
-    `value` is 0 to 1 and `kind` says what it means: a `graded` position on a
-    stated rubric, which a user weight may multiply, or a `probability` that the
-    factor holds, which it may not. A factor the method could not assess is
-    ABSENT, never a middle value, so a bar is only ever drawn over a real answer.
-    """
+    """1 axis of a score, in the shape every method writes (scoring.md 7.2). `value`
+    is 0 to 1; `kind` is `graded` (a weight may multiply it) or `probability` (it
+    may not). An unassessed factor is absent, never a middle value."""
 
     factor: str
     value: float

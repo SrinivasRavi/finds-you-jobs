@@ -328,12 +328,8 @@ def _seed_terminal_ops(db: Database, n: int, *, usd: float = 0.01) -> None:
 def test_a_completed_operation_no_longer_prunes_the_ledger(
     migrated_db: Database,
 ) -> None:
-    """Maintainer, 2026-08-24: "never delete anything".
-
-    Every completion used to end in `prune_ledger(250)`, so a ledger 300 rows
-    deep lost its oldest 50 the instant the next operation settled. Nothing
-    deletes an operation now; a deletion policy the user can see is S-C22.
-    """
+    """"Never delete anything" (2026-08-24): completions once pruned the ledger to
+    250 rows. Nothing deletes an op now; a visible policy is S-C22."""
     db = migrated_db
     _seed_terminal_ops(db, 300)
     runner = OperationRunner(db, registry=OperationRegistry({"score": _success}))
@@ -675,12 +671,8 @@ def _open_circuit_then(migrated_db: Database, probe_mode: dict) -> OperationRunn
 
 
 def test_cancelled_probe_releases_the_lease_for_a_new_probe(migrated_db: Database) -> None:
-    """A half-open probe the user cancels lands `cancelled` with no provider
-    verdict — the lease is abandoned, so the next op after cooldown becomes a
-    fresh probe instead of every op being rejected until restart.
-
-    Pins the ordering too: the retry is submitted the moment the row reads
-    `cancelled`, so the lease must already be released by then."""
+    """A cancelled half-open probe releases its lease, so the next op after cooldown
+    is a fresh probe; the lease is already free when the row reads `cancelled`."""
     db = migrated_db
     probe_mode = {"value": "engine_fail"}
     runner = _open_circuit_then(db, probe_mode)

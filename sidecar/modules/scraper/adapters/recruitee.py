@@ -1,15 +1,8 @@
-"""Recruitee adapter — public per-tenant offers API (no auth, no key).
+"""Recruitee adapter: public per-tenant offers API, no key.
 
-Claims `<slug>.recruitee.com`. One request per tenant:
-`GET https://<slug>.recruitee.com/api/offers/`, which carries the JD in the
-same response — `description` and `requirements` are both HTML strings,
-concatenated and stripped to plain text. Per-tenant subdomains are the
-variable part, so the host is validated by an anchored regex rather than a
-static allowlist (the SSRF stance career-ops uses for the same source).
-
-Ported from career-ops `providers/recruitee.mjs` (MIT) — see
-THIRD_PARTY_NOTICES.md.
-"""
+Claims `<slug>.recruitee.com` (anchored regex). 1 request to `/api/offers/`,
+whose `description` and `requirements` HTML become the JD. Ported from
+career-ops `providers/recruitee.mjs` (MIT)."""
 
 from __future__ import annotations
 

@@ -148,14 +148,9 @@ _CADENCE_MINUTES: dict[str, int] = {
 
 
 def _thread_scan_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
-    """Enable + retime the `scan` schedule from a saved `scrape_cadence`.
-
-    `next_due_at = now + interval` (never "now"): the writer just ran or will
-    run its own immediate scan (onboarding cold-start / the modal's rescan), so
-    firing the schedule immediately would double-scan. `score_new` stays
-    seeded-disabled on purpose — the runner's scan→score chain already scores
-    new jobs; enabling both would double-score.
-    """
+    """Enable and retime the `scan` schedule from a saved `scrape_cadence`.
+    `next_due_at = now + interval`, never now: the writer just ran its own scan.
+    `score_new` stays disabled: the scan-to-score chain already scores new jobs."""
     cadence = (ui_state or {}).get("scrape_cadence")
     minutes = _CADENCE_MINUTES.get(cadence) if isinstance(cadence, str) else None
     if minutes is None:
@@ -330,12 +325,9 @@ _PROMPT_TEST_NEEDS_JOB = frozenset({"score", "tailor", "cover"})
 def test_prompt(
     request: Request, kind: str, payload: dto.PromptTestRequest
 ) -> dto.OperationAccepted:
-    """Run a prompt draft once, without committing it (url-less-jobs.md section 11).
-
-    The draft rides the operation's snapshot, so the module runs it and the saved
-    prompt is untouched. The run writes nothing: no score on the job, no
-    artifact, no application profile. Its output comes back on the operation's
-    own result, which is where the modal reads it from."""
+    """Run a prompt draft once without committing it (url-less-jobs.md section 11).
+    The draft rides the op's snapshot and the run writes nothing (no score, artifact
+    or profile); its output comes back on the op's own result."""
     from ..prompt_overrides import PROMPT_KINDS
 
     spec = PROMPT_KINDS.get(kind)

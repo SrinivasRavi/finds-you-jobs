@@ -1,17 +1,9 @@
 # voyager_py/tests/test_connect_note_flow.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""The connection-request-WITH-note flow (`_click_with_note`) against LOCAL
-fixture HTML with REAL Chromium — no live LinkedIn. Covers the two invite
-layouts LinkedIn ships plus the honest degradation:
-
-  - classic modal  → "Add a note" reveals a <textarea>; note typed, Send clicked
-  - SDUI / Premium → the note field (a contenteditable) is present directly, no
-    "Add a note" button; note still typed and sent (the 2026-07-13 regression:
-    the old code degraded to note-less here and dropped the referral ask)
-  - no note field  → degrade to a note-less "Send now" (never dead-end)
-
-Anchors: FR-NW-03 (referral ask rides in the connect note).
-"""
+"""The connect-with-note flow (`_click_with_note`) on local fixtures in real
+Chromium, no LinkedIn: the classic modal ("Add a note", then a textarea), SDUI
+(a contenteditable already present; the 2026-07-13 regression), and no note
+field (a note-less Send, never a dead end). Anchor: FR-NW-03."""
 
 from __future__ import annotations
 

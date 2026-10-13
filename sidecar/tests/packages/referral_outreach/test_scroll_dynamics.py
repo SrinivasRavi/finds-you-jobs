@@ -1,18 +1,10 @@
 # voyager_py/tests/test_scroll_dynamics.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
 # ruff: noqa: S311 — seeded PRNGs make these distribution assertions reproducible.
-"""Reading-scroll — the wheel channel we never filled.
-
-Wheel events were null in 100% of 1,025 detected agent sessions, so "we emit
-any wheel at all" is the headline assertion; the rest checks that what we emit
-has the SHAPE we measured off a real device rather than the single instant
-jump a naive CDP wheel produces.
-
-Measured references (`docs/internal/evidence/2026-08-06-focus-tab-probe/`,
-run7.py, real HID events on macOS): one notch = deltaY 40 total, delivered as
-an 11-event ease-in-out over ~166 ms. A single CDP wheel of 120 gives one
-event and an instant jump.
-"""
+"""Reading scroll: wheel events were null in 100% of 1,025 detected agent
+sessions, so emitting any is the headline. The rest checks the measured shape
+(evidence/2026-08-06-focus-tab-probe/run7.py): 1 notch is 40 deltaY over 11
+ease-in-out events in about 166 ms, not 1 instant jump."""
 
 from __future__ import annotations
 

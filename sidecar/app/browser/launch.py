@@ -1,16 +1,9 @@
 """Stock launch configuration for a core browser surface.
 
-Deliberately unremarkable. Real installed Chrome through Playwright's own
-defaults, the Chromium sandbox on, and the bundled Chromium build as the
-fallback when no Chrome channel is installed. Nothing here shapes what a page
-observes: no argv of ours, no headers, no identity or geometry overrides. That
-is the point of this module — it is the stock baseline every later measurement
-is taken against, so it stays greppable-clean and a switch that isn't here is a
-switch nobody added by accident.
-
-Playwright authors its own debugging transport when it launches a browser. That
-is upstream's business, not ours, and this file never adds one.
-"""
+Deliberately unremarkable: installed Chrome through Playwright's defaults, the
+sandbox on, the bundled Chromium as fallback. No argv, headers, identity or
+geometry of ours, so it's the clean baseline every measurement is taken
+against. Playwright's own debugging transport is upstream's; this adds none."""
 
 from __future__ import annotations
 
@@ -59,13 +52,9 @@ def deheadless_user_agent(user_agent: str) -> str:
 
 
 def resolve_user_agent() -> str:
-    """The de-headlessed Chrome UA, read once from a throwaway stock launch.
-
-    Chrome only reveals its exact version in the UA it reports, so we launch it,
-    read `navigator.userAgent`, de-headless it, and throw the browser away. This
-    is a real Chrome launch, so it runs on a surface thread, never the serving
-    loop. The broker caches the result: one throwaway launch per process.
-    """
+    """The de-headlessed Chrome UA, read from a throwaway stock launch, since Chrome
+    reveals its exact version only there. A real launch, so it runs on a surface
+    thread; the broker caches it, 1 launch per process."""
     from playwright.sync_api import sync_playwright
 
     with tempfile.TemporaryDirectory(prefix="fyj-ua-") as tmp:
@@ -84,23 +73,10 @@ def resolve_user_agent() -> str:
 
 def minimal_launch_kwargs(user_agent: str) -> dict[str, Any]:
     """The guardrailed launch: stock Chrome minus the automation switches, plus a
-    de-headlessed identity nailed on at the process level.
-
-    The user agent is a LAUNCH flag, never a CDP override. The CDP override
-    (`Emulation.setUserAgentOverride`) fixes the page but leaves the surface's
-    service worker still reporting "HeadlessChrome" with its client-hint brands
-    blanked to `[]`; the `--user-agent` flag is process-global, so it beats the
-    worker into existence with a coherent identity too (measured, both surfaces).
-
-    `--disable-blink-features=AutomationControlled` is what actually clears
-    `navigator.webdriver` on the pinned Chrome: it is set by the headless run
-    itself, not by `--enable-automation` (absent from Playwright's defaults), so
-    the drop list alone leaves webdriver true. This one flag flips it, page and
-    worker alike (measured). It is not a forbidden switch (section 12.3).
-
-    Playwright's own debugging pipe is left exactly as Playwright authors it —
-    neither added here nor listed to drop — because it is Playwright's transport.
-    """
+    de-headlessed UA as a launch flag (a CDP override leaves the service worker
+    saying HeadlessChrome). `--disable-blink-features=AutomationControlled` is what
+    clears `navigator.webdriver` (measured; not forbidden, section 12.3).
+    Playwright's debugging pipe is left as Playwright authors it."""
     return {
         "headless": True,
         "channel": "chrome",
@@ -123,15 +99,9 @@ def _is_sandbox_launch_error(message: str) -> bool:
 
 
 def open_persistent_context(playwright: Any, profile_dir: str, **kwargs: Any) -> Any:
-    """Open a persistent context on `profile_dir` with the launch discipline the
-    existing sync-Playwright path established.
-
-    Two fallbacks, both narrow. The installed-Chrome channel drops to the
-    bundled Chromium build when that channel is absent. The sandbox drops off
-    only for a sandbox-launch failure, which in practice means a Linux host
-    without unprivileged user namespaces; desktop macOS and Windows always keep
-    it on.
-    """
+    """Open a persistent context on `profile_dir`. 2 narrow fallbacks: the Chrome
+    channel drops to bundled Chromium when absent, and the sandbox drops only on a
+    sandbox-launch failure (a Linux host without user namespaces)."""
     log = get_logger()
     channel = kwargs.pop("channel", None)
     sandbox = bool(kwargs.pop("chromium_sandbox", True))

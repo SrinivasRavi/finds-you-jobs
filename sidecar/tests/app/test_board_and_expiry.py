@@ -1,17 +1,9 @@
-"""Board correctness + Expired aging (this round's board work package).
+"""Board correctness and expired aging.
 
-Covers:
-- Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02): a failed `score` op with
-  no cached score resolves the board row to `scoreStatus == "failed"`.
-- Board pagination + honest total (FR-JB-02): 50/page, `total` counts every
-  eligible row — no silent 200-row cap.
-- Real last-scan meta + explained empty/running/error status (FR-JB-10).
-- Board search (FR-JB-13 / US-JB-12): shallow list_q vs deep text_q, filtered
-  server-side before pagination; a search miss never masquerades as an empty
-  scrape.
-- Expired aging (FR-SYS-03): grey at 14d, hard-delete (no tombstone) at 30d,
-  rescued by Save, un-expire resets the timer, legacy rows backfilled once.
-"""
+Covers: score-failed derivation (FR-JB-07); pagination and an honest total
+(FR-JB-02); real last-scan meta (FR-JB-10); search filtered before pagination
+(FR-JB-13), where a miss never looks like an empty scrape; and aging (FR-SYS-03):
+grey at 14 days, delete at 30, rescued by Save."""
 
 from __future__ import annotations
 

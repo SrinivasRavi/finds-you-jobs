@@ -1,14 +1,9 @@
-"""The shipped place index: names in, places out, no network and no model.
+"""The shipped place index: names in, places out, no network or model.
 
-Loads the 4 committed GeoNames cuts in `data/` (built by `build_data.py`) into 3
-dicts, once per process, behind `gazetteer()`. The load is pure CPU and takes
-long enough to matter on the event loop, so the first caller should be a worker
-thread; `warm()` exists for a caller that wants to pay the cost deliberately.
-
-Every lookup takes a folded key (`fold()`): lowercase, accents stripped, dashes
-normalized. An alias that names several places keeps all of them, biggest first,
-and is listed in `ambiguous` (docs/internal/place-picker.md).
-"""
+Loads the 4 GeoNames cuts in `data/` into 3 dicts once per process behind
+`gazetteer()`; the load is CPU-heavy, so the first caller should be a worker
+(`warm()`). Lookups take a folded key (`fold()`). An alias naming several places
+keeps them all, biggest first, listed in `ambiguous` (place-picker.md)."""
 
 from __future__ import annotations
 

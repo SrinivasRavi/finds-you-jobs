@@ -1,19 +1,9 @@
 # voyager_py/tests/test_connect_probes.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""The Connect-affordance probe chain (`find_and_click_connect`) against LOCAL
-fixture HTML with REAL Chromium — no live LinkedIn (the wire stays cold; the
-maintainer dogfoods the live send). Reproduces the four DOM variants behind the
-"[voyager] SkipProfile: Top Card section not found" dogfood failure:
-
-  - top-card Connect (Connect-primary layout)      → clicks, returns probe name
-  - Connect inside the "More" overflow menu         → opens menu, clicks, returns
-    (also exercises the page-wide fallback: this fixture has NO matching top-card
-     wrapper — the exact scenario that used to raise "Top Card section not found")
-  - invite already Pending                          → typed SkipProfile
-  - already connected (Message, no Connect)         → typed SkipProfile
-  - no affordance at all                            → SkipProfile naming probes +
-                                                       debug-capture path
-"""
+"""The Connect probe chain (`find_and_click_connect`) on local fixtures in real
+Chromium: Connect on the top card, Connect in the More menu (also the page-wide
+fallback with no top-card wrapper), invite already pending, already connected,
+and no affordance at all (SkipProfile naming the probes and capture path)."""
 
 from __future__ import annotations
 

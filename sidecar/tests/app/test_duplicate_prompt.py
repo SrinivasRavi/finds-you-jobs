@@ -1,18 +1,9 @@
 """The duplicate prompt, and where "they're different" lives (D15).
 
-The case: the user pasted an emailed JD on Monday, Wednesday's scan wrote its
-own row for the same posting, and the board shows the role twice. Both rows are
-correct by their own key, so nothing upstream can prevent it; the answer is to
-ask once and never again.
-
-What is pinned here:
-
-1. The flag is written at INGEST, so the board's render costs nothing.
-2. The gate is compound, so a Senior and a Principal at one employer are not
-   called the same job.
-3. A dismissal is a fact about the PAIR: it holds from either card, and it is
-   taken with the jobs when either is deleted.
-"""
+A pasted JD and a scan's row for the same posting are both correct by their own
+key, so the answer is to ask once. Pinned: the flag is written at ingest; the
+gate is compound (Senior and Principal differ); a dismissal belongs to the pair,
+holds from either card, and goes with either job."""
 
 from __future__ import annotations
 

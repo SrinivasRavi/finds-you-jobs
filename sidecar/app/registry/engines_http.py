@@ -1,32 +1,11 @@
-"""Direct-API BYOK engines behind the `Engine` seam (ROADMAP section 7 item 9, section A0.3).
+"""Direct-API BYOK engines behind the `Engine` seam.
 
-Two implementations cover the whole P1 provider menu (US-OB-04 / US-SET-07):
-
-- `AnthropicEngine` — Anthropic Messages API (`x-api-key`, `anthropic-version`).
-- `OpenAICompatibleEngine` — bearer-token `/chat/completions`, which covers
-  OpenRouter, OpenAI, and any user-run local server (Ollama / LM Studio / vLLM)
-  via `base_url`.
-
-Both satisfy `complete(system, user) -> (text, EngineUsage)` — the same contract
-the shared `ClaudeCliEngine` implements — so the operation wrappers and the
-registry never learn which engine they hold. HTTP is stdlib `urllib` (httpx is
-dev-only; mirrors the scraper's `Fetcher`), reached through an injectable
-`HttpTransport` seam so tests never touch the network.
-
-Cost (`usd`): OpenRouter reports the *exact* per-call cost when asked (request
-`usage.include=true`; the response's `usage.cost` is authoritative — this is
-what makes cost tracking work regardless of which concrete model
-`openrouter/auto` ends up routing to, since a static table can never keep pace
-with that). Anthropic/OpenAI direct and local servers don't return a cost, so
-those fall back to a best-effort lookup in a small pricing map for well-known
-models — **`None` when the model is unknown, never a guessed number** (ethos:
-cost honesty). Token counts come straight from the provider response.
-
-Verification (`verify_anthropic` / `verify_openai_compatible`) uses the
-industry-standard free authenticated models-list call — `GET /v1/models` — so a
-Verify click costs zero tokens. Providers without a models endpoint would fall
-back to a 1-token completion; both P1 direct APIs expose the list endpoint.
-"""
+`AnthropicEngine` (Messages API) and `OpenAICompatibleEngine` (`/chat/
+completions`: OpenRouter, OpenAI, local servers via `base_url`) both satisfy
+`complete(system, user)`, so callers never learn which engine they hold. stdlib
+urllib behind an injectable `HttpTransport`. Cost: OpenRouter's exact
+`usage.cost`, else a small pricing map, None when unknown, never a guess.
+Verify uses the free `GET /v1/models`."""
 
 from __future__ import annotations
 

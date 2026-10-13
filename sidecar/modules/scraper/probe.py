@@ -1,22 +1,10 @@
-"""Pasted-link probe — resolve a single pasted job URL to a `NormalizedJob`.
+"""Pasted-link probe: resolve 1 pasted job URL to a `NormalizedJob` (US-JB-07).
 
-The user escape hatch (US-JB-07): the user pastes one posting URL and we make a
-best-effort extraction of title / company / location / description. This is
-*not* scan()'s one-request-per-source path — it's an explicit single-URL user
-action, so a per-URL fetch is exactly right here:
-
-- If a known ATS / board adapter claims the URL shape, ask it for that one
-  posting when it has a single-job endpoint (`fetch_posting`), else fetch the
-  board (one request) and return the row whose canonical URL matches the pasted
-  one — Greenhouse / Lever / Ashby job URLs come back fully structured,
-  description included (the content-in-list params from the JD-gap work).
-- Otherwise fetch the page directly and pull a best-effort title + text body from
-  the HTML (generic careers pages, Workable job links, anything else).
-
-20 s fetch timeout, no auto-retry (US-JB-07, user-stories section 17b): the caller passes
-`timeout_s`; a fetch failure raises `ScraperError` verbatim and the user can then
-fill the fields in by hand. The result is *not* persisted — the app owns that.
-"""
+If an adapter claims the URL, ask it via `fetch_posting`, else read its board and
+pick the matching row (Greenhouse, Lever and Ashby come back structured).
+Otherwise fetch the page and extract a best-effort title and body. The caller
+passes the 20 s timeout; no retry; a failure raises `ScraperError` and the user
+fills fields by hand. Nothing is persisted here."""
 
 from __future__ import annotations
 
@@ -65,12 +53,8 @@ def probe_url(
 def _from_adapter(
     adapter: object, entry: SourceEntry, fetcher: Fetcher, canonical: str
 ) -> NormalizedJob | None:
-    """The claiming adapter's best answer for one pasted URL, or None.
-
-    A ScraperError here is never fatal: the generic path below still produces a
-    usable draft, and a whole-board read that the fetcher refuses as too large
-    used to surface as a 422 with Lever's 20 MB list in the message
-    (maintainer, 2026-10-08)."""
+    """The claiming adapter's answer for 1 pasted URL, or None. A ScraperError is
+    never fatal: the generic path still produces a draft."""
     fetch_posting: Callable[[str, Fetcher], NormalizedJob | None] | None = getattr(
         adapter, "fetch_posting", None
     )
