@@ -56,13 +56,13 @@ export function MatchRing({ score, method }: { score: number; method: string }) 
   );
 }
 
-/** Rescore and the rescore-due mark, under a row's score (score-storage.md 4.4).
- *  A span, because the row is itself a button. Nothing rescores on its own. */
-function RescoreControl({ job }: { job: Job }) {
+/** Rescore and the rescore-due mark, beside the score in the job pane
+ *  (score-storage.md 5.2). Nothing rescores on its own. */
+export function RescoreControl({ job }: { job: Job }) {
   const { t } = useTranslation();
   const rescore = useRescoreJob();
   return (
-    <span className="inline-flex items-center gap-1 text-[10px]">
+    <span className="mt-1 inline-flex items-center gap-1 text-[10.5px]">
       {job.score?.stale ? (
         <span
           data-testid="score-stale"
@@ -73,26 +73,16 @@ function RescoreControl({ job }: { job: Job }) {
           ⚠
         </span>
       ) : null}
-      <span
-        role="button"
-        tabIndex={0}
-        data-testid="rescore-row"
+      <button
+        type="button"
+        data-testid="rescore-job"
         title={t("jobBoard.row.rescoreTitle")}
-        aria-disabled={rescore.isPending}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!rescore.isPending) rescore.mutate(job.id);
-        }}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault();
-          e.stopPropagation();
-          if (!rescore.isPending) rescore.mutate(job.id);
-        }}
-        className={rescore.isPending ? "text-ink-4" : "cursor-pointer text-ink-3 hover:text-accent"}
+        disabled={rescore.isPending}
+        onClick={() => rescore.mutate(job.id)}
+        className={rescore.isPending ? "text-ink-4" : "text-ink-3 hover:text-accent"}
       >
         {rescore.isPending ? t("jobBoard.row.rescoring") : t("jobBoard.row.rescore")}
-      </span>
+      </button>
     </span>
   );
 }
@@ -247,7 +237,6 @@ export const JobRow = memo(function JobRow({
             {t("jobBoard.row.scoring")}
           </span>
         )}
-        {job.score ? <RescoreControl job={job} /> : null}
         {expired ? (
           <span
             data-testid="expired-label"

@@ -1,5 +1,5 @@
-// Covers: Rescore on a board row and the rescore-due mark (audit A3,
-// score-storage.md 4.4 and 5.2). The click runs for real in keyword mode, so it
+// Covers: Rescore and the rescore-due mark beside the score in the job pane
+// (audit A3, score-storage.md 5.2). The click runs for real in keyword mode, so it
 // spends nothing; the mark is drawn from a patched board row, because the
 // staleness rule itself is pinned in test_job_score_factors.py.
 
@@ -17,7 +17,7 @@ test.afterEach(async ({ request }) => {
   });
 });
 
-test("a row rescores on request and shows when its score predates a major resume edit", async ({
+test("the job pane rescores on request and shows when its score predates a major resume edit", async ({
   page,
   request,
 }) => {
@@ -55,10 +55,12 @@ test("a row rescores on request and shows when its score predates a major resume
     await (await request.get(`${base}/api/operations?limit=200`, { headers: auth })).json()
   ).filter((o: { kind: string }) => o.kind === "score").length;
 
-  await row.getByTestId("rescore-row").click();
+  await row.click();
+  const button = page.getByTestId("rescore-job");
+  await button.click();
   // Pending for as long as the operation waits in its queue and runs.
-  await expect(row.getByTestId("rescore-row")).toHaveText("Rescoring…");
-  await expect(row.getByTestId("rescore-row")).toHaveText("Rescore", { timeout: 60_000 });
+  await expect(button).toHaveText("Rescoring…");
+  await expect(button).toHaveText("Rescore", { timeout: 60_000 });
   const ops = (
     await (await request.get(`${base}/api/operations?limit=200`, { headers: auth })).json()
   ).filter((o: { kind: string }) => o.kind === "score");
@@ -69,7 +71,7 @@ test("a row rescores on request and shows when its score predates a major resume
   );
   expect(mine.requested_by).toBe("user");
   expect(mine.state).toBe("succeeded");
-  await page.screenshot({ path: `${DIR}/rescored-row.png` });
+  await page.screenshot({ path: `${DIR}/rescored-pane.png` });
 
   await page.route("**/api/board*", async (route) => {
     const response = await route.fetch();
@@ -80,9 +82,8 @@ test("a row rescores on request and shows when its score predates a major resume
     await route.fulfill({ response, json: body });
   });
   await page.reload();
-  const stale = page
-    .locator('[data-testid="job-row"]', { hasText: "Rescore Role" })
-    .getByTestId("score-stale");
+  await page.locator('[data-testid="job-row"]', { hasText: "Rescore Role" }).click();
+  const stale = page.getByTestId("score-stale");
   await expect(stale).toBeVisible({ timeout: 15_000 });
   await expect(stale).toHaveAttribute("title", /major edit to your resume/);
   await page.screenshot({ path: `${DIR}/stale-mark.png` });

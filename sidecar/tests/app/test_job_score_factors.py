@@ -138,6 +138,9 @@ def test_a_major_resume_edit_marks_older_scores_stale_and_a_minor_one_does_not(
     assert stale() is False
     with migrated_db.repos() as repos:
         repos.profile.upsert(RESUME + "## Projects\n- **Ledger**: a ledger in Rust.\n")
+    assert stale() is False  # a new section, but 40 characters: minor
+    with migrated_db.repos() as repos:
+        repos.profile.upsert(RESUME + "## Projects\n" + "- Shipped a ledger in Rust.\n" * 12)
     assert stale() is True
     # The score stays; nothing rescored it.
     assert _row(migrated_db, job_id)[:2] == (77, "llm")

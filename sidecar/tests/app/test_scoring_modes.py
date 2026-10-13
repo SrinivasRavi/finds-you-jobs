@@ -299,45 +299,50 @@ def test_llm_planner_does_not_auto_rescore_after_a_resume_edit(
     assert plan_score_new(db) == []  # no auto re-score at the new version
 
 
-def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) -> None:
-    """Through the real app: editing the resume re-scores the whole board for
-    free in keyword mode, and leaves prior scores untouched in AI mode. There
-    is no AI re-score action at all (S-C24, maintainer 2026-08-28)."""
+def test_api_a_major_edit_rescores_keyword_jobs_under_any_method(tmp_path) -> None:
+    """Through the real app (score-storage.md 5.2): a minor edit rescores nothing,
+    in any mode; a major edit (more than 300 characters added) rescores every Keyword
+    score for free even while LLM scoring is selected, and leaves a real score alone.
+    There is no board-wide AI re-score action (S-C24)."""
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
         enable_scheduler=False,
     )
     with TestClient(app) as client:
         db = app.state.db
-        job_id = _seed(db)
+        kw_job = _seed(db)
+        ai_job = _seed(db, url="https://ex.co/j/mode-2")
         client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME})
+        score_entrypoint(_ctx(db, ai_job, engine=_OkEngine()))
+        backfill_keyword_scores(db)
         with db.repos() as repos:
             v0 = repos.profile.get_current().version  # type: ignore[union-attr]
+            assert repos.jobs.get(kw_job).score_method == "keyword"  # type: ignore[union-attr]
+            assert repos.jobs.get(kw_job).scored_profile_version == v0  # type: ignore[union-attr]
 
-        # AI mode (default): edit resume → NO new score; the board keeps prior.
-        # (No score existed here, so it simply stays unscored — the point is
-        # that no keyword re-score is forced.)
+        def kw_version() -> int | None:
+            with db.repos() as repos:
+                return repos.jobs.get(kw_job).scored_profile_version  # type: ignore[union-attr]
+
+        # Minor edits, in either mode: nothing rescored.
         client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME + "\nGo."})
-        with db.repos() as repos:
-            job = repos.jobs.get(job_id)
-            assert job is not None
-            assert job.score is None
-
-        # Switch to keyword mode, edit again → the board is re-scored for free.
+        assert kw_version() == v0
         client.post(
             "/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "keyword"}}
         )
         client.post("/api/profile", headers=AUTH, json={"resume_markdown": RESUME + "\nRust."})
+        assert kw_version() == v0
+
+        # A major edit while LLM scoring is selected: Keyword rescored, AI kept.
+        client.post("/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "llm"}})
+        big = RESUME + "\n## Projects\n" + "- Built a streaming ledger in Rust and Go.\n" * 10
+        client.post("/api/profile", headers=AUTH, json={"resume_markdown": big})
         with db.repos() as repos:
             v_new = repos.profile.get_current().version  # type: ignore[union-attr]
-            job = repos.jobs.get(job_id)
-            assert job is not None
-            assert v_new > v0
-            assert job.score_method == "keyword"
+            ai = repos.jobs.get(ai_job)
+            assert ai is not None and ai.score_method == "llm"
+        assert kw_version() == v_new > v0
 
-        # Back in AI mode, the route that used to re-score the board is gone
-        # (405: the path now resolves to GET/PATCH `/api/jobs/{job_id}`).
-        client.post("/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "llm"}})
         assert client.post("/api/jobs/rescore", headers=AUTH).status_code == 405
 
 

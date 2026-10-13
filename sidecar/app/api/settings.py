@@ -39,10 +39,13 @@ def get_profile(request: Request) -> dto.ProfileDTO | None:
 def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileDTO:
     with _db(request).repos() as repos:
         before = repos.profile.get_current()
-        changed = before is None or before.resume_markdown != payload.resume_markdown
+        before_version = before.version if before is not None else None
         profile = repos.profile.upsert(payload.resume_markdown)
+        # The first resume is all added text, so it counts as major too.
+        major = profile.version != before_version and (
+            before_version is None or profile.major_version == profile.version
+        )
         result = dto.profile_dto(profile)
-        mode = scoring_mode(repos.preferences.get_or_create())
     # Always extract the application profile at master-save (FR-APP-01;
     # maintainer removed the toggle — it's one small cheap call and the record
     # is load-bearing for every form fill), unless AI is off (S-C60): then it
@@ -50,11 +53,10 @@ def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileD
     engines = _engines(request)
     if engines is None or engines.resolve("extract") is not None:
         _runner(request).submit("extract", {"profile_version": result.version})
-    # Re-scoring on a resume edit: keyword mode is free, so the whole board
-    # re-scores now (in Starlette's threadpool). AI mode costs tokens, so nothing
-    # auto-runs (S-C24): AI scores are version-agnostic and stay visible. An unchanged
-    # save keeps its version.
-    if changed and mode == "keyword":
+    # A major edit rescores every Keyword score now, whatever the method setting:
+    # it's free (in Starlette's threadpool). LLM, Jev and Laya scores only get the
+    # rescore-due mark; a minor edit does nothing (score-storage.md 5.2).
+    if major:
         from ..registry.operations import rescore_all_keyword
 
         rescore_all_keyword(_db(request))

@@ -19,7 +19,7 @@ import { AddLinkDialog, type AddLinkMode } from "./AddLinkDialog";
 import { FollowCompanyDialog } from "./FollowCompanyDialog";
 import { FollowResult, followLooksRight } from "./FollowResult";
 import { sourceClasses, workLabel } from "../jobFormat";
-import { MatchRing, highlight } from "./JobRow";
+import { MatchRing, RescoreControl, highlight } from "./JobRow";
 
 /** "Explain this one": 1 click, 1 job, 1 AI call, priced on the button (vision.md,
  *  cost honesty). The price is what this user's own AI scores have cost, from the
@@ -171,6 +171,7 @@ export function JobDetail({
                 ? t("jobBoard.detail.keywordsScored")
                 : t("jobBoard.detail.match")}
             </span>
+            <RescoreControl job={job} />
           </div>
         ) : null}
       </div>
