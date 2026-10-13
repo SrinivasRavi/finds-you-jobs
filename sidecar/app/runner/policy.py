@@ -7,6 +7,7 @@ the LLM pool (its packet wait depends on tailor); only the headed
 `linkedin_login` is exclusive. Dispatch is priority-ordered so interactive
 work never starves behind bulk fan-outs. `can_start` is a pure decision
 function so the policy is unit-testable without touching threads or the DB.
+Design and the 2 queue choices: docs/internal/queueing.md (audit A1).
 """
 
 from __future__ import annotations
