@@ -20,6 +20,9 @@ ID = "brave"
 LABEL = "Brave Search (your own key)"
 KIND = "search"
 INLINE_DESCRIPTION = True
+# The key's label, and the 1 entry a saved key adds (F-P6).
+CREDENTIAL = "Brave Search"
+DEFAULT_SOURCES: tuple[dict[str, str], ...] = ({"board": ID},)
 _BASE = "https://api.search.brave.com/res/v1/web/search"
 
 # ATS hosts whose public job URLs we can parse/apply against. Deliberately the

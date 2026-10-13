@@ -22,7 +22,9 @@ from ..types import NormalizedJob, ScanPrefs
 class Adapter(Protocol):
     """Structural type for an adapter module (checked in tests, not at runtime).
     `LABEL` and `KIND` are its row in Settings › Discover jobs; `KIND` is ats,
-    board, search or fallback."""
+    board, search or fallback. Optional: `BOARD_URLS`; a keyed adapter adds
+    `CREDENTIAL` and `DEFAULT_SOURCES`, and `SUB_SOURCE_*` when each entry is
+    its own toggle (F-P6)."""
 
     ID: str
     LABEL: str

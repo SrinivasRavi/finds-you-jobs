@@ -249,6 +249,22 @@ DEFAULT_ACTORS: tuple[str, ...] = (
     "curious_coder/linkedin-jobs-scraper",
 )
 
+# What discovery reads instead of naming Apify (F-P6): the key's label, the
+# entries a saved key adds, and each actor entry as its own Settings toggle,
+# counted in Analytics under the board it stamps.
+CREDENTIAL = "Apify"
+DEFAULT_SOURCES: tuple[dict[str, str], ...] = tuple(
+    {"board": ID, "actor": actor} for actor in DEFAULT_ACTORS
+)
+SUB_SOURCE_FIELD = "actor"
+SUB_SOURCE_IDS = ACTOR_SOURCE_IDS
+SUB_SOURCE_LABELS: dict[str, str] = {
+    "memo23/naukri-scraper": "Naukri (via Apify)",
+    "misceres/indeed-scraper": "Indeed (via Apify)",
+    "epicscrapers/seek-job-scraper": "Seek (via Apify)",
+    "curious_coder/linkedin-jobs-scraper": "LinkedIn deep-JD (via Apify)",
+}
+
 
 def search(entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher) -> list[NormalizedJob]:
     token = prefs.credentials.get("apify", "")
