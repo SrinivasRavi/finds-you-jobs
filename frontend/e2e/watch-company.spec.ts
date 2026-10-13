@@ -82,6 +82,7 @@ test("follow a company from a job with no link, then manage it in Settings", asy
   await expect(row).toHaveCount(1, { timeout: 15_000 });
   await expect(row).toContainText("https://e2e-board2.localhost/feed.rss");
   await expect(row).not.toContainText("https://e2e-board.localhost/jobs.rss");
+  await page.screenshot({ path: `${DIR}/02b-link-changed.png` });
 
   // Remove takes it off the list.
   await page.getByTestId("follow-remove").click();
