@@ -969,3 +969,110 @@ def test_apply_with_no_browser_at_all_is_coded(
     assert final["status"] == "failed", final
     assert final["summary"] == BROWSER_MISSING_DETAIL
     assert [b["kind"] for b in final["blockers"]] == ["browser_missing"]
+
+
+# --- A22: Submit and "I submitted" while the filled form waits in its tab ------
+
+
+def _start_held_review(client: TestClient, app: FastAPI) -> tuple[str, dict]:
+    """A run on a real submit form, held open for review: status `running`, phase
+    `ready_for_human`, the tab still live. Returns the card id and the run row."""
+    _seed_card(client, app)  # the profile and the applicant facts
+    app_id = _seed_card_for(client, app, "review_form.html")
+    run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
+        "dev": {
+            "engine_script": _happy_script(),
+            "allow_local": True, "headed": False, "review_wait_s": 60,
+        }
+    }).json()
+    deadline = time.monotonic() + 120
+    row: dict = {}
+    while time.monotonic() < deadline:
+        row = client.get(f"/api/apply-runs/{run['id']}", headers=AUTH).json()
+        if row["phase"] == "ready_for_human" and row["usage"]["calls"] > 0:
+            return app_id, row
+        if row["ended_at"] is not None:
+            break
+        time.sleep(0.25)
+    raise AssertionError(f"run never reached review: {row}")
+
+
+def _wait_ended(client: TestClient, run_id: str, timeout: float = 120.0) -> dict:
+    """The op is over (tab closed, `_finalize` written) once `ended_at` is set."""
+    deadline = time.monotonic() + timeout
+    run: dict = {}
+    while time.monotonic() < deadline:
+        run = client.get(f"/api/apply-runs/{run_id}", headers=AUTH).json()
+        if run["ended_at"] is not None:
+            return run
+        time.sleep(0.25)
+    raise AssertionError(f"run {run_id} never ended: {run}")
+
+
+def test_submit_for_me_works_while_the_form_waits_for_review(app_client) -> None:
+    """A22: Submit needed status `ready_for_human` and a live tab, which never held
+    together. In review the row is `running`, carries the fill's outcome, and Submit
+    clicks the form, ends the hold, and lands `submitted` with the card on Applied."""
+    from sidecar.app.registry.applier_window import window_for
+
+    app, client = app_client
+    app_id, row = _start_held_review(client, app)
+    assert row["status"] == "running"
+    assert row["usage"]["calls"] == 3  # the fill's outcome is on the row already
+    assert row["fields"]
+    assert row["ended_at"] is None
+    assert window_for(headless=True).has_tab(row["id"])
+    held_card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert held_card["applyRunStatus"] == "ready_for_human"  # the card says review
+
+    resp = client.post(f"/api/apply-runs/{row['id']}/submit", headers=AUTH)
+    assert resp.status_code == 202, resp.text
+
+    final = _wait_ended(client, row["id"], timeout=30)  # well before the 60 s hold
+    assert final["status"] == "submitted", final
+    assert final["submit_evidence"] == "user_submitted"
+    assert "confirmation detected" in final["summary"]
+    assert final["screenshot_count"] == row["screenshot_count"] + 1  # the confirmation page
+    assert not window_for(headless=True).has_tab(row["id"])
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] == "applied"
+    # The run is done: a second Submit is refused, never a second click.
+    again = client.post(f"/api/apply-runs/{row['id']}/submit", headers=AUTH)
+    assert again.status_code == 409
+
+
+def test_i_submitted_during_review_survives_the_hold_ending(app_client) -> None:
+    """A22: "I submitted" is accepted in review, and closing the tab afterwards must
+    not write the run back to `ready_for_human`."""
+    app, client = app_client
+    app_id, row = _start_held_review(client, app)
+
+    attested = client.post(
+        f"/api/apply-runs/{row['id']}/attest", headers=AUTH, json={"submitted": True}
+    )
+    assert attested.status_code == 200, attested.text
+    assert attested.json()["status"] == "submitted"
+
+    client.post(f"/api/apply-runs/{row['id']}/cancel", headers=AUTH)  # ends the hold
+    final = _wait_ended(client, row["id"])
+    assert final["status"] == "submitted", final
+    assert final["submit_evidence"] == "user_attested"
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] == "applied"
+
+
+def test_only_a_filled_form_is_in_review() -> None:
+    """Submit and the handoff strip key on this: a `running` row at any other phase
+    is still filling, and a sent run is done."""
+    from sidecar.app.db.models import ApplyRun, apply_run_in_review
+
+    rows = [
+        ("running", "filling", False),
+        ("running", "ready_for_human", True),
+        ("ready_for_human", "ready_for_human", True),
+        ("submitted", "ready_for_human", False),
+        ("blocked", "blocked", False),
+    ]
+    for status, phase, want in rows:
+        run = ApplyRun(application_id="a", status=status, phase=phase)
+        assert apply_run_in_review(run) is want, (status, phase)

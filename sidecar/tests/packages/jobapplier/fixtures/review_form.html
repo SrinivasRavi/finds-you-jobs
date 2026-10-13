@@ -1,0 +1,32 @@
+<!-- finds-you-jobs — AGPL-3.0-only. Fixture: form.html's application form, whose
+     Submit swaps in a confirmation, so a run can be held for review and then
+     sent from the app (audit A22). Local only, no network. -->
+<!DOCTYPE html>
+<html>
+<head><title>Apply — Staff Engineer at Acme</title></head>
+<body>
+  <h1>Apply for Staff Engineer</h1>
+  <div id="page">
+  <form id="application" onsubmit="return handle(event)">
+    <label for="name">Full name</label>
+    <input id="name" name="name" type="text" />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <button type="submit">Submit application</button>
+  </form>
+  </div>
+  <script>
+    function handle(e) {
+      e.preventDefault();
+      document.getElementById('page').innerHTML =
+        '<h2>Application received</h2><p>Thank you for applying to Acme.</p>';
+      return false;
+    }
+  </script>
+</body>
+</html>

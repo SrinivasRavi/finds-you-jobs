@@ -384,6 +384,14 @@ APPLY_RUN_ACTIVE_STATUSES: frozenset[str] = frozenset(
 )
 
 
+def apply_run_in_review(run: ApplyRun) -> bool:
+    """The filled form waits for the human: the tab is held open at status `running`,
+    phase `ready_for_human`, and lands status `ready_for_human` once it closes (A22)."""
+    return run.status == "ready_for_human" or (
+        run.status == "running" and run.phase == "ready_for_human"
+    )
+
+
 # The kanban columns a contact-sync sweep may move between (S-N5). `candidate`
 # is off the board; `converted` and `ghosted` are terminal, so neither syncs.
 CONTACT_SYNCABLE_STATUSES: tuple[str, ...] = (

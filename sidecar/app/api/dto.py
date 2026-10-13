@@ -29,6 +29,7 @@ from ..db.models import (
     OutreachLog,
     Schedule,
     UserPreferences,
+    apply_run_in_review,
 )
 
 # ---------------------------------------------------------------------------
@@ -1513,8 +1514,11 @@ def application_dto(
         packet_cover_letter_state=derive_artifact_state(cover_a, cover_state),
         referrals_state=referrals_state,
         referrals_count=referrals_count,
+        # A form held open for review reads as review on the card, not "Applying" (A22).
         apply_run_status=(
-            latest_apply_run.status if latest_apply_run is not None else "none"
+            "none" if latest_apply_run is None
+            else "ready_for_human" if apply_run_in_review(latest_apply_run)
+            else latest_apply_run.status
         ),
         apply_run_id=latest_apply_run.id if latest_apply_run is not None else None,
         artifacts=artifact_dtos,

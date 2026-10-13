@@ -47,6 +47,8 @@ function phaseInfo(status: ApplyRunStatus, phase: string): { label: string; tone
   const d = applyRunDisplay(status);
   if (status === "running") {
     const p = phase.toLowerCase();
+    // The filled form waits in its held-open tab (audit A22): show it as ready.
+    if (p === "ready_for_human") return phaseInfo("ready_for_human", "");
     if (p.includes("open")) return { label: i18n.t("popups.applier.phase.openingJob"), tone: d.tone, live: d.live };
     if (p.includes("find") || p.includes("form")) return { label: i18n.t("popups.applier.phase.findingForm"), tone: d.tone, live: d.live };
     if (p.includes("fill")) return { label: i18n.t("popups.applier.phase.filling"), tone: d.tone, live: d.live };
@@ -94,6 +96,8 @@ type ApplyEventPayload = {
   title?: string;
   field_label?: string;
   action?: string;
+  clicked?: boolean;
+  confirmed?: boolean;
 };
 
 /** Map one redacted `apply` SSE event to a feed line. Returns null for events
@@ -143,6 +147,11 @@ function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
       return { id, text: i18n.t("popups.applier.feed.readyForHuman"), tone: "warn" };
     case "apply.confirmation_detected":
       return { id, text: i18n.t("popups.applier.feed.confirmationDetected"), tone: "ok" };
+    case "apply.user_submitted":
+      if (p.confirmed) return { id, text: i18n.t("popups.applier.feed.userSubmitConfirmed"), tone: "ok" };
+      return p.clicked
+        ? { id, text: i18n.t("popups.applier.feed.userSubmitUnconfirmed"), tone: "warn" }
+        : { id, text: i18n.t("popups.applier.feed.userSubmitNotFound"), tone: "bad" };
     case "apply.interrupted":
       return { id, text: i18n.t("popups.applier.feed.interrupted"), tone: "bad" };
     case "apply.completed":
@@ -190,6 +199,9 @@ export function ApplierPanel({
 
   const status: ApplyRunStatus = run?.status ?? "running";
   const phase = phaseInfo(status, run?.phase ?? "");
+  // Ready for review while the tab is held (`running`) and after it closes (A22).
+  const inReview =
+    status === "ready_for_human" || (status === "running" && run?.phase === "ready_for_human");
 
   // ── Live event feed: seed once per run from the snapshot, then append SSE ──
   const [feed, setFeed] = useState<FeedItem[]>([]);
@@ -284,7 +296,7 @@ export function ApplierPanel({
   // No Chrome and no Chromium: the run failed coded, and Download replaces the raw text (A18).
   const browserMissing = run?.blockers.some((b) => b.kind === "browser_missing") ?? false;
   // The run's tab in the Applier window (applier/window.md section 4.5). It lives
-  // while the run is `running`, review included; `ready_for_human` lands after it closes.
+  // while the run is `running`, review included; status `ready_for_human` lands after.
   const hasTab = status === "running";
   const [tabGone, setTabGone] = useState(false);
   useEffect(() => setTabGone(false), [runId, status]);
@@ -416,7 +428,7 @@ export function ApplierPanel({
         </div>
 
         {/* Handoff strip (section 8.4) — form ready for the human to submit */}
-        {status === "ready_for_human" ? (
+        {inReview ? (
           <div
             className="border-t border-border bg-warn-wash px-5 py-3"
             data-testid="applier-handoff-strip"

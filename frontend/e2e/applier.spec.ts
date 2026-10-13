@@ -230,3 +230,104 @@ test("before the first apply, Applicant details open, and saving them continues 
     { country: "United States", status: "needs_sponsorship" },
   ]);
 });
+
+const REVIEW_FORM = pathToFileURL(
+  join(SPEC_DIR, "..", "..", "sidecar", "tests", "packages", "jobapplier", "fixtures", "review_form.html"),
+).href;
+
+test("Submit for me sends the form while it waits for review in its tab (audit A22)", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.patch(`${base}/api/profile/application-profile`, {
+    headers: auth,
+    data: { name: "E2E Candidate", email: "e2e@example.com", location: "Bengaluru, Karnataka, India" },
+  });
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "",
+        title: "Review Hold Engineer",
+        company: "Globex",
+        location: "Remote",
+        description: "Hold the form for review, then send it.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  const application = await (
+    await request.post(`${base}/api/applications`, {
+      headers: auth,
+      data: { job_id: job.id, generate_resume: false, generate_cover: false },
+    })
+  ).json();
+  const started = await request.post(`${base}/api/applications/${application.id}/apply`, {
+      headers: auth,
+      data: {
+        dev: {
+          form_url: REVIEW_FORM,
+          engine_script: [
+            JSON.stringify({ tool: "fill", element_id: "e2", value: "E2E Candidate" }),
+            JSON.stringify({ tool: "fill", element_id: "e3", value: "e2e@example.com" }),
+            JSON.stringify({ tool: "finish", reason: "grounded fields filled; review the rest" }),
+          ],
+          allow_local: true,
+          headed: false,
+          // Held long enough that only the in-app Submit can end it inside the test.
+          review_wait_s: 120,
+        },
+      },
+    });
+  expect(started.status(), await started.text()).toBe(202);
+  const run = await started.json();
+
+  // In review the run reads `running` at phase `ready_for_human`, its tab still open.
+  await expect(async () => {
+    const snap = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+    expect([snap.status, snap.phase]).toEqual(["running", "ready_for_human"]);
+  }).toPass({ timeout: 60_000 });
+
+  await page.goto("/applications");
+  const slot = page
+    .getByTestId("tracker-card")
+    .filter({ hasText: "Review Hold Engineer" })
+    .getByTestId("card-apply-slot");
+  await expect(slot).toBeVisible({ timeout: 15_000 });
+  // The card says the form is ready, not "Applying…", while its tab waits.
+  await expect(slot).toContainText("Review & submit");
+  await slot.click();
+  const strip = page.getByTestId("applier-handoff-strip");
+  await expect(strip).toBeVisible();
+  // The fill's outcome is on the row during the hold, not only after it.
+  await expect(strip).toContainText(/Filled [1-9]\d* of [1-9]\d* fields/);
+  await expect(page.getByTestId("applier-phase-pill")).toHaveText("Ready for review");
+  await expect(page.getByTestId("applier-show-tab-btn")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/review-hold-strip.png`, fullPage: true });
+
+  await page.getByTestId("applier-submit-btn").click();
+  await page.getByTestId("applier-submit-confirm-btn").click();
+  await expect(async () => {
+    const snap = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+    expect(snap.status).toBe("submitted");
+    expect(snap.submit_evidence).toBe("user_submitted");
+    expect(snap.ended_at).not.toBeNull();
+  }).toPass({ timeout: 30_000 });
+  const card = await (
+    await request.get(`${base}/api/applications/${application.id}`, { headers: auth })
+  ).json();
+  expect(card.column).toBe("applied");
+  await expect(page.getByTestId("applier-handoff-strip")).toHaveCount(0);
+  await expect(page.getByText("Submitted — this application moved to Applied.")).toBeVisible();
+  await expect(page.getByTestId("applier-panel")).toContainText(
+    "Clicked Submit for you, and the page confirmed it.",
+  );
+  await page.screenshot({ path: `${DIR}/review-hold-submitted.png`, fullPage: true });
+});

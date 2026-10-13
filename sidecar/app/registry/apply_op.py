@@ -339,6 +339,20 @@ async def _apply_async(
                 control,
                 policy=UrlPolicy(allow_local=allow_local),
             )
+            if result.status is ApplyStatus.READY_FOR_HUMAN and review_wait_s > 0:
+                # The row stays `running` while the tab is held, so the panel needs the
+                # fill's outcome now, not once the window ends (audit A22).
+                with db.repos() as repos:
+                    repos.apply_runs.update(
+                        run_id, phase="ready_for_human", **_result_fields(result)
+                    )
+                if ctx.publish is not None:
+                    # The loop's own ready event fired before this write; refetch now.
+                    ctx.publish(make_event("apply", {
+                        "run_id": run_id,
+                        "operation_id": ctx.operation_id,
+                        "event": "apply.review_started",
+                    }))
             result = await _review_window(ctx, run_id, page, result, review_wait_s, control)
         finally:
             try:
@@ -461,7 +475,7 @@ def _persist_event(ctx: OperationContext, run_id: str, event: ApplyEvent) -> Non
             repos.apply_runs.update(run_id, **fields)
 
 
-async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> None:
+async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> bool:
     """Click Submit once, because the USER asked (S-A5). The agent cannot reach
     this: `submit_application` sits outside the model's tool vocabulary and the
     only caller is the request the human made from the review surface. The
@@ -496,6 +510,22 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> Non
                 },
             )
         )
+    return outcome.confirmed
+
+
+async def _save_post_submit_shot(ctx: OperationContext, run_id: str, page: Any) -> None:
+    """The confirmation page, kept as the run's evidence that it was sent."""
+    shot = _run_dir(run_id) / "screenshots" / "post-submit.png"
+    try:
+        await page.screenshot(path=str(shot))
+    except Exception:
+        return
+    db = ctx.db
+    assert db is not None
+    with db.repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is not None:
+            repos.apply_runs.update(run_id, screenshots=list(run.screenshots) + [str(shot)])
 
 
 async def _review_window(
@@ -517,18 +547,16 @@ async def _review_window(
         if page.is_closed():
             return result  # user closed after reviewing; run stays ready_for_human
         if control.take_submit_request():
-            await _run_user_submit(ctx, run_id, page)
+            if await _run_user_submit(ctx, run_id, page):
+                await _save_post_submit_shot(ctx, run_id, page)
+                return result  # sent and confirmed; nothing left to watch for
             continue
         try:
             obs = await observe(page)
         except Exception:
             return result
         if PageState.CONFIRMATION in classify(obs):
-            shot = _run_dir(run_id) / "screenshots" / "post-submit.png"
-            try:
-                await page.screenshot(path=str(shot))
-            except Exception:
-                shot = None  # type: ignore[assignment]
+            await _save_post_submit_shot(ctx, run_id, page)
             db = ctx.db
             assert db is not None
             with db.repos() as repos:
@@ -537,11 +565,6 @@ async def _review_window(
                     submit_evidence="confirmation_detected",
                     final_url=obs.url,
                 )
-                if shot is not None:
-                    run = repos.apply_runs.get(run_id)
-                    if run is not None:
-                        shots = list(run.screenshots) + [str(shot)]
-                        repos.apply_runs.update(run_id, screenshots=shots)
             if ctx.publish is not None:
                 ctx.publish(
                     make_event(
@@ -636,31 +659,24 @@ def _finalize(
     assert db is not None
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
+        # Sent during the review window: by the app's Submit or the user's word (A22).
+        already_sent = run is not None and run.status == "submitted"
         confirmed = run is not None and run.submit_evidence == "confirmation_detected"
-        status = "submitted" if confirmed else result.status.value
+        status = "submitted" if confirmed or already_sent else result.status.value
+        fields = _result_fields(result)
+        if run is not None:
+            # Keep what the review window added, like the confirmation page's shot.
+            fields["screenshots"] += [p for p in run.screenshots if p not in fields["screenshots"]]
+        if already_sent:
+            # The submit's own note says what happened; the fill's summary is older.
+            fields.pop("summary")
         repos.apply_runs.update(
             run_id,
             status=status,
-            phase=result.status.value if not confirmed else "ready_for_human",
+            phase="ready_for_human" if status == "submitted" else result.status.value,
             final_url=result.final_url or (run.final_url if run else ""),
-            summary=result.summary,
-            blockers=[
-                {"kind": b.kind, "detail": b.detail, "field_label": b.field_label}
-                for b in result.blockers
-            ],
-            fields=[
-                {"label": f.label, "action": f.action, "ok": f.ok, "note": f.note}
-                for f in result.fields
-            ],
-            screenshots=list(result.screenshots),
-            usage={
-                "calls": result.usage.calls,
-                "tokens_in": result.usage.tokens_in,
-                "tokens_out": result.usage.tokens_out,
-                "cost_usd": result.usage.cost_usd,
-            },
-            steps=result.steps,
             ended_at=now_utc(),
+            **fields,
         )
         if confirmed:
             advance_card_to_applied(repos, application_id, by="applier")
@@ -679,6 +695,29 @@ def _finalize(
         # so a failed run keeps its cost.
         error=None if status in ("ready_for_human", "submitted") else _failure_reason(result),
     )
+
+
+def _result_fields(result: ApplyResult) -> dict[str, Any]:
+    """The fill's outcome as run-row columns: redacted labels and outcomes, never values."""
+    return {
+        "summary": result.summary,
+        "blockers": [
+            {"kind": b.kind, "detail": b.detail, "field_label": b.field_label}
+            for b in result.blockers
+        ],
+        "fields": [
+            {"label": f.label, "action": f.action, "ok": f.ok, "note": f.note}
+            for f in result.fields
+        ],
+        "screenshots": list(result.screenshots),
+        "usage": {
+            "calls": result.usage.calls,
+            "tokens_in": result.usage.tokens_in,
+            "tokens_out": result.usage.tokens_out,
+            "cost_usd": result.usage.cost_usd,
+        },
+        "steps": result.steps,
+    }
 
 
 def _failure_reason(result: ApplyResult) -> str:

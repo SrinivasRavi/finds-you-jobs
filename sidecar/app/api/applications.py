@@ -20,7 +20,12 @@ from sidecar.modules.scraper.quality import evaluate as quality_evaluate
 
 from .. import documents as docstore
 from ..db.base import now_utc
-from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
+from ..db.models import (
+    APPLY_RUN_ACTIVE_STATUSES,
+    OP_ACTIVE_STATES,
+    OP_ALL_STATES,
+    apply_run_in_review,
+)
 from ..priority import STATS_KEY, zband_priority
 from ..registry import networker_ops as networker_ops
 from ..registry.apply_op import (
@@ -818,7 +823,7 @@ def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
 
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
-        if run.status != "ready_for_human":
+        if not apply_run_in_review(run):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -857,7 +862,10 @@ def attest_apply_run(
     leaves the card in its pre-submission column with the honest run result."""
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
-        if run.status not in ("ready_for_human", "interrupted", "timed_out", "blocked"):
+        handed_off = apply_run_in_review(run) or run.status in (
+            "interrupted", "timed_out", "blocked"
+        )
+        if not handed_off:
             if not (run.status == "submitted" and payload.submitted):
                 raise HTTPException(
                     status_code=409,
