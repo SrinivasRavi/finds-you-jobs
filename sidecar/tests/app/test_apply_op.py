@@ -894,3 +894,78 @@ def test_a_retried_apply_without_facts_fails_before_any_run_row(migrated_db) -> 
         asyncio.run(apply_op._apply_async(ctx, card_id, ApplyControl()))
     with migrated_db.repos() as repos:
         assert repos.apply_runs.latest_for_application(card_id) is None
+
+
+def _seed_card_for(client: TestClient, app: FastAPI, fixture: str) -> str:
+    job_id = _seed_fixture_job(app, fixture, title=f"Engineer {fixture}")
+    return client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
+    ).json()["id"]
+
+
+def test_two_applications_fill_at_once_each_in_its_own_tab(app_client) -> None:
+    """applier/window.md section 4.1: 1 shared window, 1 tab per run, runs in parallel.
+    Both are in review at the same time, and Show finds each run's own tab."""
+    from sidecar.app.registry.applier_window import window_for
+
+    app, client = app_client
+    _job_id, first = _seed_card(client, app)
+    second = _seed_card_for(client, app, "application_form.html")
+    dev = {"engine_script": _happy_script(), "allow_local": True, "headed": False,
+           "review_wait_s": 60}
+    runs = [
+        client.post(f"/api/applications/{a}/apply", headers=AUTH, json={"dev": dev}).json()
+        for a in (first, second)
+    ]
+    # In the review window a run reads `running` at phase `ready_for_human`.
+    deadline = time.monotonic() + 120
+    phases: list[str] = []
+    while time.monotonic() < deadline:
+        phases = [
+            client.get(f"/api/apply-runs/{r['id']}", headers=AUTH).json()["phase"]
+            for r in runs
+        ]
+        if phases == ["ready_for_human", "ready_for_human"]:
+            break
+        time.sleep(0.25)
+    assert phases == ["ready_for_human", "ready_for_human"]
+
+    window = window_for(headless=True)
+    assert all(window.has_tab(r["id"]) for r in runs)
+    for r in runs:
+        shown = client.post(f"/api/apply-runs/{r['id']}/show", headers=AUTH).json()
+        assert shown == {"shown": True}
+    for r in runs:
+        client.post(f"/api/apply-runs/{r['id']}/cancel", headers=AUTH)
+    for r in runs:
+        _wait_terminal(client, r["id"])
+        assert not window.has_tab(r["id"])
+    gone = client.post(f"/api/apply-runs/{runs[0]['id']}/show", headers=AUTH).json()
+    assert gone == {"shown": False}
+
+
+def test_apply_with_no_browser_at_all_is_coded(
+    app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A18: no installed Chrome and no downloaded Chromium. The run lands failed with
+    a `browser_missing` blocker, never Playwright's raw "Executable doesn't exist"."""
+    from sidecar.app.browser import launch
+    from sidecar.app.registry.applier_window import BROWSER_MISSING_DETAIL, shutdown_windows
+
+    shutdown_windows()  # a window started under the real browser path
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
+    monkeypatch.setattr(launch, "PREFERRED_CHANNEL", None)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
+    run = client.post(
+        f"/api/applications/{app_id}/apply",
+        headers=AUTH,
+        json={"dev": {"engine_script": _happy_script(), "allow_local": True,
+                      "headed": False, "review_wait_s": 0}},
+    ).json()
+    final = _wait_terminal(client, run["id"])
+    assert final["status"] == "failed", final
+    assert final["summary"] == BROWSER_MISSING_DETAIL
+    assert [b["kind"] for b in final["blockers"]] == ["browser_missing"]

@@ -1644,6 +1644,18 @@ const de: DeepPartial<Messages> = {
   browser: {
     framesLabel: "Frames",
     noPage: "noch keine Seite",
+    download: {
+      button: "Chromium herunterladen",
+      downloading: "Chromium wird heruntergeladen… das dauert ein bis zwei Minuten",
+      stopped: "Der Download wurde vor dem Ende abgebrochen. Versuche es erneut.",
+      surfaceMissing: "Dieser Browser braucht Chrome oder Chromium, und keins von beiden ist auf diesem Computer. Lade Chromium herunter, ein einmaliger Download.",
+      applyMissing: "Zum Bewerben wird Chrome oder Chromium benötigt, und keins von beiden ist auf diesem Computer. Lade Chromium herunter, ein einmaliger Download, und bewirb dich dann erneut.",
+      applyReady: "Chromium ist bereit. Bewirb dich erneut.",
+    },
+    applierTab: {
+      show: "Im Browser zeigen",
+      gone: "Der Tab des Formulars ist geschlossen.",
+    },
   },
   relativeTime: {
     never: "nie",

@@ -2,10 +2,11 @@
 Tracker, driving `jobapplier.run_apply`.
 
 The route creates the ApplyRun; this waits for the packet, freezes the
-artifact, renders the PDF and opens the browser. The loop has no submit tool
-(4.2). On `ready_for_human` the headed browser stays open for review (8.4): a
-confirmation page records `submitted`, else the user may attest. Tests inject
-`ENGINE_FACTORY`; `FYJ_APPLY_DEV=1` honors the snapshot's dev knobs."""
+artifact, opens the run's tab in the shared Applier window
+(applier/window.md) and renders the PDF. The loop has no submit tool (4.2). On
+`ready_for_human` the tab stays open for review (8.4): a confirmation page
+records `submitted`, else the user may attest. Tests inject `ENGINE_FACTORY`;
+`FYJ_APPLY_DEV=1` honors the snapshot's dev knobs."""
 
 from __future__ import annotations
 
@@ -36,11 +37,18 @@ from sidecar.packages.jobapplier.fake import FakeApplyEngine
 from sidecar.packages.jobapplier.loop import ApplyEngine
 
 from ...modules._shared.completion_retry import CompletionCancelled
+from ..api.browser import is_browser_missing
 from ..db import Repos
 from ..db.base import now_utc
 from ..db.database import Database, resolve_data_dir
 from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES
 from ..events import make_event
+from .applier_window import (
+    BROWSER_MISSING_DETAIL,
+    ApplierWindow,
+    BrowserMissingError,
+    window_for,
+)
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome
 from .pdf import render_resume_pdf_async
@@ -106,10 +114,19 @@ def _apply(ctx: OperationContext) -> OperationOutcome:
     # run finalizes as cancelled instead of proceeding under a stale request.
     if ctx.cancelled is not None and ctx.cancelled():
         control.cancel()
+    # Every run shares 1 window, so the coroutine runs on the window's loop
+    # (applier/window.md section 4.1).
+    window = _window(ctx)
     try:
-        return asyncio.run(_apply_async(ctx, application_id, control))
+        return window.run(_apply_async(ctx, application_id, control, window))
     finally:
         APPLY_CONTROL.pop(ctx.operation_id, None)
+
+
+def _window(ctx: OperationContext) -> ApplierWindow:
+    """The shared window. Headless is a dev knob, for tests."""
+    headed = not (_dev_enabled() and ctx.input_snapshot.get("dev_headed") is False)
+    return window_for(headless=not headed)
 
 
 def _publish(ctx: OperationContext, run_id: str, event: ApplyEvent) -> None:
@@ -167,10 +184,17 @@ def purge_run_dirs(run_ids: Iterable[str]) -> None:
 
 
 async def _apply_async(
-    ctx: OperationContext, application_id: str, control: ApplyControl
+    ctx: OperationContext,
+    application_id: str,
+    control: ApplyControl,
+    window: ApplierWindow | None = None,
 ) -> OperationOutcome:
     db = ctx.db
     assert db is not None
+    if window is None:
+        window = _window(ctx)
+    if not window.on_loop():
+        return await window.run_async(_apply_async(ctx, application_id, control, window))
 
     # -- load the card + create/adopt the durable run -------------------------
     with db.repos() as repos:
@@ -257,17 +281,29 @@ async def _apply_async(
 
         dev = _dev_enabled()
         allow_local = bool(dev and ctx.input_snapshot.get("dev_allow_local"))
-        headed = not (dev and ctx.input_snapshot.get("dev_headed") is False)
         review_wait_s = _REVIEW_WAIT_S
         if dev and ctx.input_snapshot.get("dev_review_wait_s") is not None:
             review_wait_s = float(ctx.input_snapshot["dev_review_wait_s"])
 
         engine = ENGINE_FACTORY(ctx)
 
-        from playwright.async_api import async_playwright
-
-        async with async_playwright() as pw:
-            await render_resume_pdf_async(pw, resume_md, str(resume_pdf))
+        # The tab first: it holds the window open while the PDF renders on the
+        # window's Playwright (window.md section 4.4).
+        try:
+            page = await window.open_tab(run_id)
+        except Exception as exc:
+            if is_browser_missing(str(exc)):
+                raise BrowserMissingError(BROWSER_MISSING_DETAIL) from exc
+            raise
+        try:
+            try:
+                await render_resume_pdf_async(
+                    await window.playwright(), resume_md, str(resume_pdf)
+                )
+            except Exception as exc:
+                if is_browser_missing(str(exc)):
+                    raise BrowserMissingError(BROWSER_MISSING_DETAIL) from exc
+                raise
 
             request = ApplyRequest(
                 run_id=run_id,
@@ -291,32 +327,24 @@ async def _apply_async(
                 screenshot_dir=str(run_dir / "screenshots"),
             )
 
-            browser = await pw.chromium.launch(headless=not headed)
-            page = await browser.new_page()
-
             def on_event(event: ApplyEvent) -> None:
                 _publish(ctx, run_id, event)
                 _persist_event(ctx, run_id, event)
 
+            result = await run_apply(
+                page,
+                request,
+                engine,
+                on_event,
+                control,
+                policy=UrlPolicy(allow_local=allow_local),
+            )
+            result = await _review_window(ctx, run_id, page, result, review_wait_s, control)
+        finally:
             try:
-                result = await run_apply(
-                    page,
-                    request,
-                    engine,
-                    on_event,
-                    control,
-                    policy=UrlPolicy(allow_local=allow_local),
-                )
-                result = await _review_window(
-                    ctx, run_id, page, result, review_wait_s, control
-                )
-            finally:
-                try:
-                    await browser.close()
-                except Exception:  # noqa: S110 — already closed by the user
-                    logging.getLogger("fyj.sidecar").debug(
-                        "browser close raced", exc_info=True
-                    )
+                await window.close_tab(run_id)
+            except Exception:  # noqa: S110 — already closed by the user
+                logging.getLogger("fyj.sidecar").debug("tab close raced", exc_info=True)
 
         return _finalize(ctx, application_id, run_id, result)
     except Exception as exc:
@@ -328,6 +356,16 @@ async def _apply_async(
         try:
             if control.cancelled:
                 _finalize_cancel(ctx, run_id)
+            elif isinstance(exc, BrowserMissingError):
+                # Coded, so the panel offers Download instead of raw text (A18).
+                finalize_run_failed(
+                    db,
+                    run_id,
+                    str(exc),
+                    blockers=[
+                        {"kind": "browser_missing", "detail": str(exc), "field_label": ""}
+                    ],
+                )
             else:
                 finalize_run_failed(db, run_id, f"{type(exc).__name__}: {exc}")
         except Exception:  # noqa: BLE001 — never let a finalize failure mask the real error
@@ -525,7 +563,9 @@ async def _review_window(
 # landed terminal is left untouched).
 
 
-def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
+def finalize_run_failed(
+    db: Database, run_id: str, summary: str, *, blockers: list[dict[str, str]] | None = None
+) -> None:
     """Land the run row `failed` when the entrypoint dies before `_finalize` owns it,
     or the route's enqueue fails. Guarded to active rows; the op failure itself is
     the runner's job. This keeps the run from sitting live forever."""
@@ -533,12 +573,16 @@ def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
         run = repos.apply_runs.get(run_id)
         if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
+        fields: dict[str, Any] = {}
+        if blockers is not None:
+            fields["blockers"] = blockers
         repos.apply_runs.update(
             run_id,
             status="failed",
             phase="failed",
             summary=summary,
             ended_at=now_utc(),
+            **fields,
         )
 
 

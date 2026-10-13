@@ -1641,6 +1641,18 @@ const hi: DeepPartial<Messages> = {
   browser: {
     framesLabel: "फ़्रेम",
     noPage: "अभी कोई पेज नहीं",
+    download: {
+      button: "Chromium डाउनलोड करें",
+      downloading: "Chromium डाउनलोड हो रहा है… इसमें एक-दो मिनट लगते हैं",
+      stopped: "डाउनलोड पूरा होने से पहले रुक गया। फिर से कोशिश करें।",
+      surfaceMissing: "इस ब्राउज़र को Chrome या Chromium चाहिए, और इस कंप्यूटर पर दोनों में से कोई नहीं है। Chromium डाउनलोड करें, यह एक बार का डाउनलोड है।",
+      applyMissing: "आवेदन के लिए Chrome या Chromium चाहिए, और इस कंप्यूटर पर दोनों में से कोई नहीं है। Chromium डाउनलोड करें, यह एक बार का डाउनलोड है, फिर दोबारा आवेदन करें।",
+      applyReady: "Chromium तैयार है। दोबारा आवेदन करें।",
+    },
+    applierTab: {
+      show: "ब्राउज़र में दिखाएँ",
+      gone: "फ़ॉर्म का टैब बंद है।",
+    },
   },
   relativeTime: {
     never: "कभी नहीं",

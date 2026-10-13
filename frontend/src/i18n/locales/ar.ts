@@ -1748,6 +1748,18 @@ const ar = {
   browser: {
     framesLabel: "إطارات",
     noPage: "لا توجد صفحة بعد",
+    download: {
+      button: "تنزيل Chromium",
+      downloading: "جارٍ تنزيل Chromium… يستغرق ذلك دقيقة أو دقيقتين",
+      stopped: "توقف التنزيل قبل أن يكتمل. حاول مرة أخرى.",
+      surfaceMissing: "يحتاج هذا المتصفح إلى Chrome أو Chromium، ولا يوجد أي منهما على هذا الكمبيوتر. نزّل Chromium، وهو تنزيل لمرة واحدة.",
+      applyMissing: "يحتاج التقديم إلى Chrome أو Chromium، ولا يوجد أي منهما على هذا الكمبيوتر. نزّل Chromium، وهو تنزيل لمرة واحدة، ثم قدّم مرة أخرى.",
+      applyReady: "Chromium جاهز. قدّم مرة أخرى.",
+    },
+    applierTab: {
+      show: "عرض في المتصفح",
+      gone: "علامة تبويب النموذج مغلقة.",
+    },
   },
   relativeTime: {
     never: "أبدًا",

@@ -1615,6 +1615,18 @@ const zh: DeepPartial<Messages> = {
   browser: {
     framesLabel: "帧",
     noPage: "还没有页面",
+    download: {
+      button: "下载 Chromium",
+      downloading: "正在下载 Chromium… 需要一两分钟",
+      stopped: "下载在完成前停止了。请重试。",
+      surfaceMissing: "这个浏览器需要 Chrome 或 Chromium，而这台电脑上两者都没有。请下载 Chromium，只需下载一次。",
+      applyMissing: "申请需要 Chrome 或 Chromium，而这台电脑上两者都没有。请下载 Chromium（只需下载一次），然后重新申请。",
+      applyReady: "Chromium 已就绪。请重新申请。",
+    },
+    applierTab: {
+      show: "在浏览器中显示",
+      gone: "表单的标签页已关闭。",
+    },
   },
   relativeTime: {
     never: "从未",

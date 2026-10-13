@@ -12,6 +12,7 @@ import {
   type ScreencastControl,
   type ScreencastState,
 } from "../api/screencast";
+import { BrowserDownloadStrip } from "../shell/BrowserDownload";
 
 export function BrowserSurface({
   surface,
@@ -30,6 +31,9 @@ export function BrowserSurface({
   const [frames, setFrames] = useState(0);
   const [pageUrl, setPageUrl] = useState("");
   const [error, setError] = useState("");
+  // `browser_missing`: no Chrome and no Chromium; the strip offers Download, and
+  // the client's own reconnect picks the browser up once it lands (A18).
+  const [errorCode, setErrorCode] = useState("");
   // Set when the attach status says the surface has no page yet ("" URL);
   // cleared the moment any page URL lands. While set (and `autoHome` allows),
   // the effect below opens the frozen origin so the canvas is never dead blank.
@@ -93,8 +97,10 @@ export function BrowserSurface({
             setNeedsHome(true);
           }
           setError("");
+          setErrorCode("");
         } else {
           setError(msg.message);
+          setErrorCode(msg.code ?? "");
         }
       },
       onState: (next: ScreencastState) => {
@@ -168,7 +174,12 @@ export function BrowserSurface({
         </span>
       </header>
       <main className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-4">
-        {error ? (
+        {errorCode === "browser_missing" ? (
+          <BrowserDownloadStrip
+            testId="screencast-browser-download"
+            missingText={t("browser.download.surfaceMissing")}
+          />
+        ) : error ? (
           <p className="text-[12.5px] text-bad" data-testid="screencast-error">
             {error}
           </p>

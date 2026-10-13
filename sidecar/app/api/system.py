@@ -271,6 +271,15 @@ def install_browser(request: Request) -> dto.BrowserInstallResult:
     return dto.BrowserInstallResult(status=status)
 
 
+@router.get("/api/system/install-browser")
+def browser_install_status() -> dto.BrowserInstallStatus:
+    """The last Chromium download's state. A client that lost the event stream
+    mid-download reads this instead of waiting forever (A21)."""
+    from .browser import install_status
+
+    return dto.BrowserInstallStatus(**install_status())
+
+
 @router.get("/api/system/scheduler")
 def scheduler_status(request: Request) -> dto.SchedulerStatus:
     """Whether background work is running, and whether this boot is why it isn't.

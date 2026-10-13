@@ -19,6 +19,7 @@ from starlette.websockets import WebSocketState
 from ..auth import token_ok
 from ..browser import BrowserSurface, Viewer
 from ..logging_setup import get_logger
+from .browser import is_browser_missing
 
 router = APIRouter()
 
@@ -65,7 +66,9 @@ async def screencast(websocket: WebSocket) -> None:
         await surface.wait_ready()
     except Exception as exc:  # noqa: BLE001 — verbatim to the client, then close
         get_logger().exception("browser surface %r unavailable", slug)
-        await _send_error(websocket, f"{type(exc).__name__}: {exc}")
+        # No Chrome and no Chromium: coded, so the viewer offers Download (A18).
+        code = "browser_missing" if is_browser_missing(str(exc)) else None
+        await _send_error(websocket, f"{type(exc).__name__}: {exc}", code=code)
         await websocket.close(code=SERVER_ERROR_CLOSE)
         return
 
@@ -176,12 +179,15 @@ async def _apply_command(
             surface.resize(width, height)
 
 
-async def _send_error(websocket: WebSocket, message: str) -> None:
+async def _send_error(websocket: WebSocket, message: str, *, code: str | None = None) -> None:
     """Best-effort `error` frame before a close. A client that already went away
     is not a failure worth raising."""
     if websocket.client_state is not WebSocketState.CONNECTED:
         return
+    frame = {"type": "error", "message": message}
+    if code is not None:
+        frame["code"] = code
     try:
-        await websocket.send_json({"type": "error", "message": message})
+        await websocket.send_json(frame)
     except Exception:  # noqa: BLE001, S110 — the close is what matters
         pass

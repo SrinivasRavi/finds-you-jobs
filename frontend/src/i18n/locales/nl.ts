@@ -1641,6 +1641,18 @@ const nl: DeepPartial<Messages> = {
   browser: {
     framesLabel: "frames",
     noPage: "nog geen pagina",
+    download: {
+      button: "Chromium downloaden",
+      downloading: "Chromium wordt gedownload… dit duurt een minuut of twee",
+      stopped: "De download stopte voordat hij klaar was. Probeer het opnieuw.",
+      surfaceMissing: "Deze browser heeft Chrome of Chromium nodig, en geen van beide staat op deze computer. Download Chromium, een eenmalige download.",
+      applyMissing: "Solliciteren heeft Chrome of Chromium nodig, en geen van beide staat op deze computer. Download Chromium, een eenmalige download, en solliciteer daarna opnieuw.",
+      applyReady: "Chromium is klaar. Solliciteer opnieuw.",
+    },
+    applierTab: {
+      show: "Tonen in browser",
+      gone: "Het tabblad van het formulier is gesloten.",
+    },
   },
   relativeTime: {
     never: "nooit",

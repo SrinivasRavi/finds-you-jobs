@@ -836,6 +836,18 @@ def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
         return dto.apply_run_dto(run)
 
 
+@router.post("/api/apply-runs/{run_id}/show")
+async def show_apply_run(request: Request, run_id: str) -> dto.ApplyRunShowResult:
+    """Bring the run's tab to the front of the Applier window, because the user
+    asked (applier/window.md section 4.5). `shown` is false once the tab is gone."""
+    from ..registry.applier_window import show_run
+
+    with _db(request).repos() as repos:
+        _found(repos.apply_runs.get(run_id), "run", run_id)
+    shown = await asyncio.to_thread(show_run, run_id)
+    return dto.ApplyRunShowResult(shown=shown)
+
+
 @router.post("/api/apply-runs/{run_id}/attest")
 def attest_apply_run(
     request: Request, run_id: str, payload: dto.ApplyAttestRequest

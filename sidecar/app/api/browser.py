@@ -22,6 +22,9 @@ from ..logging_setup import get_logger
 _INSTALL_TIMEOUT_S = 600
 _lock = threading.Lock()
 _running = False
+# The last download's state, readable by a client that missed its event (A21).
+_status: dict[str, str] = {"state": "idle", "message": ""}
+_STATES = {"started": "running", "done": "done", "failed": "failed"}
 
 
 # Playwright's own wording when the browser it wants isn't on disk.
@@ -51,7 +54,14 @@ def install_command() -> tuple[list[str], dict[str, str]]:
     return [node, cli, "install", "chromium"], get_driver_env()
 
 
+def install_status() -> dict[str, str]:
+    with _lock:
+        return dict(_status)
+
+
 def _publish_install(publish, state: str, message: str) -> None:  # type: ignore[no-untyped-def]
+    with _lock:
+        _status.update(state=_STATES[state], message=message)
     if publish is not None:
         publish(make_event("browser_install", {"state": state, "message": message}))
 
@@ -92,6 +102,9 @@ def start_install(publish) -> str:  # type: ignore[no-untyped-def]
         if _running:
             return "already_running"
         _running = True
+        # Before the thread starts, so a status read right after this call never
+        # sees the previous download's outcome.
+        _status.update(state="running", message="")
     threading.Thread(
         target=_run_install, args=(publish,), name="fyj-browser-install", daemon=True
     ).start()

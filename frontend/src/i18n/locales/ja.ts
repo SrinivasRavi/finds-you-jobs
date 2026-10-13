@@ -1615,6 +1615,18 @@ const ja: DeepPartial<Messages> = {
   browser: {
     framesLabel: "フレーム",
     noPage: "まだページがありません",
+    download: {
+      button: "Chromium をダウンロード",
+      downloading: "Chromium をダウンロード中… 1〜2 分かかります",
+      stopped: "ダウンロードが完了前に止まりました。もう一度お試しください。",
+      surfaceMissing: "このブラウザには Chrome か Chromium が必要ですが、このコンピューターにはどちらもありません。Chromium をダウンロードしてください（初回のみ）。",
+      applyMissing: "応募には Chrome か Chromium が必要ですが、このコンピューターにはどちらもありません。Chromium をダウンロードして（初回のみ）、もう一度応募してください。",
+      applyReady: "Chromium の準備ができました。もう一度応募してください。",
+    },
+    applierTab: {
+      show: "ブラウザで表示",
+      gone: "フォームのタブは閉じられています。",
+    },
   },
   relativeTime: {
     never: "なし",

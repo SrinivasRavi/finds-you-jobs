@@ -103,6 +103,11 @@ export class SettingsApi extends ApplicationsApi {
     return d.status;
   }
 
+  /** The last Chromium download's state, for a client that missed its event (A21). */
+  async browserInstallStatus(): Promise<{ state: string; message: string }> {
+    return this.req<{ state: string; message: string }>("/api/system/install-browser");
+  }
+
   /** Commit onboarding / Job-finder-preferences edits (FR-OB-05). Merges
    *  `scrape_cadence` into `ui_state` without clobbering the rest of the map. */
   async savePreferences(input: OnboardingPrefsInput): Promise<void> {

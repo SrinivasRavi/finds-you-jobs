@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -70,7 +71,9 @@ def test_export_without_chromium_is_coded(
 ) -> None:
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
     from sidecar.app.api import system as routes_mod
+    from sidecar.app.browser import launch
 
+    monkeypatch.setattr(launch, "PREFERRED_CHANNEL", None)  # no installed Chrome either
     monkeypatch.setattr(routes_mod, "downloads_dir", lambda: tmp_path / "downloads")
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
@@ -81,3 +84,71 @@ def test_export_without_chromium_is_coded(
         )
     assert resp.status_code == 503
     assert resp.json()["detail"]["code"] == "browser_missing"
+
+
+def _chrome_installed() -> bool:
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as pw:
+            pw.chromium.launch(channel="chrome", headless=True).close()
+        return True
+    except Exception:  # noqa: BLE001 — absent or unlaunchable reads the same
+        return False
+
+
+def test_export_with_only_installed_chrome_needs_no_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """applier/window.md section 4.2: installed Chrome first, so a Chrome user never
+    sees Download, even with Playwright's Chromium absent."""
+    if not _chrome_installed():
+        pytest.skip("no installed Chrome on this machine")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
+    from sidecar.app.api import system as routes_mod
+
+    monkeypatch.setattr(routes_mod, "downloads_dir", lambda: tmp_path / "downloads")
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/export/pdf", headers=AUTH, json={"markdown": "# Ada", "filename": "cv"}
+        )
+    assert resp.status_code == 200, resp.text
+    assert Path(resp.json()["path"]).read_bytes()[:5] == b"%PDF-"
+
+
+def test_install_status_is_readable_after_a_missed_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A21: the done event can be lost with the stream; the status route still says it."""
+    from sidecar.app.api import browser as browser_mod
+
+    calls: list[list[str]] = []
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(argv, **_kw):  # type: ignore[no-untyped-def]
+        calls.append(argv)
+        return _Done()
+
+    monkeypatch.setattr(browser_mod.subprocess, "run", fake_run)
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        started = client.post("/api/system/install-browser", headers=AUTH).json()
+        assert started == {"status": "started"}
+        deadline = time.monotonic() + 5
+        status: dict = {}
+        while time.monotonic() < deadline:
+            status = client.get("/api/system/install-browser", headers=AUTH).json()
+            if status["state"] != "running":
+                break
+            time.sleep(0.05)
+    assert status["state"] == "done", status
+    assert any(argv[-2:] == ["install", "chromium"] for argv in calls)

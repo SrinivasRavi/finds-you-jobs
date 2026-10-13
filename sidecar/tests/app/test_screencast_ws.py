@@ -286,7 +286,21 @@ def test_launch_failure_reports_an_error_then_closes(
         closed = ws.receive()
     assert error["type"] == "error"
     assert "Chromium is not installed" in error["message"]
+    assert "code" not in error
     assert closed == {"type": "websocket.close", "code": 1011, "reason": ""}
+
+
+def test_no_browser_at_all_is_coded(client: TestClient, broker: FakeBroker) -> None:
+    """A18: no Chrome and no Chromium. The viewer gets `browser_missing`, its cue
+    to offer Download, beside Playwright's own text."""
+    broker.launch_error = RuntimeError(
+        "BrowserType.launch_persistent_context: Executable doesn't exist at /x/chrome"
+    )
+    with client.websocket_connect(_url(surface="pane-a")) as ws:
+        error = json.loads(ws.receive_text())
+    assert error["type"] == "error"
+    assert error["code"] == "browser_missing"
+    assert "Executable doesn't exist" in error["message"]
 
 
 async def test_viewer_queue_holds_exactly_one_frame() -> None:

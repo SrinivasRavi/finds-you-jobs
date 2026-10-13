@@ -189,7 +189,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Browser Install Status
+         * @description The last Chromium download's state. A client that lost the event stream
+         *     mid-download reads this instead of waiting forever (A21).
+         */
+        get: operations["browser_install_status_api_system_install_browser_get"];
         put?: never;
         /**
          * Install Browser
@@ -1208,6 +1213,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/apply-runs/{run_id}/show": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Show Apply Run
+         * @description Bring the run's tab to the front of the Applier window, because the user
+         *     asked (applier/window.md section 4.5). `shown` is false once the tab is gone.
+         */
+        post: operations["show_apply_run_api_apply_runs__run_id__show_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/apply-runs/{run_id}/attest": {
         parameters: {
             query?: never;
@@ -2208,6 +2234,14 @@ export interface components {
             ended_at: string | null;
         };
         /**
+         * ApplyRunShowResult
+         * @description The `POST /api/apply-runs/{id}/show` response (applier/window.md section 4.5).
+         */
+        ApplyRunShowResult: {
+            /** Shown */
+            shown: boolean;
+        };
+        /**
          * ApplyStartRequest
          * @description POST /api/applications/{id}/apply — no pre-confirm modal (section 8.1); the
          *     click IS the action. `retry_of_run_id` links a Retry / Reopen-and-refill
@@ -2405,6 +2439,20 @@ export interface components {
         BrowserInstallResult: {
             /** Status */
             status: string;
+        };
+        /**
+         * BrowserInstallStatus
+         * @description The `GET /api/system/install-browser` response: the last download's state in
+         *     this sidecar, so a client that missed the event can catch up (A21).
+         */
+        BrowserInstallStatus: {
+            /** State */
+            state: string;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
         };
         /**
          * BrowserViewRequest
@@ -4454,6 +4502,26 @@ export interface operations {
             };
         };
     };
+    browser_install_status_api_system_install_browser_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserInstallStatus"];
+                };
+            };
+        };
+    };
     install_browser_api_system_install_browser_post: {
         parameters: {
             query?: never;
@@ -6080,6 +6148,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    show_apply_run_api_apply_runs__run_id__show_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunShowResult"];
                 };
             };
             /** @description Validation Error */

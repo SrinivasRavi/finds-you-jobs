@@ -204,6 +204,13 @@ export class ApplicationsApi extends JobsApi {
     );
   }
 
+  /** Bring the run's tab to the front of the Applier window (applier/window.md
+   *  section 4.5). `false` once the tab is gone. */
+  async showApplyRun(runId: string): Promise<boolean> {
+    const d = (await this.json("POST", `/api/apply-runs/${runId}/show`, {})) as { shown: boolean };
+    return d.shown;
+  }
+
   async attestApplyRun(runId: string, submitted: boolean): Promise<ApplyRun> {
     return toApplyRun(
       (await this.json("POST", `/api/apply-runs/${runId}/attest`, { submitted })) as ApplyRunDTO,

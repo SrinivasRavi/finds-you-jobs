@@ -413,6 +413,10 @@ def create_app(
             # Close every browser surface before the DB goes: each one is a real
             # Chrome process that would otherwise outlive the sidecar.
             browser.shutdown()
+            # The Applier's window too (applier/window.md section 4.4).
+            from .registry.applier_window import shutdown_windows
+
+            shutdown_windows()
             db.dispose()
             log.info("sidecar app stopped")
 

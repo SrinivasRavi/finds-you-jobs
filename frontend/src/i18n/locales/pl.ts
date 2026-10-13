@@ -1676,6 +1676,18 @@ const pl: DeepPartial<Messages> = {
   browser: {
     framesLabel: "klatki",
     noPage: "jeszcze brak strony",
+    download: {
+      button: "Pobierz Chromium",
+      downloading: "Pobieranie Chromium… to potrwa minutę lub dwie",
+      stopped: "Pobieranie zatrzymało się przed końcem. Spróbuj ponownie.",
+      surfaceMissing: "Ta przeglądarka wymaga Chrome lub Chromium, a na tym komputerze nie ma żadnej z nich. Pobierz Chromium, to jednorazowe pobranie.",
+      applyMissing: "Aplikowanie wymaga Chrome lub Chromium, a na tym komputerze nie ma żadnej z nich. Pobierz Chromium, to jednorazowe pobranie, a potem aplikuj ponownie.",
+      applyReady: "Chromium jest gotowy. Aplikuj ponownie.",
+    },
+    applierTab: {
+      show: "Pokaż w przeglądarce",
+      gone: "Karta formularza jest zamknięta.",
+    },
   },
   relativeTime: {
     never: "nigdy",

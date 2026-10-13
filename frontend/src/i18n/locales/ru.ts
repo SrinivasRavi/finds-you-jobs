@@ -1702,6 +1702,18 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
   browser: {
     framesLabel: "кадры",
     noPage: "страницы пока нет",
+    download: {
+      button: "Скачать Chromium",
+      downloading: "Скачиваем Chromium… это займёт минуту-две",
+      stopped: "Загрузка остановилась, не завершившись. Попробуйте ещё раз.",
+      surfaceMissing: "Этому браузеру нужен Chrome или Chromium, а на этом компьютере нет ни того, ни другого. Скачайте Chromium, это разовая загрузка.",
+      applyMissing: "Для отклика нужен Chrome или Chromium, а на этом компьютере нет ни того, ни другого. Скачайте Chromium, это разовая загрузка, и откликнитесь снова.",
+      applyReady: "Chromium готов. Откликнитесь снова.",
+    },
+    applierTab: {
+      show: "Показать в браузере",
+      gone: "Вкладка формы закрыта.",
+    },
   },
   relativeTime: {
     never: "никогда",

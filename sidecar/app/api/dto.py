@@ -1118,6 +1118,20 @@ class BrowserInstallResult(BaseModel):
     status: str  # "started" | "already_running"
 
 
+class BrowserInstallStatus(BaseModel):
+    """The `GET /api/system/install-browser` response: the last download's state in
+    this sidecar, so a client that missed the event can catch up (A21)."""
+
+    state: str  # "idle" | "running" | "done" | "failed"
+    message: str = ""
+
+
+class ApplyRunShowResult(BaseModel):
+    """The `POST /api/apply-runs/{id}/show` response (applier/window.md section 4.5)."""
+
+    shown: bool
+
+
 class SchedulerStatus(BaseModel):
     """Whether the 60 s tick loop that plans background work is running, and
     whether a degraded boot is the reason it is not."""

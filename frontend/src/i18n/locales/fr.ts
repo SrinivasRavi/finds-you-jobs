@@ -1641,6 +1641,18 @@ const fr: DeepPartial<Messages> = {
   browser: {
     framesLabel: "images",
     noPage: "pas encore de page",
+    download: {
+      button: "Télécharger Chromium",
+      downloading: "Téléchargement de Chromium… cela prend une ou deux minutes",
+      stopped: "Le téléchargement s'est arrêté avant la fin. Réessaie.",
+      surfaceMissing: "Ce navigateur a besoin de Chrome ou de Chromium, et aucun des deux n'est sur cet ordinateur. Télécharge Chromium, un téléchargement unique.",
+      applyMissing: "Postuler nécessite Chrome ou Chromium, et aucun des deux n'est sur cet ordinateur. Télécharge Chromium, un téléchargement unique, puis postule à nouveau.",
+      applyReady: "Chromium est prêt. Postule à nouveau.",
+    },
+    applierTab: {
+      show: "Afficher dans le navigateur",
+      gone: "L'onglet du formulaire est fermé.",
+    },
   },
   relativeTime: {
     never: "jamais",

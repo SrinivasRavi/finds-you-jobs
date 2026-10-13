@@ -19,6 +19,7 @@ import {
 import type { ApplyRun, ApplyRunStatus } from "../api/types";
 import i18n from "../i18n";
 import { applyRunDisplay, type ApplyTone } from "../shell/applyRunDisplay";
+import { BrowserDownloadStrip } from "../shell/BrowserDownload";
 import { formatEngineError } from "../shell/formatError";
 import { Modal } from "../shell/Modal";
 
@@ -280,6 +281,13 @@ export function ApplierPanel({
   const canCancel =
     status === "queued" || status === "waiting_for_packet" || status === "running";
   const isRetryable = NON_SUCCESS_TERMINALS.includes(status);
+  // No Chrome and no Chromium: the run failed coded, and Download replaces the raw text (A18).
+  const browserMissing = run?.blockers.some((b) => b.kind === "browser_missing") ?? false;
+  // The run's tab in the Applier window (applier/window.md section 4.5). It lives
+  // while the run is `running`, review included; `ready_for_human` lands after it closes.
+  const hasTab = status === "running";
+  const [tabGone, setTabGone] = useState(false);
+  useEffect(() => setTabGone(false), [runId, status]);
   const okFields = run?.fields.filter((f) => f.ok).length ?? 0;
   const totalFields = run?.fields.length ?? 0;
 
@@ -493,9 +501,17 @@ export function ApplierPanel({
           <div className="border-t border-border bg-bad-wash px-5 py-3">
             <div className="text-[13px] font-semibold text-bad">
               {phase.label}
-              {run?.summary ? <span className="ml-1 font-normal text-ink-2">— {formatEngineError(run.summary, t)}</span> : null}
+              {run?.summary && !browserMissing ? <span className="ml-1 font-normal text-ink-2">— {formatEngineError(run.summary, t)}</span> : null}
             </div>
-            {run && run.blockers.length > 0 ? (
+            {browserMissing ? (
+              <div className="mt-1.5">
+                <BrowserDownloadStrip
+                  testId="applier-browser-download"
+                  missingText={t("browser.download.applyMissing")}
+                  readyText={t("browser.download.applyReady")}
+                />
+              </div>
+            ) : run && run.blockers.length > 0 ? (
               <ul className="mt-1.5 space-y-1 text-[12px] text-ink-2">
                 {run.blockers.map((b, i) => (
                   <li key={i} className="flex items-start gap-1.5">
@@ -540,6 +556,24 @@ export function ApplierPanel({
             >
               {cancel.isPending ? t("popups.applier.cancelling") : t("popups.applier.cancelRun")}
             </button>
+          ) : null}
+          {hasTab ? (
+            <button
+              data-testid="applier-show-tab-btn"
+              onClick={() => {
+                void Promise.resolve(api.showApplyRun(runId))
+                  .then((shown) => setTabGone(!shown))
+                  .catch(() => setTabGone(true));
+              }}
+              className={`${canCancel ? "" : "mr-auto "}inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink-2 hover:bg-surface-3`}
+            >
+              {t("browser.applierTab.show")}
+            </button>
+          ) : null}
+          {tabGone ? (
+            <span className="text-[11px] text-ink-4" data-testid="applier-tab-gone">
+              {t("browser.applierTab.gone")}
+            </span>
           ) : null}
           <span className="text-[11px] text-ink-4">{t("popups.applier.closeHint")}</span>
           <button

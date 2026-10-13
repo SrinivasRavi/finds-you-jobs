@@ -12,6 +12,43 @@ from typing import Any
 
 from ..logging_setup import get_logger
 
+# The Applier and the PDF render use the user's installed Chrome first and
+# Playwright's Chromium second, so a Chrome user never needs the download
+# (applier/window.md section 4.2). Tests set None to reach the bundled build.
+PREFERRED_CHANNEL: str | None = "chrome"
+
+
+def launch_browser(chromium: Any, **kwargs: Any) -> Any:
+    """`chromium.launch`, installed Chrome first (sync Playwright)."""
+    if PREFERRED_CHANNEL:
+        try:
+            return chromium.launch(channel=PREFERRED_CHANNEL, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
+            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
+    return chromium.launch(**kwargs)
+
+
+async def launch_browser_async(chromium: Any, **kwargs: Any) -> Any:
+    """`chromium.launch`, installed Chrome first (async Playwright)."""
+    if PREFERRED_CHANNEL:
+        try:
+            return await chromium.launch(channel=PREFERRED_CHANNEL, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
+            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
+    return await chromium.launch(**kwargs)
+
+
+async def launch_persistent_context_async(chromium: Any, profile_dir: str, **kwargs: Any) -> Any:
+    """`chromium.launch_persistent_context`, installed Chrome first (async Playwright)."""
+    if PREFERRED_CHANNEL:
+        try:
+            return await chromium.launch_persistent_context(
+                profile_dir, channel=PREFERRED_CHANNEL, **kwargs
+            )
+        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
+            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
+    return await chromium.launch_persistent_context(profile_dir, **kwargs)
+
 
 def stock_launch_kwargs() -> dict[str, Any]:
     """The launch configuration the broker uses, and the whole of it."""
