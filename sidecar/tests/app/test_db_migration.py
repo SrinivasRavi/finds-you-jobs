@@ -310,7 +310,7 @@ def test_existing_operations_read_as_started_by_the_app(tmp_path: Path) -> None:
 
 
 def test_one_score_per_job_keeps_the_shown_score_and_its_factors(tmp_path: Path) -> None:
-    """b3e9c4a1d7f2 (audit A3): the AI score wins over the keyword floor, a keyword-only
+    """b3e9c4a1d7f2 (audit A3): the LLM score wins over the keyword floor, a keyword-only
     job keeps its keyword score, only the shown method's factors move onto the row,
     and the downgrade rebuilds both column sets."""
     import json

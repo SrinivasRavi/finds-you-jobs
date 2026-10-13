@@ -384,7 +384,7 @@ export function useLedger() {
 export function useCostTotals() {
   return useQuery({ queryKey: qk.costTotals, queryFn: () => api.getCostTotals() });
 }
-/** How many jobs are stuck with a spent AI-scoring budget (S-C24). Drives the
+/** How many jobs are stuck with a spent LLM scoring budget (S-C24). Drives the
  *  ledger's Retry-scoring button, which stays hidden at 0. */
 export function useRetryableScores() {
   return useQuery({ queryKey: qk.retryableScores, queryFn: () => api.retryableScoreCount() });
@@ -819,7 +819,7 @@ export function useRetryOperation() {
   });
 }
 
-/** Hand every stuck job its AI-scoring budget back (S-C24). The recovery path
+/** Hand every stuck job its LLM scoring budget back (S-C24). The recovery path
  *  for a provider-wide failure — an expired key, an exhausted quota — that the
  *  per-job attempt cap can't tell apart from a job that simply won't score.
  *  The next scheduler tick does the re-scoring, batched. */

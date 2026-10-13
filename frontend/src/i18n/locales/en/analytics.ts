@@ -51,7 +51,7 @@ const analytics = {
     retryScoring_one: "Retry {{count}} failed score",
     retryScoring_other: "Retry {{count}} failed scores",
     retryScoringTitle:
-      "These jobs used all 3 AI-scoring attempts against a live provider. Retry hands their budget back and the next scheduler tick re-scores them. Jobs with no description are skipped — a retry can't help those.",
+      "These jobs used all 3 LLM scoring attempts against a live provider. Retry hands their budget back and the next scheduler tick re-scores them. Jobs with no description are skipped — a retry can't help those.",
     stop: "Stop",
     stopping: "Stopping…",
     restarted: "App restarted while generating.",

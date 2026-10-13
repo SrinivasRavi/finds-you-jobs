@@ -161,8 +161,8 @@ describe("ScoringSection weights", () => {
 
 describe("ScoringSection, what costs money", () => {
   it("shows the per-tick cap for both methods that bill per job", () => {
-    // It used to show for AI scoring alone, which was right when that was the
-    // only paid method. Fast scoring bills per job too, so a first scan of
+    // It used to show for LLM scoring alone, which was right when that was the
+    // only paid method. Jev scoring bills per job too, so a first scan of
     // 1,000 jobs could run uncapped on it.
     for (const mode of ["llm", "jev"] as const) {
       const { unmount } = render(

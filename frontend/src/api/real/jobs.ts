@@ -303,7 +303,7 @@ export class JobsApi extends Transport {
     });
   }
 
-  /** What an AI score will run on, and what it has cost this user before. */
+  /** What an LLM score will run on, and what it has cost this user before. */
   async getExplainCost(): Promise<ExplainCost> {
     return this.req<ExplainCost>("/api/scoring/explain-cost");
   }

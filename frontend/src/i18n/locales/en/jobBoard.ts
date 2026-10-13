@@ -40,7 +40,7 @@ const jobBoard = {
   },
   scanProgress: {
     scanning: "Scanning for new roles",
-    scoring: "AI is scoring the newly found jobs",
+    scoring: "Scoring the newly found jobs",
     done_one: "Scan complete. Found {{count}} new role.",
     done_other: "Scan complete. Found {{count}} new roles.",
     count: "{{done}} of {{found}}",
@@ -84,13 +84,13 @@ const jobBoard = {
     olderListing: "Older listing",
     olderListingTitle:
       "On your board longer than your feed-aging window (14 days by default — Settings › Privacy & Data). Greyed listings are removed from the feed about a month later; Save the job or use Restore listing to keep it.",
-    keywordScoreTitle: "Keywords scored (free, on-device) — grey, not an AI score",
+    keywordScoreTitle: "Keyword scoring (free, on your machine) — grey, not an LLM, Jev or Laya score",
     rescore: "Rescore",
     rescoreTitle: "Score this job again with the method in Settings › Scoring.",
     rescoring: "Rescoring…",
     staleTitle: "Scored before a major edit to your resume. Rescore to update it.",
     unscorableTitle:
-      "No job description was captured for this listing, so it can't be AI-scored. The grey 0 means missing data, not a bad match.",
+      "No job description was captured for this listing, so LLM, Jev and Laya scoring can't read it. The grey 0 means missing data, not a bad match.",
   },
   empty: {
     filtered: "No jobs match these filters or search.",
@@ -149,7 +149,7 @@ const jobBoard = {
     showMoreFromCompany: "Show more jobs from this company",
     openPosting: "Open posting ↗",
     keywordScoreNote:
-      "Scored on-device by keyword overlap — free and instant, lower quality than AI scoring. Choose the mode in Settings → Scoring.",
+      "Scored on your machine by keyword overlap — free and instant, lower quality than LLM, Jev or Laya scoring. Choose the method in Settings → Scoring.",
     scoringInFlight: "Scoring this job — refresh in a moment.",
   },
   prefs: {

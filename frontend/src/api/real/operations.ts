@@ -63,7 +63,7 @@ export class OperationsApi extends DiscoveryApi {
     }
   }
 
-  /** How many jobs have spent their whole AI-scoring budget with no score
+  /** How many jobs have spent their whole LLM scoring budget with no score
    *  (S-C24). 0 means the ledger's Retry-scoring button stays hidden. */
   async retryableScoreCount(): Promise<number> {
     const d = await this.req<ScoreRetryDTO>("/api/scoring/retryable");

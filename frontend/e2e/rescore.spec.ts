@@ -8,7 +8,7 @@ import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/rescore";
 
-// The spec runs in keyword mode; later specs expect the default, AI scoring.
+// The spec runs in keyword mode; later specs expect the default, LLM scoring.
 test.afterEach(async ({ request }) => {
   const { base, token } = sidecarInfo();
   await request.post(`${base}/api/settings`, {

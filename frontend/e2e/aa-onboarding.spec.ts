@@ -221,7 +221,7 @@ test("skipping the provider step finishes with AI off", async ({ page, request }
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${DIR}/settings-ai-off.png`, fullPage: true });
 
-  // Back to the default routing and AI scoring, for the specs after this one.
+  // Back to the default routing and LLM scoring, for the specs after this one.
   await request.post(`${base}/api/settings`, {
     headers: auth,
     data: {

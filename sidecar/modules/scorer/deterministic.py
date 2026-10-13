@@ -1,5 +1,5 @@
 """The zero-LLM fit scorer: "Keyword scoring", and the grey floor behind a failed
-AI score. Free, 1 ms a job.
+LLM score. Free, 1 ms a job.
 
 Written fresh: JustHireMe's engine was read as a structural reference, but its
 vocabulary is for freelance gigs (discovery.md, 2026-07-21). Weighted: skill

@@ -527,7 +527,7 @@ def test_discovery_analytics_mixed_source_averages_only_scorable_jobs(
         )
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/2",
-            title="AI scored", company="Acme", location="Remote",
+            title="LLM scored", company="Acme", location="Remote",
             description=_LONG_JD, source_adapter="lever", score=80, score_method="llm",
         )
         repos.jobs.create(

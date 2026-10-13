@@ -47,8 +47,8 @@ class JobScoreDTO(BaseModel):
     # score (Scoring modes, maintainer design 2026-07-22).
     scorer_impl: str = "scorer-llm"
     # Which of the 4 methods ran: `llm` | `jev` | `local` | `keyword`. Finer than
-    # `scorer_impl`, which can only say AI-or-not and so reads a Fast score as an
-    # AI one. The board's inner ring is this value, because a board carrying 2
+    # `scorer_impl`, which can only say LLM-or-not and so reads a Jev score as an
+    # LLM one. The board's inner ring is this value, because a board carrying 2
     # methods' numbers has to say which is which (maintainer, 2026-10-07).
     method: str = "llm"
     # True when the user's own axis weights produced this number instead of the
@@ -75,7 +75,7 @@ class ScoreFactorDTO(BaseModel):
 
 class JobFactorsDTO(BaseModel):
     """The per-axis breakdown behind a job's displayed score. `weights` is the table
-    the total used; empty for AI scoring, which asks the model for the total, so the
+    the total used; empty for LLM scoring, which asks the model for the total, so the
     bars show no invented weight."""
 
     job_id: str
@@ -275,7 +275,7 @@ class TombstoneResultDTO(BaseModel):
 
 class ScoreRetryDTO(BaseModel):
     """The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
-    many active jobs have spent the whole attempt budget with no AI score, so
+    many active jobs have spent the whole attempt budget with no LLM score, so
     the button hides when pressing it would do nothing; `reset` on the POST is
     how many got their budget back. Jobs with no usable description are in
     neither number — they never spent an attempt (S-A6)."""
@@ -712,7 +712,7 @@ class ScoringMethodDTO(BaseModel):
 class ExplainCostDTO(BaseModel):
     """What "Explain this one" will run and what it has cost this user. `avg_usd` is
     measured off their own score ops on that model, never a price list; None means
-    they've never paid for an AI score."""
+    they've never paid for an LLM score."""
 
     engine: str
     model: str
@@ -1303,7 +1303,7 @@ def derive_work_style(location: str, description: str) -> str:
 
 class WeightLens:
     """The user's axis weights, re-totaling a page of jobs on read (scoring.md 7.4).
-    Never stored: an AI score is the model's number, and overwriting it would lose
+    Never stored: an LLM score is the model's number, and overwriting it would lose
     "balanced". Uses `weights.user_total`. Build once per request; an empty table
     is inert and costs 1 lookup. Also carries the resume's last major version, so
     the same per-request read marks a score that predates it (audit A3)."""
@@ -1338,7 +1338,7 @@ class WeightLens:
         from sidecar.modules.scraper.quality import RED_FLAG_PREFIX
 
         # No table of the user's own means the method's table with their penalty.
-        # AI scoring ships no table, so its own number stands.
+        # LLM scoring ships no table, so its own number stands.
         rows = (job.score_factors or []) if job.score_method == method else []
         weights = self._weights or method_weights(method, {r["factor"] for r in rows})
         if not weights or not rows:

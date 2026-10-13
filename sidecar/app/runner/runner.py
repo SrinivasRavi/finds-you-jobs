@@ -306,7 +306,7 @@ class OperationRunner:
                         )
                     if service is not None:
                         # Circuit breaker (F-H5), keyed by the service the op calls,
-                        # which Fast scoring makes OpenRouter whatever `score` routes
+                        # which Jev scoring makes OpenRouter whatever `score` routes
                         # to. Raises ProviderCircuitOpen; True ⇒ this op holds the
                         # half-open probe lease.
                         if self._circuit.check(service):
@@ -344,7 +344,7 @@ class OperationRunner:
                     message = f"{type(exc).__name__}: {exc}"
                     # Only real engine failures feed the breaker: parse drift or our own bugs say
                     # nothing about the provider, and a ProviderCircuitOpen rejection mustn't feed
-                    # its own breaker. Charged to the service that failed: Fast scoring calls
+                    # its own breaker. Charged to the service that failed: Jev scoring calls
                     # OpenRouter whatever the kind routes to, and its spent key mustn't pause the
                     # Claude CLI.
                     failed = (

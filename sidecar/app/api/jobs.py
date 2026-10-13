@@ -729,7 +729,7 @@ def explain_cost(request: Request) -> dto.ExplainCostDTO:
 def explain_job(request: Request, job_id: str) -> dto.OperationAccepted:
     """1 click, 1 job, 1 AI call (scoring-build.md T13): prose for the jobs a user
     opens, at about $0.24 each. An ordinary `score` op, so the ledger, concurrency
-    cap, Stop and Retry apply. The job adopts the AI score (scoring-build.md section
+    cap, Stop and Retry apply. The job adopts the LLM score (scoring-build.md section
     4 choice 1, pending). It can run again; both spends are in the ledger."""
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)

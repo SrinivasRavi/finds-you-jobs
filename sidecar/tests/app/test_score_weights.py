@@ -4,7 +4,7 @@ The 2 rules that make this safe, and both are tested here rather than argued:
 
 - A weight change costs nothing and spends nothing. The factors are already
   stored, so the total is arithmetic over rows we have.
-- A weight change is never written over the score. An AI score is the model's
+- A weight change is never written over the score. An LLM score is the model's
   own number, and "balanced" has to be able to return to it, so the re-total
   happens on read and the stored column is untouched.
 """
@@ -101,7 +101,7 @@ def test_a_preset_re_totals_the_same_stored_factors_in_both_directions(tmp_path)
 
 
 def test_balanced_returns_to_the_model_s_own_number(tmp_path) -> None:
-    """The reason this is computed on read. An AI score is not a weighted sum of
+    """The reason this is computed on read. An LLM score is not a weighted sum of
     anything, so a re-weighted total written over it would be unrecoverable."""
     client, app = _client(tmp_path)
     with client:
@@ -235,8 +235,8 @@ def test_the_penalty_slider_alone_moves_a_balanced_board(tmp_path) -> None:
         assert _row(client, job_id)["score"]["score_0_100"] == no_miss
 
 
-def test_location_first_leaves_an_ai_score_alone(tmp_path) -> None:
-    """AI scoring weighs location inside the model's own number and ships no
+def test_location_first_leaves_an_llm_score_alone(tmp_path) -> None:
+    """LLM scoring weighs location inside the model's own number and ships no
     axis table, so there is nothing for a penalty-only preset to re-total."""
     client, app = _client(tmp_path)
     with client:

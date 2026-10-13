@@ -372,7 +372,7 @@ class OperationsRepo:
 
 
     def recent_score_cost(self, model: str | None, limit: int = 20) -> tuple[float | None, int]:
-        """What an AI score has actually cost this user, over how many runs. Measured,
+        """What an LLM score has actually cost this user, over how many runs. Measured,
         never estimated; None means they've never paid for one."""
         stmt = (
             select(Operation.usage)
@@ -649,7 +649,7 @@ class JobsRepo:
         ]
 
     def count_score_exhausted(self, max_attempts: int) -> int:
-        """Active jobs that have spent their whole AI-scoring budget and still
+        """Active jobs that have spent their whole LLM scoring budget and still
         carry no LLM score — the ones no future tick will ever pick up. This is
         what the ledger's Retry affordance counts, so the button appears only
         when pressing it would actually do something. A job at 1 or 2 attempts

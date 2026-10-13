@@ -104,7 +104,7 @@ PRESET_LOCATION_PENALTY: Mapping[str, int] = {
     "skills_only": 0,
 }
 
-# The table a method shipped with, for a job scored by that method. AI scoring
+# The table a method shipped with, for a job scored by that method. LLM scoring
 # is absent because it asks a model for the total rather than weighting axes.
 METHOD_WEIGHTS: Mapping[str, Mapping[str, float]] = {
     "jev": JEV_WEIGHTS,
@@ -115,7 +115,7 @@ METHOD_WEIGHTS: Mapping[str, Mapping[str, float]] = {
 def method_weights(method: str, factor_names: set[str]) -> Mapping[str, float]:
     """The table a method actually used for a job, given the factors it stored:
     the 1 answer the scorer, the bars and the weight lens all read (audit
-    finding 7). Empty for AI scoring, which asks a model for the total."""
+    finding 7). Empty for LLM scoring, which asks a model for the total."""
     if method == "keyword" and "level" not in factor_names:
         return KEYWORD_WEIGHTS_NO_LEVEL
     return METHOD_WEIGHTS.get(method, {})

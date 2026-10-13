@@ -1,5 +1,5 @@
 // The board's Rescan status pill: a sweeping ring while discovery runs, a
-// progress ring with "M of N" while the new jobs are AI-scored, then a check with
+// progress ring with "M of N" while the new jobs are LLM-scored, then a check with
 // "Found N new roles" until the next scan. Only the board has it; the other tabs
 // show progress per card. Renders nothing when no scan ran.
 

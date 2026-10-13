@@ -32,9 +32,9 @@ const common = {
   // Settings' method menu and the board's score ring. One home, so the menu and
   // the ring can never disagree about what a method is called.
   scoreMethod: {
-    llm: "AI scoring",
-    jev: "Fast scoring",
-    local: "On-device scoring",
+    llm: "LLM scoring",
+    jev: "Jev scoring",
+    local: "Laya scoring",
     keyword: "Keyword scoring",
     // The ring's hover line. `scoredBy` reads as a sentence on its own because
     // a title attribute has no surrounding copy to lean on.

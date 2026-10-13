@@ -193,7 +193,7 @@ def update_settings(
         result = _settings_dto(repos)
     # Switching to keyword mode scores the whole board here, about 0.5 ms per job,
     # so the change shows on the next fetch (a plain `def` runs in the threadpool).
-    # Switching to AI enqueues nothing: the next tick picks up jobs with no AI score.
+    # Switching to AI enqueues nothing: the next tick picks up jobs with no LLM score.
     after_mode = str(prefs_thresholds.get("scoring_mode") or "llm")
     if after_mode == "keyword" and before_mode != "keyword":
         from ..registry.operations import backfill_keyword_scores
@@ -350,8 +350,8 @@ def test_prompt(
 
     snap: dict[str, Any] = {"prompt_draft_md": payload.markdown, "prompt_test": True}
     if kind == "score":
-        # Only AI scoring reads this prompt. Without the override a board on
-        # Fast or Keyword scoring ran that method and never sent the draft.
+        # Only LLM scoring reads this prompt. Without the override a board on
+        # Jev or Keyword scoring ran that method and never sent the draft.
         snap["force_mode"] = "llm"
     if payload.guidance:
         snap["guidance"] = payload.guidance

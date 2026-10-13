@@ -671,7 +671,7 @@ def test_circuit_breaker_fails_fast_after_consecutive_engine_failures(
 
 
 def test_a_failure_is_charged_to_the_service_that_failed(migrated_db: Database) -> None:
-    """Fast scoring calls OpenRouter whatever engine the kind routes to. Its
+    """Jev scoring calls OpenRouter whatever engine the kind routes to. Its
     spent key used to open the ROUTED engine's circuit, pausing every kind
     routed there (seen 2026-10: 42 scores failed "provider 'claude-cli'
     paused" on OpenRouter 403s)."""
@@ -706,9 +706,9 @@ def _set_scoring_mode(db: Database, mode: str) -> None:
         repos.preferences.update(thresholds={"scoring_mode": mode})
 
 
-def test_an_open_openrouter_circuit_stops_the_next_fast_score(migrated_db: Database) -> None:
+def test_an_open_openrouter_circuit_stops_the_next_jev_score(migrated_db: Database) -> None:
     """Audit A4: the circuit was charged to OpenRouter but only the routed
-    engine's was checked, so every Fast score still called a spent key and
+    engine's was checked, so every Jev score still called a spent key and
     spent 1 of the job's 3 attempts."""
     from sidecar.app.registry.operations import score_service
 
@@ -741,7 +741,7 @@ def test_an_open_openrouter_circuit_stops_the_next_fast_score(migrated_db: Datab
     circuit.check("deadprov")  # the routed engine was never charged
 
 
-def test_a_fast_score_success_leaves_the_routed_engines_count_alone(
+def test_a_jev_score_success_leaves_the_routed_engines_count_alone(
     migrated_db: Database,
 ) -> None:
     from sidecar.app.registry.operations import score_service
@@ -763,7 +763,7 @@ def test_a_fast_score_success_leaves_the_routed_engines_count_alone(
         assert wait_for_state(db, runner.submit("score", {}), "succeeded") == "succeeded"
     finally:
         runner.shutdown(drain_timeout=3)
-    circuit.record_failure("deadprov", "timeout")  # 2nd in a row: Fast never reset it
+    circuit.record_failure("deadprov", "timeout")  # 2nd in a row: Jev never reset it
     with pytest.raises(ProviderCircuitOpen):
         circuit.check("deadprov")
 

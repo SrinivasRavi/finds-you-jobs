@@ -22,7 +22,7 @@ import { sourceClasses, workLabel } from "../jobFormat";
 import { MatchRing, RescoreControl, highlight } from "./JobRow";
 
 /** "Explain this one": 1 click, 1 job, 1 AI call, priced on the button (vision.md,
- *  cost honesty). The price is what this user's own AI scores have cost, from the
+ *  cost honesty). The price is what this user's own LLM scores have cost, from the
  *  ledger, since a price list goes wrong at the first model switch. With no history
  *  it names the model instead of a number. */
 function ExplainButton({ job }: { job: Job }) {
@@ -426,7 +426,7 @@ export function JobDetail({
                   {/* The bars first (scoring.md 7.3): they are the only part of
                       this panel that every method fills, and the only part a
                       user can argue with axis by axis. The prose below is what
-                      AI scoring adds on top. */}
+                      LLM scoring adds on top. */}
                   {factors.data && factors.data.factors.length > 0 ? (
                     <div className="mb-3">
                       <FactorBars
@@ -437,7 +437,7 @@ export function JobDetail({
                   ) : null}
                   {/* The cheap methods rank well and write nothing, so the one
                       job the user is about to spend an hour on can buy prose on
-                      its own (scoring-build.md T13). Hidden once AI scoring has
+                      its own (scoring-build.md T13). Hidden once LLM scoring has
                       already written it: there would be nothing to buy. */}
                   {job.score.method !== "llm" ? (
                     <ExplainButton job={job} />

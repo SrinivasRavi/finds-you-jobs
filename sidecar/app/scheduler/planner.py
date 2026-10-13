@@ -36,7 +36,7 @@ def plan_schedule(db: Database, kind: str) -> list[tuple[str, dict[str, Any]]]:
 
 
 def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
-    """Plan `("score", snapshot)` for jobs that still need an AI score. Keyword mode
+    """Plan `("score", snapshot)` for jobs that still need an LLM score. Keyword mode
     plans nothing: the floor already scores every job. AI mode plans every active
     job that can still earn one: the floor doesn't count, in-flight ops aren't
     doubled, and jobs past `SCORE_MAX_ATTEMPTS` or with no description are skipped.

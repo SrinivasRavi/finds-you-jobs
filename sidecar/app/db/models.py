@@ -162,7 +162,7 @@ class Job(Base):
     # The resume version scored against; older than the last major edit is stale.
     scored_profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # AI-scoring attempt memory. Counts only failures where a call reached the
+    # LLM scoring attempt memory. Counts only failures where a call reached the
     # provider, so a circuit-open rejection costs the job nothing. The planner stops
     # at SCORE_MAX_ATTEMPTS; every other scoring state is derived (a3d7e1f95c24).
     llm_score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

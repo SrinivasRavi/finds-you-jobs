@@ -29,14 +29,14 @@ export interface ScoreResult {
   reasons: string[];
   breakdown_md: string;
   /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
-   *  never styled like an AI score). Scoring modes, 2026-07-22. */
+   *  never styled like an LLM score). Scoring modes, 2026-07-22. */
   scorer_impl: string;
   /** True when the user's own axis weights produced this number instead of the
    *  method's, so the card can say the score is theirs. */
   weighted: boolean;
   /** Which of the 4 methods ran: "llm" | "jev" | "local" | "keyword". The
    *  board's inner ring (maintainer, 2026-10-07). Finer than `scorer_impl`,
-   *  which reads a Fast score as an AI one. */
+   *  which reads a Jev score as an LLM one. */
   method: string;
   /** Made against a resume older than its last major edit: the row shows a
    *  rescore-due mark (score-storage.md, audit A3). */
@@ -44,7 +44,7 @@ export interface ScoreResult {
 }
 
 /** The per-axis breakdown behind one job's score (`JobFactorsDTO`).
- *  `weights` is empty for AI scoring, which asks a model for the total rather
+ *  `weights` is empty for LLM scoring, which asks a model for the total rather
  *  than weighting its own axes. */
 export type ScoreWeightPreset =
   | "balanced"

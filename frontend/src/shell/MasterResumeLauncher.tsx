@@ -36,7 +36,7 @@ export function MasterResumeLauncher() {
           onSaveMaster={(md: string) => {
             // Save the resume. Keyword mode re-scores the board server-side for
             // free at save; AI mode never re-spends on a job that already has a
-            // score, so the prior AI scores stay visible (S-C24, maintainer
+            // score, so the prior LLM scores stay visible (S-C24, maintainer
             // 2026-08-28). An unchanged save bumps nothing.
             void updateProfile.mutateAsync(md).then(() => invalidateFeed(qc));
           }}

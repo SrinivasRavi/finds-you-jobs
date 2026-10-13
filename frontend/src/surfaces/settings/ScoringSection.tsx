@@ -17,8 +17,8 @@ import { InfoDot } from "../../shell/InfoDot";
 import { Section } from "./shared";
 
 // The methods that cost money per job, and so the ones a per-tick cap is for.
-// It used to show for `llm` alone, which was right when AI scoring was the only
-// paid method; Fast scoring also bills per job, so a first scan of 1,000 jobs
+// It used to show for `llm` alone, which was right when LLM scoring was the only
+// paid method; Jev scoring also bills per job, so a first scan of 1,000 jobs
 // could run uncapped on it (maintainer, 2026-10-07).
 const METERED_METHODS: ScoringMode[] = ["llm", "jev"];
 

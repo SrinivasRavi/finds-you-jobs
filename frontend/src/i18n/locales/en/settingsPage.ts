@@ -145,7 +145,7 @@ const settingsPage = {
     howTitle: "How jobs are scored",
     fallbackLabel: "Scoring fallback",
     fallbackInfo:
-      "If an AI score fails, a grey keyword score fills in — retry it from Analytics → Logs.",
+      "If an LLM score fails, a grey keyword score fills in — retry it from Analytics → Logs.",
     howHint: "Every new job gets a fit score against your master resume. Pick how.",
     // One row per method, in menu order, richest explanation first. The price is
     // per 100 jobs, measured where it says measured (docs/internal/scoring.md
@@ -153,8 +153,7 @@ const settingsPage = {
     // 2026-10-08: it used to send the user to another pane for this pane's own
     // rubric. The rubric is now further down this page, so it says where.
     rubricPointer:
-      "The rubric AI scoring follows is further down this page, and you can edit it. "
-      + "The other 3 methods have no prompt.",
+      "The rubric LLM scoring follows is further down this page, and you can edit it. The other 3 methods have no prompt.",
     weightsTitle: "What counts most",
     weightsInfo:
       "Changes how every job's number is worked out from the detail already stored. "
@@ -172,7 +171,7 @@ const settingsPage = {
       "How far a job in a place you did not ask for drops. It is a penalty rather "
       + "than a weight, because some methods answer location as a confidence and a "
       + "confidence multiplied by a weight means nothing.",
-    modeLlmBlurb: "One AI call per job. The only method that writes sentences.",
+    modeLlmBlurb: "One LLM call per job. The only method that writes sentences.",
     modeLlmPrice: "About $2.22 per 100 jobs on Haiku 4.5, $23.55 on today's Opus path",
     modeJevBlurb: "One structured call per job. Score and per-axis bars, prose on demand.",
     modeJevPrice: "About $0.02 per 100 jobs",
@@ -305,7 +304,7 @@ const settingsPage = {
     titleCover: "Cover letter",
     titleExtract: "Form answers",
     titleNetworkerDraft: "Referral messages",
-    scopeScore: "This is the rubric for AI scoring only. The other 3 methods never read it: Keyword scoring is rules on your own machine, Fast scoring sends typed questions that carry their own rubric, and On-device scoring has no prompt either.",
+    scopeScore: "This is the rubric for LLM scoring only. The other 3 methods never read it: Keyword scoring is rules on your own machine, Jev scoring sends typed questions that carry their own rubric, and Laya scoring has no prompt either.",
     scopeTailor: "Used every time a resume is tailored to a posting, whichever job it is.",
     scopeCover: "Used every time a cover letter is written.",
     scopeExtract: "Runs once each time you save your master resume. It pulls out the details that fill application forms \u2014 your name, your contact details, years of experience, work authorization \u2014 so the Applier does not have to ask you again.",
@@ -315,10 +314,9 @@ const settingsPage = {
     // and `apply` had none anywhere (url-less-jobs.md section 11.5). Only the
     // 2 pickers whose prompt scope line does NOT already say when they run
     // carry a hint, so no card says the same sentence twice.
-    titleScoreModel: "The model AI scoring runs on",
+    titleScoreModel: "The model LLM scoring runs on",
     hintScoreModel:
-      "Only AI scoring uses a model. Keyword scoring runs on your own machine, "
-      + "Fast scoring sends typed questions, and On-device scoring will run locally.",
+      "Only LLM scoring uses a model. Keyword scoring runs on your own machine, Jev scoring sends typed questions, and Laya scoring will run locally.",
     titleApplyModel: "The model the Applier runs on",
     hintApplyModel:
       "The Applier reads a job application form and decides what goes in each field. "

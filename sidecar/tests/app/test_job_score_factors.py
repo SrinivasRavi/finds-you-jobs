@@ -63,7 +63,7 @@ def test_a_rescore_replaces_the_factor_set_rather_than_merging(migrated_db: Data
 
 
 def test_a_job_keeps_only_the_latest_methods_score_and_factors(migrated_db: Database) -> None:
-    """Keyword, then Fast, then AI: 1 score and 1 factor set, the AI one's."""
+    """Keyword, then Jev, then LLM: 1 score and 1 factor set, the LLM one's."""
     job_id = _job(migrated_db, "u-factors-2")
     _score(migrated_db, job_id, "keyword", 40, [{"factor": "years", "value": 0.5}])
     _score(migrated_db, job_id, "jev", 61, [{"factor": "years", "value": 0.9,
@@ -104,8 +104,8 @@ def test_a_factor_carries_its_kind_and_empty_evidence_by_default(
 def test_the_planner_leaves_a_real_score_alone_and_upgrades_a_keyword_one(
     migrated_db: Database,
 ) -> None:
-    """SCO-D10 under the 2026-10-13 rule: a Fast score stays when the setting moves
-    to AI scoring; a Keyword score is upgraded."""
+    """SCO-D10 under the 2026-10-13 rule: a Jev score stays when the setting moves
+    to LLM scoring; a Keyword score is upgraded."""
     with migrated_db.repos() as repos:
         repos.profile.upsert(RESUME)
         repos.preferences.update(thresholds={"scoring_mode": "llm"})
@@ -183,8 +183,8 @@ def test_the_factors_route_serves_the_axes_and_the_table_they_were_weighted_with
         assert "location_preference" not in body["weights"]
 
 
-def test_ai_scoring_serves_no_weights_because_it_weights_nothing(tmp_path) -> None:
-    """AI scoring asks a model for the total directly, so there is no weight per
+def test_llm_scoring_serves_no_weights_because_it_weights_nothing(tmp_path) -> None:
+    """LLM scoring asks a model for the total directly, so there is no weight per
     axis; inventing one would be a number nobody computed."""
     app = _app(tmp_path)
     with TestClient(app) as client:

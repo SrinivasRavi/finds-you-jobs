@@ -249,7 +249,7 @@ def test_the_suggest_route_answers_the_picker(tmp_path) -> None:
 
 def test_each_consumer_gets_the_right_part_of_a_picked_chip() -> None:
     """Discovery's word filter and the search sources get the short name, the
-    same word as before the picker; AI scoring's prompt gets the full label so
+    same word as before the picker; LLM scoring's prompt gets the full label so
     the model knows which London (place-picker.md section 5)."""
     from types import SimpleNamespace
 

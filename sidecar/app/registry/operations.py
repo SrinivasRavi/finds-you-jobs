@@ -84,7 +84,7 @@ class OperationRegistry:
         self, kind: str, snapshot: dict[str, Any], db: Any, routed: str | None
     ) -> str | None:
         """The service this op will call: the routed engine unless the kind
-        says otherwise (Fast scoring calls OpenRouter whatever `score` routes to)."""
+        says otherwise (Jev scoring calls OpenRouter whatever `score` routes to)."""
         fn = self._services.get(kind)
         return routed if fn is None else fn(snapshot, db, routed)
 
@@ -370,7 +370,7 @@ def _ensure_keyword_floor(
 
 def score_service(snapshot: dict[str, Any], db: Any, routed: str | None) -> str | None:
     """Which service a `score` op calls, by the same mode rule as the entrypoint:
-    Fast scoring calls OpenRouter, Keyword and On-device call nothing."""
+    Jev scoring calls OpenRouter, Keyword and Laya call nothing."""
     from .persistence import SCORING_MODES, scoring_mode
 
     forced = str(snapshot.get("force_mode") or "")
@@ -497,7 +497,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         client = (scoring_ctx or {}).get("decisions")
         if client is None:
             raise EngineNotConfiguredError(
-                "Fast scoring needs an OpenRouter key. Add one in Settings > LLM providers, "
+                "Jev scoring needs an OpenRouter key. Add one in Settings > LLM providers, "
                 "or pick another scoring method."
             )
         jev = score_jev(
@@ -588,7 +588,7 @@ def _score_result_ref(
 ) -> dict[str, Any]:
     """The score op's ledger payload. `method` always: a thin JD silently runs
     keyword (url-less-jobs.md section 8.7). `fell_back_from` names the picked method
-    when another ran (On-device to keyword, T10). `reasons` only on the triage path,
+    when another ran (Laya to keyword, T10). `reasons` only on the triage path,
     where there's no job row (section 9.1.1)."""
     ref: dict[str, Any] = {"score": score_0_100, "job_id": job_id, "method": method}
     if job_id is None:

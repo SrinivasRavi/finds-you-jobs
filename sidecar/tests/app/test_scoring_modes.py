@@ -1,6 +1,6 @@
 """Scoring modes (maintainer design 2026-07-22).
 
-Two modes, no off-switch: "llm" (AI scoring, default) and "keyword" (the
+Two modes, no off-switch: "llm" (LLM scoring, default) and "keyword" (the
 on-device keyword scorer — free, instant, keyless). An AI failure persists a
 keyword score as the visible grey fallback while the op stays failed and
 retryable; a successful retry outranks it (display precedence LLM > keyword).
@@ -193,7 +193,7 @@ def test_llm_failure_persists_keyword_fallback_and_still_fails(
         score_entrypoint(_ctx(db, job_id, engine=_DeadEngine()))
     scores = _scores(db, job_id)
     assert SCORER_IMPL_DETERMINISTIC in scores and SCORER_IMPL not in scores
-    # Retry succeeds → the AI score replaces the keyword floor (1 score per job).
+    # Retry succeeds → the LLM score replaces the keyword floor (1 score per job).
     score_entrypoint(_ctx(db, job_id, engine=_OkEngine()))
     assert _scores(db, job_id) == {SCORER_IMPL: 77}
 
@@ -248,17 +248,17 @@ def test_backfill_scores_only_unscored_jobs(migrated_db: Database) -> None:
             company="Acme", location="Remote", description=REALISTIC_JD,
             source_adapter="greenhouse",
         ).id
-    score_entrypoint(_ctx(db, a, engine=_OkEngine()))  # a: real AI score
+    score_entrypoint(_ctx(db, a, engine=_OkEngine()))  # a: real LLM score
     assert backfill_keyword_scores(db) == 1  # only b
     assert SCORER_IMPL_DETERMINISTIC not in _scores(db, a)
     assert SCORER_IMPL_DETERMINISTIC in _scores(db, b)
 
 
-def test_ai_score_survives_a_resume_edit_and_its_keyword_sweep(
+def test_llm_score_survives_a_resume_edit_and_its_keyword_sweep(
     migrated_db: Database,
 ) -> None:
     """A resume edit never blanks the board, and the keyword sweep it fires can
-    never bury the AI score. The 2 ratings are separate columns and the display
+    never bury the LLM score. The 2 ratings are separate columns and the display
     rule prefers the AI one outright, so the defect that showed 26 where the AI
     had said 82 on 36 jobs is not expressible any more (S-C34)."""
     from sidecar.app.api import dto as dto_mod
@@ -269,8 +269,8 @@ def test_ai_score_survives_a_resume_edit_and_its_keyword_sweep(
     with db.repos() as repos:
         job = repos.jobs.get(job_id)
         assert job is not None
-        ai_score = job.score
-        assert ai_score == 77
+        llm_score = job.score
+        assert llm_score == 77
         assert dto_mod.job_score_dto(job).scorer_impl == SCORER_IMPL  # type: ignore[union-attr]
         repos.profile.upsert("# Test Candidate\n\nBackend engineer. Now with Go.")
     # The sweep never replaces a real score with a Keyword one (score-storage.md 4.2).
@@ -282,14 +282,14 @@ def test_ai_score_survives_a_resume_edit_and_its_keyword_sweep(
         shown = dto_mod.job_score_dto(job)
         assert shown is not None
         assert shown.scorer_impl == SCORER_IMPL
-        assert shown.score_0_100 == ai_score
+        assert shown.score_0_100 == llm_score
 
 
 def test_llm_planner_does_not_auto_rescore_after_a_resume_edit(
     migrated_db: Database,
 ) -> None:
-    """AI mode: a job already AI-scored at any version is not re-planned after a
-    resume edit. An AI score is version-agnostic (D1), so the prior score stays
+    """AI mode: a job already LLM-scored at any version is not re-planned after a
+    resume edit. An LLM score is version-agnostic (D1), so the prior score stays
     on the board and no tick ever re-spends on it."""
     db = migrated_db
     job_id = _seed(db)
@@ -348,7 +348,7 @@ def test_api_a_major_edit_rescores_keyword_jobs_under_any_method(tmp_path) -> No
 
 # ---------------------------------------------------------------------------
 # No AI re-score action exists (S-C24): the planner's eligibility read is
-# version-agnostic, so a job with an AI score is never re-planned or re-spent.
+# version-agnostic, so a job with an LLM score is never re-planned or re-spent.
 # ---------------------------------------------------------------------------
 
 
@@ -385,14 +385,14 @@ def test_the_ai_rescore_routes_are_gone(tmp_path) -> None:
         # 405, not 404: with the route gone, `/api/jobs/rescore` is just
         # `/api/jobs/{job_id}`, which is registered for GET and PATCH only.
         assert client.post("/api/jobs/rescore", headers=AUTH).status_code == 405
-        # And the AI-scored job keeps the one op it earned: nothing re-spends.
+        # And the LLM-scored job keeps the one op it earned: nothing re-spends.
         assert _score_ops_for(db, a) == 1
 
 
 def test_settings_switch_to_llm_enqueues_nothing_server_side(tmp_path) -> None:
     """Switching Scoring keyword→AI is a pure settings write — the server never
     spends tokens inside the request. The next scheduler tick picks up whatever
-    still has no AI score."""
+    still has no LLM score."""
     app = _make_app(tmp_path)
     with TestClient(app) as client:
         db = app.state.db
@@ -439,7 +439,7 @@ def test_restore_from_trash_reenqueues_by_mode(tmp_path) -> None:
         assert _score_ops_for(db, job_id) == 0  # keyword row is current — no op
 
         # AI mode: the keyword floor is only a floor — restore enqueues the
-        # AI upgrade for a job with no AI score at the current version.
+        # AI upgrade for a job with no LLM score at the current version.
         client.post("/api/settings", headers=AUTH, json={"thresholds": {"scoring_mode": "llm"}})
         client.patch(f"/api/jobs/{job_id}", headers=AUTH, json={"feed_state": "removed"})
         client.post(
@@ -473,7 +473,7 @@ def test_api_serves_llm_over_keyword_and_settings_switch_backfills(tmp_path) -> 
         )
         assert resp.status_code == 200
         rows = {r["id"]: r for r in client.get("/api/jobs", headers=AUTH).json()}
-        assert rows[a]["score"]["scorer_impl"] == SCORER_IMPL  # AI score kept
+        assert rows[a]["score"]["scorer_impl"] == SCORER_IMPL  # LLM score kept
         assert rows[a]["score"]["score_0_100"] == 77
         assert rows[b]["score"]["scorer_impl"] == SCORER_IMPL_DETERMINISTIC
 
@@ -672,7 +672,7 @@ def test_a_user_with_no_preferences_set_sends_two_blocks(migrated_db: Database) 
     assert "SEARCH PREFERENCES" not in seen["user"]
 
 
-def test_an_ai_score_carries_its_method_and_its_factors(migrated_db: Database) -> None:
+def test_an_llm_score_carries_its_method_and_its_factors(migrated_db: Database) -> None:
     """4 methods write that one score slot, so the board has to be able to say
     which one did, and the bars have to come from the same call that scored."""
     db = migrated_db
@@ -823,7 +823,7 @@ def test_picking_the_local_method_scores_by_keyword_and_says_so(migrated_db: Dat
 
 # --- which method ran, on the wire -------------------------------------------
 # The board's inner ring is the method, so it rides the wire per job;
-# `scorer_impl` can't carry it, since it says "scorer-llm" for Fast and On-device
+# `scorer_impl` can't carry it, since it says "scorer-llm" for Jev and Laya
 # too.
 
 
@@ -846,8 +846,8 @@ class _FakeDecisions:
 
 
 def test_the_dto_names_the_method_that_actually_ran(migrated_db: Database) -> None:
-    """AI scoring and keyword scoring each report themselves, and the keyword
-    floor under an AI score never claims the AI's name."""
+    """LLM scoring and keyword scoring each report themselves, and the keyword
+    floor under an LLM score never claims the AI's name."""
     from sidecar.app.api import dto as dto_mod
 
     db = migrated_db
@@ -870,16 +870,16 @@ def test_the_dto_names_the_method_that_actually_ran(migrated_db: Database) -> No
         assert job is not None
         shown = dto_mod.job_score_dto(job)
         assert shown is not None
-        # The AI score replaced the keyword floor, and it says AI.
+        # The LLM score replaced the keyword floor, and it says AI.
         assert job.score_method == "llm"
         assert shown.method == "llm"
 
 
-def test_a_fast_score_says_jev_and_not_llm(
+def test_a_jev_score_says_jev_and_not_llm(
     migrated_db: Database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The defect this pins: Fast scoring once wrote `jobs.llm_score`, so every
-    AI-or-not test in the app reads it as an AI score. Only `method` can tell
+    """The defect this pins: Jev scoring once wrote `jobs.llm_score`, so every
+    AI-or-not test in the app reads it as an LLM score. Only `method` can tell
     the user they are looking at a $0.0002 number rather than a $0.24 one."""
     from sidecar.app.api import dto as dto_mod
     from sidecar.app.registry import persistence as persistence_mod
@@ -909,9 +909,9 @@ def test_a_fast_score_says_jev_and_not_llm(
     assert outcome.result_ref["method"] == "jev"
 
 
-def test_on_device_falling_back_to_keyword_says_both(migrated_db: Database) -> None:
-    """On-device has no model pack yet (scoring-build.md T10), so it runs the
-    keyword floor. The ledger says keyword ran AND that On-device was asked for,
+def test_laya_falling_back_to_keyword_says_both(migrated_db: Database) -> None:
+    """Laya has no model pack yet (scoring-build.md T10), so it runs the
+    keyword floor. The ledger says keyword ran AND that Laya was asked for,
     because a user who picked a method deserves to know it didn't run."""
     db = migrated_db
     job_id = _seed(db)
