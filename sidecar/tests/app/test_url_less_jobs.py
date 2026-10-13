@@ -19,7 +19,7 @@ from sidecar.modules.scraper import ScraperError
 from sidecar.modules.scraper.identity import content_hash
 from sidecar.modules.scraper.types import NormalizedJob
 
-from ._support import AUTH
+from ._support import AUTH, seed_application_profile
 
 _JD = (
     "We are hiring a Senior Software Engineer to own our ingestion pipeline. "
@@ -513,6 +513,7 @@ def test_a_dev_run_may_carry_its_own_form_because_a_fixture_is_not_a_posting(
     no-link guard took the Applier's end-to-end test with it. The fixture rides the
     dev knobs instead; production still gets its 409."""
     app, client = app_client
+    seed_application_profile(app.state.db)
     job = _paste(client, _JD)
     saved = client.post(
         "/api/applications",

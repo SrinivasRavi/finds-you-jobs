@@ -56,6 +56,14 @@ NO_POSTING_URL_DETAIL = (
     "This job has no posting link, so there's no form to apply on. "
     "Add the link and try again."
 )
+# The Applier fills forms from the facts extracted from the master resume. Without
+# them it would fill blind, so Apply refuses (audit A5).
+NO_APPLICATION_PROFILE_DETAIL = (
+    "Your name, contact details and work authorization haven't been read from your "
+    "resume yet, so the Applier has nothing to fill forms with. If an AI provider is "
+    "set up, reading them has started: try Apply again in a minute. If not, set one "
+    "up in Settings first."
+)
 
 _REVIEW_WAIT_S = 10 * 60.0
 _REVIEW_POLL_S = 3.0
@@ -121,6 +129,12 @@ def _publish(ctx: OperationContext, run_id: str, event: ApplyEvent) -> None:
     )
 
 
+def has_application_profile(repos: Any) -> bool:
+    """Whether the facts the Applier fills forms from exist (audit A5)."""
+    profile = repos.profile.get_current()
+    return profile is not None and isinstance(profile.application_profile, dict)
+
+
 def _run_dir(run_id: str) -> Path:
     return resolve_data_dir() / "apply_runs" / run_id
 
@@ -164,6 +178,8 @@ async def _apply_async(
         dev_form_url = str(ctx.input_snapshot.get("dev_form_url") or "")
         if not job.canonical_url and not dev_form_url:
             raise ValueError(NO_POSTING_URL_DETAIL)
+        if not has_application_profile(repos):
+            raise ValueError(NO_APPLICATION_PROFILE_DETAIL)
         # Adopt the route-created row by its snapshot id first: the route
         # commits it BEFORE runner.submit, so it is always visible here, while
         # `operation_id` may not be attached yet (the route writes that after

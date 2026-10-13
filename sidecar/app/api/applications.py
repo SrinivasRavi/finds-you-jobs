@@ -24,10 +24,12 @@ from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STAT
 from ..priority import STATS_KEY, zband_priority
 from ..registry import networker_ops as networker_ops
 from ..registry.apply_op import (
+    NO_APPLICATION_PROFILE_DETAIL,
     NO_POSTING_URL_DETAIL,
     advance_card_to_applied,
     finalize_run_failed,
     finalize_run_interrupted,
+    has_application_profile,
     purge_run_dirs,
 )
 from ..registry.persistence import (
@@ -35,6 +37,7 @@ from ..registry.persistence import (
 )
 from . import dto
 from .deps import db as _db
+from .deps import engines as _engines
 from .deps import found as _found
 from .deps import runner as _runner
 from .jobs import (
@@ -687,6 +690,15 @@ def start_apply(
             raise HTTPException(status_code=409, detail=NO_POSTING_URL_DETAIL)
         needs_intent = app_row.intent != "apply"
         job_url = job.canonical_url or dev_form_url
+        has_master = repos.profile.get_current() is not None
+        has_facts = has_application_profile(repos)
+
+    if not has_facts:
+        # Start reading the facts now, so the next Apply works (audit A5).
+        engines = _engines(request)
+        if has_master and (engines is None or engines.resolve("extract") is not None):
+            runner.submit("extract", {})
+        raise HTTPException(status_code=409, detail=NO_APPLICATION_PROFILE_DETAIL)
 
     snapshot: dict[str, Any] = {"application_id": application_id}
     if payload.retry_of_run_id:

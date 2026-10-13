@@ -485,6 +485,13 @@ const it: DeepPartial<Messages> = {
       retry: "Riprova",
       applied: "Inviata",
     },
+    applyNoFacts: {
+      title: "I tuoi dati non sono ancora stati letti",
+      body: "L'Applier compila i moduli con il tuo nome, i tuoi recapiti e il tuo permesso di lavoro, letti dal tuo curriculum principale. Non sono ancora stati letti. Leggerli è 1 piccola chiamata all'IA e richiede circa un minuto; poi premi di nuovo Candidati.",
+      bodyAiOff: "L'Applier compila i moduli con il tuo nome, i tuoi recapiti e il tuo permesso di lavoro, che l'IA legge dal tuo curriculum principale. L'IA è disattivata, quindi configura prima un provider nelle Impostazioni.",
+      read: "Leggili ora",
+      settings: "Apri Impostazioni",
+    },
     card: {
       menu: "Menu della scheda",
       manual: "Manuale",

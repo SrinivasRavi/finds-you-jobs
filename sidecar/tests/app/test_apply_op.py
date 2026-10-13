@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from sidecar.app.db.models import APPLY_RUN_ACTIVE_STATUSES
 from sidecar.app.main import create_app
+from sidecar.tests.app._support import seed_application_profile
 
 TOKEN = "test-token-apply"  # noqa: S105 — test fixture, not a real secret
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -74,6 +75,7 @@ def _seed_card(client: TestClient, app: FastAPI) -> tuple[str, str]:
         json={"resume_markdown": "# Ada Lovelace\n\nBackend engineer."},
     )
     assert resp.status_code in (200, 201)
+    seed_application_profile(app.state.db)
     job = {"id": _seed_fixture_job(app, "form.html")}
     application = client.post(
         "/api/applications",
@@ -233,6 +235,7 @@ def test_closed_posting_blocks_with_zero_model_calls(app_client) -> None:
         json={"resume_markdown": "# Ada Lovelace\n\nBackend engineer."},
     )
     assert resp.status_code in (200, 201)
+    seed_application_profile(_app.state.db)
     job = {"id": _seed_fixture_job(_app, "closed.html")}
     app_id = client.post(
         "/api/applications",
@@ -345,6 +348,8 @@ def test_packet_wait_failure_lands_the_run_row_terminal_failed(
     from sidecar.packages.jobapplier import ApplyControl
 
     monkeypatch.setattr(apply_op, "_PACKET_WAIT_MAX_S", 0.0)
+    # No master resume, so no facts either: let the run reach the packet wait.
+    monkeypatch.setattr(apply_op, "has_application_profile", lambda _repos: True)
     app_id, run_id = _pending_packet_card(migrated_db)  # no master profile saved
     ctx = OperationContext(
         kind="apply",
@@ -379,6 +384,7 @@ def test_post_packet_failure_lands_the_run_row_terminal_failed(
     monkeypatch.setenv("FYJ_DATA_DIR", str(tmp_path / "data"))
     with migrated_db.repos() as repos:
         repos.profile.upsert("# Ada Lovelace — master resume")
+        repos.profile.set_application_profile({"name": "Ada Lovelace"})
         job = repos.jobs.create(
             canonical_url="https://example.com/late-fail",
             title="Staff Engineer",
@@ -475,6 +481,7 @@ def _two_cards_with_apply_a_running(tmp_path: Path):
     client = TestClient(app)
     client.__enter__()
     db = app.state.db
+    seed_application_profile(db)
     with db.repos() as repos:
         job_a = repos.jobs.create(canonical_url="jA", title="A", source_adapter="lever")
         job_b = repos.jobs.create(canonical_url="jB", title="B", source_adapter="lever")
@@ -565,6 +572,7 @@ def test_finalize_failure_does_not_mask_original_error(
     monkeypatch.setenv("FYJ_DATA_DIR", str(tmp_path / "data"))
     with migrated_db.repos() as repos:
         repos.profile.upsert("# Ada — master resume")
+        repos.profile.set_application_profile({"name": "Ada"})
         job = repos.jobs.create(
             canonical_url="https://example.com/mask",
             title="Eng",
@@ -830,3 +838,55 @@ def test_submit_request_is_consumed_once() -> None:
     assert control.submit_requested is True
     assert control.take_submit_request() is True
     assert control.take_submit_request() is False
+
+
+def test_apply_without_facts_is_refused_and_starts_reading_them(
+    app_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit A5: the Applier never fills a form blind. No run row is written, and
+    the read that would have made the facts is queued, so the next Apply works."""
+    from sidecar.app.registry.apply_op import NO_APPLICATION_PROFILE_DETAIL
+
+    app, client = app_client
+    client.post(
+        "/api/profile", headers=AUTH, json={"resume_markdown": "# Ada Lovelace\n\nEngineer."}
+    )
+    job_id = _seed_fixture_job(app, "form.html")
+    app_id = client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
+    ).json()["id"]
+    kinds: list[str] = []
+    monkeypatch.setattr(app.state.runner, "submit", lambda kind, *_a, **_k: kinds.append(kind))
+
+    resp = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={})
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == NO_APPLICATION_PROFILE_DETAIL
+    assert kinds == ["extract"]
+    assert client.get(f"/api/applications/{app_id}/apply-runs", headers=AUTH).json() == []
+
+
+def test_a_retried_apply_without_facts_fails_before_any_run_row(migrated_db) -> None:
+    """The retry path reaches the op without the route, so the op guards too."""
+    import asyncio
+
+    from sidecar.app.registry import apply_op
+    from sidecar.app.registry.operations import OperationContext
+    from sidecar.packages.jobapplier import ApplyControl
+
+    with migrated_db.repos() as repos:
+        repos.profile.upsert("# Ada — master resume")
+        job = repos.jobs.create(
+            canonical_url="https://example.com/x", title="Eng", source_adapter="lever"
+        )
+        card_id = repos.applications.create(job.id).id
+    ctx = OperationContext(
+        kind="apply", input_snapshot={"application_id": card_id}, db=migrated_db,
+        operation_id="op-a5",
+    )
+    with pytest.raises(ValueError, match="haven't been read"):
+        asyncio.run(apply_op._apply_async(ctx, card_id, ApplyControl()))
+    with migrated_db.repos() as repos:
+        assert repos.apply_runs.latest_for_application(card_id) is None

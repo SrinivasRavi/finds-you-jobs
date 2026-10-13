@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
+from ..registry.apply_op import has_application_profile
 from ..registry.engine_config import (
     PROVIDERS,
     adopt_off_kinds,
@@ -27,6 +28,7 @@ from . import dto
 from .deps import data_dir as _data_dir
 from .deps import db as _db
 from .deps import engines as _engines
+from .deps import runner as _runner
 
 router = APIRouter()
 
@@ -38,12 +40,20 @@ def _transport(request: Request) -> HttpTransport | None:
 
 
 def _adopt_off_kinds(request: Request, provider: str) -> None:
-    """A provider just set up takes over the kinds onboarding's Skip turned off."""
+    """A provider just set up takes over the kinds onboarding's Skip turned off,
+    then reads the application profile that Skip left unread (audit A5)."""
     with _db(request).repos() as repos:
         prefs = repos.preferences.get_or_create()
         routing = adopt_off_kinds(prefs.engine_routing, provider)
-        if routing is not None:
-            repos.preferences.update(engine_routing=routing)
+        if routing is None:
+            return
+        repos.preferences.update(engine_routing=routing)
+        needs_extract = repos.profile.get_current() is not None and not has_application_profile(
+            repos
+        )
+    _reconfigure(request)
+    if needs_extract:
+        _runner(request).submit("extract", {})
 
 
 def _reconfigure(request: Request) -> None:

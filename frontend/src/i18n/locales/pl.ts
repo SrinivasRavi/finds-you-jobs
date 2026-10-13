@@ -501,6 +501,13 @@ const pl: DeepPartial<Messages> = {
       retry: "Ponów",
       applied: "Zaaplikowano",
     },
+    applyNoFacts: {
+      title: "Twoje dane nie zostały jeszcze odczytane",
+      body: "Applier wypełnia formularze Twoim imieniem i nazwiskiem, danymi kontaktowymi i pozwoleniem na pracę, odczytanymi z Twojego głównego CV. Nie zostały jeszcze odczytane. Odczyt to 1 małe wywołanie AI i trwa około minuty; potem ponownie naciśnij Aplikuj.",
+      bodyAiOff: "Applier wypełnia formularze Twoim imieniem i nazwiskiem, danymi kontaktowymi i pozwoleniem na pracę, które AI odczytuje z Twojego głównego CV. AI jest wyłączone, więc najpierw skonfiguruj dostawcę w Ustawieniach.",
+      read: "Odczytaj teraz",
+      settings: "Otwórz Ustawienia",
+    },
     card: {
       menu: "Menu karty",
       manual: "Ręcznie",

@@ -487,6 +487,13 @@ const de: DeepPartial<Messages> = {
       retry: "Erneut versuchen",
       applied: "Beworben",
     },
+    applyNoFacts: {
+      title: "Deine Angaben wurden noch nicht gelesen",
+      body: "Der Applier füllt Formulare mit deinem Namen, deinen Kontaktdaten und deiner Arbeitserlaubnis aus, gelesen aus deinem Master-Lebenslauf. Sie wurden noch nicht gelesen. Das Lesen ist 1 kleiner KI-Aufruf und dauert etwa eine Minute; drücke danach erneut auf Bewerben.",
+      bodyAiOff: "Der Applier füllt Formulare mit deinem Namen, deinen Kontaktdaten und deiner Arbeitserlaubnis aus, die die KI aus deinem Master-Lebenslauf liest. Die KI ist aus, richte also zuerst in den Einstellungen einen Anbieter ein.",
+      read: "Jetzt lesen",
+      settings: "Einstellungen öffnen",
+    },
     card: {
       menu: "Kartenmenü",
       manual: "Manuell",

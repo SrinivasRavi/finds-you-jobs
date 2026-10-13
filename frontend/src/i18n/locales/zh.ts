@@ -477,6 +477,13 @@ const zh: DeepPartial<Messages> = {
       retry: "重试",
       applied: "已申请",
     },
+    applyNoFacts: {
+      title: "尚未读取你的信息",
+      body: "Applier 会用从你的主简历中读取的姓名、联系方式和工作许可来填写表单。这些信息尚未读取。读取只需 1 次小的 AI 调用，大约一分钟；之后请再次点击“申请”。",
+      bodyAiOff: "Applier 会用 AI 从你的主简历中读取的姓名、联系方式和工作许可来填写表单。AI 已关闭，请先在设置中配置一个提供方。",
+      read: "立即读取",
+      settings: "打开设置",
+    },
     card: {
       menu: "卡片菜单",
       manual: "手动",

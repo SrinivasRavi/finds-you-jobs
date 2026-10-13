@@ -485,6 +485,13 @@ const pt: DeepPartial<Messages> = {
       retry: "Tentar novamente",
       applied: "Aplicada",
     },
+    applyNoFacts: {
+      title: "Seus dados ainda não foram lidos",
+      body: "O Applier preenche formulários com seu nome, dados de contato e autorização de trabalho, lidos do seu currículo mestre. Eles ainda não foram lidos. Lê-los é 1 pequena chamada à IA e leva cerca de um minuto; depois pressione Candidatar de novo.",
+      bodyAiOff: "O Applier preenche formulários com seu nome, dados de contato e autorização de trabalho, que a IA lê do seu currículo mestre. A IA está desligada, então configure primeiro um provedor nos Ajustes.",
+      read: "Ler agora",
+      settings: "Abrir Ajustes",
+    },
     card: {
       menu: "Menu do card",
       manual: "Manual",

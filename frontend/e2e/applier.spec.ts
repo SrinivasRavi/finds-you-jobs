@@ -28,6 +28,11 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
     headers: auth,
     data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
   });
+  // Apply refuses without the facts read from the resume (audit A5).
+  await request.patch(`${base}/api/profile/application-profile`, {
+    headers: auth,
+    data: { name: "E2E Candidate", email: "e2e@example.com" },
+  });
   const job = await (
     await request.post(`${base}/api/jobs`, {
       headers: auth,
@@ -126,4 +131,73 @@ test("apply run: card slot, companion panel, attest to Applied", async ({
     expect(card.column).toBe("applied");
   }).toPass({ timeout: 10_000 });
   await page.screenshot({ path: `${DIR}/attested-submitted.png`, fullPage: true });
+});
+
+test("Apply with no facts read from the resume says why and offers to read them", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "https://example.com/e2e-no-facts-job",
+        title: "No Facts Engineer",
+        company: "Initech",
+        location: "Remote",
+        description: "Own the monolith.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  await request.post(`${base}/api/applications`, {
+    headers: auth,
+    data: { job_id: job.id, generate_resume: false, generate_cover: false },
+  });
+  // The API can't clear facts once set, so the profile read is served with none
+  // (audit A5). Apply must not be called; reading the facts must be.
+  await page.route("**/api/profile", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        resume_markdown: "# E2E Candidate\n\nBackend engineer.",
+        version: 1,
+        application_profile: null,
+      }),
+    }),
+  );
+  const applyCalls: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && /\/apply$/.test(r.url())) applyCalls.push(r.url());
+  });
+  let extractCalls = 0;
+  await page.route("**/api/profile/extract", (route) => {
+    extractCalls += 1;
+    return route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ id: "op-e2e", kind: "extract", state: "queued" }),
+    });
+  });
+  await page.goto("/applications");
+  const slot = page
+    .getByTestId("tracker-card")
+    .filter({ hasText: "No Facts Engineer" })
+    .getByTestId("card-apply-slot");
+  await expect(slot).toBeVisible({ timeout: 15_000 });
+  await slot.click();
+  const dialog = page.getByTestId("confirm-dialog");
+  await expect(dialog).toContainText("haven't been read yet");
+  await page.screenshot({ path: `${DIR}/apply-no-facts-dialog.png`, fullPage: true });
+  await page.getByTestId("confirm-ok").click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => extractCalls).toBe(1);
+  expect(applyCalls).toEqual([]);
 });

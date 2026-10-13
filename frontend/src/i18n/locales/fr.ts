@@ -144,7 +144,7 @@ const fr: DeepPartial<Messages> = {
     verify: "Vérifier",
     verifying: "Vérification…",
     skipProvider: "Passer pour l'instant",
-    skipProviderHint: "Les fonctions d'IA restent désactivées tant que vous n'ajoutez pas de fournisseur dans les Paramètres. En attendant, les offres sont notées par mots-clés.",
+    skipProviderHint: "Les fonctions d'IA restent désactivées tant que vous n'ajoutez pas de fournisseur dans les Réglages. En attendant, les offres sont notées par mots-clés.",
     verified: "Vérifié ✓",
     verifiedDetail: "{{detail}} — vous pouvez terminer la configuration.",
     verifiedOk: "Fournisseur vérifié — vous pouvez terminer la configuration.",
@@ -484,6 +484,13 @@ const fr: DeepPartial<Messages> = {
       submitted: "Soumise",
       retry: "Réessayer",
       applied: "Postulée",
+    },
+    applyNoFacts: {
+      title: "Vos informations n'ont pas encore été lues",
+      body: "L'Applier remplit les formulaires avec votre nom, vos coordonnées et votre autorisation de travail, lus dans votre CV maître. Ils n'ont pas encore été lus. Les lire demande 1 petit appel à l'IA et prend environ une minute ; appuyez ensuite à nouveau sur Postuler.",
+      bodyAiOff: "L'Applier remplit les formulaires avec votre nom, vos coordonnées et votre autorisation de travail, que l'IA lit dans votre CV maître. L'IA est désactivée : configurez d'abord un fournisseur dans les Paramètres.",
+      read: "Les lire maintenant",
+      settings: "Ouvrir les Réglages",
     },
     card: {
       menu: "Menu de la carte",

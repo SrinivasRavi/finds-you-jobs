@@ -485,6 +485,13 @@ const nl: DeepPartial<Messages> = {
       retry: "Opnieuw",
       applied: "Gesolliciteerd",
     },
+    applyNoFacts: {
+      title: "Je gegevens zijn nog niet gelezen",
+      body: "De Applier vult formulieren in met je naam, contactgegevens en werkvergunning, gelezen uit je master-cv. Ze zijn nog niet gelezen. Lezen is 1 kleine AI-aanroep en duurt ongeveer een minuut; druk daarna opnieuw op Solliciteren.",
+      bodyAiOff: "De Applier vult formulieren in met je naam, contactgegevens en werkvergunning, die AI uit je master-cv leest. AI staat uit, dus stel eerst een provider in bij Instellingen.",
+      read: "Nu lezen",
+      settings: "Instellingen openen",
+    },
     card: {
       menu: "Kaartmenu",
       manual: "Handmatig",

@@ -702,6 +702,13 @@ export function useUpdateProfile() {
   });
 }
 
+/** Read the application profile from the master resume now (FR-APP-01, audit A5). */
+export function useExtractApplicationProfile() {
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.extractApplicationProfile()),
+  });
+}
+
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
@@ -1442,6 +1449,10 @@ export function useSSEInvalidation(qc: QueryClient): void {
         // (applyRunStatus) + writes an Activity event — refresh all three so the
         // Tracker/companion repaint without a manual reload (applier-as-built.md section 8.4).
         // One event per run — no throttle needed.
+        // A finished resume read fills the facts Apply needs (audit A5).
+        if (p.kind === "extract" && terminal) {
+          qc.invalidateQueries({ queryKey: qk.profile });
+        }
         if (p.kind === "apply" && terminal) {
           qc.invalidateQueries({ queryKey: qk.applications });
           qc.invalidateQueries({ queryKey: qk.applyRun });
