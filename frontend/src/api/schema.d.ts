@@ -3787,6 +3787,10 @@ export interface components {
             kind: string;
             /** Evidence */
             evidence: string;
+            /** Code */
+            code?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * ScoreRetryDTO

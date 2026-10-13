@@ -15,6 +15,7 @@ import { FactorBars } from "../../shell/FactorBars";
 import { DuplicatePrompt } from "./DuplicatePrompt";
 import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
+import { scoreText } from "../../shell/scoreText";
 import { AddLinkDialog, type AddLinkMode } from "./AddLinkDialog";
 import { FollowCompanyDialog } from "./FollowCompanyDialog";
 import { FollowResult, followErrorText, followLooksRight } from "./FollowResult";
@@ -137,6 +138,8 @@ export function JobDetail({
     .filter(Boolean)
     .join(" · ");
   const active = sourceFilter === job.source_adapter;
+  // A keyword score's reasons arrive coded, for the user's language (audit section 5).
+  const coded = !!job.score?.reasons.some((r) => typeof r !== "string");
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-start gap-4 px-6 pt-6">
@@ -451,16 +454,21 @@ export function JobDetail({
                     <ExplainButton job={job} />
                   ) : null}
                   <ul data-testid="match-reasons" className="space-y-1.5 text-[12.5px] text-ink-2">
-                    {job.score.reasons.slice(0, 4).map((r, i) => (
+                    {/* A keyword score's lines are coded, worded here in the user's
+                        language, and all of them show; its English breakdown says
+                        the same again, so it's left out (audit section 5). */}
+                    {(coded ? job.score.reasons : job.score.reasons.slice(0, 4)).map((r, i) => (
                       <li key={i} className="flex gap-1.5">
                         <span className="mt-1 size-1 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-                        <span>{r}</span>
+                        <span>{scoreText(r, t)}</span>
                       </li>
                     ))}
                   </ul>
-                  <div className="mt-3 border-t border-border pt-3">
-                    <Markdown md={job.score.breakdown_md} className="text-[12px]" />
-                  </div>
+                  {coded ? null : (
+                    <div className="mt-3 border-t border-border pt-3">
+                      <Markdown md={job.score.breakdown_md} className="text-[12px]" />
+                    </div>
+                  )}
                 </>
               ) : (
                 <p className="text-[12px] text-ink-3">{t("jobBoard.detail.scoringInFlight")}</p>

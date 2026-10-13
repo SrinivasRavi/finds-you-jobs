@@ -272,9 +272,19 @@ def _wanted_locations(repos: Repos) -> Any:
 def _factor_rows(result: Any) -> list[dict[str, Any]]:
     """A scorer's typed factors in the shape the repo writes."""
     return [
-        {"factor": f.factor, "value": f.value, "kind": f.kind, "evidence": f.evidence}
+        {"factor": f.factor, "value": f.value, "kind": f.kind, "evidence": f.evidence,
+         "code": getattr(f, "code", None)}
         for f in getattr(result, "factors", [])
     ]
+
+
+def _stored_reasons(result: Any) -> list[Any]:
+    """The reasons as stored: `{key, args, text}` where the scorer gave codes, so the
+    screen words them in the user's language (audit section 5); else the text."""
+    codes = getattr(result, "reason_codes", [])
+    if len(codes) != len(result.reasons):
+        return list(result.reasons)
+    return [{**code, "text": text} for text, code in zip(result.reasons, codes, strict=True)]
 
 
 def _persist_score(
@@ -282,7 +292,7 @@ def _persist_score(
     *,
     job_id: str,
     score_0_100: int,
-    reasons: list[str],
+    reasons: list[Any],
     breakdown_md: str,
     scorer_impl: str,
     feed_priority_stats: bool,
@@ -352,7 +362,7 @@ def _ensure_keyword_floor(
             ctx,
             job_id=job_id,
             score_0_100=det.score,
-            reasons=list(det.reasons),
+            reasons=_stored_reasons(det),
             breakdown_md=det.breakdown_md,
             scorer_impl=SCORER_IMPL_DETERMINISTIC,
             method="keyword",
@@ -465,7 +475,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 ctx,
                 job_id=job_id,
                 score_0_100=det.score,
-                reasons=list(det.reasons),
+                reasons=_stored_reasons(det),
                 breakdown_md=det.breakdown_md,
                 scorer_impl=SCORER_IMPL_DETERMINISTIC,
                 method="keyword",
@@ -483,7 +493,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 det.score,
                 job_id,
                 "keyword",
-                list(det.reasons),
+                _stored_reasons(det),
                 fell_back_from=fell_back_from,
             ),
             usage=None,
@@ -630,7 +640,7 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
                     job_id,
                     scorer_impl=SCORER_IMPL_DETERMINISTIC,
                     score_0_100=det.score,
-                    reasons=list(det.reasons),
+                    reasons=_stored_reasons(det),
                     breakdown_md=det.breakdown_md,
                     method="keyword",
                     factors=_factor_rows(det),

@@ -214,3 +214,27 @@ def test_rescore_always_queues_the_users_score_with_the_method_in_settings(
             assert op.input_snapshot["rescore"] is True
             assert "force_mode" not in op.input_snapshot
         assert client.post("/api/jobs/nope/rescore", headers=AUTH).status_code == 404
+
+
+def test_a_keyword_score_stores_its_lines_as_keys_and_facts() -> None:
+    """Audit section 5: each reason is `{key, args, text}` and each factor carries its
+    code, so the screen words them in the user's language; the English stays as `text`."""
+    from sidecar.app.registry.operations import _factor_rows, _stored_reasons
+    from sidecar.modules.geo.resolve import resolve_wanted
+    from sidecar.modules.scorer.deterministic import score_deterministic
+
+    wanted = resolve_wanted(["Pune"])
+    det = score_deterministic(
+        "# Asha\n\nSenior backend engineer. Python, SQL, AWS. 6 years.",
+        "Senior backend engineer. Python, PostgreSQL, AWS. 5+ years required. " * 4,
+        title="Senior Backend Engineer", location="Mumbai, India", wanted=wanted,
+    )
+    stored = _stored_reasons(det)
+    assert [r["key"] for r in stored] == [
+        "kw.skills", "kw.years", "kw.level", "kw.location", "kw.penalty",
+    ]
+    assert stored[0]["text"] == det.reasons[0]
+    assert stored[3]["args"]["why"]["key"] == "loc.elsewhere"
+    codes = {row["factor"]: row["code"] for row in _factor_rows(det)}
+    assert codes["core_stack"]["key"] == "ev.skills"
+    assert codes["location_preference"]["key"] == "loc.elsewhere"

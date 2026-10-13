@@ -152,7 +152,9 @@ def _board_search_haystack(job: Any, deep: bool) -> str:
     parts = [job.title, job.company, job.location]
     if deep:
         parts += [job.salary or "", job.source_adapter, job.description]
-        parts += [str(r) for r in job.score_reasons]
+        parts += [
+            str(r.get("text", "")) if isinstance(r, dict) else str(r) for r in job.score_reasons
+        ]
         parts.append(job.score_breakdown_md)
     return "\n".join(parts).lower()
 
@@ -696,6 +698,7 @@ def get_job_factors(request: Request, job_id: str) -> dto.JobFactorsDTO:
                     value=r["value"],
                     kind=r.get("kind", "graded"),
                     evidence=r.get("evidence", ""),
+                    code=r.get("code"),
                 )
                 for r in rows
             ],

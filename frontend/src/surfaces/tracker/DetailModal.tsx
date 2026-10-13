@@ -19,6 +19,7 @@ import { formatWhen } from "../../shell/datetime";
 import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
+import { scoreText } from "../../shell/scoreText";
 import { AddLinkDialog } from "../jobs/AddLinkDialog";
 import { downloadDocument } from "../../shell/downloadDocument";
 import { JobProvenanceChips } from "../jobs/JobProvenanceChips";
@@ -312,7 +313,7 @@ export function DetailModal({
                 {app.job.score.reasons.map((r, i) => (
                   <li key={i} className="flex gap-1.5">
                     <span className="mt-1 size-1 shrink-0 rounded-full bg-accent" />
-                    <span>{r}</span>
+                    <span>{scoreText(r, t)}</span>
                   </li>
                 ))}
               </ul>

@@ -837,6 +837,7 @@ class JobsRepo:
                 "value": float(f["value"]),
                 "kind": str(f.get("kind") or "graded"),
                 "evidence": str(f.get("evidence") or ""),
+                **({"code": f["code"]} if isinstance(f.get("code"), dict) else {}),
             }
             for f in factors or []
         ]

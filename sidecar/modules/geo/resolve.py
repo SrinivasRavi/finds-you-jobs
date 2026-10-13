@@ -507,39 +507,61 @@ def resolve_wanted(chips: Sequence[object], g: Gazetteer | None = None) -> Wante
     )
 
 
-def match(resolved: ResolvedLocation, wanted: Wanted) -> tuple[Verdict, str]:
-    """The verdict and 1 line saying why, for the breakdown the user reads."""
+# The line saying why, by key, so a screen can word it in the user's language
+# (audit section 5); `match` returns the English.
+LOCATION_REASONS: dict[str, str] = {
+    "loc.no_prefs": "No location preference set, so nothing to compare.",
+    "loc.city": "{city} is a location you asked for.",
+    "loc.region": "{where} is inside a region you asked for.",
+    "loc.country": "{where} is in a country you asked for.",
+    "loc.remote_any": "Remote with no region restriction.",
+    "loc.remote_open": "Remote and open to {countries}.",
+    "loc.remote_only": "Remote, but only within {scope}.",
+    "loc.remote_unscoped": (
+        "Says remote without naming a region, so eligibility can't be read from the field."
+    ),
+    "loc.elsewhere": "Located in {named}, which you did not ask for.",
+    "loc.unreadable": "No location could be read from the posting.",
+}
+
+
+def match_reason(
+    resolved: ResolvedLocation, wanted: Wanted
+) -> tuple[Verdict, str, dict[str, str]]:
+    """The verdict, and the key and facts of the line saying why."""
     if wanted.empty:
-        return Verdict.UNVERIFIABLE, "No location preference set, so nothing to compare."
+        return Verdict.UNVERIFIABLE, "loc.no_prefs", {}
 
     for place in resolved.places:
         if place.city_id is not None and place.city_id in wanted.city_ids:
-            return Verdict.MATCH, f"{place.city} is a location you asked for."
+            return Verdict.MATCH, "loc.city", {"city": place.city or ""}
         if place.admin1_key is not None and place.admin1_key in wanted.admin1_keys:
-            where = place.city or place.admin1_key
-            return Verdict.MATCH, f"{where} is inside a region you asked for."
+            return Verdict.MATCH, "loc.region", {"where": place.city or place.admin1_key}
         if place.country is not None and place.country in wanted.countries:
-            return Verdict.MATCH, f"{place.city or place.country} is in a country you asked for."
+            return Verdict.MATCH, "loc.country", {"where": place.city or place.country}
 
     if resolved.remote and wanted.remote:
         if resolved.remote_global:
-            return Verdict.MATCH, "Remote with no region restriction."
+            return Verdict.MATCH, "loc.remote_any", {}
         reachable = wanted.countries | wanted.home_countries
         if resolved.remote_countries:
             shared = resolved.remote_countries & reachable
             if shared:
-                return Verdict.MATCH, f"Remote and open to {', '.join(sorted(shared))}."
+                return Verdict.MATCH, "loc.remote_open", {"countries": ", ".join(sorted(shared))}
             scope = ", ".join(sorted(resolved.remote_countries))
-            return Verdict.MISS, f"Remote, but only within {scope}."
-        return (
-            Verdict.UNVERIFIABLE,
-            "Says remote without naming a region, so eligibility can't be read from the field.",
-        )
+            return Verdict.MISS, "loc.remote_only", {"scope": scope}
+        return Verdict.UNVERIFIABLE, "loc.remote_unscoped", {}
 
     if resolved.places:
         named = ", ".join(p.city or p.country or "" for p in resolved.places if p.city or p.country)
-        return Verdict.MISS, f"Located in {named}, which you did not ask for."
-    return Verdict.UNVERIFIABLE, "No location could be read from the posting."
+        return Verdict.MISS, "loc.elsewhere", {"named": named}
+    return Verdict.UNVERIFIABLE, "loc.unreadable", {}
+
+
+def match(resolved: ResolvedLocation, wanted: Wanted) -> tuple[Verdict, str]:
+    """The verdict and 1 line saying why, for the breakdown the user reads."""
+    verdict, key, args = match_reason(resolved, wanted)
+    return verdict, LOCATION_REASONS[key].format(**args)
 
 
 def verdicts(

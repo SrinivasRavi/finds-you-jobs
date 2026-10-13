@@ -2,6 +2,7 @@
 // sidecar's DTOs (architecture section 4.2) and module result dataclasses
 // (sidecar/modules/*/types.py). schema.d.ts is the generated source of truth.
 
+import type { ScoreReason } from "../shell/scoreText";
 import type { components } from "./schema";
 
 /** A shape the sidecar's generated schema already states exactly is aliased
@@ -26,7 +27,8 @@ export interface Usage {
 /** ScoreResult — scorer/types.py. `reasons` is 2–4 bullets (US-JB-05). */
 export interface ScoreResult {
   score_0_100: number;
-  reasons: string[];
+  /** A string, or a keyword line as `{key, args, text}` (audit section 5). */
+  reasons: ScoreReason[];
   breakdown_md: string;
   /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
    *  never styled like an LLM score). Scoring modes, 2026-07-22. */
@@ -88,7 +90,7 @@ export interface PromptTestResult {
   output_md?: string;
   notes?: string[];
   score?: number;
-  reasons?: string[];
+  reasons?: ScoreReason[];
   message?: string;
   profile?: Record<string, unknown>;
   usd?: number | null;

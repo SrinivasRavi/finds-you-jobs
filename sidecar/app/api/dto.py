@@ -71,6 +71,9 @@ class ScoreFactorDTO(BaseModel):
     value: float
     kind: str
     evidence: str
+    # `evidence` as `{key, args}`, worded by the screen in the user's language
+    # (audit section 5); absent on a method that writes prose, and on old rows.
+    code: dict[str, Any] | None = None
 
 
 class JobFactorsDTO(BaseModel):

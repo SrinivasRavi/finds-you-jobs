@@ -11,8 +11,15 @@ side states none); a -15 location modifier from `modules/geo`; and a
 from __future__ import annotations
 
 import re
+from typing import Any
 
-from sidecar.modules.geo.resolve import Verdict, Wanted, match, resolve_location
+from sidecar.modules.geo.resolve import (
+    LOCATION_REASONS,
+    Verdict,
+    Wanted,
+    match_reason,
+    resolve_location,
+)
 from sidecar.modules.scraper.quality import RED_FLAG_TERMS
 
 from .level import LEVEL_ORDER, Level, extract_level
@@ -95,15 +102,21 @@ def _resume_level(master_md: str) -> Level | None:
     return max(found, key=lambda lvl: _LEVEL_RANK[lvl]) if found else None
 
 
-def _level_fit(title: str, master_md: str) -> tuple[int, str] | None:
-    """0 to 100 for how close the 2 rungs are, or None when either is unstated."""
+def _level_fit(title: str, master_md: str) -> tuple[int, str, str] | None:
+    """0 to 100 for how close the 2 rungs are, and the 2 rungs, or None when
+    either is unstated."""
     posting = extract_level(title)
     candidate = _resume_level(master_md)
     if posting is None or candidate is None:
         return None
     distance = abs(_LEVEL_RANK[posting] - _LEVEL_RANK[candidate])
     score = {0: 100, 1: 75, 2: 50}.get(distance, 25)
-    return score, f"posting reads {posting}, resume reads {candidate}"
+    return score, posting, candidate
+
+
+def _code(key: str, **args: Any) -> dict[str, Any]:
+    """A line as its key and facts: the screen words it (audit section 5)."""
+    return {"key": key, "args": args}
 
 
 def score_deterministic(
@@ -118,13 +131,15 @@ def score_deterministic(
     `location` and `wanted` those axes aren't assessed. A JD under `MIN_JD_CHARS`
     scores 0 (see that constant)."""
     if len((job_text or "").strip()) < MIN_JD_CHARS:
+        chars = len((job_text or "").strip())
         return ScoreResult(
             score=0,
             reasons=[
                 "No usable job description: "
-                f"{len((job_text or '').strip())} chars, under the {MIN_JD_CHARS}-char "
+                f"{chars} chars, under the {MIN_JD_CHARS}-char "
                 "minimum. Scoring a title and company name measures neither."
             ],
+            reason_codes=[_code("kw.no_description", chars=chars, min=MIN_JD_CHARS)],
             breakdown_md=(
                 "- No score: the posting carries no job description, so fit can't be "
                 "assessed. This is a missing-data marker, not a judgement on the role."
@@ -145,11 +160,15 @@ def score_deterministic(
         + level_weight * (level[0] if level else 0)
     )
 
+    found, total = len(overlap), len(jd_terms)
+    # `None` is "unstated"; the screen words it.
+    offered, required = offered_years or None, required_years or None
     factors = [
         Factor(
             "core_stack",
             skill_score / 100,
-            evidence=f"{len(overlap)} of {len(jd_terms)} posting terms appear in the resume",
+            evidence=f"{found} of {total} posting terms appear in the resume",
+            code=_code("ev.skills", found=found, total=total),
         ),
         Factor(
             "years",
@@ -158,41 +177,59 @@ def score_deterministic(
                 f"{offered_years or 'unstated'} on the resume against "
                 f"{required_years or 'unstated'} required"
             ),
+            code=_code("ev.years", offered=offered, required=required),
         ),
     ]
     reasons = [
-        f"Skill-keyword overlap: {len(overlap)}/{len(jd_terms)} JD terms found in "
+        f"Skill-keyword overlap: {found}/{total} JD terms found in "
         f"resume ({skill_score}/100, weight {skill_weight:.0%}).",
         f"Experience: {offered_years or 'unstated'} yrs on resume vs "
         f"{required_years or 'unstated'} yrs required ({years_score}/100, weight "
         f"{years_weight:.0%}).",
+    ]
+    reason_codes = [
+        _code("kw.skills", found=found, total=total, score=skill_score,
+              weight=round(skill_weight * 100)),
+        _code("kw.years", offered=offered, required=required, score=years_score,
+              weight=round(years_weight * 100)),
     ]
     breakdown_lines = [
         f"- Skill overlap: {skill_score}/100 (weight {skill_weight:.0%})",
         f"- Experience match: {years_score}/100 (weight {years_weight:.0%})",
     ]
     if level is not None:
-        level_score, level_why = level
-        factors.append(Factor("level", level_score / 100, evidence=level_why))
+        level_score, posting_level, resume_level = level
+        level_why = f"posting reads {posting_level}, resume reads {resume_level}"
+        factors.append(Factor(
+            "level", level_score / 100, evidence=level_why,
+            code=_code("ev.level", posting=posting_level, candidate=resume_level),
+        ))
         reasons.append(f"Seniority: {level_why} ({level_score}/100, weight {level_weight:.0%}).")
+        reason_codes.append(_code(
+            "kw.level", posting=posting_level, candidate=resume_level, score=level_score,
+            weight=round(level_weight * 100),
+        ))
         breakdown_lines.append(
             f"- Seniority fit: {level_score}/100 (weight {level_weight:.0%}), {level_why}"
         )
 
     penalty = 0
     if wanted is not None and location.strip():
-        verdict, why = match(resolve_location(location), wanted)
+        verdict, why_key, why_args = match_reason(resolve_location(location), wanted)
+        why = LOCATION_REASONS[why_key].format(**why_args)
         if verdict is not Verdict.UNVERIFIABLE:
             factors.append(
                 Factor(
                     "location_preference",
                     1.0 if verdict is Verdict.MATCH else 0.0,
                     evidence=why,
+                    code=_code(why_key, **why_args),
                 )
             )
         if verdict is Verdict.MISS:
             penalty = LOCATION_MISS_PENALTY
         reasons.append(f"Location: {why}")
+        reason_codes.append(_code("kw.location", why=_code(why_key, **why_args)))
         breakdown_lines.append(f"- Location: {why}")
 
     lowered = (job_text or "").lower()
@@ -202,11 +239,14 @@ def score_deterministic(
         breakdown_lines.append(
             f"- Location modifier: -{penalty} for a location you did not ask for"
         )
+        reasons.append(f"Location modifier: -{penalty} for a location you did not ask for.")
+        reason_codes.append(_code("kw.penalty", penalty=penalty))
     if red_flag:
         final = min(final, RED_FLAG_CAP)
         reasons.append(
             f"Cap applied: red-flag term {red_flag!r} detected — capped at {RED_FLAG_CAP}."
         )
+        reason_codes.append(_code("kw.red_flag", term=red_flag, cap=RED_FLAG_CAP))
         breakdown_lines.append(
             f"- Cap: red-flag term {red_flag!r} detected (score capped at {RED_FLAG_CAP})"
         )
@@ -216,5 +256,6 @@ def score_deterministic(
         reasons=reasons,
         breakdown_md="\n".join(breakdown_lines),
         factors=factors,
+        reason_codes=reason_codes,
         usage=Usage(),  # zero-LLM — no tokens/cost, matches Usage's "free beyond bandwidth"
     )

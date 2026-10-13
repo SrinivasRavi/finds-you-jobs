@@ -13,6 +13,7 @@ import {
 } from "../../api/queries";
 import { JobTombstonedError, type JobDraft } from "../../api/types";
 import { Modal } from "../../shell/Modal";
+import { scoreText } from "../../shell/scoreText";
 import { canSave, draftForSave, emptyDraft, JobFields, useAutofill } from "./JobFields";
 
 function TriageStrip({
@@ -54,10 +55,10 @@ function TriageStrip({
         {t("jobBoard.addModal.scoredWith", { method: score.method })}
       </div>
       <ul className="mt-2.5 space-y-1.5 text-[12.5px] text-ink-2">
-        {score.reasons.map((r) => (
-          <li key={r} className="flex gap-1.5">
+        {score.reasons.map((r, i) => (
+          <li key={i} className="flex gap-1.5">
             <span className="mt-1 size-1 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-            <span>{r}</span>
+            <span>{scoreText(r, t)}</span>
           </li>
         ))}
       </ul>

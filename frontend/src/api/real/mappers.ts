@@ -1,6 +1,7 @@
 // The sidecar's DTOs mapped into the view types in types.ts, and the constants
 // the frontend copies from the sidecar. Split out of real.ts (F-P3).
 
+import { asReasons } from "../../shell/scoreText";
 import type { components } from "../schema";
 import type {
   Application,
@@ -173,7 +174,7 @@ export function toJob(d: JobDTO, saved: boolean): Job {
     score: d.score
       ? {
           score_0_100: d.score.score_0_100,
-          reasons: d.score.reasons as string[],
+          reasons: asReasons(d.score.reasons),
           breakdown_md: d.score.breakdown_md,
           scorer_impl: d.score.scorer_impl ?? "scorer-llm",
           weighted: d.score.weighted ?? false,

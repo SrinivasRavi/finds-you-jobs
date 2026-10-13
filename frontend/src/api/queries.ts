@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { asReasons, type ScoreReason } from "../shell/scoreText";
 import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
@@ -582,7 +583,7 @@ export function useAttachJobLink() {
 export interface TriageResult {
   score: number;
   method: string;
-  reasons: string[];
+  reasons: ScoreReason[];
 }
 
 /** How long a prompt test or a triage score may run before it's cancelled for
@@ -645,7 +646,7 @@ export function usePromptTest() {
           output_md: typeof ref.output_md === "string" ? ref.output_md : undefined,
           notes: Array.isArray(ref.notes) ? ref.notes.map(String) : undefined,
           score: typeof ref.score === "number" ? ref.score : undefined,
-          reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : undefined,
+          reasons: Array.isArray(ref.reasons) ? asReasons(ref.reasons) : undefined,
           message: typeof ref.message === "string" ? ref.message : undefined,
           profile:
             typeof ref.profile === "object" && ref.profile !== null
@@ -681,7 +682,7 @@ export function useTriageScore() {
       return {
         score: Number(ref.score ?? 0),
         method: String(ref.method ?? ""),
-        reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : [],
+        reasons: asReasons(ref.reasons),
       };
     },
     meta: { errorHandledLocally: true },
