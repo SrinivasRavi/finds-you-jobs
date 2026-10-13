@@ -19,9 +19,11 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
-from .base import path_segments, subdomain_tenant
+from .base import detect_url, path_segments, subdomain_tenant
 
 ID = "bamboohr"
+LABEL = "BambooHR"
+KIND = "ats"
 
 _SUFFIX = ".bamboohr.com"
 _NOT_TENANTS = {"www", "api", "app", "help", "status"}
@@ -50,9 +52,7 @@ def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    return _tenant(entry.url)
+    return detect_url(entry, ID, _tenant)
 
 
 def _location(raw: dict) -> str:

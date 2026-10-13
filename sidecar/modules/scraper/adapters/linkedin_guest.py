@@ -37,6 +37,8 @@ from ..searchquery import build_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "linkedin"
+LABEL = "LinkedIn (guest search)"
+KIND = "search"
 _CLAIM = "linkedin"
 _BASE = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 

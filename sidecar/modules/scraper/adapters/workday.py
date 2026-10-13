@@ -35,6 +35,8 @@ from ..types import NormalizedJob, ScraperError
 from .base import path_segments
 
 ID = "workday"
+LABEL = "Workday"
+KIND = "ats"
 
 _HOST_RE = re.compile(r"^([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com$")
 _LOCALE_RE = re.compile(r"^[a-z]{2}-[A-Z]{2}$")

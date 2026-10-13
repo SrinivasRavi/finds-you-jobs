@@ -38,6 +38,8 @@ from ..searchquery import SearchQuery, build_queries, select_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "apify"
+LABEL = "Apify actors (your own key)"
+KIND = "search"
 INLINE_DESCRIPTION = True
 _RUN_BASE = "https://api.apify.com/v2/acts"
 

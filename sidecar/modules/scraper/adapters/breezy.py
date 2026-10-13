@@ -21,9 +21,11 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
-from .base import subdomain_tenant
+from .base import detect_url, subdomain_tenant
 
 ID = "breezy"
+LABEL = "Breezy"
+KIND = "ats"
 
 _SUFFIX = ".breezy.hr"
 _NOT_TENANTS = {"www", "app", "api", "help"}
@@ -77,9 +79,7 @@ def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    return _tenant(entry.url)
+    return detect_url(entry, ID, _tenant)
 
 
 def _location(raw: dict) -> str:

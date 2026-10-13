@@ -14,14 +14,16 @@ board — behavioral precedent only, no code seen or copied).
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from urllib.parse import urlsplit
 
 from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import detect_board
 
 ID = "arbeitnow"
+LABEL = "Arbeitnow"
+KIND = "board"
 INLINE_DESCRIPTION = True
 _CLAIM = "arbeitnow.com"
 _HOSTS = {"arbeitnow.com", "www.arbeitnow.com"}
@@ -29,12 +31,7 @@ _API = "https://www.arbeitnow.com/api/job-board-api"
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.board == ID:
-        return _CLAIM
-    host = urlsplit(entry.url).netloc.lower() if entry.url else ""
-    return _CLAIM if host in _HOSTS else ""
+    return detect_board(entry, ID, _CLAIM, _HOSTS)
 
 
 def _posted_iso(created_at: object) -> str:

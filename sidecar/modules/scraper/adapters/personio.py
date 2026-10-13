@@ -24,8 +24,11 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import detect_url
 
 ID = "personio"
+LABEL = "Personio"
+KIND = "ats"
 INLINE_DESCRIPTION = True
 
 _HOST_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\.jobs\.personio\.(de|com)$")
@@ -51,11 +54,7 @@ def _job_descriptions_text(position: ET.Element) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    return _host(entry.url) if entry.url else ""
+    return detect_url(entry, ID, _host)
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:

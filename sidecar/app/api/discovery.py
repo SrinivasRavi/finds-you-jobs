@@ -273,20 +273,13 @@ def _find_source_by_company(sources: list, company: str, source_adapter: str) ->
 # scoped to one user-initiated action. Needed so a company-domain job stays
 # watchable after its covering sources row was unwatched (found live
 # 2026-07-22 — watch→unwatch→rewatch dead-ended in a 422).
-_BOARD_URL_TEMPLATES: dict[str, list[str]] = {
-    "greenhouse": [
-        "https://boards.greenhouse.io/{}",
-        "https://job-boards.greenhouse.io/{}",
-    ],
-    "lever": ["https://jobs.lever.co/{}"],
-    "ashby": ["https://jobs.ashbyhq.com/{}"],
-    "workable": ["https://apply.workable.com/{}"],
-    "smartrecruiters": ["https://jobs.smartrecruiters.com/{}"],
+_BOARD_URL_TEMPLATES: dict[str, tuple[str, ...]] = {
+    a.ID: a.BOARD_URLS for a in adapters.ADAPTERS if hasattr(a, "BOARD_URLS")
 }
 
 
 def _guess_board_urls(job_adapter: str, company: str) -> list[str]:
-    templates = _BOARD_URL_TEMPLATES.get(job_adapter, [])
+    templates = _BOARD_URL_TEMPLATES.get(job_adapter, ())
     slugs: list[str] = []
     for candidate in (_slugish(company), _slugish(company.split()[0] if company else "")):
         if candidate and candidate not in slugs:
@@ -402,7 +395,7 @@ async def watch_company(
     fail: str | None = None
     adapter_id = ""
     if resolved is None:
-        if job_adapter in ("naukri", "indeed", "seek", "linkedin", "brave"):
+        if _source_kind(job_adapter) == "search":
             fail = (
                 f"this job came from a search source ({job_adapter}) — there is "
                 "no company board to watch. Paste the company's careers page "
@@ -562,6 +555,11 @@ _ANALYTICS_LABELS: dict[str, tuple[str, str]] = {
     "linkedin": ("LinkedIn", "search"),
     "paste-url": ("Added by URL", "other"),
 }
+
+
+def _source_kind(source_adapter: str) -> str:
+    """The kind of the source a job row was stamped with (search, ats, ...)."""
+    return _ANALYTICS_LABELS.get(source_adapter, adapters.CATALOG.get(source_adapter, ("", "")))[1]
 
 
 def _analytics_bucket_id(source_key: str) -> str:

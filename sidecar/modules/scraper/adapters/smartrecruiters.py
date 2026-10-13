@@ -20,9 +20,12 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher, paced_pages
 from ..types import NormalizedJob, ScraperError
-from .base import first_path_segment, path_segments
+from .base import detect_url, first_path_segment, path_segments
 
 ID = "smartrecruiters"
+LABEL = "SmartRecruiters"
+KIND = "ats"
+BOARD_URLS = ("https://jobs.smartrecruiters.com/{}",)
 
 _CAREERS_HOSTS = {"careers.smartrecruiters.com", "jobs.smartrecruiters.com"}
 _API_HOST = "api.smartrecruiters.com"
@@ -74,11 +77,7 @@ def _public_url(raw: dict, slug: str) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    return _slug(entry.url) if entry.url else ""
+    return detect_url(entry, ID, _slug)
 
 
 def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:

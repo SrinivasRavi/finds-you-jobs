@@ -42,7 +42,7 @@ Registry + auto-detection live in `adapters/__init__.py`.
 
 from __future__ import annotations
 
-from collections.abc import Container
+from collections.abc import Callable, Container
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -52,9 +52,13 @@ from ..types import NormalizedJob, ScanPrefs
 
 
 class Adapter(Protocol):
-    """Structural type for an adapter module (checked in tests, not at runtime)."""
+    """Structural type for an adapter module (checked in tests, not at runtime).
+    `LABEL` and `KIND` are its row in Settings › Discover jobs; `KIND` is ats,
+    board, search or fallback."""
 
     ID: str
+    LABEL: str
+    KIND: str
 
     def detect(self, entry: SourceEntry) -> str: ...
 
@@ -112,3 +116,26 @@ def subdomain_tenant(url: str, suffix: str, reserved: Container[str] = ()) -> st
         return ""
     sub = host[: -len(suffix)]
     return "" if (not sub or "." in sub or sub in reserved) else sub
+
+
+# ---------------------------------------------------------------------------
+# Shared `detect()` bodies (audit D-M17). An entry typed for another adapter is
+# never claimed; the rest is the 2 shapes most adapters repeat.
+# ---------------------------------------------------------------------------
+
+
+def detect_url(entry: SourceEntry, adapter_id: str, tenant: Callable[[str], str]) -> str:
+    """Claim an entry by its URL's tenant key (`""` when the URL has none)."""
+    if (entry.type and entry.type != adapter_id) or not entry.url:
+        return ""
+    return tenant(entry.url)
+
+
+def detect_board(entry: SourceEntry, adapter_id: str, claim: str, hosts: Container[str]) -> str:
+    """Claim a whole-site job board named by `board = <id>` or by its host."""
+    if entry.type and entry.type != adapter_id:
+        return ""
+    if entry.board == adapter_id:
+        return claim
+    host = urlsplit(entry.url).netloc.lower() if entry.url else ""
+    return claim if host in hosts else ""

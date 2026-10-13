@@ -13,9 +13,12 @@ from urllib.parse import urlsplit
 from ..config import SourceEntry
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
-from .base import first_path_segment
+from .base import detect_url, first_path_segment
 
 ID = "ashby"
+LABEL = "Ashby"
+KIND = "ats"
+BOARD_URLS = ("https://jobs.ashbyhq.com/{}",)
 INLINE_DESCRIPTION = True
 
 _HOST = "jobs.ashbyhq.com"
@@ -50,11 +53,7 @@ def _salary(raw: dict) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    return _org(entry.url) if entry.url else ""
+    return detect_url(entry, ID, _org)
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
