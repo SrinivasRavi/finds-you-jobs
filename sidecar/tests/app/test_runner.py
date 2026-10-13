@@ -652,7 +652,8 @@ def test_an_open_openrouter_circuit_stops_the_next_fast_score(migrated_db: Datab
         runner.shutdown(drain_timeout=3)
     assert calls["n"] == 2  # the 3rd to 5th never reached OpenRouter
     with db.repos() as repos:
-        error = repos.operations.get(ops[-1]).error or ""
+        last = repos.operations.get(ops[-1])
+        error = (last.error if last is not None else None) or ""
     assert "provider 'openrouter' paused" in error
     circuit.check("deadprov")  # the routed engine was never charged
 
