@@ -278,6 +278,27 @@ def test_a_metro_chip_takes_its_cities_in_its_own_country() -> None:
     assert match(resolve_location("Los Angeles, CA"), wanted)[0] is Verdict.MISS
 
 
+
+def test_the_bay_area_is_its_9_counties() -> None:
+    """place-picker.md 10.4: Milpitas (Santa Clara County) is in, though no hand list
+    named it; Santa Cruz and Tracy sit near the bay but outside the 9 counties."""
+    from sidecar.modules.geo.resolve import metro_cities
+
+    members = metro_cities(gazetteer(), "bay area")
+    assert len(members) == 83
+    assert {c.country for c in members} == {"US"}
+    wanted = resolve_wanted([{"label": "Bay Area, United States", "name": "Bay Area",
+                              "level": "metro", "id": "bay area"}])
+    assert match(resolve_location("Milpitas, CA"), wanted)[0] is Verdict.MATCH
+    assert match(resolve_location("Santa Cruz, California"), wanted)[0] is Verdict.MISS
+    assert match(resolve_location("Tracy, CA"), wanted)[0] is Verdict.MISS
+
+
+def test_a_posting_naming_a_metro_takes_its_cities_in_its_own_country() -> None:
+    """The posting side used to take the biggest Santa Clara, which is in Cuba."""
+    places = resolve_location("Bay Area").places
+    assert places and {p.country for p in places} == {"US"}
+
 def test_the_scan_keeps_a_posting_inside_a_wanted_region() -> None:
     """A word match drops "Pune, India" for a Maharashtra chip; the place test keeps it,
     and a posting outside every wanted place is still dropped."""
@@ -300,3 +321,25 @@ def test_the_scan_keeps_a_posting_inside_a_wanted_region() -> None:
     assert passes_location("Pune, India", replace(prefs, location_block=["pune"])) is False
     # Chips that name no place leave the word filter alone.
     assert _with_place_match(base, ["Somewhere Unknown"]) is base
+
+
+@pytest.mark.parametrize(
+    ("text", "labels"),
+    [
+        ("Bay Area, CA (Hybrid)", ("Bay Area, United States",)),
+        (
+            "SF Bay Area, CA or Toronto, ON",
+            ("SF Bay Area, United States", "Toronto, Ontario, Canada"),
+        ),
+        ("NYC, NY", ("NYC, United States",)),
+        ("India - Bangalore", ("Bengaluru, Karnataka, India",)),
+    ],
+)
+def test_the_board_names_a_metro_as_itself_and_its_state_adds_no_place(
+    text: str, labels: tuple[str, ...]
+) -> None:
+    """A posting naming a metro prints the metro, not the first of its 83 cities, and
+    "CA" after it is California, not Canada (it was Canada, Cuba and the Philippines)."""
+    from sidecar.modules.geo.suggest import posting_labels
+
+    assert posting_labels(text) == labels

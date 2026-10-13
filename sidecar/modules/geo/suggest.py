@@ -14,7 +14,7 @@ from typing import Any
 
 from .gazetteer import Gazetteer, fold, gazetteer
 from .regions import METROS, REGIONS
-from .resolve import resolve_location
+from .resolve import metro_cities, resolve_location
 
 LIMIT = 8
 # A suggestion ranks by population: a city's own, and for a division or a
@@ -88,13 +88,24 @@ def place_label(g: Gazetteer, place: Any) -> str:
     return country
 
 
+def metro_label(g: Gazetteer, key: str) -> str:
+    """A metro named the way its chip is: "Bay Area, United States"."""
+    country = METROS[key][0]
+    return f"{_display(key)}, {g.country_name.get(country, country)}"
+
+
 @lru_cache(maxsize=4096)
 def posting_labels(location: str) -> tuple[str, ...]:
     """A posting's location as the picker names its places, in order, each once:
     27 spellings of Bengaluru print 1 label (place-picker.md section 8.3). Empty when
     the text names no place, so the caller shows it as posted."""
     g = gazetteer()
-    found = (place_label(g, p) for p in resolve_location(location or "", g).places)
+    resolved = resolve_location(location or "", g)
+    # A metro prints as itself; its member cities aren't listed beside it.
+    members = {c.geonameid for key in resolved.metros for c in metro_cities(g, key)}
+    found = [metro_label(g, key) for key in resolved.metros] + [
+        place_label(g, p) for p in resolved.places if p.city_id not in members
+    ]
     labels = list(dict.fromkeys(label for label in found if label))
     # "India - Bangalore": India contains Bengaluru, so only the city is named.
     return tuple(a for a in labels if not any(b.endswith(f", {a}") for b in labels))
@@ -114,11 +125,10 @@ def suggest(query: str, limit: int = LIMIT, g: Gazetteer | None = None) -> list[
         if key not in _SKIP_REGIONS and key.startswith(q):
             name = _display(key)
             found.append(Suggestion(name, name, "region", key, key == q, _REGION))
-    for key, (country, _cities) in METROS.items():
+    for key in METROS:
         if key.startswith(q):
             name = _display(key)
-            label = f"{name}, {g.country_name.get(country, country)}"
-            found.append(Suggestion(label, name, "metro", key, key == q, _METRO))
+            found.append(Suggestion(metro_label(g, key), name, "metro", key, key == q, _METRO))
     for label_key, iso2 in g.country_names.items():
         if label_key.startswith(q) and (len(label_key) > 3 or label_key == q):
             name = g.country_name.get(iso2, iso2)

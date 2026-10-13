@@ -71,6 +71,14 @@ METROS: dict[str, tuple[str, tuple[str, ...]]] = {
     "randstad": ("NL", ("Amsterdam", "Rotterdam", "The Hague", "Utrecht")),
 }
 
+# A metro defined by its official counties or districts (place-picker.md 10.4):
+# every city in them is a member, so a data update adds cities by itself. The Bay
+# Area is its 9 counties by FIPS code; a metro absent here keeps its list above.
+METRO_DIVISIONS: dict[str, tuple[str, frozenset[str]]] = {
+    key: ("US.CA", frozenset({"001", "013", "041", "055", "075", "081", "085", "095", "097"}))
+    for key in ("bay area", "sf bay area")
+}
+
 # Words a posting puts in its location field that name no place: office labels,
 # building names, department suffixes. Dropping them is what lets "Bengaluru-HQ"
 # and "Bangalore - Engineering" resolve to Bengaluru.

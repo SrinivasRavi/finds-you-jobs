@@ -33,6 +33,8 @@ class City:
     admin1: str
     country: str
     population: int
+    # The county or district code: what defines a metro (place-picker.md 10.4).
+    admin2: str = ""
 
     @property
     def admin1_key(self) -> str:
@@ -95,7 +97,8 @@ def _rows(name: str) -> list[list[str]]:
 def gazetteer() -> Gazetteer:
     cities: dict[int, City] = {}
     for row in _rows("cities.tsv.gz"):
-        city = City(int(row[0]), row[1], row[2], row[3], int(row[4] or 0))
+        admin2 = row[5] if len(row) > 5 else ""
+        city = City(int(row[0]), row[1], row[2], row[3], int(row[4] or 0), admin2)
         cities[city.geonameid] = city
 
     ids_by_alias: dict[str, set[int]] = {}

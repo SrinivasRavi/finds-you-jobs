@@ -15,8 +15,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from .gazetteer import Gazetteer, fold, gazetteer
-from .regions import ADMIN1_CODES, METROS, NOISE, REGIONS
+from .gazetteer import City, Gazetteer, fold, gazetteer
+from .regions import ADMIN1_CODES, METRO_DIVISIONS, METROS, NOISE, REGIONS
 
 SEGMENT_SPLIT = re.compile(r"[;|]|\bor\b")
 TOKEN_SPLIT = re.compile(r"[,/()\[\]•]|\s-\s|\s+-|-\s+|\s{2,}")
@@ -29,6 +29,33 @@ ONSITE = re.compile(r"\bon[- ]?site\b|\bin[- ]office\b")
 # A country prefix in an ATS code, which is how Workday and friends write a
 # location: "US-CA-Menlo Park", "IN-Karnataka-Bangalore", "DE-Berlin-Trion Building".
 ATS_PREFIX = re.compile(r"^([a-z]{2})-(.+)$")
+
+
+_METRO_MEMBERS: dict[tuple[int, str], tuple[City, ...]] = {}
+
+
+def metro_cities(g: Gazetteer, key: str) -> tuple[City, ...]:
+    """A metro's member cities, in its own country: every city in its official
+    divisions when it has them, else its listed cities (the biggest Santa Clara is
+    in Cuba, so a name is looked up inside the metro's country)."""
+    if (id(g), key) in _METRO_MEMBERS:
+        return _METRO_MEMBERS[(id(g), key)]
+    country, names = METROS[key]
+    if key in METRO_DIVISIONS:
+        admin1_key, codes = METRO_DIVISIONS[key]
+        found = tuple(sorted(
+            (c for c in g.cities.values() if c.admin1_key == admin1_key and c.admin2 in codes),
+            key=lambda c: -c.population,
+        ))
+    else:
+        found = tuple(
+            c for c in (
+                next((c for c in g.cities_named(fold(n)) if c.country == country), None)
+                for n in names
+            ) if c is not None
+        )
+    _METRO_MEMBERS[(id(g), key)] = found
+    return found
 
 
 class Verdict(StrEnum):
@@ -60,6 +87,9 @@ class ResolvedLocation:
     remote_countries: frozenset[str] = frozenset()
     attendance: Attendance | None = None
     ambiguous: tuple[str, ...] = ()
+    # The metros the text named ("Bay Area"), so a display names the metro, not
+    # its first of 83 cities.
+    metros: tuple[str, ...] = ()
 
     @property
     def primary(self) -> Place | None:
@@ -117,6 +147,7 @@ class _Segment:
     countries: set[str] = field(default_factory=set)
     places: list[Place] = field(default_factory=list)
     ambiguous: list[str] = field(default_factory=list)
+    metros: list[str] = field(default_factory=list)
 
 
 def _candidates(segment: str) -> list[list[str]]:
@@ -187,14 +218,10 @@ def _resolve_token(token: str, g: Gazetteer, seg: _Segment) -> bool:
             seg.places.append(Place(country=next(iter(covered))))
         return True
     if token in METROS:
-        country, names = METROS[token]
-        for name in names:
-            city = g.city(fold(name))
-            if city is not None:
-                seg.places.append(
-                    Place(city.country, city.admin1_key, city.geonameid, city.name)
-                )
-        seg.countries.add(country)
+        for city in metro_cities(g, token):
+            seg.places.append(Place(city.country, city.admin1_key, city.geonameid, city.name))
+        seg.countries.add(METROS[token][0])
+        seg.metros.append(token)
         return True
     country = g.country(token)
     if country is not None:
@@ -281,6 +308,20 @@ def _is_city_name(token: str, g: Gazetteer) -> bool:
     return token not in REGIONS and token not in METROS and g.country(token) is None
 
 
+def _metro_qualifiers(country: str, following: list[list[str]], g: Gazetteer) -> int:
+    """How many of the pieces after a metro name its own division or country."""
+    n = 0
+    for spellings in following:
+        piece = spellings[0]
+        own_division = g.has_admin1(f"{country}.{piece.upper()}") or any(
+            k.startswith(f"{country}.") for k in g.admin1_keys_named.get(piece, ())
+        )
+        if not (own_division or g.country(piece) == country):
+            break
+        n += 1
+    return n
+
+
 def _resolve_segment(chunk: str, g: Gazetteer, seg: _Segment) -> None:
     """Every piece of 1 segment, each city read with the pieces that follow it."""
     groups = _candidates(chunk)
@@ -290,6 +331,12 @@ def _resolve_segment(chunk: str, g: Gazetteer, seg: _Segment) -> None:
         whole = spellings[0]
         if _resolve_ats(whole, g, seg):
             i += 1
+            continue
+        if whole in METROS:
+            # "Bay Area, CA": the pieces after a metro that name its own state or
+            # country qualify it, as they do a city, and add no place.
+            _resolve_token(whole, g, seg)
+            i += 1 + _metro_qualifiers(METROS[whole][0], groups[i + 1 :], g)
             continue
         place: Place | None = None
         skip = 0
@@ -331,6 +378,7 @@ def resolve_location(text: str, g: Gazetteer | None = None) -> ResolvedLocation:
 
     places: list[Place] = []
     ambiguous: list[str] = []
+    metros: list[str] = []
     remote = remote_global = False
     remote_countries: set[str] = set()
     for chunk in SEGMENT_SPLIT.split(folded):
@@ -340,6 +388,7 @@ def resolve_location(text: str, g: Gazetteer | None = None) -> ResolvedLocation:
         _resolve_segment(chunk, g, seg)
         places.extend(seg.places)
         ambiguous.extend(seg.ambiguous)
+        metros.extend(seg.metros)
         if seg.remote:
             remote = True
             remote_global = remote_global or seg.remote_global
@@ -363,6 +412,7 @@ def resolve_location(text: str, g: Gazetteer | None = None) -> ResolvedLocation:
         remote_countries=frozenset(remote_countries),
         attendance=attendance,
         ambiguous=tuple(dict.fromkeys(ambiguous)),
+        metros=tuple(dict.fromkeys(metros)),
     )
 
 
@@ -411,15 +461,8 @@ def resolve_wanted(chips: Sequence[object], g: Gazetteer | None = None) -> Wante
                 home.add(ident)
                 continue
             if level == "metro" and ident in METROS:
-                country, names = METROS[ident]
-                for name in names:
-                    # The metro's own country: the biggest "Santa Clara" is in Cuba.
-                    found = next(
-                        (c for c in g.cities_named(fold(name)) if c.country == country), None
-                    )
-                    if found is not None:
-                        city_ids.add(found.geonameid)
-                home.add(country)
+                city_ids.update(c.geonameid for c in metro_cities(g, ident))
+                home.add(METROS[ident][0])
                 continue
             if level == "region" and ident in REGIONS:
                 covered = REGIONS[ident]
