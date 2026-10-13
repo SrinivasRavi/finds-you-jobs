@@ -245,14 +245,10 @@ ACTORS: dict[str, _ActorSpec] = {
     "misceres/indeed-scraper": _ActorSpec(_indeed_runs, _indeed_item),
 }
 
-# The real board each actor scrapes. Rows are stamped with THIS as their
-# `source_adapter` (maintainer directive 2026-07-18: the user sees "Naukri",
-# never the "Apify" plumbing) — the board pill, deep search, and the Analytics
-# Discovery tab all key off it. `apify` remains only the *adapter/toggle*
-# identity (`board = "apify"` entries, `apify:<actor>` source keys). The
-# LinkedIn actor deliberately stamps "linkedin" so its rows share one identity
-# with the guest adapter + logged-in one-shot (they already share canonical
-# URLs and dedup).
+# The real board each actor scrapes, stamped as `source_adapter`, so the user
+# sees "Naukri", never "Apify"; the board pill, search and Analytics key off it.
+# `apify` stays the adapter and toggle identity. The LinkedIn actor stamps
+# "linkedin" to share 1 identity with the guest adapter.
 ACTOR_SOURCE_IDS: dict[str, str] = {
     "memo23/naukri-scraper": "naukri",
     "curious_coder/linkedin-jobs-scraper": "linkedin",

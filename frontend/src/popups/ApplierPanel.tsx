@@ -1,12 +1,8 @@
-// Applier companion panel (applier-as-built.md section 8.2-section 8.4) — the surface the app shows
-// *during and after* an Apply Run. The real work happens in a separate headed
-// Chromium tab; this panel narrates it, holds the evidence, and carries the P1
-// handoff. Modeled on ReferralsModal's Modal + eventBus subscription pattern.
-//
-// It must work whether it was open the whole time OR reopened after the fact
-// (section 9.2): the live event feed is SEEDED from the run snapshot's fields/blockers,
-// then APPENDED to from `apply` SSE events for this run_id. Closing the panel
-// never cancels the run (section 8.2) — it just closes.
+// Applier companion panel (applier-as-built.md sections 8.2 to 8.4): narrates a
+// run happening in a separate Chromium tab, holds the evidence, and carries the
+// handoff. It works open throughout or reopened later (section 9.2): the feed is
+// seeded from the run snapshot, then appended from `apply` SSE events. Closing it
+// never cancels the run.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -43,14 +39,9 @@ const DOT_CLS: Record<Tone, string> = {
   bad: "bg-bad",
 };
 
-/** The section 8.2 high-level phase pill, mapped from status (+ the free-text phase
- *  while running). Spinner shows only while the run is genuinely live.
- *
- *  Tone/liveness/label come from the shared status table (duplication audit
- *  D-F14) — this used to be a private switch whose `default` branch painted an
- *  unrecognised status GREEN "Completed", the opposite of the tracker card's
- *  conservative fallback for the same enum. `running` is the one status the
- *  panel refines further, from the run's own free-text phase. */
+/** The phase pill (section 8.2), from the shared status table (D-F14), whose
+ *  fallback is the conservative one; a private switch here once painted an unknown
+ *  status green "Completed". `running` is refined from the run's own phase text. */
 function phaseInfo(status: ApplyRunStatus, phase: string): { label: string; tone: Tone; live: boolean } {
   const d = applyRunDisplay(status);
   if (status === "running") {

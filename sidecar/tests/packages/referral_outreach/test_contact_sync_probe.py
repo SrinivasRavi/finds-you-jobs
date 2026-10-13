@@ -38,13 +38,10 @@ THREAD = "2-FyjThReAdId=="
 
 
 # ── synthetic fixture builders, mirroring the captured response shape ────────
-#
-#   data.<wrapper key varies by query>.elements: [ Conversation ]
-#     .entityUrn: "urn:li:msg_conversation:(urn:li:fsd_profile:<self>,<thread>)"
-#     .conversationParticipants[].hostIdentityUrn: "urn:li:fsd_profile:<id>"
-#     .conversationParticipants[].participantType.member.distance: "SELF" | …
-#     .messages.elements: [ Message ] NEWEST-first
-#       .sender.hostIdentityUrn / .actor.hostIdentityUrn, .deliveredAt (ms)
+#   data.<wrapper key>.elements: [ Conversation ] with .entityUrn,
+#   .conversationParticipants[].hostIdentityUrn / participantType.member.distance,
+#   .messages.elements: [ Message ] newest first, with sender/actor
+#   .hostIdentityUrn and .deliveredAt (ms)
 
 
 def _participant(profile_id: str, distance: str, first: str = "Alex") -> dict:

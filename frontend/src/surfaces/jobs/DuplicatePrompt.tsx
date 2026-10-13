@@ -1,10 +1,7 @@
-// "This looks like the job you added on Monday" (url-less-jobs.md 9.6).
-//
-// The case: the user pasted an emailed JD on Monday, Wednesday's scan wrote its
-// own row for the same posting, and the board shows the role twice. The app
-// says so and stops there: the user deletes the one they don't need, and the
-// app never merges or picks a survivor (maintainer, url-less-jobs.md section 5.5).
-// "They're different" silences the notice for that pair, from either card.
+// "This looks like the job you added on Monday" (url-less-jobs.md 9.6): a pasted
+// JD and a later scan's row for the same posting. The app says so and stops: the
+// user deletes one, and nothing is merged (section 5.5). "They're different"
+// silences the notice for that pair.
 
 import { useTranslation } from "react-i18next";
 

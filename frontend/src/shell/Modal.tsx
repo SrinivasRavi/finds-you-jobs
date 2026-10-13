@@ -1,11 +1,6 @@
-// Shared modal shell — ports the prototype dialog pattern (backdrop +
-// centered card, close on backdrop/escape). Used by Add-a-job-posting, the
-// resume trio, cover letter, guidance, and the application detail modal.
-//
-// 5 sizes, named, and nothing picks its own number (maintainer, 2026-10-08:
-// "use few standard popup modal sizes, not random ones all the time"). The
-// tree had 11 distinct widths between 440 and 1840 chosen per caller, so 2
-// dialogs doing the same job came out different sizes.
+// Shared modal shell: backdrop, centered card, close on backdrop or Escape.
+// 5 named sizes and no caller picks its own number (maintainer, 2026-10-08); the
+// tree had 11 widths, so 2 dialogs doing the same job came out different.
 
 import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";

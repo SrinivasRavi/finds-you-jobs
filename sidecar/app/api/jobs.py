@@ -474,13 +474,10 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
         if existing is not None:
             if existing.feed_state != "removed":
                 return dto.job_dto(existing)  # already active — dedup, first-seen wins
-            # Restore-from-Trash: un-trash + keep its score/history ("put it back
-            # to its prior state"). Re-score only when the CURRENT mode's scorer
-            # has never produced a row for this job — an AI-mode job carrying
-            # just the grey keyword floor re-enqueues its AI upgrade (the retry
-            # path, US-JB-06), while a good score of the active mode is preserved
-            # (no wasted spend). Version-agnostic, matching the planner: pinning
-            # to the current version re-bought an AI score the job already had.
+            # Restore from Trash: un-trash and keep its score and history. Re-score only if
+            # the current mode's scorer never scored this job, so an AI-mode job with just the
+            # keyword floor gets its AI upgrade (US-JB-06) and nothing is bought twice.
+            # Version-agnostic, like the planner.
             job = repos.jobs.set_trash_state(existing.id, trashed=False)
             mode = scoring_mode(repos.preferences.get_or_create())
             impl = SCORER_IMPL if mode == "llm" else SCORER_IMPL_DETERMINISTIC

@@ -393,10 +393,9 @@ def test_intent_rejects_unknown_values(
 
 
 # ---------------------------------------------------------------------------
-# attach / detach a document to an EXISTING application (the Upload button on
-# the Tailored resume + Cover letter editors — post-creation parity with the
-# manual-add attach). docstore.validate is extension+size only, so fake bytes
-# with a real extension exercise the store/link path without a real parser.
+# Attach or detach a document on an existing application (Upload in the tailored
+# and cover editors). docstore.validate checks extension and size only, so fake
+# bytes exercise the store and link path.
 # ---------------------------------------------------------------------------
 
 

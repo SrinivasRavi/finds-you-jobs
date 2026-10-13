@@ -65,27 +65,11 @@ _STOPWORDS = frozenset(
 _WORD_RE = re.compile(r"[a-z][a-z0-9+#./-]{1,}")
 _YEARS_RE = re.compile(r"(\d{1,2})\+?\s*(?:years|yrs)\b")
 
-# Below this many characters a JD is too thin to rate, and the answer is 0.
-#
-# The skill criterion divides overlap by the JD's OWN term count, so a short JD
-# is graded on a tiny denominator: one matching word moves a 250-term posting by
-# 0.2 points and an 8-term title header by 7.5. The years criterion compounds it,
-# returning a neutral-positive 70 whenever the JD names no bar — which a header
-# never can — so 40% of such a score is a constant and the floor is 28 even with
-# zero overlap. Net effect measured on the maintainer's install 2026-08-27: jobs
-# with NO description averaged 53.0 against 44.9 for described ones, and 34% of
-# what counted as a "match" was company or city text (`india` matched 211 times).
-# The scorer was rewarding the absence of a job description and ranking those
-# jobs above properly-described ones (S-C27, and S-A6 for why they arrive empty).
-#
-# 0 is a refusal to rate, carried in `reasons`, not a claim that the role is bad.
-# It sorts an unassessable job below every assessed one, which is where it goes.
-#
-# 200 is the same bar `_shared/job_input.py` already uses to reject a fetched
-# page as "likely a JS-only page", so the codebase keeps one number for "too
-# little text to be a job description". Safely clear of real postings: on that
-# same install the shortest genuine description is 464 chars and nothing at all
-# falls between 0 and 464.
+# Below this many characters a JD is too thin to rate, and the answer is 0, a
+# refusal carried in `reasons`, which sorts it below every assessed job (S-C27,
+# S-A6). Short JDs inflated: no-description jobs averaged 53.0 against 44.9.
+# 200 matches `_shared/job_input.py`'s JS-only-page bar; the shortest real JD on
+# that install was 464 chars. Evidence: docs/internal/status.md S-C27.
 MIN_JD_CHARS = 200
 
 # A red-flag hit clamps the keyword score here. The weight lens re-applies it.

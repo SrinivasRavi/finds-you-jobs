@@ -1,12 +1,7 @@
-// Browser-dev path: run the sidecar + vite together WITHOUT the Tauri shell.
-//
-// Mirrors, in Node, exactly what the Rust shell does at runtime: spawn the
-// sidecar, read the PORT=/TOKEN= handshake off stdout, then hand those to the
-// frontend. Here they go into frontend/.env.local (VITE_SIDECAR_*), which the
-// client's env fallback reads (frontend/src/api/client.ts). This is the path
-// used for Playwright screenshots when a full Tauri build isn't available.
-//
-// Usage: `pnpm dev:web` (from repo root). Ctrl-C tears both down.
+// Browser-dev path: the sidecar and vite without the Tauri shell. Does what the
+// shell does: spawn the sidecar, read PORT=/TOKEN= off stdout, and hand them to
+// the frontend via frontend/.env.local (read by src/api/client.ts). The Playwright
+// path. `pnpm dev:web`; Ctrl-C stops both.
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -62,13 +57,9 @@ const sidecar = spawn("uv", ["run", "python", "-m", "sidecar.app"], {
   cwd: repoRoot,
   detached: true,
   stdio: ["ignore", "pipe", "pipe"],
-  // The sidecar's orphan watchdog watches THIS pid (2026-07-17): if this
-  // script is hard-killed (SIGKILL — Playwright teardown, a crashed shell),
-  // the sidecar reaps itself within a poll tick instead of squatting on the
-  // port with the `uv` wrapper.
-  // FYJ_DEV unlocks the /api/dev/* fault-injection endpoints (F-L4) — the
-  // browser-dev/Playwright path is exactly what they exist for; the packaged
-  // app never sets it, so those routes 404 there.
+  // The sidecar's orphan watchdog watches this pid, so a hard-killed script takes
+  // the sidecar down within a tick. FYJ_DEV unlocks /api/dev/* (F-L4), which exist
+  // for this path; the packaged app never sets it.
   env: { ...process.env, FYJ_SHELL_PID: String(process.pid), FYJ_DEV: "1" },
 });
 children.push(sidecar);
@@ -98,14 +89,10 @@ sidecar.stdout.on("data", (chunk) => {
         `VITE_SIDECAR_PORT=${port}\nVITE_SIDECAR_TOKEN=${token}\n`,
       );
       console.log(`[dev-web] sidecar up on ${port}; starting vite…`);
-      // Vite runs under scripts/dev-frontend.mjs — the same wrapper `tauri
-      // dev` uses. Its ppid poll is the vite-side counterpart of the
-      // sidecar's FYJ_SHELL_PID watchdog: if THIS process is hard-killed
-      // (Playwright's webServer teardown SIGKILLs our process group without
-      // ever signalling us), the reparented wrapper reaps vite's whole
-      // process group within a poll tick instead of orphaning it on the port
-      // (2026-07-25 — the 6 h Playwright teardown hang). The wrapper handles
-      // the win32 pnpm.cmd/no-process-group cases itself.
+      // Vite runs under scripts/dev-frontend.mjs, like `tauri dev`. Its ppid poll is
+      // the vite side of the sidecar's watchdog: Playwright's teardown SIGKILLs our
+      // group without a signal, and the wrapper then reaps vite instead of orphaning it
+      // on the port. It handles the win32 cases itself.
       const vite = spawn(
         process.execPath,
         [join(repoRoot, "scripts", "dev-frontend.mjs")],

@@ -1,14 +1,6 @@
-// TanStack Query hooks over the (sidecar-backed) client + SSE invalidation.
-// Server state lives in Query; the SSE bus invalidates the relevant keys so
-// feed deltas / operation progress flow into the UI (architecture section 6:
-// "TanStack Query, invalidated by SSE events").
-//
-// Job Board / Dev status page / main.tsx guard hooks, plus the applications/
-// tracker hooks (restored — `/api/applications` now exists) and the
-// networking hooks (restored 2026-07-16 — the referral-outreach backend now
-// exists: /api/contacts, /api/jobs/{id}/referrals/*, /api/referrals/*,
-// /api/linkedin/*). Apply/prep/packet-prompts/spans hooks return with their
-// own commits, once the sidecar grows that surface.
+// TanStack Query hooks over the sidecar-backed client. Server state lives in
+// Query, and the SSE bus invalidates the keys an event affects, so feed deltas
+// and operation progress reach the UI (architecture section 6).
 
 import {
   useInfiniteQuery,
@@ -564,11 +556,8 @@ export function useAttachJobLink() {
 }
 
 /** Triage (url-less-jobs.md section 9.1.1): score a pasted JD with nothing
- *  saved. Resolves once the op reaches a terminal state, with the score,
- *  the method that actually ran and its reasons out of `result_ref`.
- *
- *  Polled rather than SSE-driven: the strip is open for a few seconds inside
- *  one modal, and a subscription would outlive it. */
+ *  saved, resolving with the score, method and reasons from `result_ref`. Polled
+ *  rather than SSE-driven: the strip lives a few seconds inside 1 modal. */
 export interface TriageResult {
   score: number;
   method: string;
@@ -1177,12 +1166,9 @@ export function useSyncContacts() {
   });
 }
 
-/** Queue a `view_page` operation that shows a page on the browser surface
- *  (2026-08-16). No invalidation: the queue panel tracks the op off the SSE
- *  operation events. A mutation, not a bare api call, ON PURPOSE — the old
- *  fire-and-forget swallowed its failure, so a click against a sidecar
- *  without the route showed nothing anywhere; now the global
- *  MutationErrorBanner nets it. */
+/** Queue a `view_page` op that shows a page on the browser surface. A mutation
+ *  on purpose: the old fire-and-forget call swallowed its failure, and now the
+ *  global MutationErrorBanner shows it. */
 export function useViewInBrowser() {
   return useMutation({
     mutationFn: (args: { url: string; surface?: string; contactId?: string }) =>
@@ -1190,14 +1176,10 @@ export function useViewInBrowser() {
   });
 }
 
-/** True while a `contact_sync` operation is genuinely in flight (queued or
- *  running). The POST above answers 202 the moment the sweep is enqueued, but
- *  the sweep itself runs for a while in the background (paced read probes), so
- *  the Sync button's busy state must follow the OPERATION, not the request:
- *  SSE operation events drive this from enqueue to terminal, and a ledger read
- *  seeds a sweep already in flight at mount (tab switch, reload, or a join via
- *  `already_running`). Same tracking pattern as `useBrowserOp`
- *  (BrowserOpPlan.tsx), scoped to the one kind. */
+/** True while a `contact_sync` op is queued or running. The POST answers 202 at
+ *  enqueue but the sweep runs on, so the Sync button follows the operation: SSE
+ *  events drive it, and a ledger read seeds a sweep already running at mount.
+ *  Same pattern as `useBrowserOp` (BrowserOpPlan.tsx). */
 export function useContactSyncInFlight(): boolean {
   const [op, setOp] = useState<{ id: string; state: string } | null>(null);
 
@@ -1325,12 +1307,9 @@ export function useReachOut() {
 
 // ─── SSE invalidation bridge ─────────────────────────────────────────────────
 
-/** Leading+trailing throttle for invalidation bursts (F-H4). The first call
- *  fires immediately (terminal-state freshness); further calls within
- *  `intervalMs` collapse into ONE trailing call, so the final event of a burst
- *  is never lost — a re-score of 300 jobs invalidates at a bounded rate instead
- *  of once per event. Pure and exported for testability (no frontend unit
- *  runner exists today — see the e2e + typecheck coverage note). */
+/** Leading and trailing throttle for invalidation bursts (F-H4). The first call
+ *  fires at once; later calls inside `intervalMs` collapse into 1 trailing call,
+ *  so a burst's last event is never lost. Exported for its unit test. */
 export interface TrailingThrottle {
   (): void;
   /** Drop any pending trailing call — for effect cleanup, so an unmounted
@@ -1439,13 +1418,9 @@ export function useSSEInvalidation(qc: QueryClient): void {
         // both so the Tracker repaints without a manual reload.
         const packetAffecting = p.kind === "tailor" || p.kind === "cover";
         if (packetAffecting && terminal) invalidatePacket();
-        // Restored 2026-07-16: a terminal discover/send/linkedin_login/
-        // contact_sync op means the referral roster, the contact kanban, the
-        // card's Referrals slot, or the LinkedIn session may have changed —
-        // refresh contacts + referral quota + applications so the Tracker/
-        // Networking surfaces repaint without a manual reload. `draft` is
-        // deliberately excluded — nothing subscribes to its result yet
-        // (see useDraftReferral).
+        // A terminal discover, send, linkedin_login or contact_sync op may have changed
+        // the roster, the kanban, the Referrals slot or the session, so contacts, quota
+        // and applications refresh. `draft` is excluded: nothing reads its result yet.
         const networkingAffecting =
           p.kind === "discover" ||
           p.kind === "send" ||
@@ -1481,14 +1456,10 @@ export function useSSEInvalidation(qc: QueryClient): void {
       if (ev.type === "apply" && APPLY_PHASE_EVENTS.has(ev.payload.event)) {
         invalidateApplications();
       }
-      // Networking live-updates (Track N3): discover/send progress for the
-      // popup + kanban (US-NW-09) — the popup's own SSE subscription (in
-      // ReferralsModal) reads company-confirm / per-contact send outcomes off
-      // this same event; here we just keep the cached lists honest. Per-contact
-      // `candidate` events grow the roster LIVE through their own wider
-      // throttle group (they burst once per found contact); everything else —
-      // including the `discovered` summary that closes every discover pass,
-      // the final-consistency backstop — keeps the tighter group (F-H4).
+      // Networking live updates (US-NW-09): the popup reads its own outcomes off this
+      // event; here the cached lists stay honest. Per-contact `candidate` events grow
+      // the roster through their own wider throttle group; everything else, including
+      // the closing `discovered` summary, uses the tighter one (F-H4).
       if (ev.type === "networker") {
         if (ev.payload.phase === "candidate") invalidateRosterCandidates();
         else invalidateReferralRoster();

@@ -1,10 +1,7 @@
-// Covers: the /browser surface against the live sidecar — the screencast
-// WebSocket reaches "live", and each navigation paints real frames from the
-// sidecar's headless Chrome into the canvas.
-//
-// This one DOES reach the public internet (example.com, google.com,
-// wikipedia.org): the whole point is proving the broker drives a real page.
-// Zero model calls.
+// Covers: the /browser surface against the live sidecar. The screencast socket
+// reaches "live" and each navigation paints real frames into the canvas.
+// This one reaches the public internet on purpose (example.com, google.com,
+// wikipedia.org), to prove the broker drives a real page. Zero model calls.
 
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";

@@ -1,14 +1,7 @@
-// ─── Editable prompts (FR-SET-11) ───────────────────────────────────────────
-// One prompt, rendered by whichever Settings category owns the work it does
-// (url-less-jobs.md section 11.5). It was a tab bar in a `Prompts & Models`
-// category until 2026-10-08: 5 prompts in 1 room because they share an engine
-// registry, which is how the code is built and not what anybody arrives
-// wanting. The scoring rubric now sits under Scoring, tailoring under Resume &
-// cover letter, and so on.
-//
-// The engine/model control moved out to `ModelPicker`, keyed on the OPERATION
-// kind rather than the prompt kind, because 2 routed kinds have no prompt at
-// all and had no picker anywhere.
+// Editable prompts (FR-SET-11): 1 prompt, rendered by the Settings category that
+// owns its work (url-less-jobs.md section 11.5), e.g. the rubric under Scoring.
+// The engine and model control is `ModelPicker`, keyed on the operation kind,
+// because 2 routed kinds have no prompt.
 
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,12 +10,9 @@ import { usePrompts, useResetPrompt } from "../../api/queries";
 import type { PromptSetting } from "../../api/types";
 import { PromptTuningModal } from "./PromptTuningModal";
 
-/** What each prompt actually governs, and what it does NOT.
- *
- *  The one that needed saying: `score` is the AI scoring rubric and nothing
- *  else. Keyword scoring is Python rules, Fast scoring sends typed questions
- *  carrying their own rubric bands, and On-device has no prompt either, so
- *  editing this file changes 1 of the 4 methods (maintainer, 2026-10-07). */
+/** What each prompt governs and what it doesn't. `score` is the AI rubric only:
+ *  keyword scoring is rules, Fast scoring carries its own bands, On-device has no
+ *  prompt, so it changes 1 of the 4 methods. */
 export const SCOPE_KEY: Record<string, string> = {
   score: "settingsPage.prompts.scopeScore",
   tailor: "settingsPage.prompts.scopeTailor",

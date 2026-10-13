@@ -1,11 +1,7 @@
-// What the trust chip is allowed to say, and in what order (url-less-jobs.md
-// section 15.5). `trust_flags` is a list of machine strings written at ingest;
-// this turns it into 1 label plus a list of sentences, worst first.
-//
-// 2 rules it exists to enforce. A flag family with no sentence here renders
-// nothing, so a raw machine string can never reach a user.
-// And the repost sentence claims only what the corpus measured: that batches
-// like this get withdrawn, never that the employer meant to ghost anybody.
+// What the trust chip may say, in what order (url-less-jobs.md section 15.5):
+// `trust_flags` becomes 1 label and sentences, worst first. A flag with no
+// sentence here renders nothing, so no machine string reaches a user; the repost
+// sentence claims only what the corpus measured.
 
 import type { TFunction } from "i18next";
 

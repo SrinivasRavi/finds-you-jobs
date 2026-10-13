@@ -649,11 +649,8 @@ def test_disconnect_clears_the_search_cursor(paged_search_client) -> None:
 
 
 # --- manual-only contact sync (FR-NW-15) -----------------------------------
-# contact_sync used to be a 12 h schedule that touched LinkedIn with nobody
-# present, then briefly a Sync button plus a throttled on-open refresh. It is
-# now manual-only (maintainer decision, 2026-08-15): the Sync button is the
-# one caller, with an already-running join guard and no throttle. See
-# `docs/internal/linkedin-addon.md` section 5 and `docs/internal/status.md`.
+# The Sync button is the 1 caller, with an already-running join guard and no
+# throttle; no timer, no on-open refresh (linkedin-addon.md section 5).
 
 
 def test_contact_sync_is_not_a_seeded_schedule(app_client) -> None:
@@ -722,12 +719,10 @@ def test_a_running_sync_is_joined_not_duplicated(app_client) -> None:
     assert joined["id"] is None
 
 
-# --- the honest sync stamp + outcome (2026-08-16) ---------------------------
-# The 2026-08-15 live confusion: a spent read budget refused every sweep in
-# ~10 ms, each op "succeeded" with synced 0, and the header stamped "Synced
-# just now" — the user reasonably read Sync as broken. The stamp now claims
-# only sweeps that actually probed (or cleanly checked an empty roster), and
-# the newest attempt's outcome rides the session DTO for the header to show.
+# --- the honest sync stamp + outcome ---------------------------------------
+# A budget-refused sweep "succeeded" with 0 synced and still stamped "Synced just
+# now". The stamp now claims only sweeps that probed (or checked an empty
+# roster), and the newest attempt's outcome rides the session DTO.
 
 
 def _plant_sync_op(app, result_ref: dict) -> None:

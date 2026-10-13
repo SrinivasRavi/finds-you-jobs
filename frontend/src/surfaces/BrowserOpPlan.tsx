@@ -1,20 +1,8 @@
-// Queue panel for the Networking Browser tab — what the agent is doing on
-// the surface, shown honestly as ONE list (maintainer, 2026-08-16): settled
-// rows first (green check / warn / fail, with verbatim reasons), then the
-// live op (the spinner IS the in-progress signal) carrying its declared
-// step plan, then the waiting rows in grey — done, in progress, and up next
-// in a single view, scrollable, with settled rows aging out after an hour.
-// The step plan is the real driver sequence (see `upstream/actions.py`) and
-// the steps TICK LIVE: the driver reports each completed step (`send_step`
-// events, 2026-08-16 — real progress from the code driving the page), so a
-// done step shows a green check, the step underway a spinner, the rest grey.
-// Everything else advances only on signals we actually observe: the runner's
-// `operation` state events and the networker phases. Idle is an explicit
-// state — the panel never implies activity when there is none.
-//
-// Add-on-side by design (it names LinkedIn op kinds); the vendor-agnostic
-// screencast surface it sits beside stays clean (`plugin-architecture.md`
-// section 12.2: the Browser tab's queue/plan UI belongs to the add-on).
+// Queue panel for the LinkedIn browser: what the agent is doing, as 1 list of
+// settled rows, the live op with its step plan, then waiting rows. The steps tick
+// live from the driver's `send_step` events; everything else advances only on
+// observed `operation` and networker events, and idle is explicit. Add-on side by
+// design (plugin-architecture.md section 12.2).
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -138,20 +126,11 @@ interface OpMeta {
   doneSteps?: string[];
 }
 
-/** Tracks the surface's operations off the SSE bus (with a ledger seed for ops
- *  already in flight at mount). Lifted out of the panel (2026-08-15) so the
- *  Networking surface can mount it for the WHOLE surface's lifetime — the
- *  panel used to mount only with the Browser tab, so a send started from the
- *  contact composer had already published its `sending` phase (the routed
- *  channel) before the panel existed, and the plan rendered stepless.
- *
- *  Since 2026-08-16 it tracks the whole lane, not just the head: `queued`
- *  lists the ops waiting behind the current one (a 3-person reach-out shows
- *  all 3), and `settled` keeps what finished this session on screen. The
- *  QUEUE MEMBERSHIP is driven purely by SSE `operation` events (deterministic;
- *  the ledger can lag); the ledger is fetched only to ENRICH rows with their
- *  subject labels (a queued send's contact name lives nowhere in the events
- *  until its `sending` phase). */
+/** Tracks the surface's operations off the SSE bus, seeded from the ledger at
+ *  mount, for the whole Networking surface's life so no send's phase is missed.
+ *  It tracks the whole lane: `queued` waits behind the current op, `settled` keeps
+ *  this session's results. SSE events decide membership; the ledger only adds
+ *  subject labels. */
 export function useBrowserOps(): BrowserOps {
   const [op, setOp] = useState<ActiveOp | null>(null);
   // Active tracked ops in arrival order (includes the current one; the return

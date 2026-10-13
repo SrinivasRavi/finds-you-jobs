@@ -46,12 +46,9 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
   failed: "failed",
 };
 
-// The Apply slot maps the latest Apply Run's status (applier-as-built.md section 8.2) onto the
-// shared PacketSlotTag state keys: none→"Apply" (grey), waiting_for_packet/
-// running→"Applying…" (grey+spinner), ready_for_human→"Review & submit"
-// (yellow), submitted→"Submitted" (green check), and the honest non-success
-// terminals→"Retry" (red). The table itself lives in shell/applyRunDisplay,
-// shared with the Applier panel's phase pill (duplication audit D-F14).
+// The Apply slot maps the latest run's status (applier-as-built.md section 8.2)
+// onto PacketSlotTag states: Apply, Applying…, Review & submit, Submitted, and
+// Retry for the non-success terminals. The table is shell/applyRunDisplay (D-F14).
 
 const SLOT_SPINNER = new Set(["generating", "finding", "sending"]);
 const SLOT_CHECK = new Set(["ready", "approved"]);

@@ -43,12 +43,9 @@ if TYPE_CHECKING:
 STALE_CONTACT_DAYS = 60
 # How long the headed login browser stays open waiting for the user (seconds).
 LOGIN_TIMEOUT_S = 300
-# How long a Fresh search's pagination snapshot stays continuable (Next page).
-# LinkedIn's own pagination is stateless — the offset lives in the URL and
-# nothing server-side expires — so this mirrors no LinkedIn limit. It bounds
-# result-coherence drift (rankings shift between requests, so a stale offset
-# points into a different list) to one job-hunting session (maintainer,
-# 2026-08-01). After it lapses, only a Fresh search makes sense.
+# How long a Fresh search's pagination snapshot can be continued. LinkedIn's
+# pagination is stateless, so this mirrors no LinkedIn limit; it bounds ranking
+# drift (a stale offset points into a different list) to 1 session.
 SEARCH_CURSOR_TTL = timedelta(hours=12)
 
 # Refusal copy for the LinkedIn-search preconditions, worded once. The route

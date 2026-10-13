@@ -1,10 +1,5 @@
-// Settings (US-SET / section 13) — Automation-on-Save, LLM providers + per-operation
-// engine routing, the LinkedIn networking risk toggle w/ warning copy + ack,
-// observability, appearance (theme). Ports settings*.html (product sections
-// only — the prototype's purple "internal UI testing" mockups are not product).
-//
-// Split 2026-07-25 (F-M6): the pane sections live in ./settings/*; this file
-// keeps the category rail state + the pane composition.
+// Settings (US-SET / section 13): the category rail and pane composition; the
+// pane sections live in ./settings/* (F-M6).
 
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";

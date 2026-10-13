@@ -1,9 +1,7 @@
-// Covers: the restored Settings + Analytics surfaces against the live sidecar
-// (feature-parity commit) — Settings renders its section stack (generation
-// toggles, engine-routing/prompt rows, networking master toggle, observability
-// controls, the P1 no-submit statement) and a prompts-editor edit round-trips
-// through /api/settings/prompts; Analytics renders the cost tiles + ledger
-// with a real completed operation row, and /logs redirects there.
+// Covers: Settings and Analytics against the live sidecar. Settings renders its
+// sections and a prompts-editor edit round-trips through /api/settings/prompts;
+// Analytics renders the cost tiles and a real completed ledger row; /logs
+// redirects there.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -357,13 +355,10 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
   const auth = { Authorization: `Bearer ${token}` };
   // At least one REAL terminal row under the injected ones.
   await request.post(`${base}/api/operations/cleanup_trash`, { headers: auth, data: {} });
-  // Worst-case rows injected deterministically (the apply-stop test's pattern):
-  // an unbroken 650-char verbatim error token on a failed scan that ALSO
-  // carries a 12-source list, a long subject with a long DM detail + linked
-  // profile, a multi-query linkedin_search, and an over-long model id —
-  // everything that used to force the table wide or balloon a collapsed row.
-  // The layout must WRAP all of it, clamp the error preview, and keep every
-  // bulk payload (source list, query list, message) expanded-only.
+  // Worst-case rows, injected: a 650-char unbroken error on a failed scan with
+  // 12 sources, a long subject and DM, a multi-query search and a long model id.
+  // The layout must wrap all of it, clamp the error preview, and keep every bulk
+  // payload expanded-only.
   const longToken = "https://example.com/very-long-unbroken-error-token/" + "x".repeat(600);
   const sourceNames = [
     "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee",

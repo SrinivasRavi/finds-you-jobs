@@ -266,12 +266,10 @@ def _find_source_by_company(sources: list, company: str, source_adapter: str) ->
     return None
 
 
-# Board-URL templates per enumerate family — the last-resort watch fallback:
-# guess the tenant slug from the company name and PROBE (one GET per
-# candidate). This is the reverse-ATS pattern discovery.md already blesses,
-# scoped to one user-initiated action. Needed so a company-domain job stays
-# watchable after its covering sources row was unwatched (found live
-# 2026-07-22 — watch→unwatch→rewatch dead-ended in a 422).
+# Board-URL templates, the last-resort watch fallback: guess the tenant slug
+# from the company name and probe each candidate. Keeps a company-domain job
+# watchable after its covering source was unwatched (watch, unwatch, rewatch
+# once dead-ended in a 422).
 _BOARD_URL_TEMPLATES: dict[str, tuple[str, ...]] = {
     a.ID: a.BOARD_URLS for a in adapters.ADAPTERS if hasattr(a, "BOARD_URLS")
 }
@@ -345,24 +343,18 @@ async def watch_company(
         snapshot = {"url": url, "company": company, "job_id": payload.job_id or ""}
         sources = list(_portals(repos).get("sources", []))
 
-    # Network probes run OUTSIDE any DB session and OFF the event loop
-    # (asyncio.to_thread — the api/jobs.py `probe_url` pattern). A synchronous
-    # probe here blocked the loop, so /healthz went dark and the shell's
-    # supervisor kill-restarted a healthy sidecar mid-session (found
-    # 2026-07-22: every mutation after that failed as WebKit "Load failed"
-    # while the UI kept rendering cached data).
+    # Network probes run outside any DB session and off the event loop, like
+    # `probe_url` in api/jobs.py. A synchronous probe here once blocked /healthz and
+    # got a healthy sidecar restarted mid-session.
     source_url = _board_root(url)
     if source_url == url:
         source_url = _strip_filters(url)
     entry = SourceEntry(url=source_url, company=company)
     resolved = adapters.resolve(entry)
     if resolved is None and job_adapter:
-        # Company-domain posting URL (no derivable board root) — the board
-        # that found this job is already a sources row; watch THAT. Every
-        # resolution is remembered in _GUESS_CACHE: unwatch deletes the roster
-        # row but not the KNOWLEDGE, so a rewatch is one fast lookup instead
-        # of a live probe (maintainer 2026-07-22 #3 — real speed, no
-        # optimistic-UI faking).
+        # A company-domain posting URL with no board root: the board that found the job
+        # is already a source, so watch that. _GUESS_CACHE remembers each resolution, so a
+        # rewatch after unwatch is a lookup, not a live probe.
         cache_key = f"{job_adapter}:{_slugish(company)}"
         covering = _find_source_by_company(sources, company, job_adapter)
         if covering is not None:
@@ -617,12 +609,9 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
                 b["jobs"] += 1
                 if job.id in saved_ids:
                     b["saved"] += 1
-                # A description-less job is `unscorable` on the board (dto.py
-                # `job_dto`, same MIN_JD_CHARS predicate): its keyword floor is
-                # a 0 written for missing data, not a judgement, so counting it
-                # here would drag a source's average toward zero for having no
-                # description rather than for scoring poorly (maintainer
-                # 2026-09-03 — 248 such rows on one install).
+                # A job with no description is `unscorable` (same MIN_JD_CHARS predicate as
+                # `dto.job_dto`): its keyword 0 marks missing data, so counting it would drag a
+                # source's average down for having no description.
                 if len(job.description or "") < MIN_JD_CHARS:
                     continue
                 # The rating the board would show: AI if it has one, else the

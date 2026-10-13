@@ -1,12 +1,6 @@
-// The one "recovery roster" modal (duplication audit D-F2). Job Trash, deleted
-// Applications and deleted Contacts were three hand-copied lists of the same
-// row — avatar, title, subtitle, a restore action and (for two of them) a
-// two-step Delete forever. Copy, actions and the optional footer are props; the
-// row chrome is shared, so a border fix lands in all three at once.
-//
-// Deleted Contacts deliberately passes no `deleteForever`: there is no
-// permanent-delete endpoint for contacts, and the divergence is parameterized
-// rather than papered over.
+// The one recovery-list modal (D-F2) for Trash, deleted Applications and deleted
+// Contacts. Contacts pass no `deleteForever`: there is no permanent-delete
+// endpoint for them.
 
 import { useState, type ReactNode } from "react";
 

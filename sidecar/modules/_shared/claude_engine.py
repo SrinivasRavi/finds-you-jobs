@@ -25,12 +25,9 @@ from pathlib import Path
 
 DEFAULT_MODEL = "claude-opus-5-5"
 
-# Env vars that, when present in the child env, silently flip the `claude` CLI
-# from subscription billing to pay-per-token API billing. The provider is named
-# "Claude subscription" — cost honesty demands the subscription actually pays,
-# so every subprocess here scrubs them. (Insight credited to JustHireMe's
-# subscription-CLI provider — concept re-implemented, no code copied; see
-# THIRD_PARTY_NOTICES.md.)
+# Env vars that flip the `claude` CLI from subscription to pay-per-token
+# billing. The provider is "Claude subscription", so every subprocess scrubs them.
+# (Idea credited to JustHireMe, reimplemented; see THIRD_PARTY_NOTICES.md.)
 _SCRUB_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 _CLAUDE_PATH: str | None = None

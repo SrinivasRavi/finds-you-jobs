@@ -54,17 +54,10 @@ RESTART_NOTE = (
 PublishFn = Callable[[dict[str, Any]], None]
 OnSuccessFn = Callable[[str, str], None]  # (operation_id, kind) after a success
 
-# Ledger retention used to fire here: every completed operation pruned the table
-# back to the 250 most-recent terminal rows. It doesn't any more (maintainer,
-# 2026-08-24: "never delete anything"). Nothing deletes an operation now, the
-# Analytics ledger reads the newest 1,000, and a deletion policy the user can
-# see and control is backlogged as S-C22 in `docs/internal/status.md`.
-# The mechanism went with it (maintainer, 2026-08-28): 60 lines of retention
-# code with zero callers and its own test suite is a cost paid on every future
-# refactor. What a rebuild owes is recorded in S-C22, including the FK-clearing
-# bug it has to solve again — other rows remember which operation produced them
-# and the app runs with `PRAGMA foreign_keys=ON`, so a delete that doesn't clear
-# those references first raises `IntegrityError` and silently prunes nothing.
+# Nothing deletes an operation (maintainer, 2026-08-24: "never delete
+# anything"); the retention code that pruned to 250 rows is gone. A user-visible
+# deletion policy is S-C22, which records what a rebuild owes, including clearing
+# the FK references other rows hold (foreign_keys=ON makes a naive delete raise).
 
 # How many queued rows one dispatch pass reads. The concurrency policy can never
 # have more than roughly 10 operations in flight (llm 4, every other group 1), so
@@ -257,12 +250,9 @@ class OperationRunner:
             if self._executor is None or self._closing:
                 return
             with self._db.repos() as repos:
-                # Interactive kinds jump the bulk fan-out (policy.py
-                # DISPATCH_PRIORITY): an apply/tailor the user is watching must
-                # never sit behind dozens of queued scores. Ordered and capped in
-                # SQL — reading every queued row to start at most a handful is
-                # what made enqueueing quadratic, and ordering there is what lets
-                # the cap be safe.
+                # Interactive kinds jump the bulk fan-out (policy.py DISPATCH_PRIORITY), so an
+                # apply the user is watching never waits behind queued scores. Ordered and capped
+                # in SQL; reading every queued row made enqueueing quadratic.
                 queued = repos.operations.list_queued_for_dispatch(
                     priority_by_kind=DISPATCH_PRIORITY,
                     default_priority=DEFAULT_DISPATCH_PRIORITY,
@@ -304,13 +294,10 @@ class OperationRunner:
         with self._lock:
             cancel_token = self._cancels.get(operation_id)
         resolved = None
-        # Half-open probe lease (F-H5 follow-up, 2026-07-25): when `check`
-        # admits this op as the circuit's ONE probe, the lease must be settled
-        # on EVERY terminal path or the circuit wedges open forever. It is
-        # *transferred* by record_success / record_failure (set back to None
-        # right after) and *abandoned* in the outer finally for every other
-        # outcome — cancellation, non-EngineError failures, even a crash in
-        # the handlers themselves.
+        # Half-open probe lease (F-H5): when `check` admits this op as the circuit's 1
+        # probe, the lease must settle on every path or the circuit wedges open.
+        # record_success and record_failure transfer it; the outer finally abandons it for
+        # everything else, a crash in the handlers included.
         probe_engine: str | None = None
         try:
             with operation_span(
@@ -362,13 +349,11 @@ class OperationRunner:
                     self._publish(operation_id, kind, "cancelled")
                 except Exception as exc:  # noqa: BLE001 — verbatim capture is the contract
                     message = f"{type(exc).__name__}: {exc}"
-                    # Only real engine failures feed the breaker — module
-                    # parse drift or our own bugs say nothing about the
-                    # provider, and a ProviderCircuitOpen rejection must never
-                    # feed the breaker that produced it (it isn't EngineError).
-                    # Charged to the service that failed: Fast scoring calls
-                    # OpenRouter whatever engine the kind routes to, and its
-                    # spent key must not pause the Claude CLI.
+                    # Only real engine failures feed the breaker: parse drift or our own bugs say
+                    # nothing about the provider, and a ProviderCircuitOpen rejection mustn't feed
+                    # its own breaker. Charged to the service that failed: Fast scoring calls
+                    # OpenRouter whatever the kind routes to, and its spent key mustn't pause the
+                    # Claude CLI.
                     failed = (
                         (getattr(exc, "provider", None) or (resolved.name if resolved else None))
                         if isinstance(exc, EngineError)
@@ -390,14 +375,10 @@ class OperationRunner:
                         )
                     with self._db.repos() as repos:
                         repos.operations.mark_failed(operation_id, error=message)
-                    # Full traceback into the flight recorder so a failing op is
-                    # debuggable from `logs/sidecar.log` alone — the maintainer
-                    # should never re-derive a crash from a screenshot. The
-                    # traceback is formatted INTO the message (not passed via
-                    # `exc_info=`): Logfire instruments stdlib logging, and an
-                    # exc_info record contaminates the global span provider in
-                    # certain test orderings. Any voyager subprocess stderr tail
-                    # already rides inside `message` (the driver appends it).
+                    # Full traceback into the flight recorder, so a failing op is debuggable from
+                    # logs/sidecar.log alone. Formatted into the message, not `exc_info=`: an
+                    # exc_info record contaminates Logfire's span provider in some test orders. A
+                    # voyager stderr tail already rides inside `message`.
                     tb = "".join(traceback.format_exception(exc))
                     self._log.error(
                         "operation %s (%s) failed: %s\n%s",
@@ -412,12 +393,9 @@ class OperationRunner:
                         self._circuit.record_success(resolved.name)
                         probe_engine = None  # lease transferred (probe verdict: healthy)
                     if outcome.error:
-                        # The entrypoint ran to completion and reports that what
-                        # the user asked for did not happen (an apply run that
-                        # ended `blocked`, say). It is a failed operation, and it
-                        # keeps the usage it already spent, which is why this is
-                        # not simply raised. The engine answered, so the breaker
-                        # above is left as recorded.
+                        # The entrypoint finished and reports the user's request didn't happen (an
+                        # apply run that ended `blocked`): a failed op that keeps its spent usage,
+                        # hence not raised. The engine answered, so the breaker stays as recorded.
                         try:
                             record_span_failure(span, outcome.error)
                         except Exception:  # noqa: BLE001 — the span is additive; the row must land

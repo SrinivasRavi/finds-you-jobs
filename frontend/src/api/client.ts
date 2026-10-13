@@ -1,10 +1,6 @@
-// Typed sidecar client.
-//
-// A1 hand-writes the minimal handshake + /healthz path. In A3 the generated
-// OpenAPI client + types land in this same `src/api/` directory
-// (openapi-typescript against the sidecar's /openapi.json — architecture section 4.3);
-// the app imports its typed operations from here. Keep hand-written helpers that
-// sit outside the generated surface (the handshake itself) in this file.
+// Typed sidecar client: the handshake and /healthz. The generated OpenAPI types
+// live beside it in src/api/ (architecture section 4.3); hand-written helpers
+// outside the generated surface stay in this file.
 
 import { inTauri } from "../shell/host";
 

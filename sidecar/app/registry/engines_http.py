@@ -174,13 +174,10 @@ def price_usd(model: str | None, tokens_in: int | None, tokens_out: int | None) 
 # ---------------------------------------------------------------------------
 
 
-# TypeSafe's Jev is not a chat completion: it takes a state plus typed questions
-# and returns typed answers, so it gets its own client rather than an `Engine`.
-# OpenRouter is the access path to build against. TypeSafe's own API is in early
-# access behind a waitlist, while OpenRouter serves Jev today on the key the user
-# already has, and OpenRouter also mirrors TypeSafe's own shape at
-# `/api/v1/systemone`, so the base URL is a constructor argument: the same client
-# reaches OpenRouter, the Vercel and Cloudflare gateways, or TypeSafe direct.
+# TypeSafe's Jev isn't a chat completion: it takes a state and typed questions
+# and returns typed answers, so it gets its own client. OpenRouter serves it today
+# on the user's key (TypeSafe's API is waitlisted), and gateways mirror the shape,
+# so the base URL is a constructor argument.
 DEFAULT_DECISIONS_BASE = "https://openrouter.ai"
 DECISIONS_PATH = "/api/alpha/decisions"
 

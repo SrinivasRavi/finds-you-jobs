@@ -40,13 +40,10 @@ def _pk() -> Mapped[str]:
 # Orchestration (database-design section 2)
 # ---------------------------------------------------------------------------
 
-# The Operation state machine's vocabulary, named once (D-A4). The runner owns
-# the transitions (`queued → running → succeeded|failed|cancelled`, runner.py);
-# these are the *sets* every filter, guard and ledger scan asks about, so a new
-# state lands in one place instead of ~17 pasted literals. Frozen sets: every
-# consumer does membership or SQL `.in_()`, neither of which is order-sensitive.
-# (`events.py`'s `Literal[...]` spells the same five values at the type level —
-# a typing Literal cannot be built from a runtime constant.)
+# The Operation state vocabulary, named once (D-A4). The runner owns the
+# transitions (runner.py); these are the sets every filter and guard asks about.
+# events.py spells the same 5 values as a Literal, which can't be built from a
+# runtime constant.
 OP_ACTIVE_STATES: frozenset[str] = frozenset({"queued", "running"})
 OP_TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
 OP_ALL_STATES: frozenset[str] = OP_ACTIVE_STATES | OP_TERMINAL_STATES
@@ -61,11 +58,8 @@ class Operation(Base):
     kind: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     # What this operation is about, promoted out of `input_snapshot` so it can be
-    # indexed instead of scanned (2026-08-29). Indexed, deliberately no foreign
-    # key: the ledger is history and history outlives its subjects. An FK would
-    # either block deleting a job or blank the record of what we spent on it,
-    # and an FK on this table is what made ledger retention fail silently for a
-    # month (S-C13).
+    # indexed. No foreign key on purpose: the ledger is history and outlives its
+    # subjects, and an FK here once made retention fail silently for a month (S-C13).
     job_id: Mapped[str | None] = mapped_column(String, nullable=True)
     contact_id: Mapped[str | None] = mapped_column(String, nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -159,12 +153,9 @@ class Job(Base):
         UTCDateTime, nullable=False, default=now_utc
     )
 
-    # The 2 fit ratings, one per scorer, as columns rather than a `job_scores`
-    # table (d2f7a91b8c46). `<x>_score IS NULL` means that scorer has not run.
-    # The board shows `llm_score ?? keyword_score`, a rule with no ranking in it
-    # and therefore no way to write it wrong; the version-ranked pick it replaces
-    # showed a keyword number over a higher AI one on 36 jobs (S-C34). Reasons is
-    # the summary list, breakdown_md the long-form working; both display-only.
+    # The 2 fit ratings as columns (d2f7a91b8c46); `<x>_score IS NULL` means that
+    # scorer hasn't run. The board shows `llm_score ?? keyword_score`, a rule with no
+    # ranking to get wrong (S-C34). Reasons and breakdown_md are display-only.
     llm_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     llm_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     llm_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -172,12 +163,9 @@ class Job(Base):
     keyword_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     keyword_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
-    # AI-scoring attempt memory, and the prefix says so. Counts ONLY failures
-    # where a call reached the provider, so a circuit-open rejection (provider
-    # refusing everybody) costs the job nothing and it returns to the pool
-    # unmarked. The planner stops at SCORE_MAX_ATTEMPTS. Every other scoring
-    # state is derived, never stored — see a3d7e1f95c24 for why there is no
-    # status column. The keyword scorer never fails and never touches these.
+    # AI-scoring attempt memory. Counts only failures where a call reached the
+    # provider, so a circuit-open rejection costs the job nothing. The planner stops
+    # at SCORE_MAX_ATTEMPTS; every other scoring state is derived (a3d7e1f95c24).
     llm_score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     llm_score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Which method produced `llm_score`: "llm", "jev" or "local". Backfilled to
@@ -185,16 +173,11 @@ class Job(Base):
     # LLM path is the only thing that could have written them.
     llm_score_method: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # The location field, read once at ingest by `modules/geo/resolve.py`, so no
-    # consumer re-parses the string and the 3 that do can't drift apart. These
-    # are facts about the posting, never about the user: the match verdict
-    # depends on preferences that change, so it is computed, never stored.
-    # `location_remote` carries 3 states on purpose: NULL means this row has not
-    # been through the resolver yet (which is every row that predates it), ""
-    # means resolved and not remote, and anything else is the scope, either
-    # "global", "unscoped", or the countries covered ("US,CA"). No index yet: the
-    # queries that would need one aren't written (D30, an index arrives with the
-    # query that reads it).
+    # The location, read once at ingest by `modules/geo/resolve.py`, so no consumer
+    # re-parses it. Facts about the posting only; the match verdict depends on prefs,
+    # so it's computed. `location_remote`: NULL is unresolved, "" is not remote,
+    # otherwise the scope ("global", "unscoped", or "US,CA"). No index until a query
+    # needs one (D30).
     location_country: Mapped[str | None] = mapped_column(String, nullable=True)
     location_admin1: Mapped[str | None] = mapped_column(String, nullable=True)
     location_city_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -721,13 +704,10 @@ class LinkedInSession(Base):
     # while a headed `login` op is in flight; `backing_off` after the Referral
     # Outreach package reports a rate-limit pause (FR-NW-05) — cleared by resume.
     status: Mapped[str] = mapped_column(String, nullable=False, default="never_set")
-    # Self-imposed rate-limit basis (maintainer directive 2026-08-01, replacing
-    # the New/Seasoned tier — that gradation now lives in `risk_pct`).
-    # `membership_type` ∈ free | premium | sales_navigator | recruiter_lite picks
-    # the estimated LinkedIn ceilings; `risk_pct` (10–100) scales them; and
-    # `cap_overrides` pins individual "{meter}_{window}" caps to absolute numbers.
-    # The outreach package computes the effective caps from these three inputs
-    # (`pacing.resolve_profile`); the app only stores the choices.
+    # Self-imposed rate-limit basis. `membership_type` (free, premium,
+    # sales_navigator, recruiter_lite) picks the estimated ceilings, `risk_pct`
+    # (10 to 100) scales them, and `cap_overrides` pins individual caps. The outreach
+    # package computes the effective caps (`pacing.resolve_profile`).
     membership_type: Mapped[str] = mapped_column(String, nullable=False, default="free")
     risk_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     cap_overrides: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

@@ -1,9 +1,6 @@
-// Dev tools (US-DEV-01) — local fault-injection surface for testing the app's
-// failure handling without a live scrape/LLM/LinkedIn session, alongside the
-// commit-2 handshake/SSE diagnostic (sidecar health, event-stream state, and a
-// snapshot refetch after every reconnect). Single-user local app on the user's
-// own machine; these actions never touch a hosted backend. Hidden from the left
-// rail (maintainer note 2026-07-09); reachable at /dev.
+// Dev tools (US-DEV-01): local fault injection for testing failure handling
+// without a live scrape, LLM or LinkedIn session, plus the handshake and SSE
+// diagnostics. Hidden from the rail; reachable at /dev.
 
 import { useCallback, useEffect, useState } from "react";
 

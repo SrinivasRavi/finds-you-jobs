@@ -516,12 +516,9 @@ def _linkedin_session_base(repos: Any) -> tuple[dto.LinkedInSessionDTO, Any]:
         session, enabled=bool(prefs.voyager_risk_marker_on),
         cursor=repos.linkedin_search_cursor.get(),
     )
-    # The "Synced Nm ago" stamp for the Networking header: when a sweep last
-    # ACTUALLY PROBED (or cleanly checked an empty roster). A budget-refused
-    # sweep succeeds as an operation with synced 0 + a stop reason, and must
-    # not re-stamp "Synced just now" — its outcome is surfaced separately so
-    # the user sees WHY nothing refreshed (the 2026-08-15 live confusion:
-    # every press answered in 10 ms, stamped "just now", and synced nothing).
+    # The "Synced Nm ago" stamp: when a sweep last actually probed (or checked an
+    # empty roster). A budget-refused sweep succeeds with 0 synced and a stop reason;
+    # it doesn't re-stamp, and its outcome is shown separately so the user sees why.
     recent = repos.operations.recent_succeeded_by_kind("contact_sync", limit=25)
     base.contact_sync_last_at = next(
         (

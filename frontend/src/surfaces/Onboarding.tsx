@@ -1,16 +1,8 @@
-// Onboarding wizard (US-OB-01..05 / FR-OB-01..07) — forward-only steps:
-// Resume → Preferences → LLM provider (real Verify hard-gate) → All set.
-// The stepper also displays "Download the app" as stage 1, always done — the
-// user is running the app — so setup starts partway complete. The LinkedIn /
-// Referral-Outreach opt-in is NOT an onboarding step (P1 decision 2026-07-12:
-// meet the core app first); it lives in Settings with its ack + warning flow.
-// The draft is held in component state AND mirrored to
-// localStorage (FR-OB-02 resumable draft), so quitting mid-wizard and relaunching
-// resumes where the user left off. Nothing hits the final MasterProfile /
-// preferences tables until "Finish" (US-OB-01 atomic-ish commit): the verified
-// engine is saved at the Verify step (POST /api/engines), and Finish commits the
-// master profile + preferences, enqueues the cold-start scan (US-JB-09), and
-// routes to /jobs — the first-launch guard (main.tsx) then keeps the wizard shut.
+// Onboarding (US-OB-01..05): Resume, Preferences, AI provider (a real Verify
+// gate), All set; "Download the app" shows as stage 1, already done. The LinkedIn
+// opt-in lives in Settings, not here. The draft mirrors to localStorage (FR-OB-02);
+// nothing reaches the profile tables until Finish, which saves, starts the first
+// scan and routes to /jobs.
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -302,13 +294,10 @@ export function Onboarding() {
         scrape_cadence: cadence,
         networking_enabled: false,
       });
-      // Route every LLM operation to the provider the user just verified —
-      // otherwise the routing default (claude-cli) silently runs the whole
-      // pipeline on a CLI the user may not even have (2026-07-12 fix: an
-      // OpenRouter onboarding was billing the user's Claude session instead).
-      // Empty model → the engine row's default_model (BYOK) or the CLI's own
-      // configured default (codex-cli / antigravity-cli). claude-cli alone
-      // skips this: it IS the routing default.
+      // Route every LLM kind to the provider just verified; otherwise the default
+      // (claude-cli) runs everything on a CLI the user may not have (an OpenRouter
+      // onboarding once billed the Claude session). An empty model means the engine's
+      // own default; claude-cli skips this, being the default already.
       if (aiSkipped) {
         // Every AI kind routes to "none" (engine_config.AI_OFF) and scoring is
         // keyword, until a provider is saved or a CLI verified in Settings.
@@ -343,18 +332,10 @@ export function Onboarding() {
   }
 
   return (
-    // Small windows (a VMware Fusion guest capped at 1024×768 with display
-    // scaling unavailable, a laptop with a tall taskbar + zoomed text, …)
-    // can be shorter than the card's content — the LLM-provider step alone
-    // lists eight options. #root is locked to `height:100vh; overflow:hidden`
-    // app-wide, so scrolling has to happen HERE, not at the page level.
-    // `overflow-y-auto` + `place-items-center` on the SAME element clips the
-    // top of the overflow (a well-known CSS trap: centering shifts content
-    // into negative scroll-position space that a scrollbar can't reach) — so
-    // the outer div only scrolls, and a separate `min-h-full` (not `h-full`)
-    // inner grid does the centering. `min-h-full` can grow past 100%, so
-    // when the card is taller than the window there's no excess space left
-    // to center within, and nothing gets clipped.
+    // Small windows can be shorter than the card, and #root is locked to 100vh with
+    // overflow hidden, so this element scrolls. Scrolling and `place-items-center` on
+    // the same element clips the top of the overflow, so the outer div only scrolls
+    // and an inner `min-h-full` grid centers.
     <div className="h-screen overflow-y-auto bg-canvas">
       <div className="grid min-h-full place-items-center p-6">
       <div className="w-full max-w-xl rounded-2xl border border-border bg-surface p-6 shadow-lg">

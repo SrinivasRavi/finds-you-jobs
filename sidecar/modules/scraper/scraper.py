@@ -118,12 +118,9 @@ def _is_disabled(entry: object, disabled: set[str]) -> bool:
     return adapter.ID in disabled or key in disabled
 
 
-# Per-source ceilings on JD detail fetches per scan (enrichment is one HTTP
-# call per JD-less row). Search-shaped sources (LinkedIn today) already bound
-# their own row count at query time (MAX_PAGES × query count, ~120 rows), so
-# every kept row is enriched — no further cap. Enumerate-shaped sources page a
-# whole company/board feed that can run into the thousands, so those stay
-# capped per source (maintainer-raised ceiling, was one shared ENRICH_CAP=20).
+# Per-source ceilings on JD detail fetches per scan, 1 HTTP call per JD-less row.
+# Search sources already bound their rows at query time (about 120), so all are
+# enriched; enumerate sources can page thousands, so they stay capped per source.
 SEARCH_ENRICH_CAP: int | None = None  # unbounded — the search itself bounds volume
 SCAN_ENRICH_CAP = 100  # per-source ceiling for enumerate-shaped (ATS/board) sources
 
@@ -282,11 +279,9 @@ def scan(
                 bucket.jobs.append(job)
 
     # -- enrich phase (JD-missing rows only; approved-plan #8) --------------
-    # Kept rows with no JD get their real description fetched per adapter
-    # (`fetch_detail`) so scoring runs normally — the optimal path. Bounded at
-    # SEARCH_ENRICH_CAP/SCAN_ENRICH_CAP per source; a failed detail fetch
-    # records the error and leaves the description empty — the drop phase
-    # below discards the row rather than keeping it as an unscorable husk.
+    # Kept rows with no JD get their description via `fetch_detail`, capped per
+    # source. A failed fetch records the error and the drop phase below discards the
+    # row rather than keep an unscorable husk.
     if enrich_buckets:
         buckets = list(enrich_buckets.values())
         if prefs.max_workers > 1 and len(buckets) > 1:

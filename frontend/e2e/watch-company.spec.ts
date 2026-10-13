@@ -1,9 +1,7 @@
-// Covers: following a company's board (docs/internal/watch-company.md). From a
-// job with no link, the follow dialog takes a careers page, strips its search
-// filters, reads the board, and follows it even when the read fails, showing
-// the link; the job's own link is never touched. The list lives in Settings ›
-// Discover jobs, with each link shown, Change link and Remove. Offline: the
-// boards are RSS-shaped URLs on .localhost, so every read fails at once.
+// Covers: following a company's board (docs/internal/watch-company.md). The
+// follow dialog strips a careers page's filters, reads the board, follows it even
+// when the read fails, and never touches the job's own link. Settings › Discover
+// jobs lists each link with Change link and Remove. Offline: every read fails.
 
 import { expect, test } from "@playwright/test";
 import { sidecarInfo } from "./_helpers";

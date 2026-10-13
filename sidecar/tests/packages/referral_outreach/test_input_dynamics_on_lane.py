@@ -154,11 +154,9 @@ async def test_input_dynamics_run_on_the_broker_lane(tmp_path: Path) -> None:
 
 
 # --- (4) inter-send pacing: the gap is drawn from the ledger and slept ----------
-# `test_pacing.py::test_wait_before_send_sleeps_the_computed_gap` asserts the
-# slept value falls in 30-90 s, but the real gap is floor + Weibull capped at
-# 900 s, so ~19% of draws break the band — that test is flaky by construction.
-# These prove the MECHANISM deterministically instead: pin the draw, then check
-# what was slept, rather than betting on where an unpinned draw lands.
+# The real gap is floor plus Weibull capped at 900 s, so a 30 to 90 s band check
+# fails about 19% of draws. These pin the draw and check what was slept, proving
+# the mechanism deterministically.
 
 
 def test_wait_before_send_sleeps_a_ledger_drawn_gap(

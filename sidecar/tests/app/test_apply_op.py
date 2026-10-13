@@ -112,13 +112,10 @@ def _wait_terminal(client: TestClient, run_id: str, timeout: float = 300.0) -> d
     raise AssertionError(f"run {run_id} never landed: {run}")
 
 
-# The scripted flow mirrors the package happy path, but the ids are computed
-# server-side per observation — the script uses element-id-free heuristics via
-# a tiny templating trick: the op's dev script accepts literal replies only,
-# so we script against the STABLE fixture (ids assigned in document order).
-# Document order in form.html: e1 form? … — instead of guessing, the script
-# fills by trying e-ids in order; the loop tolerates rejected/failed steps and
-# the test asserts on the terminal contract, not per-step success.
+# The scripted flow mirrors the package happy path, but ids are assigned
+# server-side per observation and the dev script takes literal replies only. So
+# the script tries e-ids in document order, the loop tolerates failed steps, and
+# the test asserts the terminal contract, not each step.
 def _happy_script() -> list[str]:
     return [
         _action("fill", element_id="e2", value="Ada Lovelace"),
@@ -452,10 +449,9 @@ def test_submit_failure_finalizes_route_created_run(app_client, monkeypatch) -> 
 
 
 # ---------------------------------------------------------------------------
-# Cancelling a QUEUED apply op must finalize its ApplyRun (2026-07-25): the
-# entrypoint that would finalize it never runs, so the generic operations-cancel
-# route has to land the durable run `interrupted` itself — or start_apply's
-# single-flight returns the dead run on every later Apply click for that card.
+# Cancelling a queued apply op must finalize its ApplyRun: the entrypoint never
+# runs, so the cancel route lands the run `interrupted`, or Apply keeps returning
+# the dead run.
 # ---------------------------------------------------------------------------
 
 

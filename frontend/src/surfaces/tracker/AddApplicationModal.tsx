@@ -1,10 +1,7 @@
-// "Add a job application" (FR-TR manual-add) — the Tracker sibling of the Job
-// Board's Add a job. 1 form, the link recommended rather than required, plus
-// the pipeline stage and the optional resume/cover the user submitted (stored
-// content-addressed). The person logging an application they made 3 weeks ago
-// out of an email is the person least likely to still have the URL, which is
-// why this modal takes the same treatment (url-less-jobs.md section 9.2).
-// Not memoized: it mounts only while open.
+// "Add a job application" (FR-TR manual-add), the Tracker's Add a job: 1 form
+// with the link recommended, not required, plus the stage and the resume or cover
+// actually submitted. Someone logging a 3-week-old application rarely has the URL
+// (url-less-jobs.md section 9.2). Not memoized: it mounts only while open.
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";

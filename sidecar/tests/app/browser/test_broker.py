@@ -951,11 +951,9 @@ async def test_real_screencast_stays_live_through_a_long_lane_action(
 
 
 # --- idle reclamation -------------------------------------------------------
-# A surface costs an OS thread, a real Chrome, and that Chrome's memory. Nothing
-# used to reclaim one: an entry left `_surfaces` only on app shutdown or after
-# its Chrome had already crashed, so a single visit to the LinkedIn view kept a
-# browser alive for the rest of the session. These pin both halves — that idle
-# surfaces go, and that in-use ones never do.
+# Nothing used to reclaim a surface (a thread and a real Chrome), so 1 visit to
+# the LinkedIn view kept a browser alive all session. These pin both halves: idle
+# surfaces go, in-use ones never do.
 
 
 async def test_reap_idle_closes_a_surface_nobody_is_watching(

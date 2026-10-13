@@ -344,10 +344,8 @@ def test_api_resume_edit_keyword_mode_auto_rescores_llm_mode_does_not(tmp_path) 
 
 
 # ---------------------------------------------------------------------------
-# No AI re-score action exists (maintainer 2026-08-28, S-C24). A score is a
-# cache row keyed by (job, profile_version, scorer_impl), and the planner's
-# eligibility read is version-agnostic, so a job that already carries an AI
-# score is never re-planned and never re-spent, whatever changes upstream.
+# No AI re-score action exists (S-C24): the planner's eligibility read is
+# version-agnostic, so a job with an AI score is never re-planned or re-spent.
 # ---------------------------------------------------------------------------
 
 
@@ -821,12 +819,10 @@ def test_picking_the_local_method_scores_by_keyword_and_says_so(migrated_db: Dat
         assert job.llm_score is None
 
 
-# --- which method ran, on the wire (maintainer, 2026-10-07) -------------------
-#
-# The board draws 2 concentric rings: the outer arc is the score, the inner one
-# is the method. That needs the method on the wire per job, and `scorer_impl`
-# cannot carry it — it says "scorer-llm" for a Fast or On-device score too, so
-# every one of them would draw as AI.
+# --- which method ran, on the wire -------------------------------------------
+# The board's inner ring is the method, so it rides the wire per job;
+# `scorer_impl` can't carry it, since it says "scorer-llm" for Fast and On-device
+# too.
 
 
 class _FakeDecisions:

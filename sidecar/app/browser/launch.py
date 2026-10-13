@@ -25,24 +25,11 @@ def stock_launch_kwargs() -> dict[str, Any]:
     return {"headless": True, "channel": "chrome", "chromium_sandbox": True}
 
 
-# Automation quality-of-life switches Playwright sets by default and a person
-# never would (Our Finding 23). Dropping them leaves the process argv reading
-# like a hand-launched Chrome. `ignore_default_args` is an EXACT-string filter —
-# Playwright runs `defaultArgs().filter(arg => ignore.indexOf(arg) === -1)` — so
-# every entry has to be the switch verbatim; a prefix does not match.
-#
-# `--enable-automation` leads the list because the transport policy names it
-# (`docs/internal/plugin-architecture.md` section 12.3) and because a future
-# Playwright could add it back. It is a no-op on the pinned Playwright, which
-# does not emit it (measured); the switch that actually clears
-# `navigator.webdriver` is the blink flag in `minimal_launch_kwargs`, not this.
-#
-# Deliberately NOT listed: Playwright's `--disable-features=` / `--enable-features=`
-# bundles. Their values are version-specific comma lists, and an exact-match
-# filter against a value that shifts on a Playwright bump would silently STOP
-# dropping them — a switch reappearing that nobody re-added, the opposite of what
-# this module promises. They do not affect webdriver or UA coherence (measured),
-# so they stay untouched rather than dropped by a brittle exact string.
+# Automation switches Playwright sets that a person never would (Our Finding 23).
+# `ignore_default_args` matches exact strings, so each entry is verbatim.
+# `--enable-automation` is named by the transport policy (plugin-architecture.md
+# section 12.3); it's a no-op on the pinned Playwright. The version-specific
+# feature bundles stay: an exact match would silently stop working on a bump.
 _AUTOMATION_SWITCHES_TO_DROP = [
     "--enable-automation",
     "--disable-background-networking",

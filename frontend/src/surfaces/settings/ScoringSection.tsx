@@ -1,9 +1,5 @@
-// Scoring pane section: a scanned job is scored before anything else happens
-// to it. Every scanned job is scored; the choice is HOW. AI failures fall back
-// to a grey keyword score (retry in Logs). (Extracted from Settings.tsx
-// 2026-07-25, F-M6 monolith split — pure moves, zero behavior change.)
-// Memoized: `settings` is the query-stable object; `patch` is a root
-// useCallback.
+// Scoring section: every scanned job is scored; the choice is how. An AI
+// failure falls back to a grey keyword score, retryable in Logs. Memoized.
 
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,12 +21,9 @@ import { Section } from "./shared";
 // could run uncapped on it (maintainer, 2026-10-07).
 const METERED_METHODS: ScoringMode[] = ["llm", "jev"];
 
-// Scoring batch cap presets (audit P1-1): the scheduler's `score_new` tick
-// scores every unscored job by default (0 = uncapped) — a large first scan can
-// burn a lot of LLM cost in one tick. These presets are a UI convenience over
-// the same `thresholds.score_new_batch` the planner already reads
-// (sidecar/app/scheduler/planner.py); the planner has read this since it
-// shipped, this control is the missing writer.
+// Batch cap presets (audit P1-1): the `score_new` tick scores every unscored job
+// by default (0 = uncapped), so a large first scan can cost a lot at once. These
+// write `thresholds.score_new_batch`, which the planner already reads.
 const SCORE_BATCH_PRESETS: { value: number; label: string }[] = [
   { value: 0, label: "settingsPage.scoring.uncapped" },
   { value: 10, label: "10" },

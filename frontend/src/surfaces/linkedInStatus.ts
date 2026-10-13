@@ -1,12 +1,6 @@
-// The one LinkedIn session status → pill mapping (duplication audit D-F8).
-// Settings and the Networking header each had their own switch and they had
-// already drifted: Settings named `expired` explicitly, while Networking folded
-// it into the generic "Connect LinkedIn" chip — a user whose cookie had lapsed
-// was told to connect rather than told the session expired.
-//
-// Only the status→semantics decision is shared. Each surface keeps its own
-// chrome and copy: the header pill is 22px with a currentColor dot, Settings'
-// is 20px with an explicit hex dot, and the two use different wording.
+// The one LinkedIn status to pill mapping (D-F8). 2 switches had drifted, and
+// Networking told an expired session to "Connect". Only the semantics are shared;
+// each surface keeps its own chrome and copy.
 
 import type { LinkedInSessionState } from "../api/types";
 

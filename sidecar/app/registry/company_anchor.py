@@ -36,14 +36,11 @@ _ATS_HOSTS = frozenset({
     "news.ycombinator.com",
 })
 
-# Multi-employer job boards / aggregators / tenant-subdomain ATS providers,
-# matched at the registrable-domain level (any subdomain). Their domain is the
-# *board's*, never the employer's — without this, a scraped board job mints a
-# shared `domain:<board>` cache key and the first employer resolved under it is
-# silently reused for every other employer on that board (live data bug
-# 2026-08-02: `domain:naukri.com` → Coupang, reapplied to a Virtusa job).
-# `news.ycombinator.com` stays exact-host in `_ATS_HOSTS` above — registrable
-# `ycombinator.com` is also YC's own employer site.
+# Multi-employer boards, aggregators and tenant-subdomain ATS hosts, matched at
+# the registrable domain. Their domain is the board's, so without this the first
+# employer resolved under `domain:<board>` was reused for every other one
+# (`domain:naukri.com` gave Virtusa's job Coupang). `news.ycombinator.com` stays
+# exact in `_ATS_HOSTS`: ycombinator.com is also YC's own site.
 _JOB_BOARD_DOMAINS = frozenset({
     # Boards/aggregators our own adapters scrape (sidecar/modules/scraper/adapters/).
     "naukri.com", "linkedin.com", "seek.com", "seek.com.au",
@@ -71,13 +68,9 @@ def _is_job_board_host(host: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in _JOB_BOARD_DOMAINS)
 
 
-# Common two-level public suffixes (co.in, co.uk, com.au, …): the registrable
-# domain under one of these is the last THREE labels, not two. A small inline
-# set on purpose — no PSL dependency (the module stays dependency-free). An
-# unlisted multi-part TLD still collapses to its suffix, which only ever costs
-# a user-confirm; the listed ones stop the shared-key poison (`domain:co.in`
-# minted for every Indian employer on a `.co.in` site — same class as the
-# 2026-08-02 naukri.com bug).
+# Common 2-level public suffixes (co.in, co.uk, com.au): the registrable domain
+# is the last 3 labels. Inline, no PSL dependency; an unlisted one only costs a
+# user confirm, and these stop a shared `domain:co.in` key.
 _TWO_LEVEL_PUBLIC_SUFFIXES = frozenset({
     "co.in", "net.in", "org.in", "gov.in", "ac.in",
     "co.uk", "org.uk", "ac.uk", "gov.uk",

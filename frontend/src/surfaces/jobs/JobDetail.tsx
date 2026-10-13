@@ -21,13 +21,10 @@ import { FollowResult, followLooksRight } from "./FollowResult";
 import { sourceClasses, workLabel } from "../jobFormat";
 import { MatchRing, highlight } from "./JobRow";
 
-/** "Explain this one": 1 click, 1 job, 1 AI call, with the price on the button
- *  before it is pressed (vision.md, cost honesty).
- *
- *  The price is what THIS user's own AI scores have cost, measured off their
- *  ledger, because the app cannot know what a model charges and a figure from a
- *  price list would be wrong the first time somebody switched model. With no
- *  history it names the model instead of inventing a number. */
+/** "Explain this one": 1 click, 1 job, 1 AI call, priced on the button (vision.md,
+ *  cost honesty). The price is what this user's own AI scores have cost, from the
+ *  ledger, since a price list goes wrong at the first model switch. With no history
+ *  it names the model instead of a number. */
 function ExplainButton({ job }: { job: Job }) {
   const { t } = useTranslation();
   const cost = useExplainCost(true);

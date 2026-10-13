@@ -48,17 +48,10 @@ export function HeaderAddButton({
   );
 }
 
-// Same alignment idea for the "Deleted …" buttons that sit just left of the
-// add button in all three headers, but sized by an INVISIBLE copy of the
-// longest label ("Deleted Applications") instead of a hand-measured pixel
-// constant — the longest button is exactly its natural size, the shorter two
-// match it, and nothing drifts if the font changes. The count reads as a quiet
-// "(N)" suffix, not a notification badge (maintainer 2026-07-24). The sizer
-// pins to the LABEL alone (no reserved-count digits): reserving " (99)" left a
-// visibly unbalanced right gap on the longest tab (maintainer 2026-07-28). The
-// count still can't shift the box — the visible run is absolutely positioned,
-// so its width is decoupled from the button's — it just fills the label's own
-// slack on the shorter tabs.
+// The "Deleted …" buttons, sized by an invisible copy of the longest label
+// ("Deleted Applications") so all 3 match without a pixel constant. The count is a
+// quiet "(N)" suffix; the visible run is absolutely positioned, so it fills the
+// label's slack and never resizes the box.
 export function HeaderDeletedButton({
   label,
   count,

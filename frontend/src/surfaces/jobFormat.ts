@@ -42,14 +42,9 @@ export function methodColor(method: string): string {
   return METHOD_COLOR[method as ScoreMethod] ?? METHOD_COLOR.keyword;
 }
 
-/** The outer arc's colour: red at 0, amber at 50, green at 100, interpolated.
- *  The 3 stops are the same `--bad`/`--warn`/`--good` values `scoreTier` uses,
- *  inlined for the same reason that function inlines them: a conic-gradient
- *  stop is a colour, not a class.
- *
- *  Continuous rather than banded (maintainer, 2026-10-07): a 69 and a 70 are
- *  not different kinds of job, and the old banding put a blue at 70 to 84, so
- *  the ramp read green, blue, amber, red going down. */
+/** The outer arc's colour: red at 0, amber at 50, green at 100, interpolated
+ *  from the `--bad`/`--warn`/`--good` values (inlined: a gradient stop is a colour,
+ *  not a class). Continuous, because a 69 and a 70 aren't different kinds of job. */
 export function scoreRingColor(score: number): string {
   const stops: [number, [number, number, number]][] = [
     [0, [220, 38, 38]],
@@ -65,14 +60,9 @@ export function scoreRingColor(score: number): string {
   return `rgb(${mix[0]} ${mix[1]} ${mix[2]})`;
 }
 
-/** Whole days elapsed from `iso` until now (duplication audit D-F11 — the
- *  hand-rolled copies of this arithmetic disagreed on floor vs round, so the
- *  same age could read "3d" on one surface and "4d" on another).
- *
- *  `mode` stays explicit at every call site because each existing choice is
- *  load-bearing: "floor" counts completed days (days-in-column / days-in-status),
- *  and "round" snaps to the nearest day (relative time-ago copy).
- *  Returns NaN for an unparseable timestamp — callers guard. */
+/** Whole days from `iso` until now (D-F11). `mode` is explicit everywhere:
+ *  "floor" counts completed days (days in column), "round" snaps to the nearest
+ *  (time-ago copy). NaN for an unparseable timestamp; callers guard. */
 export function daysBetween(iso: string, mode: "floor" | "round" = "floor"): number {
   const days = (Date.now() - new Date(iso).getTime()) / 86_400_000;
   return mode === "round" ? Math.round(days) : Math.floor(days);

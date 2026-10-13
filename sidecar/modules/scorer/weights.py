@@ -66,14 +66,10 @@ def weighted_total(factors: Sequence[Factor], weights: Mapping[str, float]) -> i
 
 
 # --- user weights (scoring.md 7.4) -------------------------------------------
-#
-# One table over the 5 GRADED axes, applied to whatever factors a job has and
-# renormalized over the ones present, so it works whichever method scored it.
-# The 2 modifier axes are deliberately not in it: location and logistics are
-# answered as confidences by Jev, and multiplying a confidence by a weight
-# produces a number with no meaning (talk.md D43). Location gets its own dial
-# instead, the size of the miss penalty, which is what "location first"
-# actually means in this arithmetic.
+# 1 table over the 5 graded axes, renormalized over the factors a job has, so it
+# works for every method. Location and logistics aren't in it: Jev answers them
+# as confidences, and confidence times weight means nothing (talk.md D43).
+# Location gets its own dial, the size of the miss penalty.
 
 WEIGHTED_AXES: tuple[str, ...] = (
     "hard_requirements",

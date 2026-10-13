@@ -803,12 +803,10 @@ class ContactDTO(BaseModel):
     sent_at: datetime | None
     accepted_at: datetime | None
     archived_at: datetime | None
-    # The card/modal last-message snippet (US-NW-01/03): the thread's REAL last
-    # message once contact-sync has read it (`profile_payload.last_thread_message`),
-    # attributed by `last_message_direction` — "me" is ours, "them" is the
-    # contact's, with `last_message_from` naming them. Before any sync the
-    # latest OutreachLog fills in (always direction "me"), so a card that has
-    # outreach history is never blank.
+    # The last-message snippet (US-NW-01/03): the thread's real last message once
+    # contact sync has read it, attributed by `last_message_direction` ("me" or
+    # "them", with `last_message_from`). Before any sync the latest OutreachLog fills
+    # in, so a card with history is never blank.
     last_message: str | None = None
     last_message_at: datetime | None = None
     last_message_direction: str | None = None  # "me" | "them" | None (no message)
@@ -865,17 +863,10 @@ class ReferralCandidatesDTO(BaseModel):
     company: str
     candidates: list[ReferralCandidateDTO]
     already_reached_count: int
-    # The last discover op's outcome for this role, so a reopened popup can
-    # recover a background (Save-triggered) discover instead of showing a blank
-    # start screen (2026-07-17 dogfood: a Save-discover that ended in
-    # needs_company_confirm left no visible trace). One of:
-    #   never   — no discover has run for this job
-    #   found   — discover persisted candidates (they're in `candidates`)
-    #   empty   — discover ran but LinkedIn returned nobody at the company
-    #   confirm — discover needs the user to pick the company entity
-    #   refused — voyager refused the read (self-imposed cap / backoff); the
-    #             verbatim reason is in `refusal_reason` (2026-08-15: this state
-    #             used to masquerade as `empty`)
+    # The last discover op's outcome, so a reopened popup can recover a background
+    # discover: never, found (in `candidates`), empty (nobody at the company),
+    # confirm (pick the company entity), or refused (voyager declined the read; the
+    # reason is in `refusal_reason`, and it must never read as empty).
     discover_state: str = "never"
     # When discover_state == "confirm": the entity candidates to choose from
     # (may be empty → paste-URL only) and whether a pasted URL had failed.
@@ -1054,13 +1045,9 @@ class LinkedInSessionDTO(BaseModel):
     paused_reason: str = ""
     search_cursor: LinkedInSearchCursorDTO | None = None
     rate_limits: LinkedInRateLimitsDTO | None = None
-    # When the last contact-status sync that ACTUALLY PROBED finished (None =
-    # never). Backs the Networking header's "Synced Nm ago" stamp beside the
-    # Sync button — the one trigger there is (manual-only, 2026-08-15); each
-    # press is real LinkedIn read traffic. A sweep the read budget refused
-    # outright "succeeds" as an operation but synced nothing, so it must not
-    # re-stamp "Synced just now" (the 2026-08-15 live confusion). Attached by
-    # `routes._linkedin_session_base`.
+    # When the last sync that actually probed finished (None means never); backs the
+    # "Synced Nm ago" stamp. A sweep the budget refused succeeds as an op but synced
+    # nothing, so it doesn't re-stamp. Set by `networking._linkedin_session_base`.
     contact_sync_last_at: datetime | None = None
     # What the NEWEST sync attempt did — synced/failed counts plus the stop
     # reason and untouched-tail size when the sweep was cut short. The

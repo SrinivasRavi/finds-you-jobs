@@ -1,9 +1,6 @@
 // Shared e2e helpers. Not a spec: Playwright's default testMatch only picks up
-// *.spec.ts, so this file is imported, never run.
-//
-// `sidecarInfo` existed as 21 byte-identical copies across the suite, 2 of them
-// returning a different shape under the same name, which is how a helper ends
-// up meaning 2 things. One copy now, both shapes named.
+// *.spec.ts. `sidecarInfo` used to be 21 copies, 2 of them a different shape
+// under the same name; one copy now, both shapes named.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

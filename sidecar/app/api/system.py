@@ -61,12 +61,9 @@ async def shutdown(request: Request) -> JSONResponse:
 
 
 # -- Dev tools (local testing only) ----------------------------------------
-# A single-user local app on the user's own machine — these fault-injection
-# endpoints power the Dev surface (US-DEV-01, dev-only): simulate an expired
-# LinkedIn cookie mid-action, a crash mid-generation, and quick seed data.
-# F-L4: they mutate/corrupt real state, so they answer only when the process
-# was started with FYJ_DEV=1 (scripts/dev-web.mjs sets it; the packaged app
-# never does) — otherwise 404, indistinguishable from an unknown route.
+# Fault injection behind the Dev surface (US-DEV-01): an expired LinkedIn cookie,
+# a crash mid-generation, seed data. They corrupt real state, so they answer only
+# under FYJ_DEV=1, which the packaged app never sets; otherwise 404 (F-L4).
 
 
 def _require_dev_mode() -> None:

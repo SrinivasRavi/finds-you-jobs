@@ -249,20 +249,11 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
     internal_calls = 0
     stopped = ""
 
-    # Partition the batch (2026-08-16, the read-budget redesign). A contact in
-    # accepted/engagement with a CACHED fsd_profile urn (`profile_payload.
-    # fsd_urn`, written back from an earlier full probe) needs no degree read:
-    # its whole sync question is the 1:1 thread, answered by the sweep's one
-    # inbox read — an unmetered thread-only probe that a spent profile-view
-    # budget can never refuse. Only `sent` rows (is the invite accepted?) and
-    # urn-less rows (the bootstrap read that learns the urn) pay a charged
-    # profile read. Manual-frozen rows used to rotate unprobed, which held
-    # their card's last message stale for the whole cooldown; a frozen
-    # accepted/engagement row with a cached urn now rides the thread-only pass
-    # with its TRANSITION suppressed (display refresh only — a read-only
-    # snapshot fights no manual move). Everything eligible probes in ONE
-    # browser session (2026-08-04 — the per-contact loop launched a full
-    # Chromium 5 times for a 5-contact sweep).
+    # Partition the batch. An accepted or engagement contact with a cached fsd urn
+    # needs only its thread, answered by the sweep's 1 unmetered inbox read; only
+    # `sent` rows and urn-less rows pay a charged profile read. A manually frozen row
+    # with a urn rides the thread pass with its transition suppressed. Everything
+    # eligible probes in 1 browser session.
     eligible: list[dict[str, Any]] = []
     for contact_id in contact_ids:
         with ctx.db.repos() as repos:
@@ -315,12 +306,9 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 thread_only={e["pid"] for e in eligible if e["thread_only"]},
             )
         except NetworkerError as exc:
-            # A hard batch failure (driver crash / unparseable envelope) must not
-            # kill the tick — log verbatim, rotate the whole batch, and SAY so in
-            # the result_ref (`stopped: "batch_failed"`) instead of reporting a
-            # clean zero that reads like "nothing to do".
-            # S-C14: the router names it (coded label, or the unknown path's
-            # captured evidence plus one model label) before the batch rotates.
+            # A hard batch failure mustn't kill the tick: log it, rotate the batch, and say
+            # so in result_ref (`stopped: "batch_failed"`) rather than a clean 0. S-C14: the
+            # router names the cause before the batch rotates.
             routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
             log.warning(
                 "contact_sync: batch probe failed (%s): %s", routed.diagnosis, exc
@@ -331,17 +319,11 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             probes = []
             stopped = "batch_failed"
 
-    # The worker stops the sweep on the first rate-limit/cap/auth refusal
-    # (section 0.4: the first 429 stops the batch), and it reorders (thread-only
-    # first), so probes are JOINED BY public_identifier — contacts without a
-    # result were never probed and stay first in line for the next tick. The
-    # auth stop is deliberate: a 401 is a dead SESSION, not one bad contact,
-    # so every later probe would 401 identically and probing on just burns
-    # authenticated reads. What must not happen is the stop hiding — it is
-    # surfaced in the result_ref (`stopped` + `unprobed`), never swallowed. A
-    # refused row is NOT rotated: nothing was learned from it, and the old
-    # rotate-on-refusal made every budget-refused Sync press churn one card's
-    # cursor for zero LinkedIn traffic.
+    # The worker stops on the first rate-limit, cap or auth refusal and reorders, so
+    # probes join by public_identifier; unprobed contacts stay first next tick. A 401
+    # is a dead session, so probing on just burns reads; the stop is surfaced in
+    # result_ref (`stopped`, `unprobed`). A refused row isn't rotated: nothing was
+    # learned from it.
     by_pid = {p.public_identifier: p for p in probes}
     for entry in eligible:
         probe = by_pid.get(entry["pid"])

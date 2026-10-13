@@ -1,12 +1,7 @@
-// Unit tests for MutationErrorBanner's state semantics (F-L12): the MAX_STACK
-// cap + overflow count, StrictMode double-invoked-updater safety, head-keyed
-// auto-dismiss (new arrivals must not reset the head's clock), and dismiss-all.
-//
-// The banner is driven the same way main.tsx drives it — `fyj:mutation-error`
-// CustomEvents on window — so no QueryClient/MutationCache is needed and no
-// source export was required. react-i18next is mocked (t → key, with the count
-// interpolation made visible) so the real i18n module (top-level await + init)
-// stays out of the test graph.
+// Unit tests for MutationErrorBanner (F-L12): the MAX_STACK cap and overflow
+// count, StrictMode safety, head-keyed auto-dismiss, and dismiss-all. Driven by
+// `fyj:mutation-error` events like main.tsx; react-i18next is mocked so the real
+// i18n module stays out of the graph.
 import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";

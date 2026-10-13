@@ -126,15 +126,10 @@ test("a job with no link: add it, see it, filter it, give it a link", async ({
   await page.getByTestId("add-link-confirm").click();
   await expect(page.getByTestId("add-link-dialog")).toHaveCount(0, { timeout: 15_000 });
 
-  // Promoted: it crossed to the Has-link side, and ITS pane now offers the
-  // posting instead of Add link.
-  //
-  // Crossing the filter first, then re-selecting, is load-bearing (S-C71). The
-  // board resolves the detail pane as `visible.find(selectedId) ?? visible[0]`,
-  // so asserting straight after the dialog closes, while the No-link filter is
-  // still on, reads whichever URL-less neighbour the pane fell back to and its
-  // correctly-rendered Add link button. On the Has-link side no visible job can
-  // offer one, and the click pins the pane to this job either way.
+  // Promoted: it crossed to the Has-link side. Crossing the filter first is
+  // load-bearing (S-C71): the pane falls back to `visible[0]`, so asserting while
+  // No-link is still on reads a URL-less neighbour's Add link button. On the
+  // Has-link side no job can offer one, and the click pins the pane.
   await page.locator("#filter-link").getByText("Has link").click();
   await expect(page.getByText("Staff Platform Engineer").first()).toBeVisible();
   await page.getByText("Staff Platform Engineer").first().click();

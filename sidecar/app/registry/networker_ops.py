@@ -69,14 +69,11 @@ if TYPE_CHECKING:
 # override this seam with a fake that ignores the arg.
 DriverFactory = Callable[["PacingProfile | None"], VoyagerDriver]
 
-# Broker seam (Phase-3 referral integration). A `(slug) -> ready surface`
-# callable over the core browser broker; the slug is a runtime argument owned
-# inside the GPL package, so this module never names the vendor. When set (by the
-# host — see `build_surface_provider`), the real driver runs every referral page
-# action on the broker's single serialized surface lane instead of launching its
-# own Chromium. None (the default) keeps the self-launch path — the only path the
-# automated tests exercise, since they inject a fake driver through
-# `DRIVER_FACTORY` and never reach this seam.
+# Broker seam: a `(slug) -> ready surface` callable over the core broker; the
+# slug is owned inside the GPL package, so this module never names the vendor.
+# When the host sets it (`build_surface_provider`), the driver runs on the broker's
+# serialized lane instead of its own Chromium. None keeps the self-launch path,
+# which the tests use via `DRIVER_FACTORY`.
 SurfaceProvider = Callable[[str], Any]
 SURFACE_PROVIDER: SurfaceProvider | None = None
 
@@ -799,12 +796,9 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
 
-    # The send announces itself (`sending`, with the routed channel), then
-    # narrates REAL progress: the driver reports each completed step
-    # (`send_step` with the plan key) from the code that drove it — the
-    # pacing wait, the profile open, the click, the note, the verified send
-    # (maintainer, 2026-08-16: the queue panel ticks live, no fabrication
-    # needed since we are the ones driving).
+    # The send announces itself (`sending`, with the routed channel), then reports
+    # each completed step (`send_step`) from the code that drove it: the pacing wait,
+    # the profile open, the click, the note, the verified send.
     routed_channel = "dm" if is_first_degree else "connection_note"
     op_id = ctx.operation_id or ""
     _progress_start(op_id, routed_channel)
@@ -837,26 +831,18 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
             on_step=_publish_step,
         )
     except (NetworkerError, OSError, RuntimeError) as exc:
-        # Only `NetworkerError` was caught until 2026-09-20, and the driver wraps
-        # nothing but `VoyagerError` (`modules/networker/driver.py`). So a browser
-        # that failed to launch (`BrowserLaunchError`, a RuntimeError), a browser
-        # that stopped answering (`BrowserUnresponsiveError`, an OSError), an
-        # exhausted 5xx retry (OSError) and a navigation guard (a bare
-        # RuntimeError) all escaped this block: no OutreachLog row, no
-        # `send_failed` event, and the referrals row spun on "Sending" until the
-        # modal was closed. `route_cause` already walks `__cause__` and clamps an
-        # unrecognized one to `unknown`, so the body below needs no change.
+        # Catches every exception, not just `NetworkerError`: the driver wraps only
+        # `VoyagerError`, so launch failures, an unresponsive browser, an exhausted 5xx
+        # retry and navigation guards all escaped, leaving no OutreachLog row and a row
+        # stuck on "Sending". `route_cause` clamps an unrecognized cause to `unknown`.
         SEND_PROGRESS.pop(op_id, None)
         # S-C14: name the failure. A recognized worker state routes to its coded
         # label; an unrecognized one hard-stops, captures evidence and asks the
         # model for one label. The router never picks an action.
         routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
-        # A hard voyager failure (stale selector, subprocess crash, unparseable
-        # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,
-        # outreach_logs empty" dogfood bug. The audit row is a hard requirement for
-        # EVERY attempt incl. failures (FR-REF OutreachLog / NFR-SIDE-04), so we
-        # persist the verbatim failure here, emit the send_failed event, then
-        # re-raise so the operation is still marked failed (traceback → recorder).
+        # Every attempt gets an OutreachLog row, failures included (NFR-SIDE-04); a hard
+        # failure once skipped it (6 failed sends, 0 logs). Persist the verbatim failure,
+        # emit send_failed, then re-raise so the op still fails.
         channel = "dm" if is_first_degree else "connection_note"
         detail = str(exc)
         now = now_utc()
@@ -903,13 +889,9 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         )
         log_id = log.id
         if result.sent and not dry_run:
-            # Flip onto the kanban. A 1st-degree contact is already connected —
-            # a DM lands them in Accepted; a cold connect-note lands them in Sent.
-            #
-            # S-N4: this used to write "accepted" unconditionally, erasing the
-            # fact that a contact had ever written back. A DM we just sent means
-            # ours is the last message, so anyone who has replied before belongs
-            # in `pending_their_response`, never back in `accepted`.
+            # Flip onto the kanban: a DM to a 1st-degree contact lands in Accepted, a cold
+            # connect note in Sent. S-N4: a DM we just sent makes ours the last message, so a
+            # contact who has replied before goes to `pending_their_response`, not `accepted`.
             if is_first_degree:
                 row = repos.contacts.get(contact_id)
                 payload = (row.profile_payload or {}) if row else {}

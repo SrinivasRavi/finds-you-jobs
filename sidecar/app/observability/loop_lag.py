@@ -17,12 +17,9 @@ from collections.abc import Awaitable, Callable
 
 from ..logging_setup import get_logger
 
-# Checked every quarter of the shell's 2 s health window: on a periodic
-# schedule, any single stall at least this long is guaranteed to straddle a
-# wake-up, so it can't slip between checks. Logged past a tenth of the window
-# (the same fraction as SLOW_REQUEST_INFO_SECONDS in main.py) — big enough to
-# ignore ordinary scheduling jitter, small enough to warn well before a stall
-# could cost a /healthz miss.
+# Checked every quarter of the shell's 2 s health window, so any stall this long
+# straddles a check. Logged past a tenth of the window (like
+# SLOW_REQUEST_INFO_SECONDS): above jitter, well before a /healthz miss.
 LOOP_LAG_INTERVAL_SECONDS = 0.5
 LOOP_LAG_THRESHOLD_SECONDS = 0.2
 

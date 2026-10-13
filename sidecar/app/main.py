@@ -68,13 +68,9 @@ SHUTDOWN_DRAIN_SECONDS = 10.0
 SURFACE_REAP_INTERVAL_SECONDS = 60.0
 
 # The webview loads from tauri://localhost (macOS/Linux) or
-# http://tauri.localhost (Windows/Android) in prod; the browser-dev path
-# serves from 127.0.0.1:1420. The comment above already documented the prod
-# origin, but the regex itself never actually matched it (only http(s)://
-# loopback) — every real fetch from a packaged build failed CORS silently,
-# invisible until now because no packaged build had ever been run+tested
-# (docs/internal/distribution.md section 2/section 7). Loopback-only by design otherwise
-# (section 4.2) — this only widens it to the exact schemes Tauri itself uses.
+# http://tauri.localhost (Windows) in prod, and 127.0.0.1:1420 in browser dev.
+# Loopback-only otherwise (section 4.2); this adds exactly Tauri's schemes, which
+# the regex once missed, failing every packaged fetch (distribution.md section 7).
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
@@ -271,12 +267,10 @@ def create_app(
             observability=observability,
         )
 
-        # Scan → score chain (US-JB-02). Every successful scan (1) gives every
-        # still-unscored job an INSTANT on-device keyword floor so it never
-        # shows as "Pending" — the board always has at least a grey keyword
-        # score (maintainer 2026-07-22), then (2) in AI mode fans out one LLM
-        # `score` op per job to upgrade that floor (idempotent planner; capped
-        # by thresholds.score_new_batch). Scores land via SSE and re-rank.
+        # Scan to score chain (US-JB-02): after every successful scan, each unscored job
+        # gets an instant keyword floor, so the board always has a score; in AI mode, 1
+        # `score` op per job then upgrades it (idempotent planner, capped by
+        # thresholds.score_new_batch).
         def _chain_scan_to_scores(_operation_id: str, kind: str) -> None:
             if kind != "scan":
                 return
@@ -366,12 +360,9 @@ def create_app(
         if enable_scheduler and not degraded_boot:
             start_scheduler()
 
-        # Close browser surfaces nobody is watching. A surface is an OS thread
-        # plus a real Chrome plus its resident memory, and nothing used to
-        # reclaim one, so a single visit to the LinkedIn view kept a browser
-        # alive for the whole session. `reap_idle` blocks (it joins each
-        # surface's thread), hence the worker thread; it is a no-op while a
-        # viewer is attached or an op is driving the lane.
+        # Close browser surfaces nobody is watching; each is a thread and a real
+        # Chrome. `reap_idle` blocks (it joins threads), hence the worker thread; a no-op
+        # while a viewer is attached or an op drives the lane.
         async def _reap_idle_surfaces() -> None:
             while True:
                 await asyncio.sleep(SURFACE_REAP_INTERVAL_SECONDS)

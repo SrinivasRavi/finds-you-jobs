@@ -50,12 +50,10 @@ def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileD
     engines = _engines(request)
     if engines is None or engines.resolve("extract") is not None:
         _runner(request).submit("extract", {"profile_version": result.version})
-    # Re-scoring on a resume edit (maintainer 2026-07-23): keyword mode is free,
-    # so re-score the whole board now (off the event loop, via Starlette's
-    # threadpool). AI mode costs tokens, so it does NOT auto-run and there is no
-    # re-score action any more (maintainer 2026-08-28, S-C24): an existing AI
-    # score is version-agnostic, so the prior scores stay visible and no job is
-    # ever re-spent. An unchanged save keeps its version (no bump) either way.
+    # Re-scoring on a resume edit: keyword mode is free, so the whole board
+    # re-scores now (in Starlette's threadpool). AI mode costs tokens, so nothing
+    # auto-runs (S-C24): AI scores are version-agnostic and stay visible. An unchanged
+    # save keeps its version.
     if changed and mode == "keyword":
         from ..registry.operations import rescore_all_keyword
 
@@ -187,12 +185,9 @@ def update_settings(
         if "ui_state" in fields:
             _thread_scan_cadence(repos, ui_state)
         result = _settings_dto(repos)
-    # Switching Scoring to keyword mode scores the whole board right here —
-    # ~0.5 ms/job, no LLM — so the change is visible on the next board fetch
-    # instead of waiting for a scan. Off the event loop (async-first rule):
-    # a plain `def` handler runs in Starlette's threadpool automatically.
-    # Switching to AI mode enqueues NOTHING server-side: the next scheduler tick
-    # picks up whatever still has no AI score (S-C24's eligibility read).
+    # Switching to keyword mode scores the whole board here, about 0.5 ms per job,
+    # so the change shows on the next fetch (a plain `def` runs in the threadpool).
+    # Switching to AI enqueues nothing: the next tick picks up jobs with no AI score.
     after_mode = str(prefs_thresholds.get("scoring_mode") or "llm")
     if after_mode == "keyword" and before_mode != "keyword":
         from ..registry.operations import backfill_keyword_scores

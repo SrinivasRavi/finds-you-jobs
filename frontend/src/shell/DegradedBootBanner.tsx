@@ -4,15 +4,10 @@ import { useTranslation } from "react-i18next";
 import { useResumeScheduler, useSchedulerStatus } from "../api/queries";
 import { Modal } from "./Modal";
 
-/** The degraded-boot notice (D27).
- *
- * The shell keeps the last 5 boot outcomes; 3 in a row ending the same bad way
- * start the backend without its scheduler, so nothing queues itself into
- * whatever killed them. Without this banner the app would simply look idle,
- * which is the one thing a paused-work state must never do. It opens as a
- * dialog that must be answered (S-C43); keeping work paused leaves the banner
- * up, so the state stays visible until the user resumes or dismisses it.
- */
+/** The degraded-boot notice (D27). 3 boots in a row ending the same bad way
+ * start the backend without its scheduler; without this the app would just look
+ * idle. It's a dialog that must be answered (S-C43), and keeping work paused
+ * leaves the banner up until the user resumes or dismisses it. */
 export function DegradedBootBanner() {
   const { t } = useTranslation();
   const [answered, setAnswered] = useState(false);

@@ -456,13 +456,10 @@ class Executor:
             return ExecOutcome(ok=True, note=f"uploaded {artifact.label} via chooser")
         except PlaywrightError:
             pass
-        # The click may have opened a source MENU instead (Jobvite's Select →
-        # My Computer / Dropbox / Drive). Pick the local-file item — searching
-        # every frame, since Jobvite renders its form inside an iframe — and
-        # expect the chooser from IT.
-        # The item may be an <a>, a menuitem, or (Jobvite) a <span role=button>
-        # reading "File" inside a role=dialog. Match on a role=button too, held
-        # to the local-file words so a submit/close control never qualifies.
+        # The click may have opened a source menu instead (Jobvite: My Computer,
+        # Dropbox, Drive). Pick the local-file item across every frame (Jobvite uses an
+        # iframe) and expect the chooser from it. Match role=button too, held to
+        # local-file words so no submit or close control qualifies.
         menu_sel = (
             _OPTION_SELECTOR
             + ", [role=menu] a, ul li a, [role=dialog] [role=button], [role=menu] [role=button]"

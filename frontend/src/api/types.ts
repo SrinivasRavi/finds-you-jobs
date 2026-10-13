@@ -1,11 +1,6 @@
-// Typed API surface — mirrors the sidecar's architecture section 4.2 shapes and the
-// module result dataclasses (ROADMAP section 4 / sidecar/modules/*/types.py).
-//
-// This repo's sidecar implements a SUBSET of the prior API surface so far:
-// jobs/board/trash/tombstone/preview/add-a-job, operations, cost totals,
-// schedules, profile, settings, engines, SSE. Tracker/networking/apply/prep/
-// packet/prompts/spans/ingest/dev-tools types are trimmed until their
-// sidecar surface lands — see schema.d.ts for exactly what's live.
+// Typed API surface: the view types the surfaces consume, mirroring the
+// sidecar's DTOs (architecture section 4.2) and module result dataclasses
+// (sidecar/modules/*/types.py). schema.d.ts is the generated source of truth.
 
 import type { components } from "./schema";
 
@@ -121,12 +116,9 @@ export type BoardState = "active" | "trashed" | "expired";
  *  (S-C24 D5 / S-A6). */
 export type ScoreStatus = "scored" | "pending" | "failed" | "unscorable";
 
-/**
- * Thrown by `previewJob` / `addJobByUrl` when the pasted URL was permanently
- * deleted (tombstoned). Trash is recoverable, a tombstone is final — a re-add
- * is impossible, so the modal shows the honest copy instead of an editable form
- * (2026-07-09 ruling; US-JB-07 / FR-JB-09).
- */
+/** Thrown by `previewJob` / `addJobByUrl` when the pasted URL was permanently
+ * deleted. Trash is recoverable and a tombstone is final, so the modal shows the
+ * honest copy instead of a form (US-JB-07 / FR-JB-09). */
 export class JobTombstonedError extends Error {
   constructor(message = "This job was permanently deleted and can't be re-added.") {
     super(message);
@@ -286,13 +278,8 @@ export interface ActivityEntry {
   at: string | null;
 }
 
-/** A tracked application (one per saved/applied job). Trimmed from the prior
- *  repo's shape: no apply_state/form_prep/form_prep_summary/
- *  active_apply_operation_id — the Applier and save-time prep surfaces
- *  haven't landed on this sidecar. `intent` is new (section 5.1 exclusive value on
- *  ApplicationUpdate). `referrals_state`/`referrals_count` restored
- *  (2026-07-16, referral-outreach frontend) — the networking surface now
- *  exists on this sidecar. */
+/** A tracked application, 1 per saved or applied job. `intent` is the exclusive
+ *  value on ApplicationUpdate (section 5.1). */
 /** A document the user attached to a manually-logged application (the resume /
  *  cover letter they actually submitted). Downloaded, authed, via
  *  `api.fetchDocument(document_id)`. */
@@ -360,12 +347,10 @@ export interface Application {
   /** Save-time liveness (2026-07-11): true when a prep run found the posting
    *  dead. Always false on this sidecar (no save-time prep surface yet). */
   posting_closed: boolean;
-  /** Referral progress for the tracker Referrals slot (restored 2026-07-16) —
-   *  the canonical FR-NW-01 enum (backend `none` renders as `notStarted`):
-   *  `none` (grey) → `finding` (grey+spinner, discovery running) → `pending`
-   *  (yellow — roster found, or a partial/cap-stopped batch) → `sending`
-   *  (yellow+spinner, batch in flight) → `reachedOut` (green, all selected
-   *  sent). `failed` (red) = latest batch all-failed. */
+  /** Referral progress for the Referrals slot, the FR-NW-01 enum: `none` (grey),
+   *  `finding` (discovery running), `pending` (roster found or a partial batch),
+   *  `sending` (batch in flight), `reachedOut` (all selected sent), and `failed`
+   *  (the latest batch all failed). */
   referrals_state:
     | "none"
     | "finding"
@@ -805,12 +790,9 @@ export interface EngineRoute {
   model: string;
 }
 
-/** A user-editable LLM prompt (module skill markdown) — US-SET-12 / FR-SET-11.
- *  `default_md` is the shipped text; `override_md` is the saved edit or null
- *  (→ default). `op_kind` is the `LLM_KINDS` operation whose engine and model
- *  this prompt runs on; it differs from `kind` only for `networker_draft`,
- *  which runs as `draft`. The list is server-driven
- *  (`GET /api/settings/prompts`), so whatever kinds the sidecar exposes render. */
+/** A user-editable LLM prompt (US-SET-12 / FR-SET-11). `override_md` is the saved
+ *  edit or null; `op_kind` is the operation whose engine runs it, which differs
+ *  from `kind` only for `networker_draft` (runs as `draft`). Server-driven list. */
 export interface PromptSetting {
   kind: string;
   title: string;
@@ -927,13 +909,10 @@ export interface Settings {
   /** Find referrals on Save — default OFF (experimental, account-risk); only
    *  effective when Referral Outreach (networking) is enabled. */
   auto_referrals_on_save: boolean;
-  /** Which method scores a job. Scoring itself is always on (the old off-switch
-   *  is retired), and no method is ever hidden for a missing prerequisite: the
-   *  app clears it instead (`talk.md` D44).
-   *  - "llm": one AI call per job. The only method that writes prose.
-   *  - "jev": one structured decision call per job. Needs an OpenRouter key.
-   *  - "local": an on-device model. Needs its pack downloaded.
-   *  - "keyword": the on-device rules. Free, instant, always available. */
+  /** Which method scores a job; scoring is always on, and a method missing its
+   *  prerequisite is cleared, never hidden (talk.md D44). "llm": 1 AI call, the only
+   *  one with prose. "jev": 1 structured call, needs OpenRouter. "local": on-device,
+   *  needs its pack. "keyword": on-device rules, free and always available. */
   scoring_mode: ScoringMode;
   /** Per-method readiness from the server: facts only, the copy lives in i18n. */
   scoring_methods: ScoringMethod[];

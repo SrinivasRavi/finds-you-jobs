@@ -1,12 +1,7 @@
-// One referral-candidate row (extracted from ReferralsModal.tsx 2026-07-25,
-// F-M6 monolith split — pure move, zero behavior change). Memoized: every prop
-// is a primitive, a query-stable object (`c`), or a root-stable useCallback, so
-// typing in one row's draft no longer re-renders every other row.
-//
-// 2026-08-16 (maintainer): when CONNECTED, the row no longer expands into its
-// own draft editor — the pre-send confirmation is the one editable box (edit
-// where you confirm). The expandable editor remains only in drafts-only manual
-// mode, where no confirm dialog exists and Copy needs a visible draft.
+// One referral-candidate row (F-M6). Memoized: every prop is a primitive, a
+// query-stable object or a stable callback, so typing in 1 draft doesn't
+// re-render the others. When connected, the send confirm is the editor; the
+// expandable draft exists only in drafts-only mode, where Copy needs it.
 
 import { memo } from "react";
 import { useTranslation } from "react-i18next";

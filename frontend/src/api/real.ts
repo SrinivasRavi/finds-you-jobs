@@ -1,16 +1,6 @@
-// Real sidecar-backed client (ROADMAP A4).
-//
-// Talks to the live FastAPI sidecar over the bearer-authenticated loopback API
-// (client.ts handshake). The wire DTOs come from the generated OpenAPI types
-// (schema.d.ts) — so Pydantic↔TS drift is a build error — and are mapped here
-// into the frontend view types (src/api/types.ts) the surfaces already consume.
-//
-// This repo's sidecar implements a SUBSET of the prior API surface so far
-// (jobs/board/trash/tombstone/preview/add-a-job, operations, cost totals,
-// schedules, profile, settings, engines, SSE, and now the full applications/
-// tracker CRUD + packet/artifact endpoints). Networking/apply/prep/prompts/
-// spans/ingest/dev-tools methods stay trimmed until their sidecar surface
-// lands — see schema.d.ts for exactly what's live.
+// Real sidecar-backed client. Talks to the sidecar over the bearer-authenticated
+// loopback API. Wire DTOs come from the generated types (schema.d.ts), so drift is
+// a build error, and are mapped here into the view types in types.ts.
 
 import type { components } from "./schema";
 import { apiFetch, getSidecarInfo, type SidecarInfo } from "./client";
@@ -135,12 +125,9 @@ type ScoreRetryDTO = components["schemas"]["ScoreRetryDTO"];
 
 // ─── operation kinds ─────────────────────────────────────────────────────────
 
-// The routable LLM kinds, pinned to the sidecar's `LlmKind` schema (emitted
-// from registry/engine_config.LLM_KINDS via `pnpm codegen`, F-L3). The Record
-// makes drift a COMPILE error in both directions: a kind the sidecar retires
-// is an excess key, a kind it adds is a missing one. (The hand-mirrored list
-// this replaces had drifted — it still carried the retired `prep` and missed
-// the live `draft`/`apply`, so those two rows never showed in Settings.)
+// The routable LLM kinds, pinned to the sidecar's `LlmKind` schema (F-L3). The
+// Record makes drift a compile error both ways: a retired kind is an excess key,
+// a new one a missing key. The hand-kept list it replaced had drifted.
 type LlmKind = components["schemas"]["LlmKind"];
 const LLM_KIND_ROWS: Record<LlmKind, true> = {
   score: true,
@@ -275,12 +262,9 @@ function placeholderJob(jobId: string): JobDTO {
   };
 }
 
-// Restored from the prior repo's real.ts, trimmed: no apply_state/form_prep/
-// active_apply_operation_id (no Applier, no save-time prep surface on this
-// sidecar yet) — preview_screenshot and posting_closed stay in the
-// Application type but have no live source here, so they're hardcoded
-// null/false. referrals_state/referrals_count restored 2026-07-16 (the
-// referral-outreach backend now stamps them on every ApplicationDTO).
+// preview_screenshot and posting_closed have no live source on this sidecar,
+// so they're null and false; referrals_state and referrals_count come from every
+// ApplicationDTO.
 function toApplication(d: ApplicationDTO, job: Job): Application {
   const artifacts = d.artifacts ?? [];
   const resume = artifacts.find((a) => a.kind === "tailored_resume");
@@ -532,13 +516,9 @@ export class RealApi {
     try {
       res = await apiFetch(info, path, init);
     } catch (e) {
-      // Network-level failure (WebKit reports it as the bare "Load failed"):
-      // the shell may have kill-restarted the sidecar on a NEW port/token
-      // while we kept the old handshake — every request then dies against a
-      // dead port for the rest of the session (observed 2026-07-22). Drop the
-      // cached handshake and retry ONCE, but only when the re-resolved
-      // handshake actually changed (restart evidence): the old port is dead,
-      // so the retry cannot double-apply the original request.
+      // Network-level failure ("Load failed" in WebKit): the shell may have restarted
+      // the sidecar on a new port and token. Drop the cached handshake and retry once,
+      // only if the handshake changed: the old port is dead, so nothing double-applies.
       this.infoP = null;
       const fresh = await this.info();
       if (fresh.port === info.port && fresh.token === info.token) throw e;
@@ -560,12 +540,9 @@ export class RealApi {
     });
   }
 
-  /** POST a multipart body. No explicit Content-Type — the browser sets the
-   *  multipart boundary. On failure surfaces the sidecar's **verbatim** `detail`
-   *  (the "paste instead" / 409 / 422 messages the surfaces render), and always
-   *  as an `ApiError` so the status code survives for callers that branch on it
-   *  — the resume-ingest path used to drop it (D-F13). `what` names the action
-   *  for the fallback message when the body carries no detail. */
+  /** POST a multipart body; the browser sets the boundary. A failure always throws
+   *  an `ApiError` with the sidecar's verbatim `detail` and status (D-F13); `what`
+   *  names the action for the fallback message. */
   private async postForm<T>(path: string, form: FormData, what: string): Promise<T> {
     const info = await this.info();
     const res = await apiFetch(info, path, { method: "POST", body: form });
@@ -811,12 +788,9 @@ export class RealApi {
     return (await this.json("POST", `/api/jobs/${id}/tombstone`, {})) as TombstoneResult;
   }
 
-  // Restored (`/api/applications` now exists): Save = POST an application row;
-  // un-save = find it by job_id and DELETE it — the prior repo's model. Per-job
-  // toggles (US-TL-03/US-JB-03); omitted → server falls back to the
-  // auto-packet-on-save setting. `generate_prep` is accepted (JobBoard's Save
-  // dialog still offers it) but dropped — no save-time prep surface on this
-  // sidecar (ApplicationCreate carries no such field).
+  // Save posts an application row; un-save finds it by job_id and deletes it.
+  // Per-job toggles (US-TL-03 / US-JB-03); omitted means the auto-packet setting.
+  // `generate_prep` is accepted but dropped: this sidecar has no save-time prep.
   async setJobSaved(
     id: string,
     saved: boolean,
@@ -1452,12 +1426,9 @@ export class RealApi {
   }
 
   // ── operations / ledger ────────────────────────────────────────────────
-  /** The newest 1000 operations — 20 pages of 50 in the Analytics ledger
-   *  (maintainer, 2026-08-24: "display top 1000"). Nothing prunes the table any
-   *  more, so this bound is the only thing keeping the response finite. Measured
-   *  against a 100k-row ledger: 501 KB and 97 ms, versus 100 KB and 79 ms at the
-   *  old 200 — the cost is the table-wide sort, not the row count, and the
-   *  surface renders one 50-row page at a time. */
+  /** The newest 1000 operations, 20 pages of 50 in the Analytics ledger. Nothing
+   *  prunes the table, so this bound keeps the response finite: 501 KB and 97 ms on
+   *  a 100k-row ledger, where the cost is the sort, not the row count. */
   async listLedger(): Promise<LedgerEntry[]> {
     const ops = await this.req<OperationDTO[]>("/api/operations?limit=1000");
     return ops.map(toLedgerEntry);
@@ -1717,13 +1688,10 @@ export class RealApi {
     )) as LinkedInSessionDTO);
   }
 
-  /** Queue a `view_page` operation that shows `url` on the in-app watch-only
-   *  browser surface (2026-08-16 — the queued successor to the immediate
-   *  /api/browser/open). 202 always: the view waits its turn behind whatever
-   *  op is driving the surface, never a 409, and a view of the already-shown
-   *  page settles as a no-op. Sends this display's metrics (a surface's first
-   *  navigation fails closed without geometry); `contactId` names the ledger
-   *  row's subject. */
+  /** Queue a `view_page` op that shows `url` on the watch-only browser surface.
+   *  Always 202: the view waits behind whatever drives the surface, and a view of
+   *  the page already shown is a no-op. Sends display metrics (a first navigation
+   *  fails closed without them); `contactId` names the ledger row's subject. */
   async viewInBrowser(url: string, surface?: string, contactId?: string): Promise<void> {
     await this.json("POST", "/api/browser/view", {
       url,

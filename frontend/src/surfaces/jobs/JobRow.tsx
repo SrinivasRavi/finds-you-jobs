@@ -13,14 +13,10 @@ import {
   workLabel,
 } from "../jobFormat";
 
-/** 2 concentric rings (maintainer, 2026-10-07). The OUTER arc is the score:
- *  red at 0 through amber to green at 100, drawn as far round as the number
- *  goes. The INNER ring is the method that produced it, because a board can
- *  now carry 2 methods' numbers at once and the user has to be able to tell
- *  which is which without opening anything.
- *
- *  Keyword keeps its grey dashed circle unchanged: it's the always-free floor,
- *  it must never read as a paid score, and grey IS its method colour. */
+/** 2 concentric rings: the outer arc is the score, red through green, drawn as
+ *  far round as the number; the inner ring is the method that produced it, so 2
+ *  methods' numbers can be told apart at a glance. Keyword keeps its grey dashed
+ *  circle: the free floor must never read as a paid score. */
 export function MatchRing({ score, method }: { score: number; method: string }) {
   const { t } = useTranslation();
   const label = t(`scoreMethod.${method}`, { defaultValue: method });

@@ -46,14 +46,10 @@ from .models import (
     UserPreferences,
 )
 
-# ---------------------------------------------------------------------------
-# Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07)
-# ---------------------------------------------------------------------------
-# Summing the live ledger alone would silently forget the spend of any op that
-# got deleted, so the all-time totals surface = live-ledger sum + a persistent
-# aggregate (UserPreferences.ui_state["cost_totals"]). Nothing deletes an
-# operation today (S-C22), so the aggregate sits at zero and the live sum
-# carries everything; a deletion policy folds the doomed rows in here first.
+# Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07). All-time totals are the
+# live ledger plus a persistent aggregate in ui_state["cost_totals"], so deleting
+# an op can't forget its spend. Nothing deletes ops yet (S-C22), so it's 0; a
+# deletion policy folds doomed rows in here first.
 
 CostTotals = dict[str, Any]
 

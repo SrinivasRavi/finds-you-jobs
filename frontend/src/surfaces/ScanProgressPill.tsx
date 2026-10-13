@@ -1,14 +1,7 @@
-// Board-level Rescan status pill (observed-issue #2). After a scan is triggered
-// (manually via "Rescan now", or on the background cadence), the Job Board shows
-// one compact status: a round green sweeping ring + "Scanning for new roles…"
-// while discovery runs, then a round green progress ring + "AI is scoring the newly
-// found jobs" with an "M of N" count while the found jobs are AI-scored, and
-// finally a round green check + "Scan complete. Found N new roles." that stays
-// until the next scan supersedes it (no auto-dismiss — indefinite for now).
-//
-// Only the Job Board carries this board-level indicator — Applications and
-// Networking surface progress per card. When nothing is (or was) running, the
-// pill renders nothing (the last-scan time is surfaced elsewhere).
+// The board's Rescan status pill: a sweeping ring while discovery runs, a
+// progress ring with "M of N" while the new jobs are AI-scored, then a check with
+// "Found N new roles" until the next scan. Only the board has it; the other tabs
+// show progress per card. Renders nothing when no scan ran.
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,13 +10,9 @@ import { useScanProgress } from "../api/queries";
 import type { ScanProgress } from "../api/types";
 import { Icon } from "../shell/icons";
 
-/** True on the active→idle edge of a scan/scoring cycle — i.e. the moment to
- *  flip the pill to "Done". Fires whenever a cycle we SAW run settles, even if
- *  it found no new jobs (a re-scan that dedupes to zero still "completed" and
- *  deserves the confirmation check). Pure + exported so the edge detection is
- *  unit-testable: it must fire once on the active→idle transition, and must NOT
- *  fire on an idle-on-mount read (nothing ran) or while a cycle is still
- *  active. */
+/** True on a scan cycle's active-to-idle edge, the moment to show "Done", even
+ *  when it found nothing new. Never on an idle read at mount or mid-cycle.
+ *  Exported for its unit test. */
 export function isScanDoneEdge(
   wasActive: boolean,
   p: Pick<ScanProgress, "scan_running" | "score_pending">,

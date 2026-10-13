@@ -1,25 +1,8 @@
-// i18n — i18next + react-i18next (both MIT), all locales bundled locally so
-// the packaged app's loopback-only CSP never fetches anything. The selected
-// language persists in localStorage ("fyj-language", mirroring "fyj-theme")
-// and applies immediately via i18next's change events — no reload.
-//
-// Coverage (2026-07-24): every user-facing string is externalized; English is
-// the reference locale and the 12 other locales carry full-parity machine-
-// drafted translations (native-speaker PRs welcome). Anything missing in a
-// locale falls back to English. Locale files live in ./locales — one file per
-// language; en/ is split per-namespace and assembled by en/index.ts.
-//
-// Lazy locales (F-L10, 2026-07-25): only English (the fallback) ships in the
-// boot chunk; the other 12 languages are code-split via dynamic import() and
-// loaded on demand. Still "bundled locally" — the chunks are app assets served
-// from the same origin, so the loopback-only CSP holds. The persisted choice
-// is awaited at module scope (top-level await) BEFORE init, so a non-English
-// boot never flashes English: main.tsx's side-effect import doesn't resolve —
-// and React doesn't render — until the boot locale is registered.
-//
-// Arabic renders right-to-left: the <html dir> attribute follows the active
-// language (flex layouts mirror automatically; full RTL polish of the few
-// absolutely-positioned elements is tracked as follow-up work).
+// i18n: i18next with every locale bundled, so the loopback-only CSP never fetches.
+// The choice persists in localStorage ("fyj-language") and applies without a reload.
+// English ships in the boot chunk and the 12 others load on demand (F-L10); the
+// saved choice is awaited before init, so a non-English boot never flashes English.
+// Arabic sets <html dir="rtl">.
 
 import i18n, { type Resource } from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -91,12 +74,9 @@ async function loadLocale(code: LanguageCode): Promise<void> {
   i18n.addResourceBundle(code, "translation", mod.default, true, true);
 }
 
-// Monotonic switch token: each setLanguage call claims a new token, and only
-// the latest call applies. This must NOT lean on readLanguage() — if
-// localStorage.setItem throws (persistence is best-effort), a storage-based
-// guard would never match and in-session switching would go dead, and an
-// unconditional applyDirection could flip the page RTL while the language
-// itself never changed.
+// Monotonic switch token: only the latest setLanguage call applies. It can't
+// lean on readLanguage(): storage writes are best-effort, so a storage guard could
+// go dead or flip the page RTL while the language never changed.
 let switchToken = 0;
 
 /** Persist the language and switch the live UI (text + direction) to it. */

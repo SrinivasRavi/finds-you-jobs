@@ -180,13 +180,9 @@ async def _apply_async(
         job = repos.jobs.get(app_row.job_id)
         if job is None:
             raise ValueError(f"job {app_row.job_id!r} not found")
-        # Before the run row, never after: a run against a job with no posting
-        # link has no form to fill and would sit in the Applier panel as a
-        # failure the user can't act on (url-less-jobs.md section 5.4).
-        # `start_apply` refuses first and prompts for the link; this is the
-        # retry path's own guard.
-        # Same dev seam as the route: a local fixture form lives in the dev
-        # knobs, never in `canonical_url`, which is the posting's identity.
+        # Before the run row: a run against a job with no link has no form and would
+        # sit in the panel unactionable (url-less-jobs.md section 5.4). This is the retry
+        # path's guard; `start_apply` refuses first. Same dev seam as the route.
         dev_form_url = str(ctx.input_snapshot.get("dev_form_url") or "")
         if not job.canonical_url and not dev_form_url:
             raise ValueError(NO_POSTING_URL_DETAIL)
@@ -216,27 +212,19 @@ async def _apply_async(
         role = job.title
         jd_text = (job.description or "")[:12_000]
 
-    # Late-failure finalize (F-M3 follow-up, extended 2026-07-25): ANY
-    # exception escaping the post-adoption body below — the packet wait (which
-    # may raise AFTER setting the row `waiting_for_packet`), the PDF render,
-    # the browser launch, `run_apply` itself — must land the durable run row
-    # terminal before the op fails, or the Applier panel shows a live status
-    # forever (until boot sweep). The runner still fails the *operation*
-    # verbatim; a user cancel lands `interrupted`, never `failed`; both
-    # finalizers are guarded to ACTIVE rows, so a row `_finalize` already
-    # landed is never re-written.
+    # Late-failure finalize (F-M3): any exception after adoption (packet wait, PDF
+    # render, browser launch, `run_apply`) must land the run row terminal before the
+    # op fails, or the panel shows a live status forever. A user cancel lands
+    # `interrupted`; both finalizers are guarded to active rows.
     try:
         # -- wait for the packet, freeze the exact artifacts (section 8.1) ----------
         resume_md, resume_label, resume_artifact_id = await _wait_for_packet(
             ctx, application_id, run_id, control
         )
         if control.cancelled:
-            # CompletionCancelled, not a returned outcome: the runner already
-            # maps it onto the `cancelled` operation state. Returning normally
-            # here marked a user's own Stop as "Succeeded" in the ledger, the
-            # same misreport a `blocked` run had (2026-09-20). The row finalize
-            # runs first so the durable run lands `interrupted` either way; the
-            # handler below re-enters it, which is a guarded no-op.
+            # Raise CompletionCancelled, which the runner maps to `cancelled`; returning
+            # normally marked a user's Stop as "Succeeded". The row lands `interrupted` first;
+            # the handler below re-enters it as a guarded no-op.
             _finalize_cancel(ctx, run_id)
             raise CompletionCancelled("cancelled by the user")
 
@@ -654,13 +642,10 @@ def _finalize(
     return OperationOutcome(
         result_ref={"run_id": run_id, "status": result.status.value},
         usage=usage,
-        # A run that ended anywhere but `ready_for_human` did not do what the
-        # user asked, and the ledger has to say so. It used to return normally
-        # from every terminal status, so a `blocked` run read "Succeeded" in
-        # Analytics while the panel beside it read "Blocked" (2026-09-20). The
-        # reason is the first blocker, verbatim, which is the same line the
-        # panel shows; the usage above still rides along, so a failed run keeps
-        # its cost in the dashboard.
+        # A run that ended anywhere but `ready_for_human` didn't do what the user asked,
+        # and the ledger says so: a `blocked` run once read "Succeeded" beside a panel
+        # reading "Blocked". The reason is the first blocker, verbatim; usage rides along,
+        # so a failed run keeps its cost.
         error=None if status in ("ready_for_human", "submitted") else _failure_reason(result),
     )
 

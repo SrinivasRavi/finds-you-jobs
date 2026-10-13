@@ -59,12 +59,10 @@ class OperationOutcome:
     usage: dict[str, Any] | None = None
     engine: str | None = None
     model: str | None = None
-    # Set when the entrypoint ran to completion and the answer is that the thing
-    # the user asked for did not happen: the verbatim reason, which the runner
-    # records as a FAILED operation rather than a succeeded one. An entrypoint
-    # that crashes still raises, and the runner captures that the same way; this
-    # is for a failure the entrypoint already understands, where raising would
-    # throw away the usage and the result pointer it also has to report.
+    # Set when the entrypoint finished and what the user asked for didn't happen:
+    # the verbatim reason, recorded as a failed op. A crash still raises; this is for
+    # a failure the entrypoint understands, where raising would lose the usage and
+    # result pointer it must report.
     error: str | None = None
 
 
@@ -445,17 +443,11 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS, score_deterministic
 
-    # Too thin to score, in EITHER mode. `score_deterministic` returns 0 with a
-    # missing-data reason (see MIN_JD_CHARS for the evidence); doing the check
-    # here as well keeps the llm default from ever reaching the engine, so a job
-    # with no description costs nothing.
-    #
-    # Without this the two paths disagreed in 3 bands, because the scorer
-    # module's own guard (`_shared/job_input.py:91`) cuts at 80 chars while the
-    # floor cuts at 200: under 80 the llm op FAILED, and between 80 and 199 it
-    # spent tokens and returned a real, inflated score — the exact defect the
-    # floor exists to kill, live in the default mode. Measured on the
-    # maintainer's install: 114 jobs in the first band, 134 in the second.
+    # Too thin to score, in either mode: the keyword scorer returns 0 with a
+    # missing-data reason (MIN_JD_CHARS), and checking here keeps the AI path off the
+    # engine, so a job with no description costs nothing. The 2 paths used to
+    # disagree: under 80 chars the AI op failed, and from 80 to 199 it spent tokens on
+    # an inflated score (114 and 134 jobs on the maintainer's install).
     if mode != "keyword" and len(job_text.strip()) < MIN_JD_CHARS:
         mode = "keyword"
 
@@ -559,13 +551,10 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         _ensure_keyword_floor(
             ctx, job_id=job_id, master_md=master_md, job_text=job_text
         )
-        # Spend one of this job's attempts — but ONLY because the call reached
-        # the provider. A `ProviderCircuitOpen` rejection is the runner refusing
-        # to dispatch at all (the provider is presumed down for everybody), so
-        # it must not count against a job that did nothing wrong: those jobs go
-        # back to the pool unmarked and return on the next tick once the
-        # provider does. Without this split, one expired key would burn every
-        # queued job's whole budget in seconds.
+        # Spend an attempt only when the call reached the provider. A
+        # `ProviderCircuitOpen` rejection means the runner refused to dispatch, so the job
+        # returns to the pool unmarked; otherwise 1 expired key would burn every queued
+        # job's budget in seconds.
         if job_id is not None and ctx.db is not None and not isinstance(
             exc, ProviderCircuitOpen
         ):
@@ -866,13 +855,10 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
     )
 
 
-# Kinds whose entrypoints actually POLL `ctx.cancelled` while running (the LLM
-# modules check between retry attempts and mid-backoff) — the only RUNNING ops
-# a runner-level cancel can genuinely reach (F-M7 honesty, 2026-07-25). Kept
-# NEXT to the registry below so adding a kind forces the question "does it
-# poll?" instead of the cancel route silently over-promising. `apply` is NOT
-# here: it checks once at dispatch; its real cancel is the apply-run route's
-# ApplyControl. Queued ops of ANY kind stay cancellable.
+# Kinds whose entrypoints poll `ctx.cancelled` while running, the only running
+# ops a cancel can reach (F-M7). Next to the registry so a new kind faces the
+# question. `apply` checks once at dispatch; its real cancel is the apply-run
+# route. Queued ops of any kind stay cancellable.
 CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover"})
 
 

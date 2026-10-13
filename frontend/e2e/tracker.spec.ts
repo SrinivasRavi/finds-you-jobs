@@ -1,11 +1,7 @@
-// Covers: tracker — a Saved card renders on the kanban, the detail modal
-// opens, a notes edit lands in the Activity tab, and a column move + the
-// exclusive intent value round-trip through the live sidecar (roadmap
-// commit-8 UI gate).
-//
-// The application is created via the API with generation switched OFF —
-// letting the UI Save button auto-enqueue tailor/cover here would run the
-// real claude-cli engine and spend real tokens inside a test.
+// Covers: a Saved card on the kanban, the detail modal, the Activity tab, and a
+// column move plus the exclusive intent round-tripping through the sidecar.
+// The application is created through the API with generation off, so no real
+// tailor or cover op spends tokens inside a test.
 
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";

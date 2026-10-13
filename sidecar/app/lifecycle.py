@@ -29,12 +29,10 @@ LIFECYCLE_DEFAULTS: dict[str, int] = {
     # a separate, longer window covers Sent/Accepted-but-never-replied stalls.
     "engagement_ghosted_days": 14,
     "sent_ghosted_days": 21,
-    # Feed aging (FR-SYS-03): a job that has sat on the board this many days
-    # (from first ingest; a Restore resets the clock via `feed_since`) is greyed
-    # as an "Older listing" — still on the board and restorable; hard-deleted ~30
-    # days after greying unless Saved. NOTE the clock is board-age, NOT
-    # "not re-seen in a scan" — dedupe is first-seen-wins and refreshes nothing.
-    # Was the hard-coded `persistence.EXPIRE_AFTER_DAYS=14`; now user-owned.
+    # Feed aging (FR-SYS-03): a job on the board this many days (a Restore resets
+    # the clock) is greyed as an "Older listing", then hard-deleted about 30 days
+    # later unless Saved. The clock is board age, not "unseen in a scan": dedupe is
+    # first-seen-wins.
     "expire_listing_days": 14,
     # Permanent purge of soft-deleted (archived) rows.
     "contact_purge_days": 60,           # deleted (archived) contacts

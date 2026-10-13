@@ -1,14 +1,8 @@
-// The `openResumeModal` trio — one shared component switched by `kind`
-// (US-RES-01, US-RES-02, US-CL-01).
-//   master  → single-column editor, Preview⇄Raw toggle, MASTER pill, Upload PDF.
-//   tailored→ two-column (master read-only | tailored editable), TAILORED pill,
-//             Generate at the top, fabrication-guard NOTES rail, stale hint.
-//   cover   → single-column tailored editor, COVER LETTER pill.
-// Preview is ONE directly-editable rendered surface (contentEditable WYSIWYG-
-// lite; markdown stays the document of record — see shell/mdHtml.ts); Raw is
-// the same pane as markdown source. The variant box is always editable, so a
-// user can paste their own (from their own ChatGPT/Gemini). packetState only
-// gates the generating spinner.
+// The resume modal trio, 1 component switched by `kind` (US-RES-01/02, US-CL-01):
+// master (editor, Upload PDF), tailored (master read-only beside the editable
+// variant, Generate on top, notes rail) and cover. Preview is 1 editable rendered
+// surface over markdown (shell/mdHtml.ts); the variant box is always editable, so
+// a user can paste their own.
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -58,12 +52,9 @@ function PacketPill({ state }: { state: PacketState }) {
   );
 }
 
-/**
- * Share dropdown (US-RES-01/02, US-CL-01) — header button next to ×:
- * "Copy <this document> to clipboard" (Markdown, for ATS forms) + "Export to PDF"
- * (browser print → Save as PDF; real selectable text). `what` names the document
- * so the copy action is unambiguous ("Copy tailored resume to clipboard").
- */
+/** Share dropdown (US-RES-01/02, US-CL-01): copy the document as Markdown, for
+ * ATS forms, or export to PDF through the browser's print. `what` names the
+ * document so the copy action is unambiguous. */
 function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what: string }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);

@@ -31,14 +31,10 @@ SUBSCRIBER_QUEUE_MAXSIZE = 1000
 
 
 # ─── typed event payloads (F-M2) ─────────────────────────────────────────────
-# Pydantic mirrors of every envelope published today, injected into the OpenAPI
-# components (see `register_sse_schemas`) so `pnpm codegen` types the frontend's
-# SSE seam. The wire format is untouched — `make_event` still ships plain dicts;
-# these models declare the LOAD-BEARING keys (the ones the frontend's
-# invalidation bridge branches on), with `extra="allow"` carrying the per-phase
-# extras (`error`, `result_ref`, `contact_id`, `quota`, …). Tests validate the
-# real constructors against `SSE_ENVELOPE_ADAPTER` so model and reality can't
-# drift silently.
+# Pydantic mirrors of every SSE envelope, injected into OpenAPI so codegen types
+# the frontend's seam. The wire format is unchanged; the models declare the keys
+# the frontend branches on, with `extra="allow"` for per-phase extras. Tests
+# validate the real constructors against `SSE_ENVELOPE_ADAPTER`.
 
 
 class _EventPayload(BaseModel):

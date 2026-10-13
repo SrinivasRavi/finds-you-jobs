@@ -1,11 +1,6 @@
-// Client switch — architecture section 4.3 / ROADMAP A2–A4.
-//
-// No mocks/ directory exists yet in this rebuild (that lands with its own
-// commit) — the app always talks to the real sidecar-backed client
-// (src/api/real.ts). `hasSidecar()` stays exported: it's the same handshake
-// check main.tsx / the guard routes rely on to know whether a sidecar is
-// reachable at all (Tauri webview, or `VITE_SIDECAR_PORT`/`TOKEN` on the
-// `pnpm dev:web` path).
+// Client switch (architecture section 4.3). The app always talks to the real
+// sidecar-backed client (real.ts). `hasSidecar()` is the handshake check main.tsx
+// and the guard routes use to know whether a sidecar is reachable.
 
 import { inTauri } from "../shell/host";
 import { RealApi } from "./real";

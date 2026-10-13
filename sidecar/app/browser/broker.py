@@ -73,14 +73,10 @@ SHUTDOWN_TIMEOUT_SECONDS = 5.0
 # geometry never arrives — and then we error rather than lay a page out at a
 # generic size that would betray the surface (Our Finding on real display).
 GEOMETRY_TIMEOUT_SECONDS = 10.0
-# How long a surface may sit with no viewer watching and no work in flight
-# before the broker closes it. A surface costs an OS thread, a real Chrome, and
-# that Chrome's resident memory; nothing used to reclaim one, so opening the
-# LinkedIn view kept a browser alive for the rest of the session even after the
-# modal was closed. Reopening relaunches lazily through `surface()`, and the
-# profile dir persists, so the only cost of being wrong is one relaunch.
-# Generous on purpose: a watched surface is never idle at all, and any op still
-# driving the lane holds it open, so this only elapses when nobody wants it.
+# How long a surface may sit unwatched with no work in flight before the broker
+# closes it. Each costs a thread and a real Chrome, and nothing used to reclaim
+# one. Reopening relaunches lazily with the profile intact, so being wrong costs
+# 1 relaunch. Generous: a watched or busy surface is never idle.
 IDLE_SHUTDOWN_SECONDS = 300.0
 
 # How many Chromes may be live at once (backlog S-C20). Past it, launching a

@@ -1,12 +1,6 @@
-// The one Apply-Run status → display table (duplication audit D-F14). The
-// tracker card's slot map and the Applier panel's phase pill both classified the
-// same enum, and their fallbacks were opposites: the card degraded an unknown
-// status to the grey "Apply" slot, while the panel fell through to a GREEN
-// "Completed" — an unrecognised status reading as a submitted application.
-//
-// One table now carries both vocabularies (the surfaces word the same status
-// differently on purpose: "Ready for review" in the panel, "Review & submit" on
-// the card), and the single fallback is the conservative one.
+// The one Apply-Run status display table (D-F14). The card and the panel word
+// statuses differently on purpose, and share the conservative fallback; the
+// panel's own once showed an unknown status as green "Completed".
 
 import type { ApplyRunStatus } from "../api/types";
 

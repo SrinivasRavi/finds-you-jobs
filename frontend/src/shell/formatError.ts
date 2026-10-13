@@ -1,9 +1,6 @@
-// One engine error, turned into something a user can act on.
-//
-// The sidecar's verbatim text is what we show by default (NFR-SIDE-04): it
-// names the real problem better than anything generic. The one exception is an
-// error whose text is accurate and useless, where the fix is a sentence the
-// user can follow instead of a provider's wire message.
+// 1 engine error, turned into something a user can act on. The sidecar's
+// verbatim text is the default (NFR-SIDE-04); the exception is an error whose
+// text is accurate but useless, where a sentence the user can follow is better.
 
 import type { TFunction } from "i18next";
 

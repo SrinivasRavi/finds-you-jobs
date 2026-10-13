@@ -69,12 +69,10 @@ def test_connect_inside_more_menu_with_pagewide_fallback(browser):
 
 
 def test_connect_inside_sdui_more_menu(browser):
-    # 2026-07-13 live regression: LinkedIn's server-driven-UI profile renders the
-    # overflow-menu Connect as an <a href="/preload/custom-invite/…"
-    # componentkey="ConnectButton…"> with no role and no aria-label. Every classic
-    # probe missed it and the send failed with "no Connect affordance found" even
-    # though the menu was open with a visible Connect. The SDUI markers must match
-    # and the anchor must actually get clicked.
+    # 2026-07-13 live regression: LinkedIn's server-driven profile renders the
+    # overflow Connect as an <a href="/preload/custom-invite/…"
+    # componentkey="ConnectButton…"> with no role or label, which every classic probe
+    # missed. The SDUI markers must match and the anchor must get clicked.
     page = _page_for(browser, "connect_sdui_more_menu.html")
     try:
         assert find_and_click_connect(page, wait_ms=2000) == "more-menu-connect"

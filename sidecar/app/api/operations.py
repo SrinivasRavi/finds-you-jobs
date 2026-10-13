@@ -121,13 +121,10 @@ def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccept
         raise HTTPException(
             status_code=409, detail=f"operation {operation_id!r} is not cancellable"
         )
-    # Cancelling a QUEUED `apply` op strands its ApplyRun row live forever
-    # (the entrypoint that would finalize it never runs), so start_apply's
-    # single-flight keeps returning the dead run on every later Apply click.
-    # Land it `interrupted` (never `failed`) — a user cancel. Guarded to ACTIVE
-    # rows, so a run the entrypoint already finalized is left untouched. Only a
-    # queued apply reaches here: a running apply is refused above (409) and
-    # cancelled via POST /api/apply-runs/{id}/cancel instead (2026-07-25).
+    # Cancelling a queued `apply` op would strand its ApplyRun live forever, and
+    # Apply would keep returning the dead run. Land it `interrupted`, a user cancel,
+    # guarded to active rows. A running apply is refused above (409) and cancelled
+    # through POST /api/apply-runs/{id}/cancel.
     if kind == "apply" and apply_run_id:
         finalize_run_interrupted(db, apply_run_id, "cancelled before the run started")
     # Honest post-cancel state: a queued op is already `cancelled`; a running
@@ -138,13 +135,10 @@ def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccept
     return dto.OperationAccepted(id=operation_id, kind=kind, state=state)
 
 
-# The ledger's per-row human subjects (US-LOG-01 legibility, maintainer
-# directive 2026-08-03): WHICH entity each operation acted on, resolved from
-# the row's own snapshot/result refs with one IN query per table per page
-# (the `_application_dtos` batch-loader pattern — never per-row queries). A row
-# whose refs don't resolve (historical snapshots, deleted entities) gets no
-# subject and renders as before — nothing is fabricated. Every field is
-# verbatim entity data; the frontend adds count nouns / mode names via i18n.
+# The ledger's per-row subjects (US-LOG-01): which entity each op acted on,
+# resolved from its refs with 1 IN query per table per page, never per row. A row
+# whose refs don't resolve gets no subject; nothing is invented. Fields are
+# verbatim; the frontend adds nouns via i18n.
 
 _JOB_SUBJECT_KINDS = frozenset({"score", "tailor", "cover"})
 _CONTACT_SUBJECT_KINDS = frozenset({"draft", "send", "view_page"})

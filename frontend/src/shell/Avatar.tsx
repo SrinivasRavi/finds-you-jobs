@@ -1,9 +1,5 @@
-// The one initials tile (duplication audit D-F7). Ten hand-typed copies of the
-// same grid + place-items-center markup had settled into six chrome variants —
-// one of them carrying a comment admitting it "matches the Applications card
-// avatar". What genuinely differs between the call sites (size, corner radius,
-// wash) is a prop; everything else is shared, so the initials rule and the
-// layout live in exactly one place.
+// The one initials tile (D-F7). 10 copies had settled into 6 variants; what
+// really differs (size, radius, wash) is a prop.
 
 /** Up to two leading initials, uppercased. Empty tokens are dropped first, so a
  *  stray leading or doubled space never eats one of the two slots. */

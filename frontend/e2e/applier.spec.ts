@@ -1,13 +1,8 @@
-// Covers: the Applier UI against the live sidecar (roadmap commit-15 gate) —
-// the tracker card's Apply slot reflects the run lifecycle, the companion
-// panel binds to a run (snapshot path, section 9.2), shows the honest handoff strip
-// at ready_for_human, and "I submitted" attests + moves the card to Applied.
-//
-// ZERO model calls / ZERO external traffic: the run is started via the API
-// with the FYJ_APPLY_DEV scripted-engine knobs against a local file://
-// fixture form (the same seam the sidecar integration tests use). The UI
-// under test is real; the browser work happens in the sidecar's own
-// headless Chromium.
+// Covers: the Applier UI against the live sidecar. The card's Apply slot follows
+// the run, the companion panel binds to a run (section 9.2) and shows the handoff
+// strip at ready_for_human, and "I submitted" moves the card to Applied.
+// Zero model calls and zero external traffic: FYJ_APPLY_DEV's scripted engine
+// runs against a local file:// fixture form in the sidecar's own Chromium.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

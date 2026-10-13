@@ -685,18 +685,11 @@ def start_apply(
             # Single-flight per card: reopening the companion binds to the
             # active run instead of double-launching a browser (section 8.2).
             return dto.apply_run_dto(active)
-        # Before `apply_runs.create`, never after: a run row against a job
-        # with no posting link would sit in the Applier panel as a failure the
-        # user can't act on, and the browser would launch at nothing. 409 so
-        # the card can open the Add-link dialog and start the run once the
-        # link lands (url-less-jobs.md sections 5.4 and 9.8).
-        # The dev seam carries its own form, because a local fixture is a
-        # `file://` URL and `canonicalize_url` deliberately rejects any scheme
-        # that isn't http(s) — a posting's identity cannot be a path on this
-        # machine. So a dev run's fixture has nowhere to live on the job row,
-        # and pretending otherwise is what silently cost the Applier its only
-        # end-to-end gate when the no-link guard landed. Production is
-        # unchanged: no dev knobs, no override, and a URL-less card still 409s.
+        # Before `apply_runs.create`: a run against a job with no link would sit in the
+        # panel as a failure the user can't act on. 409, so the card opens Add link
+        # (url-less-jobs.md sections 5.4 and 9.8). The dev seam carries its own form: a
+        # local fixture is a file:// URL, which `canonicalize_url` rejects, so it can't
+        # live on the job row. Production has no dev knobs; a URL-less card still 409s.
         dev_form_url = str((payload.dev or {}).get("form_url") or "")
         if not job.canonical_url and not dev_form_url:
             raise HTTPException(status_code=409, detail=NO_POSTING_URL_DETAIL)
@@ -709,14 +702,10 @@ def start_apply(
     if payload.dev:
         snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
 
-    # Write phase — settle the exclusive intent (roadmap section 5.1) and create the
-    # durable run BEFORE enqueueing the op, in its own committed txn (no
-    # pending write is held across runner.submit — the 2026-07-17 locked-DB
-    # discipline). The worker can dispatch within milliseconds of submit, and
-    # it must adopt THIS row (by snapshot `run_id`): creating the row after
-    # submit raced the op's `get_by_operation` lookup, which then minted a
-    # duplicate run while the panel watched the route's row sit `queued`
-    # forever. Honest initial state: QUEUED until the op actually starts.
+    # Write phase: settle the intent (section 5.1) and create the run in its own
+    # committed transaction before enqueueing the op. The worker can dispatch within
+    # ms and must adopt this row by `run_id`; creating it after submit raced the op,
+    # which minted a duplicate run. QUEUED until the op starts.
     with db.repos() as repos:
         if needs_intent:
             repos.applications.update(application_id, intent="apply")

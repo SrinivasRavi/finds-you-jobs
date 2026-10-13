@@ -86,11 +86,8 @@ def provides_description(adapter: object) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Tenant-key helpers (duplication audit D-M6). Every ATS adapter derives its
-# board/org/account key from the source URL, and each was re-deriving the same
-# two idioms by hand. These are the one copy; adapters still own their host
-# validation (allowlist, anchored regex, reserved segments) — only the parsing
-# is shared.
+# Tenant-key helpers (D-M6): the 1 copy of the URL parsing every ATS adapter did
+# by hand. Adapters still own their host validation.
 # ---------------------------------------------------------------------------
 
 

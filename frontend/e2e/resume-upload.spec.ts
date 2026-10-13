@@ -1,11 +1,7 @@
-// The Upload affordance across the three resume modals (2026-07-28):
-//  - Master  → Upload EXTRACTS a document's text into the editor (multi-format);
-//              Upload + Preview|Raw are right-aligned.
-//  - Tailored/Cover → Upload ATTACHES the actual file as the application's
-//              submitted document (a chip beside the editable variant that
-//              coexists with any generated markdown); controls right-aligned.
-// The extraction formats are unit-tested (test_doc_extract.py) and the attach
-// endpoint (test_applications_vertical.py); this pins the live wiring + layout.
+// Upload across the 3 resume modals. Master: Upload extracts a document's text
+// into the editor. Tailored and cover: Upload attaches the file itself as the
+// submitted document, beside any generated markdown. Formats and the attach
+// endpoint are pytest-covered; this pins the live wiring and layout.
 
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";

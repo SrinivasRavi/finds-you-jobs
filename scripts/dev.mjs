@@ -1,9 +1,6 @@
-// `pnpm dev` / `pnpm dev:web` entry with a self-sufficient PATH (2026-07-17
-// fresh-install test: the setup script installs Rust/uv, but a terminal opened
-// BEFORE that install has a stale PATH — `cargo metadata: No such file or
-// directory` — because installers only wire PATH for new shells). Instead of
-// asking users to know that, prepend the standard per-user tool locations to
-// this process's PATH before running anything; child processes inherit it.
+// `pnpm dev` entry with a self-sufficient PATH. A terminal opened before the
+// setup script installed Rust and uv has a stale PATH, so this prepends the
+// standard per-user tool locations; child processes inherit it.
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";

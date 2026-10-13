@@ -1,20 +1,8 @@
-// Screencast WebSocket client — the live JPEG stream off the sidecar's
-// headless Chrome (browser broker, commit 1).
-//
-// Same transport posture as the SSE bus (events.ts): the bearer middleware
-// doesn't guard WebSocket scopes, so the token rides a query param on this
-// loopback-only surface. Server→client BINARY messages are one JPEG frame
-// each (binaryType "arraybuffer"); server→client TEXT messages are JSON
-// control frames; client→server TEXT messages are the navigate/resize
-// commands.
-//
-// WebSocket has no native retry, so reconnection is ours to run. Every reopen
-// re-resolves the handshake first, because the shell's supervisor kill-restarts
-// an unhealthy sidecar on a NEW random port + token — the same reason the SSE
-// bus rebuilds instead of trusting EventSource's retry (F-H3, events.ts).
-//
-// One client per mounted surface, not a shared singleton: this stream carries
-// a per-viewer viewport and navigation, so it lives and dies with its surface.
+// Screencast WebSocket client: the live JPEG stream off the sidecar's Chrome.
+// The token rides a query param, as on the SSE bus. Binary messages are frames,
+// text messages are JSON control frames one way and navigate/resize the other.
+// WebSocket has no retry, so every reopen re-resolves the handshake first (F-H3).
+// 1 client per mounted surface: the stream carries a per-viewer viewport.
 
 import { getSidecarInfo } from "./client";
 

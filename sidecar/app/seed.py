@@ -78,21 +78,10 @@ def seed_defaults(db: Database) -> None:
                 "cleanup_trash", 1440,
                 next_due_at=now_utc() + timedelta(days=1), enabled=True,
             )
-        # US-NW-12 / FR-NW-15: contact-status sync is NO LONGER SCHEDULED.
-        #
-        # It used to be seeded **enabled** on a 12 h cadence, on the reasoning
-        # that the entrypoint no-ops while Referral Outreach is off. That gate is
-        # real, but once a user opts in it made the app touch LinkedIn on a timer
-        # with nobody present — an unattended background daemon against LinkedIn,
-        # which is the single hardest thing to defend and the one fact that broke
-        # the "every LinkedIn action is user-initiated" claim
-        # (`docs/internal/linkedin-addon.md` section 5, maintainer directive
-        # 2026-07-30). Refreshing is now something the user asks for: the
-        # explicit Sync button, and nothing else (the throttled on-open refresh
-        # that briefly existed was removed 2026-08-15 — manual-only).
-        #
-        # Existing installs carry an enabled row from before this change, so
-        # retire it here rather than leaving a timer running after an update.
+        # US-NW-12 / FR-NW-15: contact sync is no longer scheduled. A 12 h timer touched
+        # LinkedIn with nobody present, breaking "every LinkedIn action is user-initiated"
+        # (linkedin-addon.md section 5). The Sync button is the only trigger. Existing
+        # installs carry an enabled row, so retire it here.
         stale_sync = next((s for s in repos.schedules.list_all() if s.kind == "contact_sync"), None)
         if stale_sync is not None and stale_sync.enabled:
             repos.schedules.update(stale_sync.id, enabled=False)

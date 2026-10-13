@@ -1,9 +1,7 @@
-// Analytics (section 12 / FR-SET-07 + US-LOG-01) — the merged cost-and-usage + logs
-// surface. Left 25%: aggregate cost tiles + per-kind spend from the operations
-// ledger (the cost source of truth, architecture section 10). Right 75%: the operations
-// ledger table with a per-operation span drill-down (US-SYS-05 / A6), a Started
-// timestamp, per-agent filter chips, and a friendly "App restarted while
-// generating — retry?" affordance over the boot-recovery note (US-LOG-01).
+// Analytics (FR-SET-07 / US-LOG-01): cost and logs on 1 surface. Left, the cost
+// tiles and per-kind spend from the operations ledger (architecture section 10);
+// right, the ledger table with a span drill-down (US-SYS-05), agent filter chips,
+// and a retry offer over the boot-recovery note.
 
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -311,12 +309,9 @@ function StopButton({ entry }: { entry: LedgerEntry }) {
 }
 
 /** The error cell: the boot-recovery note gets friendly copy; other failures
- *  show a CLAMPED 1-2 line preview (de-emphasized once retried) — the full
- *  verbatim text lives ONLY in the expanded row (ExpandedBlocks), so a failed
- *  scan's Chrome-flags stack can never balloon the collapsed row (maintainer
- *  spec 2026-08-04). The Retry button itself lives in the State cell
- *  (RetryButton). Everything still WRAPS (break-words) — the ledger must never
- *  scroll sideways (2026-08-03). */
+ *  show a clamped 1 to 2 line preview, with the full text only in the expanded row,
+ *  so a long stack never balloons a collapsed row. Everything wraps: the ledger
+ *  never scrolls sideways. */
 function ErrorCell({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
   if (!entry.error) {
@@ -385,14 +380,10 @@ function queryList(s: LedgerSubject | null): string[] {
   return splitList(s?.label);
 }
 
-/** The COLLAPSED Operation cell — ONE fixed anatomy for EVERY ledger kind
- *  (maintainer spec 2026-08-04): the kind tag, ONE bold subject label (the
- *  entity, single-line truncated, hyperlinked when the backend resolved an
- *  external URL), an optional short count, and ONE muted single-line context
- *  (truncated) — nothing else, never more than ~2 text lines. Bulk payloads
- *  (source lists, search queries, messages, transition summaries) render ONLY
- *  in the expanded row (ExpandedBlocks); collapsed rows show counts instead.
- *  All entity text is verbatim backend data. */
+/** The collapsed Operation cell, 1 anatomy for every kind: the kind tag, 1 bold
+ *  subject (linked when the backend resolved a URL), an optional count, and 1 muted
+ *  context line. Bulk payloads render only in the expanded row. All entity text is
+ *  verbatim backend data. */
 function SubjectCell({ entry }: { entry: LedgerEntry }) {
   const { t } = useTranslation();
   const s = entry.subject;

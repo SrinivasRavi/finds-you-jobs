@@ -690,10 +690,9 @@ def test_hard_excludes_hide_existing_board_rows_and_restore(
 
 
 # ---------------------------------------------------------------------------
-# "New in last scan" (maintainer 2026-07-23): the scan records the job ids it
-# actually inserted in its result_ref; the board flags exactly those rows —
-# from the LATEST succeeded scan only — as isNew. Manual adds and rows from
-# older scans never carry the badge.
+# "New in last scan": the scan records the ids it inserted, and the board flags
+# exactly those, from the latest succeeded scan, as isNew. Manual adds and older
+# scans never carry the badge.
 # ---------------------------------------------------------------------------
 
 

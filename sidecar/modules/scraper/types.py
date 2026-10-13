@@ -77,12 +77,9 @@ class ScanPrefs:
     location_allow: list[str] = field(default_factory=list)
     location_block: list[str] = field(default_factory=list)
     location_always_allow: list[str] = field(default_factory=list)
-    # Company exclude — a cross-cutting gate like title/location, not a
-    # curated-list-removal like career-ops's tracked_companies: a meaningful
-    # slice of our adapters are open/uncurated (RemoteOK, TheMuse, Brave,
-    # search-shaped adapters), so an unwanted company can surface dynamically
-    # the same way an unwanted title or location can (job-finder-preferences
-    # design, docs/internal/discovery.md).
+    # Company exclude: a cross-cutting gate like title and location, since open
+    # adapters (RemoteOK, TheMuse, Brave, search) surface companies dynamically
+    # (docs/internal/discovery.md).
     company_block: list[str] = field(default_factory=list)
     # Content filter — description keywords, career-ops's `content_filter`.
     # Empty description always passes (no signal to filter on, same stance as
@@ -99,12 +96,9 @@ class ScanPrefs:
     # For seekers who need sponsorship; empty description passes.
     visa_filter: bool = False
     visa_phrases: list[str] = field(default_factory=list)
-    # Salary filter — career-ops's `salary_filter`, gated on `salary.py`'s
-    # parser. 0 = off for both bounds; amounts are ANNUAL in `salary_currency`
-    # (defaults to comparing against any currency-less posting; a posting in
-    # a *different* stated currency always passes — can't compare, can't gate).
-    # Unparsable/absent salary text always passes (rank-don't-gate: most
-    # postings state no salary at all).
+    # Salary filter (career-ops's `salary_filter`, via `salary.py`). 0 turns a bound
+    # off; amounts are annual in `salary_currency`. A posting in another currency, or
+    # with no parsable salary, always passes (rank, don't gate).
     salary_min: int = 0
     salary_max: int = 0
     salary_currency: str = ""

@@ -1,11 +1,7 @@
-// Covers: the 2-ring score dial (maintainer, 2026-10-07). The outer arc is the
-// score on a continuous red-to-green ramp; the inner ring is the method that
-// produced it. A board can now carry 4 methods' numbers at once, so a card has
-// to say which one it is without being opened.
-//
-// The 4 methods can't all be produced for real in e2e (Fast scoring needs an
-// OpenRouter key, On-device has no pack yet), so the board response is patched
-// the way board.spec.ts already patches it for the 150-row virtualization test.
+// Covers: the 2-ring score dial. The outer arc is the score on a red-to-green
+// ramp; the inner ring is the method that produced it. The 4 methods can't all
+// run in e2e (Fast needs an OpenRouter key, On-device has no pack yet), so the
+// board response is patched, as board.spec.ts does for virtualization.
 
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";

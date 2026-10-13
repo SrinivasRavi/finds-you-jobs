@@ -1,10 +1,7 @@
-// Unit tests for the WATCH-ONLY BrowserSurface (maintainer, 2026-08-16): the
-// read-only bar follows every server-pushed `status{url}` (driver-driven and
-// SPA navigations alike) — there is no typable URL field, no Go button, and no
-// way to steer the surface from here. Auto-home still holds: a pageless attach
-// opens the surface's `origin` (deferred while `autoHome` is off), so the
-// canvas is never dead blank. The ScreencastClient is mocked (no socket, no
-// frames); react-i18next is mocked t→key per the established pattern.
+// Unit tests for the watch-only BrowserSurface: the read-only bar follows every
+// server-pushed `status{url}`, with no way to steer from here, and a pageless
+// attach opens the surface's `origin` (deferred while `autoHome` is off). The
+// ScreencastClient and react-i18next are mocked.
 
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";

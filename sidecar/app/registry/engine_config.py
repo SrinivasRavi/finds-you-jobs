@@ -48,23 +48,16 @@ from .engines_http import (
 # BYOK engines are opt-in via the Settings routing map, never auto-selected.
 DEFAULT_ENGINE = "claude-cli"
 
-# The subscription-CLI provider family (2026-07-17 expansion): always-registered
-# builtin engines driven through the user's logged-in coding CLI — no key, no
-# EngineSettings row, nothing to persist. NOT in PROVIDERS below on purpose:
-# POST /api/engines must keep rejecting them as BYOK configs. Routing to one
-# that isn't installed fails at call time with a clear EngineError, matching
-# claude-cli's long-standing behavior.
+# Subscription-CLI providers: builtin engines driven through the user's
+# logged-in coding CLI, with no key and no stored row. Not in PROVIDERS, so POST
+# /api/engines rejects them as BYOK configs; an uninstalled one fails at call time
+# with a clear EngineError.
 CLI_PROVIDERS = (DEFAULT_ENGINE, "codex-cli", "antigravity-cli")
 
-# The LLM-backed operation kinds that need a routed engine. `extract` is the
-# application-profile extraction at master-save (FR-APP-01) — a small call; a
-# cheap model is fine. (The prior repository also routed `prep`; Save-time
-# form-prep is retired in this rebuild — `docs/internal/archived/applier-as-built.md` section 2 — so
-# the kind is deliberately absent.)
-# Every LLM-driven kind must be here or apply_routing never routes it and the
-# op dies EngineNotConfiguredError in production. `draft` (Networker) was
-# missing in the prior repository — a latent bug this rebuild fixes; `apply`
-# is the Applier agent loop.
+# The LLM-backed kinds that need a routed engine; one missing here is never
+# routed and dies EngineNotConfiguredError in production. `extract` is the small
+# application-profile call at master save (FR-APP-01); `draft` is the Networker;
+# `apply` is the Applier loop. `prep` is retired (applier-as-built.md section 2).
 LLM_KINDS = ("score", "tailor", "cover", "extract", "draft", "apply")
 
 # The routing value onboarding's Skip writes (S-C60): the kind stays unrouted,

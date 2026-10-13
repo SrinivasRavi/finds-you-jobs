@@ -147,13 +147,10 @@ async def test_login_seals_into_broker_profile_and_headless_surface_reads_it_bac
     assert "li_at" not in raw and "FAKE_FIXTURE_TOKEN" not in raw
     assert inspect_storage_state(storage_state)["has_auth_cookie"] is True
 
-    # 2) A real HEADLESS broker surface on the SAME slug picks the session back
-    # up. A broker-backed `AccountSession` on that surface seeds its context from
-    # the sealed storage-state on the first lane bind (the broker drops
-    # `--use-mock-keychain`, so the profile's own encrypted cookie jar is
-    # unreadable to it — the seed is what restores `li_at`). The action then runs
-    # on the surface thread and reads the session cookies back off the surface's
-    # own context.
+    # 2) A real headless broker surface on the same slug picks the session back up.
+    # The broker drops `--use-mock-keychain`, so the profile's cookie jar is
+    # unreadable to it; the sealed storage-state seeded on first bind restores
+    # `li_at`, and the action reads it back off the surface's own context.
     surface = broker.surface(SURFACE_SLUG)
     try:
         await surface.wait_ready(timeout_seconds=60)

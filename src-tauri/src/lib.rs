@@ -12,19 +12,11 @@ use tauri::{Manager, RunEvent, State};
 
 use sidecar::{dev_cwd, init_shell_log, spawn_once, supervise, AppState};
 
-/// Open an external http(s) URL in the OS default browser. The WebView blocks
-/// window.open/target=_blank for external origins, so every outbound link in
-/// the app routes through here (2026-07-11 beta feedback — links didn't open;
-/// re-hit 2026-07-17: "Open posting" did nothing because this command was
-/// missing from the rebuild's shell while the frontend already invoked it).
-///
-/// URLs reaching here come from scraped postings and LLM output — untrusted.
-/// `validate_external_url` strictly parses them, and every platform arm spawns
-/// the launcher with a real argv, never through a shell. Windows in particular
-/// must not use `cmd /C start`: cmd.exe re-tokenizes its line, so `& | ^` in a
-/// URL become command separators (F-H1 injection). `rundll32
-/// url.dll,FileProtocolHandler` opens the default browser with plain argv
-/// semantics instead.
+/// Open an external http(s) URL in the OS browser; the WebView blocks window.open
+/// for external origins. URLs come from scraped postings and LLM output, so
+/// `validate_external_url` parses them strictly, and every platform spawns the
+/// launcher with a real argv, never a shell. Windows uses `rundll32
+/// url.dll,FileProtocolHandler`, since `cmd /C start` re-tokenizes `& | ^` (F-H1).
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     let url = validate_external_url(&url)?;
@@ -105,18 +97,11 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
     Ok(parsed.to_string())
 }
 
-/// Open the user's terminal running the named subscription CLI's login flow.
-/// The terminal's own login shell resolves the binary on PATH (the same env
-/// the sidecar's login-shell probe uses), and each CLI persists its auth
-/// locally, so onboarding's Verify — which reads that persisted auth —
-/// confirms success after they log in. Shown only when Verify reports
-/// `not_logged_in`, so an already-logged-in user never lands here.
-///
-/// `cli` maps through a fixed allowlist to the exact command line — the
-/// frontend can name a CLI, never inject a command. An unknown id is an error
-/// (F-L6): silently falling back to `claude` would open the wrong login flow
-/// and hide the frontend/shell mismatch. `None` still means `claude` (the
-/// historical default).
+/// Open the user's terminal running the named CLI's login flow; the login shell
+/// resolves the binary, and onboarding's Verify then reads the persisted auth.
+/// Shown only on `not_logged_in`. `cli` maps through a fixed allowlist, so the
+/// frontend can name a CLI but never inject a command; an unknown id is an error
+/// (F-L6), and `None` means `claude`.
 #[tauri::command]
 fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
     let login_cmd = match cli.as_deref() {
@@ -147,13 +132,9 @@ fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
         .map_err(|e| format!("could not open terminal: {e}"))
 }
 
-/// Set the macOS dock / app-switcher icon at runtime to the finds-you-jobs logo.
-///
-/// A packaged `.app` gets its dock icon from `Contents/Resources/icon.icns` via
-/// `CFBundleIconFile`, but `pnpm tauri dev` runs an unbundled debug binary that
-/// has no such bundle, so it falls back to the default Tauri square. We embed
-/// the logo bytes and hand them to `NSApplication` directly. Harmless in a
-/// packaged build (it just re-asserts the same logo).
+/// Set the macOS dock icon at runtime. A packaged .app gets it from icon.icns,
+/// but `pnpm tauri dev` runs an unbundled binary that shows the default Tauri
+/// square, so the logo bytes go to NSApplication directly. Harmless when packaged.
 #[cfg(target_os = "macos")]
 fn set_macos_dock_icon() {
     use objc2::{AnyThread, MainThreadMarker};

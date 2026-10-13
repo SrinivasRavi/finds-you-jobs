@@ -69,12 +69,9 @@ def test_red_flag_term_caps_score_regardless_of_overlap():
 
 
 # --- the too-thin-to-score floor (S-C27) --------------------------------------
-# A JD under MIN_JD_CHARS scores 0. Before this, the score divided overlap by the
-# JD's OWN term count, so a 8-term title header scored on a handful of matches
-# while a 250-term real JD was graded strictly: measured on the maintainer's
-# install, description-less jobs averaged 53.0 against 44.9 for described ones
-# and outranked them on the board. The 0 is a refusal to rate, carried in
-# `reasons`, not a claim that the role is a bad fit.
+# A JD under MIN_JD_CHARS scores 0, a refusal carried in `reasons`. Overlap over
+# the JD's own term count had description-less jobs averaging 53.0 against 44.9
+# and outranking real ones.
 
 RESUME = "Senior backend engineer. 8 years with Python, Django, PostgreSQL, AWS. Mumbai, India."
 

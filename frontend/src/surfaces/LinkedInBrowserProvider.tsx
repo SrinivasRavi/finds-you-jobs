@@ -1,19 +1,8 @@
-// The LinkedIn browser modal + its app-level opener (maintainer, 2026-08-16;
-// it was a left-rail destination before, and a tab inside Networking before
-// that). The live watch-only surface on the left, the "LinkedIn actions"
-// queue panel on the right, in a maximum-size dialog (the tailored-resume
-// sizing: the shell clamps to 96vw/94vh, backdrop + × stay visible).
-//
-// Mounted ONCE in the Layout, above every routed surface, because the modal
-// opens from more than Networking: the Tracker's referrals popup and any
-// send path land here too. Hoisting `useBrowserOps` into the provider keeps
-// ONE SSE subscription + ledger seed alive for the whole session, so the
-// Networking pill's busy state and the queue panel share state and nothing
-// resets when the modal closes.
-//
-// Add-on-side by design: this file names the vendor (slug, origin, labels);
-// the shared BrowserSurface / screencast components it mounts stay
-// vendor-agnostic (`plugin-architecture.md` section 12.2).
+// The LinkedIn browser modal and its app-level opener: the watch-only surface
+// beside the "LinkedIn actions" queue, in a maximum-size dialog. Mounted once in
+// the Layout because the Tracker's popup and every send path open it too; hoisting
+// `useBrowserOps` here keeps 1 SSE subscription for the session. Add-on side: it
+// names the vendor (plugin-architecture.md section 12.2).
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -40,12 +29,9 @@ export const LINKEDIN_ORIGIN: string =
   "https://www.linkedin.com/";
 
 interface LinkedInBrowserValue {
-  /** Open the LinkedIn browser modal (in place, over the current surface).
-   *  `onBack` is supplied by a caller that closed its own modal to get here
-   *  (the referrals popup); it puts a Back control in the header that returns
-   *  the user where they came from instead of dropping them on the surface
-   *  underneath. Callers opening the modal directly pass nothing and get no
-   *  Back control, because there is nowhere to go back to. */
+  /** Open the LinkedIn browser modal over the current surface. A caller that closed
+   *  its own modal to get here (the referrals popup) passes `onBack`, which puts a
+   *  Back control in the header; direct callers get none. */
   open: (opts?: { onBack?: () => void }) => void;
   close: () => void;
   isOpen: boolean;
