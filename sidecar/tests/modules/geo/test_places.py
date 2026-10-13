@@ -262,3 +262,41 @@ def test_each_consumer_gets_the_right_part_of_a_picked_chip() -> None:
     assert chip_label(chip) == "London, Ontario, Canada"
     block = render_preferences_block(SimpleNamespace(role_aliases=["SWE"], locations=[chip]))
     assert "London, Ontario, Canada" in block
+
+
+# --- audit A7: a metro's own cities, and a wanted region at scan time ----------
+
+
+def test_a_metro_chip_takes_its_cities_in_its_own_country() -> None:
+    """The biggest "Santa Clara" is in Cuba; the Bay Area's is in California."""
+    from sidecar.modules.geo.resolve import Verdict, match, resolve_location, resolve_wanted
+
+    wanted = resolve_wanted([{"label": "Bay Area, United States", "name": "Bay Area",
+                              "level": "metro", "id": "bay area"}])
+    assert match(resolve_location("Santa Clara, California"), wanted)[0] is Verdict.MATCH
+    assert match(resolve_location("San Jose, CA"), wanted)[0] is Verdict.MATCH
+    assert match(resolve_location("Los Angeles, CA"), wanted)[0] is Verdict.MISS
+
+
+def test_the_scan_keeps_a_posting_inside_a_wanted_region() -> None:
+    """A word match drops "Pune, India" for a Maharashtra chip; the place test keeps it,
+    and a posting outside every wanted place is still dropped."""
+    from dataclasses import replace
+
+    from sidecar.app.registry.persistence import _expand_locations, _with_place_match
+    from sidecar.modules.scraper.filters import passes_location
+    from sidecar.modules.scraper.types import ScanPrefs
+
+    chip = {"label": "Maharashtra, India", "name": "Maharashtra", "level": "admin1",
+            "id": "IN.16"}
+    words = _expand_locations(["Maharashtra"])
+    base = ScanPrefs(location_allow=words, location_always_allow=words)
+    assert passes_location("Pune, India", base) is False  # the defect, word match only
+    prefs = _with_place_match(base, [chip])
+    assert passes_location("Pune, India", prefs) is True
+    assert passes_location("Mumbai", prefs) is True
+    assert passes_location("Bengaluru", prefs) is False
+    # A block still wins over a wanted place.
+    assert passes_location("Pune, India", replace(prefs, location_block=["pune"])) is False
+    # Chips that name no place leave the word filter alone.
+    assert _with_place_match(base, ["Somewhere Unknown"]) is base

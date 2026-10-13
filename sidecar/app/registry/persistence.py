@@ -153,13 +153,27 @@ def resolve_scan_prefs(
     base = _config_prefs(portals)
     expanded = _expand_locations(locations)
     return replace(
-        base,
+        _with_place_match(base, row.locations or []),
         title_allow=aliases or base.title_allow,
         location_allow=expanded or base.location_allow,
         location_always_allow=expanded or base.location_always_allow,
         max_age_days=freshness if freshness > 0 else base.max_age_days,
         company_block=list(dict.fromkeys([*base.company_block, *company_block])),
         content_block=list(dict.fromkeys([*base.content_block, *content_block])),
+    )
+
+
+def _with_place_match(base: ScanPrefs, chips: list[Any]) -> ScanPrefs:
+    """Keep a posting whose place lies inside a wanted one, which a word match can't
+    see: "Pune, India" for a Maharashtra chip, "Milpitas, CA" for the Bay Area (audit
+    A7). Only a MATCH keeps it; anything else falls through to the word filter."""
+    from sidecar.modules.geo.resolve import Verdict, match, resolve_location, resolve_wanted
+
+    wanted = resolve_wanted(chips)
+    if not (wanted.city_ids or wanted.admin1_keys or wanted.countries):
+        return base
+    return replace(
+        base, location_match=lambda text: match(resolve_location(text), wanted)[0] is Verdict.MATCH
     )
 
 

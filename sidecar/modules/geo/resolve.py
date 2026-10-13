@@ -413,7 +413,10 @@ def resolve_wanted(chips: Sequence[object], g: Gazetteer | None = None) -> Wante
             if level == "metro" and ident in METROS:
                 country, names = METROS[ident]
                 for name in names:
-                    found = g.city(fold(name))
+                    # The metro's own country: the biggest "Santa Clara" is in Cuba.
+                    found = next(
+                        (c for c in g.cities_named(fold(name)) if c.country == country), None
+                    )
                     if found is not None:
                         city_ids.add(found.geonameid)
                 home.add(country)

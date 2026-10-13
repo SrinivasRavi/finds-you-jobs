@@ -37,11 +37,14 @@ def passes_title(title: str, prefs: ScanPrefs) -> bool:
 
 
 def passes_location(location: str, prefs: ScanPrefs) -> bool:
-    """always_allow → pass; block → fail; empty allow or unknown location → pass."""
+    """always_allow → pass; block → fail; inside a wanted place → pass; empty allow or
+    unknown location → pass. The place test is what keeps "Pune" for "Maharashtra"."""
     if keyword_match(location, prefs.location_always_allow):
         return True
     if keyword_match(location, prefs.location_block):
         return False
+    if prefs.location_match is not None and location.strip() and prefs.location_match(location):
+        return True
     if not prefs.location_allow or not location.strip():
         return True
     return keyword_match(location, prefs.location_allow)
