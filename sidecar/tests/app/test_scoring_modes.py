@@ -782,8 +782,11 @@ def test_jev_mode_without_a_key_says_so_instead_of_failing_silently(
     job_id = _seed(db, url="https://ex.co/j/jev-2")
     with db.repos() as repos:
         repos.preferences.update(thresholds={"scoring_mode": "jev"})
-    with pytest.raises(EngineNotConfiguredError, match="OpenRouter key"):
+    with pytest.raises(EngineNotConfiguredError, match="OpenRouter key") as raised:
         score_entrypoint(_ctx(db, job_id, engine=None))
+    # The ledger shows the sentence as written, not quoted as a kind name (PR #12 review).
+    assert str(raised.value).startswith("Jev scoring needs an OpenRouter key.")
+    assert raised.value.kind == "score"
 
 
 def test_the_settings_payload_lists_every_method_with_what_it_needs(tmp_path) -> None:

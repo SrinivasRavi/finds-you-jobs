@@ -507,7 +507,7 @@ def test_apply_refuses_a_url_less_card_before_writing_a_run(
 
 
 def test_a_dev_run_may_carry_its_own_form_because_a_fixture_is_not_a_posting(
-    app_client: tuple[FastAPI, TestClient],
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A fixture form is a file:// URL, which `canonicalize_url` rejects, so the
     no-link guard took the Applier's end-to-end test with it. The fixture rides the
@@ -521,11 +521,12 @@ def test_a_dev_run_may_carry_its_own_form_because_a_fixture_is_not_a_posting(
         json={"job_id": job["id"], "generate_resume": False, "generate_cover": False},
     ).json()
 
-    resp = client.post(
-        f"/api/applications/{saved['id']}/apply",
-        headers=AUTH,
-        json={"dev": {"form_url": "file:///tmp/fixture-form.html", "allow_local": True}},
-    )
+    dev = {"dev": {"form_url": "file:///tmp/fixture-form.html", "allow_local": True}}
+    # Outside dev mode the knob is ignored, as every dev knob is (PR #12 review).
+    resp = client.post(f"/api/applications/{saved['id']}/apply", headers=AUTH, json=dev)
+    assert resp.status_code == 409
+    monkeypatch.setenv("FYJ_APPLY_DEV", "1")
+    resp = client.post(f"/api/applications/{saved['id']}/apply", headers=AUTH, json=dev)
     assert resp.status_code in (200, 201, 202), resp.text
     with app.state.db.repos() as repos:
         run = repos.apply_runs.latest_for_application(saved["id"])

@@ -200,6 +200,9 @@ test("skipping the provider step finishes with AI off", async ({ page, request }
   await page.getByTestId("onboarding-skip-provider").click();
   await expect(page.getByTestId("all-set-ai-off")).toBeVisible();
   await page.screenshot({ path: `${DIR}/all-set-ai-off.png`, fullPage: true });
+  // The Skip survives a reload with the rest of the draft (PR #12 review).
+  await page.reload();
+  await expect(page.getByTestId("all-set-ai-off")).toBeVisible();
   const extracts = async () =>
     (await (await request.get(`${base}/api/operations?limit=200`, { headers: auth })).json())
       .filter((o: { kind: string }) => o.kind === "extract").length;

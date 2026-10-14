@@ -207,7 +207,7 @@ async def _apply_async(
         # Before the run row: a run against a job with no link has no form and would
         # sit in the panel unactionable (url-less-jobs.md section 5.4). This is the retry
         # path's guard; `start_apply` refuses first. Same dev seam as the route.
-        dev_form_url = str(ctx.input_snapshot.get("dev_form_url") or "")
+        dev_form_url = str(ctx.input_snapshot.get("dev_form_url") or "") if _dev_enabled() else ""
         if not job.canonical_url and not dev_form_url:
             raise ValueError(NO_POSTING_URL_DETAIL)
         if not has_application_profile(repos):

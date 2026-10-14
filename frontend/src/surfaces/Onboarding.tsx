@@ -111,6 +111,7 @@ interface Draft {
   scoringMode: "llm" | "keyword";
   provider: string;
   verified: boolean;
+  aiSkipped: boolean;
 }
 
 function loadDraft(): Partial<Draft> {
@@ -143,7 +144,7 @@ export function Onboarding() {
   const [resumeMode, setResumeMode] = useState<EditorMode>("raw");
   const [resumeWarnings, setResumeWarnings] = useState<string[]>([]);
   // Skip on the provider step (S-C60): AI stays off until a provider is set up.
-  const [aiSkipped, setAiSkipped] = useState(false);
+  const [aiSkipped, setAiSkipped] = useState(d0.aiSkipped ?? false);
   const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
@@ -186,6 +187,7 @@ export function Onboarding() {
       scoringMode,
       provider,
       verified: verifyState === "verified",
+      aiSkipped,
     };
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -203,6 +205,7 @@ export function Onboarding() {
     scoringMode,
     provider,
     verifyState,
+    aiSkipped,
   ]);
 
   const needsInput = !isCliProvider(provider);

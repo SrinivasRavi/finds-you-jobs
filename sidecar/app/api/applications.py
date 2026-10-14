@@ -31,6 +31,7 @@ from ..registry import networker_ops as networker_ops
 from ..registry.apply_op import (
     NO_APPLICATION_PROFILE_DETAIL,
     NO_POSTING_URL_DETAIL,
+    _dev_enabled,
     advance_card_to_applied,
     finalize_run_failed,
     finalize_run_interrupted,
@@ -691,7 +692,7 @@ def start_apply(
         # (url-less-jobs.md sections 5.4 and 9.8). The dev seam carries its own form: a
         # local fixture is a file:// URL, which `canonicalize_url` rejects, so it can't
         # live on the job row. Production has no dev knobs; a URL-less card still 409s.
-        dev_form_url = str((payload.dev or {}).get("form_url") or "")
+        dev_form_url = str((payload.dev or {}).get("form_url") or "") if _dev_enabled() else ""
         if not job.canonical_url and not dev_form_url:
             raise HTTPException(status_code=409, detail=NO_POSTING_URL_DETAIL)
         needs_intent = app_row.intent != "apply"

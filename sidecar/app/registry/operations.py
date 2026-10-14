@@ -502,6 +502,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         client = (scoring_ctx or {}).get("decisions")
         if client is None:
             raise EngineNotConfiguredError(
+                "score",
                 "Jev scoring needs an OpenRouter key. Add one in Settings > LLM providers, "
                 "or pick another scoring method."
             )

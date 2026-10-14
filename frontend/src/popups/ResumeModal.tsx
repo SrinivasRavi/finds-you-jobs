@@ -106,6 +106,7 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
               // PDF (real selectable text) and the app asks where to save it.
               setExporting(true);
               setExportError(null);
+              setExported(null);
               void Promise.resolve(api.exportPdf(getMarkdown(), what))
                 .then((path) => {
                   if (path) setExported(path);
