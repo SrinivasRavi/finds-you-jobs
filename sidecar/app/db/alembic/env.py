@@ -22,12 +22,9 @@ from sidecar.app.db.database import resolve_db_url
 config = context.config
 
 if config.config_file_name is not None:
-    # Keep fileConfig's default (`disable_existing_loggers=True`). It DOES flip
-    # `.disabled = True` on the app's `fyj.sidecar` flight-recorder logger — the
-    # "only boot lines land" bug — but flipping it to False perturbs global logging
-    # state that span export depends on (an ordering-dependent test failure).
-    # Instead the boot path re-arms the recorder AFTER the migration (main.py
-    # calls setup_flight_recorder() again, clearing `.disabled`).
+    # Keep fileConfig's default (`disable_existing_loggers=True`). It disables the
+    # flight recorder, but turning it off perturbs logging state span export relies
+    # on; main.py re-arms the recorder after the migration instead.
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

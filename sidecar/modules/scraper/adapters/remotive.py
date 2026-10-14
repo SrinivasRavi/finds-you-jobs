@@ -8,14 +8,15 @@ we never fetch per job.
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
-
 from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import detect_board
 
 ID = "remotive"
+LABEL = "Remotive"
+KIND = "board"
 INLINE_DESCRIPTION = True
 _CLAIM = "remotive.com"
 _HOSTS = {"remotive.com", "www.remotive.com", "remotive.io"}
@@ -23,12 +24,7 @@ _API = "https://remotive.com/api/remote-jobs"
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.board == ID:
-        return _CLAIM
-    host = urlsplit(entry.url).netloc.lower() if entry.url else ""
-    return _CLAIM if host in _HOSTS else ""
+    return detect_board(entry, ID, _CLAIM, _HOSTS)
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:

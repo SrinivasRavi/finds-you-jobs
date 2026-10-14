@@ -9,7 +9,7 @@ a husk (item 7) — the failed/impossible enrichment's error is still recorded.
 
 from __future__ import annotations
 
-from sidecar.modules.scraper.adapters import linkedin_guest, workday
+from sidecar.modules.scraper.adapters import breezy, linkedin_guest, smartrecruiters, workday
 from sidecar.modules.scraper.config import PortalsConfig, SourceEntry
 from sidecar.modules.scraper.scraper import SCAN_ENRICH_CAP, scan
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScraperError
@@ -40,6 +40,32 @@ def test_linkedin_fetch_detail_parses_guest_posting():
     # No numeric id in the URL → honestly nothing to fetch.
     other = NormalizedJob(title="X", canonical_url="https://example.com/job")
     assert linkedin_guest.fetch_detail(other, routed({})()) == ""
+
+
+def test_breezy_fetch_detail_reads_a_real_position_page():
+    """Backlog S-A8. A real page from breezy.breezy.hr, fetched 2026-10-13: the
+    JD is the `<div class="description">` block, and the apply buttons' i18n
+    placeholders right after it stay out."""
+    url = "https://breezy.breezy.hr/p/98323abf2296-employee-12"
+    fetcher = routed({"breezy.breezy.hr/p/": "breezy_detail.html"})()
+    text = breezy.fetch_detail(NormalizedJob(title="Employee #12", canonical_url=url), fetcher)
+    assert text == "Roses and Rainbows until 30 days in."
+
+
+def test_smartrecruiters_fetch_detail_reads_every_section_of_a_real_posting():
+    """Backlog S-A8. A real posting payload from SmartRecruiters' public API,
+    fetched 2026-10-13: 4 HTML sections joined in payload order, for both the
+    URL shape the adapter writes and the one the site serves."""
+    fetcher = routed({"postings/744000155086199": "smartrecruiters_detail.json"})
+    for url in (
+        "https://jobs.smartrecruiters.com/Continental/postings/744000155086199",
+        "https://jobs.smartrecruiters.com/Continental/744000155086199-bestdrive-commercial-sales-associate",
+    ):
+        text = smartrecruiters.fetch_detail(NormalizedJob(title="X", canonical_url=url), fetcher())
+        assert text.count("\n\n") >= 3, url
+        assert "<" not in text and len(text) > 2_000
+    other = NormalizedJob(title="X", canonical_url="https://jobs.smartrecruiters.com/Continental")
+    assert smartrecruiters.fetch_detail(other, fetcher()) == ""
 
 
 def test_workday_fetch_detail_reads_cxs_job_posting_info():

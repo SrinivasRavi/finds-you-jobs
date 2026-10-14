@@ -17,16 +17,10 @@ from ..db import Database
 from ..db.models import SCORE_MAX_ATTEMPTS
 from ..registry.persistence import scoring_mode
 
-# A score op IN FLIGHT at the current version. Only these — a job is never
-# double-enqueued while its score is queued or running.
-#
-# `failed` used to be in this set, and that was the bug. A fan-out that died on
-# an expired key or exhausted tokens marked every remaining job failed within
-# seconds (the circuit breaker rejects fast once open), and none of them were
-# ever re-planned: topping the key up re-scored nothing, and the only way back
-# was the per-row Retry in Analytics, once per job. Retries are bounded by
-# `Job.score_attempts` now, which counts only failures that actually reached the
-# provider, so a provider outage costs a job nothing.
+# A score op in flight at the current version; a job is never double-enqueued.
+# `failed` was once in this set: an expired key failed every remaining job in
+# seconds and none were ever re-planned. Retries are bounded by
+# `Job.score_attempts`, which counts only failures that reached the provider.
 _IN_FLIGHT = {"queued", "running"}
 
 
@@ -42,23 +36,11 @@ def plan_schedule(db: Database, kind: str) -> list[tuple[str, dict[str, Any]]]:
 
 
 def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
-    """Plan `("score", snapshot)` for jobs that still need an AI score.
-
-    Scoring is always on (the old auto_score_on_scan opt-out is retired). The
-    cost lever is Settings → Scoring's MODE:
-    - **keyword** — nothing to plan here; the instant on-device keyword floor
-      (`ensure_keyword_floor`, run on scan + boot) already scores every job.
-    - **llm** — plan an LLM score for every active job that can still earn one.
-      A keyword floor does NOT count as done (the LLM upgrades it); an in-flight
-      op is not double-enqueued; a job that has failed `SCORE_MAX_ATTEMPTS` times
-      against a live provider is dropped; and a job with no usable description
-      is never offered at all (`list_active_without_llm_score`).
-
-      A failed attempt IS re-planned, unlike before. The bound is
-      `Job.score_attempts`, not the presence of a failed operation row, so a
-      provider outage that failed 800 jobs in seconds costs none of them an
-      attempt and all 800 come back on the next tick once the provider does.
-    """
+    """Plan `("score", snapshot)` for jobs that still need an LLM score. Keyword mode
+    plans nothing: the floor already scores every job. AI mode plans every active
+    job that can still earn one: the floor doesn't count, in-flight ops aren't
+    doubled, and jobs past `SCORE_MAX_ATTEMPTS` or with no description are skipped.
+    An outage costs no job an attempt, so the backlog returns next tick."""
     with db.repos() as repos:
         if repos.profile.get_current() is None:
             return []
@@ -82,16 +64,10 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
             if op.job_id is not None
         }
 
-        # The "already AI-scored" exclusion happens in SQL (`jobs.llm_score IS
-        # NOT NULL`): a resume edit never auto-spends tokens re-scoring a job
-        # that has one. Paging active jobs and filtering afterwards meant an
-        # install with more than 1,000 active jobs could never reach the oldest
-        # unscored ones.
-        #
-        # `limit` 0 means uncapped, which is the default: enqueueing is cheap and
-        # how much the user spends scoring is their call, not a cap we impose.
-        # When it IS capped, ask for enough extra rows to absorb `attempted`, so
-        # a run of in-flight jobs can't crowd out everything behind them.
+        # The "already really scored" exclusion is SQL (`score_method`), so a
+        # resume edit never re-spends tokens, and an install past 1,000 active jobs still
+        # reaches the oldest unscored ones. `limit` 0 is uncapped, the default: spend is
+        # the user's call. When capped, fetch extra to absorb `attempted`.
         fetch = limit + len(attempted) if limit else None
         jobs = repos.jobs.list_active_without_llm_score(
             limit=fetch, max_attempts=SCORE_MAX_ATTEMPTS

@@ -1,27 +1,10 @@
-"""Local span store — a SQLite `SpanExporter` (architecture section 10, layer 2).
+"""Local span store: a SQLite `SpanExporter` (architecture section 10, layer 2).
 
-The Logfire SDK is built on OpenTelemetry, so persisting spans locally is a
-matter of attaching a custom OTel `SpanExporter`. This one writes each finished
-span as a row in a standalone `logfire.sqlite` file — **not** the app's Alembic
-schema. That satisfies US-SYS-05's "No separate `Trace` table in the schema; the
-observability SDK manages its own log": the span log lives in its own file, on
-its own (non-migrated) shape, owned by the observability pipeline.
-
-Why a hand-rolled SQLite exporter (the local-store choice):
-
-- Logfire's durable path is its **cloud** platform (OTLP over the network). Its
-  offline story is `send_to_logfire=False` + whatever span processors you add —
-  there is no built-in queryable local SQLite sink. NFR-OBS-01 demands exactly
-  that: a local, queryable `logfire.sqlite`, 30-day retention, nothing leaving
-  the machine. A ~100-line exporter is the simplest durable store that (a) the
-  Logs drill-down can query by `operation_id`, (b) survives restart, and (c)
-  makes zero network calls. The OTLP file exporters write protobuf/JSON blobs,
-  not something the UI can query — rejected.
-
-Thread-safety: OTel calls `export()` from a processor thread. We open a fresh
-short-lived connection per call (WAL, autocommit) rather than sharing one — the
-volume is tiny (single-user desktop), so simplicity wins over pooling.
-"""
+Each finished span is a row in a standalone `logfire.sqlite`, not the app
+schema (US-SYS-05). Hand-rolled because Logfire has no queryable local sink;
+about 100 lines give a store the drill-down queries by `operation_id`, surviving
+restart, with 0 network calls (NFR-OBS-01). A short-lived connection per
+`export()` call: the volume is tiny."""
 
 from __future__ import annotations
 

@@ -18,9 +18,15 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
-from .base import path_segments
+from .base import detect_url, path_segments
 
 ID = "greenhouse"
+LABEL = "Greenhouse"
+KIND = "ats"
+BOARD_URLS = (
+    "https://boards.greenhouse.io/{}",
+    "https://job-boards.greenhouse.io/{}",
+)
 INLINE_DESCRIPTION = True
 
 _HOSTS = {
@@ -47,12 +53,7 @@ def _slug_and_region(url: str) -> tuple[str, str]:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    slug, _ = _slug_and_region(entry.url) if entry.url else ("", "")
-    return slug
+    return detect_url(entry, ID, lambda url: _slug_and_region(url)[0])
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:

@@ -1,16 +1,10 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""The apply agent loop (docs/internal/archived/applier-as-built.md section 4/section 5):
-observe → decide → execute → verify → repeat, under a hard time budget and a
-no-progress budget.
+"""The apply agent loop (applier-as-built.md sections 4 and 5): observe, decide,
+execute, verify, repeat, under a time budget and a no-progress budget.
 
-Terminal honesty (section 8.4): P1 success is ``ready_for_human`` — the browser
-stays open (the caller owns its lifetime), the human reviews and submits.
-The loop cannot submit: there is no submit tool in the vocabulary, and the
-executor would reject one anyway.
-
-The engine is the app's text-completion seam (sync ``complete``); each call
-runs in a worker thread so the browser's event loop keeps breathing.
-"""
+Success is `ready_for_human` (8.4): the browser stays open and the human
+submits; there's no submit tool. Each engine call runs in a worker thread so the
+browser's event loop keeps breathing."""
 
 from __future__ import annotations
 

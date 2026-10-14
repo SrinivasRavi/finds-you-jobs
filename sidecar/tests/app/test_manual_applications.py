@@ -1,20 +1,11 @@
-"""Covers: the "Add a job application" vertical (FR-TR manual-add).
+"""Covers: "Add a job application" (FR-TR manual-add), through the real app.
 
-Through the real app (TestClient → lifespan → real migration):
-
-- POST /api/applications/manual creates a job + an `origin=manual` card in a
-  post-referral stage, with optional resume/cover uploads.
-- Uploaded documents are content-addressed and deduped (identical bytes → one
-  `documents` row and ONE blob on disk), downloadable verbatim.
-- The Tracker source filter's discriminator: `origin` on the ApplicationDTO
-  ("manual" vs "discovered").
-- Guards: already-tracked job → 409; bad stage / unsupported type / too-large
-  upload → 422; unknown document → 404.
-"""
+POST /api/applications/manual creates a job and an `origin=manual` card with
+optional uploads; documents are content-addressed and deduped; `origin`
+distinguishes manual from discovered; guards return 409, 422 and 404."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,20 +13,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app import documents as docstore
-from sidecar.app.main import create_app
 
-TOKEN = "test-token-manual"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH
 
 
 def _blob_dir(app: FastAPI) -> Path:
@@ -374,3 +353,29 @@ def test_manual_application_delete_removes_card(
     }
     # Idempotence guard: a second delete is a clean 404, not a 500.
     assert client.delete(f"/api/applications/{app_id}", headers=AUTH).status_code == 404
+
+
+def test_the_tracker_form_runs_the_scam_check_and_marks_the_job_manual(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Audit finding 9: the tracker's form skipped the ingest checks, so a
+    red-flag phrase got no trust flag and lost its 40-point cap under custom
+    weights. And the job is `manual`, so delete forever never tombstones it."""
+    app, client = app_client
+    r = client.post(
+        "/api/applications/manual",
+        data={
+            "canonical_url": "https://ex.co/careers/eng-43",
+            "title": "Backend Engineer",
+            "company": "Acme",
+            "description": "Great role. Note: there is a training fee before you start.",
+            "column": "applied",
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 201, r.text
+    with app.state.db.repos() as repos:
+        job = repos.jobs.get(r.json()["job"]["id"])
+        assert job is not None
+        assert "red-flag-term:training fee" in job.trust_flags
+        assert job.origin == "manual"

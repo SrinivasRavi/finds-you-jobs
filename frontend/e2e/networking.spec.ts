@@ -1,30 +1,17 @@
-// Covers: the Referral Outreach UI against the live sidecar (roadmap
-// commits 10-11 gate) — the networking kanban renders seeded contacts in
-// their lifecycle columns, a card drags between columns and the move
-// persists, and the tracker card's Referrals slot opens the find-referrals
-// popup in its drafts-only start state.
-//
-// ZERO live LinkedIn: contacts are seeded via the manual-add API (the
-// rank-don't-gate escape hatch), and the popup is only OPENED — the test
-// never clicks "Find referrals" or "Send", so no discover/send op ever
-// enqueues and the voyager driver is never constructed.
+// Covers: the Referral Outreach UI against the live sidecar. The kanban renders
+// seeded contacts in their columns, a drag between columns persists, and the
+// card's Referrals slot opens the popup in its drafts-only start state.
+// Zero LinkedIn: contacts come from the manual-add API, and the popup is only
+// opened, so no discover or send op ever enqueues.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/networking";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test("networking kanban renders seeded contacts and drag persists", async ({
   page,
@@ -103,15 +90,10 @@ test("networking kanban renders seeded contacts and drag persists", async ({
   await page.screenshot({ path: `${DIR}/contact-detail.png` });
 });
 
-// The card and the contact modal show the thread's REAL last message with
-// honest attribution (maintainer, 2026-08-15): "Me:" when the user sent last,
-// the contact's first name when the contact did. Only a live contact-sync
-// writes `profile_payload.last_thread_message` and this stack never touches
-// LinkedIn, so the synced DTO fields are injected at the network edge — the
-// sidecar-side persistence and DTO preference are pytest-covered wire-cold
-// (test_contact_sync_op.py); what this proves is the real render. The same
-// run asserts the removed "Reach out by URL" entry stays gone (maintainer,
-// 2026-08-15: it duplicated add-a-contact + the modal composer).
+// The card and the contact modal show the thread's real last message with its
+// sender ("Me:" or the contact's first name). Only a live sync writes it, so the
+// synced DTO fields are injected at the network edge; the sidecar half is
+// pytest-covered (test_contact_sync_op.py). Also checks "Reach out by URL" stays gone.
 test("card and modal attribute the real last message; reach-out-by-url is gone", async ({
   page,
   request,
@@ -243,12 +225,9 @@ test("tracker referrals slot opens the find-referrals popup", async ({
     })
   ).json();
 
-  // With networking ON, the Job Board's JD pane regains its per-job
-  // Find-referrals toggle (US-JB-03 / US-NW-09, restored 2026-07-17).
-  // Visit /jobs BEFORE creating the application: the board excludes saved
-  // jobs server-side, so once the application below exists this row is gone
-  // from the feed (2026-08-02 — this ordering, not the prefs filter, was why
-  // the row never rendered).
+  // With networking on, the JD pane shows its Find-referrals toggle again
+  // (US-JB-03 / US-NW-09). Visit /jobs before creating the application: the board
+  // excludes saved jobs server-side, so the row disappears once it exists.
   await page.goto("/jobs");
   await page.getByText("Platform Engineer").first().click();
   await expect(page.getByTestId("jd-referrals-toggle")).toBeVisible({ timeout: 15_000 });
@@ -277,15 +256,10 @@ test("tracker referrals slot opens the find-referrals popup", async ({
   await page.screenshot({ path: `${DIR}/referrals-popup-start.png`, fullPage: true });
 });
 
-// FR-NW-15 / posture section 1: contact_sync is user-initiated only — the 12 h
-// schedule that touched LinkedIn with nobody present is gone. Two things to
-// verify visually: the Sync control is ABSENT until the feature is actually
-// usable (toggle on AND a live session), and PRESENT once it is.
-//
-// ZERO live LinkedIn: the session is marked valid through the FYJ_DEV-only
-// route, which writes no cookies. The test never CLICKS Sync — same discipline
-// this file already uses for the reach-out popup, so no contact_sync op ever
-// enqueues and no browser is ever launched at linkedin.com.
+// FR-NW-15: contact sync is user-initiated only, with no timer. The Sync control
+// is absent until the feature is usable (toggle on and a live session) and
+// present once it is. Zero LinkedIn: the session is marked valid through the
+// FYJ_DEV route, and Sync is never clicked.
 
 test("Sync is gated on a live session and never runs on a timer", async ({
   page,
@@ -329,13 +303,9 @@ test("Sync is gated on a live session and never runs on a timer", async ({
   await page.screenshot({ path: `${DIR}/sync-present-with-session.png`, fullPage: true });
 });
 
-// US-NW-09 as-reworked 2026-07-30 (posture doc section 5.1): the checkbox multi-select
-// + "Reach out (N)" batch became a per-row Connect/Message button, each opening
-// a pre-send confirmation for exactly one contact that shows the message text.
-//
-// ZERO live LinkedIn: the session is dev-marked valid (no cookies exist), and
-// the test opens the confirm overlay — pure local UI — then CANCELS. Send is
-// never clicked, so no send op ever enqueues and no browser launches.
+// US-NW-09 as reworked 2026-07-30 (posture doc section 5.1): each row has its
+// own Connect or Message button that opens a confirm for exactly 1 contact.
+// Zero LinkedIn: the test opens the confirm, then cancels, so nothing is sent.
 
 test("referral rows send one at a time via a per-row confirm", async ({
   page,
@@ -472,7 +442,7 @@ test("settings expose the rate-limit controls and the 25-job search cap", async 
   // The logged-in job search lives in the Discover-jobs settings category and
   // pulls exactly one LinkedIn page (25) — fixed, not a selector: the request
   // carries count=25 whatever we ask for, so a knob would only be cosmetic.
-  await page.getByRole("button", { name: /Sources, scoring & automation/ }).click();
+  await page.getByTestId("settings-nav-discovery").click();
   const ack = page.getByTestId("linkedin-search-ack");
   await ack.scrollIntoViewIfNeeded();
   await ack.check();
@@ -492,7 +462,7 @@ test("settings expose the rate-limit controls and the 25-job search cap", async 
   await expect(page.getByTestId("linkedin-jobsearch-next-btn")).toHaveCount(0);
   await request.post(`${base}/api/dev/linkedin/seed-search-cursor`, { headers: auth });
   await page.reload();
-  await page.getByRole("button", { name: /Sources, scoring & automation/ }).click();
+  await page.getByTestId("settings-nav-discovery").click();
   const nextBtn = page.getByTestId("linkedin-jobsearch-next-btn");
   await nextBtn.scrollIntoViewIfNeeded();
   await expect(nextBtn).toBeVisible();
@@ -506,12 +476,9 @@ test("settings expose the rate-limit controls and the 25-job search cap", async 
   await request.post(`${base}/api/linkedin/disconnect`, { headers: auth });
 });
 
-// Column ordering (maintainer ask, 2026-08-16): each column shows its most
-// recently active card first — the timestamp the card displays — never the
-// sync engine's rotation cursor (whose churn used to reshuffle the board on
-// every Sync press). The thread timestamps are injected at the network edge
-// exactly like the attribution test above; the order the REAL kanban renders
-// is what's asserted.
+// Each column shows its most recently active card first, by the timestamp the
+// card displays, never by the sync engine's rotation cursor. The timestamps are
+// injected at the network edge like the attribution test above.
 test("a column orders its cards most-recent activity first", async ({
   page,
   request,
@@ -577,12 +544,9 @@ test("a column orders its cards most-recent activity first", async ({
   await page.screenshot({ path: `${DIR}/column-most-recent-first.png`, fullPage: true });
 });
 
-// The honest sync outcome (2026-08-16): a Sync attempt the read budget cut
-// short surfaces a warn note beside the stamp instead of hiding behind
-// "Synced just now". The outcome is injected at the network edge (a real
-// budget-refusal needs live LinkedIn); the sidecar derivation is
-// pytest-covered (test_linkedin_session_n4.py) — what this proves is the
-// real header render.
+// A sync the read budget cut short shows a warn note beside the stamp instead
+// of "Synced just now". The outcome is injected at the network edge; the sidecar
+// side is pytest-covered (test_linkedin_session_n4.py).
 test("a budget-stopped sync shows the warn note inside the Sync button", async ({
   page,
   request,
@@ -638,16 +602,10 @@ test("a budget-stopped sync shows the warn note inside the Sync button", async (
   await request.post(`${base}/api/linkedin/disconnect`, { headers: auth });
 });
 
-// A voyager read refusal (self-imposed cap / backoff) must render as the honest
-// "Search paused by your rate limits" state with the verbatim pacer reason —
-// never as "No contacts found at this company yet" (the Kaseya 2026-08-15 bug:
-// a spent profile-view budget looked like a 5k-employee company with nobody in
-// it). The sidecar-side refusal propagation (silo envelope → op result_ref →
-// candidates endpoint `discover_state: refused`) is pytest-covered wire-cold
-// (test_networker_ops_n3.py, test_referral_candidates_recovery.py); what this
-// proves is the real render, so the refused payload is injected at the network
-// edge. The popup is only OPENED — "Find referrals" is never clicked, so no
-// discover op enqueues and the voyager driver is never constructed.
+// A voyager read refusal must render as "Search paused by your rate limits"
+// with the pacer's reason, never as "No contacts found" (the Kaseya 2026-08-15
+// bug). The sidecar side is pytest-covered (test_networker_ops_n3.py); here the
+// refused payload is injected, and Find referrals is never clicked.
 test("referrals popup renders a cap refusal honestly, not as an empty roster", async ({
   page,
   request,

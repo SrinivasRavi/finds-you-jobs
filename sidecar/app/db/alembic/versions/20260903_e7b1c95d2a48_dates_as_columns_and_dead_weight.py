@@ -1,21 +1,8 @@
-"""Three lifecycle dates become columns, and the dead weight goes.
+"""3 lifecycle dates become columns, and the dead weight goes.
 
-1. `expired_at`, `trashed_at` and `feed_since` move out of `jobs.source_meta`
-   into real indexed columns. The daily maintenance tick loaded every trashed,
-   every expired and every active job through the ORM to compare 3 dates in
-   Python; it is 3 queries now. `feed_since` lands NOT NULL, backfilled from
-   the JSON stamp when one exists and from `ingested_at` otherwise, because
-   "when this row's freshness clock started" is true of every job.
-2. `sequences` and `sequence_steps` are dropped, with the 2 `outreach_logs`
-   columns pointing at them. Empty on every install, no writer, no seeder; the
-   stage-aware composer covers the need with templates in code (S-N11).
-3. The dead weight from the 2026-08-30 schema audit: 2 indexes no query names,
-   7 columns nothing reads, and the 2 `ui_state` keys left behind when
-   `linkedin_search_enabled` was promoted to a column in 2026-08.
-
-`linkedin_sessions.linkedin_plan` is dropped conditionally: it exists only on
-installs that ran the deleted `a9c4e7f2b8d1` revision (S-C32), so a fresh
-database has no such column to drop.
+`expired_at`, `trashed_at`, `feed_since` leave `source_meta` for indexed columns
+(`feed_since` NOT NULL). `sequences` tables go (S-N11), with 2 indexes, 7 unread
+columns and 2 stale `ui_state` keys; `linkedin_plan` drops only where it exists.
 
 Revision ID: e7b1c95d2a48
 Revises: d2f7a91b8c46

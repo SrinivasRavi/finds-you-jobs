@@ -1,9 +1,6 @@
-// LeftRail — ports assets/shell.js renderRail(). 76px fixed rail: brand mark,
-// top nav (Job board / Applications / Networking), bottom nav (Analytics),
-// Settings tile. The Networking tile is hidden while the master networking
-// toggle is off (maintainer, 2026-09-03), reversing the earlier rule that kept
-// it always visible on the grounds that the CRM half carries no account risk.
-// Settings stays reachable, which is the only way back on.
+// LeftRail: the 76px rail with the brand, top nav, Analytics and Settings. The
+// Networking tile hides while the master networking toggle is off; Settings stays
+// reachable, as the only way back on.
 
 import { useEffect } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";

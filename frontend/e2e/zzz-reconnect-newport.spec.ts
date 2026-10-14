@@ -1,24 +1,10 @@
-// Named zzz- so it runs LAST, after zz-reconnect.spec.ts (specs execute
-// alphabetically on one worker): both specs kill the shared dev-web sidecar,
-// and this file's cleanup (each test kills its own respawned sidecar) leaves
-// it dead for good.
-//
-// Covers: F-H3 — the SSE stream survives a shell-style kill-restart where the
-// sidecar comes back on a DIFFERENT port with a DIFFERENT token. The EventBus
-// bakes the handshake into the EventSource URL, so native retry alone would
-// hammer the dead old port forever; after a few failures it must re-resolve
-// the handshake and rebuild. REST recovers through the same re-resolution
-// (RealApi.req), which is what lets the profile gate come back.
-//
-// Honest gap: outside Tauri there is no shell to re-ask, so the re-resolved
-// handshake comes from the `window.__FYJ_SIDECAR_INFO__` e2e seam
-// (src/api/client.ts) instead of the shell's `get_sidecar_port`/`get_api_token`
-// commands. The rebuild path under test — dead baked-in URL → N failures →
-// close → fresh getSidecarInfo() → new EventSource → live — is the production
-// code path; only the handshake SOURCE is injected.
+// Named zzz- so it runs after zz-reconnect; it leaves the sidecar dead.
+// Covers F-H3: the SSE stream survives a restart on a different port and token.
+// After a few failures the bus re-resolves the handshake and rebuilds, and REST
+// recovers the same way (RealApi.req). Outside Tauri the new handshake comes from
+// the `window.__FYJ_SIDECAR_INFO__` seam; the rebuild path itself is production code.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,18 +12,11 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 import { E2E_DATA_DIR } from "../playwright.config";
+import { sidecarHandshake } from "./_helpers";
 
 const DIR = "e2e/_screenshots/reconnect-newport";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(SPEC_DIR, "..", "..");
-
-function sidecarInfo(): { port: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { port, token };
-}
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -73,7 +52,7 @@ test("SSE stream recovers when the sidecar restarts on a NEW port + token", asyn
   page,
   request,
 }) => {
-  const old = sidecarInfo();
+  const old = sidecarHandshake();
   let respawned: ChildProcess | null = null;
 
   try {
@@ -147,23 +126,15 @@ test("SSE stream recovers when the sidecar restarts on a NEW port + token", asyn
   }
 });
 
-// Regression: the FAILED-handshake rebuild path. open()'s `.catch` calls
-// scheduleRebuild() while `this.opening` is still set (`.finally` clears it
-// only afterwards), so a `|| this.opening` clause in scheduleRebuild's guard
-// meant a rejected re-handshake never armed the retry timer — the bus sat in
-// "reconnecting" forever and F-M5's reconnect invalidation never fired. This
-// test injects exactly that rejection: the e2e handshake seam is installed as
-// a GETTER that throws once when read from the bus's ensureOpen frame (vite
-// dev serves unminified code, so the frame name is stable) and serves the real
-// info to every other caller. Until that one-shot throw is consumed the bus
-// can only ever re-resolve the DEAD .env.local handshake, so it cannot reach
-// "live" without first traversing handshake-rejection → scheduleRebuild →
-// backoff retry — the exact path under test.
+// Regression: a failed re-handshake must still arm the retry timer (a
+// `|| this.opening` guard once left the bus "reconnecting" forever). The seam
+// throws once when read from the bus's ensureOpen frame, so the bus can only
+// reach "live" through rejection, scheduleRebuild and the backoff retry.
 test("SSE stream recovers when the first re-handshake attempt fails", async ({
   page,
   request,
 }) => {
-  const old = sidecarInfo();
+  const old = sidecarHandshake();
   let respawned: ChildProcess | null = null;
 
   try {

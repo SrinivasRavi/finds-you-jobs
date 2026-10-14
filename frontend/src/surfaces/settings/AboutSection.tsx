@@ -166,6 +166,7 @@ export const AboutSection = memo(function AboutSection() {
       <Section title={t("settingsPage.about.aboutTitle")}>
         <div className="space-y-3">
           <p className="text-[12.5px] leading-relaxed text-ink-2">{t("settingsPage.about.licenseLine")}</p>
+          <p className="text-[11.5px] leading-relaxed text-ink-3">{t("settingsPage.about.attributionLine")}</p>
           <div className="flex flex-wrap gap-2">
             <LinkButton testid="about-repo-link" icon="externalLink" onClick={() => openExternal(REPO_URL)}>
               {t("settingsPage.about.sourceButton")}

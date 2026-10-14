@@ -1,14 +1,7 @@
-// UI conventions, ENFORCED (maintainer rules, 2026-08-16):
-//
-// 1. No all-caps text, anywhere. The Tailwind `uppercase` utility is banned —
-//    an all-caps heading reads like shouting and broke the app's type rhythm
-//    (the "REFERRAL OUTREACH AGENT" panel title incident).
-// 2. One font family. `font-mono` is allowed only where the content is
-//    genuinely code-like (editors, verbatim error excerpts, an API-key
-//    field); everywhere else the app is one face. New files wanting mono must
-//    be added to the allowlist here, deliberately.
-//
-// This test scans the source so a regression fails CI, not a design review.
+// UI conventions, enforced. 1: no all-caps text; the `uppercase` utility is
+// banned. 2: 1 font family; `font-mono` only where content is code-like, and a new
+// file wanting it joins the allowlist here deliberately. The test scans the source
+// so a regression fails CI.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -26,6 +19,7 @@ const MONO_ALLOWLIST = new Set([
   "surfaces/Onboarding.tsx", // the API-key input
   "surfaces/Dev.tsx", // dev-only tooling
   "surfaces/settings/PromptsSection.tsx", // the prompt editor
+  "surfaces/settings/PromptTuningModal.tsx", // the same prompt, editable
   "surfaces/settings/DiscoverySources.tsx", // masked API-key hints
 ]);
 

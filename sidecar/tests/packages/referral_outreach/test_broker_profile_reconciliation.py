@@ -1,34 +1,13 @@
 # voyager_py/tests/test_broker_profile_reconciliation.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""Phase-5 profile reconciliation, proven against a LOCAL fixture — **never**
+"""Phase 5 profile reconciliation, proven against a local fixture, never
 linkedin.com.
 
-The production flow this stands in for: the maintainer signs into a VISIBLE
-Chrome by hand once; `capture_login` writes the sealed session into the CORE
-browser broker's per-slug profile dir (`<data>/browser/<slug>/profile`); the
-broker then drives that SAME profile HEADLESS forever after. This test replaces
-the human + linkedin.com with a throwaway loopback page that drops a persistent
-`li_at` cookie (the same signal a real login leaves), and proves the plumbing
-end to end:
-
-  1. `capture_login` into the broker's per-slug profile dir detects the cookie
-     and SEALS the storage-state (FYJ_SESSION_KEY) with no plaintext at rest.
-  2. A real headless `BrowserSurface` (the broker) launched on that SAME slug
-     reads the `li_at` cookie back out of the shared profile.
-  3. The SingletonLock reality: while one Chrome holds the profile, a second
-     open on it is refused; after the first closes, the open succeeds — the
-     encoded form of "the one-time login window must be CLOSED before the
-     headless surface opens."
-
-Real Chrome enforces the profile ProcessSingleton; Playwright's bundled Chromium
-does not (measured). Both `capture_login` and the broker PREFER real Chrome
-(`channel="chrome"`), so the guard is encoded at that engine, and skipped when
-the channel is absent (the bundled-only fallback bypasses the lock, a caveat the
-sequential one-time-login/headless-surface flow never actually hits).
-
-Anchors: the broker's per-slug `profile_dir` (`sidecar/app/browser`); the
-persistent-profile login (`session.capture_login`); NFR-SEC-01 (sealed at rest).
-"""
+A loopback page sets a persistent `li_at`. `capture_login` into the broker's
+per-slug profile detects it and seals the storage state; a real headless
+`BrowserSurface` on the same slug reads it back; and while 1 Chrome holds the
+profile a second open is refused. Only real Chrome enforces that lock, so it's
+skipped without the Chrome channel. Anchors: `profile_dir`, NFR-SEC-01."""
 
 from __future__ import annotations
 
@@ -147,13 +126,10 @@ async def test_login_seals_into_broker_profile_and_headless_surface_reads_it_bac
     assert "li_at" not in raw and "FAKE_FIXTURE_TOKEN" not in raw
     assert inspect_storage_state(storage_state)["has_auth_cookie"] is True
 
-    # 2) A real HEADLESS broker surface on the SAME slug picks the session back
-    # up. A broker-backed `AccountSession` on that surface seeds its context from
-    # the sealed storage-state on the first lane bind (the broker drops
-    # `--use-mock-keychain`, so the profile's own encrypted cookie jar is
-    # unreadable to it — the seed is what restores `li_at`). The action then runs
-    # on the surface thread and reads the session cookies back off the surface's
-    # own context.
+    # 2) A real headless broker surface on the same slug picks the session back up.
+    # The broker drops `--use-mock-keychain`, so the profile's cookie jar is
+    # unreadable to it; the sealed storage-state seeded on first bind restores
+    # `li_at`, and the action reads it back off the surface's own context.
     surface = broker.surface(SURFACE_SLUG)
     try:
         await surface.wait_ready(timeout_seconds=60)
@@ -187,12 +163,8 @@ async def test_login_seals_into_broker_profile_and_headless_surface_reads_it_bac
 def test_singleton_lock_refuses_a_second_open_while_the_profile_is_held(
     tmp_path: Path, fixture_login_url: str
 ) -> None:
-    """The login-window-must-be-closed rule, as a test rather than a hope.
-
-    Sync (no asyncio loop) so raw sync Playwright can run here. Encoded at
-    `channel="chrome"`, the engine both `capture_login` and the broker prefer:
-    only real Chrome enforces the profile ProcessSingleton, so this skips when
-    the channel is absent."""
+    """The login window must be closed before the surface opens, as a test. Sync, so
+    raw Playwright runs here; at `channel="chrome"`, skipped without it."""
     # Seed a real li_at into the broker's per-slug profile via the same test login.
     profile_dir = tmp_path / "data" / "browser" / SURFACE_SLUG / "profile"
     storage_state = profile_dir.parent / "storage_state.json"

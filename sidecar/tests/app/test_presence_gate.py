@@ -1,14 +1,8 @@
 """Covers: the presence gate (invariant 3, Our Claim 9, as revised 2026-08-14).
 
-LinkedIn traffic runs only when the user asked for it: presence IS the
-`user_initiated` marker that only an explicit click sets, so a background timer
-or scheduler can never start a gated run. The maintainer removed the first live
-version's viewer-attached and surface-visible signals the evening they shipped
-(they gated on attention, not presence); the Browser tab is observability, never
-a requirement, so a send runs identically from any tab.
-
-ZERO live LinkedIn, ZERO real browser: drivers are fakes.
-"""
+Presence is the `user_initiated` marker only a click sets, so no timer can start
+a gated run; the viewer and visibility signals were dropped, so a send runs the
+same from any tab. Fake drivers: 0 LinkedIn, 0 browser."""
 
 from __future__ import annotations
 

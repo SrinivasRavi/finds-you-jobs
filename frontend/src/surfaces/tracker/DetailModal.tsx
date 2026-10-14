@@ -7,21 +7,23 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { api } from "../../api/index";
 import {
   useApplicationActivity,
   useApplicationNetworking,
   useLinkedInSession,
 } from "../../api/queries";
 import type { Application, ApplicationDocument, Job, Priority } from "../../api/types";
-import i18n from "../../i18n";
 import type { ResumeModalKind } from "../../popups/ResumeModal";
 import { Avatar } from "../../shell/Avatar";
 import { formatWhen } from "../../shell/datetime";
 import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
-import { scoreTier, workLabel } from "../jobFormat";
+import { scoreText } from "../../shell/scoreText";
+import { AddLinkDialog } from "../jobs/AddLinkDialog";
+import { downloadDocument } from "../../shell/downloadDocument";
+import { JobProvenanceChips } from "../jobs/JobProvenanceChips";
+import { placeLine, placeTitle, scoreTier } from "../jobFormat";
 
 // Translation keys for the attached-document slots' human labels (the artifact
 // kind vocabulary).
@@ -29,20 +31,6 @@ const DOC_KIND_KEY: Record<ApplicationDocument["kind"], string> = {
   tailored_resume: "tracker.docKind.tailored_resume",
   cover_letter: "tracker.docKind.cover_letter",
 };
-
-/** Download an attached document (authed fetch → object URL → save). The bearer
- *  token can't ride on a plain href, so we fetch the blob and click a temp link. */
-async function downloadDocument(doc: ApplicationDocument): Promise<void> {
-  const blob = await api.fetchDocument(doc.document_id);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = doc.filename || i18n.t(DOC_KIND_KEY[doc.kind] ?? doc.kind);
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
 
 /** Activity timestamps read naturally — "7 July 2026, 00:20" (local time). The
  *  date used to be pinned to "en-GB" in a 13-language app (duplication audit
@@ -98,14 +86,20 @@ function AttachedDocuments({ docs }: { docs: ApplicationDocument[] }) {
 function JobDetail({ job }: { job: Job }) {
   const { t } = useTranslation();
   const tier = job.score ? scoreTier(job.score.score_0_100) : null;
-  const meta = [job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · ");
+  const meta = [job.company, placeLine(job)].filter(Boolean).join(" · ");
+  // Same Add-link dialog as the board's detail pane (url-less-jobs.md 9.7):
+  // this is where a user looks at a job they're already pursuing, so it's
+  // where they're most likely to have found the posting since.
+  const [linking, setLinking] = useState(false);
   return (
     <div className="space-y-3" data-testid="detail-job-info">
       <div className="flex items-start gap-3">
         <Avatar name={job.company} size={10} shape="md" tone="raised" />
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-semibold leading-snug text-ink">{job.title}</div>
-          <div className="truncate text-[12px] text-ink-3">{meta}</div>
+          <div className="truncate text-[12px] text-ink-3" title={placeTitle(job)}>
+            {meta}
+          </div>
         </div>
         {job.score ? (
           <span
@@ -118,17 +112,38 @@ function JobDetail({ job }: { job: Job }) {
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-3 text-[12px]">
-        <a
-          href={job.canonical_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          data-testid="detail-job-url"
-          className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
-        >
-          {t("tracker.jobDetail.openPosting")}
-        </a>
+        {job.canonical_url ? (
+          <a
+            href={job.canonical_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="detail-job-url"
+            className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+          >
+            {t("tracker.jobDetail.openPosting")}
+          </a>
+        ) : (
+          <button
+            type="button"
+            data-testid="detail-add-link"
+            onClick={() => setLinking(true)}
+            className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+          >
+            {t("jobBoard.detail.addLink")}
+          </button>
+        )}
         {job.salary ? <span className="text-ink-3">{job.salary}</span> : null}
+        {/* The source and trust chips, same 2 axes as the board card (9.7). */}
+        <JobProvenanceChips job={job} />
       </div>
+      {linking ? (
+        <AddLinkDialog
+          jobId={job.id}
+          jobLabel={`${job.title} · ${job.company}`}
+          onClose={() => setLinking(false)}
+          onAttached={() => setLinking(false)}
+        />
+      ) : null}
       {job.description ? (
         <details className="rounded-md border border-border bg-surface-2" data-testid="detail-jd">
           <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-ink-2">
@@ -183,7 +198,7 @@ export function DetailModal({
   ];
 
   return (
-    <Modal title={`${app.job.title} · ${app.job.company}`} onClose={onClose} width={640}>
+    <Modal title={`${app.job.title} · ${app.job.company}`} onClose={onClose} size="lg">
       <div className="flex items-center gap-1 border-b border-border px-5">
         {tabs.map((tb) => (
           <button
@@ -298,7 +313,7 @@ export function DetailModal({
                 {app.job.score.reasons.map((r, i) => (
                   <li key={i} className="flex gap-1.5">
                     <span className="mt-1 size-1 shrink-0 rounded-full bg-accent" />
-                    <span>{r}</span>
+                    <span>{scoreText(r, t)}</span>
                   </li>
                 ))}
               </ul>

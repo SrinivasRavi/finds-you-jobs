@@ -1,29 +1,11 @@
-"""Apify BYO-key adapter family — actor-backed search sources.
+"""Apify BYO-key adapter family: actor-backed search sources.
 
-Covers the boards a first-party adapter cleanly can't (decision record in
-`docs/internal/discovery.md`): Indeed (Cloudflare-walled; the only direct API
-needs Indeed's own lifted mobile-app credential), Naukri (reCAPTCHA-walled),
-Seek — plus LinkedIn as an optional deeper-JD complement to the guest adapter.
-The credential is the **user's own Apify account token** (free tier ≈ $5/mo of
-credit, no card) — squarely inside the header/credential policy line
-(`http.BROWSER_HEADERS` docstring): we never embed or lift anyone else's key.
-
-Search shape (adapters/base.py): claims `board = "apify"` rows whose `actor`
-names a supported actor. `search()` builds actor input from the same
-`build_queries()` prefs as every search source, runs the actor synchronously
-on the user's account (`run-sync-get-dataset-items` — blocks until the actor
-finishes, hence the long per-call timeout), and normalizes dataset rows into
-the shared funnel. Same filters, same dedup, same per-source diagnostics.
-
-The token travels in an `Authorization: Bearer` header, NEVER a query param:
-fetch errors quote the URL verbatim and land in persisted per-source
-diagnostics. Complement, not substitute — first-party adapters stay primary
-wherever a clean path exists (free, faster, key-less).
-
-Input/output field shapes live-verified against each actor's published schema
-on apify.com, 2026-07-18. An actor changing its schema degrades to "0 rows
-parsed" + a per-source error, never a crash.
-"""
+Covers boards a first-party adapter can't (discovery.md): Indeed and Naukri
+(walled), Seek, and LinkedIn as a deeper-JD complement, on the user's own Apify
+token. Claims `board = "apify"` rows naming a supported actor; `search()` runs
+the actor synchronously (`run-sync-get-dataset-items`) and feeds the shared
+funnel. The token rides a Bearer header, never the URL. Field shapes verified
+2026-07-18; a schema change degrades to 0 rows and an error."""
 
 from __future__ import annotations
 
@@ -38,6 +20,8 @@ from ..searchquery import SearchQuery, build_queries, select_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "apify"
+LABEL = "Apify actors (your own key)"
+KIND = "search"
 INLINE_DESCRIPTION = True
 _RUN_BASE = "https://api.apify.com/v2/acts"
 
@@ -243,14 +227,10 @@ ACTORS: dict[str, _ActorSpec] = {
     "misceres/indeed-scraper": _ActorSpec(_indeed_runs, _indeed_item),
 }
 
-# The real board each actor scrapes. Rows are stamped with THIS as their
-# `source_adapter` (maintainer directive 2026-07-18: the user sees "Naukri",
-# never the "Apify" plumbing) — the board pill, deep search, and the Analytics
-# Discovery tab all key off it. `apify` remains only the *adapter/toggle*
-# identity (`board = "apify"` entries, `apify:<actor>` source keys). The
-# LinkedIn actor deliberately stamps "linkedin" so its rows share one identity
-# with the guest adapter + logged-in one-shot (they already share canonical
-# URLs and dedup).
+# The real board each actor scrapes, stamped as `source_adapter`, so the user
+# sees "Naukri", never "Apify"; the board pill, search and Analytics key off it.
+# `apify` stays the adapter and toggle identity. The LinkedIn actor stamps
+# "linkedin" to share 1 identity with the guest adapter.
 ACTOR_SOURCE_IDS: dict[str, str] = {
     "memo23/naukri-scraper": "naukri",
     "curious_coder/linkedin-jobs-scraper": "linkedin",
@@ -268,6 +248,22 @@ DEFAULT_ACTORS: tuple[str, ...] = (
     "epicscrapers/seek-job-scraper",
     "curious_coder/linkedin-jobs-scraper",
 )
+
+# What discovery reads instead of naming Apify (F-P6): the key's label, the
+# entries a saved key adds, and each actor entry as its own Settings toggle,
+# counted in Analytics under the board it stamps.
+CREDENTIAL = "Apify"
+DEFAULT_SOURCES: tuple[dict[str, str], ...] = tuple(
+    {"board": ID, "actor": actor} for actor in DEFAULT_ACTORS
+)
+SUB_SOURCE_FIELD = "actor"
+SUB_SOURCE_IDS = ACTOR_SOURCE_IDS
+SUB_SOURCE_LABELS: dict[str, str] = {
+    "memo23/naukri-scraper": "Naukri (via Apify)",
+    "misceres/indeed-scraper": "Indeed (via Apify)",
+    "epicscrapers/seek-job-scraper": "Seek (via Apify)",
+    "curious_coder/linkedin-jobs-scraper": "LinkedIn deep-JD (via Apify)",
+}
 
 
 def search(entry: SourceEntry, prefs: ScanPrefs, fetcher: Fetcher) -> list[NormalizedJob]:

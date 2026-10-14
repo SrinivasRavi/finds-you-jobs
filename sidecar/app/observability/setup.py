@@ -1,23 +1,10 @@
-"""Observability configuration (architecture section 10, layer 2 — Logfire tracing).
+"""Observability configuration (architecture section 10, layer 2).
 
-`configure_observability` is the single entry point the app lifespan calls. It
-wires Logfire to a **purely-local** span pipeline:
-
-- `send_to_logfire=False` → the SDK never talks to Logfire Cloud. **Zero network
-  calls for observability by default** (the A6 hard invariant / NFR-OBS-01).
-- A `SimpleSpanProcessor(SqliteSpanExporter)` persists every span to a local
-  `logfire.sqlite` synchronously (single-user, low volume — the Logs drill-down
-  is immediately consistent).
-- An OTLP exporter is added **only** when the user has explicitly enabled export
-  *and* given an endpoint (FR-SET-08 / NFR-OBS-02). Off ⇒ no OTLP processor
-  exists at all — not a disabled one, absent (the invariant the scope names).
-
-`console=False` is deliberate: the sidecar's stdout carries the `PORT=`/`TOKEN=`
-handshake and must never be polluted by span logging.
-
-Reconfiguration (a Settings change to the observability block) re-runs this with
-the new flags; Logfire tolerates repeat `configure()` calls.
-"""
+`configure_observability` wires Logfire purely locally: `send_to_logfire=False`
+(0 network calls by default, NFR-OBS-01), a synchronous SQLite span exporter,
+and an OTLP exporter only when the user enabled export with an endpoint
+(FR-SET-08); off means absent. `console=False` keeps stdout clean for the
+handshake. A Settings change re-runs it."""
 
 from __future__ import annotations
 
@@ -116,14 +103,9 @@ def reconfigure_observability(
     otlp_headers: dict[str, str] | None,
     retention_days: int,
 ) -> None:
-    """Re-apply observability config after a Settings change, in place.
-
-    The runner holds a reference to `handle`, so we mutate it rather than
-    swapping the object — the new `content_logging` flag is then visible to the
-    next operation, and Logfire is re-`configure()`d with the new processor set
-    (OTLP added/removed). Turning export OFF removes the OTLP processor entirely
-    (the hard invariant: off ⇒ no exporter at all).
-    """
+    """Re-apply observability config after a Settings change, mutating `handle` in
+    place since the runner holds it. Turning export off removes the OTLP processor
+    entirely."""
     fresh = configure_observability(
         data_dir,
         content_logging=content_logging,

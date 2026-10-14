@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { useDeleteEngine, useSaveEngine, useVerifyEngine } from "../../api/queries";
 import type { EngineVerifyResult, Settings as SettingsT } from "../../api/types";
-import { isCliEngine } from "./engines";
+import { AI_OFF, isCliEngine } from "./engines";
 import { MUTED_WARN_BOX } from "./shared";
 
 type ProviderCatalogEntry = {
@@ -27,14 +27,14 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     label: "OpenRouter",
     kind: "key",
     desc: "settingsPage.providers.openrouterDesc",
-    modelPlaceholder: "e.g. anthropic/claude-opus-4-8",
+    modelPlaceholder: "e.g. anthropic/claude-opus-5.5",
   },
   {
     id: "anthropic",
     label: "Anthropic",
     kind: "key",
     desc: "settingsPage.providers.anthropicDesc",
-    modelChips: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    modelChips: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
   },
   {
     id: "openai",
@@ -135,14 +135,21 @@ export const AIProvidersPanel = memo(function AIProvidersPanel({ settings }: { s
   // default-route to claude-cli, so "nothing configured" is only a real
   // problem when an operation is routed to a BYOK provider with no saved key
   // (2026-07-23: the old blanket warning contradicted the "In use" CLI badge).
+  const aiOff = settings.routing.some((r) => r.engine === AI_OFF);
   const unconfiguredRouted = settings.routing.some(
     (r) =>
+      r.engine !== AI_OFF &&
       !isCliEngine(r.engine) &&
       !settings.providers.find((p) => p.id === r.engine)?.configured,
   );
 
   return (
     <div className="space-y-4" data-testid="ai-providers-panel">
+      {aiOff && (
+        <div data-testid="ai-off-warning" className={"p-3 text-[11.5px] " + MUTED_WARN_BOX}>
+          {t("settingsPage.providers.aiOffWarning")}
+        </div>
+      )}
       {unconfiguredRouted && (
         <div data-testid="no-provider-warning" className={"p-3 text-[11.5px] " + MUTED_WARN_BOX}>
           {t("settingsPage.providers.unconfiguredWarning")}

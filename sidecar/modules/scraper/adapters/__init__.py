@@ -2,7 +2,8 @@
 
 Specific ATS adapters come first; `rss` is last because it is the generic
 fallback (claims any explicit feed URL). Contribution model mirrors
-career-ops: a new source = one module here + one registry line + tests.
+career-ops: a new source = one module here (declaring ID, LABEL, KIND) +
+one registry line + tests.
 """
 
 from __future__ import annotations
@@ -56,33 +57,10 @@ ADAPTERS: list[ModuleType] = [
     rss,
 ]
 
-# Display metadata for the Settings → Discovery sources toggles, keyed by
-# adapter ID, in ADAPTERS order. `kind` groups the checkboxes:
-# ats (company boards) | board (keyless job boards) | search (query-shaped) |
-# fallback (the generic RSS claim). All sources are ON by default — the user
-# opts *out* (per-family or per-entry), never in.
-CATALOG: dict[str, tuple[str, str]] = {
-    "greenhouse": ("Greenhouse", "ats"),
-    "lever": ("Lever", "ats"),
-    "ashby": ("Ashby", "ats"),
-    "workable": ("Workable", "ats"),
-    "smartrecruiters": ("SmartRecruiters", "ats"),
-    "recruitee": ("Recruitee", "ats"),
-    "teamtailor": ("Teamtailor", "ats"),
-    "personio": ("Personio", "ats"),
-    "workday": ("Workday", "ats"),
-    "bamboohr": ("BambooHR", "ats"),
-    "breezy": ("Breezy", "ats"),
-    "remoteok": ("RemoteOK", "board"),
-    "remotive": ("Remotive", "board"),
-    "arbeitnow": ("Arbeitnow", "board"),
-    "themuse": ("The Muse", "board"),
-    "linkedin": ("LinkedIn (guest search)", "search"),
-    "apify": ("Apify actors (your own key)", "search"),
-    "brave": ("Brave Search (your own key)", "search"),
-    "hackernews": ("Hacker News (Who is hiring)", "board"),
-    "rss": ("RSS feeds", "fallback"),
-}
+# Settings › Discover jobs rows, in ADAPTERS order: each adapter declares its
+# own LABEL and KIND (base.Adapter). All sources are ON by default; the user
+# opts out per family or per entry, never in.
+CATALOG: dict[str, tuple[str, str]] = {a.ID: (a.LABEL, a.KIND) for a in ADAPTERS}
 
 
 def resolve(entry: SourceEntry) -> tuple[ModuleType, str] | None:

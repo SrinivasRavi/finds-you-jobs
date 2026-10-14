@@ -1,22 +1,10 @@
-"""Engine wiring from Settings (architecture section 5.4/section 9).
+"""Engine wiring from Settings (architecture sections 5.4 and 9).
 
-`claude-cli` (the shared `ClaudeCliEngine`) stays the **default** engine of
-record — no routing default is flipped here. It is registered as a per-model
-**factory** so a per-kind model override in `UserPreferences.engine_routing` is
-honored.
-
-On top of that, the BYOK direct-API engines (`anthropic`, `openrouter`,
-`openai`, `local` — the last three are OpenAI-compatible) are registered from
-the persisted `EngineSettings` rows: a row that carries a usable config (a
-sealed key where one is required, a base URL where one is required) becomes a
-routable engine under its provider id, so routing a kind to it in Settings just
-works. A routing entry naming an engine we have *not* registered resolves to
-`None`, and the operation wrapper then raises the typed
-`EngineNotConfiguredError` — never a silent hang, never a silent fallback.
-
-The one-way rule holds: this is `app/` code reusing the module's shared
-`_shared/claude_engine.py` (via `engines_http`); the module never imports back.
-"""
+`claude-cli` stays the default engine, registered as a per-model factory so a
+per-kind model override works. The BYOK engines (`anthropic`, and the
+OpenAI-compatible `openrouter`, `openai`, `local`) register from EngineSettings
+rows with a usable config. Routing to an unregistered engine raises
+`EngineNotConfiguredError`: never a hang or a silent fallback."""
 
 from __future__ import annotations
 
@@ -48,24 +36,22 @@ from .engines_http import (
 # BYOK engines are opt-in via the Settings routing map, never auto-selected.
 DEFAULT_ENGINE = "claude-cli"
 
-# The subscription-CLI provider family (2026-07-17 expansion): always-registered
-# builtin engines driven through the user's logged-in coding CLI — no key, no
-# EngineSettings row, nothing to persist. NOT in PROVIDERS below on purpose:
-# POST /api/engines must keep rejecting them as BYOK configs. Routing to one
-# that isn't installed fails at call time with a clear EngineError, matching
-# claude-cli's long-standing behavior.
+# Subscription-CLI providers: builtin engines driven through the user's
+# logged-in coding CLI, with no key and no stored row. Not in PROVIDERS, so POST
+# /api/engines rejects them as BYOK configs; an uninstalled one fails at call time
+# with a clear EngineError.
 CLI_PROVIDERS = (DEFAULT_ENGINE, "codex-cli", "antigravity-cli")
 
-# The LLM-backed operation kinds that need a routed engine. `extract` is the
-# application-profile extraction at master-save (FR-APP-01) — a small call; a
-# cheap model is fine. (The prior repository also routed `prep`; Save-time
-# form-prep is retired in this rebuild — `docs/internal/archived/applier-as-built.md` section 2 — so
-# the kind is deliberately absent.)
-# Every LLM-driven kind must be here or apply_routing never routes it and the
-# op dies EngineNotConfiguredError in production. `draft` (Networker) was
-# missing in the prior repository — a latent bug this rebuild fixes; `apply`
-# is the Applier agent loop.
+# The LLM-backed kinds that need a routed engine; one missing here is never
+# routed and dies EngineNotConfiguredError in production. `extract` is the small
+# application-profile call at master save (FR-APP-01); `draft` is the Networker;
+# `apply` is the Applier loop. `prep` is retired (applier-as-built.md section 2).
 LLM_KINDS = ("score", "tailor", "cover", "extract", "draft", "apply")
+
+# The routing value onboarding's Skip writes (S-C60): the kind stays unrouted,
+# so it fails with EngineNotConfiguredError, until a provider is saved or a CLI
+# verified, which takes over every kind still set to it (`adopt_off_kinds`).
+AI_OFF = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -165,16 +151,9 @@ def verify_provider(
 
 
 class FakeInstantEngine:
-    """FYJ_FAKE_LLM's engine: instant canned completion, zero subprocesses.
-
-    Exists because the Playwright suite was discovered (2026-07-18) making REAL
-    `claude -p` calls on the dev machine's logged-in subscription — every
-    spec's profile save enqueues an `extract` op, default-routed to claude-cli.
-    That broke the suite's zero-model contract, spent real tokens per run, and
-    the ~10s child subprocesses were the root of teardown hangs and shutdown-
-    drain flakes. Same dev-seam philosophy as FYJ_APPLY_DEV: env-gated, never
-    set by the shell, honest to the ledger (zero tokens recorded).
-    """
+    """FYJ_FAKE_LLM's engine: an instant canned completion, 0 subprocesses. The
+    Playwright suite once made real `claude -p` calls on every profile save. Env-gated
+    like FYJ_APPLY_DEV, never set by the shell, 0 tokens recorded."""
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model or "fake-instant"
@@ -188,13 +167,9 @@ class FakeInstantEngine:
 
 
 def register_builtin_engines(registry: EngineRegistry) -> None:
-    """Register the always-present subscription-CLI engines. `claude-cli` keeps
-    its pinned default model; the other CLIs run their own configured default
-    when the routing entry names no model (`model=None` omits the flag).
-
-    FYJ_FAKE_LLM=1 (dev/e2e only) swaps every builtin CLI engine for
-    `FakeInstantEngine` so no test run ever drives a real subscription CLI.
-    BYOK rows are untouched — the e2e environment persists none."""
+    """Register the always-present CLI engines: `claude-cli` at its pinned default,
+    the others at their own default when no model is routed. FYJ_FAKE_LLM=1 swaps
+    them for `FakeInstantEngine`."""
     if os.environ.get("FYJ_FAKE_LLM"):
         for name in CLI_PROVIDERS:
             registry.register_factory(name, lambda model: FakeInstantEngine(model))
@@ -253,17 +228,15 @@ def register_byok_engines(
 
 
 def apply_routing(registry: EngineRegistry, engine_routing: dict[str, Any] | None) -> None:
-    """(Re)apply the per-kind routing map from settings onto the registry.
-
-    Each LLM kind routes to its configured `(engine, model)` or, absent an
-    entry, to `claude-cli` at the default model. Non-LLM kinds (`scan`) need no
-    engine and are left unrouted.
-    """
+    """(Re)apply the per-kind routing map: each LLM kind to its `(engine, model)`, or
+    `claude-cli` at the default. Non-LLM kinds stay unrouted."""
     routing = engine_routing or {}
     registry.clear_routing()
     for kind in LLM_KINDS:
         entry = routing.get(kind)
         entry = entry if isinstance(entry, dict) else {}
+        if entry.get("engine") == AI_OFF:
+            continue
         engine_name = entry.get("engine") or DEFAULT_ENGINE
         model = entry.get("model") or (DEFAULT_MODEL if engine_name == DEFAULT_ENGINE else None)
         registry.route(kind, engine=engine_name, model=model)
@@ -284,3 +257,16 @@ def configure_engines(
     if engine_rows is not None and data_dir is not None:
         register_byok_engines(registry, engine_rows, data_dir)
     apply_routing(registry, engine_routing)
+
+
+def adopt_off_kinds(routing: dict[str, Any] | None, provider: str) -> dict[str, Any] | None:
+    """The routing map with every kind set to `AI_OFF` moved to `provider`, or
+    None when no kind was off. The user who skipped the provider step and later
+    sets one up gets AI on everywhere, without re-routing kind by kind."""
+    current = dict(routing or {})
+    off = [k for k, v in current.items() if isinstance(v, dict) and v.get("engine") == AI_OFF]
+    if not off:
+        return None
+    for k in off:
+        current[k] = {"engine": provider, "model": ""}
+    return current

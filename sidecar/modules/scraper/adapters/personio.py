@@ -1,18 +1,8 @@
-"""Personio adapter — per-tenant public jobs XML (no auth, no key).
+"""Personio adapter: per-tenant public jobs XML, no key.
 
-Common across DACH/EU companies: `https://<slug>.jobs.personio.(de|com)/xml`.
-Auto-detects a `<slug>.jobs.personio.(de|com)` careers host and normalizes to
-the `/xml` feed. Host is validated by an anchored regex (per-tenant subdomains
-are the variable part), so an untrusted careers URL can never steer the fetch.
-
-Parsed with ElementTree — which natively handles the `</position>`-inside-a-
-description truncation that career-ops's regex parser has to strip around
-(free-text job bodies can contain a literal `</position>`). The feed root is
-`<workzag-jobs>` with `<position>` children.
-
-Ported from career-ops `providers/personio.mjs` (MIT) — see
-THIRD_PARTY_NOTICES.md.
-"""
+Claims `<slug>.jobs.personio.(de|com)` (anchored regex, so a URL can't steer the
+fetch) and reads `/xml` with ElementTree, which handles a literal `</position>`
+inside a description. Ported from career-ops `providers/personio.mjs` (MIT)."""
 
 from __future__ import annotations
 
@@ -24,8 +14,11 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import detect_url
 
 ID = "personio"
+LABEL = "Personio"
+KIND = "ats"
 INLINE_DESCRIPTION = True
 
 _HOST_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\.jobs\.personio\.(de|com)$")
@@ -51,11 +44,7 @@ def _job_descriptions_text(position: ET.Element) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    return _host(entry.url) if entry.url else ""
+    return detect_url(entry, ID, _host)
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:

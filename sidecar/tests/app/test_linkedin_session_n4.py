@@ -1,15 +1,8 @@
-"""Covers: Track N4 — LinkedIn session capture + lifecycle (through the real app).
+"""Covers: Track N4, LinkedIn session capture and lifecycle, through the real app.
 
-- US-SET-06 — connect (headed login op) / disconnect / validate / status DTO
-- FR-NW-05 / US-REF-09 — backoff surfacing on a rate-limited send + manual resume
-- US-NW-11 / FR-NW-13 — auto-archive never-accepted connections after 60 days
-- US-NW-10 / US-REF-08 — account-tier selection passed to voyager
-
-ZERO live LinkedIn traffic: the voyager driver factory is monkeypatched to the
-in-memory `FakeVoyagerDriver` (no subprocess, no browser, no network). The real
-headed-login *plumbing* is verified separately against a LOCAL fixture in
-`voyager_py/tests/test_login_capture.py`.
-"""
+US-SET-06 connect, disconnect, validate and status; FR-NW-05 backoff and manual
+resume; US-NW-11 auto-archive after 60 days; US-NW-10 the account tier passed to
+voyager. The driver is FakeVoyagerDriver: 0 LinkedIn traffic."""
 
 from __future__ import annotations
 
@@ -389,7 +382,7 @@ def test_linkedin_search_persists_into_the_feed(search_client) -> None:
 def test_linkedin_search_fills_the_missing_job_descriptions(search_client) -> None:
     """S-A6: the logged-in search returns cards with no JD body, and this path
     had no enrich phase, so 248 of 248 rows on the maintainer's install stored a
-    0-char description and could never be AI-scored. `scan()` had solved this
+    0-char description and could never be LLM-scored. `scan()` had solved this
     for every other adapter."""
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
@@ -414,14 +407,9 @@ def test_linkedin_search_fills_the_missing_job_descriptions(search_client) -> No
 def test_linkedin_search_drops_a_row_whose_jd_fetch_failed(
     search_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A posting that is authwalled or gone is dropped, not kept (D23).
-
-    It used to land on the board as an unscorable husk: a row that can never be
-    ranked, never explains itself, and dilutes its source's analytics. Both the
-    verbatim fetch error and the discarded URL are recorded on the scan
-    operation, so the row's absence is explained rather than silent. No
-    tombstone is written, so a later search can find the same posting once the
-    description is reachable."""
+    """An authwalled or gone posting is dropped, not kept as an unscorable husk
+    (D23). The fetch error and URL are recorded on the scan op; no tombstone, so a
+    later search can find it."""
     from sidecar.modules.scraper.adapters import linkedin_guest
 
     def _boom(job, fetcher):  # type: ignore[no-untyped-def]
@@ -649,11 +637,8 @@ def test_disconnect_clears_the_search_cursor(paged_search_client) -> None:
 
 
 # --- manual-only contact sync (FR-NW-15) -----------------------------------
-# contact_sync used to be a 12 h schedule that touched LinkedIn with nobody
-# present, then briefly a Sync button plus a throttled on-open refresh. It is
-# now manual-only (maintainer decision, 2026-08-15): the Sync button is the
-# one caller, with an already-running join guard and no throttle. See
-# `docs/internal/linkedin-addon.md` section 5 and `docs/internal/status.md`.
+# The Sync button is the 1 caller, with an already-running join guard and no
+# throttle; no timer, no on-open refresh (linkedin-addon.md section 5).
 
 
 def test_contact_sync_is_not_a_seeded_schedule(app_client) -> None:
@@ -722,12 +707,10 @@ def test_a_running_sync_is_joined_not_duplicated(app_client) -> None:
     assert joined["id"] is None
 
 
-# --- the honest sync stamp + outcome (2026-08-16) ---------------------------
-# The 2026-08-15 live confusion: a spent read budget refused every sweep in
-# ~10 ms, each op "succeeded" with synced 0, and the header stamped "Synced
-# just now" — the user reasonably read Sync as broken. The stamp now claims
-# only sweeps that actually probed (or cleanly checked an empty roster), and
-# the newest attempt's outcome rides the session DTO for the header to show.
+# --- the honest sync stamp + outcome ---------------------------------------
+# A budget-refused sweep "succeeded" with 0 synced and still stamped "Synced just
+# now". The stamp now claims only sweeps that probed (or checked an empty
+# roster), and the newest attempt's outcome rides the session DTO.
 
 
 def _plant_sync_op(app, result_ref: dict) -> None:

@@ -1,24 +1,12 @@
 # voyager_py/tests/test_last_message_client.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""`client.inbox_last_messages` end-to-end, wire-cold (FR-NW-15, 2026-08-15):
-the sweep's ONE GraphQL messenger-inbox read that replaced the dead
-LEGACY_INBOX REST finder (headed DevTools ground truth).
+"""`client.inbox_last_messages` end to end, wire-cold (FR-NW-15): the 1 GraphQL
+inbox read that replaced the dead LEGACY_INBOX finder.
 
-  - the request matches the captured shape exactly: the paginated
-    `messengerConversations` queryId, literal `variables=(…)` grammar,
-    %3A-encoded mailbox urn (the self fsd_profile urn from `/me`), the plain
-    graphql accept;
-  - ONE messaging request per browser session (sweep): the parsed map is
-    cached on the session, like the `/me` identity read;
-  - failure honesty: 401 → AuthenticationError and 429 → RateLimited (sweep
-    stops, nothing cached); any other failure → an EMPTY map cached for the
-    sweep, so a failing endpoint is never re-hammered per contact;
-  - the env-gated ALL-PATHS capture records the read (status, counts, error,
-    redacted payload on the fetching probe) with zero identities in it.
-
-Zero live LinkedIn traffic — the Playwright page/context are in-memory fakes
-serving SYNTHETIC fixtures built to the captured shape.
-"""
+Pinned: the request matches the captured shape; 1 messaging request per session
+(cached); 401 is AuthenticationError and 429 RateLimited (sweep stops), any
+other failure caches an empty map; the capture records the read with no
+identities. In-memory fakes with synthetic fixtures."""
 
 from __future__ import annotations
 
@@ -113,12 +101,9 @@ def _graphql_fetches(api: PlaywrightLinkedinAPI) -> list[str]:
 
 
 def test_inbox_get_matches_the_captured_request_shape(monkeypatch):
-    """The PROVEN request (second live confirmation, 2026-08-15): the
-    sync-token snapshot query with ONLY the mailbox urn — the paginated
-    variant (PRIMARY_INBOX predicate + count + lastUpdatedBefore=now) came
-    back an empty 200 live and must never return. Literal variables grammar
-    (structural parens/colons NEVER percent-encoded), the mailbox urn's own
-    colons %3A-encoded, the plain graphql accept."""
+    """The proven request: the sync-token snapshot query with only the mailbox urn
+    (the paginated variant returned an empty 200 live). Literal variables grammar,
+    the urn's colons %3A-encoded, plain graphql accept."""
     monkeypatch.delenv("FYJ_LINKEDIN_CAPTURE_DIR", raising=False)
     api = _api({"/voyager/api/me": (200, ME_PAYLOAD), GRAPHQL: (200, REPLY_INBOX)})
     out = api.inbox_last_messages()

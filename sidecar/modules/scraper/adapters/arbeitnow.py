@@ -1,27 +1,23 @@
-"""Arbeitnow adapter — public job-board JSON API (no auth, no key).
+"""Arbeitnow adapter: public job-board JSON API, no key.
 
-Claims `board = "arbeitnow"` and `arbeitnow.com` URLs. One request:
-`GET arbeitnow.com/api/job-board-api` → `{"data": [...]}` with `title`,
-`company_name`, `location`, `remote`, `url`, `description` (HTML, carried in
-the list payload — no per-job fetch) and `created_at` (unix seconds → ISO).
-A remote row gets ", Remote" appended to its location so the shared location
-filters can match it.
-
-Re-derived from the public payload shape (JustHireMe carries the same keyless
-board — behavioral precedent only, no code seen or copied).
-"""
+Claims `board = "arbeitnow"` and arbeitnow.com URLs. 1 request to
+`/api/job-board-api`; the JD is in the list; remote rows get ", Remote"
+appended for the location filters. Re-derived from the payload (JustHireMe as
+precedent only)."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from urllib.parse import urlsplit
 
 from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import detect_board
 
 ID = "arbeitnow"
+LABEL = "Arbeitnow"
+KIND = "board"
 INLINE_DESCRIPTION = True
 _CLAIM = "arbeitnow.com"
 _HOSTS = {"arbeitnow.com", "www.arbeitnow.com"}
@@ -29,12 +25,7 @@ _API = "https://www.arbeitnow.com/api/job-board-api"
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.board == ID:
-        return _CLAIM
-    host = urlsplit(entry.url).netloc.lower() if entry.url else ""
-    return _CLAIM if host in _HOSTS else ""
+    return detect_board(entry, ID, _CLAIM, _HOSTS)
 
 
 def _posted_iso(created_at: object) -> str:

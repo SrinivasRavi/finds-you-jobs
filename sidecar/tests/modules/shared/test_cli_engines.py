@@ -1,19 +1,9 @@
-"""Covers: the subscription-CLI engine family (`_shared/cli_engines.py`).
+"""Covers: the subscription-CLI engines (`_shared/cli_engines.py`).
 
-Fake `run_cli` (completions) / `subprocess.run` (probes) throughout — no real
-CLI, no network — except the `run_cli` process-group section at the bottom,
-which drives real short-lived `/bin/sh` children (F-L9). The contracts under
-test are the ones the engines promise the app:
-
-- Codex: containment flags (`--sandbox read-only`, scratch cwd, prompt via
-  stdin), billing scrub (OPENAI_API_KEY never reaches the child), JSONL
-  parsing (agent message + usage, tolerant of schema variants), honest errors
-  (missing binary, nonzero exit, empty result).
-- Antigravity: scratch cwd + GEMINI/GOOGLE key scrub, and the empty-stdout
-  case surfacing as a clear EngineError naming the upstream non-TTY bug —
-  never a silent empty completion.
-- `codex login status` probe mapping (ok / not_logged_in / unknown→None).
-"""
+Faked subprocesses throughout, except real `/bin/sh` children for the
+process-group kill (F-L9). Codex: containment flags, the OPENAI_API_KEY scrub,
+JSONL parsing, honest errors. Antigravity: scratch cwd, key scrub, and empty
+stdout as a clear EngineError. The `codex login status` probe mapping."""
 
 from __future__ import annotations
 

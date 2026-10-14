@@ -1,22 +1,11 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""Typed observation seam over the Skyvern-derived core
-(docs/internal/archived/applier-as-built.md section 4.1).
+"""Typed observation seam over the Skyvern-derived core (applier-as-built.md 4.1).
 
-One ``observe(page)`` call produces one immutable ``Observation``: a viewport
-screenshot, a compact interactive-element tree rendered to HTML, and a flat list
-of ``ObservedElement``s carrying a fresh opaque id (``e1``, ``e2`` …) for the
-current observation only.
-
-Element ids are per-observation and go stale the instant the next ``observe``
-runs (or the page navigates/rerenders). An action must reference an id from the
-CURRENT observation; the executor rejects stale references rather than guessing
-(section 4.1). ``unique_id`` is the underlying Skyvern per-scan DOM id the executor
-resolves against; ``element_id`` is the opaque handle the model sees.
-
-Observation is frame-aware: the tree is walked across the main frame and its
-same-origin child frames, and each element carries the ``frame_index`` it was
-found in (main frame is 0, child frames follow ``page.frames`` order).
-"""
+`observe(page)` returns 1 immutable `Observation`: a screenshot, a compact
+interactive-element tree as HTML, and `ObservedElement`s with fresh opaque ids
+(`e1`, `e2`, ...). Ids go stale on the next observe, and the executor rejects
+stale ones. `unique_id` is the DOM id the executor resolves; `element_id` is
+what the model sees. Frame-aware: each element carries its `frame_index`."""
 
 from __future__ import annotations
 
@@ -36,12 +25,8 @@ from .upstream.scraper import get_interactable_element_tree, trim_element_tree
 
 @dataclass(frozen=True)
 class ObservedElement:
-    """One interactive element, as seen in the current observation.
-
-    ``element_id`` is the opaque per-observation handle (``e1`` …); ``unique_id``
-    is the Skyvern per-scan DOM id the executor resolves against. Both expire
-    when the next observation is taken.
-    """
+    """1 interactive element in the current observation. `element_id` is the model's
+    handle, `unique_id` the DOM id the executor resolves; both expire next observe."""
 
     element_id: str
     unique_id: str
@@ -70,24 +55,16 @@ class Observation:
 
 
 def _walk(nodes: list[dict]) -> Iterator[dict]:
-    """Depth-first preorder walk over the untrimmed tree.
-
-    Preorder (which still carries ``id`` and ``frame_index``) is what makes the
-    ``e1..eN`` numbering stable and readable: it mirrors document order across
-    the main frame and its child-frame subtrees.
-    """
+    """Depth-first preorder walk, which keeps `e1..eN` in document order across the
+    main frame and child frames."""
     for node in nodes:
         yield node
         yield from _walk(node.get("children") or [])
 
 
 def _build_label_map(element_tree: list[dict]) -> dict[str, str]:
-    """Map an ``id`` -> its associated ``<label for=...>`` text.
-
-    Skyvern surfaces the ``<label>`` and its control as separate elements; the
-    flat element list the model sees needs the human-readable label carried ON
-    the control. Only explicit ``for``/``id`` association is resolved (what the
-    fixtures and typical ATS forms use)."""
+    """Map an id to its `<label for=...>` text, so the control carries its label.
+    Only explicit for/id association is resolved."""
     label_map: dict[str, str] = {}
     for node in _walk(element_tree):
         if node.get("tagName") != "label":
@@ -141,12 +118,8 @@ def _to_observed(node: dict, element_id: str, associated_label: str) -> Observed
 
 
 async def observe(page: Page) -> Observation:
-    """Observe ``page`` once: screenshot + interactive-element tree + frame walk.
-
-    The returned ``Observation`` is self-consistent for exactly this instant. Its
-    ``element_id``s are reassigned from scratch on the next ``observe`` — never
-    reuse an id across observations.
-    """
+    """Observe `page` once: screenshot, element tree, frame walk. Consistent for this
+    instant only; ids are reassigned on the next observe."""
     elements, element_tree = await get_interactable_element_tree(page)
 
     surfaced_ids = {element["id"] for element in elements if element.get("id")}

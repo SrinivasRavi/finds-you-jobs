@@ -1,26 +1,18 @@
 // Covers: Job finder preferences — personal hard excludes (companies +
-// keywords → UserPreferences.hard_excludes) and the tracked-companies roster
-// (watched [[sources]] rows: list/add/remove), job-finder-preferences design
+// keywords → UserPreferences.hard_excludes), job-finder-preferences design
 // 2026-07-21. Round-trips through the live sidecar: save, reopen, assert.
+// The followed-companies list moved to Settings (watch-company.spec.ts).
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/finder-prefs";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
-
-test("excludes and tracked companies round-trip through the modal", async ({
+test("excludes round-trip through the modal", async ({
   page,
   request,
 }) => {
@@ -48,26 +40,6 @@ test("excludes and tracked companies round-trip through the modal", async ({
     },
   });
 
-  // Seed a job on a watchable board and watch it via the job path (no
-  // liveness probe — the board is job-derived) so the roster has one entry.
-  const job = await (
-    await request.post(`${base}/api/jobs`, {
-      headers: auth,
-      data: {
-        canonical_url: "https://boards.greenhouse.io/e2e-watch-co/jobs/99",
-        title: "Watch Me",
-        company: "E2E Watch Co",
-        location: "Remote",
-        description: "",
-        source_adapter: "greenhouse",
-      },
-    })
-  ).json();
-  await request.post(`${base}/api/discovery/watchlist`, {
-    headers: auth,
-    data: { job_id: job.id },
-  });
-
   await page.goto("/jobs");
   await page.getByTestId("finder-prefs").click();
 
@@ -79,17 +51,6 @@ test("excludes and tracked companies round-trip through the modal", async ({
   await expect(page.getByTestId("fp-exclude-companies").getByText("Evil Corp")).toBeVisible();
   await expect(page.getByTestId("fp-exclude-keywords").getByText("unpaid")).toBeVisible();
 
-  // The job-derived watch shows in the roster; a pasted URL that doesn't
-  // open is refused by the liveness probe (offline-safe: unroutable host,
-  // claimed by the RSS adapter's shape check).
-  await expect(page.getByTestId("fp-tracked-row")).toContainText(
-    "boards.greenhouse.io/e2e-watch-co",
-  );
-  await page.getByTestId("fp-tracked-url").fill("https://e2e-invalid.localhost/jobs.rss");
-  await page.getByTestId("fp-tracked-add").click();
-  await expect(page.getByTestId("fp-tracked-error")).toContainText("doesn't open", {
-    timeout: 15_000,
-  });
   await page.screenshot({ path: `${DIR}/finder-prefs-filled.png`, fullPage: true });
 
   // Save persists the excludes (rescan fires against them server-side).
@@ -102,7 +63,6 @@ test("excludes and tracked companies round-trip through the modal", async ({
   await page.getByTestId("finder-prefs").click();
   await expect(page.getByTestId("fp-exclude-companies").getByText("Evil Corp")).toBeVisible();
   await expect(page.getByTestId("fp-exclude-keywords").getByText("unpaid")).toBeVisible();
-  await expect(page.getByTestId("fp-tracked-row")).toContainText("e2e-watch-co");
   await page.screenshot({ path: `${DIR}/finder-prefs-reopened.png`, fullPage: true });
 
   // The API agrees (hard_excludes actually reached UserPreferences).
@@ -111,9 +71,4 @@ test("excludes and tracked companies round-trip through the modal", async ({
     companies: ["Evil Corp"],
     keywords: ["unpaid"],
   });
-
-  // Roster remove: row disappears and stays gone after reopen.
-  await page.getByTestId("fp-tracked-remove").click();
-  await expect(page.getByTestId("fp-tracked-row")).toHaveCount(0);
-  await page.screenshot({ path: `${DIR}/finder-prefs-untracked.png`, fullPage: true });
 });

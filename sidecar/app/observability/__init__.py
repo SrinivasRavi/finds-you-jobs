@@ -1,20 +1,10 @@
-"""Observability (architecture section 10, layer 2 — Logfire tracing spans).
+"""Observability (architecture section 10, layer 2: Logfire spans).
 
-Public surface:
-
-- `configure_observability` / `ObservabilityHandle` — wire Logfire to the local
-  SQLite span store (+ opt-in OTLP). Called once from the app lifespan.
-- `operation_span` — the context manager the runner wraps each operation in.
-- `record_span_success` / `record_span_failure` — set the US-SYS-05 attribute
-  list (engine / model / cost / latency / outcome) on that span.
-- `read_spans_for_operation` — the Logs drill-down read path.
-- `monitor_loop_lag` — a lifespan background task that reports event-loop
-  blockage no request span would ever see.
-
-The runner is the only writer of operation spans; everything else reads. Modules
-stay framework-free (the one-way rule) — the engine call is represented as
-structured attributes on the app-side operation span, not a span inside a module.
-"""
+`configure_observability` wires Logfire to the local SQLite store (OTLP opt-in);
+`operation_span` wraps each op with `record_span_success`/`_failure`
+(US-SYS-05); `read_spans_for_operation` serves the drill-down;
+`monitor_loop_lag` reports loop stalls. The runner is the only writer; modules
+stay framework-free, so engine calls are attributes on the op span."""
 
 from __future__ import annotations
 
@@ -65,13 +55,9 @@ def operation_span(
     input_snapshot: dict[str, Any] | None = None,
     content_logging: bool = False,
 ) -> Iterator[Any]:
-    """Wrap one operation execution in a Logfire span (US-SYS-05).
-
-    `operation_id` + `kind` are always set (the drill-down keys on them). The
-    input snapshot's *size* is always recorded; its *content* only when the user
-    opted into content logging (NFR-SEC-02) — off by default, so no JD/resume
-    text ever lands in a span on the default path.
-    """
+    """Wrap 1 operation in a Logfire span (US-SYS-05). `operation_id` and `kind`
+    always; the snapshot's size always, its content only with content logging on
+    (NFR-SEC-02, default off)."""
     with logfire.span("operation", operation_id=operation_id, kind=kind) as span:
         if input_snapshot is not None:
             serialized = json.dumps(input_snapshot, default=str, separators=(",", ":"))

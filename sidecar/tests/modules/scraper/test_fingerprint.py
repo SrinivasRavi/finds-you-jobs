@@ -8,12 +8,11 @@ do; the annotation rides trust_flags and no row is ever dropped or merged
 from __future__ import annotations
 
 from sidecar.modules.scraper.fingerprint import (
+    SIMILARITY_THRESHOLD,
     is_probable_cross_listing,
     simhash64,
     similarity,
 )
-from sidecar.modules.scraper.scraper import _flag_cross_listings
-from sidecar.modules.scraper.types import NormalizedJob
 
 _JD = (
     "We are looking for a Senior Backend Engineer to join our platform team. "
@@ -57,7 +56,7 @@ _JD = (
 )
 
 # Cross-posted copies differ by host boilerplate, not body — the reliable
-# regime for the 0.92 threshold is realistic JD length (300+ tokens; at ~200
+# regime for the similarity threshold is realistic JD length (300+ tokens; at ~200
 # the bit margins are too thin and similarity dips into the high 0.8s —
 # verified empirically while building this).
 
@@ -89,25 +88,43 @@ def test_short_text_has_no_fingerprint():
     assert similarity(0, simhash64(_JD)) == 0.0
 
 
-def test_flag_cross_listings_annotates_both_rows_never_drops():
-    a = NormalizedJob(
-        title="Senior Backend Engineer",
-        canonical_url="https://boards.greenhouse.io/acme/jobs/1",
-        description=_JD,
+def test_adjacent_seniority_at_one_company_does_not_flag():
+    # url-less-jobs.md section 6.4: employer boilerplate puts any 2 postings
+    # from 1 company above the similarity threshold, which is why the gate
+    # also compares company and title. 9 of 21 flags on the bench corpus were
+    # this shape (`Principal SWE` against `Senior SWE` at the same employer).
+    senior = _JD
+    principal = _JD.replace("remote-first work", "remote-first work and equity")
+    assert similarity(simhash64(senior), simhash64(principal)) >= SIMILARITY_THRESHOLD
+    assert not is_probable_cross_listing(
+        simhash64(senior),
+        simhash64(principal),
+        company_a="uipath",
+        company_b="uipath",
+        title_a="Senior Software Engineer",
+        title_b="Principal Software Engineer",
     )
-    b = NormalizedJob(
-        title="Senior Backend Engineer",
-        canonical_url="https://www.linkedin.com/jobs/view/123",
-        description=_JD + " Posted via LinkedIn.",
+
+
+def test_same_title_at_different_companies_does_not_flag():
+    edited = _JD.replace("remote-first work", "remote-first work and equity")
+    assert not is_probable_cross_listing(
+        simhash64(_JD),
+        simhash64(edited),
+        company_a="Acme",
+        company_b="Globex",
+        title_a="Senior Software Engineer",
+        title_b="Senior Software Engineer",
     )
-    c = NormalizedJob(
-        title="Product Designer",
-        canonical_url="https://jobs.lever.co/acme/2",
-        description=_OTHER_JD,
+
+
+def test_labels_normalize_before_comparing():
+    edited = _JD.replace("remote-first work", "remote-first work and equity")
+    assert is_probable_cross_listing(
+        simhash64(_JD),
+        simhash64(edited),
+        company_a="UiPath, Inc.",
+        company_b="uipath inc",
+        title_a="Senior Software Engineer",
+        title_b="senior   software engineer",
     )
-    jobs = [a, b, c]
-    _flag_cross_listings(jobs)
-    assert len(jobs) == 3  # annotate, never drop
-    assert f"probable-cross-listing:{b.canonical_url}" in a.trust_flags
-    assert f"probable-cross-listing:{a.canonical_url}" in b.trust_flags
-    assert not c.trust_flags

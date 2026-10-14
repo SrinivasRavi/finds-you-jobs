@@ -1,9 +1,6 @@
-// ─── Contact & data lifecycle (FR-SYS-06 / FR-NW-15) ────────────────────────
-// One editable row per configurable window. `unit` is days unless noted; a
-// blank/zero input falls back to the stored value (the backend clamps too).
-// (Extracted from Settings.tsx 2026-07-25, F-M6 monolith split — pure move,
-// zero behavior change.) Memoized: `settings` is the query-stable object and
-// `patch` is a root-stable useCallback.
+// Contact and data lifecycle (FR-SYS-06 / FR-NW-15): 1 row per configurable
+// window, in days unless noted; a blank or zero falls back to the stored value.
+// Memoized: `settings` is query-stable and `patch` a stable callback.
 
 import { memo } from "react";
 import { Trans, useTranslation } from "react-i18next";

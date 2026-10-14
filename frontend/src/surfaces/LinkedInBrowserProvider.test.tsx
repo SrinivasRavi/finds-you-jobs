@@ -1,9 +1,7 @@
-// The app-level LinkedIn browser modal (2026-08-16): opened via context from
-// any surface, maximum-size dialog (the tailored-resume sizing), the live
-// surface + queue panel inside, session status chip in the title bar, honest
-// disabled body when Referral Outreach is off. The heavy children are
-// stand-ins (their own tests cover them); the provider, the modal shell, and
-// the open/close mechanics are the real code.
+// The app-level LinkedIn browser modal: opened via context from any surface,
+// maximum size, the live surface and queue panel inside, a status chip in the
+// title, and an honest disabled body when Referral Outreach is off. The heavy
+// children are stand-ins; the provider and modal mechanics are real.
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";

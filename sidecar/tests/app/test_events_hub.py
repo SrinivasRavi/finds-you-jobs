@@ -42,11 +42,13 @@ async def test_hub_delivers_published_event_to_subscriber() -> None:
     frames: list[str] = []
 
     async def consume() -> None:
-        async for frame in hub.stream(heartbeat_interval=0.05, limit=1):
+        # A heartbeat counts toward `limit`, so it must never beat the publish (A17).
+        async for frame in hub.stream(heartbeat_interval=30, limit=1):
             frames.append(frame)
 
     task = asyncio.create_task(consume())
-    await asyncio.sleep(0.01)  # let the subscriber register
+    # 1 yield runs `consume` up to its first await, which is after the subscribe.
+    await asyncio.sleep(0)
     assert hub.subscriber_count == 1
     hub.publish(operation_event("op1", "score", "succeeded"))
     await asyncio.wait_for(task, timeout=2)
@@ -59,12 +61,8 @@ async def test_hub_delivers_published_event_to_subscriber() -> None:
 
 
 def test_slow_subscriber_queue_is_bounded_and_drops_oldest() -> None:
-    """F-L1: a stalled SSE consumer must not grow its queue without bound.
-
-    Events are invalidation hints — dropping the OLDEST is safe (the consumer
-    refetches the same fresh snapshot on the next hint). No loop bound, so
-    delivery is inline (same as the unit-test path `publish` documents).
-    """
+    """F-L1: a stalled SSE consumer's queue is bounded and drops the oldest, safe
+    since events are invalidation hints."""
     hub = EventHub()
     queue = hub._subscribe()
     overflow = 25

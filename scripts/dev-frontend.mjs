@@ -1,14 +1,7 @@
-// Vite launcher with a real lifecycle (2026-07-17 dogfood: Ctrl-C on
-// `pnpm dev` left vite holding port 1420, so the next run failed with
-// EADDRINUSE and a stale window survived).
-//
-// Why a wrapper: `tauri dev` kills its beforeDevCommand CHILD (`pnpm --dir
-// frontend dev`), but pnpm's vite GRANDCHILD isn't in that kill and gets
-// orphaned. This script owns vite directly:
-//   - vite runs in its own process group;
-//   - SIGINT/SIGTERM/exit kill the whole group (TERM, then KILL after 3 s);
-//   - a ppid poll catches the hard-killed-parent case (tauri-cli gone
-//     without signalling us — reparented means dead parent) and cleans up.
+// Vite launcher with a real lifecycle. `tauri dev` kills its pnpm child but not
+// pnpm's vite grandchild, which then held port 1420. This owns vite in its own
+// process group, kills the group on SIGINT, SIGTERM or exit (TERM, then KILL after
+// 3 s), and a ppid poll cleans up when the parent was hard-killed.
 
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";

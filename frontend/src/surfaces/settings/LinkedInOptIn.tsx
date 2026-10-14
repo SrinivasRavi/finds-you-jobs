@@ -1,17 +1,8 @@
-// The account-safety consent scaffold shared by BOTH experimental LinkedIn
-// opt-ins (Referral Outreach + LinkedIn job search). Extracted 2026-08-02
-// (duplication audit D-F3): the scaffold was pasted twice, so an ack-semantics
-// fix could land on one opt-in and silently miss the other — the gate-hole
-// class. The consent MECHANICS now live here exactly once: the hazard badge,
-// the ToS risk line, the acknowledgement checkbox, the toggle that stays inert
-// until that box is ticked, the durable ack timestamp stamped on enable, and
-// the ack reset on disable. Everything feature-specific — copy, testids, which
-// settings keys persist, what unlocks below the toggle — is a prop.
-//
-// `ack` is owned by the caller on purpose: Referral Outreach lifts it to the
-// Settings root so it survives pane switches, LinkedIn job search keeps it
-// local so it resets on unmount. Only the storage differs; the semantics above
-// are shared.
+// The consent scaffold for both LinkedIn opt-ins (D-F3), so an ack fix can't
+// land on 1 and miss the other: hazard badge, ToS risk line, the ack checkbox,
+// a toggle inert until it's ticked, the ack timestamp on enable, reset on disable.
+// The caller owns `ack`: Referral Outreach keeps it at the Settings root, job
+// search keeps it local.
 
 import { useTranslation } from "react-i18next";
 

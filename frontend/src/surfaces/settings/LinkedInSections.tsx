@@ -1,13 +1,7 @@
-// LinkedIn session capture (US-SET-06 as-built) + the LinkedIn job search
-// opt-in. (Extracted from Settings.tsx 2026-07-25, F-M6 monolith split — pure
-// moves, zero behavior change.)
-//
-// Divergence from the prototype's cookie-paste form: the maintainer directed a
-// **headed-browser login** — click Connect, a real browser opens at LinkedIn's
-// login page, you log in yourself (incl. 2FA; the password never touches
-// finds-you-jobs), and we save the session cookies once the `li_at` auth cookie
-// appears. Status chip + connected-as + expiry + Validate/Disconnect/Resume
-// mirror settings-linkedin.html.
+// LinkedIn session capture (US-SET-06 as built) and the job search opt-in.
+// Connect opens a real browser at LinkedIn's login; the user signs in themselves
+// (2FA included, the password never touches us), and the session cookies are
+// saved once `li_at` appears.
 
 import { memo, useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
@@ -253,13 +247,9 @@ export const LinkedInSessionSection = memo(function LinkedInSessionSection() {
   );
 });
 
-// The experimental gate around LinkedIn job search — the SAME consent scaffold
-// as Referral Outreach (hazard badge + ToS risk line + ack + Enable toggle),
-// shared as `LinkedInOptIn` since 2026-08-02 (duplication audit D-F3), with its
-// OWN opt-in but the SAME shared LinkedIn session (connect once, stays until
-// Disconnect). `ack` is local state here on purpose: it resets whenever the
-// Discover pane unmounts, so consent is re-given per visit.
-// Memoized: `settings` is the query-stable object, `patch` a root useCallback.
+// The LinkedIn job search gate: the shared `LinkedInOptIn` scaffold (D-F3) with
+// its own opt-in on the shared session. `ack` is local so consent is re-given per
+// visit. Memoized: `settings` is query-stable, `patch` a stable callback.
 export const LinkedInJobSearchSection = memo(function LinkedInJobSearchSection({
   settings,
   patch,
@@ -456,12 +446,9 @@ function OverrideSelect({
   );
 }
 
-// LinkedIn self-imposed rate limits (maintainer directive 2026-08-01). One
-// membership dropdown + one risk slider drive every cap; each cap is
-// independently overridable. Changing membership OR risk resets overrides
-// (enforced server-side). Lives in the Networking category beside the shared
-// LinkedIn session it scopes to (maintainer 2026-08-02); it also carries the
-// Discover-jobs search throttle (pages/hour), which links here by name.
+// LinkedIn self-imposed rate limits: 1 membership dropdown and 1 risk slider
+// drive every cap, each overridable; changing either resets overrides
+// (server-side). Also carries the job search throttle (pages per hour).
 export const LinkedInRateLimitsSection = memo(function LinkedInRateLimitsSection() {
   const { t } = useTranslation();
   const { data: session } = useLinkedInSession();

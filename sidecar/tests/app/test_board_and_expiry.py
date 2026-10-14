@@ -1,36 +1,23 @@
-"""Board correctness + Expired aging (this round's board work package).
+"""Board correctness and expired aging.
 
-Covers:
-- Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02): a failed `score` op with
-  no cached score resolves the board row to `scoreStatus == "failed"`.
-- Board pagination + honest total (FR-JB-02): 50/page, `total` counts every
-  eligible row — no silent 200-row cap.
-- Real last-scan meta + explained empty/running/error status (FR-JB-10).
-- Board search (FR-JB-13 / US-JB-12): shallow list_q vs deep text_q, filtered
-  server-side before pagination; a search miss never masquerades as an empty
-  scrape.
-- Expired aging (FR-SYS-03): grey at 14d, hard-delete (no tombstone) at 30d,
-  rescued by Save, un-expire resets the timer, legacy rows backfilled once.
-"""
+Covers: score-failed derivation (FR-JB-07); pagination and an honest total
+(FR-JB-02); real last-scan meta (FR-JB-10); search filtered before pagination
+(FR-JB-13), where a miss never looks like an empty scrape; and aging (FR-SYS-03):
+grey at 14 days, delete at 30, rescued by Save."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import timedelta
-from pathlib import Path
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app.db import Database
 from sidecar.app.db.base import now_utc
 from sidecar.app.db.models import SCORE_MAX_ATTEMPTS
-from sidecar.app.main import create_app
 from sidecar.app.registry.persistence import age_expired_jobs
 
-TOKEN = "test-token-board"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
+from ._support import AUTH
 
 # Long enough to clear `MIN_JD_CHARS` (200). A shorter description makes the row
 # `unscorable`, which outranks every other score state, so any test about the
@@ -40,18 +27,6 @@ REALISTIC_JD = (
     "greSQL schemas, run workloads on AWS, and review other engineers' work. Requirem"
     "ents: strong Python, solid SQL, and production ownership experience."
 )
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
 
 
 def _db(app: FastAPI) -> Database:
@@ -329,6 +304,89 @@ def test_board_search_filters_before_pagination(
     assert body["total"] == 1
 
 
+def _filler(repos: object, n: int = 60) -> None:
+    """A page and more of plain rows that match none of the filters below, all
+    scored above the targets, so a target sits beyond page 0 unfiltered."""
+    for i in range(n):
+        repos.jobs.create(  # type: ignore[attr-defined]
+            canonical_url=f"f{i}", title=f"F{i}", location="Berlin", description="Office role.",
+            source_adapter="lever", score=90, score_method="keyword",
+        )
+
+
+def test_board_filters_run_on_the_whole_board_before_pagination(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Audit finding 6: the 5 filters ran in the browser over the 50 loaded
+    rows, so a match on job 61 read as "no jobs matched". Each now runs on the
+    server before the page is cut, and `total` counts the filtered set."""
+    app, client = app_client
+    recent = (now_utc() - timedelta(days=2)).isoformat()
+    old = (now_utc() - timedelta(days=40)).isoformat()
+    with _db(app).repos() as repos:
+        _filler(repos)
+        remote = repos.jobs.create(
+            canonical_url="t-remote", title="Remote Role", location="Remote",
+            description="Fully remote.",
+            source_adapter="lever", score=10, score_method="keyword", posted_at=old,
+        ).id
+        ashby = repos.jobs.create(
+            canonical_url="t-ashby", title="Ashby Role", location="Berlin",
+            description="Office role.",
+            source_adapter="ashby", score=10, score_method="keyword", posted_at=old,
+        ).id
+        ai = repos.jobs.create(
+            canonical_url="t-ai", title="AI Scored", location="Berlin",
+            description="Office role.",
+            source_adapter="lever", score=10, score_method="llm", posted_at=recent,
+        ).id
+        paid = repos.jobs.create(
+            canonical_url="t-paid", title="Paid Role", location="Berlin",
+            description="Office role.",
+            source_adapter="lever", score=10, score_method="keyword", salary="$150k - $180k",
+            posted_at=old,
+        ).id
+        low = repos.jobs.create(
+            canonical_url="t-low", title="Low Role", location="Berlin",
+            description="Office role.",
+            source_adapter="lever", score=10, score_method="keyword", salary="$30k - $40k",
+            posted_at=old,
+        ).id
+
+    def ids(query: str) -> tuple[set[str], int]:
+        body = client.get(f"/api/board?{query}", headers=AUTH).json()
+        return {j["id"] for j in body["jobs"]}, body["total"]
+
+    assert ids("work_style=REMOTE") == ({remote}, 1)
+    assert ids("work_style=REMOTE_FRIENDLY") == ({remote}, 1)
+    assert ids("source=ashby") == ({ashby}, 1)
+    assert ids("method=model") == ({ai}, 1)
+    assert ids("posted_days=7") == ({ai}, 1)
+    # The scan's own salary rule: a range under the floor is hidden, a job
+    # with no salary is never hidden (rank, don't gate).
+    found, total = ids("salary_min=100000")
+    found |= ids("salary_min=100000&page=1")[0]
+    assert paid in found and low not in found
+    assert total == 64
+
+
+def test_board_recency_sort_runs_before_pagination(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """Recency sorted only the loaded 50; the newest posting on the whole board
+    must lead page 0."""
+    app, client = app_client
+    with _db(app).repos() as repos:
+        _filler(repos)
+        newest = repos.jobs.create(
+            canonical_url="t-new", title="Newest", source_adapter="lever", score=1,
+            score_method="keyword",
+            posted_at=now_utc().isoformat(),
+        ).id
+    body = client.get("/api/board?sort=recency", headers=AUTH).json()
+    assert body["jobs"][0]["id"] == newest
+
+
 # ---------------------------------------------------------------------------
 # Last-scan meta + explained status (FR-JB-10)
 # ---------------------------------------------------------------------------
@@ -415,7 +473,7 @@ def test_expired_hard_deleted_at_30_days_without_tombstone(
     with db.repos() as repos:
         assert repos.jobs.get(job_id) is None
         # FR-SYS-03: no tombstone — a later scrape may re-surface the posting.
-        assert repos.tombstones.exists(url) is False
+        assert repos.tombstones.exists(url or "") is False
 
 
 def test_expired_legacy_row_without_stamp_backfilled_not_deleted(
@@ -557,7 +615,6 @@ def test_board_excludes_saved_jobs(app_client: tuple[FastAPI, TestClient]) -> No
 # ---------------------------------------------------------------------------
 
 
-
 def test_saved_job_never_auto_expires_or_deletes(migrated_db: Database) -> None:
     db = migrated_db
     now = now_utc()
@@ -628,10 +685,9 @@ def test_hard_excludes_hide_existing_board_rows_and_restore(
 
 
 # ---------------------------------------------------------------------------
-# "New in last scan" (maintainer 2026-07-23): the scan records the job ids it
-# actually inserted in its result_ref; the board flags exactly those rows —
-# from the LATEST succeeded scan only — as isNew. Manual adds and rows from
-# older scans never carry the badge.
+# "New in last scan": the scan records the ids it inserted, and the board flags
+# exactly those, from the latest succeeded scan, as isNew. Manual adds and older
+# scans never carry the badge.
 # ---------------------------------------------------------------------------
 
 
@@ -699,3 +755,26 @@ def test_board_is_new_absent_result_ref_is_graceful(
         job_id = job.id
     rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
     assert rows[job_id]["isNew"] is False
+
+
+def test_the_board_names_a_postings_places_the_way_the_picker_does(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """place-picker.md 8.3: 4 spellings of Bengaluru print 1 label, a containing
+    country is not repeated, and text naming no place keeps an empty list."""
+    app, client = app_client
+    spellings = ["Bangalore", "Bengaluru, IN", "India - Bangalore", "Bangalore - Engineering"]
+    ids: dict[str, str] = {}
+    with _db(app).repos() as repos:
+        for i, where in enumerate([*spellings, "Remote"]):
+            job = repos.jobs.create(
+                canonical_url=f"p{i}", title="A", description=REALISTIC_JD,
+                source_adapter="lever", location=where,
+            )
+            ids[where] = job.id
+
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    for where in spellings:
+        assert rows[ids[where]]["places"] == ["Bengaluru, Karnataka, India"]
+        assert rows[ids[where]]["location"] == where  # the text as posted stays
+    assert rows[ids["Remote"]]["places"] == []

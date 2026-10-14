@@ -122,11 +122,6 @@ class FakeVoyagerDriver:
         self._maybe_raise("status")
         return self._status
 
-    def contact_sync(self, public_identifier, *, dry_run) -> dict:
-        self.calls.append(("contact_sync", public_identifier, dry_run))
-        self._maybe_raise("contact_sync")
-        return self._contact_sync
-
     def contact_sync_states(self, entries, *, dry_run) -> dict:
         """Mirrors the worker's batch contract: one envelope per entry —
         thread-only entries (with a urn) first, exactly like the worker's

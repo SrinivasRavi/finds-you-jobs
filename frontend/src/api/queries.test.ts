@@ -1,10 +1,7 @@
-// Unit tests for makeTrailingThrottle (F-H4) — the leading+trailing throttle
-// behind the SSE→Query invalidation bridge — and for the bridge's networker
-// candidate lane (roster liveness, restored 2026-07-25): per-candidate
-// discover events must grow the referral roster live through their own wider
-// throttle group, never per-event and never touching non-roster keys. Driven
-// entirely by fake timers (Date + setTimeout are both faked so `elapsed`
-// math is exact).
+// Unit tests for makeTrailingThrottle (F-H4), the throttle behind the SSE to
+// Query bridge, and for the bridge's roster lane: per-candidate discover events
+// grow the roster through their own wider group, never touching other keys. Date
+// and setTimeout are both faked so the elapsed math is exact.
 import { QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";

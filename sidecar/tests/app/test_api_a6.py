@@ -1,44 +1,18 @@
-"""Covers: A6 observability HTTP surface (US-SYS-05, US-SET-09, FR-SET-08).
+"""Covers: A6 observability over HTTP (US-SYS-05, US-SET-09, FR-SET-08).
 
-Through the real app (TestClient → lifespan → real migration + runner +
-configured observability):
-
-- `GET /api/operations/{id}/spans` returns the Logfire spans for an operation,
-  including a failed op's error span (NFR-SIDE-04 seen from the wire).
-- Observability settings (content logging / OTLP opt-in) round-trip through
-  `GET/POST /api/settings` and default to the safe no-network baseline.
-
-Uses `score` with an empty snapshot: it fails fast in `load_job_and_master`
-(no master profile) *before* any engine/network call — a deterministic op that
-still produces a real span, with zero LLM spend.
-"""
+Through the real app: `GET /api/operations/{id}/spans` returns an op's spans,
+including a failed op's error span; observability settings round-trip through
+/api/settings and default to no network. `score` with an empty snapshot fails
+before any engine call, a real span at 0 LLM spend."""
 
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
-from pathlib import Path
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from sidecar.app.main import create_app
-
-TOKEN = "test-token-a6"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH
 
 
 def _poll(client: TestClient, op_id: str, target: str, timeout: float = 4.0) -> dict:
@@ -53,13 +27,8 @@ def _poll(client: TestClient, op_id: str, target: str, timeout: float = 4.0) -> 
 
 
 def _poll_spans(client: TestClient, op_id: str, timeout: float = 4.0) -> list[dict]:
-    """Read an operation's spans, retrying until at least one appears.
-
-    The operation span exports when the runner's worker thread EXITS the span
-    context — which happens just after the op row flips to a terminal state. So a
-    read fired the instant `_poll(..., "failed")` returns can race ahead of the
-    export; poll the read to make the assertion deterministic (not order-fragile).
-    """
+    """Read an op's spans, retrying until 1 appears: the span exports just after the
+    row turns terminal, so an immediate read can race it."""
     deadline = time.monotonic() + timeout
     spans: list[dict] = []
     while time.monotonic() < deadline:

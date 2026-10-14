@@ -7,6 +7,7 @@ final type system and these graduate into it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -25,6 +26,21 @@ class Usage:
     model: str | None = None
 
 
+@dataclass(frozen=True)
+class Factor:
+    """1 axis of a score, in the shape every method writes (scoring.md 7.2). `value`
+    is 0 to 1; `kind` is `graded` (a weight may multiply it) or `probability` (it
+    may not). An unassessed factor is absent, never a middle value."""
+
+    factor: str
+    value: float
+    kind: str = "graded"
+    evidence: str = ""
+    # `evidence` as a key and its facts, so a screen can word it in the user's
+    # language (audit section 5). Empty for a method that writes prose.
+    code: dict[str, Any] | None = field(default=None, compare=False)
+
+
 @dataclass
 class ScoreResult:
     """Output of one score() operation.
@@ -36,7 +52,10 @@ class ScoreResult:
     score: int  # 0–100
     reasons: list[str] = field(default_factory=list)  # 2–4 bullets (US-JB-05)
     breakdown_md: str = ""
+    factors: list[Factor] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
+    # 1 `{key, args}` per entry of `reasons`, or empty for a method that writes prose.
+    reason_codes: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ScoreError(Exception):

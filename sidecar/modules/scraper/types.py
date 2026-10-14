@@ -6,17 +6,14 @@ final type system and these graduate into it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 
 @dataclass
 class Usage:
-    """Aggregate cost record for one bounded operation (ROADMAP section 4).
-
-    The Scraper is zero-LLM by contract: `internal_calls` counts HTTP
-    requests; `tokens_*`/`usd`/`model` stay None — the cost dashboard reads
-    that as "this operation is free beyond bandwidth".
-    """
+    """Cost record for 1 scan: 0 LLM by contract, so `internal_calls` counts HTTP
+    requests and tokens, usd and model stay None."""
 
     internal_calls: int = 0
     tokens_in: int | None = None
@@ -28,13 +25,9 @@ class Usage:
 
 @dataclass
 class NormalizedJob:
-    """One normalized posting — the section 4 contract row (as built).
-
-    Required: `title`, `canonical_url` (the dedup key, FR-SYS-01). Everything
-    else is explicit-empty-allowed (no `?` glyphs — module convention).
-    `trust_score`/`trust_flags` carry the ingest quality checks (Track M3
-    spec); rank-don't-gate: low trust annotates, it never drops a valid row.
-    """
+    """1 normalized posting, the section 4 contract row. `title` is required; a
+    scanned row also carries `canonical_url` (FR-SYS-01). Everything else may be
+    empty. `trust_score`/`trust_flags` annotate; low trust never drops a row."""
 
     title: str
     canonical_url: str
@@ -64,25 +57,21 @@ class ContentRule:
 
 @dataclass
 class ScanPrefs:
-    """User preferences applied by the shared pipeline (not by adapters).
-
-    Filter semantics live in `filters.py` (word-boundary matching — the
-    career-ops #1101/#1169 substring lessons). `0` means "off" for the
-    numeric knobs: no freshness window, no per-source cap (never self-throttle
-    by default — vision ethos; the cap is an explicit user opt-in).
-    """
+    """User preferences applied by the shared pipeline, not by adapters. Matching
+    lives in `filters.py`. `0` turns a numeric knob off: no freshness window, no
+    per-source cap (never self-throttle by default)."""
 
     title_allow: list[str] = field(default_factory=list)
     title_block: list[str] = field(default_factory=list)
     location_allow: list[str] = field(default_factory=list)
     location_block: list[str] = field(default_factory=list)
     location_always_allow: list[str] = field(default_factory=list)
-    # Company exclude — a cross-cutting gate like title/location, not a
-    # curated-list-removal like career-ops's tracked_companies: a meaningful
-    # slice of our adapters are open/uncurated (RemoteOK, TheMuse, Brave,
-    # search-shaped adapters), so an unwanted company can surface dynamically
-    # the same way an unwanted title or location can (job-finder-preferences
-    # design, docs/internal/discovery.md).
+    # True when a posting's place lies inside a wanted one (a city in a wanted state,
+    # metro or country); set from the user's picked places, never from a snapshot.
+    location_match: Callable[[str], bool] | None = None
+    # Company exclude: a cross-cutting gate like title and location, since open
+    # adapters (RemoteOK, TheMuse, Brave, search) surface companies dynamically
+    # (docs/internal/discovery.md).
     company_block: list[str] = field(default_factory=list)
     # Content filter — description keywords, career-ops's `content_filter`.
     # Empty description always passes (no signal to filter on, same stance as
@@ -99,12 +88,9 @@ class ScanPrefs:
     # For seekers who need sponsorship; empty description passes.
     visa_filter: bool = False
     visa_phrases: list[str] = field(default_factory=list)
-    # Salary filter — career-ops's `salary_filter`, gated on `salary.py`'s
-    # parser. 0 = off for both bounds; amounts are ANNUAL in `salary_currency`
-    # (defaults to comparing against any currency-less posting; a posting in
-    # a *different* stated currency always passes — can't compare, can't gate).
-    # Unparsable/absent salary text always passes (rank-don't-gate: most
-    # postings state no salary at all).
+    # Salary filter (career-ops's `salary_filter`, via `salary.py`). 0 turns a bound
+    # off; amounts are annual in `salary_currency`. A posting in another currency, or
+    # with no parsable salary, always passes (rank, don't gate).
     salary_min: int = 0
     salary_max: int = 0
     salary_currency: str = ""
@@ -136,15 +122,9 @@ class ScanPrefs:
 
 @dataclass
 class SourceReport:
-    """Per-source diagnostics for one scan (ROADMAP section 4: `{usage, errors[]}`).
-
-    `fetched`/`kept` make filter/dedup attrition visible per source;
-    errors carry verbatim messages — never swallowed (vision non-negotiable).
-    `dropped_no_description` lists the canonical URLs of kept rows discarded
-    after the enrich phase for still lacking a scorable description (never a
-    tombstone — a later scan may find the same URL with a real one); its
-    length is the count.
-    """
+    """Per-source diagnostics for 1 scan: `fetched` and `kept` show attrition, and
+    errors are verbatim. `dropped_no_description` lists URLs discarded after enrich
+    for lacking a scorable JD, never tombstoned."""
 
     usage: Usage = field(default_factory=Usage)
     errors: list[str] = field(default_factory=list)
@@ -177,12 +157,9 @@ class ScraperError(Exception):
 
 
 class RateLimitError(ScraperError):
-    """HTTP 429 from a source, or its in-memory cool-down window (F-M9).
-
-    Typed so callers can tell "back off" from a broken feed; still a
-    ScraperError, so every existing per-source/per-query catch contains it.
-    `retry_after_s` carries the server's Retry-After hint (or the default
-    cool-down when the header is absent)."""
+    """HTTP 429, or its in-memory cool-down (F-M9). Typed so callers can tell "back
+    off" from a broken feed, yet still a ScraperError. `retry_after_s` is the
+    server's hint or the default."""
 
     def __init__(self, url: str, retry_after_s: float, *, cooling_down: bool = False) -> None:
         self.retry_after_s = retry_after_s

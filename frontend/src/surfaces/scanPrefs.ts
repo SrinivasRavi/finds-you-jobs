@@ -1,10 +1,6 @@
-// Scan-preference vocabularies shared by the Onboarding wizard and the Job
-// finder preferences modal (duplication audit D-F12). Two copies of the same
-// freshness/cadence tables had drifted: onboarding's freshness list omitted
-// "Any", so a stored no-freshness-window preference could not round-trip
-// through the wizard.
-//
-// Freshness label ⇄ days; 0 = "Any" = no freshness window (ScanPrefs semantics).
+// Scan-preference vocabularies for Onboarding and the finder modal (D-F12); a
+// second copy dropped "Any", so a no-window preference couldn't round-trip.
+// Freshness label to days; 0 means "Any", no freshness window.
 
 export const FRESHNESS_OPTIONS = ["24h", "7d", "30d", "Any"] as const;
 

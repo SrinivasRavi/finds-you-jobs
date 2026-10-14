@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,20 +24,7 @@ from sidecar.app import main as main_module
 from sidecar.app.main import create_app
 from sidecar.app.observability.loop_lag import monitor_loop_lag
 
-TOKEN = "test-token-slow"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH, TOKEN
 
 
 def _slow_request_records(

@@ -1,16 +1,13 @@
-// Covers the reworked resume editor: Preview is ONE directly-editable rendered
-// surface (cursor in the formatted text, toolbar applies real formatting), Raw
-// is the same pane as markdown source, Upload PDF sits in the master header,
-// and the tailored variant is always an editable box (paste-your-own) with
-// Generate at the top. The md↔DOM fidelity contract itself is pinned by the
-// mdHtml.test.ts unit suite; the backend create-if-missing save is pinned by
-// test_patch_artifact_creates_manual_variant_when_missing.
+// Covers the resume editor: Preview is 1 editable rendered surface, Raw is the
+// same pane as markdown, Upload PDF sits in the master header, and the tailored
+// variant is always an editable box with Generate on top. The md-to-DOM contract
+// is mdHtml.test.ts; the create-if-missing save is a pytest.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/resume-editor";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -30,14 +27,6 @@ const RESUME_MD = `# Tenet Loader
 
 1. Cut p99 latency by 40%.
 2. Led a team of five engineers.`;
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test.beforeEach(async ({ request }) => {
   const { base, token } = sidecarInfo();

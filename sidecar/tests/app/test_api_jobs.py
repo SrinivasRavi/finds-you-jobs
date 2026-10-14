@@ -1,49 +1,34 @@
-"""Covers: A4-followup HTTP surface (JD-gap work).
+"""Covers: the A4 follow-up HTTP surface.
 
-Route behavior through the real app (TestClient → lifespan → real migration +
-runner + seeded-disabled schedules):
-
-- schedule management (A4 flag #2): list, enable/disable + set interval,
-  run-now (score_new fan-out; scan single op) — seeded disabled by default;
-- Add-by-URL live path (A4 flag #3, US-JB-07): `/api/jobs/preview` extracts
-  editable fields (probe faked — no live network), and `POST /api/jobs` persists
-  with dedup + tombstone discipline and enqueues a score.
-"""
+Through the real app: schedule management (list, enable, interval, run-now;
+seeded disabled), and Add a job posting (US-JB-07): `/api/jobs/preview` with the
+probe faked, and `POST /api/jobs` with dedup, tombstones and a score enqueue."""
 
 from __future__ import annotations
-
-from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from sidecar.app.main import create_app
 from sidecar.modules.scraper import ScraperError
 from sidecar.modules.scraper.types import NormalizedJob
 
-TOKEN = "test-token-a4b"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
+from ._support import AUTH
 
 
 def _add_job(client: TestClient, url: str, title: str = "T") -> dict[str, object]:
-    """Create a job via the Add-by-URL route; return its JobDTO json."""
+    """Create a job via the Add a job posting route; return its JobDTO json."""
     return client.post(
         "/api/jobs", headers=AUTH, json={"canonical_url": url, "title": title}
     ).json()
 
 
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,  # we drive run-now / ticks explicitly
-    )
-    with TestClient(app) as client:
-        yield app, client
+def _scanned_job(app: FastAPI, url: str, title: str = "T") -> dict[str, object]:
+    """A job as a scan writes it (`origin=scan`): the only kind delete forever
+    tombstones (url-less-jobs.md section 8.2)."""
+    with app.state.db.repos() as repos:
+        job = repos.jobs.create(canonical_url=url, title=title, source_adapter="greenhouse")
+        return {"id": job.id}
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +133,7 @@ def test_run_schedule_unknown_404(app_client: tuple[FastAPI, TestClient]) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Add-by-URL live path (A4 flag #3, US-JB-07)
+# Add a job posting's live path (A4 flag #3, US-JB-07)
 # ---------------------------------------------------------------------------
 
 
@@ -173,7 +158,7 @@ def test_preview_extracts_editable_fields(
     app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _app, client = app_client
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _fake_probe_ok)
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _fake_probe_ok)
     resp = client.post(
         "/api/jobs/preview", headers=AUTH, json={"url": "https://job-boards.greenhouse.io/acme"}
     )
@@ -193,7 +178,7 @@ def test_preview_fetch_failure_is_422_verbatim(
     def _boom(_url: str, *_a: object, **_k: object) -> NormalizedJob:
         raise ScraperError("fetch", "could not fetch: timed out")
 
-    monkeypatch.setattr("sidecar.app.api.routes.probe_url", _boom)
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _boom)
     resp = client.post("/api/jobs/preview", headers=AUTH, json={"url": "https://x.test/j"})
     assert resp.status_code == 422
     assert "timed out" in resp.json()["detail"]  # verbatim underlying message
@@ -315,8 +300,8 @@ def test_add_by_url_restores_unscored_trashed_job_and_rescores(
 
 def test_empty_trash_tombstones_and_removes(app_client: tuple[FastAPI, TestClient]) -> None:
     app, client = app_client
-    a = _add_job(client, "https://ex.co/a")
-    b = _add_job(client, "https://ex.co/b")
+    a = _scanned_job(app, "https://ex.co/a")
+    b = _scanned_job(app, "https://ex.co/b")
     client.patch(f"/api/jobs/{a['id']}", headers=AUTH, json={"feed_state": "removed"})
     client.patch(f"/api/jobs/{b['id']}", headers=AUTH, json={"feed_state": "removed"})
 
@@ -336,7 +321,7 @@ def test_empty_trash_tombstones_and_removes(app_client: tuple[FastAPI, TestClien
 
 def test_delete_forever_tombstones_single_job(app_client: tuple[FastAPI, TestClient]) -> None:
     app, client = app_client
-    j = _add_job(client, "https://ex.co/one", "One")
+    j = _scanned_job(app, "https://ex.co/one", "One")
     client.patch(f"/api/jobs/{j['id']}", headers=AUTH, json={"feed_state": "removed"})
 
     resp = client.post(f"/api/jobs/{j['id']}/tombstone", headers=AUTH)
@@ -377,8 +362,8 @@ def test_ttl_tick_tombstones_stale_trash_only(app_client: tuple[FastAPI, TestCli
     from sidecar.app.registry.persistence import evict_stale_trash
 
     app, client = app_client
-    fresh = _add_job(client, "https://ex.co/fresh")
-    stale = _add_job(client, "https://ex.co/stale")
+    fresh = _scanned_job(app, "https://ex.co/fresh")
+    stale = _scanned_job(app, "https://ex.co/stale")
     with app.state.db.repos() as repos:
         repos.jobs.set_trash_state(fresh["id"], trashed=True)  # trashed_at = now
         repos.jobs.set_trash_state(stale["id"], trashed=True, now=now_utc() - timedelta(days=8))
@@ -433,12 +418,8 @@ def test_retry_operation_reenqueues_same_kind(
 def test_retry_stamps_failed_row_with_retried_as(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
-    """A retried FAILED row carries `result_ref.retried_as` → the ledger renders
-    it as "Retried" instead of a permanently nagging red row (2026-07-12).
-
-    The rows are created directly in the DB (never submitted to the live
-    runner) so their terminal states are OURS — an earlier version raced the
-    runner's own transitions and flaked."""
+    """A retried failed row carries `result_ref.retried_as`, so the ledger shows
+    "Retried". Rows are created in the DB directly, so the runner can't race them."""
     app, client = app_client
     with app.state.db.repos() as repos:
         op = repos.operations.create("score", {"job_id": "nope"})

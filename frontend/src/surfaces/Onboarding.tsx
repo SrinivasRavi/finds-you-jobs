@@ -1,16 +1,8 @@
-// Onboarding wizard (US-OB-01..05 / FR-OB-01..07) — forward-only steps:
-// Resume → Preferences → LLM provider (real Verify hard-gate) → All set.
-// The stepper also displays "Download the app" as stage 1, always done — the
-// user is running the app — so setup starts partway complete. The LinkedIn /
-// Referral-Outreach opt-in is NOT an onboarding step (P1 decision 2026-07-12:
-// meet the core app first); it lives in Settings with its ack + warning flow.
-// The draft is held in component state AND mirrored to
-// localStorage (FR-OB-02 resumable draft), so quitting mid-wizard and relaunching
-// resumes where the user left off. Nothing hits the final MasterProfile /
-// preferences tables until "Finish" (US-OB-01 atomic-ish commit): the verified
-// engine is saved at the Verify step (POST /api/engines), and Finish commits the
-// master profile + preferences, enqueues the cold-start scan (US-JB-09), and
-// routes to /jobs — the first-launch guard (main.tsx) then keeps the wizard shut.
+// Onboarding (US-OB-01..05): Resume, Preferences, AI provider (a real Verify
+// gate), All set; "Download the app" shows as stage 1, already done. The LinkedIn
+// opt-in lives in Settings, not here. The draft mirrors to localStorage (FR-OB-02);
+// nothing reaches the profile tables until Finish, which saves, starts the first
+// scan and routes to /jobs.
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -19,11 +11,16 @@ import { Trans, useTranslation } from "react-i18next";
 
 import { api } from "../api";
 import { qk } from "../api/queries";
-import type { EngineSaveInput, EngineVerifyResult } from "../api/types";
+import type { components } from "../api/schema";
+import type { EngineSaveInput, EngineVerifyResult, PlaceChip } from "../api/types";
 import { ChipInput } from "../shell/ChipInput";
+import { PlaceInput } from "../shell/PlaceInput";
 import { InfoDot } from "../shell/InfoDot";
 import { LanguageSelect } from "../shell/LanguageSelect";
 import { openLoginTerminal } from "../shell/openExternal";
+import { EXTRACT_ACCEPT } from "../shell/uploadFormats";
+import { MarkdownEditor, type EditorMode } from "../shell/MarkdownEditor";
+import { ModeToggle } from "../popups/ResumeModal";
 import { CADENCE_OPTIONS, FRESHNESS_DAYS, FRESHNESS_OPTIONS } from "./scanPrefs";
 
 // The wizard's interactive steps (i18n keys). The stepper *displays* "Download
@@ -49,21 +46,19 @@ const PROVIDERS = [
   { id: "antigravity-cli", label: "onboarding.providers.antigravity-cli.label", hint: "onboarding.providers.antigravity-cli.hint" },
 ];
 
-// The subscription-CLI providers (no key, verify-only — mirrors the backend's
-// engine_config.CLI_PROVIDERS). Per-provider guidance for the not_found /
+// The subscription-CLI providers (no key, verify-only): the backend's
+// engine_config.CLI_PROVIDERS, checked against it. Per-provider guidance for the not_found /
 // not_logged_in verify outcomes. The display strings are i18n keys (t() at
 // render) under the locale's onboarding.providers.<id> node.
-const CLI_PROVIDERS: Record<
-  string,
-  {
-    name: string; // i18n key — short name for guidance copy ("Claude CLI", …)
-    verifyHint: string; // i18n key
-    loginCli: "claude" | "codex" | "agy";
-    loginLabel: string; // i18n key
-    installUrl: string;
-    installName: string; // i18n key
-  }
-> = {
+type CliProviderInfo = {
+  name: string; // i18n key — short name for guidance copy ("Claude CLI", …)
+  verifyHint: string; // i18n key
+  loginCli: "claude" | "codex" | "agy";
+  loginLabel: string; // i18n key
+  installUrl: string;
+  installName: string; // i18n key
+};
+const CLI_PROVIDERS: Record<string, CliProviderInfo> = {
   "claude-cli": {
     name: "onboarding.providers.claude-cli.name",
     verifyHint: "onboarding.providers.claude-cli.verifyHint",
@@ -88,13 +83,20 @@ const CLI_PROVIDERS: Record<
     installUrl: "https://antigravity.google/",
     installName: "onboarding.providers.antigravity-cli.installName",
   },
-};
+} satisfies Record<components["schemas"]["SharedConstants"]["cli_provider"], CliProviderInfo>;
 const isCliProvider = (id: string) => id in CLI_PROVIDERS;
 
-// The LLM-backed operation kinds that need a routed engine — mirrors the
-// backend's LLM_KINDS (sidecar/app/registry/engine_config.py). The prior
-// repository's `prep` is retired (applier-as-built.md section 2); `draft`/`apply` route here.
-const LLM_KINDS = ["score", "tailor", "cover", "extract", "draft", "apply"] as const;
+// The LLM-backed operation kinds that need a routed engine: the backend's
+// LLM_KINDS (sidecar/app/registry/engine_config.py), checked against it.
+const LLM_KIND_ROWS: Record<components["schemas"]["LlmKind"], true> = {
+  score: true,
+  tailor: true,
+  cover: true,
+  extract: true,
+  draft: true,
+  apply: true,
+};
+const LLM_KINDS = Object.keys(LLM_KIND_ROWS) as (keyof typeof LLM_KIND_ROWS)[];
 
 const DRAFT_KEY = "fyj-onboarding-draft-v1";
 
@@ -103,12 +105,13 @@ interface Draft {
   resumeName: string;
   resumeText: string;
   aliases: string[];
-  locations: string[];
+  locations: PlaceChip[];
   freshness: string;
   cadence: string;
   scoringMode: "llm" | "keyword";
   provider: string;
   verified: boolean;
+  aiSkipped: boolean;
 }
 
 function loadDraft(): Partial<Draft> {
@@ -137,7 +140,12 @@ export function Onboarding() {
 
   // Draft — preferences.
   const [aliases, setAliases] = useState<string[]>(d0.aliases ?? []);
-  const [locations, setLocations] = useState<string[]>(d0.locations ?? []);
+  const [aliasDraft, setAliasDraft] = useState("");
+  const [resumeMode, setResumeMode] = useState<EditorMode>("raw");
+  const [resumeWarnings, setResumeWarnings] = useState<string[]>([]);
+  // Skip on the provider step (S-C60): AI stays off until a provider is set up.
+  const [aiSkipped, setAiSkipped] = useState(d0.aiSkipped ?? false);
+  const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
   // Scoring mode (2026-07-22): "llm" | "keyword" — replaces the retired
@@ -179,6 +187,7 @@ export function Onboarding() {
       scoringMode,
       provider,
       verified: verifyState === "verified",
+      aiSkipped,
     };
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -196,6 +205,7 @@ export function Onboarding() {
     scoringMode,
     provider,
     verifyState,
+    aiSkipped,
   ]);
 
   const needsInput = !isCliProvider(provider);
@@ -205,7 +215,7 @@ export function Onboarding() {
     step === 0
       ? resumeText.trim().length > 0
       : step === 1
-        ? aliases.length > 0 && locations.length > 0
+        ? (aliases.length > 0 || aliasDraft.trim().length > 0) && locations.length > 0
         : step === 2
           ? verifyState === "verified"
           : true; // All set — Finish takes over
@@ -226,6 +236,8 @@ export function Onboarding() {
       const res = await api.ingestResume(file);
       setResumeText(res.text);
       setResumeName(res.filename);
+      setResumeMode("preview");
+      setResumeWarnings(res.warnings ?? []);
     } catch (e) {
       // Honest failure — surface the verbatim "paste instead" message.
       setIngestError(e instanceof Error ? e.message : String(e));
@@ -273,6 +285,27 @@ export function Onboarding() {
     setFinishing(true);
     setFinishError("");
     try {
+      // Routing before the profile: its save queues the application-profile read, which
+      // must run on the chosen provider, or not at all after Skip (audit A5). Without it
+      // the default claude-cli runs everything (an OpenRouter onboarding once billed the
+      // Claude session). An empty model means the engine's own default.
+      if (aiSkipped) {
+        // Every AI kind routes to "none" (engine_config.AI_OFF) and scoring is
+        // keyword, until a provider is saved or a CLI verified in Settings.
+        await api.updateSettings({
+          routing: LLM_KINDS.map((kind) => ({ kind, engine: "none", model: "" })),
+          scoring_mode: "keyword",
+        });
+      } else if (provider !== "claude-cli") {
+        await api.updateSettings({
+          routing: LLM_KINDS.map((kind) => ({ kind, engine: provider, model: "" })),
+        });
+      }
+      // Scoring mode: committed only when it differs from the backend
+      // default (llm).
+      if (!aiSkipped && scoringMode !== "llm") {
+        await api.updateSettings({ scoring_mode: scoringMode });
+      }
       // Commit the master profile (this flips the FR-OB-01 guard to "onboarded").
       await api.updateProfile(resumeText);
       // Commit preferences (role/location/freshness/cadence). The LinkedIn /
@@ -285,23 +318,6 @@ export function Onboarding() {
         scrape_cadence: cadence,
         networking_enabled: false,
       });
-      // Route every LLM operation to the provider the user just verified —
-      // otherwise the routing default (claude-cli) silently runs the whole
-      // pipeline on a CLI the user may not even have (2026-07-12 fix: an
-      // OpenRouter onboarding was billing the user's Claude session instead).
-      // Empty model → the engine row's default_model (BYOK) or the CLI's own
-      // configured default (codex-cli / antigravity-cli). claude-cli alone
-      // skips this: it IS the routing default.
-      if (provider !== "claude-cli") {
-        await api.updateSettings({
-          routing: LLM_KINDS.map((kind) => ({ kind, engine: provider, model: "" })),
-        });
-      }
-      // Scoring mode: committed only when it differs from the backend
-      // default (llm).
-      if (scoringMode !== "llm") {
-        await api.updateSettings({ scoring_mode: scoringMode });
-      }
       // Cold-start scan (US-JB-09) — fire-and-forget, never blocks the redirect.
       await api.enqueueOperation("scan");
       try {
@@ -319,18 +335,10 @@ export function Onboarding() {
   }
 
   return (
-    // Small windows (a VMware Fusion guest capped at 1024×768 with display
-    // scaling unavailable, a laptop with a tall taskbar + zoomed text, …)
-    // can be shorter than the card's content — the LLM-provider step alone
-    // lists eight options. #root is locked to `height:100vh; overflow:hidden`
-    // app-wide, so scrolling has to happen HERE, not at the page level.
-    // `overflow-y-auto` + `place-items-center` on the SAME element clips the
-    // top of the overflow (a well-known CSS trap: centering shifts content
-    // into negative scroll-position space that a scrollbar can't reach) — so
-    // the outer div only scrolls, and a separate `min-h-full` (not `h-full`)
-    // inner grid does the centering. `min-h-full` can grow past 100%, so
-    // when the card is taller than the window there's no excess space left
-    // to center within, and nothing gets clipped.
+    // Small windows can be shorter than the card, and #root is locked to 100vh with
+    // overflow hidden, so this element scrolls. Scrolling and `place-items-center` on
+    // the same element clips the top of the overflow, so the outer div only scrolls
+    // and an inner `min-h-full` grid centers.
     <div className="h-screen overflow-y-auto bg-canvas">
       <div className="grid min-h-full place-items-center p-6">
       <div className="w-full max-w-xl rounded-2xl border border-border bg-surface p-6 shadow-lg">
@@ -398,7 +406,7 @@ export function Onboarding() {
               <label className="block rounded-lg border border-dashed border-border-2 bg-surface-2 p-4 text-center text-[13px] text-ink-3 hover:border-accent">
                 <input
                   type="file"
-                  accept=".md,.txt,.markdown,.pdf"
+                  accept={EXTRACT_ACCEPT}
                   className="hidden"
                   data-testid="resume-upload"
                   onChange={(e) => void onFile(e.target.files?.[0])}
@@ -422,14 +430,39 @@ export function Onboarding() {
                 </div>
               ) : null}
               <div>
-                <div className="mb-1 text-[12px] text-ink-3">{t("onboarding.resumeTextLabel")}</div>
-                <textarea
-                  value={resumeText}
-                  data-testid="resume-text"
-                  onChange={(e) => setResumeText(e.target.value)}
-                  placeholder={t("onboarding.resumePlaceholder")}
-                  className="h-40 w-full resize-y rounded-md border border-border bg-surface px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
-                />
+                {resumeWarnings.map((w) => (
+                  <p
+                    key={w}
+                    data-testid={`resume-warning-${w}`}
+                    className="mb-2 rounded-md border border-warn/40 bg-warn-wash px-3 py-2 text-[12px] text-warn"
+                  >
+                    {t(`onboarding.resumeCheck.${w}`, { defaultValue: "" })}
+                  </p>
+                ))}
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-[12px] text-ink-3">{t("onboarding.resumeTextLabel")}</span>
+                  {resumeText.trim() ? <ModeToggle mode={resumeMode} setMode={setResumeMode} /> : null}
+                </div>
+                {/* S-C56: the same editable rendered surface the Master Resume
+                    modal uses, so the user sees the extraction came out right. */}
+                {resumeMode === "preview" && resumeText.trim() ? (
+                  <div className="h-60 overflow-auto rounded-md border border-border bg-surface px-3 py-2">
+                    <MarkdownEditor
+                      value={resumeText}
+                      onChange={setResumeText}
+                      mode="preview"
+                      testid="resume-preview"
+                    />
+                  </div>
+                ) : (
+                  <textarea
+                    value={resumeText}
+                    data-testid="resume-text"
+                    onChange={(e) => setResumeText(e.target.value)}
+                    placeholder={t("onboarding.resumePlaceholder")}
+                    className="h-40 w-full resize-y rounded-md border border-border bg-surface px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none"
+                  />
+                )}
               </div>
             </div>
           ) : step === 1 ? (
@@ -442,10 +475,11 @@ export function Onboarding() {
                 items={aliases}
                 onAdd={(v) => setAliases((a) => [...a, v])}
                 onRemove={(v) => setAliases((a) => a.filter((x) => x !== v))}
+                onDraftChange={setAliasDraft}
                 placeholder={t("onboarding.aliasPlaceholder")}
                 hint={t("onboarding.aliasHint")}
               />
-              <ChipInput
+              <PlaceInput
                 variant="plain"
                 label={t("onboarding.locationLabel")}
                 testid="location"
@@ -656,6 +690,11 @@ export function Onboarding() {
               <div className="text-[40px]">🎉</div>
               <h1 className="text-[20px] font-semibold text-ink">{t("onboarding.titleAllSet")}</h1>
               <p className="text-[13px] text-ink-3">{t("onboarding.allSetIntro")}</p>
+              {aiSkipped ? (
+                <p className="text-[12.5px] text-warn" data-testid="all-set-ai-off">
+                  {t("onboarding.allSetAiOff")}
+                </p>
+              ) : null}
               <ul className="mx-auto max-w-xs space-y-1 text-left text-[12.5px] text-ink-2">
                 <li>· {t("onboarding.allSetAddUrl")}</li>
                 <li>· {t("onboarding.allSetResume")}</li>
@@ -675,7 +714,7 @@ export function Onboarding() {
 
         {/* Footer nav */}
         <div className="mt-6 flex items-center gap-2 border-t border-border pt-4">
-          {step > 0 && step < STEP_LABELS.length - 1 ? (
+          {step > 0 ? (
             <button
               onClick={() => setStep((s) => s - 1)}
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-border-2"
@@ -683,10 +722,34 @@ export function Onboarding() {
               {t("onboarding.back")}
             </button>
           ) : null}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
+            {step === 2 && !canContinue ? (
+              <button
+                type="button"
+                data-testid="onboarding-skip-provider"
+                title={t("onboarding.skipProviderHint")}
+                onClick={() => {
+                  setAiSkipped(true);
+                  setStep(3);
+                }}
+                className="text-[12.5px] text-ink-3 underline hover:text-ink"
+              >
+                {t("onboarding.skipProvider")}
+              </button>
+            ) : null}
             {step < STEP_LABELS.length - 1 ? (
               <button
-                onClick={() => setStep((s) => s + 1)}
+                onClick={() => {
+                  // A role typed but not yet a chip counts (S-C58).
+                  const draft = aliasDraft.trim();
+                  if (step === 1 && draft) {
+                    setAliases((a) => (a.includes(draft) ? a : [...a, draft]));
+                    setAliasDraft("");
+                  }
+                  // A verified provider undoes an earlier Skip.
+                  if (step === 2) setAiSkipped(false);
+                  setStep((s) => s + 1);
+                }}
                 disabled={!canContinue}
                 data-testid="onboarding-continue"
                 className={

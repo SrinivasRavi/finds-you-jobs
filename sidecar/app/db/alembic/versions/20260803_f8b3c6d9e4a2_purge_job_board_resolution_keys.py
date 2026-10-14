@@ -1,22 +1,12 @@
-"""Purge company resolutions cached under multi-employer job-board domains.
+"""Purge company resolutions cached under multi-employer board domains.
 
-`registry/company_anchor.py` used to treat any non-ATS host as the employer's
-own website, so a job scraped from a board like naukri.com minted the shared
-cache key `domain:naukri.com` — the first employer confirmed under it was then
-silently reused for EVERY job from that board (live 2026-08-02:
-`domain:naukri.com` → Coupang, reapplied to a Virtusa job; a re-confirm would
-have flipped the poison the other way). The code now refuses to derive an
-employer domain from these hosts; this purge deletes the poisoned rows so
-affected jobs re-resolve under their per-employer `<adapter>:<slug>` /
-`name:…` keys. Also purges keys minted from the naive last-two-label domain
-parse under two-level public suffixes (`domain:co.in`, `domain:com.au`, …):
-every employer on such a ccTLD site shared one key — the same poison class.
-Data-only; downgrade is a no-op (nothing to restore).
+`domain:naukri.com` and 2-level-suffix keys (`domain:co.in`) were shared by
+every employer on that site (Virtusa's job got Coupang). The code now refuses
+these hosts; this deletes the poisoned rows. Data only; downgrade is a no-op.
 
 Revision ID: f8b3c6d9e4a2
 Revises: e7a1d4c9b2f8
 Create Date: 2026-08-03
-
 """
 from __future__ import annotations
 

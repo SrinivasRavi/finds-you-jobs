@@ -1,16 +1,9 @@
 """Operation-entrypoint persistence helpers.
 
-The wrappers call the modules; this file makes them persist their results into
-the DB the app owns (architecture section 5.3/section 5.6, database-design section 3–section 4):
-
-- scan → `Job` rows, canonical-URL dedup (first-seen wins) + `Tombstone`
-  suppression + a per-source report into `result_ref`;
-- score → a cached `JobScore` row for `(job_id, profile_version, scorer_impl)`;
-- tailor/cover → an `Artifact` row (lands with the applications-schema commit).
-
-This is `app/` code — using `Repos` and importing `modules/` is exactly the
-one-way rule's allowed direction; modules never import back.
-"""
+The wrappers call the modules; this persists their results into the app's DB
+(architecture sections 5.3 and 5.6): scan writes Job rows (first-seen dedup,
+tombstone suppression, a per-source report), score writes the job's score
+columns, tailor and cover fill their Artifact."""
 
 from __future__ import annotations
 
@@ -18,11 +11,14 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
+from sidecar.modules.geo.resolve import chip_label, chip_name
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
+from sidecar.modules.scraper.fingerprint import simhash64, to_signed64
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, ScraperError
 
 from ..db import Database, Repos
 from ..db.base import now_utc
+from ..db.models import Job
 from ..lifecycle import LIFECYCLE_DEFAULTS
 
 SCORER_IMPL = "scorer-llm"
@@ -34,11 +30,57 @@ SCORER_IMPL = "scorer-llm"
 SCORER_IMPL_DETERMINISTIC = "scorer-deterministic"
 
 
+# Every scoring method the user can pick, in menu order, richest explanation
+# first (`scoring.md` section 7.1). `local` is listed because the menu never
+# hides a method for a missing prerequisite (`talk.md` D44); its pack download is
+# not built yet, so picking it falls back to the keyword floor and says so.
+SCORING_MODES: tuple[str, ...] = ("llm", "jev", "local", "keyword")
+DEFAULT_SCORING_MODE = "llm"
+
+
 def scoring_mode(prefs: Any) -> str:
-    """The Settings → Scoring mode: `"llm"` (default) or `"keyword"`. The ONE
-    reader of `thresholds["scoring_mode"]` — every call site resolves the mode
-    through here so the default and the key can never drift apart."""
-    return str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "llm")
+    """The Settings → Scoring method. The ONE reader of
+    `thresholds["scoring_mode"]`, so the default and the key can never drift
+    apart, and an unrecognized stored value reads as the default rather than
+    breaking dispatch."""
+    stored = str((getattr(prefs, "thresholds", None) or {}).get("scoring_mode") or "")
+    return stored if stored in SCORING_MODES else DEFAULT_SCORING_MODE
+
+
+def scoring_weights(prefs: Any) -> tuple[dict[str, float], int]:
+    """The user's axis weights and location penalty, or the empty table, the 1
+    reader of `score_weight_preset` and `score_weights`. Empty means each method's
+    own weights, which is `balanced` (scoring.md 7.4). Custom sliders outrank the
+    preset."""
+    from sidecar.modules.scorer.weights import (
+        LOCATION_MISS_PENALTY,
+        PRESET_LOCATION_PENALTY,
+        PRESETS,
+        WEIGHTED_AXES,
+    )
+
+    thresholds = getattr(prefs, "thresholds", None) or {}
+    preset = str(thresholds.get("score_weight_preset") or "balanced")
+    if preset not in PRESETS:
+        preset = "balanced"
+    stored_penalty = thresholds.get("score_location_penalty")
+    penalty = (
+        int(stored_penalty)
+        if isinstance(stored_penalty, int | float)
+        else PRESET_LOCATION_PENALTY.get(preset, LOCATION_MISS_PENALTY)
+    )
+
+    custom = thresholds.get("score_weights")
+    if isinstance(custom, dict):
+        table = {
+            axis: float(custom[axis])
+            for axis in WEIGHTED_AXES
+            if isinstance(custom.get(axis), int | float)
+        }
+        if table and any(v > 0 for v in table.values()):
+            return table, penalty
+    return dict(PRESETS[preset]), penalty
+
 
 # The user-configurable windows below are DERIVED from `LIFECYCLE_DEFAULTS`
 # (D-A15) — they used to be re-typed here, so a Settings default change could
@@ -80,22 +122,10 @@ def resolve_scan_prefs(
     repos: Repos | None = None,
     portals: str | PortalsConfig | None = None,
 ) -> ScanPrefs | None:
-    """The scan's effective filters, in precedence order:
-
-    1. An explicit `prefs` override in the operation snapshot (tests/CLI).
-    2. The user's onboarding preferences (US-OB-03 — "so the cold-start scrape
-       knows what to look for") merged over the config's own filter tables:
-       role aliases → `title_allow`; locations → `location_allow` **and**
-       `location_always_allow` (the multi-location rescue names the user's
-       places, not the shipped defaults); freshness window → `max_age_days`;
-       `hard_excludes.companies`/`.keywords` → `company_block`/`content_block`,
-       **unioned** with the config's own block lists rather than replacing them
-       — a personal exclude should never silently drop a registry's own
-       curated blocks (job-finder-preferences design, docs/internal/discovery.md).
-       Dimensions the user left empty keep the config's values.
-    3. None — the config's own filters as-is (the seeded registry's tuned
-       defaults; only reached when the user set no preferences at all).
-    """
+    """The scan's effective filters: an explicit snapshot `prefs` override; else the
+    onboarding preferences merged over the config's tables (roles, locations,
+    freshness, and excludes unioned with the config's own blocks; empty dimensions
+    keep the config); else None, the config as-is."""
     prefs_data = snapshot.get("prefs")
     if isinstance(prefs_data, dict):
         return ScanPrefs(**prefs_data)
@@ -103,7 +133,7 @@ def resolve_scan_prefs(
         return None
     row = repos.preferences.get_or_create()
     aliases = [str(a) for a in (row.role_aliases or []) if str(a).strip()]
-    locations = [str(loc) for loc in (row.locations or []) if str(loc).strip()]
+    locations = [chip_name(loc) for loc in (row.locations or []) if chip_name(loc).strip()]
     freshness = row.freshness_days or 0
     hard_excludes = row.hard_excludes or {}
     company_block = [
@@ -123,13 +153,27 @@ def resolve_scan_prefs(
     base = _config_prefs(portals)
     expanded = _expand_locations(locations)
     return replace(
-        base,
+        _with_place_match(base, row.locations or []),
         title_allow=aliases or base.title_allow,
         location_allow=expanded or base.location_allow,
         location_always_allow=expanded or base.location_always_allow,
         max_age_days=freshness if freshness > 0 else base.max_age_days,
         company_block=list(dict.fromkeys([*base.company_block, *company_block])),
         content_block=list(dict.fromkeys([*base.content_block, *content_block])),
+    )
+
+
+def _with_place_match(base: ScanPrefs, chips: list[Any]) -> ScanPrefs:
+    """Keep a posting whose place lies inside a wanted one, which a word match can't
+    see: "Pune, India" for a Maharashtra chip, "Milpitas, CA" for the Bay Area (audit
+    A7). Only a MATCH keeps it; anything else falls through to the word filter."""
+    from sidecar.modules.geo.resolve import Verdict, match, resolve_location, resolve_wanted
+
+    wanted = resolve_wanted(chips)
+    if not (wanted.city_ids or wanted.admin1_keys or wanted.countries):
+        return base
+    return replace(
+        base, location_match=lambda text: match(resolve_location(text), wanted)[0] is Verdict.MATCH
     )
 
 
@@ -181,16 +225,9 @@ SCRAPER_ENGINE_PREFIX = "scraper:"
 
 
 def load_scraper_credentials(repos: Repos) -> dict[str, str]:
-    """Open the sealed BYO scraper keys (Apify/Brave) for THIS scan only.
-
-    The keys live as `scraper:<id>` rows in `engine_settings` (same sealed-BLOB
-    discipline as BYOK LLM keys — NFR-SEC-01) but are invisible to the engine
-    registry (`PROVIDERS.get` skips unknown ids) and to the Settings engines
-    list. The opened secrets go into the in-memory `ScanPrefs.credentials`
-    only — never into the durable operation snapshot, a result_ref, or a log.
-
-    Key resolution uses `resolve_data_dir()` (env/platform), matching the boot
-    path; hermetic tests set `FYJ_SESSION_KEY` so no keychain is touched."""
+    """Open the sealed Apify and Brave keys for this scan only. Stored as
+    `scraper:<id>` rows (NFR-SEC-01), invisible to the engine registry; opened keys
+    go to `ScanPrefs.credentials`, never a snapshot, result or log."""
     from ..db.database import resolve_data_dir
     from ..security import get_app_key, open_secret
 
@@ -302,6 +339,16 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
                     continue
                 new_job_ids.append(repos.jobs.create(**_job_columns(job)).id)
                 persisted += 1
+            # The duplicate notice (url-less-jobs.md 9.6) for every row this scan
+            # wrote, against the whole active board including each other. Without
+            # it a scanned row was never compared, so pasted-Monday,
+            # scanned-Wednesday could never be noticed.
+            if new_job_ids:
+                rows = repos.jobs.fingerprint_rows()
+                for job_id in new_job_ids:
+                    written = repos.jobs.get(job_id)
+                    if written is not None:
+                        flag_near_duplicate(repos, written, rows=rows)
 
     fetched = sum(r.fetched for r in result.per_source.values())
     kept = sum(r.kept for r in result.per_source.values())
@@ -352,7 +399,91 @@ def _job_columns(job: NormalizedJob) -> dict[str, Any]:
         "source_adapter": job.source_adapter or "unknown",
         "trust_score": job.trust_score,
         "trust_flags": list(job.trust_flags),
+        # Stored rather than recomputed per comparison: the scan already pays
+        # for it, and the promotion check and duplicate prompt read it per
+        # card (url-less-jobs.md section 5.2). 0 means "too short to shingle".
+        "fingerprint": to_signed64(simhash64(job.description)) or None,
     }
+
+
+BACKFILL_FINGERPRINT_BATCH = 500
+
+
+def backfill_fingerprints(
+    db: Database | None, *, limit: int = BACKFILL_FINGERPRINT_BATCH
+) -> int:
+    """Fingerprint rows from before migration `c9e4a71b3f02`; returns the count.
+    Too-short text stores 0, so it converges. Flags nothing itself."""
+    if db is None:
+        return 0
+    with db.repos() as repos:
+        pending = repos.jobs.list_unfingerprinted(limit=limit)
+        for job in pending:
+            repos.jobs.update(job.id, fingerprint=to_signed64(simhash64(job.description)))
+        return len(pending)
+
+
+# Jev is reached on the OpenRouter key the user may already have for everything
+# else, so "do you have one" is a database read. The key is opened for THIS
+# operation only, never cached and never written into a snapshot or a log, the
+# same discipline as the scraper credentials above.
+DECISIONS_ENGINE_ID = "openrouter"
+
+
+def decisions_key_present(repos: Repos) -> bool:
+    """Whether a usable key for the decision model is stored, without opening it.
+
+    The Settings row reads this to say "add a key" instead of going grey: a method
+    is never hidden for a missing prerequisite (`talk.md` D44).
+    """
+    row = repos.engine_settings.get_by_engine(DECISIONS_ENGINE_ID)
+    return bool(row is not None and row.key_encrypted and row.enabled)
+
+
+def load_decisions_client(repos: Repos) -> Any:
+    """The Jev client for this operation, or None when no key is stored."""
+    from ..db.database import resolve_data_dir
+    from ..security import get_app_key, open_secret
+    from .engines_http import DecisionsHttpClient
+
+    row = repos.engine_settings.get_by_engine(DECISIONS_ENGINE_ID)
+    if row is None or not row.key_encrypted or not row.enabled:
+        return None
+    try:
+        api_key = open_secret(row.key_encrypted, get_app_key(resolve_data_dir()))
+    except Exception:  # noqa: BLE001 — a corrupt key is a missing key, not a crash
+        import logging
+
+        logging.getLogger("fyj.sidecar").exception("could not open the sealed decisions key")
+        return None
+    return DecisionsHttpClient(api_key=api_key)
+
+
+def render_preferences_block(prefs: Any) -> str:
+    """The user's preferences as the Scorer's third prompt block, empty when none
+    are set. The wording is the bench's (evidence/2026-09-25-scoring-bench), the
+    text the 2026-09-28 measurement used."""
+    roles = [str(r) for r in (getattr(prefs, "role_aliases", None) or []) if str(r).strip()]
+    chips = getattr(prefs, "locations", None) or []
+    locations = [chip_label(loc) for loc in chips if chip_label(loc).strip()]
+    excludes = getattr(prefs, "hard_excludes", None) or {}
+    companies = [str(c) for c in (excludes.get("companies") or []) if str(c).strip()]
+    keywords = [str(k) for k in (excludes.get("keywords") or []) if str(k).strip()]
+    freshness = int(getattr(prefs, "freshness_days", 0) or 0)
+    if not (roles or locations or companies or keywords):
+        return ""
+    lines = [
+        "The user set these in the product's job-finder preferences. They state what this "
+        "user wants, and they outrank the resume wherever the two disagree.",
+        "",
+        f"Roles wanted: {', '.join(roles) or 'any'}",
+        f"Locations wanted: {', '.join(locations) or 'any'}",
+        f"Excluded companies: {', '.join(companies) or 'none'}",
+        f"Excluded keywords: {', '.join(keywords) or 'none'}",
+    ]
+    if freshness > 0:
+        lines.append(f"Posting freshness wanted: within {freshness} days")
+    return "\n".join(lines)
 
 
 def scan_usage(result: ScanResult) -> dict[str, Any]:
@@ -374,15 +505,28 @@ def scan_usage(result: ScanResult) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def flag_near_duplicate(
+    repos: Repos, job: Job, *, rows: list[tuple[str, int, str, str]] | None = None
+) -> str | None:
+    """Record a new job as a probable copy of every active job it matches
+    (url-less-jobs.md 9.6), on both write paths. `rows` is `fingerprint_rows()`
+    read once by a batch caller. Returns the first match, or None."""
+    others = repos.jobs.near_duplicate_ids(
+        job.fingerprint, company=job.company, title=job.title, exclude_id=job.id,
+        rows=rows,
+    )
+    if not others:
+        return None
+    repos.duplicates.record(job.id, others)
+    return others[0]
+
+
 def load_job_and_master(
     repos: Repos, snapshot: dict[str, Any]
 ) -> tuple[str, str, int]:
-    """Resolve `(job_text, master_md, profile_version)` for an LLM operation.
-
-    Inline `master_md`/`job` in the snapshot win (direct-API callers/tests);
-    otherwise both are loaded from the DB by `job_id` + the current master
-    profile. Raises `LookupError` (surfaced verbatim on the operation row) when
-    a required input is missing."""
+    """Resolve `(job_text, master_md, profile_version)` for an LLM op: inline snapshot
+    values win, else the DB by `job_id` and the current profile. Raises
+    `LookupError` when an input is missing."""
     master_md = snapshot.get("master_md")
     profile_version = snapshot.get("profile_version")
     if master_md is None or profile_version is None:
@@ -415,13 +559,9 @@ def load_job_and_master(
 def evict_stale_trash(
     db: Database | None, *, now: datetime | None = None, ttl_days: int = TRASH_TTL_DAYS
 ) -> list[str]:
-    """Tombstone + hard-delete every Trashed job past the TTL (US-SYS-04).
-
-    "Let it go stale = not meant to be" — a job left in Trash past `ttl_days`
-    is tombstoned (its `canonical_url` suppressed from future scrapes, per
-    FR-SYS-04) and removed, exactly as if the user emptied Trash. Rows that
-    entered Trash before the stamp existed are lazily stamped and skipped this
-    tick, so the clock only ever starts once. Returns the tombstoned job ids."""
+    """Tombstone and delete every trashed job past the TTL (US-SYS-04), as if the
+    user emptied Trash. Unstamped rows are stamped and skipped this tick, so the
+    clock starts once. Returns the tombstoned ids."""
     if db is None:
         return []
     now = now or now_utc()
@@ -430,8 +570,7 @@ def evict_stale_trash(
     with db.repos() as repos:
         repos.jobs.stamp_missing_lifecycle_dates(now=now)
         for job in repos.jobs.list_trashed_before(cutoff):
-            if not repos.tombstones.exists(job.canonical_url):
-                repos.tombstones.create(job.canonical_url, reason="trash_ttl")
+            tombstone_url(repos, job, reason="trash_ttl")
             delete_job_cascade(repos, job.id)
             tombstoned.append(job.id)
     return tombstoned
@@ -444,21 +583,12 @@ def age_expired_jobs(
     expire_after_days: int = EXPIRE_AFTER_DAYS,
     delete_after_days: int = EXPIRED_DELETE_AFTER_DAYS,
 ) -> dict[str, list[str]]:
-    """TTL aging for feed jobs (FR-SYS-03), run by the daily maintenance tick.
-
-    Two stages, both **skipping any job that has an Application** (Saving rescues
-    it — the Saved/Tracker side is never auto-expired):
-
-    1. **active → expired** once a job is older than `expire_after_days`,
-       measured from `feed_since` (which starts at `ingested_at` and is reset by
-       an explicit un-expire).
-    2. **expired → hard-delete** once it has sat in Expired for
-       `delete_after_days`, measured from `expired_at`. The delete writes **no
-       tombstone** — a later scrape may re-surface the same posting.
-
-    Rows that entered Expired before the stamp existed are lazily stamped and
-    skipped this tick, so their 30-day clock only ever starts once. Returns
-    `{"expired": [...ids], "deleted": [...ids]}`."""
+    """TTL aging for feed jobs (FR-SYS-03), daily: active to expired after
+    `expire_after_days` from `feed_since`, then hard-deleted after
+    `delete_after_days`, with no tombstone so a scan can bring it back. Ages only
+    scanned jobs: a hand-added one, link or not, is no scan's to replace, the same
+    test `tombstone_url` asks (url-less-jobs.md 5.6, 8.3). Skips saved jobs.
+    Returns `{"expired": [...], "deleted": [...]}`."""
     if db is None:
         return {"expired": [], "deleted": []}
     now = now or now_utc()
@@ -470,12 +600,12 @@ def age_expired_jobs(
         repos.jobs.stamp_missing_lifecycle_dates(now=now)
         # The applications table lands with the tracker commit; until then no
         # job can be Saved, so nothing is rescued from aging.
-        saved: set[str] = _saved_job_ids(repos)
+        saved: set[str] = saved_job_ids(repos)
 
         # Stage 2 first: hard-delete stale Expired rows (no tombstone).
         for job in repos.jobs.list_expired_before(delete_cutoff):
             if job.id in saved:
-                continue  # Saved rescues it — never auto-delete
+                continue  # Saved — never auto-delete
             delete_job_cascade(repos, job.id)  # no Tombstone — FR-SYS-03
             deleted.append(job.id)
 
@@ -488,16 +618,29 @@ def age_expired_jobs(
     return {"expired": expired, "deleted": deleted}
 
 
-def _saved_job_ids(repos: Repos) -> set[str]:
-    """Job ids rescued by a Saved application — never auto-expired/deleted."""
-    return repos.applications.job_ids()
+def tombstone_url(repos: Repos, job: Job, *, reason: str) -> bool:
+    """Tombstone a scanned job's URL so no scan re-adds it (FR-SYS-04). True if
+    it wrote or found one. A job the user added by hand is only deleted, link or
+    not (url-less-jobs.md section 8.2)."""
+    if not job.canonical_url or job.origin != "scan":
+        return False
+    if not repos.tombstones.exists(job.canonical_url):
+        repos.tombstones.create(job.canonical_url, reason=reason)
+    return True
+
+
+def saved_job_ids(repos: Repos) -> set[str]:
+    """Job ids rescued by a Saved application: never auto-expired or deleted, and
+    excluded from the board server-side (US-JB-06). Public because `api/jobs`
+    reads it too (duplication audit D-A17)."""
+    return set(repos.applications.job_ids())
 
 
 def delete_job_cascade(repos: Repos, job_id: str) -> bool:
     """The ONE job cascade; all 4 delete paths call it, so a new FK child
     cannot wedge one path while another keeps working (S-C46). Referral
     candidates hard-delete; outreach logs nullify, because the log is audit
-    data. Applications are not touched: `_saved_job_ids` rescues a saved job
+    data. Applications are not touched: `saved_job_ids` rescues a saved job
     before deletion, and trashing requires unsaving first."""
     repos.referral_candidates.delete_for_job(job_id)
     repos.outreach_logs.nullify_for_job(job_id)
@@ -507,18 +650,10 @@ def delete_job_cascade(repos: Repos, job_id: str) -> bool:
 def delete_application_cascade(
     repos: Repos, application_id: str
 ) -> tuple[bool, list[str], list[str]]:
-    """Delete one application row and every FK child (`foreign_keys=ON`):
-    events, uploaded documents (manual cards — 2026-07-24 bug class), and apply
-    runs — an archived manual card used to IntegrityError here and wedge the
-    whole retention pass. Artifacts cascade via the ORM relationship.
-
-    The ONE implementation of the cascade (D-A3): the unsave route and the
-    retention pass both call it, so a new FK child can never wedge one path
-    while the other keeps working. Returns `(deleted, apply_run_ids,
-    orphaned_document_hashes)` — both sets of on-disk bytes are the caller's to
-    purge, because the two callers do it in different contexts (off-loop vs
-    sync).
-    """
+    """Delete 1 application and every FK child (events, documents, apply runs), the
+    1 cascade (D-A3) both callers use, so a new child can't wedge one path. Returns
+    `(deleted, apply_run_ids, orphaned_document_hashes)`; purging the files is the
+    caller's job."""
     run_ids = [r.id for r in repos.apply_runs.list_for_application(application_id)]
     repos.application_events.delete_for_application(application_id)
     orphaned = repos.documents.delete_for_application(application_id)

@@ -5,6 +5,18 @@
 const browser = {
   framesLabel: "frames",
   noPage: "no page yet",
+  download: {
+    button: "Download Chromium",
+    downloading: "Downloading Chromium… this takes a minute or two",
+    stopped: "The download stopped before it finished. Try again.",
+    surfaceMissing: "This browser needs Chrome or Chromium, and neither is on this computer. Download Chromium, a one-time download.",
+    applyMissing: "Applying needs Chrome or Chromium, and neither is on this computer. Download Chromium, a one-time download, then apply again.",
+    applyReady: "Chromium is ready. Apply again.",
+  },
+  applierTab: {
+    show: "Show in browser",
+    gone: "The form's tab is closed.",
+  },
 };
 
 export default browser;

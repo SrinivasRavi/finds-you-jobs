@@ -1,0 +1,272 @@
+// Covers: the 2-ring score dial. The outer arc is the score on a red-to-green
+// ramp; the inner ring is the method that produced it. The 4 methods can't all
+// run in e2e (Jev needs an OpenRouter key, Laya has no pack yet), so the
+// board response is patched, as board.spec.ts does for virtualization.
+
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
+
+const DIR = "e2e/_screenshots/score-ring";
+const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
+
+const METHODS = [
+  { method: "llm", score: 91, title: "Staff Backend Engineer", company: "Stripe" },
+  { method: "jev", score: 74, title: "Platform Engineer", company: "Ramp" },
+  { method: "local", score: 58, title: "Services Engineer", company: "Linear" },
+  { method: "keyword", score: 31, title: "Frontend Engineer", company: "Vercel" },
+];
+
+test("every scoring method is legible on the board and in the detail pane", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.post(`${base}/api/jobs`, {
+    headers: auth,
+    data: {
+      canonical_url: "https://example.com/e2e-ring-seed",
+      title: "Seed Role",
+      company: "Seed",
+      location: "Remote",
+      description:
+        "Backend engineer role. You will build and operate Python services, design " +
+        "PostgreSQL schemas, run workloads on AWS, and review other engineers' work. " +
+        "Requirements: strong Python, solid SQL, and production ownership experience.",
+      source_adapter: "greenhouse",
+    },
+  });
+
+  await page.route("**/api/board*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      jobs: Record<string, unknown>[];
+      total: number;
+    };
+    const template = body.jobs[0];
+    if (!template) throw new Error("the seeded job never reached the board");
+    body.jobs = METHODS.map((m, i) => ({
+      ...template,
+      id: `ring-${m.method}`,
+      title: m.title,
+      company: m.company,
+      canonical_url: `https://example.com/e2e-ring-${i}`,
+      scoreStatus: "scored",
+      score: {
+        ...(template.score as Record<string, unknown>),
+        score_0_100: m.score,
+        method: m.method,
+        scorer_impl: m.method === "keyword" ? "scorer-deterministic" : "scorer-llm",
+      },
+    }));
+    body.total = body.jobs.length;
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/jobs");
+  const rows = page.locator('[data-testid="job-row"]');
+  await expect(rows).toHaveCount(METHODS.length, { timeout: 15_000 });
+
+  // The list: each row's number carries its method's colour.
+  for (const m of METHODS) {
+    await expect(page.locator(`[data-method="${m.method}"]`).first()).toBeVisible();
+  }
+  await page.screenshot({ path: `${DIR}/board-4-methods.png`, fullPage: true });
+
+  // The detail pane: the dial itself, one method at a time.
+  for (const m of METHODS) {
+    await rows.filter({ hasText: m.company }).first().click();
+    const dial =
+      m.method === "keyword"
+        ? page.locator('[data-testid="keyword-score-ring"]')
+        : page.locator('[data-testid="match-score-ring"]');
+    await expect(dial).toBeVisible({ timeout: 10_000 });
+    await expect(dial).toHaveAttribute("data-method", m.method);
+    await expect(dial).toContainText(String(m.score));
+    await dial.screenshot({ path: `${DIR}/dial-${m.method}.png` });
+  }
+
+  // And the whole pane, so the dial is reviewable in its real surroundings.
+  await page.screenshot({ path: `${DIR}/detail-with-dial.png`, fullPage: true });
+});
+
+test("the factor bars draw a confidence differently from a graded position", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+
+  // Jev's real axis set: 5 graded positions and 2 confidences, with the weight
+  // table its own total used. The confidences carry no weight on purpose.
+  await page.route("**/api/jobs/*/factors", async (route) => {
+    await route.fulfill({
+      json: {
+        job_id: "ring-jev",
+        method: "jev",
+        weights: {
+          hard_requirements: 0.3,
+          core_stack: 0.3,
+          years: 0.15,
+          level: 0.15,
+          nice_to_haves: 0.1,
+        },
+        factors: [
+          { factor: "hard_requirements", value: 1.0, kind: "graded",
+            evidence: "Every item the posting states as required is evidenced in the resume." },
+          { factor: "core_stack", value: 0.9, kind: "graded",
+            evidence: "Hands-on with most of the core stack, with one adjacent substitution." },
+          { factor: "years", value: 1.0, kind: "graded",
+            evidence: "9 on the resume against 6 required" },
+          { factor: "level", value: 0.95, kind: "graded",
+            evidence: "Senior stated, senior evidenced" },
+          { factor: "nice_to_haves", value: 0.25, kind: "graded",
+            evidence: "Go is named as nice to have and is absent" },
+          { factor: "location_preference", value: 0.96, kind: "probability",
+            evidence: "96% confidence the posting is in a location you asked for" },
+          { factor: "logistics", value: 0.96, kind: "probability",
+            evidence: "4% confidence the posting states a constraint your resume contradicts" },
+        ],
+      },
+    });
+  });
+
+  await page.goto("/jobs");
+  const row = page.locator('[data-testid="job-row"]').first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await row.click();
+
+  const bars = page.locator('[data-testid="factor-bars"]');
+  await expect(bars).toBeVisible({ timeout: 10_000 });
+
+  // Rule 1: a confidence is drawn differently and is labelled as one.
+  await expect(page.locator('[data-testid="factor-location_preference"]')).toHaveAttribute(
+    "data-kind",
+    "probability",
+  );
+  // Rule 2: a graded axis shows its weight, a confidence never does.
+  await expect(page.locator('[data-testid="weight-core_stack"]')).toBeVisible();
+  await expect(page.locator('[data-testid="weight-location_preference"]')).toHaveCount(0);
+  // Rule 3: the evidence is on screen, not only on hover.
+  await expect(bars).toContainText("9 on the resume against 6 required");
+
+  await bars.screenshot({ path: `${DIR}/factor-bars.png` });
+  await page.screenshot({ path: `${DIR}/detail-with-bars.png`, fullPage: true });
+});
+
+test("weight presets and the sliders behind their disclosure", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("settings-nav-scoring").click();
+
+  const weights = page.locator('[data-testid="score-weights"]');
+  await expect(weights).toBeVisible({ timeout: 15_000 });
+  await weights.scrollIntoViewIfNeeded();
+
+  // The reset lives outside the disclosure and starts inert on a fresh install.
+  await expect(page.locator('[data-testid="score-weights-reset"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="score-weight-core_stack"]')).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/weights-presets.png`, fullPage: true });
+
+  await page.locator('[data-testid="score-weights-disclosure"]').click();
+  await expect(page.locator('[data-testid="score-weight-core_stack"]')).toBeVisible();
+  await expect(page.locator('[data-testid="score-location-penalty"]')).toBeVisible();
+  await weights.screenshot({ path: `${DIR}/weights-sliders.png` });
+
+  // Picking a preset is a real save, and the reset wakes up.
+  await page.locator('[data-testid="score-weight-preset-skills_only"]').click();
+  await expect(page.locator('[data-testid="score-weights-reset"]')).toBeEnabled({
+    timeout: 10_000,
+  });
+  await weights.screenshot({ path: `${DIR}/weights-skills-only.png` });
+});
+
+test("explain this one shows its price, and only where there is prose to buy", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+
+  // This user has paid for LLM scores before, so the button quotes their own
+  // average rather than a figure off a price list.
+  await page.route("**/api/scoring/explain-cost", async (route) => {
+    await route.fulfill({
+      json: { engine: "openrouter", model: "claude-haiku-4-5", avg_usd: 0.24, samples: 12, ready: true },
+    });
+  });
+
+  let method = "jev";
+  await page.route("**/api/board*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { jobs: Record<string, unknown>[] };
+    const t = body.jobs[0];
+    if (t) {
+      body.jobs = [
+        {
+          ...t,
+          scoreStatus: "scored",
+          score: { ...(t.score as Record<string, unknown>), score_0_100: 74, method },
+        },
+      ];
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/jobs");
+  await page.locator('[data-testid="job-row"]').first().click();
+  const button = page.locator('[data-testid="explain-this-one"]');
+  await expect(button).toBeVisible({ timeout: 15_000 });
+  await expect(button).toContainText("0.24");
+  await page.screenshot({ path: `${DIR}/explain-button.png`, fullPage: true });
+
+  // An LLM-scored job already has its prose, so there is nothing to buy.
+  method = "llm";
+  await page.reload();
+  await page.locator('[data-testid="job-row"]').first().click();
+  await expect(page.locator('[data-testid="match-reasons"]')).toBeVisible({ timeout: 15_000 });
+  await expect(button).toHaveCount(0);
+});
+
+test("the Scoring pane says which method the rubric governs", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByTestId("settings-nav")).toBeVisible({ timeout: 15_000 });
+  // The rubric lives in the Scoring pane now, under the method menu it
+  // belongs to, instead of behind a tab bar in another category.
+  await page.getByTestId("settings-nav-scoring").click();
+
+  const scope = page.locator('[data-testid="prompt-scope-score"]');
+  await expect(scope).toBeVisible();
+  await expect(scope).toContainText("LLM scoring only");
+  await expect(scope).toContainText("Keyword scoring");
+  await expect(scope).toContainText("Jev scoring");
+  await page.screenshot({ path: `${DIR}/prompts-scope.png`, fullPage: true });
+
+  // Every other prompt carries its own scope line too, in the category that
+  // owns its work.
+  const homes: [string, string][] = [
+    ["documents", "tailor"],
+    ["documents", "cover"],
+    ["applying", "extract"],
+    ["networking", "networker_draft"],
+  ];
+  for (const [cat, kind] of homes) {
+    await page.getByTestId(`settings-nav-${cat}`).click();
+    await expect(page.locator(`[data-testid="prompt-scope-${kind}"]`)).toBeVisible();
+  }
+});

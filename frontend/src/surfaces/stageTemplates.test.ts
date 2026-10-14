@@ -1,9 +1,7 @@
-// Unit tests for the stage→template mapping (maintainer spec 2026-08-14 + the
-// dropdown addendum): each mapped kanban stage exposes its full option set (3
-// distinct choices), Engagement personalizes with the contact's own employer
-// and degrades cleanly when it's blank, the greeting degrades when the name is
-// blank, and unmapped stages offer nothing. i18next is REAL, initialized from
-// the English reference bundle, so the assertions cover the shipped strings.
+// Unit tests for the stage-to-template mapping: each mapped stage offers 3
+// distinct options, Engagement uses the contact's employer and degrades when it's
+// blank, the greeting degrades without a name, and unmapped stages offer nothing.
+// i18next is real, from the English bundle, so the shipped strings are checked.
 
 import { createInstance } from "i18next";
 import { beforeAll, describe, expect, it } from "vitest";

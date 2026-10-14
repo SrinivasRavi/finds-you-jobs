@@ -391,7 +391,9 @@ async def test_browser_crash_during_captcha_wait(
     engine = FakeApplyEngine([])
     req = _request(tmp_path, _fixture_url("captcha_wall.html"))
     
-    # Custom _run to be able to close the page during the test
+    # Close the page once the wait has begun, signalled by its blocker event. A
+    # fixed 1 s timer raced page load under load: closing first is a different,
+    # correct outcome (interrupted), and the test failed 3 of 3 on 2026-10-10.
     events: list[ApplyEvent] = []
     import asyncio
 
@@ -400,20 +402,20 @@ async def test_browser_crash_during_captcha_wait(
     from sidecar.packages.jobapplier.executor import UrlPolicy
     from sidecar.packages.jobapplier.loop import run_apply
     from sidecar.packages.jobapplier.types import ApplyControl
-    
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         page = await browser.new_page()
         control = ApplyControl()
-        
-        async def close_page():
-            await asyncio.sleep(1.0)
-            await page.close()
-            
-        asyncio.create_task(close_page())
-        
+        closing: list[asyncio.Task[None]] = []
+
+        def sink(event: ApplyEvent) -> None:
+            events.append(event)
+            if event.type is ApplyEventType.BLOCKER_FOUND and not closing:
+                closing.append(asyncio.create_task(page.close()))
+
         result = await run_apply(
-            page, req, engine, events.append, control, policy=UrlPolicy(allow_local=True)
+            page, req, engine, sink, control, policy=UrlPolicy(allow_local=True)
         )
         
     assert result.status is ApplyStatus.BLOCKED

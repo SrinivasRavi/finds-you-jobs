@@ -1,10 +1,6 @@
-// Global failed-write surfacing (2026-07-24): every mutation error is logged
-// by the QueryClient's MutationCache (main.tsx) and re-broadcast as a
-// `fyj:mutation-error` window event; this banner shows recent ones until
-// dismissed. Before this, a failed archive/move/save died silently — the user
-// clicked, nothing happened, nothing was logged. A burst of failed writes
-// stacks (latest last) instead of collapsing to one flash (F-L12); beyond
-// MAX_STACK the overflow is summarized as a count.
+// Global failed-write banner: every mutation error is re-broadcast by main.tsx
+// as a `fyj:mutation-error` event and shown here until dismissed, so a failed
+// write is never silent. A burst stacks (F-L12); past MAX_STACK it's a count.
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -51,12 +47,9 @@ export function MutationErrorBanner() {
     window.addEventListener(MUTATION_ERROR_EVENT, onError);
     return () => window.removeEventListener(MUTATION_ERROR_EVENT, onError);
   }, []);
-  // Auto-dismiss: the banner informs, it must never become a lingering
-  // obstacle (it once sat over a modal's Save button and blocked the click).
-  // The timer is keyed to the HEAD ENTRY'S IDENTITY, not the array: new
-  // arrivals must not reset the head's clock, or a sustained failure cadence
-  // (< AUTO_DISMISS_MS apart) would keep the stack from ever draining. Each
-  // head expires on its own clock and the burst drains oldest-first.
+  // Auto-dismiss, so the banner never blocks a click (it once sat over a Save).
+  // The timer keys to the head entry's identity: new arrivals mustn't reset its
+  // clock, or a steady failure cadence would never drain the stack.
   const headId = state.errors[0]?.id;
   useEffect(() => {
     if (headId == null) return;

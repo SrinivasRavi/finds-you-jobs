@@ -7,7 +7,10 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { Application, Priority, Stage } from "../../api/types";
+import type { Application, Priority } from "../../api/types";
+// The Apply slot must not start a fresh run on a card already applied to
+// (2026-07-17 dogfood).
+import { POST_APPLICATION_STAGES } from "../../api/types";
 import type { ResumeModalKind } from "../../popups/ResumeModal";
 import { applyRunDisplay } from "../../shell/applyRunDisplay";
 import { Avatar } from "../../shell/Avatar";
@@ -43,16 +46,9 @@ const REFERRALS_SLOT_STATE: Record<Application["referrals_state"], string> = {
   failed: "failed",
 };
 
-// The Apply slot maps the latest Apply Run's status (applier-as-built.md section 8.2) onto the
-// shared PacketSlotTag state keys: none→"Apply" (grey), waiting_for_packet/
-// running→"Applying…" (grey+spinner), ready_for_human→"Review & submit"
-// (yellow), submitted→"Submitted" (green check), and the honest non-success
-// terminals→"Retry" (red). The table itself lives in shell/applyRunDisplay,
-// shared with the Applier panel's phase pill (duplication audit D-F14).
-
-// Stages where the job has already been applied to — the Apply slot must not
-// start a fresh run there (2026-07-17 dogfood).
-const POST_APPLICATION: Stage[] = ["Applied", "Interviewing", "Offer", "Rejected"];
+// The Apply slot maps the latest run's status (applier-as-built.md section 8.2)
+// onto PacketSlotTag states: Apply, Applying…, Review & submit, Submitted, and
+// Retry for the non-success terminals. The table is shell/applyRunDisplay (D-F14).
 
 const SLOT_SPINNER = new Set(["generating", "finding", "sending"]);
 const SLOT_CHECK = new Set(["ready", "approved"]);
@@ -97,6 +93,7 @@ export const Card = memo(function Card({
   onSlot,
   onMenu,
   menuOpen,
+  networkingOn,
 }: {
   app: Application;
   onOpen: (id: string) => void;
@@ -105,6 +102,8 @@ export const Card = memo(function Card({
   onSlot: (app: Application, kind: ResumeModalKind | "refs" | "apply") => void;
   onMenu: (id: string, anchor: DOMRect) => void;
   menuOpen: boolean;
+  /** Networking is default-off; until it's on, the card offers no way in (S-C66). */
+  networkingOn: boolean;
 }) {
   const { t } = useTranslation();
   const tier = app.job.score ? scoreTier(app.job.score.score_0_100) : null;
@@ -199,16 +198,19 @@ export const Card = memo(function Card({
             }
           />
         </button>
-        <button onClick={() => onSlot(app, "refs")} data-testid="card-referrals-slot">
-          <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state] ?? "none"} />
-        </button>
+        {networkingOn ? (
+          <button onClick={() => onSlot(app, "refs")} data-testid="card-referrals-slot">
+            <PacketSlotTag label={t("tracker.card.referrals")} state={REFERRALS_SLOT_STATE[app.referrals_state] ?? "none"} />
+          </button>
+        ) : null}
         {/* Apply slot (applier-as-built.md section 8.1/section 8.2) — starts a run (or reopens the
             bound one) and opens the companion panel. A card already past
             application (Applied/Interviewing/Offer/Rejected) with no run can't
             start one — you don't apply to a job you've already applied to
             (2026-07-17 dogfood); it shows a static "Applied" and is inert. An
             existing run stays reviewable in any stage. */}
-        {POST_APPLICATION.includes(app.stage) && app.apply_run_status === "none" ? (
+        {(POST_APPLICATION_STAGES as readonly string[]).includes(app.stage) &&
+        app.apply_run_status === "none" ? (
           <span data-testid="card-apply-slot">
             <PacketSlotTag label={t("tracker.applySlot.applied")} state="approved" />
           </span>

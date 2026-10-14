@@ -1,34 +1,15 @@
-// Covers the Networking surfaces against a live sidecar:
-//
-//   (A) the LinkedIn browser modal (2026-08-16; a left-rail destination
-//       before) — opened from the Networking header's status button, the
-//       watch-only broker surface inside a maximum-size dialog: a pageless
-//       surface auto-opens its frozen origin ("always on, never a blank
-//       canvas") and the read-only URL line tracks the live page.
-//   (B) the step-plan panel — explicit idle, then an honest plan for a
-//       dry-run send (the real op pipeline, wire cold).
-//   (C) the contact-modal composer — stage suggestions, the channel +
-//       irreversibility line beside the single Send, the modal auto-opening
-//       on send, and the plan panel advancing over the live surface.
-//
-// The one-step "Reach out by URL" entry is REMOVED (maintainer, 2026-08-15:
-// it duplicated "Add a contact by URL" + the contact modal's composer);
-// networking.spec.ts asserts its absence.
-//
-// SAFETY: the surface's frozen origin is really linkedin.com, so every test
-// that mounts the modal needs `VITE_LINKEDIN_ORIGIN` pointed at the loopback
-// fixture this spec serves — the surface then auto-opens and navigates the
-// FIXTURE only. `playwright.config.ts` defaults it, so these run on a plain
-// `npx playwright test`; the skip below stays as the backstop that keeps a
-// non-loopback override from ever reaching linkedin.com. Zero model calls,
-// zero account use throughout.
+// Covers the Networking surfaces against a live sidecar: (A) the LinkedIn
+// browser modal, which auto-opens its frozen origin; (B) the step-plan panel on a
+// dry-run send; (C) the contact-modal composer and its single Send.
+// Every test that mounts the modal needs VITE_LINKEDIN_ORIGIN on the loopback
+// fixture (playwright.config.ts defaults it); the skip below is the backstop.
 
 import { createServer, type Server } from "node:http";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/networking-browser";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -37,21 +18,6 @@ const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 // accepted — anything else (including the real default) skips the tab tests.
 const ORIGIN = process.env.VITE_LINKEDIN_ORIGIN ?? "";
 const originIsLocalFixture = /^http:\/\/127\.0\.0\.1:\d+\/$/.test(ORIGIN);
-
-function sidecarInfo(): { base: string; token: string } {
-  // An isolated run (second vite on FYJ_WEB_PORT beside the maintainer's dev
-  // session) passes the handshake via env — dev-web's .env.local is absent there.
-  const envPort = process.env.VITE_SIDECAR_PORT;
-  const envToken = process.env.VITE_SIDECAR_TOKEN;
-  if (envPort && envToken) {
-    return { base: `http://127.0.0.1:${envPort}`, token: envToken };
-  }
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 // A local linkedin-SHAPED fixture site on the overridden origin's port: a home
 // page (the auto-open landing) and /in/<slug> profile-ish pages, each visually
@@ -340,16 +306,10 @@ test("contact modal's LinkedIn link queues a view_page op that lands in the pane
   await request.post(`${base}/api/linkedin/disconnect`, { headers });
 });
 
-// Stage → suggested-message mapping in the contact detail modal (maintainer
-// spec): Accepted/Ghosted get reminders, Engagement gets a referral ask
-// personalized with the contact's own employer; a dropdown offers ~3 options
-// per stage, the first prefills the editable box. The send is ONE deliberate
-// click on the composer itself (the modal is the per-action review surface:
-// recipient in the title, the editable message, and the channel +
-// irreversibility line beside Send) — no second dialog. The composer's POST is
-// intercepted at the network edge; a real dry-run send then drives the plan
-// panel over the live fixture surface, so the watchable-send wiring is proven
-// wire-cold.
+// The contact modal's composer: each stage suggests about 3 messages and the
+// first prefills the box; the send is 1 click on the composer, with no second
+// dialog. The POST is intercepted, and a real dry-run send drives the plan panel
+// over the fixture surface, so the watchable send is proven wire-cold.
 test("contact modal composer: stage suggestions, single-click send, and the watchable browser modal", async ({
   page,
   request,

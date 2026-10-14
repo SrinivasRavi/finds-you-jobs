@@ -1,26 +1,12 @@
-"""The Applier operation (docs/internal/archived/applier-as-built.md section 8) — one direct `apply`
-op from the Tracker, driving the jobapplier package's agent loop.
+"""The Applier operation (applier-as-built.md section 8): 1 `apply` op from the
+Tracker, driving `jobapplier.run_apply`.
 
-Lifecycle (section 8.1): the route creates the durable ApplyRun immediately; this
-entrypoint waits for the packet (a still-generating tailored resume) if
-needed, freezes the exact artifact used, renders it to PDF, opens the
-browser, and hands off to `jobapplier.run_apply`. The loop cannot submit —
-its tool vocabulary has no submit tool (section 4.2).
-
-P1 handoff (section 8.4): on `ready_for_human` the HEADED browser stays open for a
-bounded review window while we watch for a confirmation page. A detected
-confirmation records `submitted` with `submit_evidence=confirmation_detected`
-and moves the card to Applied; otherwise the run stays `ready_for_human` and
-the user may attest via the API. Closing the browser is an interruption,
-never a success.
-
-**Test seam.** `ENGINE_FACTORY` builds the model engine (tests inject
-`FakeApplyEngine`); `FYJ_APPLY_DEV=1` additionally honors the dev knobs in
-`input_snapshot` (`dev_engine_script`, `dev_allow_local`, `dev_headed=false`,
-`dev_review_wait_s`) so e2e can drive a real run against a local fixture form
-with zero model calls and zero external traffic. Without that env the knobs
-are ignored.
-"""
+The route creates the ApplyRun; this waits for the packet, freezes the
+artifact, opens the run's tab in the shared Applier window
+(applier/window.md) and renders the PDF. The loop has no submit tool (4.2). On
+`ready_for_human` the tab stays open for review (8.4): a confirmation page
+records `submitted`, else the user may attest. Tests inject `ENGINE_FACTORY`;
+`FYJ_APPLY_DEV=1` honors the snapshot's dev knobs."""
 
 from __future__ import annotations
 
@@ -51,11 +37,18 @@ from sidecar.packages.jobapplier.fake import FakeApplyEngine
 from sidecar.packages.jobapplier.loop import ApplyEngine
 
 from ...modules._shared.completion_retry import CompletionCancelled
+from ..api.browser import is_browser_missing
 from ..db import Repos
 from ..db.base import now_utc
 from ..db.database import Database, resolve_data_dir
 from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES
 from ..events import make_event
+from .applier_window import (
+    BROWSER_MISSING_DETAIL,
+    ApplierWindow,
+    BrowserMissingError,
+    window_for,
+)
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome
 from .pdf import render_resume_pdf_async
@@ -65,6 +58,20 @@ APPLY_CONTROL: dict[str, ApplyControl] = {}
 
 _PACKET_POLL_S = 2.0
 _PACKET_WAIT_MAX_S = 15 * 60.0
+# Why an Apply can't start, shown by the route's refusal and raised by the
+# retry path's guard (url-less-jobs.md section 5.4).
+NO_POSTING_URL_DETAIL = (
+    "This job has no posting link, so there's no form to apply on. "
+    "Add the link and try again."
+)
+# The Applier fills forms from the facts extracted from the master resume. Without
+# them it would fill blind, so Apply refuses (audit A5).
+NO_APPLICATION_PROFILE_DETAIL = (
+    "Check your applicant details before your first application: your name, contact "
+    "details and work authorization, in Settings > Applying > Applicant details. The "
+    "Applier fills forms from them."
+)
+
 _REVIEW_WAIT_S = 10 * 60.0
 _REVIEW_POLL_S = 3.0
 
@@ -107,10 +114,19 @@ def _apply(ctx: OperationContext) -> OperationOutcome:
     # run finalizes as cancelled instead of proceeding under a stale request.
     if ctx.cancelled is not None and ctx.cancelled():
         control.cancel()
+    # Every run shares 1 window, so the coroutine runs on the window's loop
+    # (applier/window.md section 4.1).
+    window = _window(ctx)
     try:
-        return asyncio.run(_apply_async(ctx, application_id, control))
+        return window.run(_apply_async(ctx, application_id, control, window))
     finally:
         APPLY_CONTROL.pop(ctx.operation_id, None)
+
+
+def _window(ctx: OperationContext) -> ApplierWindow:
+    """The shared window. Headless is a dev knob, for tests."""
+    headed = not (_dev_enabled() and ctx.input_snapshot.get("dev_headed") is False)
+    return window_for(headless=not headed)
 
 
 def _publish(ctx: OperationContext, run_id: str, event: ApplyEvent) -> None:
@@ -129,21 +145,29 @@ def _publish(ctx: OperationContext, run_id: str, event: ApplyEvent) -> None:
     )
 
 
+def has_extracted_profile(repos: Any) -> bool:
+    """Whether a master resume exists and its facts were read or typed at all."""
+    profile = repos.profile.get_current()
+    return profile is not None and isinstance(profile.application_profile, dict)
+
+
+def has_application_profile(repos: Any) -> bool:
+    """Whether the user has confirmed the facts the Applier fills forms from: read
+    from the resume or typed, then saved once in Applicant details (audit A5)."""
+    from .applicant import details_confirmed
+
+    profile = repos.profile.get_current()
+    return profile is not None and details_confirmed(profile.application_profile)
+
+
 def _run_dir(run_id: str) -> Path:
     return resolve_data_dir() / "apply_runs" / run_id
 
 
 def purge_run_dirs(run_ids: Iterable[str]) -> None:
-    """F-M8: remove `apply_runs/<run_id>/` artifact dirs (frozen resume PDF +
-    per-step PNGs) when their rows are purged — card delete and retention purge
-    both call this, or the evidence outlives the record forever.
-
-    Best-effort by design: a missing dir is fine, and an unremovable one must
-    never fail the delete/purge that triggered it — it is only logged. Path
-    safety: a target is removed only when its resolved path is a strict child
-    of the resolved `apply_runs` base (a hostile/corrupt run id can never walk
-    out of it). Blocking (shutil.rmtree) — call via `asyncio.to_thread` from
-    async request paths."""
+    """F-M8: remove `apply_runs/<run_id>/` dirs when their rows are purged. Best
+    effort: a failure is only logged. A target must resolve strictly inside the
+    `apply_runs` base. Blocking; use `asyncio.to_thread` from async paths."""
     log = logging.getLogger("fyj.sidecar")
     base = (resolve_data_dir() / "apply_runs").resolve()
     for run_id in run_ids:
@@ -160,10 +184,17 @@ def purge_run_dirs(run_ids: Iterable[str]) -> None:
 
 
 async def _apply_async(
-    ctx: OperationContext, application_id: str, control: ApplyControl
+    ctx: OperationContext,
+    application_id: str,
+    control: ApplyControl,
+    window: ApplierWindow | None = None,
 ) -> OperationOutcome:
     db = ctx.db
     assert db is not None
+    if window is None:
+        window = _window(ctx)
+    if not window.on_loop():
+        return await window.run_async(_apply_async(ctx, application_id, control, window))
 
     # -- load the card + create/adopt the durable run -------------------------
     with db.repos() as repos:
@@ -173,6 +204,14 @@ async def _apply_async(
         job = repos.jobs.get(app_row.job_id)
         if job is None:
             raise ValueError(f"job {app_row.job_id!r} not found")
+        # Before the run row: a run against a job with no link has no form and would
+        # sit in the panel unactionable (url-less-jobs.md section 5.4). This is the retry
+        # path's guard; `start_apply` refuses first. Same dev seam as the route.
+        dev_form_url = str(ctx.input_snapshot.get("dev_form_url") or "") if _dev_enabled() else ""
+        if not job.canonical_url and not dev_form_url:
+            raise ValueError(NO_POSTING_URL_DETAIL)
+        if not has_application_profile(repos):
+            raise ValueError(NO_APPLICATION_PROFILE_DETAIL)
         # Adopt the route-created row by its snapshot id first: the route
         # commits it BEFORE runner.submit, so it is always visible here, while
         # `operation_id` may not be attached yet (the route writes that after
@@ -188,50 +227,41 @@ async def _apply_async(
                 application_id,
                 operation_id=ctx.operation_id,
                 retry_of_run_id=ctx.input_snapshot.get("retry_of_run_id"),
-                source_url=job.canonical_url,
+                source_url=job.canonical_url or dev_form_url,
                 deadline_at=now_utc() + timedelta(minutes=20),
             )
         elif run.operation_id != ctx.operation_id:
             run = repos.apply_runs.update(run.id, operation_id=ctx.operation_id)
         run_id = run.id
-        job_url = job.canonical_url
+        job_url = job.canonical_url or dev_form_url
         company = job.company
         role = job.title
+        job_location = job.location or ""
         jd_text = (job.description or "")[:12_000]
 
-    # Late-failure finalize (F-M3 follow-up, extended 2026-07-25): ANY
-    # exception escaping the post-adoption body below — the packet wait (which
-    # may raise AFTER setting the row `waiting_for_packet`), the PDF render,
-    # the browser launch, `run_apply` itself — must land the durable run row
-    # terminal before the op fails, or the Applier panel shows a live status
-    # forever (until boot sweep). The runner still fails the *operation*
-    # verbatim; a user cancel lands `interrupted`, never `failed`; both
-    # finalizers are guarded to ACTIVE rows, so a row `_finalize` already
-    # landed is never re-written.
+    # Late-failure finalize (F-M3): any exception after adoption (packet wait, PDF
+    # render, browser launch, `run_apply`) must land the run row terminal before the
+    # op fails, or the panel shows a live status forever. A user cancel lands
+    # `interrupted`; both finalizers are guarded to active rows.
     try:
         # -- wait for the packet, freeze the exact artifacts (section 8.1) ----------
         resume_md, resume_label, resume_artifact_id = await _wait_for_packet(
             ctx, application_id, run_id, control
         )
         if control.cancelled:
-            # CompletionCancelled, not a returned outcome: the runner already
-            # maps it onto the `cancelled` operation state. Returning normally
-            # here marked a user's own Stop as "Succeeded" in the ledger, the
-            # same misreport a `blocked` run had (2026-09-20). The row finalize
-            # runs first so the durable run lands `interrupted` either way; the
-            # handler below re-enters it, which is a guarded no-op.
+            # Raise CompletionCancelled, which the runner maps to `cancelled`; returning
+            # normally marked a user's Stop as "Succeeded". The row lands `interrupted` first;
+            # the handler below re-enters it as a guarded no-op.
             _finalize_cancel(ctx, run_id)
             raise CompletionCancelled("cancelled by the user")
 
         with db.repos() as repos:
+            from .applicant import apply_facts
+
             profile = repos.profile.get_current()
-            facts: dict[str, str] = {}
-            if profile is not None and isinstance(profile.application_profile, dict):
-                facts = {
-                    str(k): str(v)
-                    for k, v in profile.application_profile.items()
-                    if isinstance(v, str | int | float) and str(v)
-                }
+            facts = apply_facts(
+                profile.application_profile if profile is not None else None, job_location
+            )
             prefs_row = repos.preferences.get_or_create()
             ui_state = prefs_row.ui_state or {}
             preferences = {
@@ -251,17 +281,29 @@ async def _apply_async(
 
         dev = _dev_enabled()
         allow_local = bool(dev and ctx.input_snapshot.get("dev_allow_local"))
-        headed = not (dev and ctx.input_snapshot.get("dev_headed") is False)
         review_wait_s = _REVIEW_WAIT_S
         if dev and ctx.input_snapshot.get("dev_review_wait_s") is not None:
             review_wait_s = float(ctx.input_snapshot["dev_review_wait_s"])
 
         engine = ENGINE_FACTORY(ctx)
 
-        from playwright.async_api import async_playwright
-
-        async with async_playwright() as pw:
-            await render_resume_pdf_async(pw, resume_md, str(resume_pdf))
+        # The tab first: it holds the window open while the PDF renders on the
+        # window's Playwright (window.md section 4.4).
+        try:
+            page = await window.open_tab(run_id)
+        except Exception as exc:
+            if is_browser_missing(str(exc)):
+                raise BrowserMissingError(BROWSER_MISSING_DETAIL) from exc
+            raise
+        try:
+            try:
+                await render_resume_pdf_async(
+                    await window.playwright(), resume_md, str(resume_pdf)
+                )
+            except Exception as exc:
+                if is_browser_missing(str(exc)):
+                    raise BrowserMissingError(BROWSER_MISSING_DETAIL) from exc
+                raise
 
             request = ApplyRequest(
                 run_id=run_id,
@@ -285,32 +327,38 @@ async def _apply_async(
                 screenshot_dir=str(run_dir / "screenshots"),
             )
 
-            browser = await pw.chromium.launch(headless=not headed)
-            page = await browser.new_page()
-
             def on_event(event: ApplyEvent) -> None:
                 _publish(ctx, run_id, event)
                 _persist_event(ctx, run_id, event)
 
-            try:
-                result = await run_apply(
-                    page,
-                    request,
-                    engine,
-                    on_event,
-                    control,
-                    policy=UrlPolicy(allow_local=allow_local),
-                )
-                result = await _review_window(
-                    ctx, run_id, page, result, review_wait_s, control
-                )
-            finally:
-                try:
-                    await browser.close()
-                except Exception:  # noqa: S110 — already closed by the user
-                    logging.getLogger("fyj.sidecar").debug(
-                        "browser close raced", exc_info=True
+            result = await run_apply(
+                page,
+                request,
+                engine,
+                on_event,
+                control,
+                policy=UrlPolicy(allow_local=allow_local),
+            )
+            if result.status is ApplyStatus.READY_FOR_HUMAN and review_wait_s > 0:
+                # The row stays `running` while the tab is held, so the panel needs the
+                # fill's outcome now, not once the window ends (audit A22).
+                with db.repos() as repos:
+                    repos.apply_runs.update(
+                        run_id, phase="ready_for_human", **_result_fields(result)
                     )
+                if ctx.publish is not None:
+                    # The loop's own ready event fired before this write; refetch now.
+                    ctx.publish(make_event("apply", {
+                        "run_id": run_id,
+                        "operation_id": ctx.operation_id,
+                        "event": "apply.review_started",
+                    }))
+            result = await _review_window(ctx, run_id, page, result, review_wait_s, control)
+        finally:
+            try:
+                await window.close_tab(run_id)
+            except Exception:  # noqa: S110 — already closed by the user
+                logging.getLogger("fyj.sidecar").debug("tab close raced", exc_info=True)
 
         return _finalize(ctx, application_id, run_id, result)
     except Exception as exc:
@@ -322,6 +370,16 @@ async def _apply_async(
         try:
             if control.cancelled:
                 _finalize_cancel(ctx, run_id)
+            elif isinstance(exc, BrowserMissingError):
+                # Coded, so the panel offers Download instead of raw text (A18).
+                finalize_run_failed(
+                    db,
+                    run_id,
+                    str(exc),
+                    blockers=[
+                        {"kind": "browser_missing", "detail": str(exc), "field_label": ""}
+                    ],
+                )
             else:
                 finalize_run_failed(db, run_id, f"{type(exc).__name__}: {exc}")
         except Exception:  # noqa: BLE001 — never let a finalize failure mask the real error
@@ -417,7 +475,7 @@ def _persist_event(ctx: OperationContext, run_id: str, event: ApplyEvent) -> Non
             repos.apply_runs.update(run_id, **fields)
 
 
-async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> None:
+async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> bool:
     """Click Submit once, because the USER asked (S-A5). The agent cannot reach
     this: `submit_application` sits outside the model's tool vocabulary and the
     only caller is the request the human made from the review surface. The
@@ -452,6 +510,22 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> Non
                 },
             )
         )
+    return outcome.confirmed
+
+
+async def _save_post_submit_shot(ctx: OperationContext, run_id: str, page: Any) -> None:
+    """The confirmation page, kept as the run's evidence that it was sent."""
+    shot = _run_dir(run_id) / "screenshots" / "post-submit.png"
+    try:
+        await page.screenshot(path=str(shot))
+    except Exception:
+        return
+    db = ctx.db
+    assert db is not None
+    with db.repos() as repos:
+        run = repos.apply_runs.get(run_id)
+        if run is not None:
+            repos.apply_runs.update(run_id, screenshots=list(run.screenshots) + [str(shot)])
 
 
 async def _review_window(
@@ -473,18 +547,16 @@ async def _review_window(
         if page.is_closed():
             return result  # user closed after reviewing; run stays ready_for_human
         if control.take_submit_request():
-            await _run_user_submit(ctx, run_id, page)
+            if await _run_user_submit(ctx, run_id, page):
+                await _save_post_submit_shot(ctx, run_id, page)
+                return result  # sent and confirmed; nothing left to watch for
             continue
         try:
             obs = await observe(page)
         except Exception:
             return result
         if PageState.CONFIRMATION in classify(obs):
-            shot = _run_dir(run_id) / "screenshots" / "post-submit.png"
-            try:
-                await page.screenshot(path=str(shot))
-            except Exception:
-                shot = None  # type: ignore[assignment]
+            await _save_post_submit_shot(ctx, run_id, page)
             db = ctx.db
             assert db is not None
             with db.repos() as repos:
@@ -493,11 +565,6 @@ async def _review_window(
                     submit_evidence="confirmation_detected",
                     final_url=obs.url,
                 )
-                if shot is not None:
-                    run = repos.apply_runs.get(run_id)
-                    if run is not None:
-                        shots = list(run.screenshots) + [str(shot)]
-                        repos.apply_runs.update(run_id, screenshots=shots)
             if ctx.publish is not None:
                 ctx.publish(
                     make_event(
@@ -519,37 +586,33 @@ async def _review_window(
 # landed terminal is left untouched).
 
 
-def finalize_run_failed(db: Database, run_id: str, summary: str) -> None:
-    """Land the run row terminal (`failed`) when the entrypoint dies before
-    `_finalize` owns the row — or when the route's enqueue itself fails (the
-    start_apply strand, 2026-07-25). Mirrors `_finalize_cancel`'s mechanics,
-    guarded to ACTIVE rows only. The OPERATION failure (row + ledger + SSE) is
-    the runner's job; this only keeps the durable run from sitting in a live
-    status forever."""
+def finalize_run_failed(
+    db: Database, run_id: str, summary: str, *, blockers: list[dict[str, str]] | None = None
+) -> None:
+    """Land the run row `failed` when the entrypoint dies before `_finalize` owns it,
+    or the route's enqueue fails. Guarded to active rows; the op failure itself is
+    the runner's job. This keeps the run from sitting live forever."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
         if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
+        fields: dict[str, Any] = {}
+        if blockers is not None:
+            fields["blockers"] = blockers
         repos.apply_runs.update(
             run_id,
             status="failed",
             phase="failed",
             summary=summary,
             ended_at=now_utc(),
+            **fields,
         )
 
 
 def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
-    """Land the run row terminal (`interrupted`) when a QUEUED `apply` op is
-    cancelled before its entrypoint ever runs (the start_apply single-flight
-    strand, 2026-07-25): the generic operations-cancel route marks the queued
-    op `cancelled`, but nothing else finalizes the durable run — it would sit
-    in an ACTIVE status forever, so `start_apply`'s single-flight would keep
-    returning the dead run on every later Apply click for that card. A user
-    cancel lands `interrupted`, never `failed`. Mirrors `finalize_run_failed`'s
-    mechanics, guarded to ACTIVE rows only (double-finalize impossible: a row
-    that already landed terminal is left untouched — so this is a no-op if the
-    entrypoint raced ahead and finalized the run itself)."""
+    """Land the run row `interrupted` when a queued `apply` op is cancelled before
+    its entrypoint runs; otherwise it stays active and Apply keeps returning it.
+    Guarded to active rows, so a no-op if the entrypoint finalized it first."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
         if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
@@ -564,13 +627,9 @@ def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
 
 
 def advance_card_to_applied(repos: Repos, application_id: str, *, by: str) -> None:
-    """Move a pre-submission card to Applied and record the move (section 8.4).
-
-    The ONE implementation of the transition (D-A7): the applier's own
-    confirmation detection (`by="applier"`) and the human's attestation
-    (`by="user_attested"`) differ only in who is credited in the event detail —
-    they must never diverge in *what* they write. A card already past
-    Saved/Seeking Referral is left alone (never dragged backward)."""
+    """Move a pre-submission card to Applied and record it (section 8.4), the 1
+    implementation (D-A7): the applier's detection and the user's attestation differ
+    only in who's credited. A card past Seeking Referral is never dragged back."""
     app_row = repos.applications.get(application_id)
     if app_row is None or app_row.column not in ("saved", "seeking_referral"):
         return
@@ -600,31 +659,24 @@ def _finalize(
     assert db is not None
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
+        # Sent during the review window: by the app's Submit or the user's word (A22).
+        already_sent = run is not None and run.status == "submitted"
         confirmed = run is not None and run.submit_evidence == "confirmation_detected"
-        status = "submitted" if confirmed else result.status.value
+        status = "submitted" if confirmed or already_sent else result.status.value
+        fields = _result_fields(result)
+        if run is not None:
+            # Keep what the review window added, like the confirmation page's shot.
+            fields["screenshots"] += [p for p in run.screenshots if p not in fields["screenshots"]]
+        if already_sent:
+            # The submit's own note says what happened; the fill's summary is older.
+            fields.pop("summary")
         repos.apply_runs.update(
             run_id,
             status=status,
-            phase=result.status.value if not confirmed else "ready_for_human",
+            phase="ready_for_human" if status == "submitted" else result.status.value,
             final_url=result.final_url or (run.final_url if run else ""),
-            summary=result.summary,
-            blockers=[
-                {"kind": b.kind, "detail": b.detail, "field_label": b.field_label}
-                for b in result.blockers
-            ],
-            fields=[
-                {"label": f.label, "action": f.action, "ok": f.ok, "note": f.note}
-                for f in result.fields
-            ],
-            screenshots=list(result.screenshots),
-            usage={
-                "calls": result.usage.calls,
-                "tokens_in": result.usage.tokens_in,
-                "tokens_out": result.usage.tokens_out,
-                "cost_usd": result.usage.cost_usd,
-            },
-            steps=result.steps,
             ended_at=now_utc(),
+            **fields,
         )
         if confirmed:
             advance_card_to_applied(repos, application_id, by="applier")
@@ -637,15 +689,35 @@ def _finalize(
     return OperationOutcome(
         result_ref={"run_id": run_id, "status": result.status.value},
         usage=usage,
-        # A run that ended anywhere but `ready_for_human` did not do what the
-        # user asked, and the ledger has to say so. It used to return normally
-        # from every terminal status, so a `blocked` run read "Succeeded" in
-        # Analytics while the panel beside it read "Blocked" (2026-09-20). The
-        # reason is the first blocker, verbatim, which is the same line the
-        # panel shows; the usage above still rides along, so a failed run keeps
-        # its cost in the dashboard.
+        # A run that ended anywhere but `ready_for_human` didn't do what the user asked,
+        # and the ledger says so: a `blocked` run once read "Succeeded" beside a panel
+        # reading "Blocked". The reason is the first blocker, verbatim; usage rides along,
+        # so a failed run keeps its cost.
         error=None if status in ("ready_for_human", "submitted") else _failure_reason(result),
     )
+
+
+def _result_fields(result: ApplyResult) -> dict[str, Any]:
+    """The fill's outcome as run-row columns: redacted labels and outcomes, never values."""
+    return {
+        "summary": result.summary,
+        "blockers": [
+            {"kind": b.kind, "detail": b.detail, "field_label": b.field_label}
+            for b in result.blockers
+        ],
+        "fields": [
+            {"label": f.label, "action": f.action, "ok": f.ok, "note": f.note}
+            for f in result.fields
+        ],
+        "screenshots": list(result.screenshots),
+        "usage": {
+            "calls": result.usage.calls,
+            "tokens_in": result.usage.tokens_in,
+            "tokens_out": result.usage.tokens_out,
+            "cost_usd": result.usage.cost_usd,
+        },
+        "steps": result.steps,
+    }
 
 
 def _failure_reason(result: ApplyResult) -> str:

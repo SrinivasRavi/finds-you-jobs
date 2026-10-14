@@ -1,14 +1,8 @@
-"""SQLAlchemy 2.0 models — the core-storage slice of the first-migration schema
-(database-design section 7, carried per `docs/internal/roadmap.md` section 7.2 #3).
+"""SQLAlchemy 2.0 models (database-design section 7, as amended by the rebuild).
 
-This commit carries orchestration only: `operations` (the runner's durable
-queue + cost ledger) and `user_preferences` (whose `ui_state["cost_totals"]`
-aggregate keeps all-time spend intact across ledger retention). The remaining
-section 7 tables (jobs, applications, profile, artifacts, …) land with their feature
-commits as follow-up migrations. Enum-valued columns are plain TEXT (string
-enums — "new kinds need no migration", section 2); JSON columns use SQLAlchemy's
-cross-dialect JSON type.
-"""
+Enum-valued columns are plain TEXT, so a new kind needs no migration (section 2);
+JSON columns use SQLAlchemy's cross-dialect JSON type and hold payload that is
+only read back whole (CLAUDE.md, boring schema)."""
 
 from __future__ import annotations
 
@@ -39,13 +33,10 @@ def _pk() -> Mapped[str]:
 # Orchestration (database-design section 2)
 # ---------------------------------------------------------------------------
 
-# The Operation state machine's vocabulary, named once (D-A4). The runner owns
-# the transitions (`queued → running → succeeded|failed|cancelled`, runner.py);
-# these are the *sets* every filter, guard and ledger scan asks about, so a new
-# state lands in one place instead of ~17 pasted literals. Frozen sets: every
-# consumer does membership or SQL `.in_()`, neither of which is order-sensitive.
-# (`events.py`'s `Literal[...]` spells the same five values at the type level —
-# a typing Literal cannot be built from a runtime constant.)
+# The Operation state vocabulary, named once (D-A4). The runner owns the
+# transitions (runner.py); these are the sets every filter and guard asks about.
+# events.py spells the same 5 values as a Literal, which can't be built from a
+# runtime constant.
 OP_ACTIVE_STATES: frozenset[str] = frozenset({"queued", "running"})
 OP_TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
 OP_ALL_STATES: frozenset[str] = OP_ACTIVE_STATES | OP_TERMINAL_STATES
@@ -60,14 +51,16 @@ class Operation(Base):
     kind: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     # What this operation is about, promoted out of `input_snapshot` so it can be
-    # indexed instead of scanned (2026-08-29). Indexed, deliberately no foreign
-    # key: the ledger is history and history outlives its subjects. An FK would
-    # either block deleting a job or blank the record of what we spent on it,
-    # and an FK on this table is what made ledger retention fail silently for a
-    # month (S-C13).
+    # indexed. No foreign key on purpose: the ledger is history and outlives its
+    # subjects, and an FK here once made retention fail silently for a month (S-C13).
     job_id: Mapped[str | None] = mapped_column(String, nullable=True)
     contact_id: Mapped[str | None] = mapped_column(String, nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # `user` when a click created it and someone waits on it, else `app`. The
+    # runner orders and lanes by it (docs/internal/queueing.md section 4).
+    requested_by: Mapped[str] = mapped_column(
+        String, nullable=False, default="app", server_default="app"
+    )
     # Everything else the kind needs. Opaque: read back whole, never queried in.
     input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     result_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -81,6 +74,7 @@ class Operation(Base):
 
     __table_args__ = (
         Index("ix_operations_state_created", "state", "created_at"),
+        Index("ix_operations_state_requested_created", "state", "requested_by", "created_at"),
         Index("ix_operations_kind_created", "kind", "created_at"),
         Index("ix_operations_finished", "finished_at"),
         Index("ix_operations_job_kind", "job_id", "kind"),
@@ -115,12 +109,19 @@ SCORE_MAX_ATTEMPTS = 3
 
 
 class Job(Base):
-    """One discovered posting; `canonical_url` is the dedup key (FR-SYS-01)."""
+    """1 discovered posting, keyed on its URL or, failing that, its text. A scanned
+    job keys on `canonical_url` (FR-SYS-01); a typed-in one on `content_hash`
+    (url-less-jobs.md section 5.2). Exactly 1 is set; NULLs are distinct, so each
+    keeps its own unique index. Promotion adds the URL and keeps the hash."""
 
     __tablename__ = "jobs"
 
     id: Mapped[str] = _pk()
-    canonical_url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    canonical_url: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    # The SimHash the scan already computes: "nearly the same text?", which
+    # keys the duplicate prompt, the promotion check and the repost signal.
+    fingerprint: Mapped[int | None] = mapped_column(Integer, nullable=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     company: Mapped[str] = mapped_column(String, nullable=False, default="")
     location: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -128,6 +129,9 @@ class Job(Base):
     posted_at: Mapped[str | None] = mapped_column(String, nullable=True)
     salary: Mapped[str | None] = mapped_column(String, nullable=True)
     source_adapter: Mapped[str] = mapped_column(String, nullable=False)
+    # `scan` or `manual`: who added it, which `source_adapter` can't say once a
+    # hand-added link autofills from a board. Only a scanned job is tombstoned.
+    origin: Mapped[str] = mapped_column(String, nullable=False, default="scan")
     trust_score: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     trust_flags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     ingested_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
@@ -144,25 +148,23 @@ class Job(Base):
         UTCDateTime, nullable=False, default=now_utc
     )
 
-    # The 2 fit ratings, one per scorer, as columns rather than a `job_scores`
-    # table (d2f7a91b8c46). `<x>_score IS NULL` means that scorer has not run.
-    # The board shows `llm_score ?? keyword_score`, a rule with no ranking in it
-    # and therefore no way to write it wrong; the version-ranked pick it replaces
-    # showed a keyword number over a higher AI one on 36 jobs (S-C34). Reasons is
-    # the summary list, breakdown_md the long-form working; both display-only.
-    llm_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    llm_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    llm_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    keyword_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    keyword_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    keyword_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The 1 score a job keeps, and the method that made it: llm | jev | local |
+    # keyword, NULL until any runs (b3e9c4a1d7f2). A Keyword write never replaces a
+    # real score; a Rescore does. Reasons, breakdown and factors are read back whole.
+    # Design: docs/internal/score-storage.md (audit A3).
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    score_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    score_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # [{factor, value, kind, evidence}], value 0 to 1 (scoring.md 7.2).
+    score_factors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    scored_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # The resume version scored against; older than the last major edit is stale.
+    scored_profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # AI-scoring attempt memory, and the prefix says so. Counts ONLY failures
-    # where a call reached the provider, so a circuit-open rejection (provider
-    # refusing everybody) costs the job nothing and it returns to the pool
-    # unmarked. The planner stops at SCORE_MAX_ATTEMPTS. Every other scoring
-    # state is derived, never stored — see a3d7e1f95c24 for why there is no
-    # status column. The keyword scorer never fails and never touches these.
+    # LLM scoring attempt memory. Counts only failures where a call reached the
+    # provider, so a circuit-open rejection costs the job nothing. The planner stops
+    # at SCORE_MAX_ATTEMPTS; every other scoring state is derived (a3d7e1f95c24).
     llm_score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     llm_score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -170,16 +172,47 @@ class Job(Base):
         Index("ix_jobs_feedstate_ingested", "feed_state", "ingested_at"),
         # The planner's eligibility read: active jobs still worth an attempt.
         Index("ix_jobs_feedstate_attempts", "feed_state", "llm_score_attempts"),
+        # The planner's other half: no score yet, or only a Keyword one.
+        Index("ix_jobs_feedstate_method", "feed_state", "score_method"),
         # One per maintenance-tick query (persistence.evict_stale_trash and
         # age_expired_jobs), each reading one state on one date column.
         Index("ix_jobs_feedstate_expired", "feed_state", "expired_at"),
         Index("ix_jobs_feedstate_trashed", "feed_state", "trashed_at"),
         Index("ix_jobs_feedstate_since", "feed_state", "feed_since"),
+        # The near-duplicate lookups (promotion, the duplicate prompt).
+        Index("ix_jobs_fingerprint", "fingerprint"),
+    )
+
+
+class JobDuplicate(Base):
+    """2 jobs that look like the same posting (url-less-jobs.md section 9.6).
+
+    `job_id` is the newer row, the one written when the match was found. Both
+    sides cascade, so deleting either job removes the pair; `dismissed_at` is
+    "They're different". 1 row per pair, never 1 per direction."""
+
+    __tablename__ = "job_duplicates"
+
+    id: Mapped[str] = _pk()
+    job_id: Mapped[str] = mapped_column(
+        String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    other_job_id: Mapped[str] = mapped_column(
+        String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    detected_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    dismissed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "other_job_id", name="uq_job_duplicates_pair"),
+        Index("ix_job_duplicates_other", "other_job_id"),
     )
 
 
 class Tombstone(Base):
-    """A permanently-discarded canonical URL — never re-ingested (FR-SYS-04)."""
+    """A deleted-forever URL that no scan may bring back (FR-SYS-04).
+
+    Only a scanned job is tombstoned (url-less-jobs.md section 8.2)."""
 
     __tablename__ = "tombstones"
 
@@ -204,6 +237,11 @@ class MasterProfile(Base):
     # instead of regex-scraping the markdown. Nullable — absent means not yet
     # extracted.
     application_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The version of the last major edit (a new section or project), 0 for none.
+    # A score made against an older version shows a rescore-due mark (audit A3).
+    major_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
     )
@@ -221,13 +259,9 @@ class MasterProfile(Base):
 
 
 class Application(Base):
-    """A pipeline card (database-design section 4). `packetState` is *not* stored here —
-    it's derived from this app's Artifact rows + their operations' states.
-
-    The prior repository also stored `apply_state` (latest Applier run summary)
-    and `form_prep` (the Save-time answer cache) here; both are retired in this
-    rebuild (`docs/internal/archived/applier-as-built.md` section 2) — the durable ApplyRun
-    model arrives with the applier commits instead."""
+    """A pipeline card (database-design section 4). `packetState` isn't stored: it
+    derives from the card's Artifacts and their ops. Apply attempts live in ApplyRun
+    (applier-as-built.md section 2)."""
 
     __tablename__ = "applications"
 
@@ -239,7 +273,7 @@ class Application(Base):
     column: Mapped[str] = mapped_column(String, nullable=False, default="saved")
     priority: Mapped[str] = mapped_column(String, nullable=False, default="P0")
     # How this card entered the pipeline (FR-TR — manual-add):
-    # `discovered` = created through the fyj flow (scan / add-by-URL → Save);
+    # `discovered` = created through the fyj flow (scan / Add a job posting → Save);
     # `manual` = logged by the user via "Add a job application" for a job they
     # already applied to outside the app. Drives the Tracker source filter.
     origin: Mapped[str] = mapped_column(String, nullable=False, default="discovered")
@@ -314,17 +348,10 @@ class ApplicationEvent(Base):
 
 
 class Document(Base):
-    """An uploaded file attached to a card as its resume or cover letter (a
-    document the user actually submitted for a manually-logged application,
-    FR-TR manual-add).
-
-    The blob is stored once on disk at `<data_dir>/documents/<sha256>`, so the
-    filename IS the hash and identical bytes are written once however many cards
-    use them. This row is per attachment, not per blob: the `documents` +
-    `application_documents` pair it replaces (d2f7a91b8c46) modelled a
-    many-to-many that never occurred in practice and made detaching leak the row
-    and the file, because no reference count existed to make the delete safe.
-    Row dedup is gone; blob dedup, the part that saves disk, is untouched."""
+    """A file attached to a card as its submitted resume or cover (FR-TR manual-add).
+    The blob lives once at `<data_dir>/documents/<sha256>`; this row is per
+    attachment. The many-to-many it replaced (d2f7a91b8c46) never occurred and made
+    detaching leak the row and the file."""
 
     __tablename__ = "documents"
 
@@ -357,6 +384,14 @@ APPLY_RUN_ACTIVE_STATUSES: frozenset[str] = frozenset(
 )
 
 
+def apply_run_in_review(run: ApplyRun) -> bool:
+    """The filled form waits for the human: the tab is held open at status `running`,
+    phase `ready_for_human`, and lands status `ready_for_human` once it closes (A22)."""
+    return run.status == "ready_for_human" or (
+        run.status == "running" and run.phase == "ready_for_human"
+    )
+
+
 # The kanban columns a contact-sync sweep may move between (S-N5). `candidate`
 # is off the board; `converted` and `ghosted` are terminal, so neither syncs.
 CONTACT_SYNCABLE_STATUSES: tuple[str, ...] = (
@@ -374,13 +409,10 @@ CONTACT_ENGAGED_STATUSES: frozenset[str] = frozenset(
 
 
 class ApplyRun(Base):
-    """One durable Applier attempt (`docs/internal/archived/applier-as-built.md` section 9.1) — the
-    first-class replacement for the prior repository's `applications.apply_state`
-    overload. A retry/reopen NEVER mutates an old run: it creates a fresh row
-    linked by `retry_of_run_id`, and the old run stays immutable evidence
-    (section 8.3). P1 terminal statuses come from the jobapplier package — there is
-    no `submitted` written by the agent; Applied requires confirmation
-    evidence or explicit user attestation (section 8.4), recorded by the API layer."""
+    """1 durable Applier attempt (applier-as-built.md section 9.1). A retry creates
+    a fresh row linked by `retry_of_run_id`; old runs stay immutable evidence
+    (section 8.3). The agent never writes `submitted`: Applied needs confirmation
+    evidence or the user's attestation (section 8.4), recorded by the API."""
 
     __tablename__ = "apply_runs"
 
@@ -472,13 +504,10 @@ class UserPreferences(Base):
 
 
 class Contact(Base):
-    """One person discovered as (or added as) an outreach target (US-REF-05).
-
-    Person-level, not job-level: the same person is reused across every role at
-    their company (US-REF-04 "one connection per contact, ever"). `linkedin_url`
-    is the identity key (same person + new URL = new row in P1 — database-design
-    section 8 Q4). `audience_tag`/`warmth` are auto-assigned at discovery (US-REF-02/10);
-    `connection_status` is the kanban column (US-NW-07)."""
+    """1 person discovered or added as an outreach target (US-REF-05), reused across
+    every role at their company (US-REF-04). `linkedin_url` is the identity key.
+    `audience_tag` and `warmth` are set at discovery; `connection_status` is the
+    kanban column (US-NW-07)."""
 
     __tablename__ = "contacts"
 
@@ -496,7 +525,7 @@ class Contact(Base):
     # Lifecycle. `candidate` = discovered but not yet reached (off the kanban);
     # the kanban columns are sent | accepted | pending_our_response |
     # pending_their_response | ghosted | converted (US-NW-01, split S-N5).
-    # Manual add-by-URL sets one of the live columns directly.
+    # A manual add with a link sets one of the live columns directly.
     connection_status: Mapped[str] = mapped_column(String, nullable=False, default="candidate")
     profile_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     added_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
@@ -515,14 +544,10 @@ class Contact(Base):
 
 
 class CompanyResolution(Base):
-    """A cached name → LinkedIn company-entity resolution (FR-NW-02).
-
-    Keyed by a stable per-employer key (`domain:…` > `<adapter>:<slug>` >
-    `name:…`, see `registry/company_anchor.py`) so every job of the same employer
-    reuses ONE typeahead call + ONE user confirm choice — no re-prompting, no
-    inconsistent picks across a company's jobs. `source` records how the URN was
-    chosen: `domain` (silent — the employer website matched), `single` (the only
-    candidate), or `user` (confirmed in the find-referrals popup)."""
+    """A cached company name to LinkedIn entity resolution (FR-NW-02), keyed per
+    employer (`domain:` > `<adapter>:<slug>` > `name:`; registry/company_anchor.py)
+    so a company's jobs share 1 lookup and 1 confirm. `source`: `domain`, `single`
+    or `user`."""
 
     __tablename__ = "company_resolutions"
 
@@ -536,18 +561,10 @@ class CompanyResolution(Base):
 
 
 class ReferralCandidate(Base):
-    """One person put forward as a referral candidate for one role (US-REF-05).
-
-    `Contact` holds the person once, reusable across every role at their
-    employer; this row holds the per-role fact, so someone asked about 3 jobs is
-    1 contact and 3 rows. The per-role ask status is deliberately distinct from
-    the person-level connection status on `Contact`. `audience_tag` is copied
-    here at add-time so a job-scoped view keeps its own tag even if the person's
-    role later changes.
-
-    Never rendered as itself: it drives the Find referrals candidate list, the
-    checkbox state that survives closing the popup, and whether a Tracker card
-    shows a referrals affordance at all."""
+    """1 person put forward for 1 role (US-REF-05); `Contact` holds the person once.
+    The per-role ask status is separate from the connection status, and
+    `audience_tag` is copied at add time. It drives the popup's candidates, its
+    remembered picks, and whether a card offers referrals."""
 
     __tablename__ = "referral_candidates"
 
@@ -626,13 +643,10 @@ class LinkedInSession(Base):
     # while a headed `login` op is in flight; `backing_off` after the Referral
     # Outreach package reports a rate-limit pause (FR-NW-05) — cleared by resume.
     status: Mapped[str] = mapped_column(String, nullable=False, default="never_set")
-    # Self-imposed rate-limit basis (maintainer directive 2026-08-01, replacing
-    # the New/Seasoned tier — that gradation now lives in `risk_pct`).
-    # `membership_type` ∈ free | premium | sales_navigator | recruiter_lite picks
-    # the estimated LinkedIn ceilings; `risk_pct` (10–100) scales them; and
-    # `cap_overrides` pins individual "{meter}_{window}" caps to absolute numbers.
-    # The outreach package computes the effective caps from these three inputs
-    # (`pacing.resolve_profile`); the app only stores the choices.
+    # Self-imposed rate-limit basis. `membership_type` (free, premium,
+    # sales_navigator, recruiter_lite) picks the estimated ceilings, `risk_pct`
+    # (10 to 100) scales them, and `cap_overrides` pins individual caps. The outreach
+    # package computes the effective caps (`pacing.resolve_profile`).
     membership_type: Mapped[str] = mapped_column(String, nullable=False, default="free")
     risk_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     cap_overrides: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -651,17 +665,10 @@ class LinkedInSession(Base):
 
 
 class LinkedInSearchCursor(Base):
-    """Single-row pagination cursor for "Scan LinkedIn jobs" (Fresh search /
-    Next page). A Fresh search snapshots the queries it ran (role alias ×
-    location as they were at click time) with each pair's next page offset;
-    Next page resumes the SNAPSHOT — never live preferences, so editing prefs
-    mid-pagination can't make "page 2" mean page 2 of a search that never ran.
-
-    The cursor is honoured only within `SEARCH_CURSOR_TTL` of `fresh_at`
-    (host policy, `linkedin_op.py`). LinkedIn's own pagination is stateless —
-    offset in the URL, nothing server-side to expire — so the TTL exists for
-    result coherence (rankings drift between requests), not to mirror any
-    LinkedIn timeout."""
+    """Single-row cursor for Fresh search and Next page. Next resumes the snapshot of
+    queries the Fresh search ran, never live prefs, so "page 2" always continues a
+    search that ran. Honoured within `SEARCH_CURSOR_TTL` (linkedin_op.py), for
+    result coherence."""
 
     __tablename__ = "linkedin_search_cursors"
 

@@ -1,16 +1,10 @@
 # finds-you-jobs — AGPL-3.0-only.
-"""Feasibility spike for the observation core (roadmap commit 12 Slice A).
+"""Feasibility spike for the observation core (roadmap commit 12, Slice A).
 
-Drives the Skyvern-derived observation seam (`observe`) against a static local
-job-application form in real headless Chromium — ZERO network — and proves the
-core contract: a viewport screenshot, an interactive-element tree that includes
-labelled inputs / select+options / file upload / submit AND an input inside a
-same-origin iframe (frame walking), opaque per-observation element ids mapped to
-non-empty upstream unique ids, a non-empty compact HTML render carrying the
-form's labels, and fresh element ids on every observation.
-
-No agent loop, no actions, no submit — observation only.
-"""
+`observe` against a static local form in real headless Chromium, 0 network:
+a screenshot, an element tree with labelled inputs, select, upload, submit and a
+same-origin iframe input, opaque ids mapped to upstream ids, a compact HTML
+render, and fresh ids each time. Observation only."""
 
 from pathlib import Path
 

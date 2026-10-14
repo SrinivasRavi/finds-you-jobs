@@ -7,7 +7,7 @@ single session (one short transaction per unit of work — AM4).
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
 
 from sqlalchemy import case, delete, func, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .base import now_utc
 from .models import (
@@ -31,6 +31,7 @@ from .models import (
     Document,
     EngineSettings,
     Job,
+    JobDuplicate,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
@@ -42,14 +43,13 @@ from .models import (
     UserPreferences,
 )
 
-# ---------------------------------------------------------------------------
-# Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07)
-# ---------------------------------------------------------------------------
-# Summing the live ledger alone would silently forget the spend of any op that
-# got deleted, so the all-time totals surface = live-ledger sum + a persistent
-# aggregate (UserPreferences.ui_state["cost_totals"]). Nothing deletes an
-# operation today (S-C22), so the aggregate sits at zero and the live sum
-# carries everything; a deletion policy folds the doomed rows in here first.
+# The feed states the board shows: live jobs and greyed (expired) ones.
+ON_BOARD_STATES = ("active", "expired")
+
+# Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07). All-time totals are the
+# live ledger plus a persistent aggregate in ui_state["cost_totals"], so deleting
+# an op can't forget its spend. Nothing deletes ops yet (S-C22), so it's 0; a
+# deletion policy folds doomed rows in here first.
 
 CostTotals = dict[str, Any]
 
@@ -96,13 +96,59 @@ def add_cost_totals(base: CostTotals, delta: CostTotals) -> CostTotals:
     return merged
 
 
+
+def _update_row[M](session: Session, model: type[M], row_id: str, label: str, fields: dict) -> M:
+    """The 1 way an id-keyed repo updates a row: `KeyError` when it's gone
+    (audit finding 18; 3 repos used to raise `ValueError` or return None)."""
+    row = session.get(model, row_id)
+    if row is None:
+        raise KeyError(f"{label} {row_id!r} not found")
+    for key, value in fields.items():
+        setattr(row, key, value)
+    return row
+
+
+class _SingleRowRepo[M]:
+    """A table that holds 1 row, created on first read (preferences, the
+    LinkedIn session, the LinkedIn search cursor)."""
+
+    model: type[M]
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def get(self) -> M | None:
+        return self._s.scalars(select(self.model).limit(1)).first()
+
+    def get_or_create(self) -> M:
+        row = self.get()
+        if row is None:
+            row = self.model()
+            self._s.add(row)
+            self._s.flush()
+        return row
+
+    def update(self, **fields: Any) -> M:
+        row = self.get_or_create()
+        for key, value in fields.items():
+            setattr(row, key, value)
+        return row
+
+
+# No score, or only the Keyword floor: what the method in Settings may score on its
+# own (score-storage.md 4.3). `score_method` is NULL exactly when `score` is.
+_NO_REAL_SCORE = or_(Job.score_method.is_(None), Job.score_method == "keyword")
+
+
 class OperationsRepo:
     """The runner's durable queue + the cost ledger."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def create(self, kind: str, input_snapshot: dict[str, Any]) -> Operation:
+    def create(
+        self, kind: str, input_snapshot: dict[str, Any], *, requested_by: str = "app"
+    ) -> Operation:
         """The one place the subject ids are lifted out of the snapshot, so no
         call site has to remember to pass them twice. Empty string becomes NULL:
         the retired `watch_company` kind wrote `job_id: ""`, and "" is not a
@@ -113,6 +159,7 @@ class OperationsRepo:
             job_id=input_snapshot.get("job_id") or None,
             contact_id=input_snapshot.get("contact_id") or None,
             batch_id=input_snapshot.get("batch_id") or None,
+            requested_by=requested_by,
             input_snapshot=input_snapshot,
         )
         self._s.add(op)
@@ -141,20 +188,17 @@ class OperationsRepo:
     def list_queued_for_dispatch(
         self, *, priority_by_kind: dict[str, int], default_priority: int, limit: int
     ) -> list[Operation]:
-        """Queued operations in dispatch order, most urgent first, capped.
-
-        The runner used to read EVERY queued row and sort in Python, so
-        enqueueing N operations cost n(n+1)/2 row loads. The cap is what fixes
-        that, and the ordering has to move into SQL for the cap to be safe: with
-        a date-ordered read, a `LIMIT` would hide an `apply` the user is watching
-        behind hundreds of bulk `score` rows. Sorted here, the first `limit` rows
-        are always the most urgent ones. `created_at, id` keeps it FIFO within a
-        priority band, matching the stable Python sort this replaced."""
+        """Queued ops in dispatch order, most urgent first, capped. Reading every queued
+        row made enqueueing quadratic; the cap fixes that, and ordering in SQL keeps it
+        safe, so a watched `apply` never hides behind bulk scores. FIFO by
+        `created_at, id` within a band. A user's request comes first whatever its kind, so
+        a backlog deeper than `limit` can never hide it (queueing.md section 4)."""
         priority = case(priority_by_kind, value=Operation.kind, else_=default_priority)
+        user_first = case((Operation.requested_by == "user", 0), else_=1)
         stmt = (
             select(Operation)
             .where(Operation.state == "queued")
-            .order_by(priority, Operation.created_at, Operation.id)
+            .order_by(user_first, priority, Operation.created_at, Operation.id)
             .limit(limit)
         )
         return list(self._s.scalars(stmt))
@@ -164,14 +208,9 @@ class OperationsRepo:
         return list(self._s.scalars(stmt))
 
     def live_cost_totals(self) -> CostTotals:
-        """The cost aggregate over every operation still in the table (all states;
-        in-flight rows carry no usage and contribute only to the op count). Added
-        to the pruned aggregate to yield the all-time totals.
-
-        Reads 3 columns rather than building an ORM object per row, which is the
-        difference between 95 ms and 1.2 s at 100k operations. Still linear:
-        summing every row is inherently linear, and at 24 operations a day it
-        stays under a millisecond for years."""
+        """The cost aggregate over every op still in the table; added to the deleted-ops
+        aggregate for all-time totals. Reads 3 columns, not ORM rows: 95 ms versus 1.2 s
+        at 100k ops."""
         agg = _empty_cost_totals()
         stmt = select(Operation.kind, Operation.state, Operation.usage)
         for kind, state, usage in self._s.execute(stmt):
@@ -330,28 +369,34 @@ class OperationsRepo:
         return op
 
 
-class PreferencesRepo:
+    def recent_score_cost(self, model: str | None, limit: int = 20) -> tuple[float | None, int]:
+        """What an LLM score has actually cost this user, over how many runs. Measured,
+        never estimated; None means they've never paid for one."""
+        stmt = (
+            select(Operation.usage)
+            .where(
+                Operation.kind == "score",
+                Operation.state == "succeeded",
+                Operation.usage.is_not(None),
+            )
+            .order_by(Operation.finished_at.desc())
+            .limit(limit)
+        )
+        if model:
+            stmt = stmt.where(Operation.model == model)
+        costs = [
+            float(u["usd"])
+            for (u,) in self._s.execute(stmt)
+            if isinstance(u, dict) and isinstance(u.get("usd"), int | float)
+        ]
+        if not costs:
+            return None, 0
+        return sum(costs) / len(costs), len(costs)
+
+class PreferencesRepo(_SingleRowRepo[UserPreferences]):
     """User preferences — single row in P1."""
 
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self) -> UserPreferences | None:
-        return self._s.scalars(select(UserPreferences).limit(1)).first()
-
-    def get_or_create(self) -> UserPreferences:
-        prefs = self.get()
-        if prefs is None:
-            prefs = UserPreferences()
-            self._s.add(prefs)
-            self._s.flush()
-        return prefs
-
-    def update(self, **fields: Any) -> UserPreferences:
-        prefs = self.get_or_create()
-        for key, value in fields.items():
-            setattr(prefs, key, value)
-        return prefs
+    model = UserPreferences
 
     def get_cost_totals(self) -> CostTotals:
         """The persisted lifetime aggregate of *pruned* ledger spend (empty when
@@ -418,12 +463,7 @@ class SchedulesRepo:
         sched.next_due_at = next_due_at
 
     def update(self, schedule_id: str, **fields: Any) -> Schedule:
-        sched = self._s.get(Schedule, schedule_id)
-        if sched is None:
-            raise KeyError(f"schedule {schedule_id!r} not found")
-        for key, value in fields.items():
-            setattr(sched, key, value)
-        return sched
+        return _update_row(self._s, Schedule, schedule_id, "schedule", fields)
 
 
 class JobsRepo:
@@ -442,8 +482,28 @@ class JobsRepo:
         return {job.id: job for job in self._s.scalars(stmt)}
 
     def get_by_canonical_url(self, canonical_url: str) -> Job | None:
+        if not canonical_url:
+            return None
         stmt = select(Job).where(Job.canonical_url == canonical_url)
         return self._s.scalars(stmt).first()
+
+    def get_by_content_hash(self, content_hash: str) -> Job | None:
+        """The URL-less dedup lookup. Empty hash matches nothing rather than
+        every row whose column is NULL (url-less-jobs.md section 5.2)."""
+        if not content_hash:
+            return None
+        stmt = select(Job).where(Job.content_hash == content_hash)
+        return self._s.scalars(stmt).first()
+
+    def get_by_identity(
+        self, *, canonical_url: str = "", content_hash: str = ""
+    ) -> Job | None:
+        """Whichever key this job has. The URL wins when both are given: a
+        promoted row keeps its old hash, so the hash alone could resolve to a
+        row that now belongs to a different URL."""
+        return self.get_by_canonical_url(canonical_url) or self.get_by_content_hash(
+            content_hash
+        )
 
     def list(
         self, *, feed_state: str | None = "active", limit: int = 200
@@ -457,38 +517,17 @@ class JobsRepo:
     def list_active_without_llm_score(
         self, *, limit: int | None = None, max_attempts: int | None = None
     ) -> list[Job]:
-        """Active jobs that can still earn an AI score, newest first.
-
-        The AI planner used to page the newest 1,000 active jobs and only THEN
-        filter that page down to the unscored, so on an install with more than
-        1,000 active jobs the oldest could never be planned at any tick — they
-        sat unscored with nothing to show for it. Doing the exclusion in SQL
-        makes a scored job leave the result set on its own, so every job is
-        eventually reached, and the read is O(unscored) instead of O(all
-        active). `limit=None` means no cap, which is the planner's default.
-
-        A keyword floor does NOT count: `scorer_impl` is matched so the LLM can
-        still upgrade a job the on-device floor already scored.
-
-        A job whose description is under `MIN_JD_CHARS` is excluded outright. It
-        can never earn an LLM score (`score_entrypoint` refuses it and writes a
-        0 without calling the engine — see that constant for why), so leaving it
-        in would re-plan the same job on every tick forever, each pass writing
-        another operation row. On the maintainer's install that's 248 jobs, so
-        it would be 248 pointless operations per tick. The predicate is on the
-        description rather than on the presence of a refusal row, which means a
-        later scan that fills the description in makes the job eligible again on
-        its own, with nothing to reset (S-A6).
-
-        `max_attempts` drops jobs that have already failed that many times
-        against a live provider (`Job.llm_score_attempts`). A provider outage
-        never increments that counter, so an expired key costs no job an attempt
-        and the whole backlog returns on the next tick."""
+        """Active jobs with no score or only a Keyword one, newest first: the only jobs the
+        method in Settings scores on its own (score-storage.md 4.3). The exclusion is in
+        SQL, so every job is eventually reached. Jobs
+        under `MIN_JD_CHARS` are excluded (they can never earn one) until a scan fills
+        the description (S-A6). `max_attempts` drops jobs that failed against a live
+        provider; outages never count. `limit=None` is uncapped."""
         from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
         stmt = select(Job).where(
             Job.feed_state == "active",
-            Job.llm_score.is_(None),
+            _NO_REAL_SCORE,
             func.length(func.coalesce(Job.description, "")) >= MIN_JD_CHARS,
         )
         if max_attempts is not None:
@@ -511,15 +550,81 @@ class JobsRepo:
             )
         )
 
+    def fingerprint_rows(self) -> list[tuple[str, int, str, str]]:
+        """`(id, fingerprint, company, title)` for every fingerprinted job on the
+        board, greyed ones included, since a repost after 14 days is the ghost-job
+        signal (audit A6): the 4 narrow columns `near_duplicate_ids` compares. A scan
+        reads them once for all the rows it writes rather than once per row."""
+        rows = self._s.execute(
+            select(Job.id, Job.fingerprint, Job.company, Job.title).where(
+                Job.feed_state.in_(ON_BOARD_STATES), Job.fingerprint.is_not(None)
+            )
+        )
+        return [(r[0], r[1] or 0, r[2], r[3]) for r in rows]
+
+    def list_unfingerprinted(self, *, limit: int = 500) -> list[Job]:
+        """Active jobs with a description and no fingerprint: rows written before
+        the column existed. Active only, by the maintainer's 2026-10-12 note; a
+        restored job joins on the next pass. The backfill's own query, so it
+        converges."""
+        stmt = (
+            select(Job)
+            .where(
+                Job.feed_state == "active",
+                Job.fingerprint.is_(None),
+                Job.description != "",
+            )
+            .order_by(Job.ingested_at.desc(), Job.id)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
+    def near_duplicate_ids(
+        self,
+        fingerprint: int | None,
+        *,
+        company: str,
+        title: str,
+        exclude_id: str,
+        rows: list[tuple[str, int, str, str]] | None = None,
+    ) -> list[str]:
+        """Board jobs that are probably the same posting, checked at ingest so the board
+        pays nothing. A narrow 4-column scan, since Hamming distance over a simhash has
+        no index. The gate is compound (same company, title, similarity at threshold):
+        bare similarity was 57% precise (S-C69, url-less-jobs.md 6.4)."""
+        from sidecar.modules.scraper.fingerprint import (
+            from_signed64,
+            is_probable_cross_listing,
+        )
+
+        if not fingerprint:
+            return []
+        mine = from_signed64(fingerprint)
+        return [
+            row_id
+            for row_id, row_fp, row_company, row_title in (
+                self.fingerprint_rows() if rows is None else rows
+            )
+            if row_id != exclude_id
+            and is_probable_cross_listing(
+                mine,
+                from_signed64(row_fp or 0),
+                company_a=company,
+                company_b=row_company,
+                title_a=title,
+                title_b=row_title,
+            )
+        ]
+
     def count_score_exhausted(self, max_attempts: int) -> int:
-        """Active jobs that have spent their whole AI-scoring budget and still
+        """Active jobs that have spent their whole LLM scoring budget and still
         carry no LLM score — the ones no future tick will ever pick up. This is
         what the ledger's Retry affordance counts, so the button appears only
         when pressing it would actually do something. A job at 1 or 2 attempts
         is NOT counted: it comes back on the next tick on its own."""
         stmt = select(func.count()).select_from(Job).where(
             Job.feed_state == "active",
-            Job.llm_score.is_(None),
+            _NO_REAL_SCORE,
             Job.llm_score_attempts >= max_attempts,
         )
         return int(self._s.scalar(stmt) or 0)
@@ -567,12 +672,7 @@ class JobsRepo:
         return self.create(canonical_url=canonical_url, **fields)
 
     def update(self, job_id: str, **fields: Any) -> Job:
-        job = self._s.get(Job, job_id)
-        if job is None:
-            raise KeyError(f"job {job_id!r} not found")
-        for key, value in fields.items():
-            setattr(job, key, value)
-        return job
+        return _update_row(self._s, Job, job_id, "job", fields)
 
     def set_trash_state(
         self, job_id: str, *, trashed: bool, now: datetime | None = None
@@ -626,15 +726,20 @@ class JobsRepo:
         return list(self._s.scalars(stmt))
 
     def list_expired_before(self, cutoff: datetime) -> list[Job]:
-        """Expired rows past the hard-delete cutoff (same null rule as above)."""
+        """Scanned expired rows past the hard-delete cutoff (same null rule as above)."""
         stmt = select(Job).where(
-            Job.feed_state == "expired", Job.expired_at.is_not(None), Job.expired_at <= cutoff
+            Job.feed_state == "expired",
+            Job.expired_at.is_not(None),
+            Job.expired_at <= cutoff,
+            Job.origin == "scan",
         )
         return list(self._s.scalars(stmt))
 
     def list_active_before(self, cutoff: datetime) -> list[Job]:
-        """Active rows whose freshness window has run out."""
-        stmt = select(Job).where(Job.feed_state == "active", Job.feed_since <= cutoff)
+        """Scanned active rows whose freshness window has run out."""
+        stmt = select(Job).where(
+            Job.feed_state == "active", Job.feed_since <= cutoff, Job.origin == "scan"
+        )
         return list(self._s.scalars(stmt))
 
     def stamp_missing_lifecycle_dates(self, *, now: datetime | None = None) -> int:
@@ -674,18 +779,50 @@ class JobsRepo:
         score_0_100: int,
         reasons: list[Any],
         breakdown_md: str,
+        method: str | None = None,
+        factors: Sequence[Mapping[str, Any]] | None = None,
+        profile_version: int | None = None,
+        rescore: bool = False,
     ) -> bool:
-        """Write one scorer's rating onto the job. Returns True when this is the
-        FIRST rating that scorer has produced for this job, which is what the
-        priority distribution counts: a recompute must not double count."""
+        """Replace the job's 1 score; True when the method changed, so the priority
+        stats count a method's number once. Every part lands together. A Keyword write
+        never replaces a real score unless the user asked (`rescore`); then it returns
+        False and writes nothing (score-storage.md 4.2)."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        prefix = "llm" if scorer_impl == "scorer-llm" else "keyword"
-        is_new = getattr(job, f"{prefix}_score") is None
-        setattr(job, f"{prefix}_score", score_0_100)
-        setattr(job, f"{prefix}_reasons", list(reasons))
-        setattr(job, f"{prefix}_breakdown_md", breakdown_md)
+        method = method or ("llm" if scorer_impl == "scorer-llm" else "keyword")
+        if method == "keyword" and not rescore:
+            # The guard runs inside the UPDATE, which takes the write lock, so a real score
+            # or a newer resume's score committed after this session's read still wins (A26).
+            guard = [Job.id == job_id, or_(Job.score_method.is_(None), Job.score_method == method)]
+            if profile_version is not None:
+                guard.append(func.coalesce(Job.scored_profile_version, 0) <= profile_version)
+            claim = update(Job).where(*guard).values(score_method=Job.score_method)
+            result = cast(
+                "CursorResult[Any]",
+                self._s.execute(claim.execution_options(synchronize_session=False)),
+            )
+            if not result.rowcount:
+                return False
+            self._s.refresh(job)
+        is_new = job.score_method != method
+        job.score = score_0_100
+        job.score_method = method
+        job.score_reasons = list(reasons)
+        job.score_breakdown_md = breakdown_md
+        job.score_factors = [
+            {
+                "factor": str(f["factor"]),
+                "value": float(f["value"]),
+                "kind": str(f.get("kind") or "graded"),
+                "evidence": str(f.get("evidence") or ""),
+                **({"code": f["code"]} if isinstance(f.get("code"), dict) else {}),
+            }
+            for f in factors or []
+        ]
+        job.scored_at = now_utc()
+        job.scored_profile_version = profile_version
         self._s.flush()
         return is_new
 
@@ -694,9 +831,7 @@ class JobsRepo:
         fills so no board row is ever stuck on Pending."""
         if not job_ids:
             return set()
-        stmt = select(Job.id).where(
-            Job.id.in_(job_ids), Job.llm_score.is_(None), Job.keyword_score.is_(None)
-        )
+        stmt = select(Job.id).where(Job.id.in_(job_ids), Job.score.is_(None))
         return set(self._s.scalars(stmt))
 
 
@@ -705,6 +840,10 @@ class TombstonesRepo:
         self._s = session
 
     def exists(self, canonical_url: str) -> bool:
+        """True when this URL was deleted forever. An empty URL matches nothing:
+        only a job with a URL is ever tombstoned."""
+        if not canonical_url:
+            return False
         stmt = select(Tombstone.id).where(Tombstone.canonical_url == canonical_url)
         return self._s.scalars(stmt).first() is not None
 
@@ -762,12 +901,7 @@ class ApplicationsRepo:
         return app
 
     def update(self, application_id: str, **fields: Any) -> Application:
-        app = self._s.get(Application, application_id)
-        if app is None:
-            raise KeyError(f"application {application_id!r} not found")
-        for key, value in fields.items():
-            setattr(app, key, value)
-        return app
+        return _update_row(self._s, Application, application_id, "application", fields)
 
     def delete(self, application_id: str) -> bool:
         app = self._s.get(Application, application_id)
@@ -783,6 +917,14 @@ class ArtifactsRepo:
 
     def get(self, artifact_id: str) -> Artifact | None:
         return self._s.get(Artifact, artifact_id)
+
+    def get_many(self, artifact_ids: list[str]) -> dict[str, Artifact]:
+        """id → Artifact for a batch — one IN query for the ledger's tailor and
+        cover subject pass, same shape as JobsRepo.get_many."""
+        if not artifact_ids:
+            return {}
+        stmt = select(Artifact).where(Artifact.id.in_(artifact_ids))
+        return {a.id: a for a in self._s.scalars(stmt)}
 
     def list_for_application(self, application_id: str) -> list[Artifact]:
         stmt = (
@@ -814,12 +956,8 @@ class ArtifactsRepo:
         self._s.flush()
         return artifact
 
-    def update(self, artifact_id: str, **fields: Any) -> Artifact | None:
-        artifact = self._s.get(Artifact, artifact_id)
-        if artifact is None:
-            return None
-        for key, value in fields.items():
-            setattr(artifact, key, value)
+    def update(self, artifact_id: str, **fields: Any) -> Artifact:
+        artifact = _update_row(self._s, Artifact, artifact_id, "artifact", fields)
         self._s.flush()
         return artifact
 
@@ -989,8 +1127,14 @@ class ProfileRepo:
             # version, so a phantom bump would mark every score stale and
             # trigger a pointless "Re-score N jobs?" prompt (2026-07-23).
             return current
+        from sidecar.modules.profiler.resume_change import is_major_edit
+
+        major = is_major_edit(current.resume_markdown, resume_markdown)
         current.resume_markdown = resume_markdown
         current.version += 1
+        if major:
+            # Scores made before this version show a rescore-due mark (audit A3).
+            current.major_version = current.version
         return current
 
     def set_application_profile(self, profile: dict[str, Any] | None) -> MasterProfile:
@@ -1024,12 +1168,8 @@ class EngineSettingsRepo:
         self._s.flush()
         return row
 
-    def update(self, settings_id: str, **fields: Any) -> EngineSettings | None:
-        row = self._s.get(EngineSettings, settings_id)
-        if row is None:
-            return None
-        for k, v in fields.items():
-            setattr(row, k, v)
+    def update(self, settings_id: str, **fields: Any) -> EngineSettings:
+        row = _update_row(self._s, EngineSettings, settings_id, "engine settings", fields)
         self._s.flush()
         return row
 
@@ -1112,20 +1252,10 @@ class ContactsRepo:
         include_candidates: bool = True,
         limit: int = 10_000,
     ) -> list[Contact]:
-        """The kanban roster, most-recently-touched first and capped (S-C8).
-
-        Every filter the roster route applies is in SQL, because a LIMIT on top
-        of a Python filter bounds the wrong population: the "Deleted Contacts"
-        view could show nothing while archived rows existed past the cap, and a
-        big `candidate` pile (discovery writes one row per person found) could
-        eat the whole budget before a single kanban card was reached.
-
-        10,000, matching the board's `list_by_states`. The first cut capped at
-        1,000 and nothing in the UI says "1,000 of 1,240", so a discovery-grown
-        roster (about 10 candidate rows per company watched) would silently drop
-        people past 100 companies — the same class of defect as the scoring
-        window it shipped beside. The batched last-message query removed the
-        real cost of a big roster; this cap now bounds DTO building only."""
+        """The kanban roster, most recently touched first, capped at 10,000 like the
+        board (S-C8). Every filter is in SQL, since a LIMIT over a Python filter bounds
+        the wrong population. With the batched last-message query, the cap bounds only
+        DTO building."""
         stmt = select(Contact)
         if archived_only:
             stmt = stmt.where(Contact.archived_at.is_not(None))
@@ -1141,15 +1271,9 @@ class ContactsRepo:
     def list_for_referrals(
         self, *, company_names: set[str], contact_ids: set[str]
     ) -> list[Contact]:
-        """The find-referrals popup roster for a role (US-NW-09 / FR-NW-02).
-
-        A contact belongs on it if it is at the target company — matched
-        **case-insensitively against ANY of `company_names`** (the raw ATS
-        `job.company` AND the resolved LinkedIn entity name, which often differ,
-        e.g. `hopper` vs `Hopper`) — OR it is already associated with this job
-        (`contact_ids`, the reliable link discovery writes regardless of how the
-        employer string is spelled). Excludes archived. This replaces a brittle
-        exact-match on `job.company` that could hide a whole discovered roster."""
+        """The popup's roster for a role (US-NW-09 / FR-NW-02): contacts at the company,
+        matched case-insensitively against any of `company_names` (ATS name and LinkedIn
+        name differ), or already linked to the job (`contact_ids`). Archived excluded."""
         lowered = {n.strip().lower() for n in company_names if n and n.strip()}
         conds = []
         if lowered:
@@ -1190,12 +1314,7 @@ class ContactsRepo:
         return self.create(linkedin_url, **fields)
 
     def update(self, contact_id: str, **fields: Any) -> Contact:
-        contact = self._s.get(Contact, contact_id)
-        if contact is None:
-            raise KeyError(f"contact {contact_id!r} not found")
-        for key, value in fields.items():
-            setattr(contact, key, value)
-        return contact
+        return _update_row(self._s, Contact, contact_id, "contact", fields)
 
     def list_never_accepted_before(self, cutoff: datetime) -> list[Contact]:
         """Sent-but-never-accepted connections older than `cutoff` (US-NW-11)."""
@@ -1215,12 +1334,8 @@ class ContactsRepo:
     _SYNCABLE_STATUSES = CONTACT_SYNCABLE_STATUSES
 
     def list_syncable(self, *, limit: int) -> list[Contact]:
-        """The next `limit` contacts due for a status-sync probe (US-NW-12).
-
-        Ordered by `last_touched_at` ASC (least-recently-touched first): each
-        probe bumps `last_touched_at`, so the probed contacts rotate to the back
-        and the whole live set is swept fairly over successive ticks — a natural
-        round-robin cursor with no extra bookkeeping column."""
+        """The next `limit` contacts due for a sync probe (US-NW-12), least recently
+        touched first; each probe bumps `last_touched_at`, a round-robin cursor for free."""
         stmt = (
             select(Contact)
             .where(Contact.archived_at.is_(None))
@@ -1316,6 +1431,91 @@ class ReferralCandidatesRepo:
         return cast("CursorResult[Any]", result).rowcount
 
 
+class JobDuplicatesRepo:
+    """Pairs of jobs that look like the same posting (url-less-jobs.md 9.6).
+
+    1 row per pair whichever side asks; `job_id` is the newer job. A pair whose
+    other job isn't active is not shown, and a dismissed pair is never shown."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def _row(self, a: str, b: str) -> JobDuplicate | None:
+        return self._s.scalars(
+            select(JobDuplicate).where(
+                or_(
+                    (JobDuplicate.job_id == a) & (JobDuplicate.other_job_id == b),
+                    (JobDuplicate.job_id == b) & (JobDuplicate.other_job_id == a),
+                )
+            )
+        ).first()
+
+    def record(self, job_id: str, other_ids: list[str]) -> int:
+        """Record `job_id` as a probable copy of each of `other_ids`, skipping
+        pairs already known from either side. Returns how many were new."""
+        added = 0
+        for other in other_ids:
+            if other != job_id and self._row(job_id, other) is None:
+                self._s.add(JobDuplicate(job_id=job_id, other_job_id=other))
+                added += 1
+        if added:
+            self._s.flush()
+        return added
+
+    def dismiss(self, job_id: str, other_job_id: str) -> None:
+        """"They're different." Idempotent, and it records the pair if the
+        check never did, so the notice can't come back for it."""
+        row = self._row(job_id, other_job_id)
+        if row is None:
+            row = JobDuplicate(job_id=job_id, other_job_id=other_job_id)
+            self._s.add(row)
+        if row.dismissed_at is None:
+            row.dismissed_at = now_utc()
+
+    def _open(self):
+        other = aliased(Job)
+        me = aliased(Job)
+        return (
+            select(JobDuplicate)
+            .join(other, other.id == JobDuplicate.other_job_id)
+            .join(me, me.id == JobDuplicate.job_id)
+            .where(
+                JobDuplicate.dismissed_at.is_(None),
+                other.feed_state.in_(ON_BOARD_STATES),
+                me.feed_state.in_(ON_BOARD_STATES),
+            )
+        )
+
+    def open_for(self, job_id: str) -> tuple[str, JobDuplicate] | None:
+        """The other job of this job's oldest open pair, from either side."""
+        row = self._s.scalars(
+            self._open()
+            .where(or_(JobDuplicate.job_id == job_id, JobDuplicate.other_job_id == job_id))
+            .order_by(JobDuplicate.detected_at)
+        ).first()
+        if row is None:
+            return None
+        return (row.other_job_id if row.job_id == job_id else row.job_id), row
+
+    def open_summary(self, job_ids: list[str]) -> tuple[dict[str, int], set[str]]:
+        """For a page of jobs, in 1 query: how many open pairs each job is the
+        newer copy in (the card's "reposted" chip), and which jobs have any open
+        pair at all (whether the detail pane asks for the notice)."""
+        copies: dict[str, int] = {}
+        noticed: set[str] = set()
+        if not job_ids:
+            return copies, noticed
+        rows = self._s.scalars(
+            self._open().where(
+                or_(JobDuplicate.job_id.in_(job_ids), JobDuplicate.other_job_id.in_(job_ids))
+            )
+        )
+        for row in rows:
+            copies[row.job_id] = copies.get(row.job_id, 0) + 1
+            noticed.update((row.job_id, row.other_job_id))
+        return copies, noticed & set(job_ids)
+
+
 class OutreachLogsRepo:
     """Per-message audit (database-design section 5)."""
 
@@ -1375,12 +1575,9 @@ class OutreachLogsRepo:
         return list(self._s.scalars(stmt))
 
     def latest_batches_for_jobs(self, job_ids: list[str]) -> dict[str, list[OutreachLog]]:
-        """The OutreachLog rows of the *latest* reach-out batch per role, used
-        to derive `referralsState` (FR-NW-01) — one IN query for a batch of
-        roles (F-H2). The batch is keyed by `batch_id`; a NULL batch_id
-        (legacy/manual single send) is its own settled batch. The latest batch =
-        the one containing the most-recently-created log. Roles with no logs are
-        absent from the map."""
+        """The OutreachLog rows of each role's latest batch, for `referralsState`
+        (FR-NW-01), in 1 IN query (F-H2). A NULL batch_id is its own batch; latest means
+        the newest log. Roles with no logs are absent."""
         if not job_ids:
             return {}
         stmt = select(OutreachLog).where(OutreachLog.job_id.in_(job_ids))
@@ -1411,53 +1608,17 @@ class OutreachLogsRepo:
         return cast("CursorResult[Any]", result).rowcount
 
 
-class LinkedInSessionRepo:
+class LinkedInSessionRepo(_SingleRowRepo[LinkedInSession]):
     """Single-row LinkedIn session state (database-design section 5)."""
 
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self) -> LinkedInSession | None:
-        return self._s.scalars(select(LinkedInSession).limit(1)).first()
-
-    def get_or_create(self) -> LinkedInSession:
-        row = self.get()
-        if row is None:
-            row = LinkedInSession()
-            self._s.add(row)
-            self._s.flush()
-        return row
-
-    def update(self, **fields: Any) -> LinkedInSession:
-        row = self.get_or_create()
-        for key, value in fields.items():
-            setattr(row, key, value)
-        return row
+    model = LinkedInSession
 
 
-class LinkedInSearchCursorRepo:
+class LinkedInSearchCursorRepo(_SingleRowRepo[LinkedInSearchCursor]):
     """Single-row pagination cursor for the logged-in job search (Fresh search /
     Next page). Same single-row pattern as `LinkedInSessionRepo`."""
 
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def get(self) -> LinkedInSearchCursor | None:
-        return self._s.scalars(select(LinkedInSearchCursor).limit(1)).first()
-
-    def get_or_create(self) -> LinkedInSearchCursor:
-        row = self.get()
-        if row is None:
-            row = LinkedInSearchCursor()
-            self._s.add(row)
-            self._s.flush()
-        return row
-
-    def update(self, **fields: Any) -> LinkedInSearchCursor:
-        row = self.get_or_create()
-        for key, value in fields.items():
-            setattr(row, key, value)
-        return row
+    model = LinkedInSearchCursor
 
     def clear(self) -> None:
         """Drop the cursor (Fresh search resets it; Disconnect clears it)."""
@@ -1489,11 +1650,7 @@ class ApplyRunsRepo:
         return self._s.scalars(stmt).first()
 
     def update(self, run_id: str, **fields: Any) -> ApplyRun:
-        run = self._s.get(ApplyRun, run_id)
-        if run is None:
-            raise ValueError(f"apply run {run_id!r} not found")
-        for key, value in fields.items():
-            setattr(run, key, value)
+        run = _update_row(self._s, ApplyRun, run_id, "apply run", fields)
         self._s.flush()
         return run
 
@@ -1562,6 +1719,7 @@ class Repos:
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)
         self.referral_candidates = ReferralCandidatesRepo(session)
+        self.duplicates = JobDuplicatesRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)

@@ -1,23 +1,8 @@
-// Find / view referrals popup — the centerpiece of Track N3 (US-NW-09 / US-REF-*),
-// restored 2026-07-16 from the prior repo (the referral-outreach backend now
-// exists on this sidecar).
-//
-// State machine (ports assets/shell.js openReferralsModal):
-//   searching → review (per-row draft edit + per-row Connect/Message) → confirm
-// Reworked 2026-07-30: the checkbox multi-select + "Reach out (N)" batch became
-// a per-row Connect (cold invite+note) / Message (warm DM) button — each opens
-// a pre-send confirmation showing THAT person's message, and sends exactly one
-// contact (per-contact confirm; posture doc section 5.1). Rows show Sending/Reached
-// badges in place, so there is no full-screen "sending" phase any more.
-// With the LinkedIn master toggle ON + a valid session, sends go through the
-// networker module (the voyager quota/caps + backoff are surfaced here). With
-// it OFF (default) or no session, the popup is drafts-only: copy each message
-// and send it yourself — the module never sends (matches README + vision).
-// Discovery/sends are streamed as `networker` SSE events. The LinkedIn enable
-// toggle itself lives in Settings — this modal only reads session state.
-//
-// Split 2026-07-25 (F-M6): the per-row, quota-bar, company-confirm, and
-// send-confirm pieces live in ./referrals/*; this file keeps the state machine.
+// Find referrals popup (US-NW-09 / US-REF-*): searching, then review with a
+// per-row Connect or Message button, each confirming 1 contact (posture doc
+// section 5.1). With networking on and a session, sends go through the networker;
+// otherwise it's drafts-only and the user sends by hand. Progress streams as
+// `networker` SSE events; the row pieces live in ./referrals/* (F-M6).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
@@ -139,12 +124,9 @@ export function ReferralsModal({
   // not-done op is invisible to `discover.isPending`).
   const [discovering, setDiscovering] = useState(false);
   const discoverOpIdRef = useRef<string | null>(null);
-  // Guards the boot discovery so it fires AT MOST ONCE per open, even if the
-  // effect re-runs (a settling `connected` query, a re-mount). Without it the
-  // modal fired two concurrent discover ops ~2 ms apart — two live LinkedIn
-  // scans, and the second op's late `needs_company_confirm` re-opened the
-  // company picker after the user had already confirmed (the confirm→search→
-  // ask-again loop; 2026-07-13 debug: two no-URN discover ops at the same ms).
+  // Fires the boot discovery at most once per open, even if the effect re-runs.
+  // Without it 2 discover ops ran 2 ms apart, and the second's late company prompt
+  // reopened the picker after the user had confirmed.
   const bootedRef = useRef(false);
 
   // Subscribe to the send-outcome stream for this role: sent → clear sending +
@@ -286,14 +268,10 @@ export function ReferralsModal({
     setPhase((cur) => (cur === "confirm" ? cur : "review"));
   }
 
-  // RECONCILE the per-row Sending state against the sidecar's in-flight send
-  // ops on every candidates refresh (2026-08-16). Two failure modes this
-  // covers at once: a send started here still shows (with its
-  // View-in-browser jump) after the popup is closed and reopened, AND a row
-  // can never wedge on "Sending" when the terminal SSE event was missed (a
-  // reconnect gap — or dev HMR — swallowed it; the live 08-16 stuck row).
-  // Server truth wins; the only local additions kept are clicks fresh enough
-  // that the refetched payload may predate their 202 (`SEND_CLICK_GRACE_MS`).
+  // Reconcile per-row Sending state against the server's in-flight sends on every
+  // refresh: a send still shows after close and reopen, and a row can't stay stuck
+  // when its terminal event was missed. Server truth wins, except clicks inside
+  // `SEND_CLICK_GRACE_MS`, whose 202 the refetch may predate.
   const clickedAtRef = useRef<Map<string, number>>(new Map());
   const candidatesData = candidatesQ.data;
   useEffect(() => {
@@ -345,14 +323,10 @@ export function ReferralsModal({
     setDrafts((d) => ({ ...d, [id]: v }));
   }, []);
 
-  // A row's LinkedIn button: show the contact on the in-app LinkedIn browser
-  // modal (2026-08-16 — never an external browser). The view is a QUEUED
-  // operation, so it can never interrupt a running send — but while THAT
-  // row's send is in flight the surface is already showing the contact, so
-  // don't even enqueue a pointless view; just go watch. A mutation so a
-  // failed enqueue surfaces (MutationErrorBanner), never a silent nothing.
-  // Close-then-open: the referrals popup is itself a modal, and the browser
-  // dialog replaces it rather than stacking on it.
+  // A row's LinkedIn button shows the contact in the in-app browser modal. The
+  // view is a queued op, so it never interrupts a send; while that row's send is in
+  // flight the surface already shows the contact, so skip the view and just watch.
+  // The browser dialog replaces this modal rather than stacking on it.
   const linkedinBrowser = useLinkedInBrowser();
   const viewInBrowser = useViewInBrowser();
   const handleOpenLinkedIn = useCallback(
@@ -378,12 +352,9 @@ export function ReferralsModal({
     setConfirmingId(null);
     const message =
       drafts[contactId] ?? candidates.find((c) => c.contact_id === contactId)?.draft ?? "";
-    // Immediate feedback: the row shows a Sending badge before the request
-    // resolves; the SSE outcome flips it to Reached/failed. The list stays on
-    // screen — pacing spaces real sends 30-90 s apart, so a full-screen
-    // "sending…" takeover would just hide the roster for minutes. The click
-    // time feeds the reconcile's grace window (a refetch racing the 202 must
-    // not strip this fresh badge).
+    // The row shows Sending before the request resolves, and the SSE outcome flips
+    // it. The list stays up: pacing spaces sends 30 to 90 s apart. The click time
+    // feeds the reconcile's grace window.
     clickedAtRef.current.set(contactId, Date.now());
     setSendingIds((prev) => new Set(prev).add(contactId));
     setFailures((prev) => omit(prev, contactId));
@@ -485,7 +456,7 @@ export function ReferralsModal({
   const title = `${titleVerb} — ${jobTitle} · ${company}`;
 
   return (
-    <Modal title={title} onClose={onClose} width={1300}>
+    <Modal title={title} onClose={onClose} size="xl">
       <div className="flex h-[80vh] flex-col" data-testid="find-referrals-popup">
         {/* Quota / status bar */}
         {phase !== "start" && phase !== "searching" && phase !== "confirm" && (

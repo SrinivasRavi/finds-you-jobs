@@ -1,32 +1,11 @@
-"""Direct-API BYOK engines behind the `Engine` seam (ROADMAP section 7 item 9, section A0.3).
+"""Direct-API BYOK engines behind the `Engine` seam.
 
-Two implementations cover the whole P1 provider menu (US-OB-04 / US-SET-07):
-
-- `AnthropicEngine` — Anthropic Messages API (`x-api-key`, `anthropic-version`).
-- `OpenAICompatibleEngine` — bearer-token `/chat/completions`, which covers
-  OpenRouter, OpenAI, and any user-run local server (Ollama / LM Studio / vLLM)
-  via `base_url`.
-
-Both satisfy `complete(system, user) -> (text, EngineUsage)` — the same contract
-the shared `ClaudeCliEngine` implements — so the operation wrappers and the
-registry never learn which engine they hold. HTTP is stdlib `urllib` (httpx is
-dev-only; mirrors the scraper's `Fetcher`), reached through an injectable
-`HttpTransport` seam so tests never touch the network.
-
-Cost (`usd`): OpenRouter reports the *exact* per-call cost when asked (request
-`usage.include=true`; the response's `usage.cost` is authoritative — this is
-what makes cost tracking work regardless of which concrete model
-`openrouter/auto` ends up routing to, since a static table can never keep pace
-with that). Anthropic/OpenAI direct and local servers don't return a cost, so
-those fall back to a best-effort lookup in a small pricing map for well-known
-models — **`None` when the model is unknown, never a guessed number** (ethos:
-cost honesty). Token counts come straight from the provider response.
-
-Verification (`verify_anthropic` / `verify_openai_compatible`) uses the
-industry-standard free authenticated models-list call — `GET /v1/models` — so a
-Verify click costs zero tokens. Providers without a models endpoint would fall
-back to a 1-token completion; both P1 direct APIs expose the list endpoint.
-"""
+`AnthropicEngine` (Messages API) and `OpenAICompatibleEngine` (`/chat/
+completions`: OpenRouter, OpenAI, local servers via `base_url`) both satisfy
+`complete(system, user)`, so callers never learn which engine they hold. stdlib
+urllib behind an injectable `HttpTransport`. Cost: OpenRouter's exact
+`usage.cost`, else a small pricing map, None when unknown, never a guess.
+Verify uses the free `GET /v1/models`."""
 
 from __future__ import annotations
 
@@ -37,7 +16,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from sidecar.modules._shared.claude_engine import EngineError, EngineUsage
 
@@ -137,11 +116,15 @@ def _default_transport() -> HttpTransport:
 # `usage.cost` instead (see `_openrouter_cost` below), so this map does not
 # need to track OpenRouter's ever-changing catalog.
 _PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
-    # Anthropic (public list prices, re-checked 2026-08-19)
+    # Anthropic (public list prices, re-checked 2026-10-12)
+    "claude-fable-5-1": (10.0, 50.0),
     "claude-fable-5": (10.0, 50.0),
+    "claude-opus-5-5": (4.0, 20.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-opus-4-8": (5.0, 25.0),
-    "claude-sonnet-5": (3.0, 15.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-sonnet-4-6": (3.0, 15.0),  # superseded id, kept for installs still routed to it
     "claude-haiku-4-5": (1.0, 5.0),
     # OpenAI
@@ -168,6 +151,59 @@ def price_usd(model: str | None, tokens_in: int | None, tokens_out: int | None) 
 # ---------------------------------------------------------------------------
 # Verify result
 # ---------------------------------------------------------------------------
+
+
+# TypeSafe's Jev isn't a chat completion: it takes a state and typed questions
+# and returns typed answers, so it gets its own client. OpenRouter serves it today
+# on the user's key (TypeSafe's API is waitlisted), and gateways mirror the shape,
+# so the base URL is a constructor argument.
+DEFAULT_DECISIONS_BASE = "https://openrouter.ai"
+DECISIONS_PATH = "/api/alpha/decisions"
+
+
+class DecisionsHttpClient:
+    """`decide(body) -> reply` over the same transport every engine uses."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        base_url: str = DEFAULT_DECISIONS_BASE,
+        transport: HttpTransport | None = None,
+        timeout_s: int = 60,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.transport = transport or _default_transport()
+        self.timeout_s = timeout_s
+
+    def decide(self, body: dict[str, Any]) -> dict[str, Any]:
+        headers = {"content-type": "application/json"}
+        if self.api_key:
+            headers["authorization"] = f"Bearer {self.api_key}"
+        resp = self.transport.request(
+            "POST",
+            f"{self.base_url}{DECISIONS_PATH}",
+            headers=headers,
+            body=json.dumps(body).encode(),
+            timeout_s=self.timeout_s,
+        )
+        if resp.status != 200:
+            # Same structured classification as the engines, so the runner's
+            # retry policy and circuit breaker treat a decision call like any
+            # other provider call (F-H5).
+            raise EngineError(
+                f"decisions API {resp.status}: {_verbatim(resp)}",
+                status=resp.status,
+                retry_after_s=_retry_after_s(resp),
+                provider="openrouter",
+            )
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise EngineError(
+                "decisions API returned a non-object response", provider="openrouter"
+            )
+        return data
 
 
 @dataclass

@@ -1,41 +1,18 @@
-"""Covers: the applications vertical HTTP surface (2026-07-09 audit fixes).
+"""Covers: the applications vertical over HTTP.
 
-Through the real app (TestClient → lifespan → real migration + runner):
-
-- artifact PATCH (US-RES-02 / FR-RES-02): persist edited markdown + the
-  Approve-and-Save flip; per-artifact `packetResumeState` / `packetCoverLetterState`.
-- priority assignment (FR-TR-09): Welford z-band at Save, P0 when saved Pending,
-  explicit override wins.
-- split auto-generate-on-Save defaults (FR-SET-02): Resume ON / Cover ON.
-
-No live LLM: artifacts are seeded directly (operation_id=None → `ready`), so the
-route logic — not a routed engine — is what's under test.
-"""
+Through the real app: the artifact PATCH (US-RES-02, edits and the Approve
+flip), Welford priority at Save (FR-TR-09; P0 when saved pending, override
+wins), and the auto-generate defaults (FR-SET-02). Artifacts are seeded, so no
+LLM runs."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from sidecar.app.main import create_app
 from sidecar.app.priority import STATS_KEY
 
-TOKEN = "test-token-appvert"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data",
-        enable_scheduler=False,
-    )
-    with TestClient(app) as client:
-        yield app, client
+from ._support import AUTH
 
 
 def _seed_job(app: FastAPI, *, url: str = "https://ex.co/j/av", score: int | None = None) -> str:
@@ -347,7 +324,6 @@ def test_application_dto_embeds_its_job(
     assert single["job"]["title"] == "Backend Engineer"
 
 
-
 # ---------------------------------------------------------------------------
 # Exclusive intent (docs/internal/roadmap.md section 5.1) — none | referral | apply
 # ---------------------------------------------------------------------------
@@ -410,10 +386,9 @@ def test_intent_rejects_unknown_values(
 
 
 # ---------------------------------------------------------------------------
-# attach / detach a document to an EXISTING application (the Upload button on
-# the Tailored resume + Cover letter editors — post-creation parity with the
-# manual-add attach). docstore.validate is extension+size only, so fake bytes
-# with a real extension exercise the store/link path without a real parser.
+# Attach or detach a document on an existing application (Upload in the tailored
+# and cover editors). docstore.validate checks extension and size only, so fake
+# bytes exercise the store and link path.
 # ---------------------------------------------------------------------------
 
 

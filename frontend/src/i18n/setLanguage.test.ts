@@ -1,12 +1,6 @@
-// Unit tests for the setLanguage switch-token guard (F-L10 lazy locales).
-//
-// What is mocked and why: the per-language locale chunks ("./locales/es" etc.)
-// are replaced with gate-controlled promises so each test decides WHEN (and
-// whether) a chunk resolves — that's the only way to pin the fast-double-switch
-// ordering. i18next itself is REAL: the module under test is imported fresh per
-// test (vi.resetModules) so its top-level await + synchronous init run for
-// real, with localStorage cleared so the boot language is always "en" (the
-// boot path takes no dynamic import and the top-level await is not entangled).
+// Unit tests for the setLanguage switch-token guard (F-L10). The locale chunks
+// are gated promises, so each test decides when a chunk resolves; i18next itself
+// is real, re-imported per test with localStorage cleared so boot is always "en".
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Gate registry shared with the hoisted vi.mock factories. Each test recreates

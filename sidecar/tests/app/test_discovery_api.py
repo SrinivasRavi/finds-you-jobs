@@ -9,7 +9,6 @@ before any fetch.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,12 +16,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sidecar.app.api import discovery as discovery_api
-from sidecar.app.main import create_app
 from sidecar.modules.scraper import adapters
 from sidecar.modules.scraper.types import ScraperError
 
-TOKEN = "test-token-discovery"  # noqa: S105 — test fixture, not a real secret
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
+from ._support import AUTH
 
 
 class _ProbeOkFetcher:
@@ -46,19 +43,10 @@ def _offline_watch_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     a fake fetcher unless a test swaps in its own. The resolved-board memory
     is cleared so no test sees another's cache."""
     monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
-    discovery_api._GUESS_CACHE.clear()
-
-
-@pytest.fixture
-def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
-    app = create_app(
-        token=TOKEN,
-        original_ppid=None,
-        data_dir=tmp_path / "data",
-        enable_scheduler=False,
+    monkeypatch.setattr(
+        discovery_api, "_read_board", lambda *_: (5, ["Backend Engineer", "SRE", "Data"], "")
     )
-    with TestClient(app) as client:
-        yield app, client
+    discovery_api._GUESS_CACHE.clear()
 
 
 def test_catalog_lists_every_family_enabled_by_default(
@@ -326,8 +314,9 @@ def test_scan_entrypoint_injects_credentials_in_memory_only(
 def test_brave_key_seeds_source_and_budget_ledger_caps(
     sealed_env: None, app_client: tuple[FastAPI, TestClient]
 ) -> None:
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
+    from sidecar.app.db.base import now_utc
     from sidecar.app.registry.persistence import (
         BRAVE_LEDGER_KEY,
         BRAVE_MONTHLY_BUDGET,
@@ -353,7 +342,7 @@ def test_brave_key_seeds_source_and_budget_ledger_caps(
     assert len([s for s in sources if s.get("board") == "brave"]) == 1
 
     db = app.state.db
-    now = datetime.now()
+    now = now_utc()
 
     # Under budget: prefs untouched.
     with db.repos() as repos:
@@ -508,12 +497,12 @@ def test_discovery_analytics_all_unscorable_source_reports_no_score(
         repos.jobs.create(
             canonical_url="https://boards.greenhouse.io/acme/jobs/1",
             title="Backend Engineer", company="Acme", location="Remote",
-            description="", source_adapter="greenhouse", keyword_score=0,
+            description="", source_adapter="greenhouse", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://boards.greenhouse.io/acme/jobs/2",
             title="Frontend Engineer", company="Acme", location="Remote",
-            description="", source_adapter="greenhouse", keyword_score=0,
+            description="", source_adapter="greenhouse", score=0, score_method="keyword",
         )
 
     data = client.get("/api/discovery/analytics", headers=AUTH).json()
@@ -534,17 +523,17 @@ def test_discovery_analytics_mixed_source_averages_only_scorable_jobs(
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/1",
             title="No description", company="Acme", location="Remote",
-            description="", source_adapter="lever", keyword_score=0,
+            description="", source_adapter="lever", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/2",
-            title="AI scored", company="Acme", location="Remote",
-            description=_LONG_JD, source_adapter="lever", llm_score=80,
+            title="LLM scored", company="Acme", location="Remote",
+            description=_LONG_JD, source_adapter="lever", score=80, score_method="llm",
         )
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/3",
             title="Keyword scored", company="Acme", location="Remote",
-            description=_LONG_JD, source_adapter="lever", keyword_score=60,
+            description=_LONG_JD, source_adapter="lever", score=60, score_method="keyword",
         )
 
     data = client.get("/api/discovery/analytics", headers=AUTH).json()
@@ -566,12 +555,12 @@ def test_discovery_analytics_row_counts_ignore_the_score_exclusion(
         saved_job = repos.jobs.create(
             canonical_url="https://apply.workable.com/acme/j/1",
             title="No description, saved", company="Acme", location="Remote",
-            description="", source_adapter="workable", keyword_score=0,
+            description="", source_adapter="workable", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://apply.workable.com/acme/j/2",
             title="No description, not saved", company="Acme", location="Remote",
-            description="", source_adapter="workable", keyword_score=0,
+            description="", source_adapter="workable", score=0, score_method="keyword",
         )
         repos.applications.create(saved_job.id)
         repos.operations.create("scan", {})
@@ -614,6 +603,9 @@ def test_watch_company_from_url_and_job_row(
         "source_url": "https://boards.greenhouse.io/totally-new-co",
         "adapter": "greenhouse",
         "company": "NewCo",
+        "openings": 5,
+        "sample_titles": ["Backend Engineer", "SRE", "Data"],
+        "read_error": "",
     }
     # Idempotent — watching again reports added=False, no duplicate entry.
     again = client.post(
@@ -650,7 +642,15 @@ def test_watch_company_from_url_and_job_row(
         json={"url": "https://example.com/careers"},
     )
     assert bad.status_code == 422
-    assert "no adapter recognizes" in bad.json()["detail"]
+    detail = bad.json()["detail"]
+    assert detail["code"] == "unrecognised_board"
+    assert "no adapter recognizes" in detail["message"]
+    # The vendor list is the registry's, so a new board reader joins it by itself (A8).
+    from sidecar.modules.scraper import adapters
+
+    assert detail["vendors"] == [a.LABEL for a in adapters.ADAPTERS if a.KIND == "ats"]
+    assert "Greenhouse" in detail["vendors"]
+    assert "Brave Search (your own key)" not in detail["vendors"]
 
 
 def test_watch_company_domain_url_falls_back_to_covering_source(
@@ -763,33 +763,34 @@ def test_watch_search_source_job_explains_no_board(
         )
     bad = client.post("/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id})
     assert bad.status_code == 422
-    assert "search source (naukri)" in bad.json()["detail"]
+    detail = bad.json()["detail"]
+    assert detail["code"] == "search_source" and detail["source"] == "naukri"
+    # It no longer names a Settings heading that was renamed (A8).
+    assert "Companies you follow" not in detail["message"]
     # The refusal is durable: Analytics → Logs (operations ledger) has it.
     with app.state.db.repos() as repos:
         ops = [o for o in repos.operations.list_recent() if o.kind == "watch_company"]
     assert ops and ops[0].state == "failed" and "search source" in (ops[0].error or "")
 
 
-def test_watch_pasted_url_is_liveness_probed(
+def test_a_board_that_reads_badly_is_followed_with_the_reason(
     app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Warn, never refuse (watch-company.md section 3): a dead tenant is still
+    followed, and the reason comes back so the UI can show it with the link."""
     _, client = app_client
-    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeDeadFetcher)
-    bad = client.post(
+    monkeypatch.setattr(
+        discovery_api, "_read_board", lambda *_: (None, [], "GET … -> 404")
+    )
+    r = client.post(
         "/api/discovery/watchlist",
         headers=AUTH,
         json={"url": "https://boards.greenhouse.io/no-such-tenant-xyz"},
     )
-    assert bad.status_code == 422
-    assert "doesn't open" in bad.json()["detail"]
-    # A job-derived watch skips the probe (the board was just scanned).
-    monkeypatch.setattr(discovery_api, "Fetcher", _ProbeOkFetcher)
-    ok = client.post(
-        "/api/discovery/watchlist",
-        headers=AUTH,
-        json={"url": "https://boards.greenhouse.io/live-tenant"},
-    )
-    assert ok.json()["added"] is True
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] is True and body["openings"] is None
+    assert "404" in body["read_error"]
 
 
 def test_slow_watch_probe_never_blocks_the_event_loop(
@@ -803,13 +804,12 @@ def test_slow_watch_probe_never_blocks_the_event_loop(
     import threading
     import time
 
-    class _SlowFetcher(_ProbeOkFetcher):
-        def get_text(self, url: str, headers: dict | None = None) -> str:  # noqa: ARG002
-            time.sleep(1.2)
-            return "<html>board</html>"
+    def _slow_read(*_: object) -> tuple[int, list[str], str]:
+        time.sleep(1.2)
+        return 3, [], ""
 
     _, client = app_client
-    monkeypatch.setattr(discovery_api, "Fetcher", _SlowFetcher)
+    monkeypatch.setattr(discovery_api, "_read_board", _slow_read)
 
     result: dict = {}
 
@@ -849,6 +849,8 @@ def test_watchlist_roster_lists_and_removes_watched_rows_only(
             "url": "https://boards.greenhouse.io/rosterco",
             "company": "RosterCo",
             "adapter": "greenhouse",
+            "openings": 5,
+            "read_error": "",
         }
     ]
     # Seeded (non-watched) registry rows never appear in the roster.

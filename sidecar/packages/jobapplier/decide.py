@@ -3,24 +3,13 @@
 # the patterns across lines hurts readability more than the width does.
 """Deterministic decider: fills a job-application form with no LLM.
 
-The code rung of the ladder (applier.md Option 11). Called once per loop turn in
-place of the model. It walks the observation in document order, classifies the
-first eligible unfilled field against an ordered rule table (semantics ported
-from the proven interpreter under
-``docs/internal/applier/evidence/2026-08-12-deterministic-repair/``), grounds the
-value in ``ApplyRequest.profile_facts`` / ``preferences`` / ``approved_links``,
-and emits exactly one Action from the same vocabulary the model uses — there is
-still no submit tool anywhere.
-
-A field no rule can ground is reported (when required) or skipped (when
-optional), never filled with a first option or a default yes: the wrong fills in
-the deterministic baseline were all fallback-to-first or default-to-yes. No
-persona literal lives in this module; every value flows from the request.
-
-Each field gets exactly one decision, recorded in ``done`` at decision time —
-one attempt per field, ever. That is the livelock fix by construction: the
-decider never re-issues an action, so it never re-verifies a settled field.
-"""
+The code rung of the ladder (applier.md Option 11), called per turn in place of
+the model. It classifies the first eligible unfilled field against an ordered
+rule table (ported from evidence/2026-08-12-deterministic-repair), grounds the
+value in the request's facts, preferences and links, and emits 1 Action; no
+submit. An ungroundable field is reported if required, skipped if not; never a
+first option or default yes. 1 decision per field, ever, which fixes the
+livelock by construction."""
 
 from __future__ import annotations
 
@@ -88,17 +77,26 @@ def _monthly(annual: str | None) -> str | None:
         return None
 
 
+def _full_name(p: dict[str, str]) -> str | None:
+    """The app's record names "first name", "last name" and "name"; the bench
+    persona's 1 "legal name" line stays the fallback."""
+    parts = [(p.get("first name") or "").strip(), (p.get("last name") or "").strip()]
+    return " ".join(x for x in parts if x) or (p.get("name") or "").strip() or None
+
+
 _DERIVERS = {
     "first_name": lambda p: (
-        _re1(r"\(first ([^,]+),", p.get("legal name"))
-        or ((_pre_paren(p.get("legal name")) or "").split(" ") or [None])[0]
+        (p.get("first name") or "").strip()
+        or _re1(r"\(first ([^,]+),", p.get("legal name"))
+        or ((_pre_paren(p.get("legal name")) or _full_name(p) or "").split(" ") or [None])[0]
         or None
     ),
     "last_name": lambda p: (
-        _re1(r"last ([^)]+)\)", p.get("legal name"))
-        or ((_pre_paren(p.get("legal name")) or "").split(" ") or [None])[-1]
+        (p.get("last name") or "").strip()
+        or _re1(r"last ([^)]+)\)", p.get("legal name"))
+        or ((_pre_paren(p.get("legal name")) or _full_name(p) or "").split(" ") or [None])[-1]
     ),
-    "full_name": lambda p: _pre_paren(p.get("legal name")),
+    "full_name": lambda p: _pre_paren(p.get("legal name")) or _full_name(p),
     "email": lambda p: (p.get("email") or "").strip() or None,
     "phone_full": lambda p: (p.get("phone") or "").strip() or None,
     "phone_cc": lambda p: _re1(r"^(\+\d{1,3})\b", p.get("phone")),
@@ -115,16 +113,21 @@ _DERIVERS = {
     ),
     "current_title": lambda p: _re1(r"^([^,;(]+?),", p.get("current role")),
     "current_company": lambda p: _re1(r"\bat\s+([^\s(;,]+)", p.get("current role")),
-    "years_total": lambda p: _re1(r"(\d+)\s*\+?\s*year", p.get("experience")),
+    "years_total": lambda p: (
+        _re1(r"(\d+)", p.get("years of experience")) or _re1(r"(\d+)\s*\+?\s*year", p.get("experience"))
+    ),
     "salary_year_usd": lambda p: _fmt_money("USD", _re1(r"USD\s*([\d,]+)\s*/\s*year", p.get("salary expectation"))),
     "salary_year_inr": lambda p: _fmt_money("INR", _re1(r"INR\s*([\d,]+)\s*/\s*year", p.get("salary expectation"))),
     "salary_month_usd": lambda p: _monthly(_re1(r"USD\s*([\d,]+)\s*/\s*year", p.get("salary expectation"))),
-    "notice_days": lambda p: "0" if re.search(r"immediate|no notice", p.get("availability", ""), re.I) else None,
+    "notice_days": lambda p: (
+        "0" if re.search(r"immediate|no notice", p.get("availability", "") + p.get("notice period", ""), re.I)
+        else _re1(r"^(\d+)\s*days?\b", p.get("notice period"))
+    ),
     "start_when": lambda p: "Immediately" if re.search(r"immediate", p.get("availability", ""), re.I) else None,
     "postal_code": lambda p: _re1(r"\b(\d{5,6})\b", _pre_paren(p.get("location")) or ""),
     "street_address": lambda p: None,  # never held as a fact today; report when required
     # 6+ years of professional experience is sufficient evidence of adulthood.
-    "adult": lambda p: "Yes" if int(_re1(r"(\d+)\s*\+?\s*year", p.get("experience")) or 0) >= 6 else None,
+    "adult": lambda p: "Yes" if int(_derive("years_total", p) or 0) >= 6 else None,
 }
 
 

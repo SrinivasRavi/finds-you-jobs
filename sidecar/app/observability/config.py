@@ -4,7 +4,7 @@ The observability settings (content logging + OTLP export opt-in + retention)
 live under `ui_state` alongside theme — there is no separate observability table
 in P1 (US-SYS-05: the SDK owns its own log; the *config* is a handful of prefs).
 One parser, shared by app startup (main.py) and the Settings-change reconfigure
-path (routes.py), so the two never drift.
+path (api/settings.py), so the two never drift.
 """
 
 from __future__ import annotations
@@ -25,12 +25,9 @@ class ObservabilitySettings:
 
 
 def observability_config(ui_state: dict[str, Any] | None) -> ObservabilitySettings:
-    """Extract the observability settings from a prefs `ui_state` dict.
-
-    Defaults are the safe, no-network baseline: content logging off, OTLP export
-    off, 30-day retention. A malformed/partial `ui_state` degrades to defaults —
-    observability config must never crash the sidecar.
-    """
+    """The observability settings from `ui_state`. Defaults are the no-network
+    baseline (content logging off, OTLP off, 30 days); malformed input degrades to
+    them."""
     ui = ui_state or {}
     raw_headers = ui.get("otlp_headers")
     headers: dict[str, str] = {}

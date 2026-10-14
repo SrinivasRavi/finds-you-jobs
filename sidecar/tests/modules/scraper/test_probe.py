@@ -1,7 +1,7 @@
-"""Add-by-URL probe tests — probe_url resolves one pasted URL to a job.
+"""Pasted-link probe tests — probe_url resolves one pasted URL to a job.
 
 Covers:
-  US-JB-07 — Add-by-URL escape hatch (best-effort title/company/location/desc)
+  US-JB-07 — a pasted link's autofill (best-effort title/company/location/desc)
   Track M3 / JD-gap — a known ATS job URL comes back fully structured (with the
   JD body the content-in-list params now carry).
 """
@@ -61,3 +61,37 @@ def test_probe_rejects_non_http_url() -> None:
     with pytest.raises(ScraperError) as ei:
         probe_url("not-a-real-url")
     assert "[probe]" in str(ei.value)
+
+
+def test_probe_lever_job_url_takes_the_single_posting_endpoint() -> None:
+    # One pasted Lever job URL asks for that job, never the board. The board
+    # list is 20 MB on a big tenant and the fetcher refuses it outright, which
+    # is what the maintainer hit on 2026-10-08.
+    posting = {
+        "text": "Apple Watch User Research",
+        "hostedUrl": "https://jobs.lever.co/tsmg/c60ccb3a",
+        "categories": {"location": "All states"},
+        "descriptionPlain": "Participate in a research project.",
+        "createdAt": 1759000000000,
+    }
+    fetcher = routed({"api.lever.co/v0/postings/tsmg/c60ccb3a": posting})
+    job = probe_url("https://jobs.lever.co/tsmg/c60ccb3a", fetcher_factory=fetcher)
+    assert job.source_adapter == "lever"
+    assert job.title == "Apple Watch User Research"
+    assert job.description
+    assert job.location == "All states"
+
+
+def test_probe_falls_back_to_generic_when_the_board_read_is_refused() -> None:
+    # The Lever board list over the fetcher's 20 MB cap used to surface as a
+    # 422 in the Add-a-job modal. The user gets a generic draft instead.
+    too_big = ScraperError("fetch", "returned more than 20971520 bytes; refusing")
+    fetcher = routed(
+        {
+            "api.lever.co/v0/postings/tsmg": too_big,
+            "jobs.lever.co/tsmg": _GENERIC_PAGE,
+        }
+    )
+    job = probe_url("https://jobs.lever.co/tsmg", fetcher_factory=fetcher)
+    assert job.source_adapter == "paste-url"
+    assert job.title

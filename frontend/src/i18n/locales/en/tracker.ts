@@ -72,19 +72,11 @@ const tracker = {
   },
   addApp: {
     intro:
-      "Already applied to a job elsewhere? Paste its posting URL to log it here — you can attach the resume and cover letter you used.",
-    tombstoned: "This job was permanently deleted and can't be re-added.",
-    fetch: "Fetch job details",
-    fetching: "Fetching job details…",
-    noUrl: "(no URL)",
-    refetch: "· Re-fetch",
-    titlePlaceholder: "Title",
-    companyPlaceholder: "Company",
-    locationPlaceholder: "Location",
+      "Already applied somewhere else? Log it here — you can attach the resume and cover letter you used.",
     stage: "Stage",
     notesPlaceholder: "Notes (optional)",
     adding: "Adding…",
-    submit: "Add application",
+    submit: "Log it",
   },
   jobDetail: {
     matchScoreTitle: "Match score against your master resume",

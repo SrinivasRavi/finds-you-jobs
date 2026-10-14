@@ -36,6 +36,8 @@ const settingsPage = {
     aboutTitle: "About",
     licenseLine:
       "finds-you-jobs is licensed under AGPL-3.0-only. You're free to inspect, run, modify, and share it under the same terms.",
+    attributionLine:
+      "This product includes data created by GeoNames (https://www.geonames.org) and information from O*NET OnLine by the U.S. Department of Labor, Employment and Training Administration, both used under CC BY 4.0. O*NET is a trademark of USDOL/ETA. Full third-party notices ship in THIRD_PARTY_NOTICES.md in the source tree.",
     sourceButton: "Source code",
     issuesButton: "Report a bug or request a feature",
   },
@@ -80,15 +82,110 @@ const settingsPage = {
       remove: "Remove",
     },
   },
+  applicant: {
+    title: "Applicant details",
+    intro: "What the Applier types into application forms. It's read from your master resume; check and complete it before your first application.",
+    firstName: "First name",
+    lastName: "Last name",
+    email: "Email",
+    phone: "Phone",
+    location: "Where you live",
+    locationHint: "On forms, the Applier gives each job's own location instead.",
+    links: "Links",
+    linksHint: "1 per line: LinkedIn, GitHub, portfolio.",
+    workAuth: "Work authorization",
+    workAuthHint: "Add each country you can work in, or need sponsorship for. The Applier answers for the country each job is in; a country not listed counts as not authorized.",
+    country: "Country",
+    status: "Status",
+    note: "Note (optional)",
+    addCountry: "Add a country",
+    remove: "Remove",
+    status_citizen: "Citizen",
+    status_permanent_resident: "Permanent resident",
+    status_visa: "Authorized on a work visa",
+    status_needs_sponsorship: "Needs sponsorship",
+    save: "Save details",
+    saved: "Saved",
+    fill: "Fill from my resume",
+    filling: "Reading your resume…",
+    dialogTitle: "Check your details before your first application",
+    dialogBody: "The Applier fills forms with these. Save them once and Apply continues.",
+    saveAndApply: "Save and apply",
+    requiredMissing: "Add your first name and where you live to save.",
+    moreTitle: "More answers forms ask for",
+    moreHint: "Optional. The Applier fills a question from these when it can, and leaves any question it can't answer empty for you to fill at review.",
+    salaryExpectation: "Salary expectation",
+    salaryPlaceholder: "USD 150,000 / year",
+    noticePeriod: "Notice period",
+    noticePlaceholder: "30 days, or immediately",
+    yearsOfExperience: "Years of experience",
+    citizenship: "Citizenship",
+    selfIdTitle: "Voluntary self-identification",
+    selfIdHint: "Optional. Anything left empty is answered \"I don't wish to answer\".",
+    gender: "Gender",
+    raceEthnicity: "Race or ethnicity",
+    veteranStatus: "Veteran status",
+    disabilityStatus: "Disability status",
+    sid_decline: "I don't wish to answer",
+    vet_yes: "I'm a protected veteran",
+    vet_no: "I'm not a protected veteran",
+    dis_yes: "Yes, I have a disability",
+    dis_no: "No, I don't have a disability",
+    resumeLocationSection: "Your location on tailored documents",
+    resumeLocation: "Location on tailored resumes and cover letters",
+    resumeLocationHint: "What the header of each tailored resume and its cover letter says about where you are.",
+    resumeLocationShared: "This is 1 setting, also shown in Settings › {{other}}. Changing it here changes it there.",
+    resumeLocationGo: "Open {{other}}",
+    rl_posting: "The job's location",
+    rl_master: "Your master resume's",
+    rl_none: "Leave it out",
+  },
   scoring: {
     title: "Scoring",
     howTitle: "How jobs are scored",
     fallbackLabel: "Scoring fallback",
     fallbackInfo:
-      "If an AI score fails, a grey keyword score fills in — retry it from Analytics → Logs.",
-    howHint: "Every new job gets a fit score against your master resume.",
-    modeLlm: "AI scoring — best quality, but costs LLM tokens and some time",
-    modeKeyword: "Keyword scoring — lower quality, but free and instant",
+      "If an LLM score fails, a grey keyword score fills in — retry it from Analytics → Logs.",
+    howHint: "Every new job gets a fit score against your master resume. Pick how.",
+    // One row per method, in menu order, richest explanation first. The price is
+    // per 100 jobs, measured where it says measured (docs/internal/scoring.md
+    // section 7.1); nothing here hides a method the user has not set up yet.
+    // 2026-10-08: it used to send the user to another pane for this pane's own
+    // rubric. The rubric is now further down this page, so it says where.
+    rubricPointer:
+      "The rubric LLM scoring follows is further down this page, and you can edit it. The other 3 methods have no prompt.",
+    weightsTitle: "What counts most",
+    weightsInfo:
+      "Changes how every job's number is worked out from the detail already stored. "
+      + "It costs nothing and spends nothing: no model is called and no job is scored again.",
+    weightsHint: "Re-ranks your board instantly. No model call, no cost.",
+    weightsReset: "Reset",
+    weightsShow: "Fine-tune each one",
+    weightsHide: "Hide the sliders",
+    weightsFromJev: "LLM scoring asks the model for the total, so it has no table of its own. These start from Jev scoring's.",
+    preset_balanced: "Balanced",
+    preset_location_first: "Location first",
+    preset_seniority_first: "Seniority first",
+    preset_skills_only: "Skills only",
+    locationPenalty: "Location miss",
+    locationPenaltyHint:
+      "How far a job in a place you did not ask for drops. It is a penalty rather "
+      + "than a weight, because some methods answer location as a confidence and a "
+      + "confidence multiplied by a weight means nothing.",
+    modeLlmBlurb: "One LLM call per job. The only method that writes sentences.",
+    modeLlmPrice: "About $2.22 per 100 jobs on Haiku 4.5, $23.55 on today's Opus path",
+    modeJevBlurb: "One structured call per job. Score and per-axis bars, prose on demand.",
+    modeJevPrice: "About $0.02 per 100 jobs",
+    modeLocalBlurb: "A small model running on your own machine. Nothing leaves it.",
+    modeLocalPrice: "Free, after a one-time model download",
+    modeKeywordBlurb: "On-device rules over your resume and the posting. Always available.",
+    modeKeywordPrice: "Free and instant",
+    needsKeyLabel: "Needs an OpenRouter key",
+    needsKeyAction: "Add a key",
+    needsPackLabel: "Not available yet",
+    needsPackBody:
+      "The model download isn't built. Pick it and jobs are scored by keyword until it is.",
+    modeCurrent: "In use",
     batchCap: "Scoring batch cap",
     batchCapInfo:
       "Uncapped scores everything found in a scan; a cap spreads the LLM cost across more scans.",
@@ -100,6 +197,12 @@ const settingsPage = {
     parallelHint: "How many AI calls run at once.",
     atOnce: "{{n}} at once",
     unlimited: "Unlimited",
+    queueMode: "How AI work waits",
+    queueModeInfo: "1 queue per kind of work: your own requests never wait behind background scoring, but several kinds of work can call your provider at once, so a rate limit or a subscription's 5-hour window arrives sooner. 1 shared queue: never more than Parallel AI calls at once, but a request can wait for 1 running call to finish.",
+    queueModeHint: "Your own requests always go first.",
+    queuePerKind: "1 queue per kind of work",
+    queueShared: "1 shared queue",
+    parallelHintPerKind: "How many jobs score at once in the background.",
   },
   automation: {
     title: "Automation on Save",
@@ -123,6 +226,7 @@ const settingsPage = {
     title: "Select the LLM Providers",
     unconfiguredWarning:
       "An operation is routed to a provider that isn't set up yet — verify and save it below, or pick a different engine under Prompts & Models.",
+    aiOffWarning: "AI features are off, because no provider is set up yet. Set one up below and every AI feature turns on.",
     configured: "Configured",
     notSet: "Not set",
     inUse: "In use",
@@ -140,8 +244,7 @@ const settingsPage = {
     verified: "✓ Verified",
     verifiedCheck: "Verified ✓",
     clisTitle: "Subscription CLIs",
-    clisIntro:
-      "Use a coding CLI you're already logged into — no API key, your subscription pays. Verify checks the login; pick one per operation under Prompts & Models.",
+    clisIntro: "Use a coding CLI you're already logged into: no API key, your subscription pays. Verify asks the CLI which account is logged in; pick one per operation under Prompts & Models.",
     cli: {
       claudeLabel: "Claude subscription (CLI)",
       claudeDesc: "Your logged-in Claude Code CLI.",
@@ -153,16 +256,91 @@ const settingsPage = {
   },
   prompts: {
     title: "Pick the model engines and edit the prompts",
-    modelEngine: "Model engine",
+    // 2026-10-08: the category is gone and each prompt sits with its feature,
+    // so `title` survives only for anything still naming the old pane.
+    // The trigger out on the Settings row is deliberately NOT the loud accent
+    // button: the noisiest thing on that row would otherwise be the one action
+    // that changes nothing (maintainer, 2026-10-08).
+    openEditor: "Test the prompt",
+    tuneTitle: "{{name}} prompt",
+    draftTitle: "Your edit",
+    draftLabel: "Nothing here changes what runs until you press \u201cUse this from now on\u201d.",
+    chars: "{{n, number}} characters",
+    close: "Close",
+    commit: "Use this from now on",
+    commitHint:
+      "Every future run uses this one. Reset, on the page behind this window, always "
+      + "brings back the one we ship.",
+    tryTitle: "Try it out",
+    tryHintJob: "Pick a job to run it against.",
+    tryHintContact: "Pick someone to write to.",
+    tryHintNone: "This one reads your master resume, so there is nothing to pick.",
+    testOn: "Runs on {{engine}} ({{model}}).",
+    testRunning: "Testing\u2026",
+    testRun: "Test this prompt",
+    // One label per kind. "Run this draft once" named our mechanism; a user
+    // reads a button to find out what is about to happen to them, so each one
+    // names the work (maintainer, 2026-10-08).
+    testRunScore: "Test scoring with this prompt",
+    testRunTailor: "Test tailoring with this prompt",
+    testRunCover: "Test a cover letter with this prompt",
+    testRunExtract: "Test form answers with this prompt",
+    testRunNetworkerDraft: "Test a referral message with this prompt",
+    testHint: "One real call on your own key. It lands in your cost dashboard like any other.",
+    testEmpty: "What it writes will show up here.",
+    testEmptyJob: "Pick a job above, then press the button. What it writes shows up here.",
+    testEmptyContact: "Pick someone above, then press the button. The message shows up here.",
+    testFailed: "That did not work.",
+    testCost: "That cost ${{usd}}.",
+    sourceBoard: "One of your jobs",
+    sourcePaste: "Paste a description",
+    pickJob: "Pick a job\u2026",
+    // The row says what the job is, where it is, and what we already scored it,
+    // because picking blind is picking the first row (maintainer, 2026-10-08).
+    // Which method scored it is deliberately absent: that belongs to the ring.
+    jobOptionScore: "scored {{n}}",
+    pickContact: "Pick a contact\u2026",
+    pastePlaceholder: "Paste a job description here.",
+    titleTailor: "Resume tailoring",
+    titleCover: "Cover letter",
+    titleExtract: "Form answers",
+    titleNetworkerDraft: "Referral messages",
+    scopeScore: "This is the rubric for LLM scoring only. The other 3 methods never read it: Keyword scoring is rules on your own machine, Jev scoring sends typed questions that carry their own rubric, and Laya scoring has no prompt either.",
+    scopeTailor: "Used every time a resume is tailored to a posting, whichever job it is.",
+    scopeCover: "Used every time a cover letter is written.",
+    scopeExtract: "Runs once each time you save your master resume. It pulls out the details that fill application forms \u2014 your name, your contact details, years of experience, work authorization \u2014 so the Applier does not have to ask you again.",
+    scopeNetworkerDraft: "Used when a referral message is drafted for a contact.",
+    // The model each piece of work runs on, stated where that work is
+    // configured. The 4 that had a picker had it beside their prompt; `draft`
+    // and `apply` had none anywhere (url-less-jobs.md section 11.5). Only the
+    // 2 pickers whose prompt scope line does NOT already say when they run
+    // carry a hint, so no card says the same sentence twice.
+    titleScoreModel: "The model LLM scoring runs on",
+    hintScoreModel:
+      "Only LLM scoring uses a model. Keyword scoring runs on your own machine, Jev scoring sends typed questions, and Laya scoring will run locally.",
+    titleApplyModel: "The model the Applier runs on",
+    hintApplyModel:
+      "The Applier reads a job application form and decides what goes in each field. "
+      + "It has no prompt you can edit yet.",
+    // The one picker that governs a button rather than a default: the message
+    // the popup opens with is a canned sentence with the name and company
+    // dropped in, and no model is involved until Regenerate (maintainer asked
+    // whether referral drafting is templated, 2026-10-08 — it is, until you
+    // press that button).
+    hintDraftModel:
+      "The message each referral row opens with is a fixed template with the name and "
+      + "company filled in, and it costs nothing. This model runs only when you press "
+      + "Regenerate, which rewrites it against your master resume and the posting.",
+    modelEngine: "Runs on",
     cliDefaultModel: "CLI default model",
+    engineOff: "Off (no provider yet)",
     providerDefault: "provider default",
     modelTitle:
       "Model this operation uses on {{engineLabel}}. Blank = {{effectiveModel}} (the provider/CLI default).",
-    noModel: "This prompt has no model — it's drafted when a referral message is sent.",
-    resetConfirm: "Reset this prompt to the shipped default? Your edits will be lost.",
-    charCount: "{{n}} chars",
-    overrideActive: " · override active",
-    shippedDefault: " · shipped default",
+    resetConfirm: "Throw your version away and go back to the one we ship? This cannot be undone.",
+    charCount: "{{n, number}} characters",
+    overrideActive: " \u00b7 your version",
+    shippedDefault: " \u00b7 the default we ship",
     resetToDefault: "Reset to default",
     save: "Save",
     customized: "Customized",
@@ -311,7 +489,7 @@ const settingsPage = {
     contactPurgeHint: "Deleted contacts are erased permanently this many days later.",
     expireListingLabel: "Mark a job listing “Older” after",
     expireListingHint:
-      "A job that has been on your board this many days is greyed as an “Older listing” — still on the board and restorable. Greyed listings are removed from the feed about a month later; Saved jobs are never auto-removed.",
+      "A job found by scanning that has been on your board this many days is greyed as an “Older listing” — still on the board and restorable. Greyed listings are removed from the feed about a month later; Saved jobs, and jobs you added by hand, are never auto-removed.",
     trashedJobsLabel: "Erase deleted jobs for good after",
     trashedJobsHint:
       "Deleted jobs are erased permanently (and won't be re-scraped) this many days later.",

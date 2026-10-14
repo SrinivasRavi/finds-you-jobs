@@ -1,18 +1,12 @@
 # finds-you-jobs — AGPL-3.0-only.
-"""Applier package — the agentic job-application core.
+"""Applier package: the agentic job-application core.
 
-A finds-you-jobs-owned facade and agent (package root, AGPL-3.0-only, written
-new) over a trimmed, Skyvern-derived browser *observation* core under
-``upstream/`` (also AGPL-3.0 — see ``provenance.md``).
-
-The app talks to this package ONLY through the typed contract in ``types.py``
-(`docs/internal/archived/applier-as-built.md` section 3.1): ``run_apply(page, ApplyRequest, engine,
-sink, control) -> ApplyResult``. The tool vocabulary has no ``submit`` — the
-P1 terminal success is ``ready_for_human`` and a human clicks Submit (section 8.4).
-``submit_application`` sits deliberately outside that vocabulary: the agent
-still cannot submit, and the app calls it once on the user's own Submit click.
-No route calls it yet.
-"""
+An AGPL-3.0-only facade and agent over a trimmed, Skyvern-derived observation
+core in `upstream/` (provenance.md). The app uses only `types.py`'s contract
+(applier-as-built.md section 3.1): `run_apply(page, ApplyRequest, engine, sink,
+control) -> ApplyResult`. The tool vocabulary has no submit: success is
+`ready_for_human` (8.4). `submit_application` sits outside it and runs once on
+the user's own Submit click."""
 
 from __future__ import annotations
 

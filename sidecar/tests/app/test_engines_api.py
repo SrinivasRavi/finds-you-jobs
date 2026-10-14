@@ -1,15 +1,8 @@
 """Covers: the BYOK provider router (FR-SET-06 / US-SET-07 / US-OB-04).
 
-Drives `sidecar/app/api/engines.py` through the real app (TestClient → lifespan
-→ real migration + engine registry):
-
-- save seals the key (never plaintext on disk), list returns a masked hint only;
-- verify makes a provider-appropriate call against a **fake** HTTP transport
-  (no network), surfacing a 401's verbatim body;
-- a saved + routed BYOK engine registers so `resolve(kind)` returns it;
-- delete removes the config and 404s when absent;
-- the claude-cli live verify is env-guarded (FYJ_LIVE_E2E).
-"""
+Save seals the key and list shows a masked hint; verify calls a fake transport
+and surfaces a 401's body; a routed BYOK engine resolves; delete removes it (404
+when absent); the live claude-cli verify needs FYJ_LIVE_E2E."""
 
 from __future__ import annotations
 
@@ -608,3 +601,104 @@ def test_verify_claude_cli_live(app_client: tuple[FastAPI, TestClient]) -> None:
     resp = client.post("/api/engines/verify", headers=AUTH, json={"provider": "claude-cli"})
     assert resp.status_code == 200
     assert resp.json()["provider"] == "claude-cli"
+
+
+# ---------------------------------------------------------------------------
+# S-C60: AI off after onboarding's Skip, and on again once a provider is set up
+# ---------------------------------------------------------------------------
+
+_ALL_OFF = {
+    "engine_routing": {
+        k: {"engine": "none", "model": ""}
+        for k in ("score", "tailor", "cover", "extract", "draft", "apply")
+    }
+}
+
+
+def _routing(client: TestClient) -> dict[str, str]:
+    body = client.get("/api/settings", headers=AUTH).json()
+    return {k: v["engine"] for k, v in body["preferences"]["engine_routing"].items()}
+
+
+def test_skipped_ai_leaves_every_kind_unrouted(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    assert client.post("/api/settings", headers=AUTH, json=_ALL_OFF).status_code == 200
+    assert app.state.engines.resolve("tailor") is None
+    # Saving the resume queues no extract that could only fail.
+    client.post("/api/profile", headers=AUTH, json={"resume_markdown": "# A\n\nEngineer."})
+    with app.state.db.repos() as repos:
+        assert not [o for o in repos.operations.list_recent() if o.kind == "extract"]
+
+
+def test_saving_a_provider_turns_ai_back_on(app_client: tuple[FastAPI, TestClient]) -> None:
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert set(_routing(client).values()) == {"anthropic"}
+    assert app.state.engines.resolve("tailor") is not None
+
+
+def test_a_verified_cli_turns_ai_back_on(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sidecar.modules._shared.claude_engine as ce
+
+    _app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    monkeypatch.setattr(ce, "resolve_claude", lambda refresh=False: "/usr/local/bin/claude")
+    monkeypatch.setattr(ce, "claude_auth_status", lambda exe=None: {"logged_in": True})
+    client.post("/api/engines/verify", headers=AUTH, json={"provider": "claude-cli"})
+    assert set(_routing(client).values()) == {"claude-cli"}
+
+
+def _record_submits(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record what the runner is asked to queue, without running it (no real LLM call)."""
+    kinds: list[str] = []
+    monkeypatch.setattr(app.state.runner, "submit", lambda kind, *_a, **_k: kinds.append(kind))
+    return kinds
+
+
+def test_a_provider_after_skip_reads_the_application_profile(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Audit A5: the extract Skip left unread runs once AI turns on.
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    client.post("/api/profile", headers=AUTH, json={"resume_markdown": "# A\n\nEngineer."})
+    kinds = _record_submits(app, monkeypatch)
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert kinds == ["extract"]
+    assert app.state.engines.resolve("extract") is not None
+
+
+def test_a_verified_cli_after_skip_reads_the_application_profile(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sidecar.modules._shared.claude_engine as ce
+
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    client.post("/api/profile", headers=AUTH, json={"resume_markdown": "# A\n\nEngineer."})
+    monkeypatch.setattr(ce, "resolve_claude", lambda refresh=False: "/usr/local/bin/claude")
+    monkeypatch.setattr(ce, "claude_auth_status", lambda exe=None: {"logged_in": True})
+    kinds = _record_submits(app, monkeypatch)
+    client.post("/api/engines/verify", headers=AUTH, json={"provider": "claude-cli"})
+    assert kinds == ["extract"]
+
+
+def test_turning_ai_on_reads_nothing_already_read_or_absent(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    kinds = _record_submits(app, monkeypatch)
+    # No master resume: nothing to read.
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert kinds == []
+    # Facts already present: nothing to read either.
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    with app.state.db.repos() as repos:
+        repos.profile.upsert("# A\n\nEngineer.")
+        repos.profile.set_application_profile({"name": "A", "source": "edited"})
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert kinds == []

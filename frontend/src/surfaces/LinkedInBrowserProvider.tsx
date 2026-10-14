@@ -1,19 +1,8 @@
-// The LinkedIn browser modal + its app-level opener (maintainer, 2026-08-16;
-// it was a left-rail destination before, and a tab inside Networking before
-// that). The live watch-only surface on the left, the "LinkedIn actions"
-// queue panel on the right, in a maximum-size dialog (the tailored-resume
-// sizing: the shell clamps to 96vw/94vh, backdrop + × stay visible).
-//
-// Mounted ONCE in the Layout, above every routed surface, because the modal
-// opens from more than Networking: the Tracker's referrals popup and any
-// send path land here too. Hoisting `useBrowserOps` into the provider keeps
-// ONE SSE subscription + ledger seed alive for the whole session, so the
-// Networking pill's busy state and the queue panel share state and nothing
-// resets when the modal closes.
-//
-// Add-on-side by design: this file names the vendor (slug, origin, labels);
-// the shared BrowserSurface / screencast components it mounts stay
-// vendor-agnostic (`plugin-architecture.md` section 12.2).
+// The LinkedIn browser modal and its app-level opener: the watch-only surface
+// beside the "LinkedIn actions" queue, in a maximum-size dialog. Mounted once in
+// the Layout because the Tracker's popup and every send path open it too; hoisting
+// `useBrowserOps` here keeps 1 SSE subscription for the session. Add-on side: it
+// names the vendor (plugin-architecture.md section 12.2).
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,7 +11,11 @@ import { useLinkedInSession } from "../api/queries";
 import { Modal } from "../shell/Modal";
 import { BrowserOpPlan, opBusy, useBrowserOps, type BrowserOps } from "./BrowserOpPlan";
 import { BrowserSurface } from "./BrowserSurface";
-import { type LinkedInPillTone, linkedInStatusPill } from "./linkedInStatus";
+import {
+  HEADER_PILL_CLS,
+  HEADER_PILL_LABEL,
+  linkedInStatusPill,
+} from "./linkedInStatus";
 
 // The broker surface slug this modal attaches to. Owned by the add-on side —
 // never spelled inside the shared BrowserSurface / screencast components.
@@ -36,12 +29,9 @@ export const LINKEDIN_ORIGIN: string =
   "https://www.linkedin.com/";
 
 interface LinkedInBrowserValue {
-  /** Open the LinkedIn browser modal (in place, over the current surface).
-   *  `onBack` is supplied by a caller that closed its own modal to get here
-   *  (the referrals popup); it puts a Back control in the header that returns
-   *  the user where they came from instead of dropping them on the surface
-   *  underneath. Callers opening the modal directly pass nothing and get no
-   *  Back control, because there is nowhere to go back to. */
+  /** Open the LinkedIn browser modal over the current surface. A caller that closed
+   *  its own modal to get here (the referrals popup) passes `onBack`, which puts a
+   *  Back control in the header; direct callers get none. */
   open: (opts?: { onBack?: () => void }) => void;
   close: () => void;
   isOpen: boolean;
@@ -108,21 +98,6 @@ export function LinkedInBrowserProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// The modal's own status chip (D-F8: only status→semantics is shared via
-// linkedInStatusPill; each surface keeps its own chrome and copy).
-const HEADER_PILL_CLS: Record<LinkedInPillTone, string> = {
-  good: "bg-good-wash border-good text-good",
-  warn: "bg-warn-wash border-warn text-warn",
-  bad: "bg-bad-wash border-bad text-bad",
-};
-const HEADER_PILL_LABEL: Record<string, string> = {
-  connected: "networking.linkedinPill.connected",
-  connecting: "networking.linkedinPill.connecting",
-  backingOff: "networking.linkedinPill.backingOff",
-  expired: "networking.linkedinPill.expired",
-  disconnected: "networking.linkedinPill.connect",
-};
-
 function LinkedInBrowserModal({
   ops,
   onClose,
@@ -141,7 +116,7 @@ function LinkedInBrowserModal({
     <Modal
       title={t("networking.linkedinModal.title")}
       onClose={onClose}
-      width={1840}
+      size="full"
       headerExtra={
         <>
           {onBack ? (

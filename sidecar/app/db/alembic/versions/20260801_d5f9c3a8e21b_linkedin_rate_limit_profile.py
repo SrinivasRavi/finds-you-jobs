@@ -1,20 +1,11 @@
-"""linkedin self-imposed rate-limit profile: membership_type, risk_pct, cap_overrides.
+"""linkedin rate-limit profile: membership_type, risk_pct, cap_overrides.
 
-Maintainer directive 2026-08-01. The New/Seasoned account tier is retired as the
-user-facing basis — that gradation now lives in a risk-appetite slider. The user
-picks a LinkedIn **membership type** (the estimated-ceiling basis), a **risk_pct**
-(10–100, scales the ceilings), and optional per-meter **cap_overrides** (absolute
-pins). The outreach package computes the effective caps from these.
-
-The free/premium plan the note-budget path keys on is derived from
-`membership_type` at runtime (`pacing.plan_for_membership`) — no stored plan
-column. `account_tier` is retained only because it pre-dates this branch;
-nothing reads it.
+Replaces the New/Seasoned tier. The plan the note budget keys on derives from
+`membership_type` (`pacing.plan_for_membership`); `account_tier` stays, unread.
 
 Revision ID: d5f9c3a8e21b
 Revises: c4e8b2d7f3a9
 Create Date: 2026-08-01
-
 """
 from __future__ import annotations
 

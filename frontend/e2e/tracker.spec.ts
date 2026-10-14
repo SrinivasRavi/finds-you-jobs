@@ -1,35 +1,16 @@
-// Covers: tracker — a Saved card renders on the kanban, the detail modal
-// opens, a notes edit lands in the Activity tab, and a column move + the
-// exclusive intent value round-trip through the live sidecar (roadmap
-// commit-8 UI gate).
-//
-// The application is created via the API with generation switched OFF —
-// letting the UI Save button auto-enqueue tailor/cover here would run the
-// real claude-cli engine and spend real tokens inside a test.
+// Covers: a Saved card on the kanban, the detail modal, the Activity tab, and a
+// column move plus the exclusive intent round-tripping through the sidecar.
+// The application is created through the API with generation off, so no real
+// tailor or cover op spends tokens inside a test.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/tracker";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  // An isolated run (second vite on FYJ_WEB_PORT beside the maintainer's dev
-  // session) passes the handshake via env — dev-web's .env.local is absent there.
-  const envPort = process.env.VITE_SIDECAR_PORT;
-  const envToken = process.env.VITE_SIDECAR_TOKEN;
-  if (envPort && envToken) {
-    return { base: `http://127.0.0.1:${envPort}`, token: envToken };
-  }
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test("tracker shows a saved card and records activity", async ({
   page,
@@ -41,6 +22,11 @@ test("tracker shows a saved card and records activity", async ({
   await request.post(`${base}/api/profile`, {
     headers: auth,
     data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  // Networking off, as on a fresh install (an earlier spec may have turned it on).
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: false },
   });
   const job = await (
     await request.post(`${base}/api/jobs`, {
@@ -67,6 +53,8 @@ test("tracker shows a saved card and records activity", async ({
   await expect(page.getByText("Staff Engineer").first()).toBeVisible({
     timeout: 15_000,
   });
+  // S-C66: networking is default-off, so the card offers no Referrals slot.
+  await expect(page.getByTestId("card-referrals-slot")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/tracker-saved-card.png`, fullPage: true });
 
   // Detail modal: edit notes → the Activity tab records it.

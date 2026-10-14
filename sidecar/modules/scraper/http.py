@@ -26,13 +26,10 @@ from .types import RateLimitError, ScraperError, Usage
 USER_AGENT = "findsyoujobs/0.0 (+https://github.com/findsyoujobs)"
 MAX_BYTES = 20 * 1024 * 1024  # refuse absurd payloads before json.loads
 
-# Header policy (discovery-expansion decision 2026-07-17). The keyless ATS/board
-# adapters send the honest `findsyoujobs/0.0` UA above and never need more. The
-# big *search* boards (LinkedIn/Indeed/Naukri) refuse that UA, so search
-# adapters send browser-standard headers via `BROWSER_HEADERS`. The line we hold:
-# browser-standard headers at one user's personal desktop volume is defensible
-# (it is the user's own machine running their own search); proxy rotation,
-# CAPTCHA solving, and TLS-fingerprint forgery are the arms race we stay out of.
+# Header policy: keyless ATS and board adapters send the honest UA above. The
+# big search boards refuse it, so search adapters send `BROWSER_HEADERS`.
+# Browser-standard headers at 1 user's desktop volume is defensible; proxy
+# rotation, CAPTCHA solving and TLS forgery are the arms race we stay out of.
 BROWSER_HEADERS: dict[str, str] = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -44,23 +41,17 @@ BROWSER_HEADERS: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# SSRF guard (F-M1) — the refusal logic + guarded redirect handler live in
-# `_shared/url_guard.py` (one copy, shared with `_shared/job_input.py` since
-# the 2026-07-25 dedup; see that module's docstring for the design and the
-# documented DNS-rebinding TOCTOU boundary). Refusals here are wrapped in the
-# Scraper's own typed ScraperError at the call sites below.
+# SSRF guard (F-M1): the refusal logic and guarded redirects live in
+# `_shared/url_guard.py`; refusals are wrapped in ScraperError below.
 # ---------------------------------------------------------------------------
 
 _opener = urllib.request.build_opener(_GuardedRedirects)
 
 
 # ---------------------------------------------------------------------------
-# Rate-limit handling (F-M9). A 429 raises the typed RateLimitError and opens
-# an in-memory per-host cool-down so the next scan (same sidecar process)
-# skips the host without re-bursting it. Process-local by design: persisting
-# it would need an app-layer schema (the Brave monthly ledger lives in
-# app/registry, out of this module's reach); a sidecar restart forgiving the
-# cool-down is proportionate for a single-user desktop app.
+# Rate limits (F-M9): a 429 raises RateLimitError and opens a per-host cool-down
+# so the next scan skips the host. Process-local: a restart forgiving it is
+# proportionate for a single-user desktop app.
 # ---------------------------------------------------------------------------
 
 _COOLDOWN_DEFAULT_S = 60.0
@@ -80,14 +71,9 @@ def page_pause() -> None:
 
 
 def paced_pages(pages: Iterable[int], *, already_requested: bool = False) -> Iterator[int]:
-    """Yield each page of a paginating adapter's bounded loop, pausing before
-    every request except the very first (duplication audit D-M9 — the four
-    paginating adapters each re-derived this guard in a different spelling).
-
-    `already_requested=True` when the caller has *already* hit this host in the
-    same run, so this page is not the first request either — the LinkedIn-guest
-    adapter's per-query inner loop, where query 2 page 0 still follows query 1
-    page 1 back-to-back."""
+    """Yield each page of a bounded paginating loop, pausing before every request
+    but the first (D-M9). `already_requested=True` when this host was already hit
+    this run (the LinkedIn guest adapter's later queries)."""
     for i, page in enumerate(pages):
         if i or already_requested:
             page_pause()
@@ -190,15 +176,9 @@ class Fetcher:
         headers: dict[str, str] | None = None,
         timeout_s: int | None = None,
     ) -> object:
-        """POST a JSON body, return parsed JSON. Exists for Workday-style CxS
-        endpoints whose public job lists answer only to POST — same guards,
-        same usage accounting as GET (one internal_call per request).
-
-        `headers` lets a keyed source send its bearer token (Apify — in a
-        header, NEVER a query param: fetch errors quote the URL verbatim and
-        land in persisted per-source diagnostics). `timeout_s` overrides the
-        per-request budget for endpoints that legitimately run long (an Apify
-        run-sync call blocks until the actor finishes)."""
+        """POST a JSON body and return parsed JSON, for Workday-style endpoints; same
+        guards and accounting as GET. `headers` carries a keyed source's token (never
+        the URL); `timeout_s` serves long calls like Apify's run-sync."""
         body = self._read(
             url,
             data=json.dumps(payload).encode(),

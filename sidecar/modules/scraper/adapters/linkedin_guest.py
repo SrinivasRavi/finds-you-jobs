@@ -1,29 +1,11 @@
-"""LinkedIn (guest) adapter — the public, no-login job-search endpoint.
+"""LinkedIn (guest) adapter: the public, no-login job-search endpoint.
 
-This is the *unauthenticated* LinkedIn: the guest job-search API that anyone's
-browser hits, no account and no session in the loop — so it carries **none** of
-the account-ban risk of the authenticated Voyager path (that path stays behind
-the default-off LinkedIn toggle, a separate user-initiated action). The only
-exposure here is a temporary per-IP rate-limit, which the run at a single
-user's personal desktop volume rarely reaches.
-
-Search shape (adapters/base.py): claims `board = "linkedin"` and builds queries
-from the user's role aliases × locations. Endpoint:
-
-    GET .../jobs-guest/jobs/api/seeMoreJobPostings/search
-        ?keywords={kw}&location={loc}&start={n}
-
-→ an HTML list of job cards (title, company, location, posting date, job URL).
-Browser-standard headers are required (the honest bot UA is refused) — the
-header-policy line is documented in `http.BROWSER_HEADERS`. Paginated by `start`
-in steps of 25, bounded at `MAX_PAGES` per query for IP courtesy. The card URL
-carries tracking params; we normalize to the stable `/jobs/view/{id}` form so
-cross-query and cross-source dedup works.
-
-Endpoint shape re-derived from JobSpy's `linkedin` module (MIT) as the
-behavioral reference — headers dict and card fields; no code copied. See
-UPSTREAMS.md.
-"""
+No account or session, so none of the logged-in path's ban risk; only a
+temporary per-IP rate limit. Claims `board = "linkedin"`, queries
+`jobs-guest/jobs/api/seeMoreJobPostings/search` per alias × location with
+browser-standard headers (`http.BROWSER_HEADERS`), 25 per page up to
+`MAX_PAGES`, and normalizes URLs to `/jobs/view/{id}`. JobSpy (MIT) as
+behavioral reference; see UPSTREAMS.md."""
 
 from __future__ import annotations
 
@@ -37,6 +19,8 @@ from ..searchquery import build_queries
 from ..types import NormalizedJob, ScanPrefs, ScraperError
 
 ID = "linkedin"
+LABEL = "LinkedIn (guest search)"
+KIND = "search"
 _CLAIM = "linkedin"
 _BASE = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 

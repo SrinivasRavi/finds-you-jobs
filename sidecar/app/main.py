@@ -22,17 +22,24 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from sidecar.modules.geo.gazetteer import warm as warm_gazetteer
+
+from .api.applications import router as applications_router
 from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
-from .api.routes import router
+from .api.jobs import router as jobs_router
+from .api.networking import router as networking_router
+from .api.operations import router as operations_router
 from .api.screencast_ws import router as screencast_router
+from .api.settings import router as settings_router
+from .api.system import router as system_router
 from .auth import BearerAuthMiddleware
 from .browser import BrowserBroker
 from .db import Database, resolve_db_url
 from .db.base import now_utc
 from .db.database import resolve_data_dir
-from .db.migrate import upgrade_to_head
+from .db.migrate import report_migration_failure, upgrade_to_head
 from .db.models import OP_ACTIVE_STATES
 from .events import HEARTBEAT_INTERVAL_SECONDS, EventHub, register_sse_schemas
 from .logging_setup import get_logger, setup_flight_recorder
@@ -42,10 +49,12 @@ from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
 from .registry.operations import backfill_keyword_scores
 from .runner import OperationRunner
+from .runner.policy import policy_from
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
 from .security import AppKeyUnavailable, migrate_plaintext_session, resolve_app_key_once
 from .seed import seed_defaults
+from .shared_constants import register_shared_constants
 from .watchdog import watch_parent
 
 # What the Tauri shell allows one /healthz answer (`src-tauri/src/sidecar.rs`).
@@ -60,13 +69,9 @@ SHUTDOWN_DRAIN_SECONDS = 10.0
 SURFACE_REAP_INTERVAL_SECONDS = 60.0
 
 # The webview loads from tauri://localhost (macOS/Linux) or
-# http://tauri.localhost (Windows/Android) in prod; the browser-dev path
-# serves from 127.0.0.1:1420. The comment above already documented the prod
-# origin, but the regex itself never actually matched it (only http(s)://
-# loopback) — every real fetch from a packaged build failed CORS silently,
-# invisible until now because no packaged build had ever been run+tested
-# (docs/internal/distribution.md section 2/section 7). Loopback-only by design otherwise
-# (section 4.2) — this only widens it to the exact schemes Tauri itself uses.
+# http://tauri.localhost (Windows) in prod, and 127.0.0.1:1420 in browser dev.
+# Loopback-only otherwise (section 4.2); this adds exactly Tauri's schemes, which
+# the regex once missed, failing every packaged fetch (distribution.md section 7).
 _LOOPBACK_ORIGIN_RE = r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|tauri://localhost|http://tauri\.localhost)$"
 
 
@@ -85,16 +90,10 @@ SLOW_REQUEST_INFO_SECONDS = SLOW_REQUEST_SECONDS / 10
 
 
 class _RequestObserverMiddleware:
-    """Time every request, name the slow ones, and log any exception escaping a
-    route before RE-RAISING it (the 500 and its propagation are unchanged).
-
-    Two bars: INFO at SLOW_REQUEST_INFO_SECONDS (this route got slow), WARNING
-    at SLOW_REQUEST_SECONDS (this will cost a restart) — only the higher one
-    that's crossed logs, so a genuinely slow request logs once, not twice.
-
-    Pure ASGI on purpose: BaseHTTPMiddleware buffers response streams and breaks
-    SSE. `/api/events` is excluded from timing because an SSE stream is supposed
-    to stay open."""
+    """Time every request, name the slow ones, and log any exception escaping a route
+    before re-raising it. INFO past SLOW_REQUEST_INFO_SECONDS, WARNING past
+    SLOW_REQUEST_SECONDS, only the higher. Pure ASGI (BaseHTTPMiddleware breaks
+    SSE); `/api/events` isn't timed."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -136,16 +135,9 @@ def create_app(
     operation_registry: OperationRegistry | None = None,
     enable_scheduler: bool = True,
 ) -> FastAPI:
-    """Build the sidecar FastAPI app.
-
-    `token` guards every non-open route. `original_ppid` (the shell's pid at
-    spawn) arms the orphan watchdog; when None (tests, standalone curl) the
-    watchdog is skipped. `data_dir` overrides the DB/app-data location (tests
-    point it at a tmp dir); None falls back to FYJ_DATA_DIR / the platform dir.
-    `operation_registry` overrides the default kind table (tests register fake
-    entrypoints); None uses `default_operation_registry()`. `enable_scheduler`
-    runs the 60 s tick loop (off for isolated route tests).
-    """
+    """Build the sidecar app. `token` guards non-open routes; `original_ppid` arms
+    the orphan watchdog; `data_dir` overrides the data location; tests pass an
+    `operation_registry` of fakes; `enable_scheduler` runs the 60 s tick loop."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -155,7 +147,17 @@ def create_app(
 
         # Storage: migrate to head, then open the engine (architecture section 5.3 boot).
         db_url = resolve_db_url(data_dir)
-        upgrade_to_head(db_url)
+        try:
+            upgrade_to_head(db_url)
+        except Exception as exc:
+            # Alembic's fileConfig disabled every existing logger on its way in,
+            # including ours AND uvicorn's, so a failure here used to reach no
+            # log, no stderr and no UI: the shell retried 3 times and the window
+            # sat on "Starting the local backend" forever (2026-10-07).
+            setup_flight_recorder()
+            get_logger().exception("boot: schema migration failed")
+            report_migration_failure(db_url, exc)
+            raise
         # Alembic's fileConfig (inside upgrade_to_head) disables existing loggers,
         # including our flight recorder — re-arm it so every runner/operation log
         # written after boot lands in the file (was the "only boot lines land" bug).
@@ -192,6 +194,18 @@ def create_app(
         configure_engines(
             engines, routing, engine_rows=engine_rows, data_dir=resolved_data_dir
         )
+
+        # Load the place index on a worker thread. It costs 290 ms and 21 MB, and
+        # every job insert reads it, so paying it here keeps that cost off the
+        # first request. The resolver loads it on demand anyway, so a failure
+        # here only means the first caller pays; it must never block boot.
+        async def _warm_gazetteer() -> None:
+            try:
+                await asyncio.to_thread(warm_gazetteer)
+            except Exception:  # noqa: BLE001 — warming must never kill boot
+                log.exception("gazetteer warm failed; the first resolve will pay for it")
+
+        app.state.gazetteer_warm_task = asyncio.create_task(_warm_gazetteer())
 
         # Observability (architecture section 10): wire Logfire → local `logfire.sqlite`
         # under the data dir. `send_to_logfire=False` is the hard invariant (no
@@ -233,20 +247,23 @@ def create_app(
         except Exception:  # noqa: BLE001 — recovery must never block boot
             log.exception("apply-run boot recovery failed")
 
+        # The saved Parallel AI calls and queue choice apply from the first pump, not
+        # only after the next Settings save.
+        with db.repos() as repos:
+            saved_thresholds = dict(repos.preferences.get_or_create().thresholds or {})
         runner = OperationRunner(
             db,
             registry=operation_registry,
             engines=engines,
+            policy=policy_from(saved_thresholds),
             publish=hub.publish,
             observability=observability,
         )
 
-        # Scan → score chain (US-JB-02). Every successful scan (1) gives every
-        # still-unscored job an INSTANT on-device keyword floor so it never
-        # shows as "Pending" — the board always has at least a grey keyword
-        # score (maintainer 2026-07-22), then (2) in AI mode fans out one LLM
-        # `score` op per job to upgrade that floor (idempotent planner; capped
-        # by thresholds.score_new_batch). Scores land via SSE and re-rank.
+        # Scan to score chain (US-JB-02): after every successful scan, each unscored job
+        # gets an instant keyword floor, so the board always has a score; in AI mode, 1
+        # `score` op per job then upgrades it (idempotent planner, capped by
+        # thresholds.score_new_batch).
         def _chain_scan_to_scores(_operation_id: str, kind: str) -> None:
             if kind != "scan":
                 return
@@ -336,12 +353,9 @@ def create_app(
         if enable_scheduler and not degraded_boot:
             start_scheduler()
 
-        # Close browser surfaces nobody is watching. A surface is an OS thread
-        # plus a real Chrome plus its resident memory, and nothing used to
-        # reclaim one, so a single visit to the LinkedIn view kept a browser
-        # alive for the whole session. `reap_idle` blocks (it joins each
-        # surface's thread), hence the worker thread; it is a no-op while a
-        # viewer is attached or an op is driving the lane.
+        # Close browser surfaces nobody is watching; each is a thread and a real
+        # Chrome. `reap_idle` blocks (it joins threads), hence the worker thread; a no-op
+        # while a viewer is attached or an op drives the lane.
         async def _reap_idle_surfaces() -> None:
             while True:
                 await asyncio.sleep(SURFACE_REAP_INTERVAL_SECONDS)
@@ -399,11 +413,15 @@ def create_app(
             # Close every browser surface before the DB goes: each one is a real
             # Chrome process that would otherwise outlive the sidecar.
             browser.shutdown()
+            # The Applier's window too (applier/window.md section 4.4).
+            from .registry.applier_window import shutdown_windows
+
+            shutdown_windows()
             db.dispose()
             log.info("sidecar app stopped")
 
     app = FastAPI(
-        title="finds-you-jobs sidecar", version="0.5.5", lifespan=lifespan
+        title="finds-you-jobs sidecar", version="0.5.9", lifespan=lifespan
     )
 
     # Unexpected route crashes land in the flight recorder (2026-07-24):
@@ -416,12 +434,9 @@ def create_app(
     async def _app_key_unavailable(
         _request: Request, exc: AppKeyUnavailable
     ) -> JSONResponse:
-        """Say what happened instead of a bare 500. The message names the
-        keychain, the key file path, and the recovery, and it is the only thing
-        standing between the user and silently unreadable API keys — without
-        this handler it reached them as "Internal Server Error" and lived only
-        in `logs/sidecar.log`. 503, because the install is fine and the secret
-        store is what's unavailable; the frontend renders `detail` verbatim."""
+        """Name the keychain, the key file and the recovery instead of a bare 500, so
+        unreadable API keys are never silent. 503: the install is fine, the secret store
+        isn't; the frontend shows `detail` verbatim."""
         return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     app.state.token = token
@@ -441,7 +456,12 @@ def create_app(
         allow_headers=["*"],
     )
 
-    app.include_router(router)
+    app.include_router(system_router)
+    app.include_router(jobs_router)
+    app.include_router(settings_router)
+    app.include_router(applications_router)
+    app.include_router(operations_router)
+    app.include_router(networking_router)
     app.include_router(engines_router)
     app.include_router(discovery_router)
     app.include_router(ingest_router)
@@ -455,6 +475,7 @@ def create_app(
     def _openapi_with_sse() -> dict[str, Any]:
         schema = _openapi_default()
         register_sse_schemas(schema)
+        register_shared_constants(schema)
         return schema
 
     app.openapi = _openapi_with_sse  # type: ignore[method-assign]

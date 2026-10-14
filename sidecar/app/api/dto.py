@@ -8,6 +8,7 @@ shapes drive the OpenAPI → TS codegen, so drift is a build error.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -28,6 +29,7 @@ from ..db.models import (
     OutreachLog,
     Schedule,
     UserPreferences,
+    apply_run_in_review,
 )
 
 # ---------------------------------------------------------------------------
@@ -45,13 +47,55 @@ class JobScoreDTO(BaseModel):
     # frontend renders a keyword score visibly grey, never styled like an AI
     # score (Scoring modes, maintainer design 2026-07-22).
     scorer_impl: str = "scorer-llm"
+    # Which of the 4 methods ran: `llm` | `jev` | `local` | `keyword`. Finer than
+    # `scorer_impl`, which can only say LLM-or-not and so reads a Jev score as an
+    # LLM one. The board's inner ring is this value, because a board carrying 2
+    # methods' numbers has to say which is which (maintainer, 2026-10-07).
+    method: str = "llm"
+    # True when the user's own axis weights produced this number instead of the
+    # method's. The card says so, because a 72 under "skills only" and a 72 as
+    # the model scored it are not the same claim.
+    weighted: bool = False
+    # Made against a resume older than its last major edit: the card shows a
+    # rescore-due mark; nothing rescores on its own (maintainer, 2026-10-13).
+    stale: bool = False
+
+
+class ScoreFactorDTO(BaseModel):
+    """One axis of one job's score (an entry of `Job.score_factors`). `value` is 0 to 1, and
+    `kind` says what it means: a `graded` position on a stated rubric, or a
+    `probability` that the factor holds. The bar chart draws the 2 differently
+    because a user weight may multiply the first and must never multiply the
+    second."""
+
+    factor: str
+    value: float
+    kind: str
+    evidence: str
+    # `evidence` as `{key, args}`, worded by the screen in the user's language
+    # (audit section 5); absent on a method that writes prose, and on old rows.
+    code: dict[str, Any] | None = None
+
+
+class JobFactorsDTO(BaseModel):
+    """The per-axis breakdown behind a job's displayed score. `weights` is the table
+    the total used; empty for LLM scoring, which asks the model for the total, so the
+    bars show no invented weight."""
+
+    job_id: str
+    method: str
+    factors: list[ScoreFactorDTO]
+    weights: dict[str, float]
 
 
 class JobDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: str
-    canonical_url: str
+    # Null for a job the user typed in (url-less-jobs.md section 5.3). Every
+    # reader that treats this as an action target needs a branch for it:
+    # "Open posting" becomes "Add link", and Apply refuses and prompts.
+    canonical_url: str | None
     title: str
     company: str
     location: str
@@ -69,6 +113,9 @@ class JobDTO(BaseModel):
     # guessed). The same keyword logic backs FR-JB-04's work-style filter, so the
     # chip and the filter always agree.
     work_style: str = Field(default="", serialization_alias="workStyle")
+    # The posting's places named the way the picker names them, computed on read
+    # from `location` (place-picker.md section 8.3); empty shows the text as posted.
+    places: list[str] = Field(default_factory=list)
     # The board serves jobs *with* their score (null while unscored).
     score: JobScoreDTO | None = None
     # Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): `scored` (a real 0–100) /
@@ -81,6 +128,22 @@ class JobDTO(BaseModel):
     # "NEW" badge (maintainer 2026-07-23). Stamped by the board/list routes from
     # that scan op's recorded new_job_ids; manual adds are never flagged.
     is_new: bool = Field(default=False, serialization_alias="isNew")
+    # From `job_duplicates` (url-less-jobs.md 9.6), stamped by the list routes:
+    # how many open pairs this job is the newer copy in (the "reposted" chip),
+    # and whether it has any open pair (the detail pane asks for the notice).
+    duplicates: int = 0
+    duplicate_notice: bool = Field(default=False, serialization_alias="duplicateNotice")
+
+
+@dataclass(frozen=True)
+class BoardFilters:
+    """The board's chip filters, as `/api/board` reads them (audit finding 6)."""
+
+    source: str = ""
+    work_style: str = ""
+    method: str = ""
+    posted_days: int = 0
+    salary_min: int = 0
 
 
 class BoardPageDTO(BaseModel):
@@ -100,16 +163,10 @@ class BoardPageDTO(BaseModel):
 
 
 class ScanProgressDTO(BaseModel):
-    """Board-level scan + scoring progress (observed-issue #2 backend). A small,
-    schema-free read the board polls while a scan runs — derived entirely from
-    the operations ledger, no new persisted state.
-
-    `scan_running` — a scan op is queued/in-flight. `last_scan_at` — the latest
-    succeeded scan's finish time (null before any scan lands). `new_found` — how
-    many jobs that scan inserted (its recorded `new_job_ids`), the "N" of the
-    board's "M of N scored". `score_pending` — the live (queued/running) score-op
-    count. `score_done` — how many of THIS scan's new jobs have reached a
-    terminal score, the "M"."""
+    """Board scan and scoring progress, derived from the operations ledger.
+    `scan_running`, `last_scan_at` (latest succeeded scan), `new_found` (its
+    inserted ids, the board's N), `score_pending` (live score ops) and `score_done`
+    (this scan's new jobs with a terminal score, the M)."""
 
     scan_running: bool
     last_scan_at: datetime | None = None
@@ -119,9 +176,13 @@ class ScanProgressDTO(BaseModel):
 
 
 class JobCreate(BaseModel):
-    """Add-by-URL (US-JB-07) + programmatic ingest."""
+    """Add a job (US-JB-07) + programmatic ingest.
 
-    canonical_url: str
+    The link is recommended, never required: a job with no usable URL is keyed
+    on its description instead (url-less-jobs.md section 5.1). One of the 2
+    has to be there, which the route enforces."""
+
+    canonical_url: str = ""
     title: str
     company: str = ""
     location: str = ""
@@ -132,13 +193,13 @@ class JobCreate(BaseModel):
 
 
 class JobPreviewRequest(BaseModel):
-    """Add-by-URL step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist."""
+    """Add a job posting, step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist."""
 
     url: str
 
 
 class JobPreviewDTO(BaseModel):
-    """The editable review payload the Add-by-URL modal shows before submit.
+    """The editable review payload the Add a job posting form shows before submit.
 
     Best-effort — a known ATS URL comes back fully structured; a generic page
     fills what it can and the user edits the rest."""
@@ -153,6 +214,57 @@ class JobPreviewDTO(BaseModel):
     source_adapter: str
 
 
+class AttachLinkRequest(BaseModel):
+    """Promotion (url-less-jobs.md section 5.4): give a URL-less job its URL.
+
+    `confirm` attaches despite a mismatch or an unreadable page, which is
+    rank-don't-gate applied to a field: always available, never the default."""
+
+    url: str
+    confirm: bool = False
+
+
+class DuplicateActionRequest(BaseModel):
+    """Which other job the user is answering about."""
+
+    other_job_id: str
+
+
+class LinkCandidateDTO(BaseModel):
+    """One side of the mismatch confirm's side-by-side."""
+
+    title: str
+    company: str
+    location: str
+    similarity: float | None = None
+
+
+class DuplicatePromptDTO(BaseModel):
+    """The "this looks like the job you added on Monday" prompt (9.6).
+
+    Absent (null) whenever there is nothing to ask: no flag, the counterpart is
+    gone or archived, or the user already said they are different."""
+
+    job_id: str
+    other_job_id: str
+    other: LinkCandidateDTO
+    other_added_at: datetime
+
+
+class AttachLinkResultDTO(BaseModel):
+    """What the Add-link dialog renders next: `attached` (passed or confirmed),
+    `mismatch` (`pasted` and `card` fill the side-by-side; confirm attaches anyway),
+    `unreadable` (nothing to compare), or `duplicate` (another job holds the URL,
+    named in `pasted` and `other_job_id`; nothing is written)."""
+
+    status: Literal["attached", "mismatch", "unreadable", "duplicate"]
+    job: JobDTO | None = None
+    pasted: LinkCandidateDTO | None = None
+    card: LinkCandidateDTO | None = None
+    other_job_id: str | None = None
+    reason: str | None = None
+
+
 class JobUpdate(BaseModel):
     """App-side job state — Trash (US-JB-11): `feed_state` active/removed."""
 
@@ -161,7 +273,8 @@ class JobUpdate(BaseModel):
 
 class TombstoneResultDTO(BaseModel):
     """Result of a permanent-discard action (Empty Trash / Delete forever /
-    TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned."""
+    TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned. A job
+    with no URL is deleted without one, so it counts in neither field."""
 
     tombstoned: int
     canonical_urls: list[str]
@@ -169,7 +282,7 @@ class TombstoneResultDTO(BaseModel):
 
 class ScoreRetryDTO(BaseModel):
     """The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
-    many active jobs have spent the whole attempt budget with no AI score, so
+    many active jobs have spent the whole attempt budget with no LLM score, so
     the button hides when pressing it would do nothing; `reset` on the POST is
     how many got their budget back. Jobs with no usable description are in
     neither number — they never spent an attempt (S-A6)."""
@@ -506,6 +619,12 @@ class WatchCompanyResult(BaseModel):
     source_url: str
     adapter: str
     company: str
+    # What reading the board once found (watch-company.md section 3): null
+    # openings with a reason when the read failed. A follow is never refused
+    # for any of these; the UI warns and shows the link.
+    openings: int | None = None
+    sample_titles: list[str] = []
+    read_error: str = ""
 
 
 class WatchlistEntryDTO(BaseModel):
@@ -516,6 +635,27 @@ class WatchlistEntryDTO(BaseModel):
     url: str
     company: str
     adapter: str
+    # Openings found the last time this board was checked; null if never read.
+    openings: int | None = None
+    # Why the last check couldn't read the board; empty when it could.
+    read_error: str = ""
+
+
+class CountryDTO(BaseModel):
+    """1 country, for the work-authorization editor (audit A5)."""
+
+    code: str
+    name: str
+
+
+class PlaceSuggestionDTO(BaseModel):
+    """1 row of the location picker (place-picker.md section 3): what the user
+    reads, and what the chip stores when they pick it."""
+
+    label: str
+    name: str
+    level: str
+    id: str
 
 
 class WatchlistDTO(BaseModel):
@@ -564,9 +704,47 @@ class EngineSettingDTO(BaseModel):
     key_hint: str | None
 
 
+class ScoringMethodDTO(BaseModel):
+    """One scoring-menu row and whether it can run now. The server reports facts, the
+    client owns copy and prices; a method is never hidden for a missing
+    prerequisite (talk.md D44), so `ready` drives an inline fix."""
+
+    id: str
+    ready: bool
+    # None when ready. "openrouter_key" or "model_pack" otherwise, which is what
+    # the client turns into the one action that clears it.
+    needs: str | None = None
+
+
+class ExplainCostDTO(BaseModel):
+    """What "Explain this one" will run and what it has cost this user. `avg_usd` is
+    measured off their own score ops on that model, never a price list; None means
+    they've never paid for an LLM score."""
+
+    engine: str
+    model: str
+    avg_usd: float | None = None
+    samples: int = 0
+    ready: bool = True
+
+
+class PromptTestRequest(BaseModel):
+    """Run an unsaved prompt draft once (url-less-jobs.md section 11.3), validated per
+    kind. score, tailor, cover: a board job (`job_id`, comparable with the saved
+    prompt's output) or a pasted `job_description`. extract: nothing.
+    networker_draft: a real `contact_id`."""
+
+    markdown: str
+    job_id: str | None = None
+    job_description: str | None = None
+    contact_id: str | None = None
+    guidance: str = ""
+
+
 class SettingsDTO(BaseModel):
     preferences: PreferencesDTO
     engines: list[EngineSettingDTO]
+    scoring_methods: list[ScoringMethodDTO] = []
 
 
 # ---------------------------------------------------------------------------
@@ -611,12 +789,10 @@ class ContactDTO(BaseModel):
     sent_at: datetime | None
     accepted_at: datetime | None
     archived_at: datetime | None
-    # The card/modal last-message snippet (US-NW-01/03): the thread's REAL last
-    # message once contact-sync has read it (`profile_payload.last_thread_message`),
-    # attributed by `last_message_direction` — "me" is ours, "them" is the
-    # contact's, with `last_message_from` naming them. Before any sync the
-    # latest OutreachLog fills in (always direction "me"), so a card that has
-    # outreach history is never blank.
+    # The last-message snippet (US-NW-01/03): the thread's real last message once
+    # contact sync has read it, attributed by `last_message_direction` ("me" or
+    # "them", with `last_message_from`). Before any sync the latest OutreachLog fills
+    # in, so a card with history is never blank.
     last_message: str | None = None
     last_message_at: datetime | None = None
     last_message_direction: str | None = None  # "me" | "them" | None (no message)
@@ -673,17 +849,10 @@ class ReferralCandidatesDTO(BaseModel):
     company: str
     candidates: list[ReferralCandidateDTO]
     already_reached_count: int
-    # The last discover op's outcome for this role, so a reopened popup can
-    # recover a background (Save-triggered) discover instead of showing a blank
-    # start screen (2026-07-17 dogfood: a Save-discover that ended in
-    # needs_company_confirm left no visible trace). One of:
-    #   never   — no discover has run for this job
-    #   found   — discover persisted candidates (they're in `candidates`)
-    #   empty   — discover ran but LinkedIn returned nobody at the company
-    #   confirm — discover needs the user to pick the company entity
-    #   refused — voyager refused the read (self-imposed cap / backoff); the
-    #             verbatim reason is in `refusal_reason` (2026-08-15: this state
-    #             used to masquerade as `empty`)
+    # The last discover op's outcome, so a reopened popup can recover a background
+    # discover: never, found (in `candidates`), empty (nobody at the company),
+    # confirm (pick the company entity), or refused (voyager declined the read; the
+    # reason is in `refusal_reason`, and it must never read as empty).
     discover_state: str = "never"
     # When discover_state == "confirm": the entity candidates to choose from
     # (may be empty → paste-URL only) and whether a pasted URL had failed.
@@ -702,12 +871,9 @@ class ReachOutContact(BaseModel):
 
 
 class DiscoverReferralsRequest(BaseModel):
-    """Kick off / resume referral discovery for a role (US-REF-01 / FR-NW-02).
-
-    `limit` bumps for the "find 10 more" control. `company_urn` (+ name/vanity/
-    industry) is set only when re-calling after a `needs_company_confirm` event —
-    it's the company the user picked in the confirm popup; the op caches + uses
-    it, skipping resolution."""
+    """Start or resume referral discovery (US-REF-01 / FR-NW-02). `limit` grows with
+    "find 10 more". `company_urn` and its details are set only after a
+    `needs_company_confirm`: the company the user picked, cached and used."""
 
     limit: int = 10
     page: int = 1  # "find 10 more" fetches the next results page
@@ -721,15 +887,10 @@ class DiscoverReferralsRequest(BaseModel):
 
 
 class ReachOutRequest(BaseModel):
-    """Reach-out (US-NW-09). Each contact gets ITS audience/warmth template
-    (fanned out per person, not one string). The pre-send confirmation gate
-    lives in the UI (per contact since 2026-07-30 — each row's Connect/Message
-    button confirms and sends one person); `dry_run` plans without touching
-    LinkedIn.
-
-    `contacts` is hard-capped: an unbounded list meant one HTTP request could
-    authorise arbitrarily many real sends (posture doc section 5.1 — a user-control
-    ceiling, not a compliance claim). The UI sends one contact per confirm."""
+    """Reach-out (US-NW-09): each contact gets its own audience and warmth template.
+    The confirm lives in the UI, 1 contact per confirm; `dry_run` plans without
+    LinkedIn. `contacts` is hard-capped so 1 request can't authorise unbounded sends
+    (posture doc section 5.1)."""
 
     job_id: str | None = None
     application_id: str | None = None
@@ -813,12 +974,9 @@ class LinkedInRateLimitsDTO(BaseModel):
 
 
 class BrowserViewRequest(BaseModel):
-    """POST /api/browser/view — queue a `view_page` operation that shows `url`
-    on a watch-only broker surface once the lane is free (2026-08-16; the
-    queued successor to the immediate /api/browser/open). `width`/`height`/
-    `dpr` are the caller's display metrics (fail-closed geometry);
-    `contact_id` links the ledger row to the contact whose button was
-    clicked."""
+    """POST /api/browser/view: queue a `view_page` op that shows `url` on a
+    watch-only surface once the lane is free. `width`, `height` and `dpr` are the
+    caller's display metrics; `contact_id` links the ledger row."""
 
     url: str
     surface: str | None = None
@@ -843,15 +1001,10 @@ class ContactSyncOutcomeDTO(BaseModel):
 
 
 class LinkedInSessionDTO(BaseModel):
-    """LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
-
-    `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
-    `status` is the session validity. The popup send path unlocks only when
-    enabled AND status == 'valid'. N4 adds the session-capture metadata the
-    Settings → LinkedIn session UI renders (connected-as, expiry, backoff);
-    `search_cursor` (2026-08-01) is the job-search pagination state — None
-    until a Fresh search has run; `rate_limits` is the self-imposed
-    membership/risk/override profile."""
+    """LinkedIn session and master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+    `enabled` is the networking toggle, `status` the session validity; sends unlock
+    only when enabled and valid. Plus connected-as, expiry and backoff;
+    `search_cursor` (None until a Fresh search) and `rate_limits`."""
 
     enabled: bool
     status: str        # valid | expired | never_set | connecting | backing_off
@@ -862,13 +1015,9 @@ class LinkedInSessionDTO(BaseModel):
     paused_reason: str = ""
     search_cursor: LinkedInSearchCursorDTO | None = None
     rate_limits: LinkedInRateLimitsDTO | None = None
-    # When the last contact-status sync that ACTUALLY PROBED finished (None =
-    # never). Backs the Networking header's "Synced Nm ago" stamp beside the
-    # Sync button — the one trigger there is (manual-only, 2026-08-15); each
-    # press is real LinkedIn read traffic. A sweep the read budget refused
-    # outright "succeeds" as an operation but synced nothing, so it must not
-    # re-stamp "Synced just now" (the 2026-08-15 live confusion). Attached by
-    # `routes._linkedin_session_base`.
+    # When the last sync that actually probed finished (None means never); backs the
+    # "Synced Nm ago" stamp. A sweep the budget refused succeeds as an op but synced
+    # nothing, so it doesn't re-stamp. Set by `networking._linkedin_session_base`.
     contact_sync_last_at: datetime | None = None
     # What the NEWEST sync attempt did — synced/failed counts plus the stop
     # reason and untouched-tail size when the sweep was cut short. The
@@ -912,11 +1061,11 @@ class LinkedInRateLimitsRequest(BaseModel):
 class PromptDTO(BaseModel):
     """One user-editable LLM prompt (module skill markdown). `default_md` is the
     shipped text; `override_md` is the saved edit or None when unset (→ default).
-    `routed` marks the kinds that also carry an engine/model selector."""
+    `op_kind` is the `LLM_KINDS` operation whose engine and model it runs on."""
 
     kind: str
     title: str
-    routed: bool
+    op_kind: str
     default_md: str
     override_md: str | None
 
@@ -955,6 +1104,9 @@ class ExportPdfRequest(BaseModel):
 
     markdown: str
     filename: str = "document"
+    # `temp` in the app: the shell asks where to save, at export time, and
+    # copies the file there (S-C53). `downloads` on the browser-only dev path.
+    destination: Literal["downloads", "temp"] = "downloads"
 
 
 class ExportPdfResult(BaseModel):
@@ -965,6 +1117,20 @@ class BrowserInstallResult(BaseModel):
     """The `POST /api/system/install-browser` response (A5b / A0.6)."""
 
     status: str  # "started" | "already_running"
+
+
+class BrowserInstallStatus(BaseModel):
+    """The `GET /api/system/install-browser` response: the last download's state in
+    this sidecar, so a client that missed the event can catch up (A21)."""
+
+    state: str  # "idle" | "running" | "done" | "failed"
+    message: str = ""
+
+
+class ApplyRunShowResult(BaseModel):
+    """The `POST /api/apply-runs/{id}/show` response (applier/window.md section 4.5)."""
+
+    shown: bool
 
 
 class SchedulerStatus(BaseModel):
@@ -1014,20 +1180,33 @@ class EngineSettingUpsert(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class OperationArtifactDTO(BaseModel):
+    """The in-app destination behind a ledger row's View button."""
+
+    application_id: str
+    kind: str  # "tailored" | "cover" — the ResumeModal slot it opens
+
+
 class OperationSubjectDTO(BaseModel):
-    """What one ledger row acted ON — its human subject (US-LOG-01 legibility,
-    maintainer directive 2026-08-03). Every field is verbatim entity data
-    (a contact's name, "title · company", the note text) — never localized
-    here; the frontend adds its own chrome (count nouns, mode names) via i18n.
-    Computed batched in the ledger route from the row's snapshot/result refs;
-    absent whenever those refs don't resolve (historical rows, deleted
-    entities) — the row then renders as before, nothing is fabricated."""
+    """What 1 ledger row acted on (US-LOG-01). Verbatim entity data, never localized
+    here. Computed in batch from the row's refs; absent when they don't resolve,
+    and nothing is invented."""
 
     label: str = ""  # primary line ("Jane Doe", "Backend Engineer") — may be ""
     href: str | None = None  # external link (LinkedIn profile / posting URL)
     context: str | None = None  # secondary line (the role a send was for; search mode)
     detail: str | None = None  # long text for the EXPANDED row (the DM/note sent)
     count: int | None = None  # entities touched (contacts found, jobs persisted…)
+    # A short trailing mark: the score a `score` row produced, or the fact that
+    # a row was a prompt test rather than real work (url-less-jobs.md drawing 13,
+    # url-less-jobs.md P3). Verbatim like every other field here; the frontend
+    # adds its own chrome.
+    badge: str | None = None
+    # What this row produced, when the app can open it in place: the document a
+    # `tailor` or `cover` run wrote, named by its application and its slot. The
+    # ledger used to link only the posting, so reading your own tailored resume
+    # meant finding the card in the Tracker (maintainer, 2026-10-08).
+    artifact: OperationArtifactDTO | None = None
 
 
 class OperationDTO(BaseModel):
@@ -1042,6 +1221,8 @@ class OperationDTO(BaseModel):
     error: str | None
     engine: str | None
     model: str | None
+    # `user` (a click, someone waiting) or `app`; queueing.md section 4.
+    requested_by: str = "app"
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -1070,12 +1251,9 @@ class ContactSyncAccepted(BaseModel):
 
 
 class CostTotalsDTO(BaseModel):
-    """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
-
-    Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime
-    totals that survive any deletion of an operation row. Nothing deletes one
-    today, so the aggregate is empty and the live sum carries it all. `by_kind`
-    maps each operation kind to its all-time usd spend."""
+    """All-time cost totals for the Analytics tiles (FR-SET-07 / US-LOG-01 #2): the
+    live ledger plus the deleted-ops aggregate (0 today; nothing deletes).
+    `by_kind` maps each kind to its all-time spend."""
 
     usd: float
     tokens_in: int
@@ -1085,47 +1263,31 @@ class CostTotalsDTO(BaseModel):
     by_kind: dict[str, float]
 
 
-def job_score_dto(job: Job) -> JobScoreDTO | None:
-    """The rating a job DISPLAYS: the AI one if it has it, otherwise the keyword
-    floor, otherwise nothing. The whole rule, and there is no ranking in it to
-    get backwards. It replaced a version-ranked pick over a `job_scores` table
-    that showed a keyword number over a higher AI one on 36 jobs (S-C34).
-
-    `scorer_impl` stays on the wire under its old values so the frontend's grey
-    styling keeps working; nothing stores that string any more, so renaming it
-    to `keyword` is now a frontend change with no data migration behind it."""
-    if job.llm_score is not None:
-        return JobScoreDTO(
-            score_0_100=job.llm_score,
-            reasons=list(job.llm_reasons),
-            breakdown_md=job.llm_breakdown_md,
-            scorer_impl="scorer-llm",
-        )
-    if job.keyword_score is not None:
-        return JobScoreDTO(
-            score_0_100=job.keyword_score,
-            reasons=list(job.keyword_reasons),
-            breakdown_md=job.keyword_breakdown_md,
-            scorer_impl="scorer-deterministic",
-        )
-    return None
+def job_score_dto(job: Job, major_version: int = 0) -> JobScoreDTO | None:
+    """The job's 1 score, or nothing (score-storage.md 4.1). `scorer_impl` keeps its
+    old values for the frontend's grey styling. `stale` when it was made against a
+    resume older than the last major edit; old rows with no version never are."""
+    if job.score is None:
+        return None
+    method = job.score_method or "llm"
+    return JobScoreDTO(
+        score_0_100=job.score,
+        reasons=list(job.score_reasons),
+        breakdown_md=job.score_breakdown_md,
+        scorer_impl="scorer-deterministic" if method == "keyword" else "scorer-llm",
+        method=method,
+        stale=job.scored_profile_version is not None
+        and job.scored_profile_version < major_version,
+    )
 
 
 def derive_score_status(
     has_score: bool, op_states: set[str], *, scorable: bool = True, attempts: int = 0
 ) -> str:
-    """The board's Score lifecycle (FR-JB-07 / NFR-OFFLINE-02), in precedence
-    order: `unscorable` (no usable description, so no tick will ever pick it up,
-    S-C24 D5), `scored`, `pending` while an op is in flight, `failed` once the
-    attempt budget is spent, `pending` otherwise.
-
-    `unscorable` outranks `scored` because such a job does carry a score: the
-    keyword floor writes a 0 with a missing-data reason, so "scored" would read
-    as a real rating of a job we know nothing about.
-
-    `failed` counts attempts rather than asking the ledger for a failed op,
-    because a failed op with budget left is not failed — the next tick retries
-    it, and the pill used to say dead while the system said pending."""
+    """The board's score lifecycle (FR-JB-07), in order: `unscorable` (no usable
+    description; its keyword 0 isn't a rating), `scored`, `pending` while an op is
+    in flight, `failed` once the attempt budget is spent, else `pending`. Attempts,
+    not a failed op: budget left means the next tick retries."""
     if not scorable:
         return "unscorable"
     if has_score:
@@ -1160,13 +1322,100 @@ def derive_work_style(location: str, description: str) -> str:
     return ""
 
 
-def job_dto(job: Job, *, score_op_states: set[str] | None = None) -> JobDTO:
+class WeightLens:
+    """The user's axis weights, re-totaling a page of jobs on read (scoring.md 7.4).
+    Never stored: an LLM score is the model's number, and overwriting it would lose
+    "balanced". Uses `weights.user_total`. Build once per request; an empty table
+    is inert and costs 1 lookup. Also carries the resume's last major version, so
+    the same per-request read marks a score that predates it (audit A3)."""
+
+    __slots__ = ("_penalty", "_weights", "major_version")
+
+    def __init__(
+        self,
+        weights: dict[str, float],
+        location_penalty: int,
+        major_version: int = 0,
+    ) -> None:
+        self._weights = weights
+        self._penalty = location_penalty
+        self.major_version = major_version
+
+    @property
+    def active(self) -> bool:
+        # A penalty-only preset (`location_first`, or the slider on its own)
+        # carries no weight table and still has to move numbers.
+        from sidecar.modules.scorer.weights import LOCATION_MISS_PENALTY
+
+        return bool(self._weights) or self._penalty != LOCATION_MISS_PENALTY
+
+    def total_for(self, job: Any, method: str) -> int | None:
+        """The re-weighted score for this job, or None to keep the stored one."""
+        if not self.active:
+            return None
+        from sidecar.modules.scorer.deterministic import RED_FLAG_CAP
+        from sidecar.modules.scorer.types import Factor
+        from sidecar.modules.scorer.weights import method_weights, user_total
+        from sidecar.modules.scraper.quality import RED_FLAG_PREFIX
+
+        # No table of the user's own means the method's table with their penalty.
+        # LLM scoring ships no table, so its own number stands.
+        rows = (job.score_factors or []) if job.score_method == method else []
+        weights = self._weights or method_weights(method, {r["factor"] for r in rows})
+        if not weights or not rows:
+            return None
+        total = user_total(
+            [
+                Factor(r["factor"], r["value"], r.get("kind", "graded"), r.get("evidence", ""))
+                for r in rows
+            ],
+            weights,
+            location_penalty=self._penalty,
+        )
+        # The keyword scorer's scam-risk clamp leaves no trace in its factors,
+        # so a re-total would quietly lift a capped posting back up.
+        if total is not None and method == "keyword" and any(
+            f.startswith(RED_FLAG_PREFIX) for f in job.trust_flags or []
+        ):
+            total = min(total, RED_FLAG_CAP)
+        return total
+
+
+def build_weight_lens(repos: Any, job_ids: list[str]) -> WeightLens:
+    """One lens for a page of jobs: 1 preferences read and 1 profile read, never
+    one per card (the F-H2 lesson). The factors ride on each job row."""
+    from ..registry.persistence import scoring_weights
+
+    weights, penalty = scoring_weights(repos.preferences.get_or_create())
+    profile = repos.profile.get_current()
+    return WeightLens(weights, penalty, profile.major_version if profile is not None else 0)
+
+
+def job_dto(
+    job: Job,
+    *,
+    score_op_states: set[str] | None = None,
+    lens: WeightLens | None = None,
+) -> JobDTO:
     """The board/tracker view of one job. The rating rides on the job row, so
-    there is no score to pass in and no second query to forget."""
+    there is no score to pass in and no second query to forget.
+
+    `lens` re-totals the score under the user's own axis weights. Omitted, or
+    holding an empty table, the stored number is served unchanged."""
+    from sidecar.modules.geo.suggest import posting_labels
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
-    dto = JobDTO.model_validate(job)
-    dto.score = job_score_dto(job)
+    # `jobs.score` is the bare number; the DTO's `score` is the built object below.
+    dto = JobDTO.model_validate(
+        {name: getattr(job, name) for name in JobDTO.model_fields if name != "score"
+         and hasattr(job, name)}
+    )
+    dto.score = job_score_dto(job, lens.major_version if lens is not None else 0)
+    if dto.score is not None and lens is not None:
+        reweighted = lens.total_for(job, dto.score.method)
+        if reweighted is not None:
+            dto.score.score_0_100 = reweighted
+            dto.score.weighted = True
     dto.score_status = derive_score_status(
         dto.score is not None,
         score_op_states or set(),
@@ -1177,6 +1426,7 @@ def job_dto(job: Job, *, score_op_states: set[str] | None = None) -> JobDTO:
         attempts=job.llm_score_attempts,
     )
     dto.work_style = derive_work_style(job.location, job.description)
+    dto.places = list(posting_labels(job.location or ""))
     return dto
 
 
@@ -1264,8 +1514,11 @@ def application_dto(
         packet_cover_letter_state=derive_artifact_state(cover_a, cover_state),
         referrals_state=referrals_state,
         referrals_count=referrals_count,
+        # A form held open for review reads as review on the card, not "Applying" (A22).
         apply_run_status=(
-            latest_apply_run.status if latest_apply_run is not None else "none"
+            "none" if latest_apply_run is None
+            else "ready_for_human" if apply_run_in_review(latest_apply_run)
+            else latest_apply_run.status
         ),
         apply_run_id=latest_apply_run.id if latest_apply_run is not None else None,
         artifacts=artifact_dtos,
@@ -1465,23 +1718,10 @@ def derive_referrals_state(
     has_candidates: bool,
     latest_batch_outcomes: list[str],
 ) -> str:
-    """The canonical `referralsState` for a role's Tracker card (FR-NW-01).
-
-    Precedence (transient in-flight states win so a spinner never goes stale):
-
-    - `sending`  — a send op of the current batch is queued/running.
-    - `finding`  — a discover op for this role is queued/running (and nothing is
-      sending).
-    - Otherwise the resting state comes from the *latest reach-out batch*
-      (`latest_batch_outcomes`, one entry per OutreachLog row sharing the newest
-      `batch_id`):
-        - all members `sent`     → `reachedOut`
-        - ≥1 sent, not all       → `pending`    (partial / cap-stopped batch)
-        - a batch exists, 0 sent → `failed`     (all-failed — an honest extension
-          of the 5-state spec)
-    - No batch yet but candidates were discovered for the role → `pending`.
-    - Nothing discovered or sent → `none` (frontend `notStarted`).
-    """
+    """The card's `referralsState` (FR-NW-01). In-flight wins: `sending`, then
+    `finding`. Otherwise the latest batch: all sent is `reachedOut`, some is
+    `pending`, none is `failed`. No batch but candidates found: `pending`. Nothing
+    at all: `none`."""
     if any(state in OP_ACTIVE_STATES for state in send_op_states):
         return "sending"
     if discover_in_flight:

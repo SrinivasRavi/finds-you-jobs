@@ -1,24 +1,11 @@
-"""Subscription-CLI engine family — Codex (ChatGPT plan) and Antigravity
-(Google AI plan), beside the shared Claude engine (`claude_engine.py`).
+"""Subscription-CLI engines: Codex (ChatGPT plan) and Antigravity (Google AI).
 
-One pattern, three CLIs: the user's already-logged-in coding CLI is driven as a
-print-mode subprocess, so no API key ever enters this app and the subscription
-pays. Each engine implements the same duck-typed contract as `ClaudeCliEngine`
-(`complete(system, user) -> (text, EngineUsage)`) and reuses its `EngineUsage`
-/ `EngineError` types.
-
-Containment (2026-07-17 design decision, discovery/engines expansion): unlike
-`claude -p`, `codex exec` and `agy -p` are *agents* that may execute tool
-calls. Every call here therefore (a) runs in a fresh empty scratch directory,
-never the app or user cwd, and (b) for Codex passes `--sandbox read-only`. A
-prompt-injected job description must not be able to touch the user's files.
-Antigravity's `-p` mode auto-approves tool calls with no known restriction
-flag — one of the reasons that provider ships labeled **experimental**.
-
-Billing scrub mirrors `claude_engine._subscription_env`: env vars that would
-silently flip the CLI from subscription auth to pay-per-token API billing are
-removed from the child env (cost honesty — the tile says "subscription").
-"""
+The user's logged-in CLI runs as a print-mode subprocess, so no key enters the
+app; each engine matches `ClaudeCliEngine`'s contract and types. These CLIs are
+agents, so every call runs in an empty scratch dir, and Codex with
+`--sandbox read-only`: an injected JD must not touch the user's files.
+Antigravity auto-approves tools, hence experimental. Env vars that would switch
+to API billing are scrubbed."""
 
 from __future__ import annotations
 
@@ -117,17 +104,9 @@ def codex_login_status(exe: str | None = None) -> CliProbe | None:
 
 
 class CodexCliEngine:
-    """`codex exec` on the user's ChatGPT subscription.
-
-    - `--json`: JSONL event stream; the final agent message and the
-      `turn.completed` usage record are parsed out of it. An unparseable
-      stream degrades to plain-text stdout (older CLI), like ClaudeCliEngine.
-    - `--sandbox read-only` + empty scratch cwd: containment (module docstring).
-    - `model=None` omits `-m` — the CLI's own configured default model runs,
-      which is the honest choice for a subscription (the user picked it there).
-    - The system prompt is prepended to the prompt text: `codex exec` has no
-      append-system-prompt flag; its input is simply "the task".
-    """
+    """`codex exec` on the ChatGPT subscription: `--json` events (plain stdout as
+    fallback), `--sandbox read-only` in an empty cwd, no `-m` when no model is set
+    (the user's own default), and the system prompt prepended (no flag for it)."""
 
     def __init__(self, model: str | None = None, timeout_s: int = 600) -> None:
         self.model = model or None
@@ -217,19 +196,10 @@ def _parse_codex_jsonl(stdout: str) -> tuple[str, EngineUsage]:
 
 
 class AntigravityCliEngine:
-    """`agy -p` on the user's Google AI (Antigravity) subscription. Experimental.
-
-    Known upstream limits, current as of 2026-07 (all handled honestly, none
-    hidden): `--output-format json` is not stable, so plain-text stdout is the
-    contract (no token usage available — the ledger records calls + latency
-    only); `-p` under a non-TTY can drop the final response entirely, which
-    surfaces here as a clear EngineError rather than a silent empty result —
-    and the Verify flow runs a real completion through this exact path so the
-    breakage is caught at setup, not mid-pipeline; `-p` auto-approves tool
-    calls, hence the empty scratch cwd (see module docstring).
-
-    No model flag: the account's Antigravity default model runs.
-    """
+    """`agy -p` on the Google AI subscription. Experimental: plain-text output (no
+    token usage), `-p` without a TTY can drop the response (a clear EngineError,
+    which Verify catches at setup), and tools auto-approve (hence the empty cwd).
+    No model flag."""
 
     def __init__(self, model: str | None = None, timeout_s: int = 600) -> None:
         self.model = model or None  # accepted for the factory contract; unused

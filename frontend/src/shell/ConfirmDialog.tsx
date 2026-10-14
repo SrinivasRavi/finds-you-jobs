@@ -23,7 +23,7 @@ export function ConfirmDialog({
 }) {
   const { t } = useTranslation();
   return (
-    <Modal title={title} onClose={onCancel} width={440}>
+    <Modal title={title} onClose={onCancel} size="sm">
       <div className="flex flex-col gap-4 px-5 py-4" data-testid="confirm-dialog">
         <p className="text-[13px] leading-relaxed text-ink-2">{body}</p>
         <div className="flex items-center justify-end gap-2">

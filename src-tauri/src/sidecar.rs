@@ -1,10 +1,7 @@
-//! Sidecar lifecycle — the section 4.4 contract (AM1–AM3), decided numbers built in.
-//!
-//! Spawn the Python sidecar, capture its `PORT=`/`TOKEN=` handshake (20 s cap),
-//! supervise `/healthz` with a restart cap (3 failures in 30 s, exponential
-//! backoff, ≥ 60 s-healthy reset), and on quit drain (10 s) then force-kill the
-//! whole process group so no grandchildren (claude CLI / Chromium / voyager)
-//! survive.
+//! Sidecar lifecycle, the section 4.4 contract (AM1 to AM3). Spawn the sidecar,
+//! capture its PORT=/TOKEN= handshake (20 s cap), supervise /healthz with a restart
+//! cap (3 failures in 30 s, exponential backoff, reset after 60 s healthy), and on
+//! quit drain 10 s, then kill the whole process group so no grandchild survives.
 
 use std::io::{BufRead, BufReader, Error, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -24,22 +21,16 @@ const HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const RESTART_WINDOW: Duration = Duration::from_secs(30); // AM2
 const MAX_FAILURES: u32 = 3; // AM2
 const HEALTHY_RESET: Duration = Duration::from_secs(60); // AM2
-                                                         // Consecutive missed health polls tolerated while the sidecar process is still
-                                                         // ALIVE. A blocked event loop still holds its listening socket, so a slow query
-                                                         // and a crash look identical over HTTP; the process table knows the difference,
-                                                         // and `try_wait` is how we ask. At a 2 s poll with a 2 s timeout this is roughly
-                                                         // 20 s of unresponsiveness before we recycle a live process, against Kubernetes'
-                                                         // default of 3 consecutive liveness failures. A process that has actually EXITED
-                                                         // is restarted on the first poll, unchanged — that speed was the point.
+                                                         // Missed health polls tolerated while the process is still alive: a blocked
+                                                         // event loop and a crash look the same over HTTP, but `try_wait` tells them apart.
+                                                         // About 20 s at a 2 s poll (Kubernetes defaults to 3 failures). An exited process
+                                                         // restarts on the first poll.
 const BUSY_TOLERANCE: u32 = 5;
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10); // AM3
-                                                          // Startup grace: the sidecar prints its handshake BEFORE the Python lifespan
-                                                          // runs (migrations on first boot), and uvicorn only LISTENS after the lifespan
-                                                          // finishes — on a cold Windows laptop with antivirus scanning every .py file
-                                                          // that is tens of seconds. "Not listening yet" right after a (re)spawn is a
-                                                          // boot phase, not a crash: counting it killed healthy booting sidecars in a
-                                                          // 2.5 s loop on three real Windows installs (2026-07-19). A dead PROCESS is
-                                                          // still detected immediately via try_wait inside the grace.
+                                                          // Startup grace: the handshake prints before the lifespan runs migrations, and
+                                                          // uvicorn listens only after, which takes tens of seconds on a cold Windows laptop
+                                                          // with antivirus. Counting that killed healthy booting sidecars on 3 real installs;
+                                                          // a dead process is still caught at once via try_wait.
 const STARTUP_GRACE: Duration = Duration::from_secs(180);
 
 // Boot outcomes: the last few starts, so a crash LOOP is distinguishable from a
@@ -157,13 +148,9 @@ pub fn spawn_once(cwd: &Path, app: &AppHandle) -> std::io::Result<(Child, Sideca
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-    // The sidecar binary is a console-subsystem executable (it prints the
-    // PORT=/TOKEN= handshake to stdout), but the packaged shell is a GUI app
-    // with no console of its own — spawning a console child from a
-    // console-less GUI parent makes Windows create a new, briefly *visible*
-    // console window unless told not to. In dev, a console already exists
-    // (the terminal `pnpm dev` runs in), so the child attaches to it either
-    // way and CREATE_NO_WINDOW has no effect there — safe to set unconditionally.
+    // The sidecar is a console executable but the packaged shell is a GUI app, and a
+    // console child of a console-less parent opens a visible console window unless
+    // told not to. In dev a console already exists, so CREATE_NO_WINDOW is harmless.
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

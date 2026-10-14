@@ -1,26 +1,16 @@
-// Covers: the restored Settings + Analytics surfaces against the live sidecar
-// (feature-parity commit) — Settings renders its section stack (generation
-// toggles, engine-routing/prompt rows, networking master toggle, observability
-// controls, the P1 no-submit statement) and a prompts-editor edit round-trips
-// through /api/settings/prompts; Analytics renders the cost tiles + ledger
-// with a real completed operation row, and /logs redirects there.
+// Covers: Settings and Analytics against the live sidecar. Settings renders its
+// sections and a prompts-editor edit round-trips through /api/settings/prompts;
+// Analytics renders the cost tiles and a real completed ledger row; /logs
+// redirects there.
 
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/settings-analytics";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test.beforeEach(async ({ request }) => {
   const { base, token } = sidecarInfo();
@@ -47,20 +37,60 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("provider-tile-embedded")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
 
-  // Prompts pane — the one-line prompt tab bar (2026-07-23 redesign).
-  await page.getByTestId("settings-nav-prompts").click();
-  await expect(page.getByTestId("prompt-row-score")).toBeVisible();
-  await page.screenshot({ path: `${DIR}/settings-prompts.png`, fullPage: true });
-
-  // Job Discovery pane — Scoring (before Automation now) + the Automation toggles.
-  await page.getByTestId("settings-nav-discovery").click();
+  // Scoring pane — the method menu, the batch cap, AND the rubric the AI
+  // method follows, which used to live 2 categories away (2026-10-08 split).
+  await page.getByTestId("settings-nav-scoring").click();
   await expect(page.getByTestId("scoring-mode-picker")).toBeVisible();
   await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
   await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
+  // Audit A1: the queue choice defaults to 1 queue per kind; the parallel hint
+  // says what the cap covers under each choice, and the choice persists.
+  const queueMode = page.getByTestId("ai-queue-mode-select");
+  await expect(queueMode).toHaveValue("per_kind");
+  await expect(page.getByText("How many jobs score at once in the background.")).toBeVisible();
+  await queueMode.selectOption("shared");
+  await expect(page.getByText("How many AI calls run at once.")).toBeVisible();
+  await page.reload();
+  await page.getByTestId("settings-nav-scoring").click();
+  await expect(page.getByTestId("ai-queue-mode-select")).toHaveValue("shared");
+  await page.getByTestId("ai-queue-mode-select").selectOption("per_kind");
+  await expect(page.getByTestId("ai-queue-mode-select")).toHaveValue("per_kind");
+  await page.getByTestId("ai-queue-mode-select").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-queue-mode.png` });
+  await expect(page.getByTestId("model-picker-score")).toBeVisible();
+  await expect(page.getByTestId("prompt-textarea-score")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-scoring.png`, fullPage: true });
+
+  // Resume & cover letter — the 2 generate-on-save toggles and both models.
+  await page.getByTestId("settings-nav-documents").click();
   await expect(page.getByTestId("auto-resume-toggle")).toBeVisible();
+  // The tailored documents' header location defaults to the master resume's (D65),
+  // and it's 1 setting shown in 2 places, each saying so (audit B3).
+  await expect(page.getByTestId("resume-location-select")).toHaveValue("master");
+  await expect(page.getByTestId("resume-location-shared")).toContainText("1 setting");
+  await page.getByTestId("resume-location-select").selectOption("posting");
   await expect(page.getByTestId("auto-cover-toggle")).toBeVisible();
-  await page.screenshot({ path: `${DIR}/settings-overview.png`, fullPage: true });
+  await expect(page.getByTestId("model-picker-tailor")).toBeVisible();
+  await expect(page.getByTestId("model-picker-cover")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-documents.png`, fullPage: true });
+
+  // Applying — the Applier's model, which had no UI at all before the split,
+  // and the Form answers prompt.
+  await page.getByTestId("settings-nav-applying").click();
+  // Applicant details (audit A5): the facts every form is filled from.
+  await expect(page.getByTestId("applicant-details")).toBeVisible();
+  // The same setting, already showing the value picked in the other category.
+  await expect(page.getByTestId("resume-location-select")).toHaveValue("posting");
+  await page.getByTestId("resume-location-applying").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-resume-location-applying.png` });
+  await page.getByTestId("resume-location-select").selectOption("master");
+  await expect(page.getByTestId("applicant-add-auth")).toBeVisible();
+  await expect(page.getByTestId("model-picker-apply")).toBeVisible();
+  await expect(page.getByTestId("prompt-textarea-extract")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-applying.png`, fullPage: true });
+
+  await page.getByTestId("settings-nav-scoring").click();
   // keyword hides the batch cap.
   await page.getByTestId("scoring-mode-keyword").click();
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
@@ -73,9 +103,17 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
 
-  // Networking pane — the master toggle.
+  // Networking pane — the master toggle, and the referral model, which had no
+  // picker anywhere before the split (maintainer, 2026-10-08).
   await page.getByTestId("settings-nav-networking").click();
   await expect(page.getByTestId("networking-toggle")).toBeVisible();
+  await expect(page.getByTestId("model-picker-draft")).toBeVisible();
+  // It says what it governs: the row's opening message is a free template,
+  // and this model runs only on Regenerate.
+  await expect(page.getByTestId("model-picker-draft")).toContainText("Regenerate");
+  await expect(page.getByTestId("prompt-textarea-networker_draft")).toBeVisible();
+  await page.getByTestId("model-picker-draft").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-networking-model.png`, fullPage: true });
 
   // Privacy & Data pane — observability + lifecycle.
   await page.getByTestId("settings-nav-data").click();
@@ -99,7 +137,7 @@ test("switching scoring to AI prompts nothing and spends nothing in-request", as
   // seed a job over the API — in keyword mode it earns a free keyword score
   // only, so it is a guaranteed AI-cache miss.
   await page.goto("/settings");
-  await page.getByTestId("settings-nav-discovery").click();
+  await page.getByTestId("settings-nav-scoring").click();
   await page.getByTestId("scoring-mode-keyword").click();
   await expect(page.getByTestId("scoring-mode-keyword")).toHaveAttribute("data-on", "true");
   await request.post(`${base}/api/jobs`, {
@@ -152,8 +190,7 @@ test("prompts editor round-trips an override", async ({ page, request }) => {
   const auth = { Authorization: `Bearer ${token}` };
 
   await page.goto("/settings");
-  await page.getByTestId("settings-nav-prompts").click();
-  await page.getByTestId("prompt-row-score").click();
+  await page.getByTestId("settings-nav-scoring").click();
   await expect(page.getByTestId("prompt-textarea-score")).toBeVisible();
   await expect(page.getByTestId("route-score")).toBeVisible();
   await page.screenshot({ path: `${DIR}/prompts-editor-open.png`, fullPage: true });
@@ -232,6 +269,18 @@ test("analytics shows cost tiles and a real ledger row; /logs redirects", async 
   const row = page.getByTestId("log-row").filter({ hasText: "cleanup_trash" }).first();
   await expect(row.locator("td").last()).toHaveText("—");
   await page.screenshot({ path: `${DIR}/analytics-ledger.png`, fullPage: true });
+
+  // Audit A1: the Time column shows the end time; the row's timeline holds
+  // when it was queued, started and finished, and who started it.
+  await expect(page.getByRole("columnheader", { name: "Time" })).toBeVisible();
+  await expect(row.getByTestId("log-time")).toHaveAttribute("title", /Queued: .*\nStarted: .*\nFinished: /);
+  await row.getByTestId("log-time").click();
+  const timeline = page.getByTestId("log-timeline").first();
+  await expect(timeline).toContainText("Queued:");
+  await expect(timeline).toContainText("Finished:");
+  await expect(timeline).toContainText(/Ran \d/);
+  await expect(timeline).toContainText("You started this");
+  await page.screenshot({ path: `${DIR}/analytics-ledger-timeline.png`, fullPage: true });
 });
 
 test("a queued operation row offers Stop and cancels to `cancelled` (F-M7)", async ({
@@ -243,6 +292,19 @@ test("a queued operation row offers Stop and cancels to `cancelled` (F-M7)", asy
   // Deterministically queued: the dev seed writes the operation ROW without
   // pumping the runner, so it STAYS queued (the generic enqueue dispatches
   // almost immediately — a race, not a test). FYJ_DEV=1 is set by dev-web.
+  // Any op finishing pumps the runner, which would dispatch the seeded row too, so
+  // start from an idle queue: earlier specs' work must be done (PR #11 CI).
+  await expect
+    .poll(
+      async () => {
+        const ops = (await (
+          await request.get(`${base}/api/operations?limit=200`, { headers: auth })
+        ).json()) as { state: string }[];
+        return ops.filter((o) => o.state === "queued" || o.state === "running").length;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(0);
   const seeded = await request.post(`${base}/api/dev/operations/seed-queued`, { headers: auth });
   expect(seeded.status()).toBe(201);
   const opId = (await seeded.json()).id as string;
@@ -345,13 +407,10 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
   const auth = { Authorization: `Bearer ${token}` };
   // At least one REAL terminal row under the injected ones.
   await request.post(`${base}/api/operations/cleanup_trash`, { headers: auth, data: {} });
-  // Worst-case rows injected deterministically (the apply-stop test's pattern):
-  // an unbroken 650-char verbatim error token on a failed scan that ALSO
-  // carries a 12-source list, a long subject with a long DM detail + linked
-  // profile, a multi-query linkedin_search, and an over-long model id —
-  // everything that used to force the table wide or balloon a collapsed row.
-  // The layout must WRAP all of it, clamp the error preview, and keep every
-  // bulk payload (source list, query list, message) expanded-only.
+  // Worst-case rows, injected: a 650-char unbroken error on a failed scan with
+  // 12 sources, a long subject and DM, a multi-query search and a long model id.
+  // The layout must wrap all of it, clamp the error preview, and keep every bulk
+  // payload expanded-only.
   const longToken = "https://example.com/very-long-unbroken-error-token/" + "x".repeat(600);
   const sourceNames = [
     "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee",
@@ -435,7 +494,7 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
     // …and the full DM text lives in the EXPANDED detail, not the row.
     await expect(wideRow).not.toContainText("would love a referral");
     // Expand via the Started cell — the subject link swallows clicks (external).
-    await wideRow.getByTestId("log-started").click();
+    await wideRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-detail")).toContainText("would love a referral");
 
     // The failed scan's COLLAPSED row: counts only ("37 new jobs" · "12
@@ -462,12 +521,12 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
 
     // EXPANDED, the bulk payloads appear as labeled blocks: the full source
     // list and the FULL verbatim error text.
-    await errRow.getByTestId("log-started").click();
+    await errRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-sources")).toContainText("greenhouse");
     await expect(page.getByTestId("log-sources")).toContainText("jobvite");
     await expect(page.getByTestId("log-error-full")).toContainText(longToken);
     // The query list too, on the linkedin_search row.
-    await searchRow.getByTestId("log-started").click();
+    await searchRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-sources")).toContainText("python developer remote");
 
     // The container never scrolls sideways — with the expanded row open too.
@@ -596,4 +655,88 @@ test("linkedin one-shot job search block lives under Discovery and gates on a co
   // Leave the shared profile clean.
   await page.getByTestId("settings-nav-networking").click();
   await page.getByTestId("networking-toggle").click();
+});
+
+test("a tailor row in the ledger opens the document it wrote", async ({ page, request }) => {
+  // url-less-jobs.md drawing 13. The row used to link out to the posting and
+  // nothing else, so reading your own tailored resume meant finding the card
+  // in the Tracker by hand (maintainer, 2026-10-08).
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  const seeded = await (
+    await request.post(`${base}/api/dev/seed-application`, { headers: auth, data: {} })
+  ).json();
+
+  // The real tailor path needs an LLM, so inject the row the backend would
+  // build for one. Its destination is a REAL application, which is what makes
+  // the hand-off testable end to end.
+  await page.route("**/api/operations?*", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const injected = [
+      {
+        id: "e2e-tailor-artifact",
+        kind: "tailor",
+        state: "succeeded",
+        subject: {
+          label: "Dev Sample Engineer",
+          context: "Devbento",
+          artifact: { application_id: seeded.application_id, kind: "tailored" },
+        },
+        usage: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        result_ref: null,
+      },
+    ];
+    const response = await route.fetch();
+    const body = (await response.json()) as unknown[];
+    await route.fulfill({ response, json: [...injected, ...body] });
+  });
+
+  await page.goto("/analytics");
+  const row = page.getByTestId("log-row").filter({ hasText: "Dev Sample Engineer" }).first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const view = row.getByTestId("log-view-artifact");
+  await expect(view).toHaveText("View resume");
+  await page.screenshot({ path: `${DIR}/ledger-view-artifact.png`, fullPage: true });
+
+  // It hands off to the Tracker's own viewer, where Save, Approve and
+  // Regenerate are real, rather than mounting a second read-only one.
+  await view.click();
+  await expect(page).toHaveURL(/\/applications/);
+  await expect(page.getByTestId("tailored-editor")).toBeVisible({ timeout: 15_000 });
+  await page.screenshot({ path: `${DIR}/ledger-view-artifact-opened.png`, fullPage: true });
+});
+
+test("the new panes render translated, not as an English fallback", async ({ page }) => {
+  // The 2026-10-08 i18n pass filled 369 keys across all 12 non-English
+  // locales. Before it, every string on the new panes fell back to English,
+  // which is silent: nothing errors, it just quietly stays English. This
+  // spec picks 2 locales and 2 of the newest strings and insists they moved.
+  await page.goto("/settings");
+  await page.getByTestId("settings-nav-appearance").click();
+  const picker = page.getByTestId("language-select");
+  await expect(picker).toBeVisible({ timeout: 15_000 });
+
+  await picker.selectOption("es");
+  await expect(page.getByTestId("settings-nav-scoring")).toContainText("Puntuación");
+  await expect(page.getByTestId("settings-nav-documents")).toContainText(
+    "CV y carta de presentación",
+  );
+  await page.getByTestId("settings-nav-applying").click();
+  await expect(page.getByTestId("prompt-scope-extract")).toContainText("CV maestro");
+  await page.screenshot({ path: `${DIR}/i18n-es-applying.png`, fullPage: true });
+
+  await page.getByTestId("settings-nav-appearance").click();
+  await picker.selectOption("ja");
+  await expect(page.getByTestId("settings-nav-scoring")).toContainText("スコアリング");
+  await page.getByTestId("settings-nav-documents").click();
+  await expect(page.getByTestId("prompt-scope-cover")).toContainText("カバーレター");
+  await page.screenshot({ path: `${DIR}/i18n-ja-documents.png`, fullPage: true });
+
+  // Leave the shared e2e profile in English for every other spec.
+  await page.getByTestId("settings-nav-appearance").click();
+  await picker.selectOption("en");
+  await expect(page.getByTestId("settings-nav-scoring")).toContainText("Scoring");
 });

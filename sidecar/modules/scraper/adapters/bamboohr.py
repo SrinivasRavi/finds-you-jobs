@@ -1,17 +1,8 @@
-"""BambooHR adapter — public careers JSON API (no auth, no key).
+"""BambooHR adapter: public careers JSON API, no key.
 
-Claims `{company}.bamboohr.com` careers URLs. One request:
-`GET {company}.bamboohr.com/careers/list` → `{"result": [...]}` with per-row
-`id`, `jobOpeningName`, `departmentLabel`, `location {city, state}`,
-`isRemote`. No JD body in the list payload and no posted date at all —
-BambooHR simply doesn't expose either here. `fetch_detail` fills the JD from
-the per-job endpoint: `GET {company}.bamboohr.com/careers/{id}/detail` →
-`{"jobOpening": {"description": "<html>"}}`. Posting URL:
-`{company}.bamboohr.com/careers/{id}`.
-
-Re-derived from the public payload shape; career-ops's MIT provider is the
-behavioral reference (no code copied — see THIRD_PARTY_NOTICES.md).
-"""
+Claims `{company}.bamboohr.com`. `/careers/list` has no JD and no posted date;
+`fetch_detail` reads `/careers/{id}/detail`. Re-derived from the payload;
+career-ops's MIT provider as behavioral reference (THIRD_PARTY_NOTICES.md)."""
 
 from __future__ import annotations
 
@@ -19,9 +10,11 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
-from .base import path_segments, subdomain_tenant
+from .base import detect_url, path_segments, subdomain_tenant
 
 ID = "bamboohr"
+LABEL = "BambooHR"
+KIND = "ats"
 
 _SUFFIX = ".bamboohr.com"
 _NOT_TENANTS = {"www", "api", "app", "help", "status"}
@@ -50,9 +43,7 @@ def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    return _tenant(entry.url)
+    return detect_url(entry, ID, _tenant)
 
 
 def _location(raw: dict) -> str:

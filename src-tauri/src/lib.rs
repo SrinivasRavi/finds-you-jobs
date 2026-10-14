@@ -12,19 +12,11 @@ use tauri::{Manager, RunEvent, State};
 
 use sidecar::{dev_cwd, init_shell_log, spawn_once, supervise, AppState};
 
-/// Open an external http(s) URL in the OS default browser. The WebView blocks
-/// window.open/target=_blank for external origins, so every outbound link in
-/// the app routes through here (2026-07-11 beta feedback — links didn't open;
-/// re-hit 2026-07-17: "Open posting" did nothing because this command was
-/// missing from the rebuild's shell while the frontend already invoked it).
-///
-/// URLs reaching here come from scraped postings and LLM output — untrusted.
-/// `validate_external_url` strictly parses them, and every platform arm spawns
-/// the launcher with a real argv, never through a shell. Windows in particular
-/// must not use `cmd /C start`: cmd.exe re-tokenizes its line, so `& | ^` in a
-/// URL become command separators (F-H1 injection). `rundll32
-/// url.dll,FileProtocolHandler` opens the default browser with plain argv
-/// semantics instead.
+/// Open an external http(s) URL in the OS browser; the WebView blocks window.open
+/// for external origins. URLs come from scraped postings and LLM output, so
+/// `validate_external_url` parses them strictly, and every platform spawns the
+/// launcher with a real argv, never a shell. Windows uses `rundll32
+/// url.dll,FileProtocolHandler`, since `cmd /C start` re-tokenizes `& | ^` (F-H1).
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     let url = validate_external_url(&url)?;
@@ -39,6 +31,46 @@ fn open_external(url: String) -> Result<(), String> {
     result
         .map(|_| ())
         .map_err(|e| format!("could not open browser: {e}"))
+}
+
+/// Export, step 2 (S-C53): ask where to save a PDF the sidecar rendered into
+/// its exports folder, at the moment of export, and move it there. The copy
+/// runs here, in the process the user granted the folder to by picking it, so
+/// a Downloads folder the sidecar may not write to still works. `None` means
+/// the user cancelled. Only files directly inside the exports folder are moved.
+#[tauri::command]
+async fn save_export(src: String, name: String) -> Result<Option<String>, String> {
+    let src = export_source(&std::env::temp_dir().join("fyj-exports"), &src)?;
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_file_name(&name)
+        .add_filter("PDF", &["pdf"]);
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        dialog = dialog.set_directory(std::path::Path::new(&home).join("Downloads"));
+    }
+    let Some(picked) = dialog.save_file().await else {
+        let _ = std::fs::remove_file(&src);
+        return Ok(None);
+    };
+    let dest = picked.path().to_path_buf();
+    std::fs::copy(&src, &dest).map_err(|e| format!("could not save to {}: {e}", dest.display()))?;
+    let _ = std::fs::remove_file(&src);
+    Ok(Some(dest.display().to_string()))
+}
+
+/// The rendered PDF `save_export` may move: a `.pdf` directly inside `exports`.
+fn export_source(exports: &std::path::Path, src: &str) -> Result<std::path::PathBuf, String> {
+    let src = std::path::Path::new(src)
+        .canonicalize()
+        .map_err(|e| format!("the exported file is gone: {e}"))?;
+    let exports = exports
+        .canonicalize()
+        .map_err(|e| format!("no exports folder: {e}"))?;
+    if src.parent() != Some(exports.as_path())
+        || src.extension().and_then(|e| e.to_str()) != Some("pdf")
+    {
+        return Err("refusing to save a file from outside the exports folder".to_string());
+    }
+    Ok(src)
 }
 
 /// Strict validation for untrusted outbound URLs (F-H1): absolute http(s) with
@@ -67,18 +99,11 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
     Ok(parsed.to_string())
 }
 
-/// Open the user's terminal running the named subscription CLI's login flow.
-/// The terminal's own login shell resolves the binary on PATH (the same env
-/// the sidecar's login-shell probe uses), and each CLI persists its auth
-/// locally, so onboarding's Verify — which reads that persisted auth —
-/// confirms success after they log in. Shown only when Verify reports
-/// `not_logged_in`, so an already-logged-in user never lands here.
-///
-/// `cli` maps through a fixed allowlist to the exact command line — the
-/// frontend can name a CLI, never inject a command. An unknown id is an error
-/// (F-L6): silently falling back to `claude` would open the wrong login flow
-/// and hide the frontend/shell mismatch. `None` still means `claude` (the
-/// historical default).
+/// Open the user's terminal running the named CLI's login flow; the login shell
+/// resolves the binary, and onboarding's Verify then reads the persisted auth.
+/// Shown only on `not_logged_in`. `cli` maps through a fixed allowlist, so the
+/// frontend can name a CLI but never inject a command; an unknown id is an error
+/// (F-L6), and `None` means `claude`.
 #[tauri::command]
 fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
     let login_cmd = match cli.as_deref() {
@@ -109,13 +134,9 @@ fn open_login_terminal(cli: Option<String>) -> Result<(), String> {
         .map_err(|e| format!("could not open terminal: {e}"))
 }
 
-/// Set the macOS dock / app-switcher icon at runtime to the finds-you-jobs logo.
-///
-/// A packaged `.app` gets its dock icon from `Contents/Resources/icon.icns` via
-/// `CFBundleIconFile`, but `pnpm tauri dev` runs an unbundled debug binary that
-/// has no such bundle, so it falls back to the default Tauri square. We embed
-/// the logo bytes and hand them to `NSApplication` directly. Harmless in a
-/// packaged build (it just re-asserts the same logo).
+/// Set the macOS dock icon at runtime. A packaged .app gets it from icon.icns,
+/// but `pnpm tauri dev` runs an unbundled binary that shows the default Tauri
+/// square, so the logo bytes go to NSApplication directly. Harmless when packaged.
 #[cfg(target_os = "macos")]
 fn set_macos_dock_icon() {
     use objc2::{AnyThread, MainThreadMarker};
@@ -203,6 +224,7 @@ pub fn run() {
             get_sidecar_status,
             open_external,
             open_login_terminal,
+            save_export,
         ])
         .setup(|app| {
             // Dev-mode dock icon: the unbundled `tauri dev` binary has no
@@ -255,7 +277,26 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_external_url;
+    use super::{export_source, validate_external_url};
+
+    #[test]
+    fn export_source_takes_only_a_pdf_inside_the_exports_folder() {
+        let root = std::env::temp_dir().join(format!("fyj-export-test-{}", std::process::id()));
+        let exports = root.join("fyj-exports");
+        std::fs::create_dir_all(&exports).unwrap();
+        let pdf = exports.join("cv.pdf");
+        let txt = exports.join("notes.txt");
+        let outside = root.join("secret.pdf");
+        for f in [&pdf, &txt, &outside] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        assert!(export_source(&exports, pdf.to_str().unwrap()).is_ok());
+        assert!(export_source(&exports, txt.to_str().unwrap()).is_err());
+        assert!(export_source(&exports, outside.to_str().unwrap()).is_err());
+        let sneaky = exports.join("..").join("secret.pdf");
+        assert!(export_source(&exports, sneaky.to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn accepts_clean_http_and_https() {

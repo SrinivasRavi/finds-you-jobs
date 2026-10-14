@@ -1,43 +1,16 @@
-"""Adapter contract — the career-ops provider model, typed.
+"""Adapter contract: the career-ops provider model, typed.
 
-An adapter is a module (not a class) exposing:
-
-    ID: str                                   # source_adapter value on every job
-    def detect(entry: SourceEntry) -> str     # claim key ("" = not mine)
-    def fetch(entry, fetcher) -> list[NormalizedJob]
-
-`detect` returns the tenant/host part of the source key (e.g. the Greenhouse
-board slug) so diagnostics read `greenhouse:gleanwork`. Adapters normalize and
-nothing else: no filtering, no dedup, no quality scoring — the shared pipeline
-(`scraper.scan`) does that for every source. A description is a hard
-requirement (maintainer decision, description-gap closure, 2026-09): every
-adapter either lands the JD in the same list request (declared with the
-module-level `INLINE_DESCRIPTION = True` flag — Greenhouse `content=true`,
-Workable `details=true`, Lever/Ashby native `descriptionPlain`, ...) or
-implements `fetch_detail(job, fetcher) -> str` for the scan's enrich phase to
-call per row (BambooHR, Breezy, SmartRecruiters, Workday, LinkedIn guest).
-`provides_description()` below checks every registered adapter does one or
-the other.
-
-**Two source shapes (discovery-expansion 2026-07-17).**
-
-- *Enumerate* sources (every ATS + keyless board) list a company's or board's
-  whole feed with `fetch(entry, fetcher)`. The shared pipeline's title/location
-  filters then narrow the result.
-- *Search* sources (LinkedIn/Indeed/Naukri) can't enumerate the whole site —
-  the query IS the filter, applied server-side. They additionally expose
-  `search(entry, prefs, fetcher) -> list[NormalizedJob]`, building queries from
-  the user's role aliases (`prefs.title_allow`) × locations
-  (`prefs.location_allow`). `scan()` calls `search` when present, else `fetch`.
-  The same downstream filter chain still runs — the query reduces volume; the
-  local filters refine — so behavior stays consistent across shapes.
-
-Registry + auto-detection live in `adapters/__init__.py`.
-"""
+An adapter is a module exposing `ID`, `LABEL`, `KIND`, `detect(entry) -> str`
+(the claim key, "" for not mine) and `fetch(entry, fetcher)`. Adapters only
+normalize; `scraper.scan` filters and dedups. Each either sets
+`INLINE_DESCRIPTION = True` or implements `fetch_detail` (checked by
+`provides_description`). Optional `fetch_posting(url, fetcher)` serves 1 pasted
+URL. Search sources (LinkedIn, Indeed, Naukri) add `search(entry, prefs,
+fetcher)`, built from role aliases × locations; `scan()` prefers it."""
 
 from __future__ import annotations
 
-from collections.abc import Container
+from collections.abc import Callable, Container
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -47,9 +20,15 @@ from ..types import NormalizedJob, ScanPrefs
 
 
 class Adapter(Protocol):
-    """Structural type for an adapter module (checked in tests, not at runtime)."""
+    """Structural type for an adapter module (checked in tests, not at runtime).
+    `LABEL` and `KIND` are its row in Settings › Discover jobs; `KIND` is ats,
+    board, search or fallback. Optional: `BOARD_URLS`; a keyed adapter adds
+    `CREDENTIAL` and `DEFAULT_SOURCES`, and `SUB_SOURCE_*` when each entry is
+    its own toggle (F-P6)."""
 
     ID: str
+    LABEL: str
+    KIND: str
 
     def detect(self, entry: SourceEntry) -> str: ...
 
@@ -77,11 +56,8 @@ def provides_description(adapter: object) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Tenant-key helpers (duplication audit D-M6). Every ATS adapter derives its
-# board/org/account key from the source URL, and each was re-deriving the same
-# two idioms by hand. These are the one copy; adapters still own their host
-# validation (allowlist, anchored regex, reserved segments) — only the parsing
-# is shared.
+# Tenant-key helpers (D-M6): the 1 copy of the URL parsing every ATS adapter did
+# by hand. Adapters still own their host validation.
 # ---------------------------------------------------------------------------
 
 
@@ -107,3 +83,26 @@ def subdomain_tenant(url: str, suffix: str, reserved: Container[str] = ()) -> st
         return ""
     sub = host[: -len(suffix)]
     return "" if (not sub or "." in sub or sub in reserved) else sub
+
+
+# ---------------------------------------------------------------------------
+# Shared `detect()` bodies (audit D-M17). An entry typed for another adapter is
+# never claimed; the rest is the 2 shapes most adapters repeat.
+# ---------------------------------------------------------------------------
+
+
+def detect_url(entry: SourceEntry, adapter_id: str, tenant: Callable[[str], str]) -> str:
+    """Claim an entry by its URL's tenant key (`""` when the URL has none)."""
+    if (entry.type and entry.type != adapter_id) or not entry.url:
+        return ""
+    return tenant(entry.url)
+
+
+def detect_board(entry: SourceEntry, adapter_id: str, claim: str, hosts: Container[str]) -> str:
+    """Claim a whole-site job board named by `board = <id>` or by its host."""
+    if entry.type and entry.type != adapter_id:
+        return ""
+    if entry.board == adapter_id:
+        return claim
+    host = urlsplit(entry.url).netloc.lower() if entry.url else ""
+    return claim if host in hosts else ""

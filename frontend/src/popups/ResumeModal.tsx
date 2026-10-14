@@ -1,24 +1,22 @@
-// The `openResumeModal` trio — one shared component switched by `kind`
-// (US-RES-01, US-RES-02, US-CL-01).
-//   master  → single-column editor, Preview⇄Raw toggle, MASTER pill, Upload PDF.
-//   tailored→ two-column (master read-only | tailored editable), TAILORED pill,
-//             Generate at the top, fabrication-guard NOTES rail, stale hint.
-//   cover   → single-column tailored editor, COVER LETTER pill.
-// Preview is ONE directly-editable rendered surface (contentEditable WYSIWYG-
-// lite; markdown stays the document of record — see shell/mdHtml.ts); Raw is
-// the same pane as markdown source. The variant box is always editable, so a
-// user can paste their own (from their own ChatGPT/Gemini). packetState only
-// gates the generating spinner.
+// The resume modal trio, 1 component switched by `kind` (US-RES-01/02, US-CL-01):
+// master (editor, Upload PDF), tailored (master read-only beside the editable
+// variant, Generate on top, notes rail) and cover. Preview is 1 editable rendered
+// surface over markdown (shell/mdHtml.ts); the variant box is always editable, so
+// a user can paste their own.
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../api/index";
+import { ApiError } from "../api/real/transport";
 
 import type { Application, ApplicationDocument, PacketState, Profile } from "../api/types";
 import { Icon } from "../shell/icons";
+import { useBrowserInstall } from "../shell/BrowserDownload";
+import { downloadDocument, downloadDocumentOrReport } from "../shell/downloadDocument";
 import { MarkdownEditor } from "../shell/MarkdownEditor";
 import { Modal } from "../shell/Modal";
+import { ATTACH_ACCEPT, EXTRACT_ACCEPT } from "../shell/uploadFormats";
 
 export type ResumeModalKind = "master" | "tailored" | "cover";
 
@@ -56,12 +54,9 @@ function PacketPill({ state }: { state: PacketState }) {
   );
 }
 
-/**
- * Share dropdown (US-RES-01/02, US-CL-01) — header button next to ×:
- * "Copy <this document> to clipboard" (Markdown, for ATS forms) + "Export to PDF"
- * (browser print → Save as PDF; real selectable text). `what` names the document
- * so the copy action is unambiguous ("Copy tailored resume to clipboard").
- */
+/** Share dropdown (US-RES-01/02, US-CL-01): copy the document as Markdown, for
+ * ATS forms, or export to PDF through the browser's print. `what` names the
+ * document so the copy action is unambiguous. */
 function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what: string }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -69,6 +64,12 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
   const [exported, setExported] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // Chromium isn't bundled; a coded refusal offers the download (A16).
+  const [browserNeeded, setBrowserNeeded] = useState(false);
+  const install = useBrowserInstall();
+  useEffect(() => {
+    if (install.state === "ready") setExportError(null);
+  }, [install.state]);
   return (
     <div className="relative">
       <button
@@ -101,15 +102,25 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
             data-testid="share-export-pdf"
             disabled={exporting}
             onClick={() => {
-              // The webview can't print or download — the sidecar renders the
-              // PDF (real selectable text) straight into ~/Downloads.
+              // The webview can't print or download: the sidecar renders the
+              // PDF (real selectable text) and the app asks where to save it.
               setExporting(true);
               setExportError(null);
+              setExported(null);
               void Promise.resolve(api.exportPdf(getMarkdown(), what))
-                .then((path) => setExported(path))
-                .catch((e: unknown) =>
-                  setExportError(e instanceof Error ? e.message : t("popups.resume.share.exportFailed")),
-                )
+                .then((path) => {
+                  if (path) setExported(path);
+                  setBrowserNeeded(false);
+                })
+                .catch((e: unknown) => {
+                  if (e instanceof ApiError && e.coded?.code === "browser_missing") {
+                    setBrowserNeeded(true);
+                    install.reset();
+                    setExportError(t("popups.resume.share.browserMissing"));
+                    return;
+                  }
+                  setExportError(e instanceof Error ? e.message : t("popups.resume.share.exportFailed"));
+                })
                 .finally(() => setExporting(false));
             }}
             className="block w-full px-3 py-2 text-left text-[12.5px] text-ink-2 hover:bg-surface-2 disabled:opacity-50"
@@ -119,7 +130,7 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
               : exported
                 ? t("popups.resume.share.exported")
                 : t("popups.resume.share.exportPdf")}
-            <span className="mt-0.5 block break-all text-[10.5px] text-ink-4" data-testid="share-export-result">
+            <span className="mt-0.5 block break-words text-[10.5px] text-ink-4" data-testid="share-export-result">
               {exportError
                 ? exportError
                 : exported
@@ -127,6 +138,24 @@ function ShareDropdown({ getMarkdown, what }: { getMarkdown: () => string; what:
                   : t("popups.resume.share.exportHint")}
             </span>
           </button>
+          {browserNeeded ? (
+            <div className="border-t border-border px-3 py-2 text-[11px] text-ink-3" data-testid="share-browser">
+              {install.state === "downloading" ? (
+                t("popups.resume.share.downloadingBrowser")
+              ) : install.state === "ready" ? (
+                t("popups.resume.share.browserReady")
+              ) : (
+                <button
+                  data-testid="share-download-browser"
+                  onClick={install.start}
+                  className="inline-flex h-[24px] items-center rounded-7 border border-border-2 bg-surface px-2 text-[11.5px] font-medium text-ink-2 hover:bg-surface-3"
+                >
+                  {t("popups.resume.share.downloadBrowser")}
+                </button>
+              )}
+              {install.error ? <span className="mt-1 block break-words text-ink-4">{install.error}</span> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -164,19 +193,10 @@ function SubmittedDocViewer({ doc }: { doc: ApplicationDocument }) {
     doc.mime_type.startsWith("image/");
 
   function download() {
-    api
-      .fetchDocument(doc.document_id)
-      .then((blob) => {
-        const dl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = dl;
-        a.download = doc.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(dl);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    // This viewer renders its own error line, so it keeps the rejecting form.
+    void downloadDocument(doc).catch((e: unknown) =>
+      setError(e instanceof Error ? e.message : String(e)),
+    );
   }
 
   if (error) {
@@ -220,25 +240,7 @@ function DownloadDocButton({ doc }: { doc: ApplicationDocument }) {
   return (
     <button
       data-testid="submitted-doc-download-btn"
-      onClick={() => {
-        void api
-          .fetchDocument(doc.document_id)
-          .then((blob) => {
-            const dl = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = dl;
-            a.download = doc.filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(dl);
-          })
-          .catch((e: unknown) => {
-            // Never a silent no-op (2026-07-24 graceful-failure audit).
-            console.error("[finds-you-jobs] document download failed:", e);
-            window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: e }));
-          });
-      }}
+      onClick={() => downloadDocumentOrReport(doc)}
       className="inline-flex h-[28px] items-center gap-1 rounded-7 border border-border-2 bg-surface px-2.5 text-[12px] font-medium text-ink-2 hover:bg-surface-3"
     >
       {t("popups.resume.submittedDoc.download")}
@@ -251,7 +253,7 @@ const MODE_LABEL: Record<Mode, string> = {
   raw: "popups.resume.mode.raw",
 };
 
-function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+export function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   const { t } = useTranslation();
   return (
     <div className="inline-flex overflow-hidden rounded-7 border border-border text-[11.5px]">
@@ -272,15 +274,6 @@ function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void 
   );
 }
 
-// Every format the sidecar can EXTRACT (master resume → editor) or STORE as a
-// binary attachment (tailored/cover → submitted document). One list so all
-// three uploaders offer the same set (pdf/docx/odt/pages/txt/md/rtf/doc).
-const UPLOAD_ACCEPT =
-  ".pdf,.docx,.odt,.pages,.txt,.md,.rtf,.doc,application/pdf," +
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
-  "application/vnd.oasis.opendocument.text,application/vnd.apple.pages," +
-  "text/plain,text/markdown,application/rtf,application/msword";
-
 /** The shared "Upload" control (icon + short label). It only PICKS a file and
  *  hands it to `onFile`; the caller decides what to do — extract-to-editor for
  *  the master resume, attach-as-submitted-document for the tailored / cover
@@ -290,11 +283,14 @@ function UploadButton({
   busy,
   error,
   testid,
+  accept,
 }: {
   onFile: (file: File) => void;
   busy: boolean;
   error: string | null;
   testid: string;
+  /** Extract-into-the-editor and attach-as-submitted take different sets. */
+  accept: string;
 }) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -303,7 +299,7 @@ function UploadButton({
       <input
         ref={inputRef}
         type="file"
-        accept={UPLOAD_ACCEPT}
+        accept={accept}
         data-testid={`${testid}-input`}
         className="hidden"
         onChange={(e) => {
@@ -335,24 +331,7 @@ function UploadButton({
  *  name to download it verbatim; ✕ detaches it. */
 function AttachedDocChip({ doc, onRemove }: { doc: ApplicationDocument; onRemove: () => void }) {
   const { t } = useTranslation();
-  const download = () => {
-    void api
-      .fetchDocument(doc.document_id)
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = doc.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      })
-      .catch((e: unknown) => {
-        console.error("[finds-you-jobs] document download failed:", e);
-        window.dispatchEvent(new CustomEvent("fyj:mutation-error", { detail: e }));
-      });
-  };
+  const download = () => downloadDocumentOrReport(doc);
   return (
     <span
       data-testid="attached-doc-chip"
@@ -478,7 +457,9 @@ export function ResumeModal({
   // As large as a dialog can read without becoming a fullscreen takeover: the
   // shell clamps to 96vw / 94vh, backdrop + × stay visible (2026-07-12 beta
   // feedback, twice — these carry a lot of text; give them the room).
-  const width = kind === "tailored" ? 1840 : kind === "cover" ? 1480 : 1100;
+  // Both single-column kinds take the same size; only the 2-column tailored
+  // view needs the full width (maintainer, 2026-10-08: few standard sizes).
+  const size = kind === "tailored" ? "full" : "xl";
 
   // Right-aligned control cluster, rendered beside the pane it controls: in the
   // modal header for master/cover, in the tailored pane's own header row for the
@@ -503,6 +484,7 @@ export function ResumeModal({
         busy={ingesting}
         error={ingestError}
         testid="upload-doc-master"
+        accept={EXTRACT_ACCEPT}
       />
       <ModeToggle mode={mode} setMode={setMode} />
     </div>
@@ -518,6 +500,7 @@ export function ResumeModal({
           busy={attaching}
           error={attachError}
           testid="upload-doc-variant"
+          accept={ATTACH_ACCEPT}
         />
       ) : null}
       <ModeToggle mode={mode} setMode={setMode} />
@@ -759,7 +742,7 @@ export function ResumeModal({
     <Modal
       title={title}
       onClose={onClose}
-      width={width}
+      size={size}
       footer={footer}
       headerExtra={
         showEditor && value ? (

@@ -1,15 +1,8 @@
-"""Salary-string parsing — the prerequisite the salary filter needed.
+"""Salary-string parsing for the salary filter.
 
-Adapters carry `NormalizedJob.salary` as free text verbatim from the source
-("$120k–$150k", "€60,000", "₹12L–₹18L per annum", "$50/hr"). A min/max
-filter is only meaningful over a parsed range, so this module turns that
-text into an annualized (amount_min, amount_max, currency) triple — and
-returns None the moment it isn't confident (no number, ambiguous units).
-The filter treats None as "no signal → pass" (rank-don't-gate), so an
-unparsed string can never cost the user a real lead.
-
-Zero deps, zero LLM — same contract as the rest of the module.
-"""
+Turns free text ("$120k–$150k", "₹12L–₹18L per annum", "$50/hr") into an
+annualized (min, max, currency), or None when unsure; the filter passes None
+(rank, don't gate). 0 deps, 0 LLM."""
 
 from __future__ import annotations
 
@@ -69,14 +62,9 @@ class SalaryRange:
 
 
 def parse_salary(text: str) -> SalaryRange | None:
-    """Best-effort parse; None whenever the text carries no usable number.
-
-    Confidence rules: small unscaled numbers are noise ("5 days", "40 hrs"),
-    not pay — skipped. Multiple amounts collapse to the widest range
-    (min..max of everything parsed): wide is the conservative direction for
-    a pass/fail gate — it can only make the filter pass more, never silently
-    drop a lead over a mis-read bonus figure.
-    """
+    """Best-effort parse, None without a usable number. Small unscaled numbers are
+    noise; multiple amounts collapse to the widest range, which can only make the
+    filter pass more."""
     if not text.strip():
         return None
 

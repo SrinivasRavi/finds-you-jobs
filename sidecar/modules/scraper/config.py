@@ -1,54 +1,11 @@
-"""Portals config — the career-ops `portals.yml` model, as stdlib TOML.
+"""Portals config: the career-ops `portals.yml` model, as stdlib TOML.
 
-The user lists company careers URLs and board feeds; the right adapter claims
-each entry from its URL shape (auto-detection). TOML over YAML is a deliberate
-lean-by-design call: `tomllib` is stdlib, the repo carries zero runtime deps,
-and the config is flat enough that the format doesn't matter. JSON is accepted
-too for programmatic callers.
-
-Shape (see `sidecar/modules/scraper/portals.example.toml`):
-
-    [[sources]]
-    url = "https://boards.greenhouse.io/gleanwork"
-    company = "Glean"            # optional display-name override
-
-    [[sources]]
-    board = "remoteok"           # boards: remoteok | remotive | hackernews |
-                                 #         arbeitnow | themuse
-
-    [[sources]]
-    url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
-    type = "rss"                 # optional explicit adapter id
-
-    [filters.title]
-    allow = ["software engineer"]
-    block = ["staff"]
-    [filters.location]
-    allow = ["india", "remote"]
-    block = []
-    always_allow = []
-    [filters.company]
-    block = ["Example Corp"]     # cross-cutting exclude, not a curated-list removal —
-                                 # see ScanPrefs.company_block
-    [filters.content]
-    allow = []                  # description keywords; block wins over allow
-    block = ["unpaid internship"]
-    [[filters.content.by_title_keyword]]
-    title = ["manager"]          # rule applies only when title matches
-    allow = []
-    block = ["on-site"]
-    [filters.visa]
-    enabled = false              # drop explicit sponsorship denials
-    phrases = []                 # empty = filters.DEFAULT_VISA_PHRASES
-    [filters.salary]
-    min = 0                      # annual, 0 = off; unstated salary passes
-    max = 0
-    currency = "USD"             # postings in a different currency pass
-    [scan]
-    max_age_days = 0             # 0 = off
-    per_source_cap = 0           # 0 = uncapped (never self-throttle by default)
-    search_terms = []            # extra user-authored terms for search sources
-"""
+The user lists careers URLs and board feeds; the right adapter claims each from
+its URL shape. TOML because `tomllib` is stdlib; JSON is accepted too. Each
+`[[sources]]` has a `url` or a `board`, plus optional `company` and `type`;
+`[filters.*]` (title, location, company, content, visa, salary) and `[scan]`
+tables follow. The full annotated shape is
+`sidecar/modules/scraper/portals.example.toml`."""
 
 from __future__ import annotations
 

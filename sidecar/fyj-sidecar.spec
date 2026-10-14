@@ -42,6 +42,10 @@ datas = [
     (os.path.join(SIDECAR, "modules", "networker", "draft-referral-skill.md"), "sidecar/modules/networker"),
     (os.path.join(SIDECAR, "modules", "networker", "playbooks"), "sidecar/modules/networker/playbooks"),
     (os.path.join(SIDECAR, "modules", "scorer", "score-job-skill.md"), "sidecar/modules/scorer"),
+    # The gazetteer the location resolver reads: 4 gzipped GeoNames cuts, 0.95 MB
+    # total, opened by path at runtime (sidecar/modules/geo/gazetteer.py).
+    (os.path.join(SIDECAR, "modules", "geo", "data"), "sidecar/modules/geo/data"),
+    (os.path.join(SIDECAR, "modules", "titles", "data"), "sidecar/modules/titles/data"),
     (os.path.join(SIDECAR, "modules", "tailorer", "tailor-resume-skill.md"), "sidecar/modules/tailorer"),
     (os.path.join(SIDECAR, "modules", "coverletterer", "cover-letter-skill.md"), "sidecar/modules/coverletterer"),
     # Skyvern-derived DOM utility script the Applier's browser agent injects —

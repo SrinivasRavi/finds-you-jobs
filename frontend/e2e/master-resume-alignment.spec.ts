@@ -4,22 +4,14 @@
 // same pixel (maintainer 2026-07-28). This measures its bounding box on each
 // tab and asserts they coincide, and captures a header screenshot per tab.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test, type Page } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/master-resume-alignment";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test.beforeEach(async ({ request }) => {
   // A saved profile lands us on the real tabs (not onboarding).
