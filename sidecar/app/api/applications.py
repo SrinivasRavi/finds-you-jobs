@@ -700,12 +700,13 @@ def start_apply(
         has_master = repos.profile.get_current() is not None
         has_facts = has_application_profile(repos)
         has_read = has_extracted_profile(repos)
+        reading = repos.operations.any_in_flight("extract")
 
     if not has_facts:
         # Applicant details must be confirmed once before the first apply (audit A5).
         # With nothing read yet, start reading the resume so the form arrives prefilled.
         engines = _engines(request)
-        if has_master and not has_read and (
+        if has_master and not has_read and not reading and (
             engines is None or engines.resolve("extract") is not None
         ):
             runner.submit("extract", {}, requested_by="user")

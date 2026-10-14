@@ -873,6 +873,13 @@ def test_apply_without_facts_is_refused_and_starts_reading_them(
     assert kinds == ["extract"]
     assert client.get(f"/api/applications/{app_id}/apply-runs", headers=AUTH).json() == []
 
+    # A read already queued is not bought twice by a second click (PR #11 review).
+    with app.state.db.repos() as repos:
+        repos.operations.create("extract", {})
+    again = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={})
+    assert again.status_code == 409
+    assert kinds == ["extract"]
+
 
 def test_a_retried_apply_without_facts_fails_before_any_run_row(migrated_db) -> None:
     """The retry path reaches the op without the route, so the op guards too."""
