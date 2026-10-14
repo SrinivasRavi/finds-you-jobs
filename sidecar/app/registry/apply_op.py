@@ -29,6 +29,7 @@ from sidecar.packages.jobapplier import (
     PageState,
     UrlPolicy,
     classify,
+    is_closed_target,
     observe,
     run_apply,
     submit_application,
@@ -158,6 +159,9 @@ def has_application_profile(repos: Any) -> bool:
 
     profile = repos.profile.get_current()
     return profile is not None and details_confirmed(profile.application_profile)
+
+
+_WINDOW_CLOSED = "the Applier window was closed before the run finished"
 
 
 def _run_dir(run_id: str) -> Path:
@@ -295,6 +299,12 @@ async def _apply_async(
             if is_browser_missing(str(exc)):
                 raise BrowserMissingError(BROWSER_MISSING_DETAIL) from exc
             raise
+        close_after = ctx.input_snapshot.get("dev_close_tab_after_s") if dev else None
+        if close_after is not None:
+            # The e2e's stand-in for the user closing the window mid-run (AUD-10).
+            asyncio.get_running_loop().call_later(
+                float(close_after), lambda: asyncio.ensure_future(page.close())
+            )
         try:
             try:
                 await render_resume_pdf_async(
@@ -379,6 +389,18 @@ async def _apply_async(
                     blockers=[
                         {"kind": "browser_missing", "detail": str(exc), "field_label": ""}
                     ],
+                )
+            elif is_closed_target(exc):
+                finalize_run_interrupted(
+                    db,
+                    run_id,
+                    _WINDOW_CLOSED,
+                    blockers=[{"kind": "window_closed", "detail": "", "field_label": ""}],
+                )
+                # The user closed it: a worded outcome, not a raw exception in the ledger.
+                return OperationOutcome(
+                    result_ref={"run_id": run_id, "status": "interrupted"},
+                    error=_WINDOW_CLOSED,
                 )
             else:
                 finalize_run_failed(db, run_id, f"{type(exc).__name__}: {exc}")
@@ -615,20 +637,24 @@ def finalize_run_failed(
         )
 
 
-def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
+def finalize_run_interrupted(
+    db: Database, run_id: str, summary: str, *, blockers: list[dict[str, str]] | None = None
+) -> None:
     """Land the run row `interrupted` when a queued `apply` op is cancelled before
-    its entrypoint runs; otherwise it stays active and Apply keeps returning it.
-    Guarded to active rows, so a no-op if the entrypoint finalized it first."""
+    its entrypoint runs, or its window closed; otherwise it stays active and Apply
+    keeps returning it. Guarded to active rows, so a no-op if finalized first."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
         if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
+        fields: dict[str, Any] = {} if blockers is None else {"blockers": blockers}
         repos.apply_runs.update(
             run_id,
             status="interrupted",
             phase="interrupted",
             summary=summary,
             ended_at=now_utc(),
+            **fields,
         )
 
 

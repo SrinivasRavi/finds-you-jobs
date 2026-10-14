@@ -420,3 +420,26 @@ async def test_browser_crash_during_captcha_wait(
         
     assert result.status is ApplyStatus.BLOCKED
     assert "browser closed while waiting" in result.summary
+
+
+async def test_a_closed_window_is_a_coded_interruption(tmp_path: Path) -> None:
+    """AUD-10, Applier half: the user closing the window must land a coded
+    `window_closed` blocker the panel can put in words, not Playwright's text."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake resume")
+    request = _request(tmp_path, _fixture_url("jd.html"), resume)
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        await page.close()  # the user shut the tab before the run reached it
+        try:
+            result = await run_apply(
+                page, request, FakeApplyEngine([]), lambda _e: None, ApplyControl(),
+                policy=UrlPolicy(allow_local=True),
+            )
+        finally:
+            await browser.close()
+
+    assert result.status is ApplyStatus.INTERRUPTED
+    assert [b.kind for b in result.blockers] == ["window_closed"]
+    assert "Target" not in result.summary and "closed" in result.summary

@@ -879,6 +879,40 @@ async def test_a_submit_after_doubt_reads_first_and_records_the_send(
     assert any(p.get("event") == "apply.user_submitted" and not p["clicked"] for p in payloads)
 
 
+def test_a_window_closed_mid_run_is_coded_never_raw(app_client, monkeypatch) -> None:
+    """AUD-10, Applier half: closing the Applier window while the resume PDF
+    renders raised TargetClosedError, and its text became the run's summary."""
+    from playwright._impl._errors import TargetClosedError
+
+    from sidecar.app.registry import apply_op
+
+    async def closed(*_a, **_k):
+        raise TargetClosedError("Target page, context or browser has been closed")
+
+    monkeypatch.setattr(apply_op, "render_resume_pdf_async", closed)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
+    run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
+        "dev": {"engine_script": [_action("finish", reason="x")],
+                "allow_local": True, "headed": False, "review_wait_s": 0}
+    }).json()
+    done = _wait_terminal(client, run["id"])
+
+    assert done["status"] == "interrupted"
+    assert [b["kind"] for b in done["blockers"]] == ["window_closed"]
+    assert "TargetClosedError" not in done["summary"]
+    assert "Target page" not in done["summary"]
+    deadline = time.monotonic() + 30
+    op: dict = {}
+    while time.monotonic() < deadline:
+        op = client.get(f"/api/operations/{done['operation_id']}", headers=AUTH).json()
+        if op.get("state") not in ("queued", "running"):
+            break
+        time.sleep(0.2)
+    assert "TargetClosedError" not in (op.get("error") or "")
+    assert "window was closed" in (op.get("error") or "")
+
+
 def test_user_submit_is_409_once_the_browser_is_gone(app_client) -> None:
     """No review window means no live page; say so instead of a silent no-op."""
     app, client = app_client

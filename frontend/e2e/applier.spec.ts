@@ -430,3 +430,81 @@ test("a Submit with no confirmation yet warns, and the next Submit reads before 
   );
   await page.screenshot({ path: `${DIR}/submit-settled.png`, fullPage: true });
 });
+
+const CLOSING_FORM = pathToFileURL(
+  join(SPEC_DIR, "..", "..", "sidecar", "tests", "packages", "jobapplier", "fixtures", "closing_form.html"),
+).href;
+
+test("closing the Applier window mid-run says so in words, never Playwright's text (AUD-10)", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.patch(`${base}/api/profile/application-profile`, {
+    headers: auth,
+    data: { name: "E2E Candidate", email: "e2e@example.com", location: "Bengaluru, Karnataka, India" },
+  });
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "",
+        title: "Closed Window Engineer",
+        company: "Hooli",
+        location: "Remote",
+        description: "The tab closes mid-fill.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  const application = await (
+    await request.post(`${base}/api/applications`, {
+      headers: auth,
+      data: { job_id: job.id, generate_resume: false, generate_cover: false },
+    })
+  ).json();
+  const started = await request.post(`${base}/api/applications/${application.id}/apply`, {
+    headers: auth,
+    data: {
+      dev: {
+        form_url: CLOSING_FORM,
+        engine_script: [
+          JSON.stringify({ tool: "fill", element_id: "e2", value: "E2E Candidate" }),
+          JSON.stringify({ tool: "fill", element_id: "e3", value: "e2e@example.com" }),
+          JSON.stringify({ tool: "finish", reason: "filled; review the rest" }),
+        ],
+        allow_local: true,
+        headed: false,
+        // Held for review, then the tab closes: a close the user makes mid-run.
+        review_wait_s: 0,
+        close_tab_after_s: 0.4,
+      },
+    },
+  });
+  expect(started.status(), await started.text()).toBe(202);
+  const run = await started.json();
+  let done: { status: string; blockers: { kind: string }[]; summary: string } | null = null;
+  await expect(async () => {
+    done = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+    expect(done!.status).toBe("interrupted");
+  }).toPass({ timeout: 60_000 });
+  expect(done!.blockers.map((b) => b.kind)).toEqual(["window_closed"]);
+
+  await page.goto("/applications");
+  await page
+    .getByTestId("tracker-card")
+    .filter({ hasText: "Closed Window Engineer" })
+    .getByTestId("card-apply-slot")
+    .click();
+  const panel = page.getByTestId("applier-panel");
+  await expect(panel).toContainText("You closed the Applier window before the run finished. Nothing was submitted.");
+  await expect(panel).not.toContainText("Target");
+  await expect(panel).not.toContainText("window_closed");
+  await page.screenshot({ path: `${DIR}/window-closed.png`, fullPage: true });
+});

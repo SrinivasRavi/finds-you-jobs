@@ -59,6 +59,11 @@ class DeciderEngine(Protocol):
     def decide(self, obs: Observation, request: ApplyRequest) -> Action: ...
 
 
+def is_closed_target(exc: BaseException) -> bool:
+    """Whether a Playwright error means the page, tab or window was closed."""
+    return type(exc).__name__ == "TargetClosedError" or "has been closed" in str(exc)
+
+
 _NO_PROGRESS_OBSERVATIONS = 3  # materially identical observations in a row
 _MAX_CONSECUTIVE_FAILURES = 4  # failed/disallowed actions in a row
 _REDUNDANT_ACTIONS = 3  # verified re-fills of an already-settled field in a row
@@ -247,14 +252,19 @@ class _Run:
             return await self._run_inner()
         except PlaywrightError as exc:
             # The human closed the browser, or the page died mid-action. Not a
-            # success, not a lie — an interruption (section 8.3).
-            self._emit(ApplyEvent(ApplyEventType.INTERRUPTED, {"reason": str(exc)}))
-            self._set_phase(ApplyPhase.INTERRUPTED)
-            return self._result(
-                ApplyStatus.INTERRUPTED,
-                "the browser closed or the page died before the run finished",
-                None,
+            # success, not a lie — an interruption (section 8.3), coded so the
+            # panel says it in words (AUD-10).
+            closed = is_closed_target(exc)
+            kind = "window_closed" if closed else "page_died"
+            summary = (
+                "the Applier window was closed before the run finished"
+                if closed
+                else "the page stopped responding before the run finished"
             )
+            self._blockers.append(Blocker(kind=kind, detail=summary))
+            self._emit(ApplyEvent(ApplyEventType.INTERRUPTED, {"reason": kind}))
+            self._set_phase(ApplyPhase.INTERRUPTED)
+            return self._result(ApplyStatus.INTERRUPTED, summary, None)
 
     async def _run_inner(self) -> ApplyResult:
         self._set_phase(ApplyPhase.OPENING)
