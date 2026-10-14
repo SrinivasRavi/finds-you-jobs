@@ -98,6 +98,7 @@ type ApplyEventPayload = {
   action?: string;
   clicked?: boolean;
   confirmed?: boolean;
+  unconfirmed?: boolean;
 };
 
 /** Map one redacted `apply` SSE event to a feed line. Returns null for events
@@ -147,11 +148,22 @@ function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
       return { id, text: i18n.t("popups.applier.feed.readyForHuman"), tone: "warn" };
     case "apply.confirmation_detected":
       return { id, text: i18n.t("popups.applier.feed.confirmationDetected"), tone: "ok" };
-    case "apply.user_submitted":
-      if (p.confirmed) return { id, text: i18n.t("popups.applier.feed.userSubmitConfirmed"), tone: "ok" };
-      return p.clicked
-        ? { id, text: i18n.t("popups.applier.feed.userSubmitUnconfirmed"), tone: "warn" }
-        : { id, text: i18n.t("popups.applier.feed.userSubmitNotFound"), tone: "bad" };
+    case "apply.user_submitted": {
+      const labels = {
+        submitForMe: i18n.t("popups.applier.submitForMe"),
+        iSubmitted: i18n.t("popups.applier.iSubmitted"),
+        didntSubmit: i18n.t("popups.applier.didntSubmit"),
+      };
+      if (p.confirmed) {
+        const key = p.clicked ? "userSubmitConfirmed" : "userSubmitSettled";
+        return { id, text: i18n.t(`popups.applier.feed.${key}`), tone: "ok" };
+      }
+      if (p.unconfirmed) {
+        const key = p.clicked ? "userSubmitUnconfirmed" : "userSubmitPageMoved";
+        return { id, text: i18n.t(`popups.applier.feed.${key}`, labels), tone: "warn" };
+      }
+      return { id, text: i18n.t("popups.applier.feed.userSubmitNotFound"), tone: "bad" };
+    }
     case "apply.interrupted":
       return { id, text: i18n.t("popups.applier.feed.interrupted"), tone: "bad" };
     case "apply.completed":
@@ -160,6 +172,13 @@ function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
       return null;
   }
 }
+
+// How a run was submitted, in words; a code never reaches the screen.
+const EVIDENCE_KEY: Record<string, string> = {
+  user_submitted: "evidenceUserSubmitted",
+  confirmation_detected: "evidenceConfirmationDetected",
+  user_attested: "evidenceUserAttested",
+};
 
 function fmtRemaining(ms: number): string {
   if (ms <= 0) return "0:00";
@@ -238,6 +257,7 @@ export function ApplierPanel({
   // ── Latest evidence screenshot (screenshot_count-1), via authed blob fetch ──
   const shotCount = run?.screenshot_count ?? 0;
   const [shotUrl, setShotUrl] = useState<string | null>(null);
+  const [shotIndex, setShotIndex] = useState(-1);
   const shotUrlRef = useRef<string | null>(null);
   useEffect(() => {
     if (shotCount <= 0) return;
@@ -250,6 +270,7 @@ export function ApplierPanel({
         if (shotUrlRef.current) URL.revokeObjectURL(shotUrlRef.current);
         shotUrlRef.current = url;
         setShotUrl(url);
+        setShotIndex(shotCount - 1);
       })
       .catch(() => {
         /* a not-yet-written screenshot is fine — the count-driven refetch retries */
@@ -371,8 +392,10 @@ export function ApplierPanel({
         {status === "submitted" ? (
           <div className="border-b border-border bg-good-wash px-5 py-2.5 text-[12.5px] font-medium text-good">
             {t("popups.applier.submittedBanner")}
-            {run?.submit_evidence ? (
-              <span className="ml-1 font-normal text-ink-2">{run.submit_evidence}</span>
+            {run && EVIDENCE_KEY[run.submit_evidence] ? (
+              <span className="ml-1 font-normal text-ink-2">
+                {t(`popups.applier.${EVIDENCE_KEY[run.submit_evidence]}`)}
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -417,6 +440,7 @@ export function ApplierPanel({
               {shotUrl ? (
                 <img
                   src={shotUrl}
+                  data-shot-index={shotIndex}
                   alt={t("popups.applier.screenshotAlt")}
                   className="max-h-full max-w-full rounded-md border border-border object-contain"
                 />
@@ -447,6 +471,16 @@ export function ApplierPanel({
                   })
                 : " " + t("popups.applier.neverSubmits")}
             </div>
+            {run?.submit_evidence === "unconfirmed" ? (
+              <div
+                className="mt-2 rounded-md border border-warn bg-surface px-3 py-2 text-[12px] text-ink-2"
+                data-testid="applier-unconfirmed-notice"
+              >
+                {t("popups.applier.unconfirmedNotice", {
+                  submitForMe: t("popups.applier.submitForMe"),
+                })}
+              </div>
+            ) : null}
             {confirmingSubmit ? (
               <div
                 className="mt-3 rounded-md border border-warn bg-surface px-3 py-2"

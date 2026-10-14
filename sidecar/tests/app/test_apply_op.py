@@ -800,6 +800,85 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
     assert card["column"] != "applied"
 
 
+async def _user_submit_on(app_client, html: str, tmp_path: Path, *, evidence: str = "none"):
+    from playwright.async_api import async_playwright
+
+    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.operations import OperationContext
+
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
+    db = app.state.db
+    with db.repos() as repos:
+        run_id = repos.apply_runs.create(
+            app_id, status="ready_for_human", submit_evidence=evidence
+        ).id
+    events: list[dict] = []
+    ctx = OperationContext(
+        kind="apply", input_snapshot={}, db=db, operation_id="op-doubt",
+        publish=events.append,
+    )
+    page_file = tmp_path / "form.html"
+    page_file.write_text(html, encoding="utf-8")
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        try:
+            await page.goto(page_file.as_uri())
+            await _run_user_submit(ctx, run_id, page)
+        finally:
+            await browser.close()
+    with db.repos() as repos:
+        row = repos.apply_runs.get(run_id)
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    return row, card, [e["payload"] for e in events]
+
+
+@pytest.fixture
+def short_submit_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sidecar.packages.jobapplier import submit as submit_mod
+
+    monkeypatch.setattr(submit_mod, "_CONFIRM_POLL_S", 0.05)
+    monkeypatch.setattr(submit_mod, "_CONFIRM_WAIT_S", 0.2)
+    monkeypatch.setattr(submit_mod, "_SETTLE_WAIT_S", 0.3)
+
+
+_SILENT_FORM = (
+    "<html><body><form onsubmit='return false'><input name='a' value='x'>"
+    "<button type='submit'>Submit application</button></form></body></html>"
+)
+
+
+async def test_a_submit_with_no_confirmation_is_recorded_unconfirmed(
+    app_client, short_submit_waits: None, tmp_path: Path
+) -> None:
+    """AUD-4, Applier half: past the click, silence is doubt. The row says so,
+    so the next Submit reads before it clicks."""
+    row, card, payloads = await _user_submit_on(app_client, _SILENT_FORM, tmp_path)
+
+    assert row is not None
+    assert row.submit_evidence == "unconfirmed"
+    assert row.status == "ready_for_human"
+    assert card["column"] != "applied"
+    assert any(p.get("event") == "apply.user_submitted" and p["unconfirmed"] for p in payloads)
+
+
+async def test_a_submit_after_doubt_reads_first_and_records_the_send(
+    app_client, short_submit_waits: None, tmp_path: Path
+) -> None:
+    """The earlier click went through; the page now confirms. No 2nd click."""
+    html = "<html><body><h2>Application received</h2></body></html>"
+    row, card, payloads = await _user_submit_on(
+        app_client, html, tmp_path, evidence="unconfirmed"
+    )
+
+    assert row is not None
+    assert row.status == "submitted"
+    assert row.submit_evidence == "user_submitted"
+    assert card["column"] == "applied"
+    assert any(p.get("event") == "apply.user_submitted" and not p["clicked"] for p in payloads)
+
+
 def test_user_submit_is_409_once_the_browser_is_gone(app_client) -> None:
     """No review window means no live page; say so instead of a silent no-op."""
     app, client = app_client

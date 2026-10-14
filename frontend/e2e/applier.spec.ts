@@ -331,3 +331,102 @@ test("Submit for me sends the form while it waits for review in its tab (audit A
   );
   await page.screenshot({ path: `${DIR}/review-hold-submitted.png`, fullPage: true });
 });
+
+const SLOW_CONFIRM_FORM = pathToFileURL(
+  join(SPEC_DIR, "..", "..", "sidecar", "tests", "packages", "jobapplier", "fixtures", "slow_confirm_form.html"),
+).href;
+
+test("a Submit with no confirmation yet warns, and the next Submit reads before it clicks (audit 8.2)", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.patch(`${base}/api/profile/application-profile`, {
+    headers: auth,
+    data: { name: "E2E Candidate", email: "e2e@example.com", location: "Bengaluru, Karnataka, India" },
+  });
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "",
+        title: "Slow Confirm Engineer",
+        company: "Initech",
+        location: "Remote",
+        description: "The ATS confirms 25 s after Submit.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  const application = await (
+    await request.post(`${base}/api/applications`, {
+      headers: auth,
+      data: { job_id: job.id, generate_resume: false, generate_cover: false },
+    })
+  ).json();
+  const started = await request.post(`${base}/api/applications/${application.id}/apply`, {
+    headers: auth,
+    data: {
+      dev: {
+        form_url: SLOW_CONFIRM_FORM,
+        engine_script: [
+          JSON.stringify({ tool: "fill", element_id: "e2", value: "E2E Candidate" }),
+          JSON.stringify({ tool: "finish", reason: "filled; review the rest" }),
+        ],
+        allow_local: true,
+        headed: false,
+        review_wait_s: 150,
+      },
+    },
+  });
+  expect(started.status(), await started.text()).toBe(202);
+  const run = await started.json();
+  await expect(async () => {
+    const snap = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+    expect([snap.status, snap.phase], JSON.stringify(snap.blockers) + snap.summary).toEqual(["running", "ready_for_human"]);
+  }).toPass({ timeout: 60_000 });
+
+  await page.goto("/applications");
+  await page
+    .getByTestId("tracker-card")
+    .filter({ hasText: "Slow Confirm Engineer" })
+    .getByTestId("card-apply-slot")
+    .click();
+  await page.getByTestId("applier-submit-btn").click();
+  await page.getByTestId("applier-submit-confirm-btn").click();
+
+  // 20 s pass with no confirmation: the run is in doubt, and the strip says so.
+  await expect(page.getByTestId("applier-unconfirmed-notice")).toBeVisible({ timeout: 40_000 });
+  await expect(page.getByTestId("applier-panel")).toContainText("it may have gone through");
+  const doubt = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+  expect(doubt.status).toBe("running");
+  expect(doubt.submit_evidence).toBe("unconfirmed");
+  await page.screenshot({ path: `${DIR}/submit-unconfirmed.png`, fullPage: true });
+
+  // The second Submit reads first. The confirmation lands while it reads, so
+  // it records the send and never clicks a second time.
+  await page.getByTestId("applier-submit-btn").click();
+  await page.getByTestId("applier-submit-confirm-btn").click();
+  await expect(async () => {
+    const snap = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+    expect(snap.status).toBe("submitted");
+  }).toPass({ timeout: 60_000 });
+  const done = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+  // Either read caught it: the hold's own watcher, or the 2nd Submit's read.
+  expect(["user_submitted", "confirmation_detected"]).toContain(done.submit_evidence);
+  // The confirmation page is the proof, and the panel shows it last.
+  expect(done.screenshot_count, JSON.stringify(done.screenshots ?? null)).toBeGreaterThan(doubt.screenshot_count);
+  expect(done.summary).not.toContain("clicked 'Submit application'; confirmation detected");
+  await expect(page.getByTestId("applier-unconfirmed-notice")).toHaveCount(0);
+  await expect(page.getByTestId("applier-screenshot").locator("img")).toHaveAttribute(
+    "data-shot-index",
+    String(done.screenshot_count - 1),
+  );
+  await page.screenshot({ path: `${DIR}/submit-settled.png`, fullPage: true });
+});

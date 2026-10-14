@@ -481,9 +481,12 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
     only caller is the request the human made from the review surface. The
     outcome is recorded verbatim, including a failure, and the confirmation
     poll below keeps running either way."""
-    outcome = await submit_application(page)
     db = ctx.db
     assert db is not None
+    with db.repos() as repos:
+        prior = repos.apply_runs.get(run_id)
+    after_doubt = prior is not None and prior.submit_evidence == "unconfirmed"
+    outcome = await submit_application(page, after_doubt=after_doubt)
     with db.repos() as repos:
         fields: dict[str, Any] = {"summary": outcome.note}
         if outcome.final_url:
@@ -491,6 +494,8 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
         if outcome.confirmed:
             fields["status"] = "submitted"
             fields["submit_evidence"] = "user_submitted"
+        elif outcome.unconfirmed:
+            fields["submit_evidence"] = "unconfirmed"
         repos.apply_runs.update(run_id, **fields)
         if outcome.confirmed:
             run = repos.apply_runs.get(run_id)
@@ -506,6 +511,7 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
                     "event": "apply.user_submitted",
                     "clicked": outcome.clicked,
                     "confirmed": outcome.confirmed,
+                    "unconfirmed": outcome.unconfirmed,
                     "note": outcome.note,
                 },
             )
