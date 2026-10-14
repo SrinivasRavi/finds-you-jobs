@@ -311,8 +311,13 @@ def create_app(
         app.state.data_dir = resolved_data_dir
         app.state.browser = browser
 
+        # The autopilot tick enqueues through the same runner as every other caller.
+        from .registry import autopilot_op
+
+        autopilot_op.RUNNER = runner
+
         # Referral Outreach runs on the browser broker's serialized lane, and
-        # its presence gate reads the broker's live surface. Wiring both here
+        # the exception router reads the broker's live surface. Wiring both here
         # activates the broker-backed path; unset, the referral ops self-launch
         # (the pre-broker behaviour). The slugs are the referral package's own
         # runtime values, so nothing vendor-named enters this core module.

@@ -44,7 +44,7 @@ def test_schedules_seeded_disabled(app_client: tuple[FastAPI, TestClient]) -> No
     # scan/score_new seeded OFF (no unattended LLM spend); cleanup_trash +
     # archive_stale_contacts are zero-LLM, zero-network housekeeping → seeded ON.
     assert set(kinds) == {
-        "scan", "score_new", "cleanup_trash", "archive_stale_contacts",
+        "scan", "score_new", "cleanup_trash", "archive_stale_contacts", "autopilot",
     }
     assert not kinds["scan"]["enabled"]
     assert not kinds["score_new"]["enabled"]
@@ -52,6 +52,9 @@ def test_schedules_seeded_disabled(app_client: tuple[FastAPI, TestClient]) -> No
     assert kinds["cleanup_trash"]["enabled"]
     # US-NW-11: zero-LLM, zero-network kanban housekeeping → seeded ON.
     assert kinds["archive_stale_contacts"]["enabled"]
+    # Section 8.10: the tick reads the autopilot switches, all off by default, so
+    # seeded ON it enqueues nothing until the user turns 1 on.
+    assert kinds["autopilot"]["enabled"]
     # US-NW-12 / FR-NW-15: contact_sync is deliberately NOT a schedule any more.
     # It is the only housekeeping op that talks to LinkedIn, and a timer meant it
     # did so with nobody present (`docs/internal/linkedin-addon.md` section 5,

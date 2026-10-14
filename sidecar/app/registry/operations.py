@@ -898,6 +898,7 @@ def default_operation_registry() -> OperationRegistry:
     # the networking package's playwright import cost unless a networking kind is
     # actually wired.
     from .apply_op import apply_entrypoints
+    from .autopilot_op import autopilot_entrypoint
     from .contact_sync_op import contact_sync_entrypoints
     from .linkedin_op import linkedin_entrypoints
     from .networker_ops import networker_entrypoints
@@ -916,6 +917,7 @@ def default_operation_registry() -> OperationRegistry:
             **contact_sync_entrypoints(),  # contact_sync
             **apply_entrypoints(),  # apply (the Applier agent)
             **view_page_entrypoints(),  # view_page (queued watch-surface show)
+            "autopilot": autopilot_entrypoint,  # enqueues work the user put on autopilot
         },
         services={"score": score_service},
     )

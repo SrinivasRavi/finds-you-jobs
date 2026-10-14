@@ -16,7 +16,8 @@ GATED_KINDS: frozenset[str] = frozenset({"send", "discover", "view_page", "apply
 # The rest. `contact_sync` and `linkedin_search` read LinkedIn under their own
 # switches (the sync schedule, `linkedin_search_enabled`), as before this gate.
 UNGATED_KINDS: frozenset[str] = frozenset({
-    "archive_stale_contacts", "cleanup_trash", "contact_sync", "cover", "draft",
+    # `autopilot` only enqueues; each op it enqueues authorizes itself.
+    "autopilot", "archive_stale_contacts", "cleanup_trash", "contact_sync", "cover", "draft",
     "extract", "linkedin_login", "linkedin_search", "scan", "score", "tailor",
 })
 
