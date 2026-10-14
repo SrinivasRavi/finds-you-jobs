@@ -20,12 +20,12 @@ from fastapi.testclient import TestClient
 from sidecar.app.db import Database
 from sidecar.app.main import create_app
 from sidecar.app.registry import networker_ops
+from sidecar.app.registry.autonomy import NotAuthorized
 from sidecar.app.registry.operations import (
     OperationContext,
     OperationOutcome,
     OperationRegistry,
 )
-from sidecar.app.registry.presence_gate import PresenceAbsent
 from sidecar.app.registry.view_page_op import _same_page, view_page_entrypoint
 from sidecar.app.runner import DEFAULT_POLICY, OperationRunner, can_start
 from sidecar.app.runner.policy import BROWSER_LANE_KINDS
@@ -91,14 +91,15 @@ def _snapshot(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "url": "https://www.linkedin.com/in/ada-lovelace/",
         "surface": "linkedin",
-        "user_initiated": True,
     }
     base.update(overrides)
     return base
 
 
-def _ctx(**overrides: Any) -> OperationContext:
-    return OperationContext(kind="view_page", input_snapshot=_snapshot(**overrides))
+def _ctx(*, requested_by: str = "user", **overrides: Any) -> OperationContext:
+    return OperationContext(
+        kind="view_page", input_snapshot=_snapshot(**overrides), requested_by=requested_by
+    )
 
 
 # -- pure policy: the view waits for the lane, and the lane waits for it ----
@@ -153,7 +154,7 @@ def test_view_stays_queued_behind_a_running_send(migrated_db: Database) -> None:
     )
     runner.start()
     try:
-        runner.submit("send", {"contact_id": "c1", "user_initiated": True})
+        runner.submit("send", {"contact_id": "c1"})
         assert blocking.started.acquire(timeout=3)
         view_id = runner.submit("view_page", _snapshot())
         # Held back while the send runs…
@@ -207,9 +208,9 @@ def test_entrypoint_applies_geometry_only_when_carried(
     assert fake_surface.geometry is None
 
 
-def test_entrypoint_requires_user_initiation(fake_surface: _FakeSurface) -> None:
-    with pytest.raises(PresenceAbsent):
-        view_page_entrypoint(_ctx(user_initiated=False))
+def test_entrypoint_refuses_a_background_caller(fake_surface: _FakeSurface) -> None:
+    with pytest.raises(NotAuthorized):
+        view_page_entrypoint(_ctx(requested_by="app"))
     assert fake_surface.navigated == []
 
 
@@ -257,7 +258,7 @@ def test_view_route_enqueues_with_click_provenance(app_client) -> None:
         op = repos.operations.get(body["id"])
         assert op is not None
         snap = op.input_snapshot or {}
-        assert snap["user_initiated"] is True  # the click IS the presence
+        assert op.requested_by == "user"  # the click is the caller
         assert snap["contact_id"] == "c-42"
         assert snap["url"] == "https://www.linkedin.com/in/ada-lovelace/"
 
@@ -326,7 +327,7 @@ def test_ledger_subject_is_the_contact(app_client) -> None:
             "view_page",
             {
                 "url": "https://www.linkedin.com/in/jane-doe",
-                "user_initiated": True, "contact_id": contact.id,
+                "contact_id": contact.id,
             },
         )
         repos.operations.mark_running(row.id)
@@ -347,11 +348,11 @@ def test_ledger_subject_falls_back_to_the_url_path(app_client) -> None:
     with _app.state.db.repos() as repos:
         row = repos.operations.create(
             "view_page",
-            {"url": "https://www.linkedin.com/in/sandhya-singh/", "user_initiated": True},
+            {"url": "https://www.linkedin.com/in/sandhya-singh/"},
         )
         home = repos.operations.create(
             "view_page",
-            {"url": "https://www.linkedin.com/", "user_initiated": True},
+            {"url": "https://www.linkedin.com/"},
         )
     rows = client.get("/api/operations", headers=AUTH).json()
     by_id = {r["id"]: r for r in rows}

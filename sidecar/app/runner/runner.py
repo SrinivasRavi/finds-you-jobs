@@ -240,7 +240,7 @@ class OperationRunner:
         """Dispatch as many queued ops as the concurrency policy allows."""
         if self._closing:
             return
-        to_start: list[tuple[str, str, dict[str, Any]]] = []
+        to_start: list[tuple[str, str, dict[str, Any], str]] = []
         with self._lock:
             if self._executor is None or self._closing:
                 return
@@ -263,22 +263,24 @@ class OperationRunner:
                         break
                     if can_start(op.kind, running, policy, op.requested_by):
                         snapshot = dict(op.input_snapshot or {})
-                        to_start.append((op.id, op.kind, snapshot))
+                        to_start.append((op.id, op.kind, snapshot, op.requested_by))
                         running.append((op.kind, op.requested_by))
                         self._running[op.id] = (op.kind, op.requested_by)
-                for op_id, _kind, _snap in to_start:
+                for op_id, _kind, _snap, _by in to_start:
                     repos.operations.mark_running(op_id)
                     self._cancels[op_id] = Event()
             executor = self._executor
-        for op_id, kind, snapshot in to_start:
+        for op_id, kind, snapshot, requested_by in to_start:
             self._log.info("operation %s (%s) → running", op_id, kind)
             self._publish(op_id, kind, "running")
-            future = executor.submit(self._run, op_id, kind, snapshot)
+            future = executor.submit(self._run, op_id, kind, snapshot, requested_by)
             with self._lock:
                 self._futures.add(future)
             future.add_done_callback(self._forget_future)
 
-    def _run(self, operation_id: str, kind: str, snapshot: dict[str, Any]) -> None:
+    def _run(
+        self, operation_id: str, kind: str, snapshot: dict[str, Any], requested_by: str
+    ) -> None:
         """Worker body: call the entrypoint, persist outcome and usage, publish, all
         inside a per-op Logfire span (US-SYS-05). A failure lands in the row, the span
         and the SSE event (NFR-SIDE-04)."""
@@ -324,6 +326,7 @@ class OperationRunner:
                         operation_id=operation_id,
                         publish=self._publish_fn,
                         cancelled=cancel_token.is_set if cancel_token is not None else None,
+                        requested_by=requested_by,
                     )
                     entrypoint = self._registry.resolve(kind)
                     outcome = entrypoint(ctx)

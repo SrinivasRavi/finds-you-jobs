@@ -551,6 +551,12 @@ class PreferencesDTO(BaseModel):
     linkedin_search_ack_at: datetime | None
     engine_routing: dict[str, Any]
     ui_state: dict[str, Any]
+    autopilot_invite: bool
+    autopilot_dm: bool
+    autopilot_apply: bool
+    autopilot_min_score: int
+    autopilot_contacts_per_job: int
+    autopilot_applies_per_day: int
 
 
 class PreferencesUpdate(BaseModel):
@@ -567,6 +573,12 @@ class PreferencesUpdate(BaseModel):
     linkedin_search_ack_at: datetime | None = None
     engine_routing: dict[str, Any] | None = None
     ui_state: dict[str, Any] | None = None
+    autopilot_invite: bool | None = None
+    autopilot_dm: bool | None = None
+    autopilot_apply: bool | None = None
+    autopilot_min_score: int | None = Field(default=None, ge=0, le=100)
+    autopilot_contacts_per_job: int | None = Field(default=None, ge=1, le=10)
+    autopilot_applies_per_day: int | None = Field(default=None, ge=1, le=100)
 
 
 class DiscoverySourceDTO(BaseModel):

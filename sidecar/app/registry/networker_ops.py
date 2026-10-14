@@ -30,11 +30,11 @@ from ..db.base import now_utc
 from ..db.database import resolve_data_dir
 from ..db.models import CONTACT_ENGAGED_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import make_event
+from .autonomy import authorize
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
 from .exception_router import route_cause
 from .operations import OperationContext, OperationOutcome, llm_outcome
-from .presence_gate import PresenceAbsent, decide_presence
 
 if TYPE_CHECKING:
     from ..db import Repos
@@ -87,22 +87,6 @@ def build_surface_provider(
         return surface
 
     return _provider
-
-
-# ---------------------------------------------------------------------------
-# Presence gate (invariant 3 / Our Claim 9, as revised 2026-08-14).
-# ---------------------------------------------------------------------------
-
-
-def _require_presence(ctx: OperationContext) -> None:
-    """Refuse a logged-in LinkedIn run unless the user asked (invariant 3): the run
-    must carry the `user_initiated` marker only a click sets. Viewer and visibility
-    checks were dropped on 2026-08-14 (presence_gate.py). Raises `PresenceAbsent`."""
-    verdict = decide_presence(
-        user_initiated=bool(ctx.input_snapshot.get("user_initiated"))
-    )
-    if not verdict.present:
-        raise PresenceAbsent(verdict.reason)
 
 
 def linkedin_data_dir() -> Path:
@@ -432,9 +416,9 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     company_url = snap.get("company_url")  # a pasted LinkedIn company URL (authoritative)
     if ctx.db is None:
         raise RuntimeError("discover operation requires a database context")
-    # Presence gate (invariant 3): no LinkedIn read starts unless the user is
-    # present. Refuses before the first typeahead touches the network.
-    _require_presence(ctx)
+    # A background discover runs only with outreach autopilot on (section 8.10).
+    # Refuses before the first typeahead touches the network.
+    authorize(ctx.db, "linkedin_read", ctx.requested_by)
 
     with ctx.db.repos() as repos:
         profile = resolve_pacing_profile(repos)
@@ -718,10 +702,6 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     dry_run = bool(snap.get("dry_run", False))
     if ctx.db is None:
         raise RuntimeError("send operation requires a database context")
-    # Presence gate (invariant 3): no send touches LinkedIn unless the user is
-    # present. Refuses before the driver is built or the wire is touched.
-    _require_presence(ctx)
-
     with ctx.db.repos() as repos:
         row = repos.contacts.get(contact_id)
         if row is None:
@@ -731,6 +711,9 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
         unconfirmed_since = _unconfirmed_since(repos, contact_id)
+    # A background send runs only with that channel's autopilot on (section 8.10).
+    # Refuses before the driver is built or the wire is touched.
+    authorize(ctx.db, "dm" if is_first_degree else "invite", ctx.requested_by)
 
     # The send announces itself (`sending`, with the routed channel), then reports
     # each completed step (`send_step`) from the code that drove it: the pacing wait,

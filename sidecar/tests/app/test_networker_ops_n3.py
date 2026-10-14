@@ -82,22 +82,17 @@ def wired(migrated_db: Database) -> Iterator[Wired]:  # noqa: F811
 
 def _ctx(
     db: Database, kind: str, snap: dict, *,
-    engine=None, events=None, stamp_user_initiated: bool = True,
+    engine=None, events=None, requested_by: str = "user",
 ) -> OperationContext:
     publish = (lambda e: events.append(e)) if events is not None else None
-    # Stamp the click marker the way every gated route does (the presence gate,
-    # invariant 3, refuses without it) — these tests emulate user-clicked flows.
-    # The gate's own negative tests opt out with stamp_user_initiated=False.
-    if stamp_user_initiated and kind in ("send", "discover"):
-        snap = {"user_initiated": True, **snap}
     # A real Operation row so FK-linked writes (OutreachLog.operation_id) hold,
     # exactly as the runner creates one before dispatching an entrypoint.
     with db.repos() as repos:
-        op = repos.operations.create(kind, snap)
+        op = repos.operations.create(kind, snap, requested_by=requested_by)
         op_id = op.id
     return OperationContext(
         kind=kind, input_snapshot=snap, engine=engine, db=db,
-        operation_id=op_id, publish=publish,
+        operation_id=op_id, publish=publish, requested_by=requested_by,
     )
 
 
@@ -693,8 +688,8 @@ def _enqueue_batch(w: Wired, contact_ids: list[str], batch_id: str) -> list[str]
         for cid in contact_ids:
             op = repos.operations.create("send", {
                 "contact_id": cid, "job_id": w.job_id, "application_id": w.app_id,
-                "batch_id": batch_id, "message": "Hi", "user_initiated": True,
-            })
+                "batch_id": batch_id, "message": "Hi",
+            }, requested_by="user")
             op_ids.append(op.id)
     return op_ids
 
@@ -715,9 +710,9 @@ def _run_send(w: Wired, op_id: str, contact_id: str, batch_id: str, *, sent: boo
         kind="send",
         input_snapshot={
             "contact_id": contact_id, "job_id": w.job_id, "application_id": w.app_id,
-            "batch_id": batch_id, "message": "Hi", "user_initiated": True,
+            "batch_id": batch_id, "message": "Hi",
         },
-        engine=None, db=w.db, operation_id=op_id, publish=None,
+        engine=None, db=w.db, operation_id=op_id, publish=None, requested_by="user",
     )
     ops.send_entrypoint(ctx)
     with w.db.repos() as repos:  # runner marks it terminal after the entrypoint

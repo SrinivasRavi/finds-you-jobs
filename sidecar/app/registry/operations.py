@@ -38,6 +38,10 @@ class OperationContext:
     # raising `CompletionCancelled`. None when the runner predates the token
     # (fake-entrypoint tests) — treat as never cancelled.
     cancelled: Callable[[], bool] | None = None
+    # The op row's `requested_by`: "user" for a click, "app" for the scheduler and
+    # the autopilot. `autonomy.authorize` reads it. "app" by default, so a caller
+    # that forgets it is refused, never trusted.
+    requested_by: str = "app"
 
 
 @dataclass

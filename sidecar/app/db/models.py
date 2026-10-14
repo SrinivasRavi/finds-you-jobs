@@ -506,6 +506,14 @@ class UserPreferences(Base):
     )
     engine_routing: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     ui_state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Autonomy (audit-2026-10-14.md section 8.10): off means "confirm each". Columns,
+    # not `thresholds`, because the sidecar refuses a background send on them.
+    autopilot_invite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    autopilot_dm: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    autopilot_apply: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    autopilot_min_score: Mapped[int] = mapped_column(Integer, nullable=False, default=80)
+    autopilot_contacts_per_job: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    autopilot_applies_per_day: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
 
 
 # ---------------------------------------------------------------------------

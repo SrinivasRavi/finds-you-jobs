@@ -50,6 +50,7 @@ from .applier_window import (
     BrowserMissingError,
     window_for,
 )
+from .autonomy import NotAuthorized, authorize
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome
 from .pdf import render_resume_pdf_async
@@ -108,6 +109,14 @@ def _apply(ctx: OperationContext) -> OperationOutcome:
     application_id = str(ctx.input_snapshot.get("application_id", ""))
     if not application_id:
         raise ValueError("apply requires application_id")
+    # A background apply runs only with Submit autopilot on (section 8.10).
+    try:
+        authorize(ctx.db, "apply", ctx.requested_by)
+    except NotAuthorized as exc:
+        run_id = str(ctx.input_snapshot.get("run_id") or "")
+        if run_id:
+            finalize_run_failed(ctx.db, run_id, exc.reason)
+        raise
 
     control = APPLY_CONTROL.setdefault(ctx.operation_id, ApplyControl())
     # F-M7: a runner-level cancel can land in the window between dispatch and

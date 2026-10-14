@@ -3526,6 +3526,18 @@ export interface components {
             ui_state: {
                 [key: string]: unknown;
             };
+            /** Autopilot Invite */
+            autopilot_invite: boolean;
+            /** Autopilot Dm */
+            autopilot_dm: boolean;
+            /** Autopilot Apply */
+            autopilot_apply: boolean;
+            /** Autopilot Min Score */
+            autopilot_min_score: number;
+            /** Autopilot Contacts Per Job */
+            autopilot_contacts_per_job: number;
+            /** Autopilot Applies Per Day */
+            autopilot_applies_per_day: number;
         };
         /** PreferencesUpdate */
         PreferencesUpdate: {
@@ -3569,6 +3581,18 @@ export interface components {
             ui_state?: {
                 [key: string]: unknown;
             } | null;
+            /** Autopilot Invite */
+            autopilot_invite?: boolean | null;
+            /** Autopilot Dm */
+            autopilot_dm?: boolean | null;
+            /** Autopilot Apply */
+            autopilot_apply?: boolean | null;
+            /** Autopilot Min Score */
+            autopilot_min_score?: number | null;
+            /** Autopilot Contacts Per Job */
+            autopilot_contacts_per_job?: number | null;
+            /** Autopilot Applies Per Day */
+            autopilot_applies_per_day?: number | null;
         };
         /** ProfileDTO */
         ProfileDTO: {
