@@ -156,3 +156,56 @@ def test_routed_exception_has_no_action_surface() -> None:
     fields = RoutedException.__dataclass_fields__
     assert "action" not in fields
     assert set(fields) == {"diagnosis", "handled_by", "rationale", "dom", "screenshot"}
+
+
+# --- rules first: the evidence decides before any model call ------------------
+
+
+class PageSurface(FakeSurface):
+    """A surface that also reports where its page sits, as the broker's does."""
+
+    def __init__(self, *, url: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.page_url = url
+
+
+@pytest.mark.parametrize(
+    ("exc", "surface", "label"),
+    [
+        (RuntimeError("stuck"), PageSurface(url="https://www.linkedin.com/checkpoint/challenge"),
+         "account_wall"),
+        (RuntimeError("stuck"), PageSurface(dom="<h1>We noticed unusual activity</h1>"),
+         "throttle_signal"),
+        (TimeoutError("lane deadline"), PageSurface(), "transient"),
+        (OSError("Page.goto: net::ERR_NAME_NOT_RESOLVED"), None, "transient"),
+        (RuntimeError("Timeout 5000ms exceeded waiting for locator('button')"), None,
+         "interface_drift"),
+    ],
+)
+def test_a_rule_names_the_failure_from_the_page_without_the_model(
+    exc: Exception, surface: PageSurface | None, label: str
+) -> None:
+    """The model used to be asked about every unrecognized error with no page in
+    hand, at a cost, and nobody saw its answer (architecture-audit-2026-10-14.md
+    section 4.4). A rule over the URL, DOM and error now decides first, for free."""
+    engine = FakeEngine(raw="LABEL: unknown\nRATIONALE: should not be asked")
+    routed = route(exc, surface=surface, engine=engine)
+    assert routed.diagnosis == label
+    assert routed.handled_by == "rules"
+    assert routed.is_unknown is True
+    assert engine.seen == []
+    assert routed.explanation  # words the user reads, never a bare label
+
+
+def test_the_model_gets_the_page_url_when_no_rule_decides() -> None:
+    engine = FakeEngine(raw="LABEL: interface_drift\nRATIONALE: a new modal")
+    surface = PageSurface(url="https://www.linkedin.com/in/someone/")
+    routed = route(RuntimeError("weird state"), surface=surface, engine=engine)
+    assert routed.handled_by == "model"
+    assert "PAGE_URL: https://www.linkedin.com/in/someone/" in str(engine.seen[0])
+    assert "page changed" in routed.explanation
+
+
+def test_a_coded_error_needs_no_explanation_of_its_own() -> None:
+    routed = route(up.RateLimited("999"), surface=None, engine=None)
+    assert routed.explanation == ""

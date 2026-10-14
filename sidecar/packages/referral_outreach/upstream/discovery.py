@@ -7,6 +7,9 @@
 # extraction verbatim in spirit but returns a plain list of contact dicts (no DB),
 # enriches the top N via the forked Voyager client, and sorts degree-first — the
 # finds-you-jobs discovery contract (US-REF-01/02, FR-NW-02).
+#   - Split into a search step and 1 step per candidate (finds-you-jobs,
+#     2026-10-14), so each runs as its own bounded lane action and the pauses
+#     between them hold no lane. See `provenance.md`.
 """Discover potential referrers at a target company: search LinkedIn People
 scoped to the company, shortlist ~N, enrich, sort degree-first."""
 
@@ -96,21 +99,14 @@ def _next_page_url(current_url: str, page_num: int) -> str:
     return parsed._replace(query=urlencode(params, doseq=True)).geturl()
 
 
-def discover_company_contacts(
+def search_candidates(
     session: AccountSession,
     company: str,
-    limit: int = 10,
     page: int = 1,
     company_urn: str | None = None,
-) -> list[dict]:
-    """Return up to `limit` enriched CURRENT employees of `company`, degree-first.
-
-    Scopes the People search by `company_urn`'s `currentCompany` facet
-    (current-employees-only), enriches each candidate via Voyager, and drops any
-    whose current employer doesn't verify against the target (search-index lag /
-    unreadable employer). Each contact: {public_identifier, url, full_name,
-    headline, current_title, current_company, connection_degree, is_first_degree}.
-    Inaccessible profiles are skipped (never fatal)."""
+) -> list[str]:
+    """Run the People search scoped by `company_urn`'s `currentCompany` facet
+    (current-employees-only) and return the result cards' unique /in/ URLs."""
     session.ensure_browser()
     search_url = _people_search_url(company, page=1, company_urn=company_urn)
     goto_page(
@@ -136,8 +132,77 @@ def discover_company_contacts(
     logger.info(
         "discovery: %d /in/ candidates for %r (urn=%s)", len(urls), company, company_urn
     )
+    return urls
 
+
+def enrich_candidate(
+    session: AccountSession, url: str, public_id: str, company_urn: str | None
+) -> dict | None:
+    """Enrich 1 candidate via Voyager. None when the profile is inaccessible or
+    its current employer doesn't verify against the target (search-index lag /
+    unreadable employer)."""
     api = PlaywrightLinkedinAPI(session=session)
+    try:
+        parsed, _raw = api.get_profile(public_identifier=public_id)
+    except ProfileInaccessibleError:
+        logger.debug("skip inaccessible profile %s", public_id)
+        return None
+    if not parsed:
+        return None
+    if not _profile_matches_company(parsed, company_urn):
+        logger.info(
+            "discovery: dropping %s — current employer entity ≠ target %s (moved)",
+            public_id, company_urn,
+        )
+        return None
+    current = parsed.get("current_position") or {}
+    # Bulk enrichment: a degree we cannot read must never kill the page, so
+    # the TOPCARD fallback runs best-effort (client.resolve_degree).
+    degree = resolve_degree(api, parsed, public_id, best_effort=True)
+    if degree is None:
+        # Genuinely unknown after linked + included-scan + TOPCARD — leave
+        # NULL (warmth defaults to cold) but log it so a systemic degree-parse
+        # regression is visible in the flight recorder, not silent (FR-NW-02).
+        logger.info("discovery: connection_degree unknown for %s", public_id)
+    return {
+        "public_identifier": parsed.get("public_identifier") or public_id,
+        "url": parsed.get("url") or unquote(url),
+        "full_name": parsed.get("full_name"),
+        "headline": parsed.get("headline"),
+        "current_title": current.get("title"),
+        "current_company": current.get("company_name"),
+        "connection_degree": degree,
+        "is_first_degree": degree == 1,
+    }
+
+
+def _run_inline(action):
+    return action()
+
+
+def _enrich_pause() -> None:
+    random_sleep(*ENRICH_PAUSE_RANGE_S)
+
+
+def discover_company_contacts(
+    session: AccountSession,
+    company: str,
+    limit: int = 10,
+    page: int = 1,
+    company_urn: str | None = None,
+    *,
+    run=_run_inline,
+    pause=_enrich_pause,
+) -> list[dict]:
+    """Return up to `limit` enriched CURRENT employees of `company`, degree-first.
+
+    `run` executes each page-driving step (the search, then 1 per candidate), so a
+    broker-backed caller passes `session.run_browser` and every step gets its own
+    bounded lane action; `pause` runs between candidates, off the lane. Each
+    contact: {public_identifier, url, full_name, headline, current_title,
+    current_company, connection_degree, is_first_degree}. Inaccessible profiles are
+    skipped (never fatal)."""
+    urls = run(lambda: search_candidates(session, company, page, company_urn))
     contacts: list[dict] = []
     fetched = 0
     for url in urls:
@@ -149,42 +214,16 @@ def discover_company_contacts(
         # than the tool we forked on the axis scraping detection actually keys
         # on (OpenOutreach sleeps 6-10 s per scraped profile; posture doc section 2).
         if fetched:
-            random_sleep(*ENRICH_PAUSE_RANGE_S)
+            pause()
         fetched += 1
-        try:
-            parsed, _raw = api.get_profile(public_identifier=public_id)
-        except ProfileInaccessibleError:
-            logger.debug("skip inaccessible profile %s", public_id)
-            continue
-        if not parsed:
-            continue
-        if not _profile_matches_company(parsed, company_urn):
-            logger.info(
-                "discovery: dropping %s — current employer entity ≠ target %s (moved)",
-                public_id, company_urn,
+        contact = run(
+            lambda url=url, public_id=public_id: enrich_candidate(
+                session, url, public_id, company_urn
             )
-            continue
-        current = parsed.get("current_position") or {}
-        # Bulk enrichment: a degree we cannot read must never kill the page, so
-        # the TOPCARD fallback runs best-effort (client.resolve_degree).
-        degree = resolve_degree(api, parsed, public_id, best_effort=True)
-        if degree is None:
-            # Genuinely unknown after linked + included-scan + TOPCARD — leave
-            # NULL (warmth defaults to cold) but log it so a systemic degree-parse
-            # regression is visible in the flight recorder, not silent (FR-NW-02).
-            logger.info("discovery: connection_degree unknown for %s", public_id)
-        contacts.append(
-            {
-                "public_identifier": parsed.get("public_identifier") or public_id,
-                "url": parsed.get("url") or unquote(url),
-                "full_name": parsed.get("full_name"),
-                "headline": parsed.get("headline"),
-                "current_title": current.get("title"),
-                "current_company": current.get("company_name"),
-                "connection_degree": degree,
-                "is_first_degree": degree == 1,
-            }
         )
+        if contact is None:
+            continue
+        contacts.append(contact)
         if len(contacts) >= limit:
             break
 

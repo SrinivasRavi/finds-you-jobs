@@ -409,3 +409,19 @@ def test_existing_call_sites_still_work(bounds):
     assert [e[1] for e in loc.keyboard.log if e[0] == "down" and e[1] != "Shift"] == list(
         "Referral request?"
     )
+
+
+@pytest.mark.parametrize("chars", [200, 262, 524, 1000])
+def test_typing_ceiling_bounds_every_sampled_schedule(chars):
+    """The lane deadline rests on this ceiling, so no sampled schedule may exceed it:
+    a deadline that fires mid-type sends the message and logs it failed
+    (architecture-audit-2026-10-14.md 4.1). 200 seeds, the audit's own sample."""
+    persona = persona_for_legacy_bounds(10, 50)
+    words = "Hi Priya, would you refer me for the Backend role? Thanks! "
+    text = (words * (chars // len(words) + 1))[:chars]
+    ceiling = td.typing_ceiling_s(text, persona)
+    worst = max(
+        td.schedule(plan(text, persona, random.Random(seed)))[-1].t_ms / 1000.0
+        for seed in range(200)
+    )
+    assert worst < ceiling

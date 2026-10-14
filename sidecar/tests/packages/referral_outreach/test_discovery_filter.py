@@ -6,6 +6,7 @@ no browser, no network."""
 
 from __future__ import annotations
 
+from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 from sidecar.packages.referral_outreach.upstream.discovery import (
@@ -78,3 +79,62 @@ def test_reverify_does_not_name_match_namesake_companies():
 def test_reverify_no_target_urn_cannot_filter():
     # Standalone-CLI keyword mode (no entity to scope by) — nothing to verify.
     assert _profile_matches_company(_profile(company_name="Anything"), None) is True
+
+
+def test_discover_runs_the_search_and_each_candidate_as_its_own_step(monkeypatch):
+    """The whole walk used to be 1 lane action: 6 to 10 s pauses between up to 10
+    profiles outran its 45 s deadline, so discover failed for any company with more
+    than about 4 candidates (2026-10-10 live, 46.0 s). Now 1 step for the search, 1
+    per candidate, and every pause between them runs outside a step."""
+    from sidecar.packages.referral_outreach.upstream import discovery
+
+    urls = [f"https://www.linkedin.com/in/person-{i}" for i in range(4)]
+    events: list[str] = []
+    monkeypatch.setattr(discovery, "search_candidates", lambda *a, **k: urls)
+
+    def enrich(_session, url, public_id, _urn):
+        events.append(f"enrich:{public_id}")
+        degree = 2 if public_id.endswith("1") else 1
+        if public_id.endswith("3"):
+            return None  # moved employer: dropped, still paced
+        return {"public_identifier": public_id, "url": url, "connection_degree": degree}
+
+    monkeypatch.setattr(discovery, "enrich_candidate", enrich)
+
+    def run(step):
+        events.append("step")
+        return step()
+
+    contacts = discovery.discover_company_contacts(
+        cast(Any, object()), "Acme", limit=10, run=run, pause=lambda: events.append("pause")
+    )
+    assert events == [
+        "step",
+        "step", "enrich:person-0",
+        "pause", "step", "enrich:person-1",
+        "pause", "step", "enrich:person-2",
+        "pause", "step", "enrich:person-3",
+    ]
+    assert [c["public_identifier"] for c in contacts] == ["person-0", "person-2", "person-1"]
+
+
+def test_discover_stops_enriching_at_the_limit(monkeypatch):
+    from sidecar.packages.referral_outreach.upstream import discovery
+
+    urls = [f"https://www.linkedin.com/in/p-{i}" for i in range(6)]
+    monkeypatch.setattr(discovery, "search_candidates", lambda *a, **k: urls)
+    monkeypatch.setattr(
+        discovery,
+        "enrich_candidate",
+        lambda _s, url, pid, _u: {"public_identifier": pid, "url": url, "connection_degree": 1},
+    )
+    steps: list[int] = []
+    contacts = discovery.discover_company_contacts(
+        cast(Any, object()),
+        "Acme",
+        limit=2,
+        run=lambda f: (steps.append(1), f())[1],
+        pause=lambda: None,
+    )
+    assert len(contacts) == 2
+    assert len(steps) == 3  # the search, then exactly 2 candidates

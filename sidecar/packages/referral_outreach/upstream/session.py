@@ -35,6 +35,9 @@
 #     origin before each fetch (`ensure_linkedin_origin`, called from
 #     `client._fetch`), navigating to the feed only when the page sits
 #     elsewhere. DOM-driving actions are untouched. See `provenance.md`.
+#   - Lane deadline sized from the typing (finds-you-jobs, 2026-10-14): a send that
+#     types a message waits `typed_action_timeout_s`, not a flat 45 s. See
+#     `provenance.md`.
 """Standalone LinkedIn browser session: launch Chromium, load saved cookies,
 navigate at a human pace. Chromium is fetched on first use, never bundled, and
 torn down after each run (NFR-MEM-02)."""
@@ -70,6 +73,21 @@ _AUTH_COOKIE_NAME = "li_at"
 SURFACE_SLUG = "linkedin"
 
 T = TypeVar("T")
+
+# How long a caller waits on one lane action before giving up on it. An action
+# that types a message waits this plus the typing ceiling (`typed_action_timeout_s`).
+LANE_TIMEOUT_S = 45.0
+# How long past a lane deadline the caller waits for the surface's kill to land.
+LANE_KILL_GRACE_S = 10.0
+
+
+def typed_action_timeout_s(text: str) -> float:
+    """The lane deadline for an action that `human_type`s `text` on the compose and
+    note path (bounds 10, 50). A flat 45 s fired mid-type on a 262-char DM, which
+    then sent anyway and was logged failed (architecture-audit-2026-10-14.md 4.1)."""
+    from .typing_dynamics import persona_for_legacy_bounds, typing_ceiling_s
+
+    return LANE_TIMEOUT_S + typing_ceiling_s(text, persona_for_legacy_bounds(10, 50))
 
 # Page-load jitter between actions (upstream conf.MIN_DELAY / MAX_DELAY).
 MIN_DELAY = 5
@@ -400,12 +418,17 @@ class AccountSession:
         """The broker surface for this session's slug, fetched (and cached) once.
         The provider returns a READY surface — the host resolves the surface and
         awaits its launch OFF the serving loop before handing it back."""
+        if self._surface is not None and getattr(self._surface, "is_dead", False):
+            # Killed at a deadline or crashed: the broker relaunches the slug, and the
+            # new Chrome gets the saved session seeded like the first one did.
+            self._surface = None
+            self._surface_seeded = False
         if self._surface is None:
             assert self._surface_provider is not None
             self._surface = self._surface_provider(self._surface_slug)
         return self._surface
 
-    def run_browser(self, action: Callable[[], T]) -> T:
+    def run_browser(self, action: Callable[[], T], timeout_s: float = LANE_TIMEOUT_S) -> T:
         """Run one page-driving `action()` where the browser actually lives.
 
         Broker-backed: `action` is submitted to the surface's single serialized
@@ -434,7 +457,23 @@ class AccountSession:
             self._seed_surface_session()
             return action()
 
-        return surface.run_on_lane(_on_surface).result(timeout=45.0)
+        # The surface enforces the deadline (it kills a stuck Chrome); the grace
+        # only covers the kill itself, so this wait always ends in an answer.
+        return surface.run_on_lane(_on_surface, deadline_s=timeout_s).result(
+            timeout=timeout_s + LANE_KILL_GRACE_S
+        )
+
+    def kill_browser(self) -> None:
+        """End a hung page from another thread. Broker-backed: kill the surface's
+        Chrome, the only interrupt a sync Playwright call honours (a cross-thread
+        `context.close()` raises and leaves the call running). Self-launch: close
+        the context, best-effort, as before."""
+        if self.broker_backed:
+            if self._surface is not None:
+                self._surface.kill_browser()
+            return
+        if self.context is not None:
+            self.context.close()
 
     def _seed_surface_session(self) -> None:
         """On the FIRST lane bind, seed the broker surface's context with the

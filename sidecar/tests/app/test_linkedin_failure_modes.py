@@ -188,6 +188,23 @@ def test_a_failed_send_always_writes_its_audit_row(
     assert failed, f"{label}: no send_failed event, so the modal never stops spinning"
 
 
+def test_a_failed_send_says_what_went_wrong_in_words(wired: Wired) -> None:  # noqa: F811
+    """The router's verdict reaches the reason the user reads, ahead of the raw error."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/sarah-tan")).id
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        raise_on="send_connection", error=OSError("Page.goto: net::ERR_NAME_NOT_RESOLVED"),
+    )
+    with pytest.raises(OSError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi"}))
+    with wired.db.repos() as repos:
+        detail = repos.outreach_logs.list_for_contact(cid)[0].outcome_detail
+    assert detail.startswith("LinkedIn didn't load in time")
+    assert "net::ERR_NAME_NOT_RESOLVED" in detail
+
+
 def test_a_failed_send_still_closes_its_browser(wired: Wired) -> None:  # noqa: F811
     """A launch failure must not leak the driver either — S-C12's property,
     now over the widened catch."""

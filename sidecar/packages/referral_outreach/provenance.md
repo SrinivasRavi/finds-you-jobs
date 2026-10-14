@@ -606,6 +606,39 @@ published `send_step` events verbatim.
 - `actions.py`: `_goto_profile` checks if the landed path starts with `/checkpoint`, `/authwall`, or `/uas/login` and raises `AuthenticationError` (a `VoyagerError`), catching login walls early instead of throwing the generic "no Connect affordance found" `SkipProfile` error.
 - `session.py`: `run_browser` adds a `timeout=45.0` to `surface.run_on_lane(...).result()` so a dead browser doesn't hang the worker thread indefinitely.
 
+### Lane deadline sized from the typing (2026-10-14)
+
+**Files:** `upstream/session.py`, `upstream/worker.py`, `upstream/typing_dynamics.py` (all GPL-3.0-only; finds-you-jobs-authored lines).
+
+**What changed and why.** The flat 45 s `run_browser` timeout fired mid-type on any DM over about 250 characters, while the action kept running on the lane and sent the message, so the host logged a sent DM as failed and Retry sent it twice (`docs/internal/architecture-audit-2026-10-14.md` section 4.1).
+- `typing_dynamics.py`: `typing_ceiling_s(text, persona)`, a generous upper bound on `human_type`'s duration (twice the mean interval at the slowest digraph, plus the full punctuation penalty).
+- `session.py`: `LANE_TIMEOUT_S` names the old 45 s; `run_browser` takes `timeout_s`; `typed_action_timeout_s(text)` is 45 s plus the ceiling at the compose path's persona.
+- `worker.py`: `send_dm` and `send_connection` pass `typed_action_timeout_s` for the message and the note.
+
+**Verification:** `test_typing_ceiling_bounds_every_sampled_schedule` (200 seeds at 200, 262, 524 and 1,000 characters, the worst sampled schedule stays under the ceiling) and `test_dm_lane_deadline_is_sized_from_the_message`.
+
+### A stuck browser is killed at its deadline; discover runs 1 step per candidate (2026-10-14)
+
+**Files:** `upstream/session.py`, `upstream/client.py`, `upstream/discovery.py`, `upstream/worker.py` (all GPL-3.0-only; finds-you-jobs-authored lines).
+
+**What changed and why.** The core broker now enforces each lane action's deadline by killing the surface's Chrome, the only interrupt a stuck sync Playwright call honours (`docs/internal/architecture-audit-2026-10-14.md` section 3.3).
+- `session.py`: `run_browser` passes its timeout to the surface as the deadline and waits `LANE_KILL_GRACE_S` past it, so the wait always ends in an answer. `kill_browser()` ends a hung page from any thread.
+- `client.py`: the voyager watchdog calls `session.kill_browser()`. Its old cross-thread `context.close()` raised a greenlet error and never interrupted anything (audit section 4.3).
+- `discovery.py`: `discover_company_contacts` is split into `search_candidates` and `enrich_candidate`, composed through `run` and `pause` hooks. The whole walk was 1 lane action, and its 6 to 10 s pauses between up to 10 profiles outran the 45 s deadline: the maintainer's only discover since 0.5.8 failed at 46.0 s (2026-10-10).
+- `worker.py`: `discover` passes `run=session.run_browser`, so the search and each candidate are separate bounded lane actions and the pauses hold no lane.
+
+**Verification:** `test_discover_runs_the_search_and_each_candidate_as_its_own_step`, `test_discover_stops_enriching_at_the_limit`, `test_discover_drives_each_step_through_its_own_lane_action`, `test_a_hung_fetch_kills_the_browser_and_raises_unresponsive` (fails on the old watchdog), and in core `test_real_hung_page_script_is_killed_and_the_surface_recovers` against real Chrome.
+
+### A send that ends in doubt is settled by reading LinkedIn (2026-10-14)
+
+**Files:** `upstream/worker.py`, `upstream/session.py` (GPL-3.0-only; finds-you-jobs-authored lines).
+
+**What changed and why.** A send that failed after its point of no return was written Failed, so Retry could send it twice (`docs/internal/architecture-audit-2026-10-14.md` section 4.2). The point of no return is the DM compose opening (typing can submit) or the Connect click.
+- `worker.py`: past that point, any failure, including `_send_dm_via_ui` returning False, is settled by reading LinkedIn's own record up to 3 times, 5, 15 and 30 s apart: the thread's last message for a DM (`_dm_verdict`, ours and delivered after the attempt began), the profile's Pending state for an invite (`_invite_verdict`). Sent keeps the charge, a proven no-send refunds it, and an unreadable LinkedIn returns `error="unconfirmed"` with the charge kept. `unconfirmed_since` on `send_dm` and `send_connection` reads first on a retry and sends only if nothing landed.
+- `session.py`: `_acquire_surface` drops a dead surface, so the settle read runs on a relaunched Chrome with the saved session seeded again.
+
+**Verification:** `test_send_settles_by_reading.py`, 10 cases: landed, not landed, unreadable, a compose error after it opened, a failure before it, the 3 retry outcomes, and 2 invite outcomes.
+
 ## Upstream
 
 - **Project:** OpenOutreach — <https://github.com/eracle/OpenOutreach>

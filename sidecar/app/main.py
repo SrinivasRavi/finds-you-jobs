@@ -321,6 +321,7 @@ def create_app(
         networker_ops.SURFACE_PROVIDER = networker_ops.build_surface_provider(
             browser, asyncio.get_running_loop()
         )
+        networker_ops.LIVE_SURFACE = networker_ops.build_live_surface(browser)
 
         # A degraded boot: the shell saw 3 consecutive runs end the same bad way
         # and started us with no scheduler, so the window opens and nothing

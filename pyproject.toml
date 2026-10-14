@@ -32,6 +32,9 @@ dependencies = [
     "pypdf>=5",
     "python-multipart>=0.0.32",
     "pdfplumber>=0.11.10",
+    # Ends a browser surface whose page action hangs: killing its Chrome is the only
+    # interrupt a stuck sync Playwright call honours (BSD-3-Clause, no service tie).
+    "psutil>=7",
 ]
 
 [tool.hatch.build.targets.wheel]

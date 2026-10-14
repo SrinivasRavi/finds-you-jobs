@@ -43,7 +43,7 @@ class _CountingSession:
     def __init__(self, **kwargs):
         type(self).built += 1
 
-    def run_browser(self, action):
+    def run_browser(self, action, timeout_s=None):
         # The per-probe action-on-the-lane bridge — run the (monkeypatched)
         # probe inline, as the self-launch path does with no broker surface.
         return action()

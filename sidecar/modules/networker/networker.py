@@ -178,25 +178,30 @@ def send(
     *,
     dry_run: bool = False,
     on_step: Callable[[str], None] | None = None,
+    unconfirmed_since: float | None = None,
 ) -> SendResult:
     """Send `message` to `contact` (US-REF-04 / FR-NW-03): warm gets a DM, cold an
     invite with a note. `on_step` gets each completed step key as the driver
     finishes it. A not-sent (cap, backoff, UI failure) returns `sent=False` with the
-    reason; only a crash or unparseable output raises NetworkerError."""
+    reason; only a crash or unparseable output raises NetworkerError.
+    `unconfirmed_since` makes the driver read LinkedIn before sending again."""
     if not message.strip():
         raise NetworkerError("send", "message is empty")
     warmth = warmth_for_degree(contact.connection_degree)
     channel = channel_for_warmth(warmth)
     drv = driver or DirectVoyagerDriver()
+    # Only a retry of an unconfirmed send carries the extra argument.
+    extra = {} if unconfirmed_since is None else {"unconfirmed_since": unconfirmed_since}
     try:
         if channel.value == "dm":
             raw = drv.send_dm(
-                contact.public_identifier, message, dry_run=dry_run, on_step=on_step
+                contact.public_identifier, message, dry_run=dry_run, on_step=on_step,
+                **extra,
             )
         else:
             raw = drv.send_connection(
                 contact.public_identifier, note=message, dry_run=dry_run,
-                on_step=on_step,
+                on_step=on_step, **extra,
             )
         return _send_result_from_raw(raw, contact, channel, dry_run)
     finally:

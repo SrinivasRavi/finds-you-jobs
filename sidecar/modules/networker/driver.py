@@ -44,10 +44,12 @@ class VoyagerDriver(Protocol):
     def send_connection(
         self, public_identifier: str, note: str, *, dry_run: bool,
         on_step: Callable[[str], None] | None = None,
+        unconfirmed_since: float | None = None,
     ) -> dict: ...
     def send_dm(
         self, public_identifier: str, message: str, *, dry_run: bool,
         on_step: Callable[[str], None] | None = None,
+        unconfirmed_since: float | None = None,
     ) -> dict: ...
     def status(self, public_identifier: str, *, dry_run: bool) -> dict: ...
     def contact_sync_states(
@@ -202,9 +204,11 @@ class DirectVoyagerDriver:
     def send_connection(
         self, public_identifier: str, note: str, *, dry_run: bool,
         on_step: Callable[[str], None] | None = None,
+        unconfirmed_since: float | None = None,
     ) -> dict:
         return self._call(
             self._worker().send_connection,
+            unconfirmed_since=unconfirmed_since,
             public_identifier=public_identifier,
             note=note,
             on_step=on_step,
@@ -221,9 +225,11 @@ class DirectVoyagerDriver:
     def send_dm(
         self, public_identifier: str, message: str, *, dry_run: bool,
         on_step: Callable[[str], None] | None = None,
+        unconfirmed_since: float | None = None,
     ) -> dict:
         return self._call(
             self._worker().send_dm,
+            unconfirmed_since=unconfirmed_since,
             public_identifier=public_identifier,
             message=message,
             on_step=on_step,

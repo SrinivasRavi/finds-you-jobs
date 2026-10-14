@@ -17,12 +17,13 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from ..logging_setup import get_logger
 from .launch import minimal_launch_kwargs, open_persistent_context, resolve_user_agent
+from .process import kill_browser
 
 # Screencast wire settings. JPEG at 60 keeps a full-page frame in the tens of
 # kilobytes, which a loopback websocket ships without thinking about it.
@@ -53,6 +54,11 @@ GEOMETRY_TIMEOUT_SECONDS = 10.0
 # one. Reopening relaunches lazily with the profile intact, so being wrong costs
 # 1 relaunch. Generous: a watched or busy surface is never idle.
 IDLE_SHUTDOWN_SECONDS = 300.0
+# Every lane action has a deadline. Past it the surface's Chrome is killed, the only
+# interrupt a stuck sync Playwright call honours, and the surface relaunches on its
+# next use (architecture-audit-2026-10-14.md section 3.3). Callers that know their
+# work runs longer (typing, paced reads) pass their own.
+DEFAULT_ACTION_DEADLINE_SECONDS = 120.0
 
 # How many Chromes may be live at once (backlog S-C20). Past it, launching a
 # new surface first closes the longest-idle one; a surface in use is never
@@ -72,6 +78,17 @@ _ISOLATED_WORLD_NAME = "fyj_driver"
 class BrowserLaunchError(RuntimeError):
     """The surface never reached a live page: no Chrome, a locked profile, a
     launch that timed out. Raised to the caller that asked for the surface."""
+
+
+class BrowserActionTimeout(RuntimeError):
+    """A lane action ran past its deadline, so the surface's Chrome was killed. The
+    action's effect on the page is unknown: a write that raised this may have landed."""
+
+    def __init__(self, slug: str, deadline_s: float) -> None:
+        super().__init__(
+            f"browser surface {slug!r}: an action ran past its {deadline_s:.0f}s deadline"
+        )
+        self.deadline_s = deadline_s
 
 
 class Frame(NamedTuple):
@@ -104,6 +121,7 @@ class SurfaceSession(NamedTuple):
 
 
 Opener = Callable[[Path, dict[str, Any]], SurfaceSession]
+Killer = Callable[[Path], int]
 
 
 def open_session(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
@@ -136,6 +154,7 @@ class BrowserSurface:
         *,
         opener: Opener = open_session,
         geometry_timeout: float = GEOMETRY_TIMEOUT_SECONDS,
+        killer: Killer = kill_browser,
     ) -> None:
         self.slug = slug
         self._profile_dir = Path(profile_dir)
@@ -146,6 +165,7 @@ class BrowserSurface:
         self._launch_kwargs = launch_kwargs
         self._opener = opener
         self._geometry_timeout = geometry_timeout
+        self._killer = killer
         self._log = get_logger()
         self._thread: threading.Thread | None = None
         self._stopping = threading.Event()
@@ -167,7 +187,7 @@ class BrowserSurface:
         self._inflight = 0
         self._activity_lock = threading.Lock()
         self._commands: queue.SimpleQueue[
-            tuple[Future[Any], Callable[[SurfaceSession], Any]]
+            tuple[Future[Any], Callable[[SurfaceSession], Any], float]
         ] = queue.SimpleQueue()
         self._viewer: Viewer | None = None
         self._max_width = DEFAULT_MAX_WIDTH
@@ -256,7 +276,9 @@ class BrowserSurface:
             return
         self._signal_ready()
         try:
-            while not self._stopping.is_set():
+            # A deadline kill marks the surface dead from another thread; the loop
+            # stops there rather than drive a Chrome that's gone.
+            while not self._stopping.is_set() and not self._dead.is_set():
                 self._drain_commands(session)
                 self._watch_url(session)
                 # Parking inside Playwright is what lets its sync event
@@ -270,6 +292,7 @@ class BrowserSurface:
             # can tell this surface apart from a live one and relaunch a fresh
             # Chrome for the slug instead of handing back this corpse.
             self._dead.set()
+            self._fail_pending()
 
     def _screencast_params(self) -> dict[str, Any]:
         return {
@@ -281,20 +304,49 @@ class BrowserSurface:
         }
 
     def _drain_commands(self, session: SurfaceSession) -> None:
-        while True:
+        while not self._dead.is_set():
             try:
-                future, action = self._commands.get_nowait()
+                future, action, deadline_s = self._commands.get_nowait()
             except queue.Empty:
                 return
             if not future.set_running_or_notify_cancel():
                 self._finished_one()
                 continue
+            timer = threading.Timer(deadline_s, self._on_deadline, args=(future, deadline_s))
+            timer.daemon = True
+            timer.start()
             try:
-                future.set_result(action(session))
+                _resolve(future, result=action(session))
             except Exception as exc:  # noqa: BLE001 — travels to the caller
-                future.set_exception(exc)
+                _resolve(future, error=exc)
             finally:
+                timer.cancel()
                 self._finished_one()
+
+    def _on_deadline(self, future: Future[Any], deadline_s: float) -> None:
+        """On a timer thread: the running action is past its deadline. Mark the surface
+        dead first, so nothing new is queued on it and the broker relaunches, then kill
+        its Chrome so the stuck call fails, then answer the caller."""
+        self._log.error(
+            "browser surface %r: lane action past its %.0fs deadline, killing Chrome",
+            self.slug, deadline_s,
+        )
+        # Answer first: the stuck call fails the instant Chrome dies, and its own
+        # error must not be what the caller sees.
+        _resolve(future, error=BrowserActionTimeout(self.slug, deadline_s))
+        self._dead.set()
+        self._fail_pending()
+        try:
+            self._killer(self._profile_dir)
+        except Exception:  # noqa: BLE001, the caller already has its answer
+            self._log.exception("browser surface %r: killing Chrome failed", self.slug)
+
+    def kill_browser(self) -> None:
+        """Kill this surface's Chrome from any thread. Whatever is running on the lane
+        fails, queued work fails, and the next `surface(slug)` launches a fresh one."""
+        self._dead.set()
+        self._fail_pending()
+        self._killer(self._profile_dir)
 
     def _watch_url(self, session: SurfaceSession) -> None:
         """Emit the committed main-frame URL whenever it changes, once per tick on the
@@ -493,13 +545,17 @@ class BrowserSurface:
         `Runtime` CDP call of our own."""
         return self._submit(lambda s: s.page.evaluate(expression))
 
-    def run_on_lane(self, action: Callable[[SurfaceSession], Any]) -> Future[Any]:
+    def run_on_lane(
+        self,
+        action: Callable[[SurfaceSession], Any],
+        deadline_s: float = DEFAULT_ACTION_DEADLINE_SECONDS,
+    ) -> Future[Any]:
         """The public name for the surface's single serialized operation lane:
         queue `action` for the surface thread and hand back its future. This is
         the integration hook an external driver submits its own callables onto,
         so "one account, one lane" stays a structural guarantee (section 5.4).
-        Internal callers keep using `_submit`; it is the same machinery."""
-        return self._submit(action)
+        Past `deadline_s` the future fails with `BrowserActionTimeout`."""
+        return self._submit(action, deadline_s)
 
     def screenshot(self) -> Future[bytes]:
         """Capture the surface as image bytes for the exception agent, over CDP
@@ -563,11 +619,15 @@ class BrowserSurface:
 
         return self._submit(_eval)
 
-    def _submit(self, action: Callable[[SurfaceSession], Any]) -> Future[Any]:
+    def _submit(
+        self,
+        action: Callable[[SurfaceSession], Any],
+        deadline_s: float = DEFAULT_ACTION_DEADLINE_SECONDS,
+    ) -> Future[Any]:
         """Queue work for the surface thread. Returns immediately with a future
         the caller can wrap (`asyncio.wrap_future`) or ignore."""
         future: Future[Any] = Future()
-        if self._stopping.is_set():
+        if self._stopping.is_set() or self._dead.is_set():
             future.set_exception(
                 BrowserLaunchError(f"browser surface {self.slug!r} is shut down")
             )
@@ -575,8 +635,26 @@ class BrowserSurface:
         with self._activity_lock:
             self._last_activity = time.monotonic()
             self._inflight += 1
-        self._commands.put((future, action))
+        self._commands.put((future, action, deadline_s))
+        # The thread may have died between the check above and the put, after
+        # its own final drain; nothing else would ever resolve this future.
+        if self._dead.is_set():
+            self._fail_pending()
         return future
+
+    def _fail_pending(self) -> None:
+        """Fail every queued action once the run loop is over. A dead surface used to
+        leave them unresolved forever (architecture-audit-2026-10-14.md section 3.3)."""
+        while True:
+            try:
+                future, _, _ = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            if future.set_running_or_notify_cancel():
+                future.set_exception(
+                    BrowserLaunchError(f"browser surface {self.slug!r} stopped")
+                )
+            self._finished_one()
 
     def touch(self) -> None:
         """Mark the surface as just taken. Without this stamp the gap before a caller's
@@ -622,6 +700,20 @@ class BrowserSurface:
         self._call_on_loop(self._ready.set)
 
 
+def _resolve(
+    future: Future[Any], *, result: Any = None, error: BaseException | None = None
+) -> None:
+    """Settle `future` unless the deadline timer or the action already did: the 2 race
+    by design, and whichever lands first is the caller's answer."""
+    try:
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+    except InvalidStateError:
+        pass
+
+
 class BrowserBroker:
     """Get-or-create browser surfaces by slug.
 
@@ -637,12 +729,14 @@ class BrowserBroker:
         opener: Opener = open_session,
         user_agent_resolver: Callable[[], str] = resolve_user_agent,
         geometry_timeout: float = GEOMETRY_TIMEOUT_SECONDS,
+        killer: Killer = kill_browser,
     ) -> None:
         self._root = Path(data_dir) / "browser"
         self._loop = loop
         self._opener = opener
         self._user_agent_resolver = user_agent_resolver
         self._geometry_timeout = geometry_timeout
+        self._killer = killer
         # The de-headlessed UA, resolved once (a throwaway launch) and reused by
         # every later surface. Guarded because two surfaces can launch at once.
         self._user_agent: str | None = None
@@ -720,6 +814,7 @@ class BrowserBroker:
                     self._guardrailed_launch_kwargs,
                     opener=self._opener,
                     geometry_timeout=self._geometry_timeout,
+                    killer=self._killer,
                 )
                 self._surfaces[slug] = surface
             surface.start()

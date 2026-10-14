@@ -185,7 +185,7 @@ def test_quota_snapshot_reads_the_same_ledger_the_send_path_charges(
 
     class _Inline:
         def __init__(self, **kwargs: object) -> None: ...
-        def run_browser(self, action):
+        def run_browser(self, action, timeout_s=None):
             return action()
         def close(self) -> None: ...
 

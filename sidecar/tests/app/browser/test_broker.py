@@ -171,6 +171,19 @@ class CrashingPage(FakePage):
         raise RuntimeError("Chrome crashed under a live surface")
 
 
+class DiesOnReleasePage(FakePage):
+    """A page that parks until the test releases it, then dies: work submitted while
+    it parks is still queued when the run loop exits."""
+
+    def __init__(self, cdp: FakeCdp) -> None:
+        super().__init__(cdp)
+        self.release = threading.Event()
+
+    def wait_for_timeout(self, _ms: float) -> None:
+        self.release.wait()
+        raise RuntimeError("Chrome crashed with work queued")
+
+
 async def _until(predicate: Callable[[], bool], within: float = 3.0) -> bool:
     """Poll `predicate` while yielding to the loop, so the surface thread's
     `call_soon_threadsafe` callbacks get their turn to run."""
@@ -767,6 +780,148 @@ async def test_a_dead_surface_is_evicted_and_relaunched(tmp_path: Path) -> None:
         healthy.emit(71)
         assert await _until(lambda: not viewer.queue.empty())
         assert viewer.queue.get_nowait().session_id == 71
+    finally:
+        broker.shutdown()
+
+
+async def test_a_dead_surface_fails_queued_and_later_work(tmp_path: Path) -> None:
+    """Work queued on a surface whose Chrome dies used to hang forever, and so did
+    work submitted after (architecture-audit-2026-10-14.md section 3.3). Both fail."""
+    dying = FakeBrowser()
+    page = dying.page = DiesOnReleasePage(dying.cdp)
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=dying.opener,
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=0.3,
+    )
+    try:
+        surface = broker.surface("pane-a")
+        await surface.wait_ready()
+        queued = surface.evaluate("1 + 1")
+        await asyncio.sleep(0.05)
+        assert not queued.done()  # parked: the thread hasn't drained it
+
+        page.release.set()
+        with pytest.raises(BrowserLaunchError, match="stopped"):
+            await asyncio.wait_for(asyncio.wrap_future(queued), 3.0)
+        assert await _until(lambda: surface.is_dead)
+        with pytest.raises(BrowserLaunchError, match="shut down"):
+            surface.evaluate("2 + 2").result(timeout=0)
+        assert surface.idle_seconds is not None  # nothing left counted in flight
+    finally:
+        broker.shutdown()
+
+
+async def test_a_hung_lane_action_is_killed_at_its_deadline_and_the_slug_relaunches(
+    tmp_path: Path,
+) -> None:
+    """A lane action that never returned wedged the surface until restart
+    (architecture-audit-2026-10-14.md section 3.3). Past its deadline the surface's
+    Chrome is killed, the caller gets a coded timeout, and the slug relaunches."""
+    stuck = FakeBrowser()
+    fresh = FakeBrowser()
+    browsers = iter([stuck, fresh])
+    unstick = threading.Event()
+    killed: list[Path] = []
+
+    def opener(profile_dir: Path, kwargs: dict[str, Any]) -> SurfaceSession:
+        return next(browsers).opener(profile_dir, kwargs)
+
+    def killer(profile_dir: Path) -> int:
+        # Killing Chrome is what makes the stuck Playwright call raise.
+        killed.append(profile_dir)
+        unstick.set()
+        return 1
+
+    def hang(_session: SurfaceSession) -> None:
+        unstick.wait(10)
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=opener,
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=0.3,
+        killer=killer,
+    )
+    try:
+        surface = broker.surface("pane-a")
+        await surface.wait_ready()
+        hung = surface.run_on_lane(hang, deadline_s=0.2)
+        queued_behind = surface.evaluate("1 + 1")
+        with pytest.raises(broker_module.BrowserActionTimeout, match="0s deadline"):
+            await asyncio.wait_for(asyncio.wrap_future(hung), 3.0)
+        assert killed == [broker.profile_dir("pane-a")]
+        assert surface.is_dead
+        with pytest.raises(BrowserLaunchError):
+            await asyncio.wait_for(asyncio.wrap_future(queued_behind), 3.0)
+
+        relaunched = broker.surface("pane-a")
+        assert relaunched is not surface
+        await relaunched.wait_ready()
+        assert await asyncio.wrap_future(relaunched.evaluate("2 + 2")) == "evaluated:2 + 2"
+    finally:
+        broker.shutdown()
+
+
+async def test_an_action_that_finishes_inside_its_deadline_kills_nothing(
+    broker: BrowserBroker,
+) -> None:
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    result = await asyncio.wrap_future(surface.run_on_lane(lambda _s: 7, deadline_s=5.0))
+    assert result == 7
+    await asyncio.sleep(0.05)
+    assert not surface.is_dead
+
+
+async def test_real_hung_page_script_is_killed_and_the_surface_recovers(
+    tmp_path: Path,
+) -> None:
+    """Against REAL Chrome: a page script that never returns used to wedge the lane
+    until restart. The deadline kills that profile's Chrome, the call fails coded,
+    no Chrome is left on the profile, and the next surface for the slug works."""
+    pytest.importorskip("playwright.sync_api")
+    from sidecar.app.browser.process import browser_processes
+
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=5.0,
+    )
+    surface = broker.surface("pane-a")
+    try:
+        try:
+            await surface.wait_ready(timeout_seconds=60)
+        except BrowserLaunchError as exc:  # pragma: no cover, CI without Chrome
+            pytest.skip(f"real Chrome unavailable: {exc}")
+        profile = broker.profile_dir("pane-a")
+        assert browser_processes(profile), "the matcher must see the live Chrome"
+
+        started = time.monotonic()
+        with pytest.raises(broker_module.BrowserActionTimeout):
+            await asyncio.wait_for(
+                asyncio.wrap_future(
+                    surface.run_on_lane(
+                        lambda s: s.page.evaluate("() => new Promise(() => {})"),
+                        deadline_s=2.0,
+                    )
+                ),
+                15.0,
+            )
+        assert time.monotonic() - started < 8.0
+        assert await _until(lambda: not browser_processes(profile), within=5.0)
+
+        relaunched = broker.surface("pane-a")
+        assert relaunched is not surface
+        await relaunched.wait_ready(timeout_seconds=60)
+        assert await asyncio.wrap_future(
+            relaunched.run_on_lane(lambda s: s.page.evaluate("() => 6 * 7"))
+        ) == 42
     finally:
         broker.shutdown()
 

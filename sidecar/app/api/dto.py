@@ -998,6 +998,9 @@ class ContactSyncOutcomeDTO(BaseModel):
     failed: int = 0
     stopped: str = ""
     unprobed: int = 0
+    # The exception router's label when a batch failed (transient |
+    # interface_drift | throttle_signal | account_wall | unknown), else "".
+    diagnosis: str = ""
 
 
 class LinkedInSessionDTO(BaseModel):

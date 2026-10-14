@@ -23,7 +23,12 @@ from ..db.models import CONTACT_ENGAGED_STATUSES
 from ..lifecycle import MANUAL_OVERRIDE_COOLDOWN_DAYS, resolve_lifecycle
 from ..logging_setup import get_logger
 from .exception_router import route_cause
-from .networker_ops import DRIVER_FACTORY, _net_contact_from_row, resolve_pacing_profile
+from .networker_ops import (
+    DRIVER_FACTORY,
+    _net_contact_from_row,
+    live_surface,
+    resolve_pacing_profile,
+)
 from .operations import OperationContext, OperationOutcome
 
 if TYPE_CHECKING:
@@ -200,6 +205,8 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
     failed = 0
     internal_calls = 0
     stopped = ""
+    # What the exception router made of a failed batch, shown beside the stop.
+    diagnosis = ""
 
     # Partition the batch. An accepted or engagement contact with a cached fsd urn
     # needs only its thread, answered by the sweep's 1 unmetered inbox read; only
@@ -261,7 +268,10 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             # A hard batch failure mustn't kill the tick: log it, rotate the batch, and say
             # so in result_ref (`stopped: "batch_failed"`) rather than a clean 0. S-C14: the
             # router names the cause before the batch rotates.
-            routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
+            routed = route_cause(
+                exc, surface=live_surface(), engine=ctx.engine.engine if ctx.engine else None
+            )
+            diagnosis = routed.diagnosis
             log.warning(
                 "contact_sync: batch probe failed (%s): %s", routed.diagnosis, exc
             )
@@ -398,6 +408,7 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             # size of the untouched tail, never a clean `synced: N` that hides
             # an early stop.
             **({"stopped": stopped, "unprobed": unprobed} if stopped else {}),
+            **({"diagnosis": diagnosis} if diagnosis else {}),
         },
         usage={"internal_calls": internal_calls},
     )

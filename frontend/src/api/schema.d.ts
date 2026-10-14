@@ -2607,6 +2607,11 @@ export interface components {
              * @default 0
              */
             unprobed: number;
+            /**
+             * Diagnosis
+             * @default
+             */
+            diagnosis: string;
         };
         /**
          * ContactUpdate

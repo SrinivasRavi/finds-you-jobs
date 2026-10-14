@@ -9,6 +9,7 @@ kwargs."""
 from __future__ import annotations
 
 from .broker import (
+    BrowserActionTimeout,
     BrowserBroker,
     BrowserLaunchError,
     BrowserSurface,
@@ -19,6 +20,7 @@ from .broker import (
 from .launch import minimal_launch_kwargs, stock_launch_kwargs
 
 __all__ = [
+    "BrowserActionTimeout",
     "BrowserBroker",
     "BrowserLaunchError",
     "BrowserSurface",

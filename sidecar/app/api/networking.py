@@ -494,6 +494,7 @@ def _linkedin_session_base(repos: Any) -> tuple[dto.LinkedInSessionDTO, Any]:
                 failed=int(ref.get("failed") or 0),
                 stopped=str(ref.get("stopped") or ""),
                 unprobed=int(ref.get("unprobed") or 0),
+                diagnosis=str(ref.get("diagnosis") or ""),
             )
     return base, profile
 

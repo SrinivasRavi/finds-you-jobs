@@ -118,12 +118,13 @@ def test_view_page_single_flight_and_free_when_lane_is_quiet() -> None:
     assert can_start("score", ["view_page"], DEFAULT_POLICY) is True
 
 
-def test_send_discover_concurrency_is_untouched() -> None:
-    # The lane mutual-exclusion is view_page-specific — the existing send ↔
-    # discover admission (serialized by the surface lane, not the policy)
-    # must not change under this rule.
-    assert can_start("send", ["discover"], DEFAULT_POLICY) is True
-    assert can_start("discover", ["send"], DEFAULT_POLICY) is True
+def test_no_two_lane_kinds_run_together() -> None:
+    # Send beside discover used to be admitted, so 4 kinds could interleave their
+    # navigations on 1 account (architecture-audit-2026-10-14.md section 3.3).
+    for kind in sorted(BROWSER_LANE_KINDS):
+        for other in sorted(BROWSER_LANE_KINDS):
+            assert can_start(kind, [other], DEFAULT_POLICY) is False, (kind, other)
+    assert can_start("send", ["score", "scan", "apply"], DEFAULT_POLICY) is True
 
 
 # -- live runner: a queued view starts only after the lane op settles -------

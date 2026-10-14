@@ -53,7 +53,7 @@ class _InlineSession:
     def __init__(self, **kwargs: Any) -> None:
         type(self).built += 1
 
-    def run_browser(self, action):
+    def run_browser(self, action, timeout_s=None):
         return action()
 
     def close(self) -> None:
@@ -88,7 +88,7 @@ class _FakeBrokerSurface:
     def __init__(self) -> None:
         self.lane_runs = 0
 
-    def run_on_lane(self, fn):
+    def run_on_lane(self, fn, deadline_s=None):
         self.lane_runs += 1
         return _FakeLaneFuture(fn)
 

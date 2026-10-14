@@ -323,11 +323,11 @@ class PlaywrightLinkedinAPI:
 
         def _kill():
             fired.set()
-            logger.error("Browser watchdog fired on %s — closing context", label)
+            logger.error("Browser watchdog fired on %s, killing the browser", label)
             try:
-                self.page.context.close()
+                self.session.kill_browser()
             except Exception:
-                logger.debug("context.close() raised inside watchdog", exc_info=True)
+                logger.debug("kill_browser() raised inside watchdog", exc_info=True)
 
         timer = threading.Timer(deadline_s, _kill)
         timer.daemon = True
