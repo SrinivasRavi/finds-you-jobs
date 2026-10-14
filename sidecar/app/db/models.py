@@ -148,6 +148,14 @@ class Job(Base):
         UTCDateTime, nullable=False, default=now_utc
     )
 
+    # Liveness (audit-2026-10-14.md 8.7). `source_board` is the company board a
+    # complete scan last listed this job on; a job that board stops listing gets
+    # `closed_at`. `liveness_checked_at` is the daily read of a job no board lists.
+    source_board: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    liveness_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
     # The 1 score a job keeps, and the method that made it: llm | jev | local |
     # keyword, NULL until any runs (b3e9c4a1d7f2). A Keyword write never replaces a
     # real score; a Rescore does. Reasons, breakdown and factors are read back whole.
@@ -179,6 +187,8 @@ class Job(Base):
         Index("ix_jobs_feedstate_expired", "feed_state", "expired_at"),
         Index("ix_jobs_feedstate_trashed", "feed_state", "trashed_at"),
         Index("ix_jobs_feedstate_since", "feed_state", "feed_since"),
+        Index("ix_jobs_source_board", "source_board"),
+        Index("ix_jobs_liveness_checked", "liveness_checked_at"),
         # The near-duplicate lookups (promotion, the duplicate prompt).
         Index("ix_jobs_fingerprint", "fingerprint"),
     )

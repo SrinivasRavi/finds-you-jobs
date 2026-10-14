@@ -171,6 +171,8 @@ export interface Job {
   duplicate_notice: boolean;
   saved: boolean;
   board_state: BoardState;
+  /** The employer's board stopped listing it, or its page said it closed. */
+  closed: boolean;
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */
@@ -862,6 +864,9 @@ export interface EngineVerifyResult {
    *  `not_logged_in` (open a terminal, log in) vs `error`. Other providers map
    *  ok→"ok" / not-ok→"error". Optional for back-compat with older payloads. */
   status?: "ok" | "not_found" | "not_logged_in" | "error";
+  /** An OpenAI-style provider's `/models` ids, and the 1 Verify suggests saving. */
+  models?: string[];
+  suggested_model?: string | null;
 }
 
 /** Save/replace one provider's config. Omitting `key` keeps the sealed key. */

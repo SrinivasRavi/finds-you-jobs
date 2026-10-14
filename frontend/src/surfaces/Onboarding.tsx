@@ -36,14 +36,23 @@ const DISPLAY_STEPS = ["onboarding.stepDownload", ...STEP_LABELS];
 
 // label/hint are i18n keys (t() at render) under the locale's
 // onboarding.providers.<id> node; the ids themselves are API values.
-const PROVIDERS = [
-  { id: "openrouter", label: "onboarding.providers.openrouter.label", hint: "onboarding.providers.openrouter.hint" },
-  { id: "local", label: "onboarding.providers.local.label", hint: "onboarding.providers.local.hint" },
-  { id: "anthropic", label: "onboarding.providers.anthropic.label", hint: "onboarding.providers.anthropic.hint" },
-  { id: "openai", label: "onboarding.providers.openai.label", hint: "onboarding.providers.openai.hint" },
-  { id: "claude-cli", label: "onboarding.providers.claude-cli.label", hint: "onboarding.providers.claude-cli.hint" },
-  { id: "codex-cli", label: "onboarding.providers.codex-cli.label", hint: "onboarding.providers.codex-cli.hint" },
-  { id: "antigravity-cli", label: "onboarding.providers.antigravity-cli.label", hint: "onboarding.providers.antigravity-cli.hint" },
+const providerEntry = (id: string) => ({
+  id,
+  label: `onboarding.providers.${id}.label`,
+  hint: `onboarding.providers.${id}.hint`,
+});
+// 3 groups, by what the user already has: an API key, a subscription they're
+// logged into, or a model on this computer (10-10 report 4.6).
+const PROVIDER_GROUPS = [
+  {
+    heading: "onboarding.providerGroupKey",
+    providers: ["openrouter", "anthropic", "openai", "zai", "zai-coding", "opencode"].map(providerEntry),
+  },
+  {
+    heading: "onboarding.providerGroupSubscription",
+    providers: ["claude-cli", "codex-cli", "antigravity-cli"].map(providerEntry),
+  },
+  { heading: "onboarding.providerGroupLocal", providers: ["local"].map(providerEntry) },
 ];
 
 // The subscription-CLI providers (no key, verify-only): the backend's
@@ -266,7 +275,12 @@ export function Onboarding() {
         // (or a Finish after a quit) already has a working engine.
         // Subscription CLIs have nothing to persist: no key, no URL — POST
         // /api/engines rejects them as BYOK configs; verify alone is the gate.
-        if (!isCliProvider(provider)) await api.saveEngine(input);
+        // A provider with no published model list saves the model its own
+        // `/models` offered (Z.ai, OpenCode); the rest keep their default.
+        if (!isCliProvider(provider))
+          await api.saveEngine(
+            res.suggested_model ? { ...input, default_model: res.suggested_model } : input,
+          );
         // A CLI's detail names the account ("Logged in as …") — show it.
         if (isCliProvider(provider)) setVerifyDetail(res.detail);
         setVerifyState("verified");
@@ -540,7 +554,10 @@ export function Onboarding() {
                 </InfoDot>
               </p>
               <div className="space-y-2">
-                {PROVIDERS.map((p) => (
+                {PROVIDER_GROUPS.map((group) => (
+                  <div key={group.heading} className="space-y-2" data-testid="provider-group">
+                    <div className="pt-1 text-[11px] font-medium text-ink-3">{t(group.heading)}</div>
+                {group.providers.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => {
@@ -572,6 +589,8 @@ export function Onboarding() {
                       <span className="block text-[11.5px] text-ink-3">{t(p.hint)}</span>
                     </span>
                   </button>
+                ))}
+                  </div>
                 ))}
               </div>
               <div className="flex items-center gap-2">

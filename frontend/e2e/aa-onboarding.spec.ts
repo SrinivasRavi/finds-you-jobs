@@ -142,18 +142,23 @@ test("provider step offers the subscription-CLI family beside BYOK", async ({ pa
   await page.getByTestId("onboarding-continue").click();
   await expect(page.getByTestId("onboarding-step-2")).toBeVisible();
 
-  // The full provider menu: 4 BYOK + 3 subscription CLIs.
-  for (const id of [
-    "openrouter",
-    "local",
-    "anthropic",
-    "openai",
-    "claude-cli",
-    "codex-cli",
-    "antigravity-cli",
-  ]) {
-    await expect(page.getByTestId(`provider-${id}`)).toBeVisible();
+  // The full provider menu, in 3 groups by what the user already has: an API key
+  // (6), a logged-in subscription (3), a model on this computer (1).
+  const groups = page.getByTestId("provider-group");
+  await expect(groups).toHaveCount(3);
+  const expected = [
+    ["openrouter", "anthropic", "openai", "zai", "zai-coding", "opencode"],
+    ["claude-cli", "codex-cli", "antigravity-cli"],
+    ["local"],
+  ];
+  for (const [i, ids] of expected.entries()) {
+    for (const id of ids) {
+      await expect(groups.nth(i).getByTestId(`provider-${id}`)).toBeVisible();
+    }
   }
+  await expect(groups.nth(0)).toContainText("With an API key");
+  await expect(groups.nth(0)).toContainText("OpenCode");
+  await page.screenshot({ path: `${DIR}/onboarding-step2-provider-groups.png`, fullPage: true });
 
   // A CLI selection swaps the key input for the no-key hint (verify-only path).
   await page.getByTestId("provider-codex-cli").click();

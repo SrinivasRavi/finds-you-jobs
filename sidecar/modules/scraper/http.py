@@ -116,6 +116,10 @@ class Fetcher:
     def __init__(self, timeout_s: int = 20, usage: Usage | None = None) -> None:
         self.timeout_s = timeout_s
         self.usage = usage if usage is not None else Usage()
+        # Set by an adapter that stopped at its page cap: the list it returned is
+        # not the whole board, so a missing posting proves nothing (audit 8.7).
+        self.truncated = False
+        self.final_url = ""
 
     def _read(
         self,
@@ -147,12 +151,13 @@ class Fetcher:
                 req, timeout=timeout_s if timeout_s is not None else self.timeout_s
             ) as resp:
                 body = resp.read(MAX_BYTES + 1)
+                self.final_url = resp.geturl()
         except urllib.error.HTTPError as e:
             if e.code == 429:  # typed rate-limit + cool-down (F-M9)
                 retry_after = _retry_after_s(e.headers.get("Retry-After"))
                 _start_cooldown(host, retry_after)
                 raise RateLimitError(url, retry_after) from e
-            raise ScraperError("fetch", f"could not fetch {url}: {e}") from e
+            raise ScraperError("fetch", f"could not fetch {url}: {e}", status=e.code) from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise ScraperError("fetch", f"could not fetch {url}: {e}") from e
         finally:
@@ -165,6 +170,17 @@ class Fetcher:
 
     def get_text(self, url: str, headers: dict[str, str] | None = None) -> str:
         return self._read(url, headers=headers)
+
+    def read_page(
+        self, url: str, headers: dict[str, str] | None = None
+    ) -> tuple[int | None, str, str]:
+        """(status, URL after redirects, text). An HTTP error is a status, not a raise;
+        no answer at all (refused, timed out) is status None."""
+        try:
+            text = self._read(url, headers=headers)
+        except ScraperError as e:
+            return e.status, url, ""
+        return 200, getattr(self, "final_url", url), text
 
     def get_json(self, url: str, headers: dict[str, str] | None = None) -> object:
         return self._parse_json(url, self.get_text(url, headers=headers))

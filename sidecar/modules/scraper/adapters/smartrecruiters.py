@@ -134,4 +134,6 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
             )
         if len(content) < _PAGE_SIZE:
             break  # last (short) page
+    else:
+        fetcher.truncated = True  # _MAX_PAGES ran out before the board did
     return jobs

@@ -254,6 +254,8 @@ async def verify_engine(
         status="ok" if result.ok else "error",
         detail=result.detail,
         provider=payload.provider,
+        models=list(result.models),
+        suggested_model=result.suggested_model,
     )
 
 

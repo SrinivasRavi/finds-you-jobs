@@ -326,7 +326,7 @@ def record_brave_usage(
 def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
     """Persist scanned jobs (dedup + tombstone suppression) and build the
     per-source `result_ref`. Returns the result_ref payload."""
-    persisted = deduped = tombstoned = 0
+    persisted = deduped = tombstoned = closed = 0
     new_job_ids: list[str] = []
     if db is not None:
         with db.repos() as repos:
@@ -349,6 +349,8 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
                     written = repos.jobs.get(job_id)
                     if written is not None:
                         flag_near_duplicate(repos, written, rows=rows)
+            for board, urls in result.listed.items():
+                closed += _apply_listing(repos, board, urls)
 
     fetched = sum(r.fetched for r in result.per_source.values())
     kept = sum(r.kept for r in result.per_source.values())
@@ -374,6 +376,7 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
             "persisted": persisted,
             "deduped": deduped,
             "tombstoned": tombstoned,
+            "closed": closed,
             # The ids this scan actually inserted — the board flags the latest
             # succeeded scan's set as "NEW" (maintainer 2026-07-23).
             "new_job_ids": new_job_ids,
@@ -385,6 +388,40 @@ def persist_scan(db: Database | None, result: ScanResult) -> dict[str, Any]:
         },
         "per_source": per_source,
     }
+
+
+def _apply_listing(repos: Repos, board: str, urls: list[str]) -> int:
+    """1 complete board's list against the board's jobs: stamp what it lists, reopen
+    what came back, close what it dropped. Returns how many closed."""
+    now = now_utc()
+    listed = set(urls)
+    for job in repos.jobs.list_by_canonical_urls(urls):
+        job.source_board, job.last_seen_at = board, now
+        if job.closed_at is not None:
+            reopen_job(repos, job, now=now)
+    closed = 0
+    saved = saved_job_ids(repos)
+    for job in repos.jobs.list_open_on_board(board):
+        if job.canonical_url not in listed:
+            close_job(repos, job, saved=job.id in saved, now=now)
+            closed += 1
+    return closed
+
+
+def close_job(repos: Repos, job: Job, *, saved: bool, now: datetime) -> None:
+    """The posting is gone. A scanned, unsaved job greys out and leaves on the
+    expiry clock; a saved or hand-added one is only marked (url-less-jobs 5.6)."""
+    job.closed_at = now
+    if not saved and job.origin == "scan" and job.feed_state == "active":
+        repos.jobs.set_expired(job.id, now=now)
+
+
+def reopen_job(repos: Repos, job: Job, *, now: datetime) -> None:
+    """The posting is back. Undo the close, and only the close: a job aged out by
+    the 14-day clock stays aged."""
+    if job.feed_state == "expired" and job.expired_at == job.closed_at:
+        repos.jobs.unexpire(job.id, now=now)
+    job.closed_at = None
 
 
 def _job_columns(job: NormalizedJob) -> dict[str, Any]:

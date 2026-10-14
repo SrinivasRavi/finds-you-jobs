@@ -233,6 +233,10 @@ const settingsPage = {
     openrouterDesc: "One key, most models — the simplest bring-your-own-key path.",
     anthropicDesc: "Direct Anthropic API key (x-api-key).",
     openaiDesc: "Direct OpenAI API key (Bearer).",
+    zaiDesc: "Z.ai's general API (GLM models), over the OpenAI-compatible format. Verify lists the models your key can use.",
+    zaiCodingDesc: "The GLM Coding Plan's own endpoint, for a plan you already pay for. Verify lists the models it covers.",
+    opencodeDesc: "OpenCode Console, pay as you go. finds-you-jobs uses its chat-format models (GLM, Kimi, DeepSeek, Qwen); its Claude and GPT models use other formats.",
+    modelPlaceholder: "Model id (Verify lists yours)",
     localDesc:
       "Point at a running Ollama / LM Studio / vLLM server — nothing leaves your machine.",
     keySavedPlaceholder: "Key saved ({{hint}}) — paste to replace",

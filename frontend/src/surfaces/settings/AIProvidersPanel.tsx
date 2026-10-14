@@ -44,6 +44,28 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     modelChips: ["gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
   },
   {
+    id: "zai",
+    label: "Z.ai (GLM)",
+    kind: "key",
+    desc: "settingsPage.providers.zaiDesc",
+    modelChips: ["glm-5.3", "glm-5.2", "glm-5.1", "glm-5"],
+  },
+  {
+    id: "zai-coding",
+    label: "Z.ai GLM Coding Plan",
+    kind: "key",
+    desc: "settingsPage.providers.zaiCodingDesc",
+    modelChips: ["glm-5.3", "glm-5.2", "glm-5.1", "glm-5"],
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    kind: "key",
+    desc: "settingsPage.providers.opencodeDesc",
+    // Chat-format models only: OpenCode serves Claude and GPT over other formats.
+    modelChips: ["glm-5.3", "kimi-k3", "deepseek-v4-pro", "qwen3.8-max"],
+  },
+  {
     id: "local",
     label: "Local LLM",
     kind: "local",
@@ -209,6 +231,7 @@ export const AIProvidersPanel = memo(function AIProvidersPanel({ settings }: { s
             <input
               data-testid="engine-model-input"
               value={model}
+              list="engine-models"
               onChange={(e) => setModel(e.target.value)}
               placeholder={entry.modelPlaceholder}
               className={INPUT_CLS}
@@ -248,23 +271,36 @@ export const AIProvidersPanel = memo(function AIProvidersPanel({ settings }: { s
                   </button>
                 ))}
               </div>
-            ) : (
-              <input
-                data-testid="engine-model-input"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder={entry.modelPlaceholder}
-                className={INPUT_CLS}
-              />
-            )}
+            ) : null}
+            <input
+              data-testid="engine-model-input"
+              value={model}
+              list="engine-models"
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={entry.modelPlaceholder ?? t("settingsPage.providers.modelPlaceholder")}
+              className={INPUT_CLS}
+            />
           </div>
         )}
+        {/* The ids the provider's own /models listed on Verify. */}
+        <datalist id="engine-models">
+          {(result?.models ?? []).map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             data-testid="engine-verify-btn"
             disabled={verify.isPending}
-            onClick={() => verify.mutate(input, { onSuccess: setResult })}
+            onClick={() =>
+              verify.mutate(input, {
+                onSuccess: (r) => {
+                  setResult(r);
+                  if (!model && r.suggested_model) setModel(r.suggested_model);
+                },
+              })
+            }
             className="inline-flex h-[30px] items-center rounded-md border border-border-2 bg-surface px-3 text-[12px] font-medium text-ink hover:bg-surface-3 disabled:opacity-50"
           >
             {verify.isPending

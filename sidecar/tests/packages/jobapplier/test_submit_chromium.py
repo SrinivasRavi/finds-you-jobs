@@ -136,17 +136,18 @@ async def _two_submits(page_html: str, tmp_path: Path, *, pause_s: float = 0.0):
 def short_waits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(submit_mod, "_CONFIRM_POLL_S", 0.05)
     monkeypatch.setattr(submit_mod, "_CONFIRM_WAIT_S", 0.2)
-    monkeypatch.setattr(submit_mod, "_SETTLE_WAIT_S", 0.6)
+    # Late pages change at 2 s: far past the first wait, well inside the settle.
+    monkeypatch.setattr(submit_mod, "_SETTLE_WAIT_S", 4.0)
 
 
 async def test_a_late_confirmation_settles_the_second_submit_without_a_click(
     short_waits: None, tmp_path: Path
 ) -> None:
-    # The ATS confirms 0.4 s after the click, past the first wait. Before the
+    # The ATS confirms 2 s after the click, past the first wait. Before the
     # fix, the second Submit clicked again: a second application.
     html = _COUNTING_FORM.format(
         after="setTimeout(function(){document.getElementById('page').innerHTML="
-        "'<h2>Application received</h2>';}, 400);"
+        "'<h2>Application received</h2>';}, 2000);"
     )
     first, second, clicks = await _two_submits(html, tmp_path)
 
@@ -158,7 +159,7 @@ async def test_a_late_confirmation_settles_the_second_submit_without_a_click(
 async def test_an_already_applied_page_counts_as_sent(short_waits: None, tmp_path: Path) -> None:
     html = _COUNTING_FORM.format(
         after="setTimeout(function(){document.getElementById('page').innerHTML="
-        "'<p>You have already applied to this job.</p>';}, 300);"
+        "'<p>You have already applied to this job.</p>';}, 2000);"
     )
     first, second, clicks = await _two_submits(html, tmp_path)
 

@@ -207,6 +207,10 @@ def scan_entrypoint(ctx: OperationContext) -> OperationOutcome:
         prefs = resolve_scan_prefs(snap)
     result = scan(portals, prefs=prefs)
     result_ref = persist_scan(ctx.db, result)
+    # Every scan also reads the pages no complete board vouches for, 1 a day each.
+    from .liveness import check_due
+
+    result_ref["liveness"] = check_due(ctx.db)
     record_brave_usage(ctx.db, result_ref)
     return OperationOutcome(result_ref=result_ref, usage=scan_usage(result))
 

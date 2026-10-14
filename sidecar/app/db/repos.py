@@ -8,7 +8,7 @@ single session (one short transaction per unit of work — AM4).
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -716,6 +716,38 @@ class JobsRepo:
         job.feed_since = now or now_utc()
         job.feed_state = "active"
         return job
+
+    def list_by_canonical_urls(self, urls: list[str]) -> list[Job]:
+        if not urls:
+            return []
+        return list(self._s.scalars(select(Job).where(Job.canonical_url.in_(urls))))
+
+    def list_liveness_due(self, checked_before: datetime, limit: int) -> list[Job]:
+        """Jobs with a link that no complete board lists (or hasn't for 2 days: the
+        user may have stopped scanning it), unread since `checked_before`, the
+        never-read first."""
+        stale = checked_before - timedelta(days=1)
+        stmt = (
+            select(Job)
+            .where(
+                Job.canonical_url.is_not(None),
+                Job.source_board.is_(None) | (Job.last_seen_at < stale),
+                Job.feed_state != "removed",
+                (Job.liveness_checked_at.is_(None)) | (Job.liveness_checked_at < checked_before),
+            )
+            .order_by(Job.liveness_checked_at.is_not(None), Job.liveness_checked_at)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_open_on_board(self, board: str) -> list[Job]:
+        """Jobs a complete scan last listed on `board` and that aren't closed yet."""
+        stmt = select(Job).where(
+            Job.source_board == board,
+            Job.closed_at.is_(None),
+            Job.feed_state.in_(ON_BOARD_STATES),
+        )
+        return list(self._s.scalars(stmt))
 
     def list_trashed_before(self, cutoff: datetime) -> list[Job]:
         """Trashed rows whose TTL has run out. A row with no `trashed_at` is

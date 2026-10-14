@@ -37,6 +37,15 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("provider-tile-embedded")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
 
+  // Z.ai and OpenCode tiles (10-10 report 4.6): suggested models, plus a free
+  // model box that Verify fills with the ids the account's /models lists.
+  await page.getByTestId("provider-tile-opencode").click();
+  await expect(page.getByTestId("model-chip-kimi-k3")).toBeVisible();
+  await expect(page.getByTestId("engine-model-input")).toBeVisible();
+  await page.getByTestId("provider-tile-zai-coding").click();
+  await expect(page.getByTestId("model-chip-glm-5.3")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-zai-provider.png`, fullPage: true });
+
   // Scoring pane — the method menu, the batch cap, AND the rubric the AI
   // method follows, which used to live 2 categories away (2026-10-08 split).
   await page.getByTestId("settings-nav-scoring").click();

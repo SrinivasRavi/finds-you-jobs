@@ -370,3 +370,19 @@ def dev_seed_application(request: Request) -> dict[str, Any]:
         )
         app = repos.applications.create(job_id=job.id, column="saved", priority="P2")
         return {"ok": True, "job_id": job.id, "application_id": app.id}
+
+
+@router.post("/api/dev/jobs/{job_id}/close")
+def dev_close_job(request: Request, job_id: str) -> dict[str, Any]:
+    """Close a job the way a scan does when its board stops listing it, so the
+    board's "No longer listed" state can be seen without a live board. Dev-only."""
+    from ..db.base import now_utc
+    from ..registry.persistence import close_job, saved_job_ids
+
+    _require_dev_mode()
+    with _db(request).repos() as repos:
+        job = repos.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        close_job(repos, job, saved=job_id in saved_job_ids(repos), now=now_utc())
+        return {"ok": True, "feed_state": job.feed_state}

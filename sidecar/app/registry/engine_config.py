@@ -8,9 +8,10 @@ rows with a usable config. Routing to an unregistered engine raises
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,8 @@ from .engines_http import (
     HttpTransport,
     OpenAICompatibleEngine,
     VerifyResult,
+    _default_transport,
+    _verbatim,
     verify_anthropic,
     verify_openai_compatible,
 )
@@ -91,6 +94,50 @@ PROVIDERS: dict[str, ProviderSpec] = {
     ),
     # Local LLM: user provides the base URL; key optional (Ollama needs none).
     "local": ProviderSpec("local", "openai-compatible", None, False, True),
+    # Plans people already pay for, over the same engine (10-10 report 4.6).
+    "zai": ProviderSpec(
+        "zai", "openai-compatible", "https://api.z.ai/api/paas/v4", True, False,
+        default_model="glm-5",
+    ),
+    "zai-coding": ProviderSpec(
+        "zai-coding", "openai-compatible", "https://api.z.ai/api/coding/paas/v4", True, False,
+        default_model="glm-5",
+    ),
+    "opencode": ProviderSpec(
+        "opencode", "openai-compatible", "https://opencode.ai/inference/v1", True, False,
+        default_model="glm-5.3",
+    ),
+}
+
+# Providers whose `/models` answers without a key, so it proves nothing about one.
+KEYLESS_MODEL_LISTS = frozenset({"opencode"})
+
+
+def _prove_key(
+    base_url: str, api_key: str, listed: VerifyResult, transport: HttpTransport | None
+) -> VerifyResult:
+    """A chat call naming no real model: auth runs first, so 401 or 403 is a bad
+    key and anything else means the key passed. No model runs, nothing is spent."""
+    resp = (transport or _default_transport()).request(
+        "POST",
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"},
+        body=json.dumps({"model": "fyj-verify-probe", "max_tokens": 1,
+                         "messages": [{"role": "user", "content": "."}]}).encode(),
+    )
+    if resp.status in (401, 403):
+        return VerifyResult(ok=False, detail=f"LLM API {resp.status}: {_verbatim(resp)}")
+    return listed
+
+
+# Verify suggests the first of these the account's `/models` lists. OpenCode's
+# Claude and GPT ids use other wire formats, so only chat-completions ids appear.
+PREFERRED_MODELS: dict[str, tuple[str, ...]] = {
+    "zai": ("glm-5.3", "glm-5.2", "glm-5.1", "glm-5"),
+    "zai-coding": ("glm-5.3", "glm-5.2", "glm-5.1", "glm-5"),
+    "opencode": (
+        "glm-5.3", "kimi-k3", "deepseek-v4-pro", "qwen3.8-max", "glm-5.2", "kimi-k2.7-code",
+    ),
 }
 
 
@@ -142,7 +189,12 @@ def verify_provider(
         return verify_anthropic(
             api_key or "", base_url=resolved_base or DEFAULT_ANTHROPIC_BASE, transport=transport
         )
-    return verify_openai_compatible(resolved_base or "", api_key, transport=transport)
+    result = verify_openai_compatible(resolved_base or "", api_key, transport=transport)
+    if result.ok and provider in KEYLESS_MODEL_LISTS:
+        result = _prove_key(resolved_base or "", api_key or "", result, transport)
+    listed = set(result.models)
+    suggested = next((m for m in PREFERRED_MODELS.get(provider, ()) if m in listed), None)
+    return replace(result, suggested_model=suggested)
 
 
 # ---------------------------------------------------------------------------

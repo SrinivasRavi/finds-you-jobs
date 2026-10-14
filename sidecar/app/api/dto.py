@@ -107,6 +107,9 @@ class JobDTO(BaseModel):
     trust_flags: list[str]
     feed_state: str
     ingested_at: datetime
+    # When the employer's board stopped listing it, or its page said it closed
+    # (audit-2026-10-14.md 8.7). Null while open, or never checked.
+    closed_at: datetime | None = None
     # Best-effort work style (US-JB-01 row chip) derived app-side from the
     # location + description text — NOT part of the frozen NormalizedJob scraper
     # contract. `REMOTE` | `HYBRID` | `ONSITE`, or `""` when undeterminable (never
@@ -1165,6 +1168,9 @@ class EngineVerifyResult(BaseModel):
     # the subscription CLIs (claude-cli / codex-cli / antigravity-cli) use the
     # non-`ok`/`error` values; every BYOK provider maps ok→"ok" / not-ok→"error".
     status: Literal["ok", "not_found", "not_logged_in", "error"] = "ok"
+    # An OpenAI-style provider's `/models` ids, and the 1 Verify suggests saving.
+    models: list[str] = Field(default_factory=list)
+    suggested_model: str | None = None
 
 
 class EngineSettingUpsert(BaseModel):

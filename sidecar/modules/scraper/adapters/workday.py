@@ -134,4 +134,6 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
         total = payload.get("total")
         if not postings or (isinstance(total, int) and offset >= total):
             break
+    else:
+        fetcher.truncated = True  # MAX_PAGES ran out before the board did
     return jobs

@@ -321,6 +321,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dev/jobs/{job_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Close Job
+         * @description Close a job the way a scan does when its board stops listing it, so the
+         *     board's "No longer listed" state can be seen without a live board. Dev-only.
+         */
+        post: operations["dev_close_job_api_dev_jobs__job_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -2878,6 +2899,10 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "not_found" | "not_logged_in" | "error";
+            /** Models */
+            models?: string[];
+            /** Suggested Model */
+            suggested_model?: string | null;
         };
         /**
          * ExplainCostDTO
@@ -3006,6 +3031,8 @@ export interface components {
              * Format: date-time
              */
             ingested_at: string;
+            /** Closed At */
+            closed_at?: string | null;
             /**
              * Workstyle
              * @default
@@ -4649,6 +4676,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    dev_close_job_api_dev_jobs__job_id__close_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

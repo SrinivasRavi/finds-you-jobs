@@ -145,14 +145,18 @@ class ScanResult:
 
     jobs: list[NormalizedJob] = field(default_factory=list)
     per_source: dict[str, SourceReport] = field(default_factory=dict)
+    # Each company board read in full, with every posting it listed, filtered or
+    # not: a job missing from its board's list is closed (audit 8.7).
+    listed: dict[str, list[str]] = field(default_factory=dict)
 
 
 class ScraperError(Exception):
     """Typed failure. The message carries the verbatim underlying error —
     never swallowed, never half-succeeded (vision non-negotiable)."""
 
-    def __init__(self, stage: str, message: str) -> None:
+    def __init__(self, stage: str, message: str, *, status: int | None = None) -> None:
         self.stage = stage
+        self.status = status  # the HTTP status, when the server answered
         super().__init__(f"[{stage}] {message}")
 
 
@@ -168,4 +172,4 @@ class RateLimitError(ScraperError):
             if cooling_down
             else f"HTTP 429 rate-limited (retry after ~{retry_after_s:.0f}s)"
         )
-        super().__init__("rate-limit", f"{url}: {detail}")
+        super().__init__("rate-limit", f"{url}: {detail}", status=429)
