@@ -9,6 +9,7 @@ postings that are actually distinct.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # Tracking/analytics params that never identify a posting.
@@ -18,6 +19,12 @@ _TRACKING_PREFIXES = ("utm_",)
 _TRACKING_PARAMS |= {"gh_src", "lever-origin", "lever-source", "lever-source[]"}
 _TRACKING_ALSO = {"fbclid", "gclid", "msclkid", "mc_cid", "mc_eid"}
 _TRACKING_PARAMS |= _TRACKING_ALSO
+
+
+# SmartRecruiters serves a posting at `/<company>/<id>`, also as `<id>-<title>`;
+# the API-shaped `/<company>/postings/<id>` is a 404 (audit-2026-10-14.md 8.4).
+_SMARTRECRUITERS_HOSTS = {"jobs.smartrecruiters.com", "careers.smartrecruiters.com"}
+_SMARTRECRUITERS_POSTING = re.compile(r"^/([^/]+)/(?:postings/)?(\d+)(?:-[^/]*)?$")
 
 
 def canonicalize_url(url: str) -> str:
@@ -34,6 +41,12 @@ def canonicalize_url(url: str) -> str:
     path = parts.path or "/"
     if len(path) > 1 and path.endswith("/"):
         path = path.rstrip("/")
+
+    if host in _SMARTRECRUITERS_HOSTS:
+        posting = _SMARTRECRUITERS_POSTING.match(path)
+        if posting:
+            # The id alone names the posting; its title slug and query are noise.
+            return f"https://jobs.smartrecruiters.com/{posting[1]}/{posting[2]}"
 
     kept = [
         (k, v)
