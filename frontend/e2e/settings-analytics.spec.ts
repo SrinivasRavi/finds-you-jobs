@@ -292,6 +292,19 @@ test("a queued operation row offers Stop and cancels to `cancelled` (F-M7)", asy
   // Deterministically queued: the dev seed writes the operation ROW without
   // pumping the runner, so it STAYS queued (the generic enqueue dispatches
   // almost immediately — a race, not a test). FYJ_DEV=1 is set by dev-web.
+  // Any op finishing pumps the runner, which would dispatch the seeded row too, so
+  // start from an idle queue: earlier specs' work must be done (PR #11 CI).
+  await expect
+    .poll(
+      async () => {
+        const ops = (await (
+          await request.get(`${base}/api/operations?limit=200`, { headers: auth })
+        ).json()) as { state: string }[];
+        return ops.filter((o) => o.state === "queued" || o.state === "running").length;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(0);
   const seeded = await request.post(`${base}/api/dev/operations/seed-queued`, { headers: auth });
   expect(seeded.status()).toBe(201);
   const opId = (await seeded.json()).id as string;
