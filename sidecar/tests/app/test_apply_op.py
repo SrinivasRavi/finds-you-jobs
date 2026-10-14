@@ -991,7 +991,8 @@ def _start_held_review(client: TestClient, app: FastAPI) -> tuple[str, dict]:
     row: dict = {}
     while time.monotonic() < deadline:
         row = client.get(f"/api/apply-runs/{run['id']}", headers=AUTH).json()
-        if row["phase"] == "ready_for_human" and row["usage"]["calls"] > 0:
+        # The loop's phase event lands 1 write before the fill's results (PR #11 CI).
+        if row["phase"] == "ready_for_human" and row["usage"].get("calls", 0) > 0:
             return app_id, row
         if row["ended_at"] is not None:
             break
