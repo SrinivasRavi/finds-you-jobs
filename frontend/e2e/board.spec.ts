@@ -225,3 +225,14 @@ test("a filter finds a match beyond the first page", async ({ page, request }) =
     await request.post(`${base}/api/jobs/${id}/tombstone`, { headers: auth });
   }
 });
+
+test("the salary chips say they keep a range that reaches the line (audit A11)", async ({
+  page,
+}) => {
+  await page.goto("/jobs");
+  const group = page.locator("#filter-salary");
+  await expect(group).toContainText("Salary reaches");
+  await expect(group.getByRole("button", { name: "$100k+", exact: true })).toBeVisible();
+  await expect(group).toHaveAttribute("title", /\$80k to \$120k stays at \$100k\+/);
+  await group.screenshot({ path: `${DIR}/salary-chips.png` });
+});

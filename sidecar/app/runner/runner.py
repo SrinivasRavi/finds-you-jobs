@@ -43,7 +43,9 @@ from .policy import (
     DISPATCH_PRIORITY,
     ConcurrencyPolicy,
     can_start,
+    fit_to_pool,
     with_llm_limit,
+    with_queue_mode,
 )
 
 RESTART_NOTE = (
@@ -80,10 +82,10 @@ class OperationRunner:
         on_success: OnSuccessFn | None = None,
         observability: ObservabilityHandle | None = None,
         # Worker threads bound REAL parallelism; the per-group policy bounds
-        # intended parallelism. Sized generously so a raised llm_concurrency
-        # setting isn't silently capped — idle threads cost nothing. 32 is the
-        # practical ceiling for the "Unlimited" setting.
-        max_workers: int = 32,
+        # intended parallelism. Scoring gets what the other lanes' caps leave
+        # (`fit_to_pool`, audit A19), so this is sized for every lane at its cap
+        # plus the top Parallel AI calls (20). Idle threads cost nothing.
+        max_workers: int = 64,
         # Injectable for tests (short cooldowns); production uses the default.
         circuit: EngineCircuitBreaker | None = None,
     ) -> None:
@@ -102,7 +104,8 @@ class OperationRunner:
         self._max_workers = max_workers
         self._executor: ThreadPoolExecutor | None = None
         self._lock = RLock()
-        self._running: dict[str, str] = {}  # operation_id -> kind (in-flight)
+        # operation_id -> (kind, requested_by), in flight; the lane needs both.
+        self._running: dict[str, tuple[str, str]] = {}
         # Per-running-op cooperative cancel tokens (F-M7): created at dispatch,
         # exposed to the entrypoint via ctx.cancelled, dropped on completion.
         self._cancels: dict[str, Event] = {}
@@ -145,10 +148,13 @@ class OperationRunner:
         """The operation kinds this runner can dispatch (registry keys)."""
         return self._registry.kinds()
 
-    def submit(self, kind: str, input_snapshot: dict[str, Any]) -> str:
-        """Create a `queued` operation, publish, and pump. Returns the id now."""
+    def submit(
+        self, kind: str, input_snapshot: dict[str, Any], *, requested_by: str = "app"
+    ) -> str:
+        """Create a `queued` operation, publish, and pump. Returns the id now.
+        `requested_by="user"` when a click created it and someone is waiting."""
         with self._db.repos() as repos:
-            op = repos.operations.create(kind, input_snapshot)
+            op = repos.operations.create(kind, input_snapshot, requested_by=requested_by)
             operation_id = op.id
         self._log.info("operation %s enqueued (kind=%s)", operation_id, kind)
         self._publish(operation_id, kind, "queued")
@@ -204,6 +210,12 @@ class OperationRunner:
             self._policy = with_llm_limit(self._policy, limit)
         self._pump()
 
+    def set_queue_mode(self, mode: str) -> None:
+        """Switch the AI queue choice live (queueing.md section 5); running ops finish."""
+        with self._lock:
+            self._policy = with_queue_mode(self._policy, mode)
+        self._pump()
+
     # -- boot recovery -----------------------------------------------------
 
     def recover(self) -> None:
@@ -241,17 +253,21 @@ class OperationRunner:
                     default_priority=DEFAULT_DISPATCH_PRIORITY,
                     limit=DISPATCH_SCAN_LIMIT,
                 )
-                running_kinds = list(self._running.values())
+                running = list(self._running.values())
+                policy = fit_to_pool(self._policy, self._max_workers, self._registry.kinds())
                 for op in queued:
                     if op.id in self._running:
                         continue
-                    if can_start(op.kind, running_kinds, self._policy):
+                    # Marked running means it has a thread, never a wait in the pool's queue.
+                    if len(running) >= self._max_workers:
+                        break
+                    if can_start(op.kind, running, policy, op.requested_by):
                         snapshot = dict(op.input_snapshot or {})
                         to_start.append((op.id, op.kind, snapshot))
-                        running_kinds.append(op.kind)
-                for op_id, kind, _snap in to_start:
+                        running.append((op.kind, op.requested_by))
+                        self._running[op.id] = (op.kind, op.requested_by)
+                for op_id, _kind, _snap in to_start:
                     repos.operations.mark_running(op_id)
-                    self._running[op_id] = kind
                     self._cancels[op_id] = Event()
             executor = self._executor
         for op_id, kind, snapshot in to_start:
@@ -272,6 +288,7 @@ class OperationRunner:
         with self._lock:
             cancel_token = self._cancels.get(operation_id)
         resolved = None
+        service: str | None = None  # the provider this op calls; the breaker's key
         # Half-open probe lease (F-H5): when `check` admits this op as the circuit's 1
         # probe, the lease must settle on every path or the circuit wedges open.
         # record_success and record_failure transfer it; the outer finally abandons it for
@@ -289,13 +306,16 @@ class OperationRunner:
                         self._engines.resolve(kind) if self._engines is not None else None
                     )
                     if resolved is not None:
-                        # Circuit breaker (F-H5): a provider that keeps failing
-                        # rejects fast here instead of burning an llm slot on
-                        # retries/timeouts. Raises ProviderCircuitOpen → the
-                        # generic failure path lands its message in the ledger.
-                        # True ⇒ this op holds the half-open probe lease.
-                        if self._circuit.check(resolved.name):
-                            probe_engine = resolved.name
+                        service = self._registry.service_for(
+                            kind, snapshot, self._db, resolved.name
+                        )
+                    if service is not None:
+                        # Circuit breaker (F-H5), keyed by the service the op calls,
+                        # which Jev scoring makes OpenRouter whatever `score` routes
+                        # to. Raises ProviderCircuitOpen; True ⇒ this op holds the
+                        # half-open probe lease.
+                        if self._circuit.check(service):
+                            probe_engine = service
                     ctx = OperationContext(
                         kind=kind,
                         input_snapshot=snapshot,
@@ -329,11 +349,11 @@ class OperationRunner:
                     message = f"{type(exc).__name__}: {exc}"
                     # Only real engine failures feed the breaker: parse drift or our own bugs say
                     # nothing about the provider, and a ProviderCircuitOpen rejection mustn't feed
-                    # its own breaker. Charged to the service that failed: Fast scoring calls
+                    # its own breaker. Charged to the service that failed: Jev scoring calls
                     # OpenRouter whatever the kind routes to, and its spent key mustn't pause the
                     # Claude CLI.
                     failed = (
-                        (getattr(exc, "provider", None) or (resolved.name if resolved else None))
+                        (getattr(exc, "provider", None) or service)
                         if isinstance(exc, EngineError)
                         else None
                     )
@@ -367,8 +387,8 @@ class OperationRunner:
                     )
                     self._publish(operation_id, kind, "failed", error=message)
                 else:
-                    if resolved is not None:
-                        self._circuit.record_success(resolved.name)
+                    if service is not None:
+                        self._circuit.record_success(service)
                         probe_engine = None  # lease transferred (probe verdict: healthy)
                     if outcome.error:
                         # The entrypoint finished and reports the user's request didn't happen (an

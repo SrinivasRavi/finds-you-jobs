@@ -66,9 +66,27 @@ class UnknownOperationKind(Exception):
         super().__init__(f"no entrypoint registered for operation kind {kind!r}")
 
 
+# (snapshot, db, routed engine name) -> the service an op will call, or None
+# when it calls none. The runner's circuit breaker gates and credits that service.
+ServiceFn = Callable[[dict[str, Any], Any, str | None], str | None]
+
+
 class OperationRegistry:
-    def __init__(self, entries: dict[str, Entrypoint] | None = None) -> None:
+    def __init__(
+        self,
+        entries: dict[str, Entrypoint] | None = None,
+        services: dict[str, ServiceFn] | None = None,
+    ) -> None:
         self._entries: dict[str, Entrypoint] = dict(entries or {})
+        self._services: dict[str, ServiceFn] = dict(services or {})
+
+    def service_for(
+        self, kind: str, snapshot: dict[str, Any], db: Any, routed: str | None
+    ) -> str | None:
+        """The service this op will call: the routed engine unless the kind
+        says otherwise (Jev scoring calls OpenRouter whatever `score` routes to)."""
+        fn = self._services.get(kind)
+        return routed if fn is None else fn(snapshot, db, routed)
 
     def register(self, kind: str, entrypoint: Entrypoint) -> None:
         self._entries[kind] = entrypoint
@@ -202,7 +220,6 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     from .persistence import (
         age_expired_jobs,
         backfill_fingerprints,
-        backfill_resolved_locations,
         evict_stale_trash,
         purge_archived_applications,
     )
@@ -218,11 +235,8 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
     purged_apps = purge_archived_applications(
         ctx.db, retention_days=settings["archived_applications_purge_days"]
     )
-    # Rows that predate the location resolver. Bounded per tick and converging:
-    # a row it touches stops matching its own query.
-    resolved_locations = backfill_resolved_locations(ctx.db)
-    # Same shape for the duplicate check's fingerprint: bounded, converging,
-    # and a no-op once every pre-migration row has one.
+    # Rows from before the duplicate check's fingerprint: bounded per tick,
+    # converging, and a no-op once every pre-migration row has one.
     fingerprinted = backfill_fingerprints(ctx.db)
     return OperationOutcome(
         result_ref={
@@ -234,7 +248,6 @@ def cleanup_trash_entrypoint(ctx: OperationContext) -> OperationOutcome:
             "expired_deleted_ids": aged["deleted"],
             "purged_applications_count": len(purged_apps),
             "purged_application_ids": purged_apps,
-            "resolved_locations_count": resolved_locations,
             "fingerprinted_count": fingerprinted,
         }
     )
@@ -254,9 +267,19 @@ def _wanted_locations(repos: Repos) -> Any:
 def _factor_rows(result: Any) -> list[dict[str, Any]]:
     """A scorer's typed factors in the shape the repo writes."""
     return [
-        {"factor": f.factor, "value": f.value, "kind": f.kind, "evidence": f.evidence}
+        {"factor": f.factor, "value": f.value, "kind": f.kind, "evidence": f.evidence,
+         "code": getattr(f, "code", None)}
         for f in getattr(result, "factors", [])
     ]
+
+
+def _stored_reasons(result: Any) -> list[Any]:
+    """The reasons as stored: `{key, args, text}` where the scorer gave codes, so the
+    screen words them in the user's language (audit section 5); else the text."""
+    codes = getattr(result, "reason_codes", [])
+    if len(codes) != len(result.reasons):
+        return list(result.reasons)
+    return [{**code, "text": text} for text, code in zip(result.reasons, codes, strict=True)]
 
 
 def _persist_score(
@@ -264,16 +287,18 @@ def _persist_score(
     *,
     job_id: str,
     score_0_100: int,
-    reasons: list[str],
+    reasons: list[Any],
     breakdown_md: str,
     scorer_impl: str,
     feed_priority_stats: bool,
     method: str | None = None,
     factors: list[dict[str, Any]] | None = None,
+    profile_version: int | None = None,
 ) -> None:
     """Write one scorer's rating onto the job; optionally feed the running
     priority distribution (FR-TR-09) exactly once per *new* rating of that
-    scorer — a recompute must not double count."""
+    scorer — a recompute must not double count. A Rescore (`rescore` in the
+    snapshot) may replace a real score with a Keyword one."""
     if ctx.db is None:
         return
     from ..priority import STATS_KEY, welford_update
@@ -287,6 +312,8 @@ def _persist_score(
             breakdown_md=breakdown_md,
             method=method,
             factors=factors,
+            profile_version=profile_version,
+            rescore=bool(ctx.input_snapshot.get("rescore")),
         )
         if feed_priority_stats and is_new_score:
             prefs = repos.preferences.get_or_create()
@@ -303,6 +330,7 @@ def _ensure_keyword_floor(
     job_id: str | None,
     master_md: str,
     job_text: str,
+    profile_version: int | None = None,
 ) -> None:
     """Guarantee this job carries a keyword rating — idempotent: a no-op if the
     floor is already there (the usual case, since the post-scan and boot floor
@@ -317,7 +345,7 @@ def _ensure_keyword_floor(
         return
     with ctx.db.repos() as repos:
         job = repos.jobs.get(job_id)
-        if job is None or job.keyword_score is not None:
+        if job is None or job.score is not None:
             return
         title, location = job.title, job.location
         wanted = _wanted_locations(repos)
@@ -329,12 +357,13 @@ def _ensure_keyword_floor(
             ctx,
             job_id=job_id,
             score_0_100=det.score,
-            reasons=list(det.reasons),
+            reasons=_stored_reasons(det),
             breakdown_md=det.breakdown_md,
             scorer_impl=SCORER_IMPL_DETERMINISTIC,
             method="keyword",
             factors=_factor_rows(det),
             feed_priority_stats=False,
+            profile_version=profile_version,
         )
     except Exception:
         import logging
@@ -342,6 +371,24 @@ def _ensure_keyword_floor(
         logging.getLogger(__name__).exception(
             "keyword floor failed for job_id=%s", job_id
         )
+
+
+def score_service(snapshot: dict[str, Any], db: Any, routed: str | None) -> str | None:
+    """Which service a `score` op calls, by the same mode rule as the entrypoint:
+    Jev scoring calls OpenRouter, Keyword and Laya call nothing."""
+    from .persistence import SCORING_MODES, scoring_mode
+
+    forced = str(snapshot.get("force_mode") or "")
+    if forced in SCORING_MODES:
+        mode = forced
+    elif db is None:
+        mode = str(snapshot.get("scoring_mode") or "llm")
+    else:
+        with db.repos() as repos:
+            mode = scoring_mode(repos.preferences.get_or_create())
+    if mode == "jev":
+        return "openrouter"
+    return None if mode in ("keyword", "local") else routed
 
 
 def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
@@ -423,11 +470,12 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 ctx,
                 job_id=job_id,
                 score_0_100=det.score,
-                reasons=list(det.reasons),
+                reasons=_stored_reasons(det),
                 breakdown_md=det.breakdown_md,
                 scorer_impl=SCORER_IMPL_DETERMINISTIC,
                 method="keyword",
                 factors=_factor_rows(det),
+                profile_version=profile_version,
                 # In keyword mode these ARE the displayed scores — they drive
                 # the priority distribution. A too-thin-to-score 0 is excluded:
                 # it's a missing-data marker, not a fit measurement, and feeding
@@ -440,7 +488,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 det.score,
                 job_id,
                 "keyword",
-                list(det.reasons),
+                _stored_reasons(det),
                 fell_back_from=fell_back_from,
             ),
             usage=None,
@@ -454,7 +502,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         client = (scoring_ctx or {}).get("decisions")
         if client is None:
             raise EngineNotConfiguredError(
-                "Fast scoring needs an OpenRouter key. Add one in Settings > LLM providers, "
+                "score",
+                "Jev scoring needs an OpenRouter key. Add one in Settings > LLM providers, "
                 "or pick another scoring method."
             )
         jev = score_jev(
@@ -474,6 +523,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 feed_priority_stats=True,
                 method="jev",
                 factors=_factor_rows(jev),
+                profile_version=profile_version,
             )
         return OperationOutcome(
             result_ref=_score_result_ref(jev.score, job_id, "jev", list(jev.reasons)),
@@ -500,7 +550,8 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
         # The keyword floor is the fallback; guarantee it exists (idempotent)
         # then re-raise so the op stays failed.
         _ensure_keyword_floor(
-            ctx, job_id=job_id, master_md=master_md, job_text=job_text
+            ctx, job_id=job_id, master_md=master_md, job_text=job_text,
+            profile_version=profile_version,
         )
         # Spend an attempt only when the call reached the provider. A
         # `ProviderCircuitOpen` rejection means the runner refused to dispatch, so the job
@@ -524,6 +575,7 @@ def score_entrypoint(ctx: OperationContext) -> OperationOutcome:
             feed_priority_stats=True,
             method="llm",
             factors=_factor_rows(result),
+            profile_version=profile_version,
         )
     return llm_outcome(
         _score_result_ref(result.score, job_id, "llm", list(result.reasons)),
@@ -542,7 +594,7 @@ def _score_result_ref(
 ) -> dict[str, Any]:
     """The score op's ledger payload. `method` always: a thin JD silently runs
     keyword (url-less-jobs.md section 8.7). `fell_back_from` names the picked method
-    when another ran (On-device to keyword, T10). `reasons` only on the triage path,
+    when another ran (Laya to keyword, T10). `reasons` only on the triage path,
     where there's no job row (section 9.1.1)."""
     ref: dict[str, Any] = {"score": score_0_100, "job_id": job_id, "method": method}
     if job_id is None:
@@ -555,8 +607,8 @@ def _score_result_ref(
 def _keyword_sweep(db: Database, *, refresh: bool) -> int:
     """The 1 keyword sweep over the active board (about 0.5 ms per job).
     `refresh=False` is the floor: only unrated jobs get a keyword rating.
-    `refresh=True` recomputes every job against the new resume; the AI score lives in
-    its own column, so it's never buried."""
+    `refresh=True` recomputes every Keyword score against the new resume; `set_score`
+    never lets it replace a real score."""
     from sidecar.modules.scorer.deterministic import score_deterministic
 
     from .persistence import SCORER_IMPL_DETERMINISTIC, compose_job_text
@@ -565,7 +617,7 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
         profile = repos.profile.get_current()
         if profile is None:
             return 0
-        master_md = profile.resume_markdown
+        master_md, version = profile.resume_markdown, profile.version
         jobs = repos.jobs.list(feed_state="active")
         if not refresh:
             unscored = repos.jobs.ids_without_any_score([j.id for j in jobs])
@@ -584,10 +636,11 @@ def _keyword_sweep(db: Database, *, refresh: bool) -> int:
                     job_id,
                     scorer_impl=SCORER_IMPL_DETERMINISTIC,
                     score_0_100=det.score,
-                    reasons=list(det.reasons),
+                    reasons=_stored_reasons(det),
                     breakdown_md=det.breakdown_md,
                     method="keyword",
                     factors=_factor_rows(det),
+                    profile_version=version,
                 )
             done += 1
         except Exception:  # noqa: BLE001 — one bad job never aborts the sweep
@@ -655,6 +708,27 @@ def _persist_artifact(
         return artifact.id
 
 
+def _resume_location(repos: Repos, job_id: Any) -> tuple[str, str, str]:
+    """(mode, posting place, master's location line) for the header of a tailored
+    resume and its cover letter: the 1 setting shown in Settings > Applying and
+    Settings > Resume & cover letter (default the master's, D65), the job's first
+    resolved place, and the location read from the master resume."""
+    from sidecar.modules._shared.location_line import RESUME_LOCATION_MODES
+
+    from .applicant import posting_place
+
+    prefs = repos.preferences.get_or_create()
+    mode = str((prefs.thresholds or {}).get("resume_location") or "master")
+    if mode not in RESUME_LOCATION_MODES:
+        mode = "master"
+    profile = repos.profile.get_current()
+    record = profile.application_profile if profile is not None else None
+    master = str((record or {}).get("location") or "") if isinstance(record, dict) else ""
+    job = repos.jobs.get(str(job_id)) if job_id else None
+    place = posting_place(job.location or "") if job is not None else None
+    return mode, place[0] if place is not None else "", master
+
+
 def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Tailor a resume (Tailorer module) → its `Artifact`. Routed engine."""
     resolved = _require_engine(ctx)
@@ -662,7 +736,9 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
     snap = ctx.input_snapshot
-    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
+    job_text, master_md, profile_version, location = _load_job_inputs(
+        ctx, also=lambda repos: _resume_location(repos, snap.get("job_id"))
+    )
 
     result = tailor(
         master_md,
@@ -671,6 +747,7 @@ def tailor_entrypoint(ctx: OperationContext) -> OperationOutcome:
         engine=resolved.engine,
         skill_md=prompt_for(ctx, "tailor"),
         cancelled=ctx.cancelled,
+        location=location,
     )
     if is_prompt_test(ctx):
         # The output goes in the ledger row and nowhere else, so the modal can
@@ -711,7 +788,9 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
 
 
     snap = ctx.input_snapshot
-    job_text, master_md, profile_version, _ = _load_job_inputs(ctx)
+    job_text, master_md, profile_version, location = _load_job_inputs(
+        ctx, also=lambda repos: _resume_location(repos, snap.get("job_id"))
+    )
 
     result = cover(
         master_md,
@@ -720,6 +799,7 @@ def cover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         engine=resolved.engine,
         skill_md=prompt_for(ctx, "cover"),
         cancelled=ctx.cancelled,
+        location=location,
     )
     if is_prompt_test(ctx):
         return llm_outcome(
@@ -777,8 +857,14 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
             usage=result.usage,
             resolved=resolved,
         )
-    record = {**result.profile, "profile_version": version, "source": "extracted"}
+    from .applicant import merge_extracted
+
     with ctx.db.repos() as repos:
+        current = repos.profile.get_current()
+        record = merge_extracted(
+            current.application_profile if current is not None else None,
+            {**result.profile, "profile_version": version, "source": "extracted"},
+        )
         repos.profile.set_application_profile(record)
     return llm_outcome(
         {
@@ -822,5 +908,6 @@ def default_operation_registry() -> OperationRegistry:
             **contact_sync_entrypoints(),  # contact_sync
             **apply_entrypoints(),  # apply (the Applier agent)
             **view_page_entrypoints(),  # view_page (queued watch-surface show)
-        }
+        },
+        services={"score": score_service},
     )

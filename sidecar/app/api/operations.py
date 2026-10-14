@@ -64,7 +64,7 @@ def create_operation(
         )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
-    operation_id = runner.submit(kind, input_snapshot or {})
+    operation_id = runner.submit(kind, input_snapshot or {}, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind=kind, state="queued")
 
 
@@ -83,7 +83,7 @@ def retry_operation(request: Request, operation_id: str) -> dto.OperationAccepte
             status_code=422,
             detail=f"{kind} cannot be retried from the ledger — re-run it from its own surface",
         )
-    new_id = _runner(request).submit(kind, snapshot)
+    new_id = _runner(request).submit(kind, snapshot, requested_by="user")
     # Durable old→new link (no schema change: result_ref is JSON): a FAILED row
     # that was retried renders as "Retried" instead of nagging red forever,
     # while staying in the ledger as the honest cost/audit record (US-LOG-01).

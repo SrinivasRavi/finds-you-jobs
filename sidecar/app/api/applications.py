@@ -20,14 +20,23 @@ from sidecar.modules.scraper.quality import evaluate as quality_evaluate
 
 from .. import documents as docstore
 from ..db.base import now_utc
-from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
+from ..db.models import (
+    APPLY_RUN_ACTIVE_STATUSES,
+    OP_ACTIVE_STATES,
+    OP_ALL_STATES,
+    apply_run_in_review,
+)
 from ..priority import STATS_KEY, zband_priority
 from ..registry import networker_ops as networker_ops
 from ..registry.apply_op import (
+    NO_APPLICATION_PROFILE_DETAIL,
     NO_POSTING_URL_DETAIL,
+    _dev_enabled,
     advance_card_to_applied,
     finalize_run_failed,
     finalize_run_interrupted,
+    has_application_profile,
+    has_extracted_profile,
     purge_run_dirs,
 )
 from ..registry.persistence import (
@@ -35,6 +44,7 @@ from ..registry.persistence import (
 )
 from . import dto
 from .deps import db as _db
+from .deps import engines as _engines
 from .deps import found as _found
 from .deps import runner as _runner
 from .jobs import (
@@ -682,11 +692,25 @@ def start_apply(
         # (url-less-jobs.md sections 5.4 and 9.8). The dev seam carries its own form: a
         # local fixture is a file:// URL, which `canonicalize_url` rejects, so it can't
         # live on the job row. Production has no dev knobs; a URL-less card still 409s.
-        dev_form_url = str((payload.dev or {}).get("form_url") or "")
+        dev_form_url = str((payload.dev or {}).get("form_url") or "") if _dev_enabled() else ""
         if not job.canonical_url and not dev_form_url:
             raise HTTPException(status_code=409, detail=NO_POSTING_URL_DETAIL)
         needs_intent = app_row.intent != "apply"
         job_url = job.canonical_url or dev_form_url
+        has_master = repos.profile.get_current() is not None
+        has_facts = has_application_profile(repos)
+        has_read = has_extracted_profile(repos)
+        reading = repos.operations.any_in_flight("extract")
+
+    if not has_facts:
+        # Applicant details must be confirmed once before the first apply (audit A5).
+        # With nothing read yet, start reading the resume so the form arrives prefilled.
+        engines = _engines(request)
+        if has_master and not has_read and not reading and (
+            engines is None or engines.resolve("extract") is not None
+        ):
+            runner.submit("extract", {}, requested_by="user")
+        raise HTTPException(status_code=409, detail=NO_APPLICATION_PROFILE_DETAIL)
 
     snapshot: dict[str, Any] = {"application_id": application_id}
     if payload.retry_of_run_id:
@@ -711,7 +735,7 @@ def start_apply(
         run_id = run.id
     snapshot["run_id"] = run_id
     try:
-        operation_id = runner.submit("apply", snapshot)
+        operation_id = runner.submit("apply", snapshot, requested_by="user")
     except Exception as exc:
         # Enqueue failed (2026-07-25): the just-created row would strand
         # `queued` until boot sweep — land it terminal-failed, then let the
@@ -801,7 +825,7 @@ def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
 
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
-        if run.status != "ready_for_human":
+        if not apply_run_in_review(run):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -819,6 +843,18 @@ def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
         return dto.apply_run_dto(run)
 
 
+@router.post("/api/apply-runs/{run_id}/show")
+async def show_apply_run(request: Request, run_id: str) -> dto.ApplyRunShowResult:
+    """Bring the run's tab to the front of the Applier window, because the user
+    asked (applier/window.md section 4.5). `shown` is false once the tab is gone."""
+    from ..registry.applier_window import show_run
+
+    with _db(request).repos() as repos:
+        _found(repos.apply_runs.get(run_id), "run", run_id)
+    shown = await asyncio.to_thread(show_run, run_id)
+    return dto.ApplyRunShowResult(shown=shown)
+
+
 @router.post("/api/apply-runs/{run_id}/attest")
 def attest_apply_run(
     request: Request, run_id: str, payload: dto.ApplyAttestRequest
@@ -828,7 +864,10 @@ def attest_apply_run(
     leaves the card in its pre-submission column with the honest run result."""
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
-        if run.status not in ("ready_for_human", "interrupted", "timed_out", "blocked"):
+        handed_off = apply_run_in_review(run) or run.status in (
+            "interrupted", "timed_out", "blocked"
+        )
+        if not handed_off:
             if not (run.status == "submitted" and payload.submitted):
                 raise HTTPException(
                     status_code=409,

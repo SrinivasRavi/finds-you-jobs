@@ -13,7 +13,7 @@ export type ScreencastState = "connecting" | "live" | "reconnecting";
  *  commits, so every field is optional and read by shape. */
 export type ScreencastControl =
   | { type: "status"; url?: string; state?: string; surface?: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; code?: string };
 
 /** The frontend's real display geometry, read from `window.screen`. Sent once
  *  the socket opens so the surface lays its page out at the true monitor size

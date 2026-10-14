@@ -79,9 +79,15 @@ test("follow a company from a job with no link, then manage it in Settings", asy
   await page.getByTestId("follow-row-change").click();
   await page.getByTestId("follow-change-input").fill("https://e2e-board2.localhost/feed.rss");
   await page.getByTestId("follow-change-save").click();
-  await expect(row).toHaveCount(1, { timeout: 15_000 });
+  // The new link is followed before the old one goes, so 2 rows show for a moment;
+  // a bare count of 1 can pass on the old row before the change starts.
+  await expect(row.filter({ hasText: "https://e2e-board.localhost/jobs.rss" })).toHaveCount(0, {
+    timeout: 15_000,
+  });
+  await expect(row).toHaveCount(1);
   await expect(row).toContainText("https://e2e-board2.localhost/feed.rss");
   await expect(row).not.toContainText("https://e2e-board.localhost/jobs.rss");
+  await page.screenshot({ path: `${DIR}/02b-link-changed.png` });
 
   // Remove takes it off the list.
   await page.getByTestId("follow-remove").click();

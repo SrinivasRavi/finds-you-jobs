@@ -1,5 +1,5 @@
 """The zero-LLM scorer: Settings > Scoring "Keyword scoring", and the grey floor
-behind a failed AI score. See the module's own docstring for why the rubric is a
+behind a failed LLM score. See the module's own docstring for why the rubric is a
 fresh design rather than a JustHireMe port."""
 
 from __future__ import annotations

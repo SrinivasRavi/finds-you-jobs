@@ -5,12 +5,16 @@
 
 import { useTranslation } from "react-i18next";
 
+import { codedLine, scoreText } from "./scoreText";
+
 /** One axis as a scorer judged it. Mirrors `scorer/types.py:Factor`. */
 export interface ScoreFactor {
   factor: string;
   value: number;
   kind: string;
   evidence: string;
+  /** `evidence` as a key and its facts, for the user's language (audit section 5). */
+  code?: { [key: string]: unknown } | null;
 }
 
 /** Display order, matching `scorer/output_parse.py:FACTOR_KEYS` so a bar chart
@@ -65,7 +69,11 @@ function Bar({ factor, weight }: { factor: ScoreFactor; weight?: number }) {
         />
       </div>
       {factor.evidence ? (
-        <p className="mt-1 text-[10.5px] leading-snug text-ink-3">{factor.evidence}</p>
+        <p className="mt-1 text-[10.5px] leading-snug text-ink-3">
+          {codedLine(factor.code)
+            ? scoreText({ ...codedLine(factor.code)!, text: factor.evidence }, t)
+            : factor.evidence}
+        </p>
       ) : null}
     </li>
   );

@@ -178,7 +178,7 @@ def test_a_score_test_run_never_touches_the_job_s_real_score(tmp_path) -> None:
             assert "Backend Engineer" in op.input_snapshot["job"]
             job = repos.jobs.get(job_id)
             assert job is not None
-            assert job.llm_score == 42
+            assert job.score == 42
 
 
 def test_a_pasted_description_works_with_nothing_on_the_board(tmp_path) -> None:
@@ -404,9 +404,9 @@ def test_a_tailor_row_whose_artifact_is_gone_says_nothing(tmp_path) -> None:
         assert row["subject"]["artifact"] is None
 
 
-def test_a_score_prompt_test_runs_the_ai_scorer_whatever_the_board_uses(tmp_path) -> None:
-    """The AI scoring prompt is read by the AI scorer and nothing else. A user
-    whose board runs Fast or Keyword scoring used to get that method back from
+def test_a_score_prompt_test_runs_the_llm_scorer_whatever_the_board_uses(tmp_path) -> None:
+    """The LLM scoring prompt is read by the LLM scorer and nothing else. A user
+    whose board runs Jev or Keyword scoring used to get that method back from
     "Test scoring with this prompt", with their draft never sent anywhere."""
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False

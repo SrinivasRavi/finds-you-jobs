@@ -649,3 +649,56 @@ def test_a_verified_cli_turns_ai_back_on(
     monkeypatch.setattr(ce, "claude_auth_status", lambda exe=None: {"logged_in": True})
     client.post("/api/engines/verify", headers=AUTH, json={"provider": "claude-cli"})
     assert set(_routing(client).values()) == {"claude-cli"}
+
+
+def _record_submits(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record what the runner is asked to queue, without running it (no real LLM call)."""
+    kinds: list[str] = []
+    monkeypatch.setattr(app.state.runner, "submit", lambda kind, *_a, **_k: kinds.append(kind))
+    return kinds
+
+
+def test_a_provider_after_skip_reads_the_application_profile(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Audit A5: the extract Skip left unread runs once AI turns on.
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    client.post("/api/profile", headers=AUTH, json={"resume_markdown": "# A\n\nEngineer."})
+    kinds = _record_submits(app, monkeypatch)
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert kinds == ["extract"]
+    assert app.state.engines.resolve("extract") is not None
+
+
+def test_a_verified_cli_after_skip_reads_the_application_profile(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sidecar.modules._shared.claude_engine as ce
+
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    client.post("/api/profile", headers=AUTH, json={"resume_markdown": "# A\n\nEngineer."})
+    monkeypatch.setattr(ce, "resolve_claude", lambda refresh=False: "/usr/local/bin/claude")
+    monkeypatch.setattr(ce, "claude_auth_status", lambda exe=None: {"logged_in": True})
+    kinds = _record_submits(app, monkeypatch)
+    client.post("/api/engines/verify", headers=AUTH, json={"provider": "claude-cli"})
+    assert kinds == ["extract"]
+
+
+def test_turning_ai_on_reads_nothing_already_read_or_absent(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, client = app_client
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    kinds = _record_submits(app, monkeypatch)
+    # No master resume: nothing to read.
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert kinds == []
+    # Facts already present: nothing to read either.
+    client.post("/api/settings", headers=AUTH, json=_ALL_OFF)
+    with app.state.db.repos() as repos:
+        repos.profile.upsert("# A\n\nEngineer.")
+        repos.profile.set_application_profile({"name": "A", "source": "edited"})
+    client.post("/api/engines", headers=AUTH, json={"provider": "anthropic", "key": SECRET_KEY})
+    assert kinds == []

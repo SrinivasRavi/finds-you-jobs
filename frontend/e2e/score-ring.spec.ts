@@ -1,6 +1,6 @@
 // Covers: the 2-ring score dial. The outer arc is the score on a red-to-green
 // ramp; the inner ring is the method that produced it. The 4 methods can't all
-// run in e2e (Fast needs an OpenRouter key, On-device has no pack yet), so the
+// run in e2e (Jev needs an OpenRouter key, Laya has no pack yet), so the
 // board response is patched, as board.spec.ts does for virtualization.
 
 import { dirname } from "node:path";
@@ -203,7 +203,7 @@ test("explain this one shows its price, and only where there is prose to buy", a
     data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
   });
 
-  // This user has paid for AI scores before, so the button quotes their own
+  // This user has paid for LLM scores before, so the button quotes their own
   // average rather than a figure off a price list.
   await page.route("**/api/scoring/explain-cost", async (route) => {
     await route.fulfill({
@@ -235,7 +235,7 @@ test("explain this one shows its price, and only where there is prose to buy", a
   await expect(button).toContainText("0.24");
   await page.screenshot({ path: `${DIR}/explain-button.png`, fullPage: true });
 
-  // An AI-scored job already has its prose, so there is nothing to buy.
+  // An LLM-scored job already has its prose, so there is nothing to buy.
   method = "llm";
   await page.reload();
   await page.locator('[data-testid="job-row"]').first().click();
@@ -252,9 +252,9 @@ test("the Scoring pane says which method the rubric governs", async ({ page }) =
 
   const scope = page.locator('[data-testid="prompt-scope-score"]');
   await expect(scope).toBeVisible();
-  await expect(scope).toContainText("AI scoring only");
+  await expect(scope).toContainText("LLM scoring only");
   await expect(scope).toContainText("Keyword scoring");
-  await expect(scope).toContainText("Fast scoring");
+  await expect(scope).toContainText("Jev scoring");
   await page.screenshot({ path: `${DIR}/prompts-scope.png`, fullPage: true });
 
   // Every other prompt carries its own scope line too, in the category that

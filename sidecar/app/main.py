@@ -49,6 +49,7 @@ from .registry import EngineRegistry, OperationRegistry
 from .registry.engine_config import configure_engines
 from .registry.operations import backfill_keyword_scores
 from .runner import OperationRunner
+from .runner.policy import policy_from
 from .scheduler import Scheduler
 from .scheduler.planner import plan_schedule, plan_score_new
 from .security import AppKeyUnavailable, migrate_plaintext_session, resolve_app_key_once
@@ -246,10 +247,15 @@ def create_app(
         except Exception:  # noqa: BLE001 — recovery must never block boot
             log.exception("apply-run boot recovery failed")
 
+        # The saved Parallel AI calls and queue choice apply from the first pump, not
+        # only after the next Settings save.
+        with db.repos() as repos:
+            saved_thresholds = dict(repos.preferences.get_or_create().thresholds or {})
         runner = OperationRunner(
             db,
             registry=operation_registry,
             engines=engines,
+            policy=policy_from(saved_thresholds),
             publish=hub.publish,
             observability=observability,
         )
@@ -407,11 +413,15 @@ def create_app(
             # Close every browser surface before the DB goes: each one is a real
             # Chrome process that would otherwise outlive the sidecar.
             browser.shutdown()
+            # The Applier's window too (applier/window.md section 4.4).
+            from .registry.applier_window import shutdown_windows
+
+            shutdown_windows()
             db.dispose()
             log.info("sidecar app stopped")
 
     app = FastAPI(
-        title="finds-you-jobs sidecar", version="0.5.5", lifespan=lifespan
+        title="finds-you-jobs sidecar", version="0.5.9", lifespan=lifespan
     )
 
     # Unexpected route crashes land in the flight recorder (2026-07-24):

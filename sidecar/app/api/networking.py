@@ -345,7 +345,7 @@ def discover_referrals(
         snapshot["company_industry"] = payload.company_industry or ""
     if payload.company_url:
         snapshot["company_url"] = payload.company_url
-    operation_id = _runner(request).submit("discover", snapshot)
+    operation_id = _runner(request).submit("discover", snapshot, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind="discover", state="queued")
 
 
@@ -358,7 +358,7 @@ def draft_referral(
     with _db(request).repos() as repos:
         _found(repos.contacts.get(contact_id), "contact", contact_id)
     operation_id = _runner(request).submit(
-        "draft", {"contact_id": contact_id, "job_id": job_id}
+        "draft", {"contact_id": contact_id, "job_id": job_id}, requested_by="user"
     )
     return dto.OperationAccepted(id=operation_id, kind="draft", state="queued")
 
@@ -417,7 +417,7 @@ def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.ReachOutRes
                 # The user clicked "Send now": the marker the presence gate reads
                 # (invariant 3), so a background caller can never start a send.
                 "user_initiated": True,
-            })
+            }, requested_by="user")
         )
     return dto.ReachOutResult(enqueued=enqueued, skipped_contact_ids=skipped)
 
@@ -457,7 +457,7 @@ def networking_contact_sync(request: Request) -> dto.ContactSyncAccepted:
     if in_flight:
         return dto.ContactSyncAccepted(state="already_running")
 
-    operation_id = _runner(request).submit("contact_sync", {})
+    operation_id = _runner(request).submit("contact_sync", {}, requested_by="user")
     return dto.ContactSyncAccepted(id=operation_id, state="queued")
 
 
@@ -558,7 +558,7 @@ def linkedin_connect(
         snap["login_url"] = payload.login_url
     if payload is not None and payload.timeout_s:
         snap["timeout_s"] = payload.timeout_s
-    operation_id = _runner(request).submit("linkedin_login", snap)
+    operation_id = _runner(request).submit("linkedin_login", snap, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind="linkedin_login", state="queued")
 
 
@@ -604,7 +604,9 @@ def linkedin_search(
             detail="LinkedIn job-search hourly limit reached — wait for it to "
                    "reset, or raise it in Settings › LinkedIn self-imposed rate limits.",
         )
-    operation_id = _runner(request).submit("linkedin_search", {"mode": mode})
+    operation_id = _runner(request).submit(
+        "linkedin_search", {"mode": mode}, requested_by="user"
+    )
     return dto.OperationAccepted(id=operation_id, kind="linkedin_search", state="queued")
 
 
@@ -772,5 +774,5 @@ def view_browser_page(
         snapshot.update(width=payload.width, height=payload.height, dpr=payload.dpr)
     if payload.contact_id:
         snapshot["contact_id"] = payload.contact_id
-    operation_id = _runner(request).submit("view_page", snapshot)
+    operation_id = _runner(request).submit("view_page", snapshot, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind="view_page", state="queued")

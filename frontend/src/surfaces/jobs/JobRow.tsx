@@ -1,5 +1,6 @@
 import { memo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useRescoreJob } from "../../api/queries";
 import { type Job } from "../../api/types";
 import { Avatar } from "../../shell/Avatar";
 import { JobProvenanceChips } from "./JobProvenanceChips";
@@ -9,8 +10,9 @@ import {
   scoreRingColor,
   scoreTier,
   sourceClasses,
+  placeLine,
+  placeTitle,
   timeAgo,
-  workLabel,
 } from "../jobFormat";
 
 /** 2 concentric rings: the outer arc is the score, red through green, drawn as
@@ -52,6 +54,37 @@ export function MatchRing({ score, method }: { score: number; method: string }) 
         <span className={`text-[13px] font-semibold ${tier.text}`}>{score}</span>
       </div>
     </div>
+  );
+}
+
+/** Rescore and the rescore-due mark, beside the score in the job pane
+ *  (score-storage.md 5.2). Nothing rescores on its own. */
+export function RescoreControl({ job }: { job: Job }) {
+  const { t } = useTranslation();
+  const rescore = useRescoreJob();
+  return (
+    <span className="mt-1 inline-flex items-center gap-1 text-[10.5px]">
+      {job.score?.stale ? (
+        <span
+          data-testid="score-stale"
+          title={t("jobBoard.row.staleTitle")}
+          aria-label={t("jobBoard.row.staleTitle")}
+          className="text-warn"
+        >
+          ⚠
+        </span>
+      ) : null}
+      <button
+        type="button"
+        data-testid="rescore-job"
+        title={t("jobBoard.row.rescoreTitle")}
+        disabled={rescore.isPending}
+        onClick={() => rescore.mutate(job.id)}
+        className={rescore.isPending ? "text-ink-4" : "text-ink-3 hover:text-accent"}
+      >
+        {rescore.isPending ? t("jobBoard.row.rescoring") : t("jobBoard.row.rescore")}
+      </button>
+    </span>
   );
 }
 
@@ -130,12 +163,9 @@ export const JobRow = memo(function JobRow({
             </span>
           ) : null}
         </div>
-        {/* US-JB-01 row: company · location · work-style */}
-        <div className="truncate text-[11.5px] text-ink-2">
-          {highlight(
-            [job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · "),
-            q,
-          )}
+        {/* US-JB-01 row: company · place (work style), as place-picker.md 8.3 prints it */}
+        <div className="truncate text-[11.5px] text-ink-2" title={placeTitle(job)}>
+          {highlight([job.company, placeLine(job)].filter(Boolean).join(" · "), q)}
         </div>
         {/* salary · time-ago */}
         <div className="text-[11.5px] text-ink-3">

@@ -15,14 +15,15 @@ import { FactorBars } from "../../shell/FactorBars";
 import { DuplicatePrompt } from "./DuplicatePrompt";
 import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
+import { scoreText } from "../../shell/scoreText";
 import { AddLinkDialog, type AddLinkMode } from "./AddLinkDialog";
 import { FollowCompanyDialog } from "./FollowCompanyDialog";
-import { FollowResult, followLooksRight } from "./FollowResult";
-import { sourceClasses, workLabel } from "../jobFormat";
-import { MatchRing, highlight } from "./JobRow";
+import { FollowResult, followErrorText, followLooksRight } from "./FollowResult";
+import { placeLine, placeTitle, sourceClasses } from "../jobFormat";
+import { MatchRing, RescoreControl, highlight } from "./JobRow";
 
 /** "Explain this one": 1 click, 1 job, 1 AI call, priced on the button (vision.md,
- *  cost honesty). The price is what this user's own AI scores have cost, from the
+ *  cost honesty). The price is what this user's own LLM scores have cost, from the
  *  ledger, since a price list goes wrong at the first model switch. With no history
  *  it names the model instead of a number. */
 function ExplainButton({ job }: { job: Job }) {
@@ -130,13 +131,15 @@ export function JobDetail({
   }
   const subtitle = [
     job.company,
-    job.location,
-    workLabel(job.work_style) || t("jobBoard.detail.workStyleNA"),
+    placeLine(job),
+    job.work_style ? "" : t("jobBoard.detail.workStyleNA"),
     job.salary || t("jobBoard.detail.salaryNA"),
   ]
     .filter(Boolean)
     .join(" · ");
   const active = sourceFilter === job.source_adapter;
+  // A keyword score's reasons arrive coded, for the user's language (audit section 5).
+  const coded = !!job.score?.reasons.some((r) => typeof r !== "string");
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-start gap-4 px-6 pt-6">
@@ -158,7 +161,15 @@ export function JobDetail({
               {job.source_adapter}
             </button>
           </div>
-          <div className="mt-1 text-[12.5px] text-ink-2">{subtitle}</div>
+          <div className="mt-1 text-[12.5px] text-ink-2" title={placeTitle(job)}>
+            {subtitle}
+          </div>
+          {/* Nothing the board wrote is hidden (place-picker.md 8.3 item 3). */}
+          {job.places.length > 0 && job.location ? (
+            <div className="text-[11.5px] text-ink-3" data-testid="job-location-as-posted">
+              {t("jobBoard.detail.asPosted", { text: job.location })}
+            </div>
+          ) : null}
           <div className="text-[11.5px] text-ink-3">
             {t("jobBoard.detail.posted", { date: job.posted_at || t("jobBoard.detail.na") })}
           </div>
@@ -171,6 +182,7 @@ export function JobDetail({
                 ? t("jobBoard.detail.keywordsScored")
                 : t("jobBoard.detail.match")}
             </span>
+            <RescoreControl job={job} />
           </div>
         ) : null}
       </div>
@@ -266,7 +278,7 @@ export function JobDetail({
           <button
             type="button"
             data-testid="watch-company-unsupported"
-            title={watchError.message}
+            title={followErrorText(watchError, t)}
             onClick={() => setFollowOpen(true)}
             className="inline-flex h-[30px] items-center px-3 text-[12px] text-ink-3 underline hover:text-ink"
           >
@@ -278,7 +290,7 @@ export function JobDetail({
             data-on={!!watchedEntry}
             title={
               watchError
-                ? t("jobBoard.detail.watchFailedTitle", { message: watchError.message })
+                ? t("jobBoard.detail.watchFailedTitle", { message: followErrorText(watchError, t) })
                 : watchedEntry
                   ? t("jobBoard.detail.watchOnTitle")
                   : t("jobBoard.detail.watchOffTitle")
@@ -425,7 +437,7 @@ export function JobDetail({
                   {/* The bars first (scoring.md 7.3): they are the only part of
                       this panel that every method fills, and the only part a
                       user can argue with axis by axis. The prose below is what
-                      AI scoring adds on top. */}
+                      LLM scoring adds on top. */}
                   {factors.data && factors.data.factors.length > 0 ? (
                     <div className="mb-3">
                       <FactorBars
@@ -436,22 +448,27 @@ export function JobDetail({
                   ) : null}
                   {/* The cheap methods rank well and write nothing, so the one
                       job the user is about to spend an hour on can buy prose on
-                      its own (scoring-build.md T13). Hidden once AI scoring has
+                      its own (scoring-build.md T13). Hidden once LLM scoring has
                       already written it: there would be nothing to buy. */}
                   {job.score.method !== "llm" ? (
                     <ExplainButton job={job} />
                   ) : null}
                   <ul data-testid="match-reasons" className="space-y-1.5 text-[12.5px] text-ink-2">
-                    {job.score.reasons.slice(0, 4).map((r, i) => (
+                    {/* A keyword score's lines are coded, worded here in the user's
+                        language, and all of them show; its English breakdown says
+                        the same again, so it's left out (audit section 5). */}
+                    {(coded ? job.score.reasons : job.score.reasons.slice(0, 4)).map((r, i) => (
                       <li key={i} className="flex gap-1.5">
                         <span className="mt-1 size-1 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-                        <span>{r}</span>
+                        <span>{scoreText(r, t)}</span>
                       </li>
                     ))}
                   </ul>
-                  <div className="mt-3 border-t border-border pt-3">
-                    <Markdown md={job.score.breakdown_md} className="text-[12px]" />
-                  </div>
+                  {coded ? null : (
+                    <div className="mt-3 border-t border-border pt-3">
+                      <Markdown md={job.score.breakdown_md} className="text-[12px]" />
+                    </div>
+                  )}
                 </>
               ) : (
                 <p className="text-[12px] text-ink-3">{t("jobBoard.detail.scoringInFlight")}</p>

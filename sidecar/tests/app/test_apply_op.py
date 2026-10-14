@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from sidecar.app.db.models import APPLY_RUN_ACTIVE_STATUSES
 from sidecar.app.main import create_app
+from sidecar.tests.app._support import seed_application_profile
 
 TOKEN = "test-token-apply"  # noqa: S105 — test fixture, not a real secret
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -74,6 +75,7 @@ def _seed_card(client: TestClient, app: FastAPI) -> tuple[str, str]:
         json={"resume_markdown": "# Ada Lovelace\n\nBackend engineer."},
     )
     assert resp.status_code in (200, 201)
+    seed_application_profile(app.state.db)
     job = {"id": _seed_fixture_job(app, "form.html")}
     application = client.post(
         "/api/applications",
@@ -233,6 +235,7 @@ def test_closed_posting_blocks_with_zero_model_calls(app_client) -> None:
         json={"resume_markdown": "# Ada Lovelace\n\nBackend engineer."},
     )
     assert resp.status_code in (200, 201)
+    seed_application_profile(_app.state.db)
     job = {"id": _seed_fixture_job(_app, "closed.html")}
     app_id = client.post(
         "/api/applications",
@@ -345,6 +348,8 @@ def test_packet_wait_failure_lands_the_run_row_terminal_failed(
     from sidecar.packages.jobapplier import ApplyControl
 
     monkeypatch.setattr(apply_op, "_PACKET_WAIT_MAX_S", 0.0)
+    # No master resume, so no facts either: let the run reach the packet wait.
+    monkeypatch.setattr(apply_op, "has_application_profile", lambda _repos: True)
     app_id, run_id = _pending_packet_card(migrated_db)  # no master profile saved
     ctx = OperationContext(
         kind="apply",
@@ -379,6 +384,9 @@ def test_post_packet_failure_lands_the_run_row_terminal_failed(
     monkeypatch.setenv("FYJ_DATA_DIR", str(tmp_path / "data"))
     with migrated_db.repos() as repos:
         repos.profile.upsert("# Ada Lovelace — master resume")
+        repos.profile.set_application_profile(
+            {"name": "Ada Lovelace", "confirmed_at": "2026-10-13T00:00:00+00:00"}
+        )
         job = repos.jobs.create(
             canonical_url="https://example.com/late-fail",
             title="Staff Engineer",
@@ -399,6 +407,7 @@ def test_post_packet_failure_lands_the_run_row_terminal_failed(
             "run_id": run_id,
             "application_id": app_id,
             "dev_engine_script": [_action("finish", reason="unreachable")],
+            "dev_headed": False,
         },
         db=migrated_db,
         operation_id="op-late-fail",
@@ -422,7 +431,7 @@ def test_submit_failure_finalizes_route_created_run(app_client, monkeypatch) -> 
     app, client = app_client
     _job_id, app_id = _seed_card(client, app)
 
-    def rejecting_submit(kind: str, snapshot: dict) -> str:
+    def rejecting_submit(kind: str, snapshot: dict, *, requested_by: str = "app") -> str:
         raise RuntimeError("executor rejected the dispatch")
 
     monkeypatch.setattr(app.state.runner, "submit", rejecting_submit)
@@ -475,6 +484,7 @@ def _two_cards_with_apply_a_running(tmp_path: Path):
     client = TestClient(app)
     client.__enter__()
     db = app.state.db
+    seed_application_profile(db)
     with db.repos() as repos:
         job_a = repos.jobs.create(canonical_url="jA", title="A", source_adapter="lever")
         job_b = repos.jobs.create(canonical_url="jB", title="B", source_adapter="lever")
@@ -565,6 +575,9 @@ def test_finalize_failure_does_not_mask_original_error(
     monkeypatch.setenv("FYJ_DATA_DIR", str(tmp_path / "data"))
     with migrated_db.repos() as repos:
         repos.profile.upsert("# Ada — master resume")
+        repos.profile.set_application_profile(
+            {"name": "Ada", "confirmed_at": "2026-10-13T00:00:00+00:00"}
+        )
         job = repos.jobs.create(
             canonical_url="https://example.com/mask",
             title="Eng",
@@ -589,6 +602,7 @@ def test_finalize_failure_does_not_mask_original_error(
             "run_id": run_id,
             "application_id": app_id,
             "dev_engine_script": [_action("finish", reason="x")],
+            "dev_headed": False,
         },
         db=migrated_db,
         operation_id="op-mask",
@@ -830,3 +844,245 @@ def test_submit_request_is_consumed_once() -> None:
     assert control.submit_requested is True
     assert control.take_submit_request() is True
     assert control.take_submit_request() is False
+
+
+def test_apply_without_facts_is_refused_and_starts_reading_them(
+    app_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit A5: the Applier never fills a form blind. No run row is written, and
+    the read that would have made the facts is queued, so the next Apply works."""
+    from sidecar.app.registry.apply_op import NO_APPLICATION_PROFILE_DETAIL
+
+    app, client = app_client
+    client.post(
+        "/api/profile", headers=AUTH, json={"resume_markdown": "# Ada Lovelace\n\nEngineer."}
+    )
+    job_id = _seed_fixture_job(app, "form.html")
+    app_id = client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
+    ).json()["id"]
+    kinds: list[str] = []
+    monkeypatch.setattr(app.state.runner, "submit", lambda kind, *_a, **_k: kinds.append(kind))
+
+    resp = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={})
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == NO_APPLICATION_PROFILE_DETAIL
+    assert kinds == ["extract"]
+    assert client.get(f"/api/applications/{app_id}/apply-runs", headers=AUTH).json() == []
+
+    # A read already queued is not bought twice by a second click (PR #11 review).
+    with app.state.db.repos() as repos:
+        repos.operations.create("extract", {})
+    again = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={})
+    assert again.status_code == 409
+    assert kinds == ["extract"]
+
+
+def test_a_retried_apply_without_facts_fails_before_any_run_row(migrated_db) -> None:
+    """The retry path reaches the op without the route, so the op guards too."""
+    import asyncio
+
+    from sidecar.app.registry import apply_op
+    from sidecar.app.registry.operations import OperationContext
+    from sidecar.packages.jobapplier import ApplyControl
+
+    with migrated_db.repos() as repos:
+        repos.profile.upsert("# Ada — master resume")
+        job = repos.jobs.create(
+            canonical_url="https://example.com/x", title="Eng", source_adapter="lever"
+        )
+        card_id = repos.applications.create(job.id).id
+    ctx = OperationContext(
+        kind="apply", input_snapshot={"application_id": card_id}, db=migrated_db,
+        operation_id="op-a5",
+    )
+    with pytest.raises(ValueError, match="applicant details"):
+        asyncio.run(apply_op._apply_async(ctx, card_id, ApplyControl()))
+    with migrated_db.repos() as repos:
+        assert repos.apply_runs.latest_for_application(card_id) is None
+
+
+def _seed_card_for(client: TestClient, app: FastAPI, fixture: str) -> str:
+    job_id = _seed_fixture_job(app, fixture, title=f"Engineer {fixture}")
+    return client.post(
+        "/api/applications",
+        headers=AUTH,
+        json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
+    ).json()["id"]
+
+
+def test_two_applications_fill_at_once_each_in_its_own_tab(app_client) -> None:
+    """applier/window.md section 4.1: 1 shared window, 1 tab per run, runs in parallel.
+    Both are in review at the same time, and Show finds each run's own tab."""
+    from sidecar.app.registry.applier_window import window_for
+
+    app, client = app_client
+    _job_id, first = _seed_card(client, app)
+    second = _seed_card_for(client, app, "application_form.html")
+    dev = {"engine_script": _happy_script(), "allow_local": True, "headed": False,
+           "review_wait_s": 60}
+    runs = [
+        client.post(f"/api/applications/{a}/apply", headers=AUTH, json={"dev": dev}).json()
+        for a in (first, second)
+    ]
+    # In the review window a run reads `running` at phase `ready_for_human`.
+    deadline = time.monotonic() + 120
+    phases: list[str] = []
+    while time.monotonic() < deadline:
+        phases = [
+            client.get(f"/api/apply-runs/{r['id']}", headers=AUTH).json()["phase"]
+            for r in runs
+        ]
+        if phases == ["ready_for_human", "ready_for_human"]:
+            break
+        time.sleep(0.25)
+    assert phases == ["ready_for_human", "ready_for_human"]
+
+    window = window_for(headless=True)
+    assert all(window.has_tab(r["id"]) for r in runs)
+    for r in runs:
+        shown = client.post(f"/api/apply-runs/{r['id']}/show", headers=AUTH).json()
+        assert shown == {"shown": True}
+    for r in runs:
+        client.post(f"/api/apply-runs/{r['id']}/cancel", headers=AUTH)
+    for r in runs:
+        _wait_terminal(client, r["id"])
+        assert not window.has_tab(r["id"])
+    gone = client.post(f"/api/apply-runs/{runs[0]['id']}/show", headers=AUTH).json()
+    assert gone == {"shown": False}
+
+
+def test_apply_with_no_browser_at_all_is_coded(
+    app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A18: no installed Chrome and no downloaded Chromium. The run lands failed with
+    a `browser_missing` blocker, never Playwright's raw "Executable doesn't exist"."""
+    from sidecar.app.browser import launch
+    from sidecar.app.registry.applier_window import BROWSER_MISSING_DETAIL, shutdown_windows
+
+    shutdown_windows()  # a window started under the real browser path
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
+    monkeypatch.setattr(launch, "PREFERRED_CHANNEL", None)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
+    run = client.post(
+        f"/api/applications/{app_id}/apply",
+        headers=AUTH,
+        json={"dev": {"engine_script": _happy_script(), "allow_local": True,
+                      "headed": False, "review_wait_s": 0}},
+    ).json()
+    final = _wait_terminal(client, run["id"])
+    assert final["status"] == "failed", final
+    assert final["summary"] == BROWSER_MISSING_DETAIL
+    assert [b["kind"] for b in final["blockers"]] == ["browser_missing"]
+
+
+# --- A22: Submit and "I submitted" while the filled form waits in its tab ------
+
+
+def _start_held_review(client: TestClient, app: FastAPI) -> tuple[str, dict]:
+    """A run on a real submit form, held open for review: status `running`, phase
+    `ready_for_human`, the tab still live. Returns the card id and the run row."""
+    _seed_card(client, app)  # the profile and the applicant facts
+    app_id = _seed_card_for(client, app, "review_form.html")
+    run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
+        "dev": {
+            "engine_script": _happy_script(),
+            "allow_local": True, "headed": False, "review_wait_s": 60,
+        }
+    }).json()
+    deadline = time.monotonic() + 120
+    row: dict = {}
+    while time.monotonic() < deadline:
+        row = client.get(f"/api/apply-runs/{run['id']}", headers=AUTH).json()
+        # The loop's phase event lands 1 write before the fill's results (PR #11 CI).
+        if row["phase"] == "ready_for_human" and row["usage"].get("calls", 0) > 0:
+            return app_id, row
+        if row["ended_at"] is not None:
+            break
+        time.sleep(0.25)
+    raise AssertionError(f"run never reached review: {row}")
+
+
+def _wait_ended(client: TestClient, run_id: str, timeout: float = 120.0) -> dict:
+    """The op is over (tab closed, `_finalize` written) once `ended_at` is set."""
+    deadline = time.monotonic() + timeout
+    run: dict = {}
+    while time.monotonic() < deadline:
+        run = client.get(f"/api/apply-runs/{run_id}", headers=AUTH).json()
+        if run["ended_at"] is not None:
+            return run
+        time.sleep(0.25)
+    raise AssertionError(f"run {run_id} never ended: {run}")
+
+
+def test_submit_for_me_works_while_the_form_waits_for_review(app_client) -> None:
+    """A22: Submit needed status `ready_for_human` and a live tab, which never held
+    together. In review the row is `running`, carries the fill's outcome, and Submit
+    clicks the form, ends the hold, and lands `submitted` with the card on Applied."""
+    from sidecar.app.registry.applier_window import window_for
+
+    app, client = app_client
+    app_id, row = _start_held_review(client, app)
+    assert row["status"] == "running"
+    assert row["usage"]["calls"] == 3  # the fill's outcome is on the row already
+    assert row["fields"]
+    assert row["ended_at"] is None
+    assert window_for(headless=True).has_tab(row["id"])
+    held_card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert held_card["applyRunStatus"] == "ready_for_human"  # the card says review
+
+    resp = client.post(f"/api/apply-runs/{row['id']}/submit", headers=AUTH)
+    assert resp.status_code == 202, resp.text
+
+    final = _wait_ended(client, row["id"], timeout=30)  # well before the 60 s hold
+    assert final["status"] == "submitted", final
+    assert final["submit_evidence"] == "user_submitted"
+    assert "confirmation detected" in final["summary"]
+    assert final["screenshot_count"] == row["screenshot_count"] + 1  # the confirmation page
+    assert not window_for(headless=True).has_tab(row["id"])
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] == "applied"
+    # The run is done: a second Submit is refused, never a second click.
+    again = client.post(f"/api/apply-runs/{row['id']}/submit", headers=AUTH)
+    assert again.status_code == 409
+
+
+def test_i_submitted_during_review_survives_the_hold_ending(app_client) -> None:
+    """A22: "I submitted" is accepted in review, and closing the tab afterwards must
+    not write the run back to `ready_for_human`."""
+    app, client = app_client
+    app_id, row = _start_held_review(client, app)
+
+    attested = client.post(
+        f"/api/apply-runs/{row['id']}/attest", headers=AUTH, json={"submitted": True}
+    )
+    assert attested.status_code == 200, attested.text
+    assert attested.json()["status"] == "submitted"
+
+    client.post(f"/api/apply-runs/{row['id']}/cancel", headers=AUTH)  # ends the hold
+    final = _wait_ended(client, row["id"])
+    assert final["status"] == "submitted", final
+    assert final["submit_evidence"] == "user_attested"
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] == "applied"
+
+
+def test_only_a_filled_form_is_in_review() -> None:
+    """Submit and the handoff strip key on this: a `running` row at any other phase
+    is still filling, and a sent run is done."""
+    from sidecar.app.db.models import ApplyRun, apply_run_in_review
+
+    rows = [
+        ("running", "filling", False),
+        ("running", "ready_for_human", True),
+        ("ready_for_human", "ready_for_human", True),
+        ("submitted", "ready_for_human", False),
+        ("blocked", "blocked", False),
+    ]
+    for status, phase, want in rows:
+        run = ApplyRun(application_id="a", status=status, phase=phase)
+        assert apply_run_in_review(run) is want, (status, phase)

@@ -39,10 +39,13 @@ def get_profile(request: Request) -> dto.ProfileDTO | None:
 def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileDTO:
     with _db(request).repos() as repos:
         before = repos.profile.get_current()
-        changed = before is None or before.resume_markdown != payload.resume_markdown
+        before_version = before.version if before is not None else None
         profile = repos.profile.upsert(payload.resume_markdown)
+        # The first resume is all added text, so it counts as major too.
+        major = profile.version != before_version and (
+            before_version is None or profile.major_version == profile.version
+        )
         result = dto.profile_dto(profile)
-        mode = scoring_mode(repos.preferences.get_or_create())
     # Always extract the application profile at master-save (FR-APP-01;
     # maintainer removed the toggle — it's one small cheap call and the record
     # is load-bearing for every form fill), unless AI is off (S-C60): then it
@@ -50,11 +53,10 @@ def upsert_profile(request: Request, payload: dto.ProfileUpsert) -> dto.ProfileD
     engines = _engines(request)
     if engines is None or engines.resolve("extract") is not None:
         _runner(request).submit("extract", {"profile_version": result.version})
-    # Re-scoring on a resume edit: keyword mode is free, so the whole board
-    # re-scores now (in Starlette's threadpool). AI mode costs tokens, so nothing
-    # auto-runs (S-C24): AI scores are version-agnostic and stay visible. An unchanged
-    # save keeps its version.
-    if changed and mode == "keyword":
+    # A major edit rescores every Keyword score now, whatever the method setting:
+    # it's free (in Starlette's threadpool). LLM, Jev and Laya scores only get the
+    # rescore-due mark; a minor edit does nothing (score-storage.md 5.2).
+    if major:
         from ..registry.operations import rescore_all_keyword
 
         rescore_all_keyword(_db(request))
@@ -68,7 +70,7 @@ def extract_application_profile(request: Request) -> dto.OperationAccepted:
     with _db(request).repos() as repos:
         if repos.profile.get_current() is None:
             raise HTTPException(status_code=404, detail="no master profile to extract from")
-    operation_id = _runner(request).submit("extract", {})
+    operation_id = _runner(request).submit("extract", {}, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind="extract", state="queued")
 
 
@@ -76,13 +78,22 @@ def extract_application_profile(request: Request) -> dto.OperationAccepted:
 def patch_application_profile(
     request: Request, payload: dict[str, Any]
 ) -> dto.ProfileDTO:
-    """Persist manual edits to the application profile (Settings editor).
-    The payload replaces the stored record verbatim, stamped `source: edited`
-    — deterministic user edits always win over extraction."""
+    """Save Applicant details (Settings > Applying, or the dialog before the first
+    apply). The payload replaces the stored record, stamped `source: edited` and
+    `confirmed_at`: saving is the review Apply waits for (audit A5), and a later
+    resume read never overwrites what was saved here."""
+    from ..db.base import now_utc
+    from ..registry.applicant import missing_required
+
+    missing = missing_required(payload)
+    if missing:
+        raise HTTPException(
+            status_code=422, detail=f"applicant details need: {', '.join(missing)}"
+        )
     with _db(request).repos() as repos:
         if repos.profile.get_current() is None:
             raise HTTPException(status_code=404, detail="no master profile yet")
-        record = {**payload, "source": "edited"}
+        record = {**payload, "source": "edited", "confirmed_at": now_utc().isoformat()}
         profile = repos.profile.set_application_profile(record)
         return dto.profile_dto(profile)
 
@@ -182,7 +193,7 @@ def update_settings(
         result = _settings_dto(repos)
     # Switching to keyword mode scores the whole board here, about 0.5 ms per job,
     # so the change shows on the next fetch (a plain `def` runs in the threadpool).
-    # Switching to AI enqueues nothing: the next tick picks up jobs with no AI score.
+    # Switching to AI enqueues nothing: the next tick picks up jobs with no LLM score.
     after_mode = str(prefs_thresholds.get("scoring_mode") or "llm")
     if after_mode == "keyword" and before_mode != "keyword":
         from ..registry.operations import backfill_keyword_scores
@@ -195,9 +206,10 @@ def update_settings(
     # LLM parallelism is re-capped live (2026-07-17): the runner swaps its
     # policy on the next pump; running ops are never interrupted.
     if "thresholds" in fields:
-        from ..runner.policy import llm_concurrency_from
+        from ..runner.policy import ai_queue_mode_from, llm_concurrency_from
 
         _runner(request).set_llm_limit(llm_concurrency_from(prefs_thresholds))
+        _runner(request).set_queue_mode(ai_queue_mode_from(prefs_thresholds))
     # A6: an observability change (content logging / OTLP opt-in / retention) is
     # re-applied live — turning OTLP export ON adds the exporter, OFF removes it
     # entirely (no exporter at all — the no-network-by-default invariant).
@@ -338,8 +350,8 @@ def test_prompt(
 
     snap: dict[str, Any] = {"prompt_draft_md": payload.markdown, "prompt_test": True}
     if kind == "score":
-        # Only AI scoring reads this prompt. Without the override a board on
-        # Fast or Keyword scoring ran that method and never sent the draft.
+        # Only LLM scoring reads this prompt. Without the override a board on
+        # Jev or Keyword scoring ran that method and never sent the draft.
         snap["force_mode"] = "llm"
     if payload.guidance:
         snap["guidance"] = payload.guidance
@@ -380,7 +392,7 @@ def test_prompt(
     # cap, Stop and Retry come for free and its spend compares with a real run's
     # (url-less-jobs.md section 11.4).
     op_kind = spec.operation_kind()
-    operation_id = _runner(request).submit(op_kind, snap)
+    operation_id = _runner(request).submit(op_kind, snap, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind=op_kind, state="queued")
 
 

@@ -218,7 +218,12 @@ export function JobBoard() {
           ))}
         </FilterGroup>
         <FilterSep />
-        <FilterGroup label={t("jobBoard.filters.minSalary")}>
+        {/* A range that reaches the line is kept (audit A11): rank, don't gate. */}
+        <FilterGroup
+          label={t("jobBoard.filters.minSalary")}
+          id="filter-salary"
+          title={t("jobBoard.filters.minSalaryTitle")}
+        >
           {[
             [0, "jobBoard.filters.any"],
             [50000, "jobBoard.filters.salary50k"],

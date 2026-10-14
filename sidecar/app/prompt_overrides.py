@@ -83,12 +83,12 @@ def _networker_draft_default() -> str:
 PROMPT_KINDS: dict[str, PromptKind] = {
     p.kind: p
     for p in (
-        # "AI scoring", not "Job scoring": 3 of the 4 scoring methods never see
-        # this file. Keyword scoring is Python rules, Fast scoring sends typed
-        # questions with their own rubric bands, and On-device has no prompt
+        # "LLM scoring", not "Job scoring": 3 of the 4 scoring methods never see
+        # this file. Keyword scoring is Python rules, Jev scoring sends typed
+        # questions with their own rubric bands, and Laya scoring has no prompt
         # either. Naming it after the job rather than the method told the user
         # it governed all 4 (maintainer, 2026-10-07).
-        PromptKind("score", "AI scoring", _score_default),
+        PromptKind("score", "LLM scoring", _score_default),
         PromptKind("tailor", "Resume tailoring", _tailor_default),
         PromptKind("cover", "Cover letter", _cover_default),
         PromptKind("extract", "Application profile extraction", _extract_default),

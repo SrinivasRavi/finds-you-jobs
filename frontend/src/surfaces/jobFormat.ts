@@ -15,6 +15,31 @@ export function workLabel(ws: WorkStyle): string {
   return map[ws] ?? "";
 }
 
+/** Where a job is, in 1 format on every surface (place-picker.md section 8.3):
+ *  "Bengaluru, Karnataka, India (Hybrid)", "+N" for more places, "Remote (United
+ *  States, Canada)". Text that names no place is shown as posted. */
+export function placeLine(job: Pick<Job, "location" | "places" | "work_style">): string {
+  const work = workLabel(job.work_style);
+  const places = job.places ?? [];
+  if (places.length === 0) {
+    // "Remote" posted on a remote job would print twice: the label already says it.
+    const bare = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+    const posted = work && bare(job.location) === bare(job.work_style) ? "" : job.location;
+    return [posted, work].filter(Boolean).join(" · ");
+  }
+  if (job.work_style === "REMOTE" && places.length <= 3) return `${work} (${places.join(", ")})`;
+  const first = places.length > 1 ? `${places[0]} +${places.length - 1}` : places[0];
+  if (!work) return first;
+  return job.work_style === "REMOTE" ? `${work} (${first})` : `${first} (${work})`;
+}
+
+/** The hover text behind `placeLine`: every place, then the text as posted. */
+export function placeTitle(job: Pick<Job, "location" | "places">): string {
+  const places = job.places ?? [];
+  if (places.length === 0) return job.location;
+  return [...places, i18n.t("jobBoard.detail.asPosted", { text: job.location })].join("\n");
+}
+
 /** Score → color tier (jobs.html matchScoreBadge). */
 export function scoreTier(score: number): { text: string; ring: string; wash: string } {
   if (score >= 85) return { text: "text-good", ring: "#059669", wash: "bg-good-wash" };
@@ -23,7 +48,7 @@ export function scoreTier(score: number): { text: string; ring: string; wash: st
   return { text: "text-bad", ring: "#dc2626", wash: "bg-bad-wash" };
 }
 
-/** The 4 scoring methods, in the vocabulary `Job.llm_score_method` stores.
+/** The 4 scoring methods, in the vocabulary `Job.score_method` stores.
  *  Theme tokens, not hexes, so both themes are right for free. */
 export const SCORE_METHODS = ["llm", "jev", "local", "keyword"] as const;
 export type ScoreMethod = (typeof SCORE_METHODS)[number];

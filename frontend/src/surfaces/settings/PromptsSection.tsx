@@ -11,7 +11,7 @@ import type { PromptSetting } from "../../api/types";
 import { PromptTuningModal } from "./PromptTuningModal";
 
 /** What each prompt governs and what it doesn't. `score` is the AI rubric only:
- *  keyword scoring is rules, Fast scoring carries its own bands, On-device has no
+ *  keyword scoring is rules, Jev scoring carries its own bands, Laya scoring has no
  *  prompt, so it changes 1 of the 4 methods. */
 export const SCOPE_KEY: Record<string, string> = {
   score: "settingsPage.prompts.scopeScore",

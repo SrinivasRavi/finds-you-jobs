@@ -39,13 +39,16 @@ export function FilterGroup({
   label,
   children,
   id,
+  title,
 }: {
   label: string;
   children: ReactNode;
   id?: string;
+  /** Hover text saying what the group's chips really do. */
+  title?: string;
 }) {
   return (
-    <div className="flex items-center gap-1.5" id={id}>
+    <div className="flex items-center gap-1.5" id={id} title={title}>
       <span className="text-[11.5px] text-ink-4">{label}</span>
       {children}
     </div>

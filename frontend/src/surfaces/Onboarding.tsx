@@ -111,6 +111,7 @@ interface Draft {
   scoringMode: "llm" | "keyword";
   provider: string;
   verified: boolean;
+  aiSkipped: boolean;
 }
 
 function loadDraft(): Partial<Draft> {
@@ -143,7 +144,7 @@ export function Onboarding() {
   const [resumeMode, setResumeMode] = useState<EditorMode>("raw");
   const [resumeWarnings, setResumeWarnings] = useState<string[]>([]);
   // Skip on the provider step (S-C60): AI stays off until a provider is set up.
-  const [aiSkipped, setAiSkipped] = useState(false);
+  const [aiSkipped, setAiSkipped] = useState(d0.aiSkipped ?? false);
   const [locations, setLocations] = useState<PlaceChip[]>(d0.locations ?? []);
   const [freshness, setFreshness] = useState(d0.freshness ?? "7d");
   const [cadence, setCadence] = useState(d0.cadence ?? "Every 24h");
@@ -186,6 +187,7 @@ export function Onboarding() {
       scoringMode,
       provider,
       verified: verifyState === "verified",
+      aiSkipped,
     };
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -203,6 +205,7 @@ export function Onboarding() {
     scoringMode,
     provider,
     verifyState,
+    aiSkipped,
   ]);
 
   const needsInput = !isCliProvider(provider);
@@ -282,22 +285,10 @@ export function Onboarding() {
     setFinishing(true);
     setFinishError("");
     try {
-      // Commit the master profile (this flips the FR-OB-01 guard to "onboarded").
-      await api.updateProfile(resumeText);
-      // Commit preferences (role/location/freshness/cadence). The LinkedIn /
-      // Referral-Outreach opt-in is Settings-only (P1 decision 2026-07-12) —
-      // onboarding always commits it off.
-      await api.savePreferences({
-        role_aliases: aliases,
-        locations,
-        freshness_days: FRESHNESS_DAYS[freshness] ?? 7,
-        scrape_cadence: cadence,
-        networking_enabled: false,
-      });
-      // Route every LLM kind to the provider just verified; otherwise the default
-      // (claude-cli) runs everything on a CLI the user may not have (an OpenRouter
-      // onboarding once billed the Claude session). An empty model means the engine's
-      // own default; claude-cli skips this, being the default already.
+      // Routing before the profile: its save queues the application-profile read, which
+      // must run on the chosen provider, or not at all after Skip (audit A5). Without it
+      // the default claude-cli runs everything (an OpenRouter onboarding once billed the
+      // Claude session). An empty model means the engine's own default.
       if (aiSkipped) {
         // Every AI kind routes to "none" (engine_config.AI_OFF) and scoring is
         // keyword, until a provider is saved or a CLI verified in Settings.
@@ -315,6 +306,18 @@ export function Onboarding() {
       if (!aiSkipped && scoringMode !== "llm") {
         await api.updateSettings({ scoring_mode: scoringMode });
       }
+      // Commit the master profile (this flips the FR-OB-01 guard to "onboarded").
+      await api.updateProfile(resumeText);
+      // Commit preferences (role/location/freshness/cadence). The LinkedIn /
+      // Referral-Outreach opt-in is Settings-only (P1 decision 2026-07-12) —
+      // onboarding always commits it off.
+      await api.savePreferences({
+        role_aliases: aliases,
+        locations,
+        freshness_days: FRESHNESS_DAYS[freshness] ?? 7,
+        scrape_cadence: cadence,
+        networking_enabled: false,
+      });
       // Cold-start scan (US-JB-09) — fire-and-forget, never blocks the redirect.
       await api.enqueueOperation("scan");
       try {

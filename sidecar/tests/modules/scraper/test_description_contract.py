@@ -77,3 +77,27 @@ def test_the_shared_detect_helpers_never_claim_an_entry_typed_for_another_adapte
     assert detect_board(www, "b", "b.com", {"www.b.com"}) == "b.com"
     assert detect_board(SourceEntry(board="b", type="rss"), "b", "b.com", set()) == ""
     assert detect_board(SourceEntry(url="https://c.com"), "b", "b.com", {"b.com"}) == ""
+
+
+def test_keyed_adapters_declare_what_discovery_reads():
+    """Discovery builds its key list, seeding, sub-source toggles and analytics
+    names from these declarations and names no vendor itself (F-P6)."""
+    from pathlib import Path
+
+    from sidecar.app.api import discovery
+
+    keyed = [a for a in ADAPTERS if hasattr(a, "CREDENTIAL")]
+    assert discovery.CREDENTIALS == {a.ID: a.CREDENTIAL for a in keyed}
+    assert set(discovery.CREDENTIALS) == {"apify", "brave"}
+    for adapter in keyed:
+        assert adapter.DEFAULT_SOURCES, adapter.ID
+        assert all(s["board"] == adapter.ID for s in adapter.DEFAULT_SOURCES), adapter.ID
+    for adapter in (a for a in ADAPTERS if hasattr(a, "SUB_SOURCE_FIELD")):
+        assert set(adapter.SUB_SOURCE_IDS) <= set(adapter.SUB_SOURCE_LABELS), adapter.ID
+        assert all(s.get(adapter.SUB_SOURCE_FIELD) for s in adapter.DEFAULT_SOURCES)
+    code = [
+        line for line in Path(discovery.__file__).read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    assert not [line for line in code if "brave" in line.lower()]
+    assert not [line for line in code if "apify" in line.lower() and "`apify:" not in line]

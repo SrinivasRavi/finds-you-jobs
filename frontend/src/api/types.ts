@@ -2,6 +2,7 @@
 // sidecar's DTOs (architecture section 4.2) and module result dataclasses
 // (sidecar/modules/*/types.py). schema.d.ts is the generated source of truth.
 
+import type { ScoreReason } from "../shell/scoreText";
 import type { components } from "./schema";
 
 /** A shape the sidecar's generated schema already states exactly is aliased
@@ -26,22 +27,26 @@ export interface Usage {
 /** ScoreResult — scorer/types.py. `reasons` is 2–4 bullets (US-JB-05). */
 export interface ScoreResult {
   score_0_100: number;
-  reasons: string[];
+  /** A string, or a keyword line as `{key, args, text}` (audit section 5). */
+  reasons: ScoreReason[];
   breakdown_md: string;
   /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
-   *  never styled like an AI score). Scoring modes, 2026-07-22. */
+   *  never styled like an LLM score). Scoring modes, 2026-07-22. */
   scorer_impl: string;
   /** True when the user's own axis weights produced this number instead of the
    *  method's, so the card can say the score is theirs. */
   weighted: boolean;
   /** Which of the 4 methods ran: "llm" | "jev" | "local" | "keyword". The
    *  board's inner ring (maintainer, 2026-10-07). Finer than `scorer_impl`,
-   *  which reads a Fast score as an AI one. */
+   *  which reads a Jev score as an LLM one. */
   method: string;
+  /** Made against a resume older than its last major edit: the row shows a
+   *  rescore-due mark (score-storage.md, audit A3). */
+  stale: boolean;
 }
 
 /** The per-axis breakdown behind one job's score (`JobFactorsDTO`).
- *  `weights` is empty for AI scoring, which asks a model for the total rather
+ *  `weights` is empty for LLM scoring, which asks a model for the total rather
  *  than weighting its own axes. */
 export type ScoreWeightPreset =
   | "balanced"
@@ -85,7 +90,7 @@ export interface PromptTestResult {
   output_md?: string;
   notes?: string[];
   score?: number;
-  reasons?: string[];
+  reasons?: ScoreReason[];
   message?: string;
   profile?: Record<string, unknown>;
   usd?: number | null;
@@ -151,6 +156,9 @@ export interface Job {
   trust_score: number;
   trust_flags: string[];
   work_style: WorkStyle;
+  /** The posting's places as the picker names them, computed by the sidecar from
+   *  `location`; empty when the text names no place (place-picker.md section 8.3). */
+  places: string[];
   /** null while the scorer operation is still in flight. */
   score: ScoreResult | null;
   /** Score lifecycle — resolves a null score to `pending` vs `failed` (US-JB-06). */
@@ -682,8 +690,21 @@ export interface ApplicationProfile {
   phone?: string;
   location?: string;
   country?: string;
+  /** Legacy free text, read from the resume; superseded by `work_authorizations`. */
   work_authorization?: string;
+  /** 1 entry per country (audit A5); the Applier picks the job's country. */
+  work_authorizations?: WorkAuthorization[];
   links?: Record<string, string>;
+  /** Optional answers forms ask for (audit B4); an empty one stays out of the facts. */
+  salary_expectation?: string;
+  notice_period?: string;
+  years_of_experience?: string;
+  citizenship?: string;
+  /** Voluntary self-identification: empty means "I don't wish to answer". */
+  gender?: string;
+  race_ethnicity?: string;
+  veteran_status?: SelfIdAnswer;
+  disability_status?: SelfIdAnswer;
   education?: {
     school?: string;
     degree?: string;
@@ -694,6 +715,23 @@ export interface ApplicationProfile {
   /** "extracted" (LLM at save) or "edited" (manual Settings edits — win). */
   source?: "extracted" | "edited";
   profile_version?: number;
+  /** Set when the user saved Applicant details; Apply waits for it (audit A5). */
+  confirmed_at?: string;
+}
+
+export type SelfIdAnswer = "" | "yes" | "no";
+
+export type WorkAuthStatus = "citizen" | "permanent_resident" | "visa" | "needs_sponsorship";
+
+export interface WorkAuthorization {
+  country: string;
+  status: WorkAuthStatus;
+  note?: string;
+}
+
+export interface Country {
+  code: string;
+  name: string;
 }
 
 export interface Profile {
@@ -918,6 +956,10 @@ export interface Settings {
   scoring_methods: ScoringMethod[];
   // 0 = unlimited (runner ceiling applies); otherwise 2-20.
   llm_concurrency: number;
+  /** The tailored resume's header location: the job's, the master's, or none. */
+  resume_location: ResumeLocation;
+  /** How AI work queues (queueing.md section 5): a lane per kind, or 1 shared. */
+  ai_queue_mode: AiQueueMode;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
    *  the human — the default) or "auto" (legacy fill-and-submit). */
   /** Save-time form prep (FR-APP-01, 2026-07-11): visit the job's real form,
@@ -1067,6 +1109,9 @@ export interface LedgerSubject {
   artifact: { application_id: string; kind: "tailored" | "cover" } | null;
 }
 
+export type AiQueueMode = "per_kind" | "shared";
+export type ResumeLocation = "posting" | "master" | "none";
+
 export interface LedgerEntry {
   id: string;
   kind: OperationKind;
@@ -1080,6 +1125,9 @@ export interface LedgerEntry {
   error: string | null;
   created_at: string;
   started_at: string | null; // when the op went running (US-LOG-01 timestamp)
+  finished_at: string | null;
+  /** "user" when a click started it, "app" otherwise (queueing.md section 4). */
+  requested_by: "user" | "app";
   /** Absent on rows whose snapshot/result refs don't resolve (historical rows,
    *  deleted entities) — the row then renders kind-only, nothing fabricated. */
   subject: LedgerSubject | null;

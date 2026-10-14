@@ -29,6 +29,7 @@ from ..db.models import (
     OutreachLog,
     Schedule,
     UserPreferences,
+    apply_run_in_review,
 )
 
 # ---------------------------------------------------------------------------
@@ -47,18 +48,21 @@ class JobScoreDTO(BaseModel):
     # score (Scoring modes, maintainer design 2026-07-22).
     scorer_impl: str = "scorer-llm"
     # Which of the 4 methods ran: `llm` | `jev` | `local` | `keyword`. Finer than
-    # `scorer_impl`, which can only say AI-or-not and so reads a Fast score as an
-    # AI one. The board's inner ring is this value, because a board carrying 2
+    # `scorer_impl`, which can only say LLM-or-not and so reads a Jev score as an
+    # LLM one. The board's inner ring is this value, because a board carrying 2
     # methods' numbers has to say which is which (maintainer, 2026-10-07).
     method: str = "llm"
     # True when the user's own axis weights produced this number instead of the
     # method's. The card says so, because a 72 under "skills only" and a 72 as
     # the model scored it are not the same claim.
     weighted: bool = False
+    # Made against a resume older than its last major edit: the card shows a
+    # rescore-due mark; nothing rescores on its own (maintainer, 2026-10-13).
+    stale: bool = False
 
 
 class ScoreFactorDTO(BaseModel):
-    """One axis of one job's score (`JobScoreFactor`). `value` is 0 to 1, and
+    """One axis of one job's score (an entry of `Job.score_factors`). `value` is 0 to 1, and
     `kind` says what it means: a `graded` position on a stated rubric, or a
     `probability` that the factor holds. The bar chart draws the 2 differently
     because a user weight may multiply the first and must never multiply the
@@ -68,11 +72,14 @@ class ScoreFactorDTO(BaseModel):
     value: float
     kind: str
     evidence: str
+    # `evidence` as `{key, args}`, worded by the screen in the user's language
+    # (audit section 5); absent on a method that writes prose, and on old rows.
+    code: dict[str, Any] | None = None
 
 
 class JobFactorsDTO(BaseModel):
     """The per-axis breakdown behind a job's displayed score. `weights` is the table
-    the total used; empty for AI scoring, which asks the model for the total, so the
+    the total used; empty for LLM scoring, which asks the model for the total, so the
     bars show no invented weight."""
 
     job_id: str
@@ -106,6 +113,9 @@ class JobDTO(BaseModel):
     # guessed). The same keyword logic backs FR-JB-04's work-style filter, so the
     # chip and the filter always agree.
     work_style: str = Field(default="", serialization_alias="workStyle")
+    # The posting's places named the way the picker names them, computed on read
+    # from `location` (place-picker.md section 8.3); empty shows the text as posted.
+    places: list[str] = Field(default_factory=list)
     # The board serves jobs *with* their score (null while unscored).
     score: JobScoreDTO | None = None
     # Score lifecycle (FR-JB-07 / NFR-OFFLINE-02): `scored` (a real 0–100) /
@@ -272,7 +282,7 @@ class TombstoneResultDTO(BaseModel):
 
 class ScoreRetryDTO(BaseModel):
     """The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
-    many active jobs have spent the whole attempt budget with no AI score, so
+    many active jobs have spent the whole attempt budget with no LLM score, so
     the button hides when pressing it would do nothing; `reset` on the POST is
     how many got their budget back. Jobs with no usable description are in
     neither number — they never spent an attempt (S-A6)."""
@@ -631,6 +641,13 @@ class WatchlistEntryDTO(BaseModel):
     read_error: str = ""
 
 
+class CountryDTO(BaseModel):
+    """1 country, for the work-authorization editor (audit A5)."""
+
+    code: str
+    name: str
+
+
 class PlaceSuggestionDTO(BaseModel):
     """1 row of the location picker (place-picker.md section 3): what the user
     reads, and what the chip stores when they pick it."""
@@ -702,7 +719,7 @@ class ScoringMethodDTO(BaseModel):
 class ExplainCostDTO(BaseModel):
     """What "Explain this one" will run and what it has cost this user. `avg_usd` is
     measured off their own score ops on that model, never a price list; None means
-    they've never paid for an AI score."""
+    they've never paid for an LLM score."""
 
     engine: str
     model: str
@@ -1102,6 +1119,20 @@ class BrowserInstallResult(BaseModel):
     status: str  # "started" | "already_running"
 
 
+class BrowserInstallStatus(BaseModel):
+    """The `GET /api/system/install-browser` response: the last download's state in
+    this sidecar, so a client that missed the event can catch up (A21)."""
+
+    state: str  # "idle" | "running" | "done" | "failed"
+    message: str = ""
+
+
+class ApplyRunShowResult(BaseModel):
+    """The `POST /api/apply-runs/{id}/show` response (applier/window.md section 4.5)."""
+
+    shown: bool
+
+
 class SchedulerStatus(BaseModel):
     """Whether the 60 s tick loop that plans background work is running, and
     whether a degraded boot is the reason it is not."""
@@ -1190,6 +1221,8 @@ class OperationDTO(BaseModel):
     error: str | None
     engine: str | None
     model: str | None
+    # `user` (a click, someone waiting) or `app`; queueing.md section 4.
+    requested_by: str = "app"
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -1230,28 +1263,22 @@ class CostTotalsDTO(BaseModel):
     by_kind: dict[str, float]
 
 
-def job_score_dto(job: Job) -> JobScoreDTO | None:
-    """The rating a job displays: the AI one, else the keyword floor, else nothing,
-    with no ranking to get backwards (S-C34). `scorer_impl` keeps its old values for
-    the frontend's grey styling. `method` defaults to `llm` only for rows written
-    before the column (migration `b4d8e2a7c531`)."""
-    if job.llm_score is not None:
-        return JobScoreDTO(
-            score_0_100=job.llm_score,
-            reasons=list(job.llm_reasons),
-            breakdown_md=job.llm_breakdown_md,
-            scorer_impl="scorer-llm",
-            method=job.llm_score_method or "llm",
-        )
-    if job.keyword_score is not None:
-        return JobScoreDTO(
-            score_0_100=job.keyword_score,
-            reasons=list(job.keyword_reasons),
-            breakdown_md=job.keyword_breakdown_md,
-            scorer_impl="scorer-deterministic",
-            method="keyword",
-        )
-    return None
+def job_score_dto(job: Job, major_version: int = 0) -> JobScoreDTO | None:
+    """The job's 1 score, or nothing (score-storage.md 4.1). `scorer_impl` keeps its
+    old values for the frontend's grey styling. `stale` when it was made against a
+    resume older than the last major edit; old rows with no version never are."""
+    if job.score is None:
+        return None
+    method = job.score_method or "llm"
+    return JobScoreDTO(
+        score_0_100=job.score,
+        reasons=list(job.score_reasons),
+        breakdown_md=job.score_breakdown_md,
+        scorer_impl="scorer-deterministic" if method == "keyword" else "scorer-llm",
+        method=method,
+        stale=job.scored_profile_version is not None
+        and job.scored_profile_version < major_version,
+    )
 
 
 def derive_score_status(
@@ -1297,21 +1324,22 @@ def derive_work_style(location: str, description: str) -> str:
 
 class WeightLens:
     """The user's axis weights, re-totaling a page of jobs on read (scoring.md 7.4).
-    Never stored: an AI score is the model's number, and overwriting it would lose
+    Never stored: an LLM score is the model's number, and overwriting it would lose
     "balanced". Uses `weights.user_total`. Build once per request; an empty table
-    is inert and costs 1 lookup."""
+    is inert and costs 1 lookup. Also carries the resume's last major version, so
+    the same per-request read marks a score that predates it (audit A3)."""
 
-    __slots__ = ("_by_job", "_penalty", "_weights")
+    __slots__ = ("_penalty", "_weights", "major_version")
 
     def __init__(
         self,
         weights: dict[str, float],
         location_penalty: int,
-        factors_by_job: dict[str, list[Any]],
+        major_version: int = 0,
     ) -> None:
         self._weights = weights
         self._penalty = location_penalty
-        self._by_job = factors_by_job
+        self.major_version = major_version
 
     @property
     def active(self) -> bool:
@@ -1331,13 +1359,16 @@ class WeightLens:
         from sidecar.modules.scraper.quality import RED_FLAG_PREFIX
 
         # No table of the user's own means the method's table with their penalty.
-        # AI scoring ships no table, so its own number stands.
-        rows = [r for r in self._by_job.get(job.id, ()) if r.method == method]
-        weights = self._weights or method_weights(method, {r.factor for r in rows})
+        # LLM scoring ships no table, so its own number stands.
+        rows = (job.score_factors or []) if job.score_method == method else []
+        weights = self._weights or method_weights(method, {r["factor"] for r in rows})
         if not weights or not rows:
             return None
         total = user_total(
-            [Factor(r.factor, r.value, r.kind, r.evidence) for r in rows],
+            [
+                Factor(r["factor"], r["value"], r.get("kind", "graded"), r.get("evidence", ""))
+                for r in rows
+            ],
             weights,
             location_penalty=self._penalty,
         )
@@ -1351,18 +1382,13 @@ class WeightLens:
 
 
 def build_weight_lens(repos: Any, job_ids: list[str]) -> WeightLens:
-    """One lens for a page of jobs: 1 preferences read and 1 indexed factor
-    read, never one per card (the F-H2 lesson). Skips the factor read entirely
-    when the user has set no weights, which is every install by default."""
+    """One lens for a page of jobs: 1 preferences read and 1 profile read, never
+    one per card (the F-H2 lesson). The factors ride on each job row."""
     from ..registry.persistence import scoring_weights
 
     weights, penalty = scoring_weights(repos.preferences.get_or_create())
-    if not job_ids or not WeightLens(weights, penalty, {}).active:
-        return WeightLens(weights, penalty, {})
-    by_job: dict[str, list[Any]] = {}
-    for row in repos.job_score_factors.list_for_jobs(job_ids):
-        by_job.setdefault(row.job_id, []).append(row)
-    return WeightLens(weights, penalty, by_job)
+    profile = repos.profile.get_current()
+    return WeightLens(weights, penalty, profile.major_version if profile is not None else 0)
 
 
 def job_dto(
@@ -1376,10 +1402,15 @@ def job_dto(
 
     `lens` re-totals the score under the user's own axis weights. Omitted, or
     holding an empty table, the stored number is served unchanged."""
+    from sidecar.modules.geo.suggest import posting_labels
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
-    dto = JobDTO.model_validate(job)
-    dto.score = job_score_dto(job)
+    # `jobs.score` is the bare number; the DTO's `score` is the built object below.
+    dto = JobDTO.model_validate(
+        {name: getattr(job, name) for name in JobDTO.model_fields if name != "score"
+         and hasattr(job, name)}
+    )
+    dto.score = job_score_dto(job, lens.major_version if lens is not None else 0)
     if dto.score is not None and lens is not None:
         reweighted = lens.total_for(job, dto.score.method)
         if reweighted is not None:
@@ -1395,6 +1426,7 @@ def job_dto(
         attempts=job.llm_score_attempts,
     )
     dto.work_style = derive_work_style(job.location, job.description)
+    dto.places = list(posting_labels(job.location or ""))
     return dto
 
 
@@ -1482,8 +1514,11 @@ def application_dto(
         packet_cover_letter_state=derive_artifact_state(cover_a, cover_state),
         referrals_state=referrals_state,
         referrals_count=referrals_count,
+        # A form held open for review reads as review on the card, not "Applying" (A22).
         apply_run_status=(
-            latest_apply_run.status if latest_apply_run is not None else "none"
+            "none" if latest_apply_run is None
+            else "ready_for_human" if apply_run_in_review(latest_apply_run)
+            else latest_apply_run.status
         ),
         apply_run_id=latest_apply_run.id if latest_apply_run is not None else None,
         artifacts=artifact_dtos,

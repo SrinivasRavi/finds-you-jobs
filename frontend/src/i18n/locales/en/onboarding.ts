@@ -52,7 +52,7 @@ const onboarding = {
         "Every 72h": "Every 72h",
     },
     scoringLabel: "How jobs are scored",
-    scoringLlm: "AI scoring — best quality, but costs LLM tokens and some time",
+    scoringLlm: "LLM scoring — best quality, but costs LLM tokens and some time",
     scoringKeyword: "Keyword scoring — lower quality, but free and instant",
     scoringHint: "You can change this any time in Settings → Scoring.",
     // LLM-provider step.

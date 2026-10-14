@@ -62,7 +62,9 @@ fn export_source(exports: &std::path::Path, src: &str) -> Result<std::path::Path
     let src = std::path::Path::new(src)
         .canonicalize()
         .map_err(|e| format!("the exported file is gone: {e}"))?;
-    let exports = exports.canonicalize().map_err(|e| format!("no exports folder: {e}"))?;
+    let exports = exports
+        .canonicalize()
+        .map_err(|e| format!("no exports folder: {e}"))?;
     if src.parent() != Some(exports.as_path())
         || src.extension().and_then(|e| e.to_str()) != Some("pdf")
     {

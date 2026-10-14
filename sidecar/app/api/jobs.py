@@ -27,8 +27,6 @@ from ..db.base import now_utc
 from ..db.models import OP_ACTIVE_STATES
 from ..registry import networker_ops as networker_ops
 from ..registry.persistence import (
-    SCORER_IMPL,
-    SCORER_IMPL_DETERMINISTIC,
     delete_job_cascade,
     saved_job_ids,
     scoring_mode,
@@ -100,16 +98,15 @@ def _stamp_duplicates(repos: Any, dtos: list[dto.JobDTO]) -> None:
 
 
 def _display_score_value(job: Any, lens: dto.WeightLens | None = None) -> int:
-    """The number a board row sorts on: the AI rating if the job has one, else
-    the keyword floor, else -1 so unscored rows land last. With `lens`, the
+    """The number a board row sorts on: its 1 score, else -1 so unscored rows land
+    last. With `lens`, the
     number the row will SHOW under the user's weights, so the board sorts
     before it paginates on the same value each card displays."""
-    value = job.llm_score if job.llm_score is not None else job.keyword_score
+    value = job.score
     if value is None:
         return -1
     if lens is not None:
-        method = (job.llm_score_method or "llm") if job.llm_score is not None else "keyword"
-        reweighted = lens.total_for(job, method)
+        reweighted = lens.total_for(job, job.score_method or "llm")
         if reweighted is not None:
             return reweighted
     return value
@@ -155,12 +152,10 @@ def _board_search_haystack(job: Any, deep: bool) -> str:
     parts = [job.title, job.company, job.location]
     if deep:
         parts += [job.salary or "", job.source_adapter, job.description]
-        if job.llm_score is not None:
-            parts += [str(r) for r in job.llm_reasons]
-            parts.append(job.llm_breakdown_md)
-        elif job.keyword_score is not None:
-            parts += [str(r) for r in job.keyword_reasons]
-            parts.append(job.keyword_breakdown_md)
+        parts += [
+            str(r.get("text", "")) if isinstance(r, dict) else str(r) for r in job.score_reasons
+        ]
+        parts.append(job.score_breakdown_md)
     return "\n".join(parts).lower()
 
 
@@ -193,9 +188,9 @@ def _board_filter(rows: list[Any], f: dto.BoardFilters) -> list[Any]:
     elif f.work_style:
         rows = [j for j in rows if dto.derive_work_style(j.location, j.description) == f.work_style]
     if f.method == "model":
-        rows = [j for j in rows if j.llm_score is not None]
+        rows = [j for j in rows if j.score_method not in (None, "keyword")]
     elif f.method == "keyword":
-        rows = [j for j in rows if j.llm_score is None and j.keyword_score is not None]
+        rows = [j for j in rows if j.score_method == "keyword"]
     if f.posted_days > 0:
         now = now_utc()
         rows = [j for j in rows if _posted_within(j, f.posted_days, now)]
@@ -428,16 +423,16 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
         if existing is not None:
             if existing.feed_state != "removed":
                 return dto.job_dto(existing)  # already active — dedup, first-seen wins
-            # Restore from Trash: un-trash and keep its score and history. Re-score only if
-            # the current mode's scorer never scored this job, so an AI-mode job with just the
-            # keyword floor gets its AI upgrade (US-JB-06) and nothing is bought twice.
-            # Version-agnostic, like the planner.
+            # Restore from Trash: un-trash and keep its score and history. Score it only
+            # under the planner's rule (score-storage.md 4.3): no score, or a Keyword one
+            # while Settings picks another method. Nothing is bought twice.
             job = repos.jobs.set_trash_state(existing.id, trashed=False)
             mode = scoring_mode(repos.preferences.get_or_create())
-            impl = SCORER_IMPL if mode == "llm" else SCORER_IMPL_DETERMINISTIC
-            scored = job.llm_score if impl == SCORER_IMPL else job.keyword_score
+            needs_score = job.score is None or (
+                job.score_method == "keyword" and mode != "keyword"
+            )
             result = dto.job_dto(job)
-            if scored is None:
+            if needs_score:
                 profile = repos.profile.get_current()
                 if profile is not None:
                     enqueue_score = True
@@ -483,7 +478,11 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
     # Score the freshly-added (or restored-but-unscored) job so it sorts into the
     # feed (US-JB-07 → FR-JB-01).
     if enqueue_score and job_id is not None:
-        _runner(request).submit("score", {"job_id": job_id, "profile_version": profile_version})
+        _runner(request).submit(
+            "score",
+            {"job_id": job_id, "profile_version": profile_version},
+            requested_by="user",
+        )
     return result
 
 
@@ -681,23 +680,25 @@ def get_job(request: Request, job_id: str) -> dto.JobDTO:
 def get_job_factors(request: Request, job_id: str) -> dto.JobFactorsDTO:
     """The bars behind one job's number (scoring.md 7.3).
 
-    Read-only and free: every method stores its axes when it scores, so this
-    costs a single indexed read and never a model call."""
+    Read-only and free: every method stores its axes on the job row when it
+    scores, so this never calls a model."""
     from sidecar.modules.scorer.weights import method_weights
 
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
-        method = (
-            job.llm_score_method or "llm" if job.llm_score is not None else "keyword"
-        )
-        rows = repos.job_score_factors.list_for_job(job_id, method)
-        weights = method_weights(method, {r.factor for r in rows})
+        method = job.score_method or "keyword"
+        rows = sorted(job.score_factors or [], key=lambda r: str(r["factor"]))
+        weights = method_weights(method, {r["factor"] for r in rows})
         return dto.JobFactorsDTO(
             job_id=job_id,
             method=method,
             factors=[
                 dto.ScoreFactorDTO(
-                    factor=r.factor, value=r.value, kind=r.kind, evidence=r.evidence
+                    factor=r["factor"],
+                    value=r["value"],
+                    kind=r.get("kind", "graded"),
+                    evidence=r.get("evidence", ""),
+                    code=r.get("code"),
                 )
                 for r in rows
             ],
@@ -731,7 +732,7 @@ def explain_cost(request: Request) -> dto.ExplainCostDTO:
 def explain_job(request: Request, job_id: str) -> dto.OperationAccepted:
     """1 click, 1 job, 1 AI call (scoring-build.md T13): prose for the jobs a user
     opens, at about $0.24 each. An ordinary `score` op, so the ledger, concurrency
-    cap, Stop and Retry apply. The job adopts the AI score (scoring-build.md section
+    cap, Stop and Retry apply. The job adopts the LLM score (scoring-build.md section
     4 choice 1, pending). It can run again; both spends are in the ledger."""
     with _db(request).repos() as repos:
         job = _found(repos.jobs.get(job_id), "job", job_id)
@@ -749,7 +750,28 @@ def explain_job(request: Request, job_id: str) -> dto.OperationAccepted:
             )
         version = profile.version
     operation_id = _runner(request).submit(
-        "score", {"job_id": job_id, "profile_version": version, "force_mode": "llm"}
+        "score",
+        {"job_id": job_id, "profile_version": version, "force_mode": "llm"},
+        requested_by="user",
+    )
+    return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
+
+
+@router.post("/api/jobs/{job_id}/rescore", status_code=202)
+def rescore_job(request: Request, job_id: str) -> dto.OperationAccepted:
+    """Rescore on a board row (score-storage.md 4.4): 1 `score` op with the method in
+    Settings, as the user's request. It always runs, whatever score the job has, and
+    its result replaces the stored one, Keyword included."""
+    with _db(request).repos() as repos:
+        _found(repos.jobs.get(job_id), "job", job_id)
+        profile = repos.profile.get_current()
+        if profile is None:
+            raise HTTPException(status_code=400, detail="no master resume to score against")
+        version = profile.version
+    operation_id = _runner(request).submit(
+        "score",
+        {"job_id": job_id, "profile_version": version, "rescore": True},
+        requested_by="user",
     )
     return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
 

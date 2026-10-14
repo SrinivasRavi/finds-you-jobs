@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, inspect
 
 from sidecar.app.db.migrate import downgrade_to_base, upgrade_to_head
@@ -33,7 +34,6 @@ _EXPECTED = {
     "linkedin_search_cursors",
     "apply_runs",
     "documents",
-    "job_score_factors",
     "job_duplicates",
 }
 
@@ -214,12 +214,9 @@ def test_url_less_identity_preserves_existing_rows(tmp_path: Path) -> None:
                     "INSERT INTO jobs (id, canonical_url, content_hash, title,"
                     " company, location, description, source_adapter,"
                     " trust_score, trust_flags, ingested_at, feed_state,"
-                    " feed_since, llm_reasons, llm_breakdown_md,"
-                    " keyword_reasons, keyword_breakdown_md,"
-                    " llm_score_attempts) VALUES (:id, NULL, :hash, 'SWE',"
-                    " 'Acme', 'Pune', 'JD', 'paste-text', 100, '[]',"
-                    " '2026-10-07T00:00:00', 'active', '2026-10-07T00:00:00',"
-                    " '[]', '', '[]', '', 0)"
+                    " feed_since, llm_score_attempts) VALUES (:id, NULL, :hash,"
+                    " 'SWE', 'Acme', 'Pune', 'JD', 'paste-text', 100, '[]',"
+                    " '2026-10-07T00:00:00', 'active', '2026-10-07T00:00:00', 0)"
                 ),
                 {"id": f"j{i}", "hash": f"hash-{i}"},
             )
@@ -286,3 +283,201 @@ def test_duplicate_flags_and_dismissals_become_1_row_per_pair(tmp_path: Path) ->
         assert json.loads(flags["c"]) == []
         origins = {str(r[0]): str(r[1]) for r in conn.execute(text("SELECT id, origin FROM jobs"))}
         assert origins == {"a": "scan", "b": "manual", "c": "scan", "d": "scan"}
+
+
+def test_existing_operations_read_as_started_by_the_app(tmp_path: Path) -> None:
+    """a1c7e5d2b9f4 (audit A1): every operation that predates `requested_by` reads
+    `app`, so nothing old jumps the queue; the downgrade drops the column."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'ops.db'}"
+    cfg = make_alembic_config(url)
+    command.upgrade(cfg, "f7c2d4e9a1b6")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO operations (id, kind, state, input_snapshot, created_at) "
+            "VALUES ('o1', 'score', 'queued', '{}', '2026-10-01 00:00:00')"
+        ))
+    command.upgrade(cfg, "a1c7e5d2b9f4")
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT requested_by FROM operations")).scalar() == "app"
+    command.downgrade(cfg, "f7c2d4e9a1b6")
+    cols = {c["name"] for c in inspect(engine).get_columns("operations")}
+    assert "requested_by" not in cols
+
+
+def test_one_score_per_job_keeps_the_shown_score_and_its_factors(tmp_path: Path) -> None:
+    """b3e9c4a1d7f2 (audit A3): the LLM score wins over the keyword floor, a keyword-only
+    job keeps its keyword score, only the shown method's factors move onto the row,
+    and the downgrade rebuilds both column sets."""
+    import json
+
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'score.db'}"
+    cfg = make_alembic_config(url)
+    command.upgrade(cfg, "a1c7e5d2b9f4")
+    engine = create_engine(url)
+    base = (
+        "INSERT INTO jobs (id, canonical_url, title, company, location, description,"
+        " source_adapter, trust_score, trust_flags, ingested_at, feed_state, feed_since,"
+        " llm_score, llm_score_method, llm_reasons, llm_breakdown_md, keyword_score,"
+        " keyword_reasons, keyword_breakdown_md, llm_score_attempts) VALUES (:id, :id,"
+        " 'SWE', 'Acme', 'Pune', 'JD', 'lever', 100, '[]', '2026-10-01T00:00:00',"
+        " 'active', '2026-10-01T00:00:00', :llm, :m, '[\"ai\"]', 'ai md', :kw,"
+        " '[\"kw\"]', 'kw md', 0)"
+    )
+    factor = (
+        "INSERT INTO job_score_factors (id, job_id, method, factor, value, kind, evidence,"
+        " created_at) VALUES (:id, :job, :m, :f, :v, 'graded', '', '2026-10-02 00:00:00')"
+    )
+    with engine.begin() as conn:
+        conn.execute(text(base), {"id": "ai", "llm": 81, "m": "jev", "kw": 40})
+        conn.execute(text(base), {"id": "kw", "llm": None, "m": None, "kw": 33})
+        conn.execute(text(base), {"id": "none", "llm": None, "m": None, "kw": None})
+        for i, (job, m, f, v) in enumerate([
+            ("ai", "jev", "core_stack", 0.9), ("ai", "keyword", "core_stack", 0.2),
+            ("kw", "keyword", "years", 0.5),
+        ]):
+            conn.execute(text(factor), {"id": f"f{i}", "job": job, "m": m, "f": f, "v": v})
+    command.upgrade(cfg, "b3e9c4a1d7f2")
+    with engine.connect() as conn:
+        rows = {
+            r[0]: r[1:]
+            for r in conn.execute(text(
+                "SELECT id, score, score_method, score_reasons, score_factors, scored_at"
+                " FROM jobs"
+            ))
+        }
+    assert rows["ai"][:2] == (81, "jev")
+    assert json.loads(rows["ai"][2]) == ["ai"]
+    assert [f["value"] for f in json.loads(rows["ai"][3])] == [0.9]
+    assert rows["ai"][4] is not None
+    assert rows["kw"][:2] == (33, "keyword")
+    assert rows["none"][:2] == (None, None)
+    assert "job_score_factors" not in inspect(engine).get_table_names()
+    command.downgrade(cfg, "a1c7e5d2b9f4")
+    with engine.connect() as conn:
+        back = conn.execute(text(
+            "SELECT llm_score, llm_score_method, keyword_score FROM jobs WHERE id = 'ai'"
+        )).one()
+        assert tuple(back) == (81, "jev", None)
+        assert conn.execute(text("SELECT count(*) FROM job_score_factors")).scalar() == 2
+
+
+def test_duplicate_migration_hashes_only_the_jobs_a_flag_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """e3a8c51f7d20 (audit A12): 1,000 unflagged jobs cost the boot nothing; only the 3
+    jobs named in a pair flag are fingerprinted. Alembic re-imports a revision on each
+    run, so the module is loaded here and its own `upgrade()` run, to count the calls."""
+    import importlib.util
+    import json
+
+    from alembic import command
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'hash.db'}"
+    command.upgrade(make_alembic_config(url), "d1c5f83a9b27")
+    engine = create_engine(url)
+    jd = (
+        "Senior Software Engineer at Acme. You will own distributed Python services, "
+        "design PostgreSQL schemas, run workloads on AWS and mentor other engineers."
+    )
+    insert = text(
+        "INSERT INTO jobs (id, canonical_url, title, company, location, description,"
+        " source_adapter, trust_score, trust_flags, ingested_at, feed_state, feed_since)"
+        " VALUES (:id, :url, 'SWE', 'Acme', '', :jd, 'lever', 100, :flags, '2026-10-01',"
+        " 'active', '2026-10-01')"
+    )
+    flagged = {
+        "a": [],
+        "b": ["probable-duplicate:a", "duplicate-batch:1"],
+        "c": ["probable-cross-listing:https://ex.co/a", "probable-duplicate:gone"],
+    }
+    with engine.begin() as conn:
+        for job_id, flags in flagged.items():
+            conn.execute(
+                insert,
+                {"id": job_id, "url": f"https://ex.co/{job_id}", "jd": jd,
+                 "flags": json.dumps(flags)},
+            )
+        for i in range(1000):
+            conn.execute(
+                insert,
+                {"id": f"plain-{i}", "url": f"https://ex.co/p{i}", "jd": f"{jd} {i}",
+                 "flags": "[]"},
+            )
+
+    path = (
+        Path(__file__).parents[2]
+        / "app/db/alembic/versions/20261012_e3a8c51f7d20_job_duplicates_and_origin.py"
+    )
+    spec = importlib.util.spec_from_file_location("e3a8c51f7d20", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    hashed: list[str] = []
+    real = module._simhash64
+
+    def counting(description: str) -> int:
+        hashed.append(description)
+        return real(description)
+
+    monkeypatch.setattr(module, "_simhash64", counting)
+    with engine.begin() as conn, Operations.context(MigrationContext.configure(conn)):
+        module.upgrade()
+
+    assert len(hashed) == 3
+    with engine.connect() as conn:
+        pairs = set(conn.execute(text("SELECT job_id, other_job_id FROM job_duplicates")))
+    assert pairs == {("b", "a"), ("c", "a")}
+
+
+def test_the_5_location_columns_go_and_come_back_empty(tmp_path: Path) -> None:
+    """c5f1a8d3e6b2 (B6, place-picker.md 10.5 item 2): the columns nothing read are
+    dropped with the job kept; the downgrade restores them as NULL, which the old
+    daily pass reads as "never resolved" and refills."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'loc.db'}"
+    cfg = make_alembic_config(url)
+    command.upgrade(cfg, "b3e9c4a1d7f2")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO jobs (id, canonical_url, title, company, location, description,"
+            " source_adapter, trust_score, trust_flags, ingested_at, feed_state, feed_since,"
+            " location_country, location_admin1, location_city_id, location_remote,"
+            " location_attendance) VALUES ('j', 'https://ex.co/j', 'SWE', 'Acme',"
+            " 'Bengaluru (Hybrid)', 'JD', 'lever', 100, '[]', '2026-10-01', 'active',"
+            " '2026-10-01', 'IN', 'IN.19', 1277333, '', 'hybrid')"
+        ))
+    names = ("location_country", "location_admin1", "location_city_id", "location_remote",
+             "location_attendance")
+
+    command.upgrade(cfg, "c5f1a8d3e6b2")
+    cols = {c["name"] for c in inspect(engine).get_columns("jobs")}
+    assert not cols & set(names)
+    with engine.connect() as conn:
+        location = conn.execute(text("SELECT location FROM jobs WHERE id = 'j'")).scalar()
+    assert location == "Bengaluru (Hybrid)"
+
+    command.downgrade(cfg, "b3e9c4a1d7f2")
+    with engine.connect() as conn:
+        back = conn.execute(text(f"SELECT {', '.join(names)} FROM jobs WHERE id = 'j'")).one()  # noqa: S608 — fixed names
+    assert tuple(back) == (None,) * 5

@@ -200,8 +200,17 @@ test("skipping the provider step finishes with AI off", async ({ page, request }
   await page.getByTestId("onboarding-skip-provider").click();
   await expect(page.getByTestId("all-set-ai-off")).toBeVisible();
   await page.screenshot({ path: `${DIR}/all-set-ai-off.png`, fullPage: true });
+  // The Skip survives a reload with the rest of the draft (PR #12 review).
+  await page.reload();
+  await expect(page.getByTestId("all-set-ai-off")).toBeVisible();
+  const extracts = async () =>
+    (await (await request.get(`${base}/api/operations?limit=200`, { headers: auth })).json())
+      .filter((o: { kind: string }) => o.kind === "extract").length;
+  const extractsBefore = await extracts();
   await page.getByTestId("onboarding-finish").click();
   await expect(page).toHaveURL(/\/jobs$/, { timeout: 15_000 });
+  // AI is off before the resume is saved, so no resume read is queued (audit A5).
+  expect(await extracts()).toBe(extractsBefore);
 
   const settings = await (await request.get(`${base}/api/settings`, { headers: auth })).json();
   const engines = Object.values(settings.preferences.engine_routing).map(
@@ -215,7 +224,7 @@ test("skipping the provider step finishes with AI off", async ({ page, request }
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${DIR}/settings-ai-off.png`, fullPage: true });
 
-  // Back to the default routing and AI scoring, for the specs after this one.
+  // Back to the default routing and LLM scoring, for the specs after this one.
   await request.post(`${base}/api/settings`, {
     headers: auth,
     data: {

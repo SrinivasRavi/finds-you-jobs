@@ -211,6 +211,7 @@ def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
     the sidecar renders with the same Chromium pipeline the Applier uploads
     (real selectable text) and saves collision-safe. Returns the saved path."""
     from ..registry.pdf import PdfRenderError, render_resume_pdf
+    from .browser import is_browser_missing
 
     if not payload.markdown.strip():
         raise HTTPException(status_code=422, detail="nothing to export — the document is empty")
@@ -244,6 +245,15 @@ def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
         # probes.
         render_resume_pdf(payload.markdown, str(path))
     except PdfRenderError as e:
+        if is_browser_missing(str(e)):
+            # Coded, so the screen offers the Download action (A16).
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "browser_missing",
+                    "message": "Chromium isn't downloaded yet; download it, then export again",
+                },
+            ) from e
         raise HTTPException(status_code=503, detail=str(e)) from e
     return dto.ExportPdfResult(path=str(path))
 
@@ -259,6 +269,15 @@ def install_browser(request: Request) -> dto.BrowserInstallResult:
     publish = hub.publish if hub is not None else None
     status = start_install(publish)
     return dto.BrowserInstallResult(status=status)
+
+
+@router.get("/api/system/install-browser")
+def browser_install_status() -> dto.BrowserInstallStatus:
+    """The last Chromium download's state. A client that lost the event stream
+    mid-download reads this instead of waiting forever (A21)."""
+    from .browser import install_status
+
+    return dto.BrowserInstallStatus(**install_status())
 
 
 @router.get("/api/system/scheduler")

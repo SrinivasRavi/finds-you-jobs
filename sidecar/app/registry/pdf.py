@@ -1,4 +1,4 @@
-"""Resume markdown → PDF via headless Chromium.
+"""Resume markdown → PDF via headless Chrome, or Chromium when Chrome is absent.
 
 Carried from the maintainer's prior repository
 (`sidecar/modules/applier_redesign/pdf.py` — same CSS, same page setup) and
@@ -34,7 +34,9 @@ async def render_resume_pdf_async(pw: Any, markdown_text: str, out_path: str) ->
         "<!doctype html><html><head><meta charset='utf-8'>"
         f"<style>{_CSS}</style></head><body>{body}</body></html>"
     )
-    browser = await pw.chromium.launch(headless=True)
+    from ..browser.launch import launch_browser_async
+
+    browser = await launch_browser_async(pw.chromium, headless=True)
     try:
         page = await browser.new_page()
         await page.set_content(html, wait_until="load")
@@ -65,6 +67,8 @@ def render_resume_pdf(markdown_text: str, out_path: str) -> None:
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import sync_playwright
 
+    from ..browser.launch import launch_browser
+
     body = MarkdownIt("commonmark").render(markdown_text)
     html = (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -72,7 +76,7 @@ def render_resume_pdf(markdown_text: str, out_path: str) -> None:
     )
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = launch_browser(pw.chromium, headless=True)
             try:
                 page = browser.new_page()
                 page.set_content(html, wait_until="load")

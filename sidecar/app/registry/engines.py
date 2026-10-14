@@ -24,10 +24,11 @@ class EngineNotConfiguredError(Exception):
     """No engine is routed for an LLM operation kind. Surfaced verbatim on the
     operation row (NFR-SIDE-04) — never swallowed."""
 
-    def __init__(self, kind: str) -> None:
+    def __init__(self, kind: str, message: str | None = None) -> None:
         self.kind = kind
         super().__init__(
-            f"no engine configured for {kind!r}: AI features stay off until an LLM "
+            message
+            or f"no engine configured for {kind!r}: AI features stay off until an LLM "
             "provider is set up in Settings › LLM Providers"
         )
 

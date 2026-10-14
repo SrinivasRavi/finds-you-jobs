@@ -15,6 +15,7 @@ import uuid
 
 import uvicorn
 
+from .api.browser import pin_browsers_path
 from .logging_setup import get_logger, setup_flight_recorder
 from .main import create_app
 
@@ -56,6 +57,7 @@ def _maybe_write_dev_handshake(port: int, token: str) -> None:
 
 def main() -> int:
     setup_flight_recorder()
+    pin_browsers_path()
     log = get_logger()
 
     port = int(os.environ.get("FYJ_PORT", "0")) or find_free_port()

@@ -36,7 +36,7 @@ def plan_schedule(db: Database, kind: str) -> list[tuple[str, dict[str, Any]]]:
 
 
 def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
-    """Plan `("score", snapshot)` for jobs that still need an AI score. Keyword mode
+    """Plan `("score", snapshot)` for jobs that still need an LLM score. Keyword mode
     plans nothing: the floor already scores every job. AI mode plans every active
     job that can still earn one: the floor doesn't count, in-flight ops aren't
     doubled, and jobs past `SCORE_MAX_ATTEMPTS` or with no description are skipped.
@@ -64,7 +64,7 @@ def plan_score_new(db: Database, *, limit: int | None = None) -> list[tuple[str,
             if op.job_id is not None
         }
 
-        # The "already AI-scored" exclusion is SQL (`llm_score IS NOT NULL`), so a
+        # The "already really scored" exclusion is SQL (`score_method`), so a
         # resume edit never re-spends tokens, and an install past 1,000 active jobs still
         # reaches the oldest unscored ones. `limit` 0 is uncapped, the default: spend is
         # the user's call. When capped, fetch extra to absorb `attempted`.

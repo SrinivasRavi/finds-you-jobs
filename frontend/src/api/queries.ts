@@ -12,9 +12,11 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { asReasons, type ScoreReason } from "../shell/scoreText";
 import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
+  ApplicationProfile,
   BoardFilters,
   Application,
   Operation,
@@ -230,6 +232,26 @@ export function useExplainJob() {
   });
 }
 
+/** Rescore 1 row. Pending until the operation ends, so the row can say so while
+ *  it waits in its queue and runs; the board refetches on the terminal event. */
+export function useRescoreJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      const { id } = await api.rescoreJob(jobId);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const op = await api.getOperation(id);
+        if (op && ["succeeded", "failed", "cancelled"].includes(op.state)) return op;
+      }
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.ledger });
+      void qc.invalidateQueries({ queryKey: qk.costTotals });
+    },
+  });
+}
+
 export function useToggleDiscoverySource() {
   const qc = useQueryClient();
   return useMutation({
@@ -363,7 +385,7 @@ export function useLedger() {
 export function useCostTotals() {
   return useQuery({ queryKey: qk.costTotals, queryFn: () => api.getCostTotals() });
 }
-/** How many jobs are stuck with a spent AI-scoring budget (S-C24). Drives the
+/** How many jobs are stuck with a spent LLM scoring budget (S-C24). Drives the
  *  ledger's Retry-scoring button, which stays hidden at 0. */
 export function useRetryableScores() {
   return useQuery({ queryKey: qk.retryableScores, queryFn: () => api.retryableScoreCount() });
@@ -561,7 +583,7 @@ export function useAttachJobLink() {
 export interface TriageResult {
   score: number;
   method: string;
-  reasons: string[];
+  reasons: ScoreReason[];
 }
 
 /** How long a prompt test or a triage score may run before it's cancelled for
@@ -579,10 +601,12 @@ export class RunStoppedError extends Error {
 /** Wait for an operation to finish. It keeps asking for as long as the run
  *  lasts, and at the limit it cancels the run itself rather than abandoning it. */
 async function waitForOperation(opId: string): Promise<Operation> {
-  const started = Date.now();
+  // The limit counts running time only: a queued run spends nothing
+  // (queueing.md section 6, audit A1).
+  let runningSince: number | null = null;
   for (;;) {
     await new Promise((r) => setTimeout(r, 500));
-    if (Date.now() - started >= RUN_LIMIT_MS) {
+    if (runningSince !== null && Date.now() - runningSince >= RUN_LIMIT_MS) {
       await api.cancelOperation(opId).catch(() => undefined);
       throw new RunStoppedError("timeout");
     }
@@ -590,6 +614,7 @@ async function waitForOperation(opId: string): Promise<Operation> {
     if (op === undefined) continue;
     if (op.state === "cancelled") throw new RunStoppedError("stopped");
     if (op.state === "succeeded" || op.state === "failed") return op;
+    if (op.state === "running" && runningSince === null) runningSince = Date.now();
   }
 }
 
@@ -621,7 +646,7 @@ export function usePromptTest() {
           output_md: typeof ref.output_md === "string" ? ref.output_md : undefined,
           notes: Array.isArray(ref.notes) ? ref.notes.map(String) : undefined,
           score: typeof ref.score === "number" ? ref.score : undefined,
-          reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : undefined,
+          reasons: Array.isArray(ref.reasons) ? asReasons(ref.reasons) : undefined,
           message: typeof ref.message === "string" ? ref.message : undefined,
           profile:
             typeof ref.profile === "object" && ref.profile !== null
@@ -657,7 +682,7 @@ export function useTriageScore() {
       return {
         score: Number(ref.score ?? 0),
         method: String(ref.method ?? ""),
-        reasons: Array.isArray(ref.reasons) ? ref.reasons.map(String) : [],
+        reasons: asReasons(ref.reasons),
       };
     },
     meta: { errorHandledLocally: true },
@@ -699,6 +724,31 @@ export function useUpdateProfile() {
   return useMutation({
     mutationFn: (master_md: string) => Promise.resolve(api.updateProfile(master_md)),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.profile }),
+  });
+}
+
+/** Read the application profile from the master resume now (FR-APP-01, audit A5). */
+export function useExtractApplicationProfile() {
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.extractApplicationProfile()),
+  });
+}
+
+/** Save Applicant details; saving is the review Apply waits for (audit A5). */
+export function useSaveApplicantDetails() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fields: ApplicationProfile) =>
+      Promise.resolve(api.patchApplicationProfile(fields)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.profile }),
+  });
+}
+
+export function useCountries() {
+  return useQuery({
+    queryKey: ["countries"] as const,
+    queryFn: () => api.getCountries(),
+    staleTime: Infinity,
   });
 }
 
@@ -770,7 +820,7 @@ export function useRetryOperation() {
   });
 }
 
-/** Hand every stuck job its AI-scoring budget back (S-C24). The recovery path
+/** Hand every stuck job its LLM scoring budget back (S-C24). The recovery path
  *  for a provider-wide failure — an expired key, an exhausted quota — that the
  *  per-job attempt cap can't tell apart from a job that simply won't score.
  *  The next scheduler tick does the re-scoring, batched. */
@@ -1442,6 +1492,10 @@ export function useSSEInvalidation(qc: QueryClient): void {
         // (applyRunStatus) + writes an Activity event — refresh all three so the
         // Tracker/companion repaint without a manual reload (applier-as-built.md section 8.4).
         // One event per run — no throttle needed.
+        // A finished resume read fills the facts Apply needs (audit A5).
+        if (p.kind === "extract" && terminal) {
+          qc.invalidateQueries({ queryKey: qk.profile });
+        }
         if (p.kind === "apply" && terminal) {
           qc.invalidateQueries({ queryKey: qk.applications });
           qc.invalidateQueries({ queryKey: qk.applyRun });

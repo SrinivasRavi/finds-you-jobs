@@ -7,6 +7,8 @@ is mocked, so no download."""
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Generator, Iterator
 from pathlib import Path
 
@@ -62,6 +64,10 @@ def test_export_pdf_renders_into_downloads(
     assert Path(again["path"]).name == "My-Resume-1.pdf"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="chmod can't deny a write on Windows or to root",
+)
 def test_export_pdf_says_plainly_when_downloads_is_denied(
     app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

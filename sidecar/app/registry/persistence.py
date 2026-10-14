@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
-from sidecar.modules.geo.resolve import chip_label, chip_name, resolve_location
+from sidecar.modules.geo.resolve import chip_label, chip_name
 from sidecar.modules.scraper.config import PortalsConfig, load_portals, parse_portals
 from sidecar.modules.scraper.fingerprint import simhash64, to_signed64
 from sidecar.modules.scraper.types import NormalizedJob, ScanPrefs, ScanResult, ScraperError
@@ -153,13 +153,27 @@ def resolve_scan_prefs(
     base = _config_prefs(portals)
     expanded = _expand_locations(locations)
     return replace(
-        base,
+        _with_place_match(base, row.locations or []),
         title_allow=aliases or base.title_allow,
         location_allow=expanded or base.location_allow,
         location_always_allow=expanded or base.location_always_allow,
         max_age_days=freshness if freshness > 0 else base.max_age_days,
         company_block=list(dict.fromkeys([*base.company_block, *company_block])),
         content_block=list(dict.fromkeys([*base.content_block, *content_block])),
+    )
+
+
+def _with_place_match(base: ScanPrefs, chips: list[Any]) -> ScanPrefs:
+    """Keep a posting whose place lies inside a wanted one, which a word match can't
+    see: "Pune, India" for a Maharashtra chip, "Milpitas, CA" for the Bay Area (audit
+    A7). Only a MATCH keeps it; anything else falls through to the word filter."""
+    from sidecar.modules.geo.resolve import Verdict, match, resolve_location, resolve_wanted
+
+    wanted = resolve_wanted(chips)
+    if not (wanted.city_ids or wanted.admin1_keys or wanted.countries):
+        return base
+    return replace(
+        base, location_match=lambda text: match(resolve_location(text), wanted)[0] is Verdict.MATCH
     )
 
 
@@ -392,34 +406,12 @@ def _job_columns(job: NormalizedJob) -> dict[str, Any]:
     }
 
 
-BACKFILL_LOCATION_BATCH = 500
+BACKFILL_FINGERPRINT_BATCH = 500
 
 
-def backfill_resolved_locations(
-    db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH
+def backfill_fingerprints(
+    db: Database | None, *, limit: int = BACKFILL_FINGERPRINT_BATCH
 ) -> int:
-    """Resolve locations for rows that predate the resolver; returns the count.
-    Converges, since `location_remote IS NULL` stops matching once touched. Bounded
-    per call: the maintenance tick has other stages."""
-    if db is None:
-        return 0
-    with db.repos() as repos:
-        pending = repos.jobs.list_unresolved_locations(limit=limit)
-        for job in pending:
-            resolved = resolve_location(job.location or "")
-            primary = resolved.primary
-            repos.jobs.update(
-                job.id,
-                location_country=primary.country if primary else None,
-                location_admin1=primary.admin1_key if primary else None,
-                location_city_id=primary.city_id if primary else None,
-                location_remote=resolved.remote_scope,
-                location_attendance=str(resolved.attendance) if resolved.attendance else None,
-            )
-        return len(pending)
-
-
-def backfill_fingerprints(db: Database | None, *, limit: int = BACKFILL_LOCATION_BATCH) -> int:
     """Fingerprint rows from before migration `c9e4a71b3f02`; returns the count.
     Too-short text stores 0, so it converges. Flags nothing itself."""
     if db is None:
@@ -593,8 +585,9 @@ def age_expired_jobs(
 ) -> dict[str, list[str]]:
     """TTL aging for feed jobs (FR-SYS-03), daily: active to expired after
     `expire_after_days` from `feed_since`, then hard-deleted after
-    `delete_after_days`, with no tombstone so a scan can bring it back. Skips saved
-    jobs and URL-less ones, which no scan can replace (url-less-jobs.md 5.6, 8.3).
+    `delete_after_days`, with no tombstone so a scan can bring it back. Ages only
+    scanned jobs: a hand-added one, link or not, is no scan's to replace, the same
+    test `tombstone_url` asks (url-less-jobs.md 5.6, 8.3). Skips saved jobs.
     Returns `{"expired": [...], "deleted": [...]}`."""
     if db is None:
         return {"expired": [], "deleted": []}
@@ -611,14 +604,14 @@ def age_expired_jobs(
 
         # Stage 2 first: hard-delete stale Expired rows (no tombstone).
         for job in repos.jobs.list_expired_before(delete_cutoff):
-            if job.id in saved or not job.canonical_url:
-                continue  # Saved, or no feed to replace it — never auto-delete
+            if job.id in saved:
+                continue  # Saved — never auto-delete
             delete_job_cascade(repos, job.id)  # no Tombstone — FR-SYS-03
             deleted.append(job.id)
 
         # Stage 1: grey out active jobs past the freshness window.
         for job in repos.jobs.list_active_before(expire_cutoff):
-            if job.id in saved or not job.canonical_url:
+            if job.id in saved:
                 continue
             repos.jobs.set_expired(job.id, now=now)
             expired.append(job.id)
@@ -651,7 +644,6 @@ def delete_job_cascade(repos: Repos, job_id: str) -> bool:
     before deletion, and trashing requires unsaving first."""
     repos.referral_candidates.delete_for_job(job_id)
     repos.outreach_logs.nullify_for_job(job_id)
-    repos.job_score_factors.delete_for_job(job_id)
     return repos.jobs.delete(job_id)
 
 

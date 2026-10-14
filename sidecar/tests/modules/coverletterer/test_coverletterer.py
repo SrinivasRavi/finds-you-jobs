@@ -273,3 +273,21 @@ def test_cover_cancel_checkpoint_precedes_any_attempt() -> None:
     with pytest.raises(CompletionCancelled):
         cover("# Master", "responsibilities " * 20, engine=Never(), cancelled=lambda: True)
     assert calls["n"] == 0
+
+
+def test_the_cover_letter_follows_the_resume_location_setting():
+    """1 setting for both documents (maintainer, 2026-10-13): the contact line takes
+    the posting's place, and the company's own city line is left alone."""
+    fake = FakeEngine()
+    result = cover("# Master", "responsibilities " * 20, engine=fake,
+                   location=("posting", "London, Ontario, Canada", "Bengaluru"))
+    lines = result.cover_letter_md.splitlines()
+    assert lines[1] == "London, Ontario, Canada | jane@example.com"
+    assert any(line.startswith("Glean, Bengaluru") for line in lines)
+    assert "London, Ontario, Canada" in fake.calls[0][1]  # the model was told
+    removed = cover("# Master", "responsibilities " * 20, engine=FakeEngine(),
+                    location=("none", "", "Bengaluru"))
+    assert removed.cover_letter_md.splitlines()[1] == "jane@example.com"
+    kept = cover("# Master", "responsibilities " * 20, engine=FakeEngine(),
+                 location=("master", "London", "Bengaluru"))
+    assert kept.cover_letter_md.splitlines()[1] == "Bengaluru | jane@example.com"

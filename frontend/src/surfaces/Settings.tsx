@@ -8,6 +8,7 @@ import { useSettings, useUpdateSettings } from "../api/queries";
 import type { Settings as SettingsT } from "../api/types";
 import { AboutSection } from "./settings/AboutSection";
 import { AIProvidersPanel } from "./settings/AIProvidersPanel";
+import { ApplicantDetailsForm } from "./settings/ApplicantDetails";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { AutomationSection } from "./settings/AutomationSection";
 import { DiscoveryKeysSection, DiscoverySourcesSection } from "./settings/DiscoverySources";
@@ -18,6 +19,7 @@ import { ObservabilitySection } from "./settings/ObservabilitySection";
 import { ModelPicker } from "./settings/ModelPicker";
 import { PromptCard } from "./settings/PromptsSection";
 import { ReferralOutreachSection } from "./settings/ReferralOutreachSection";
+import { ResumeLocationSetting } from "./settings/ResumeLocationSetting";
 import { ScoringSection } from "./settings/ScoringSection";
 import { SETTINGS_CATS, SettingsNav, type SettingsCat } from "./settings/SettingsNav";
 import { Section } from "./settings/shared";
@@ -123,6 +125,12 @@ export function Settings() {
           <AutomationSection settings={settings} patch={patch} />
           <Section title={t("settingsPage.prompts.titleTailor")}>
             <div className="space-y-4">
+              <ResumeLocationSetting
+                settings={settings}
+                patch={patch}
+                alsoIn="applying"
+                onGo={() => setCat("applying")}
+              />
               <ModelPicker kind="tailor" settings={settings} patch={patch} />
               <PromptCard kind="tailor" />
             </div>
@@ -142,6 +150,17 @@ export function Settings() {
               (url-less-jobs.md section 11.5). */}
           {cat === "applying" && (
           <div className="space-y-8">
+          <Section title={t("settingsPage.applicant.title")}>
+            <ApplicantDetailsForm />
+          </Section>
+          <Section title={t("settingsPage.applicant.resumeLocationSection")}>
+            <ResumeLocationSetting
+              settings={settings}
+              patch={patch}
+              alsoIn="documents"
+              onGo={() => setCat("documents")}
+            />
+          </Section>
           <Section title={t("settingsPage.prompts.titleApplyModel")}>
             <ModelPicker
               kind="apply"
@@ -158,12 +177,6 @@ export function Settings() {
           </Section>
           </div>
           )}
-
-          {/* The "Applications" settings category (P1 Applier statement +
-              Application-profile editor) was removed 2026-07-23 (maintainer:
-              no value in P1). The profile is still auto-extracted on
-              master-save regardless. The editor component itself is gone, not
-              parked: restoring it means writing it again. */}
 
           {cat === "providers" && (
           <div className="space-y-8">

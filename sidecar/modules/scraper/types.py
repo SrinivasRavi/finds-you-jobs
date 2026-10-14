@@ -6,6 +6,7 @@ final type system and these graduate into it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 
@@ -65,6 +66,9 @@ class ScanPrefs:
     location_allow: list[str] = field(default_factory=list)
     location_block: list[str] = field(default_factory=list)
     location_always_allow: list[str] = field(default_factory=list)
+    # True when a posting's place lies inside a wanted one (a city in a wanted state,
+    # metro or country); set from the user's picked places, never from a snapshot.
+    location_match: Callable[[str], bool] | None = None
     # Company exclude: a cross-cutting gate like title and location, since open
     # adapters (RemoteOK, TheMuse, Brave, search) surface companies dynamically
     # (docs/internal/discovery.md).

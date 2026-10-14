@@ -1,12 +1,12 @@
 """Discovery-source controls (Settings › Discover jobs).
 
 Every source family is on by default; the user opts out per family or per entry
-(Apify actors). The opt-out list is `portals_config["disabled_sources"]`, the
-document `scan()` reads, so a toggle applies on the next scan. Routes: GET/POST
+(an adapter's sub-sources). The opt-out list is `portals_config["disabled_sources"]`,
+the document `scan()` reads, so a toggle applies on the next scan. Routes: GET/POST
 /api/discovery/sources (the catalog, and flipping entries), and GET/POST/DELETE
-/api/discovery/credentials (the Apify and Brave keys, sealed with the app Fernet
-key into `scraper:<id>` rows, NFR-SEC-01). Saving the Apify key seeds the default
-actor sources."""
+/api/discovery/credentials (the users' own scraper keys, sealed with the app Fernet
+key into `scraper:<id>` rows, NFR-SEC-01). Saving a key seeds its adapter's default
+sources. No vendor is named here: each adapter declares its part (F-P6)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from sidecar.modules.scraper import adapters
-from sidecar.modules.scraper.adapters import apify
 from sidecar.modules.scraper.config import SourceEntry
 from sidecar.modules.scraper.http import Fetcher
 from sidecar.modules.scraper.types import ScraperError
@@ -33,17 +32,13 @@ from .deps import db as _db
 
 router = APIRouter()
 
-# The BYO scraper keys the product knows how to use. Brave rides the same
-# store; its adapter lands with the meta-search commit.
-CREDENTIALS: dict[str, str] = {"apify": "Apify", "brave": "Brave Search"}
+# The users' own scraper keys, from the adapters that declare one.
+_KEYED = {a.ID: a for a in adapters.ADAPTERS if hasattr(a, "CREDENTIAL")}
+CREDENTIALS: dict[str, str] = {cid: a.CREDENTIAL for cid, a in _KEYED.items()}
 
-# Friendly names for the seeded Apify actor sources (catalog rows).
-ACTOR_LABELS: dict[str, str] = {
-    "memo23/naukri-scraper": "Naukri (via Apify)",
-    "misceres/indeed-scraper": "Indeed (via Apify)",
-    "epicscrapers/seek-job-scraper": "Seek (via Apify)",
-    "curious_coder/linkedin-jobs-scraper": "LinkedIn deep-JD (via Apify)",
-}
+# Adapters whose every entry is its own toggle (keyed by the entry's
+# `SUB_SOURCE_FIELD`), counted in Analytics under the board it stamps.
+_SUB_SOURCED = {a.ID: a for a in adapters.ADAPTERS if hasattr(a, "SUB_SOURCE_FIELD")}
 
 
 def _portals(repos) -> dict:  # noqa: ANN001 — Repos
@@ -96,24 +91,25 @@ def _catalog(portals_config: dict) -> list[dto.DiscoverySourceDTO]:
         )
         for adapter_id, (label, kind) in adapters.CATALOG.items()
     ]
-    # Actor-granular rows for the user's Apify entries: each one toggles just
-    # that actor (full source key), on top of the family master toggle.
-    apify_off = "apify" in disabled
+    # A row per sub-source entry: each toggles just that entry (full source
+    # key), on top of the family master toggle.
     for raw in portals_config.get("sources", []):
-        if isinstance(raw, dict) and str(raw.get("board", "")) == "apify":
-            actor = str(raw.get("actor", ""))
-            if not actor:
-                continue
-            key = f"apify:{actor}"
-            rows.append(
-                dto.DiscoverySourceDTO(
-                    id=key,
-                    label=ACTOR_LABELS.get(actor, actor),
-                    kind="search",
-                    entries=1,
-                    enabled=not apify_off and key not in disabled,
-                )
+        if not isinstance(raw, dict):
+            continue
+        adapter = _SUB_SOURCED.get(str(raw.get("board", "")))
+        sub = str(raw.get(adapter.SUB_SOURCE_FIELD, "")) if adapter else ""
+        if adapter is None or not sub:
+            continue
+        key = f"{adapter.ID}:{sub}"
+        rows.append(
+            dto.DiscoverySourceDTO(
+                id=key,
+                label=adapter.SUB_SOURCE_LABELS.get(sub, sub),
+                kind=adapter.KIND,
+                entries=1,
+                enabled=adapter.ID not in disabled and key not in disabled,
             )
+        )
     return rows
 
 
@@ -363,23 +359,33 @@ async def watch_company(
                         source_url, resolved = cand, cand_resolved
                         _guess_cache_put(cache_key, cand)
                         break
-    fail: str | None = None
+    fail: dict[str, Any] | None = None
     adapter_id = ""
     if resolved is None:
+        # A code and its facts, so the screen writes the sentence in the user's
+        # language; `message` is the English the ledger keeps (audit A8).
+        vendors = [a.LABEL for a in adapters.ADAPTERS if a.KIND == "ats"]
         if _source_kind(job_adapter) == "search":
-            fail = (
-                f"this job came from a search source ({job_adapter}) — there is "
-                "no company board to watch. Paste the company's careers page "
-                "on a supported ATS in Settings → Discover jobs → Companies you "
-                "follow instead"
-            )
+            fail = {
+                "code": "search_source",
+                "source": job_adapter,
+                "vendors": vendors,
+                "message": (
+                    f"this job came from a search source ({job_adapter}), so there is "
+                    "no company board to follow; paste the company's careers page instead"
+                ),
+            }
         else:
-            fail = (
-                "no adapter recognizes this URL as a scannable board — paste the "
-                "company's careers page on a supported ATS (Greenhouse, Lever, "
-                "Ashby, Workable, SmartRecruiters, Recruitee, Teamtailor, "
-                "Personio, Workday, BambooHR, Breezy) or an RSS feed"
-            )
+            # A followed row no adapter can read would scan nothing forever, so
+            # this refuses (watch-company.md section 3, row 5).
+            fail = {
+                "code": "unrecognised_board",
+                "vendors": vendors,
+                "message": (
+                    "no adapter recognizes this URL as a scannable board; paste a careers "
+                    f"page on {', '.join(vendors)}, or an RSS feed"
+                ),
+            }
     openings: int | None = None
     titles: list[str] = []
     read_error = ""
@@ -397,7 +403,7 @@ async def watch_company(
         # rolls its transaction back, which silently discarded the ledger row
         # (found 2026-07-22).
         with _db(request).repos() as ledger_repos:
-            _ledger_watch(ledger_repos, snapshot, fail)
+            _ledger_watch(ledger_repos, snapshot, fail["message"])
         raise HTTPException(status_code=422, detail=fail)
     with _db(request).repos() as repos:
         portals, save = _portals_for_update(repos)
@@ -460,6 +466,19 @@ def suggest_places(q: str = "", limit: int = 8) -> list[dto.PlaceSuggestionDTO]:
     ]
 
 
+@router.get("/api/geo/countries")
+def list_countries() -> list[dto.CountryDTO]:
+    """Every country in the shipped gazetteer, by name, for Applicant details' work
+    authorizations. A plain `def`, so the first load runs off the event loop."""
+    from sidecar.modules.geo.gazetteer import gazetteer
+
+    names = gazetteer().country_name
+    return [
+        dto.CountryDTO(code=code, name=name)
+        for code, name in sorted(names.items(), key=lambda kv: kv[1])
+    ]
+
+
 @router.get("/api/discovery/watchlist")
 def list_watched_companies(request: Request) -> dto.WatchlistDTO:
     """The tracked-companies roster: user-added (`watched`) board rows from
@@ -514,15 +533,15 @@ def unwatch_company(request: Request, url: str) -> dto.WatchRemoveResult:
 _RECENT_SCANS = 30
 
 # Display identities for source ids that aren't adapter families in CATALOG:
-# the real boards behind the Apify actors (rows are stamped with these as
-# `source_adapter` — maintainer directive 2026-07-18: show "Naukri", never the
-# "Apify" plumbing), plus friendlier analytics labels for the search families.
+# the real boards a sub-source stamps as `source_adapter` (maintainer directive
+# 2026-07-18: show "Naukri", never the plumbing), and 1 LinkedIn identity on
+# every path, since the paths share canonical URLs and dedup.
 _ANALYTICS_LABELS: dict[str, tuple[str, str]] = {
-    "naukri": ("Naukri (via Apify)", "search"),
-    "indeed": ("Indeed (via Apify)", "search"),
-    "seek": ("Seek (via Apify)", "search"),
-    # One LinkedIn identity regardless of path (guest / logged-in / Apify actor)
-    # — the paths already share canonical URLs and dedup.
+    **{
+        board: (a.SUB_SOURCE_LABELS.get(sub, board), a.KIND)
+        for a in _SUB_SOURCED.values()
+        for sub, board in a.SUB_SOURCE_IDS.items()
+    },
     "linkedin": ("LinkedIn", "search"),
     "paste-url": ("Added by URL", "other"),
 }
@@ -534,12 +553,13 @@ def _source_kind(source_adapter: str) -> str:
 
 
 def _analytics_bucket_id(source_key: str) -> str:
-    """Map a per-scan source key to its user-facing analytics identity.
-    `apify:<actor>` buckets as the actor's real board (naukri/indeed/seek/
-    linkedin); every other key buckets by its family prefix."""
+    """Map a per-scan source key to its user-facing analytics identity: a
+    sub-source key (`apify:<actor>`) buckets as the board it stamps; every
+    other key buckets by its family prefix."""
     family, _, rest = source_key.partition(":")
-    if family == "apify" and rest:
-        return apify.ACTOR_SOURCE_IDS.get(rest, "apify")
+    adapter = _SUB_SOURCED.get(family)
+    if adapter is not None and rest:
+        return adapter.SUB_SOURCE_IDS.get(rest, family)
     return family
 
 
@@ -583,9 +603,8 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
                 # source's average down for having no description.
                 if len(job.description or "") < MIN_JD_CHARS:
                     continue
-                # The rating the board would show: AI if it has one, else the
-                # keyword floor.
-                score = job.llm_score if job.llm_score is not None else job.keyword_score
+                # The rating the board shows.
+                score = job.score
                 if score is not None:
                     b["scored"] += 1
                     b["score_sum"] += float(score)
@@ -640,7 +659,7 @@ async def discovery_analytics(request: Request) -> dto.DiscoveryAnalyticsDTO:
     return await asyncio.to_thread(_assemble)
 
 
-# -- BYO scraper keys (Apify / Brave) ----------------------------------------
+# -- the users' own scraper keys ---------------------------------------------
 
 
 def _credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
@@ -660,37 +679,23 @@ def _credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
         return out
 
 
-def _seed_apify_sources(repos) -> None:  # noqa: ANN001 — Repos
-    """First Apify key save: add the default actor `[[sources]]` entries so
-    the sources exist, per-actor toggleable, without touching existing rows."""
+def _seed_sources(repos, adapter_id: str) -> None:  # noqa: ANN001 — Repos
+    """First key save: add the adapter's `DEFAULT_SOURCES` the user doesn't
+    have yet (an entry carrying every default field counts), so they exist and
+    toggle without touching existing rows."""
     portals, save = _portals_for_update(repos)
     sources = list(portals.get("sources", []))
-    present = {
-        str(raw.get("actor", ""))
-        for raw in sources
-        if isinstance(raw, dict) and str(raw.get("board", "")) == "apify"
-    }
-    added = False
-    for actor in apify.DEFAULT_ACTORS:
-        if actor not in present:
-            sources.append({"board": "apify", "actor": actor})
-            added = True
-    if added:
-        portals["sources"] = sources
+    missing = [
+        default
+        for default in _KEYED[adapter_id].DEFAULT_SOURCES
+        if not any(
+            isinstance(raw, dict) and all(str(raw.get(k, "")) == v for k, v in default.items())
+            for raw in sources
+        )
+    ]
+    if missing:
+        portals["sources"] = sources + [dict(d) for d in missing]
         save()
-
-
-def _seed_brave_source(repos) -> None:  # noqa: ANN001 — Repos
-    """First Brave key save: add the single `board = "brave"` source entry."""
-    portals, save = _portals_for_update(repos)
-    sources = list(portals.get("sources", []))
-    if any(
-        isinstance(raw, dict) and str(raw.get("board", "")) == "brave" for raw in sources
-    ):
-        return
-    sources.append({"board": "brave"})
-    portals["sources"] = sources
-    save()
 
 
 @router.get("/api/discovery/credentials")
@@ -716,10 +721,7 @@ def save_discovery_credential(
             repos.engine_settings.create(engine_id, **fields)
         else:
             repos.engine_settings.update(row.id, **fields)
-        if payload.id == "apify":
-            _seed_apify_sources(repos)
-        elif payload.id == "brave":
-            _seed_brave_source(repos)
+        _seed_sources(repos, payload.id)
     return _credentials(request)
 
 
@@ -736,5 +738,5 @@ def delete_discovery_credential(
     if not removed:
         raise HTTPException(status_code=404, detail=f"no stored {credential_id!r} key")
     # The seeded [[sources]] entries stay — the next scan reports a clear
-    # "no Apify API key" per-source error, and the user can untick them.
+    # missing-key error per source, and the user can untick them.
     return _credentials(request)

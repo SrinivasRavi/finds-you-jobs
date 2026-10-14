@@ -11,7 +11,6 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
-    Float,
     ForeignKey,
     Index,
     Integer,
@@ -57,6 +56,11 @@ class Operation(Base):
     job_id: Mapped[str | None] = mapped_column(String, nullable=True)
     contact_id: Mapped[str | None] = mapped_column(String, nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # `user` when a click created it and someone waits on it, else `app`. The
+    # runner orders and lanes by it (docs/internal/queueing.md section 4).
+    requested_by: Mapped[str] = mapped_column(
+        String, nullable=False, default="app", server_default="app"
+    )
     # Everything else the kind needs. Opaque: read back whole, never queried in.
     input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     result_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -70,6 +74,7 @@ class Operation(Base):
 
     __table_args__ = (
         Index("ix_operations_state_created", "state", "created_at"),
+        Index("ix_operations_state_requested_created", "state", "requested_by", "created_at"),
         Index("ix_operations_kind_created", "kind", "created_at"),
         Index("ix_operations_finished", "finished_at"),
         Index("ix_operations_job_kind", "job_id", "kind"),
@@ -143,41 +148,32 @@ class Job(Base):
         UTCDateTime, nullable=False, default=now_utc
     )
 
-    # The 2 fit ratings as columns (d2f7a91b8c46); `<x>_score IS NULL` means that
-    # scorer hasn't run. The board shows `llm_score ?? keyword_score`, a rule with no
-    # ranking to get wrong (S-C34). Reasons and breakdown_md are display-only.
-    llm_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    llm_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    llm_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    keyword_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    keyword_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    keyword_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The 1 score a job keeps, and the method that made it: llm | jev | local |
+    # keyword, NULL until any runs (b3e9c4a1d7f2). A Keyword write never replaces a
+    # real score; a Rescore does. Reasons, breakdown and factors are read back whole.
+    # Design: docs/internal/score-storage.md (audit A3).
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    score_reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    score_breakdown_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # [{factor, value, kind, evidence}], value 0 to 1 (scoring.md 7.2).
+    score_factors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    scored_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # The resume version scored against; older than the last major edit is stale.
+    scored_profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # AI-scoring attempt memory. Counts only failures where a call reached the
+    # LLM scoring attempt memory. Counts only failures where a call reached the
     # provider, so a circuit-open rejection costs the job nothing. The planner stops
     # at SCORE_MAX_ATTEMPTS; every other scoring state is derived (a3d7e1f95c24).
     llm_score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     llm_score_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Which method produced `llm_score`: "llm", "jev" or "local". Backfilled to
-    # "llm" for every row scored before the column existed, because the single
-    # LLM path is the only thing that could have written them.
-    llm_score_method: Mapped[str | None] = mapped_column(String, nullable=True)
-
-    # The location, read once at ingest by `modules/geo/resolve.py`, so no consumer
-    # re-parses it. Facts about the posting only; the match verdict depends on prefs,
-    # so it's computed. `location_remote`: NULL is unresolved, "" is not remote,
-    # otherwise the scope ("global", "unscoped", or "US,CA"). No index until a query
-    # needs one (D30).
-    location_country: Mapped[str | None] = mapped_column(String, nullable=True)
-    location_admin1: Mapped[str | None] = mapped_column(String, nullable=True)
-    location_city_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    location_remote: Mapped[str | None] = mapped_column(String, nullable=True)
-    location_attendance: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index("ix_jobs_feedstate_ingested", "feed_state", "ingested_at"),
         # The planner's eligibility read: active jobs still worth an attempt.
         Index("ix_jobs_feedstate_attempts", "feed_state", "llm_score_attempts"),
+        # The planner's other half: no score yet, or only a Keyword one.
+        Index("ix_jobs_feedstate_method", "feed_state", "score_method"),
         # One per maintenance-tick query (persistence.evict_stale_trash and
         # age_expired_jobs), each reading one state on one date column.
         Index("ix_jobs_feedstate_expired", "feed_state", "expired_at"),
@@ -185,31 +181,6 @@ class Job(Base):
         Index("ix_jobs_feedstate_since", "feed_state", "feed_since"),
         # The near-duplicate lookups (promotion, the duplicate prompt).
         Index("ix_jobs_fingerprint", "fingerprint"),
-    )
-
-
-class JobScoreFactor(Base):
-    """1 axis of 1 job's score, as 1 scorer judged it (scoring.md 7.2). Every method
-    writes the same keys. `value` is 0 to 1; `kind` is `graded` (a user weight may
-    multiply it) or `probability` (it may not). The weight isn't stored."""
-
-    __tablename__ = "job_score_factors"
-
-    id: Mapped[str] = _pk()
-    job_id: Mapped[str] = mapped_column(String, ForeignKey("jobs.id"), nullable=False)
-    # llm | keyword | jev | local — the same vocabulary as `Job.llm_score_method`.
-    method: Mapped[str] = mapped_column(String, nullable=False)
-    factor: Mapped[str] = mapped_column(String, nullable=False)
-    value: Mapped[float] = mapped_column(Float, nullable=False)
-    # graded | probability
-    kind: Mapped[str] = mapped_column(String, nullable=False, default="graded")
-    evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
-
-    __table_args__ = (
-        # One row per axis per method per job, which is also the read path's
-        # index: every query starts from a job and a method.
-        UniqueConstraint("job_id", "method", "factor", name="uq_job_score_factor"),
     )
 
 
@@ -266,6 +237,11 @@ class MasterProfile(Base):
     # instead of regex-scraping the markdown. Nullable — absent means not yet
     # extracted.
     application_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The version of the last major edit (a new section or project), 0 for none.
+    # A score made against an older version shows a rescore-due mark (audit A3).
+    major_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
     )
@@ -406,6 +382,14 @@ class Document(Base):
 APPLY_RUN_ACTIVE_STATUSES: frozenset[str] = frozenset(
     {"queued", "waiting_for_packet", "running"}
 )
+
+
+def apply_run_in_review(run: ApplyRun) -> bool:
+    """The filled form waits for the human: the tab is held open at status `running`,
+    phase `ready_for_human`, and lands status `ready_for_human` once it closes (A22)."""
+    return run.status == "ready_for_human" or (
+        run.status == "running" and run.phase == "ready_for_human"
+    )
 
 
 # The kanban columns a contact-sync sweep may move between (S-N5). `candidate`

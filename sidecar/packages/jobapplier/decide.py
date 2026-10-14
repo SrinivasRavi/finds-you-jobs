@@ -77,17 +77,26 @@ def _monthly(annual: str | None) -> str | None:
         return None
 
 
+def _full_name(p: dict[str, str]) -> str | None:
+    """The app's record names "first name", "last name" and "name"; the bench
+    persona's 1 "legal name" line stays the fallback."""
+    parts = [(p.get("first name") or "").strip(), (p.get("last name") or "").strip()]
+    return " ".join(x for x in parts if x) or (p.get("name") or "").strip() or None
+
+
 _DERIVERS = {
     "first_name": lambda p: (
-        _re1(r"\(first ([^,]+),", p.get("legal name"))
-        or ((_pre_paren(p.get("legal name")) or "").split(" ") or [None])[0]
+        (p.get("first name") or "").strip()
+        or _re1(r"\(first ([^,]+),", p.get("legal name"))
+        or ((_pre_paren(p.get("legal name")) or _full_name(p) or "").split(" ") or [None])[0]
         or None
     ),
     "last_name": lambda p: (
-        _re1(r"last ([^)]+)\)", p.get("legal name"))
-        or ((_pre_paren(p.get("legal name")) or "").split(" ") or [None])[-1]
+        (p.get("last name") or "").strip()
+        or _re1(r"last ([^)]+)\)", p.get("legal name"))
+        or ((_pre_paren(p.get("legal name")) or _full_name(p) or "").split(" ") or [None])[-1]
     ),
-    "full_name": lambda p: _pre_paren(p.get("legal name")),
+    "full_name": lambda p: _pre_paren(p.get("legal name")) or _full_name(p),
     "email": lambda p: (p.get("email") or "").strip() or None,
     "phone_full": lambda p: (p.get("phone") or "").strip() or None,
     "phone_cc": lambda p: _re1(r"^(\+\d{1,3})\b", p.get("phone")),
@@ -104,16 +113,21 @@ _DERIVERS = {
     ),
     "current_title": lambda p: _re1(r"^([^,;(]+?),", p.get("current role")),
     "current_company": lambda p: _re1(r"\bat\s+([^\s(;,]+)", p.get("current role")),
-    "years_total": lambda p: _re1(r"(\d+)\s*\+?\s*year", p.get("experience")),
+    "years_total": lambda p: (
+        _re1(r"(\d+)", p.get("years of experience")) or _re1(r"(\d+)\s*\+?\s*year", p.get("experience"))
+    ),
     "salary_year_usd": lambda p: _fmt_money("USD", _re1(r"USD\s*([\d,]+)\s*/\s*year", p.get("salary expectation"))),
     "salary_year_inr": lambda p: _fmt_money("INR", _re1(r"INR\s*([\d,]+)\s*/\s*year", p.get("salary expectation"))),
     "salary_month_usd": lambda p: _monthly(_re1(r"USD\s*([\d,]+)\s*/\s*year", p.get("salary expectation"))),
-    "notice_days": lambda p: "0" if re.search(r"immediate|no notice", p.get("availability", ""), re.I) else None,
+    "notice_days": lambda p: (
+        "0" if re.search(r"immediate|no notice", p.get("availability", "") + p.get("notice period", ""), re.I)
+        else _re1(r"^(\d+)\s*days?\b", p.get("notice period"))
+    ),
     "start_when": lambda p: "Immediately" if re.search(r"immediate", p.get("availability", ""), re.I) else None,
     "postal_code": lambda p: _re1(r"\b(\d{5,6})\b", _pre_paren(p.get("location")) or ""),
     "street_address": lambda p: None,  # never held as a fact today; report when required
     # 6+ years of professional experience is sufficient evidence of adulthood.
-    "adult": lambda p: "Yes" if int(_re1(r"(\d+)\s*\+?\s*year", p.get("experience")) or 0) >= 6 else None,
+    "adult": lambda p: "Yes" if int(_derive("years_total", p) or 0) >= 6 else None,
 }
 
 

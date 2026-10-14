@@ -44,6 +44,20 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("scoring-mode-llm")).toHaveAttribute("data-on", "true");
   await expect(page.getByTestId("score-batch-cap-uncapped")).toBeVisible();
   await expect(page.getByTestId("llm-concurrency-select")).toBeVisible();
+  // Audit A1: the queue choice defaults to 1 queue per kind; the parallel hint
+  // says what the cap covers under each choice, and the choice persists.
+  const queueMode = page.getByTestId("ai-queue-mode-select");
+  await expect(queueMode).toHaveValue("per_kind");
+  await expect(page.getByText("How many jobs score at once in the background.")).toBeVisible();
+  await queueMode.selectOption("shared");
+  await expect(page.getByText("How many AI calls run at once.")).toBeVisible();
+  await page.reload();
+  await page.getByTestId("settings-nav-scoring").click();
+  await expect(page.getByTestId("ai-queue-mode-select")).toHaveValue("shared");
+  await page.getByTestId("ai-queue-mode-select").selectOption("per_kind");
+  await expect(page.getByTestId("ai-queue-mode-select")).toHaveValue("per_kind");
+  await page.getByTestId("ai-queue-mode-select").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-queue-mode.png` });
   await expect(page.getByTestId("model-picker-score")).toBeVisible();
   await expect(page.getByTestId("prompt-textarea-score")).toBeVisible();
   await page.screenshot({ path: `${DIR}/settings-scoring.png`, fullPage: true });
@@ -51,6 +65,11 @@ test("settings renders every restored section across its panes", async ({ page }
   // Resume & cover letter — the 2 generate-on-save toggles and both models.
   await page.getByTestId("settings-nav-documents").click();
   await expect(page.getByTestId("auto-resume-toggle")).toBeVisible();
+  // The tailored documents' header location defaults to the master resume's (D65),
+  // and it's 1 setting shown in 2 places, each saying so (audit B3).
+  await expect(page.getByTestId("resume-location-select")).toHaveValue("master");
+  await expect(page.getByTestId("resume-location-shared")).toContainText("1 setting");
+  await page.getByTestId("resume-location-select").selectOption("posting");
   await expect(page.getByTestId("auto-cover-toggle")).toBeVisible();
   await expect(page.getByTestId("model-picker-tailor")).toBeVisible();
   await expect(page.getByTestId("model-picker-cover")).toBeVisible();
@@ -59,6 +78,14 @@ test("settings renders every restored section across its panes", async ({ page }
   // Applying — the Applier's model, which had no UI at all before the split,
   // and the Form answers prompt.
   await page.getByTestId("settings-nav-applying").click();
+  // Applicant details (audit A5): the facts every form is filled from.
+  await expect(page.getByTestId("applicant-details")).toBeVisible();
+  // The same setting, already showing the value picked in the other category.
+  await expect(page.getByTestId("resume-location-select")).toHaveValue("posting");
+  await page.getByTestId("resume-location-applying").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${DIR}/settings-resume-location-applying.png` });
+  await page.getByTestId("resume-location-select").selectOption("master");
+  await expect(page.getByTestId("applicant-add-auth")).toBeVisible();
   await expect(page.getByTestId("model-picker-apply")).toBeVisible();
   await expect(page.getByTestId("prompt-textarea-extract")).toBeVisible();
   await page.screenshot({ path: `${DIR}/settings-applying.png`, fullPage: true });
@@ -242,6 +269,18 @@ test("analytics shows cost tiles and a real ledger row; /logs redirects", async 
   const row = page.getByTestId("log-row").filter({ hasText: "cleanup_trash" }).first();
   await expect(row.locator("td").last()).toHaveText("—");
   await page.screenshot({ path: `${DIR}/analytics-ledger.png`, fullPage: true });
+
+  // Audit A1: the Time column shows the end time; the row's timeline holds
+  // when it was queued, started and finished, and who started it.
+  await expect(page.getByRole("columnheader", { name: "Time" })).toBeVisible();
+  await expect(row.getByTestId("log-time")).toHaveAttribute("title", /Queued: .*\nStarted: .*\nFinished: /);
+  await row.getByTestId("log-time").click();
+  const timeline = page.getByTestId("log-timeline").first();
+  await expect(timeline).toContainText("Queued:");
+  await expect(timeline).toContainText("Finished:");
+  await expect(timeline).toContainText(/Ran \d/);
+  await expect(timeline).toContainText("You started this");
+  await page.screenshot({ path: `${DIR}/analytics-ledger-timeline.png`, fullPage: true });
 });
 
 test("a queued operation row offers Stop and cancels to `cancelled` (F-M7)", async ({
@@ -253,6 +292,19 @@ test("a queued operation row offers Stop and cancels to `cancelled` (F-M7)", asy
   // Deterministically queued: the dev seed writes the operation ROW without
   // pumping the runner, so it STAYS queued (the generic enqueue dispatches
   // almost immediately — a race, not a test). FYJ_DEV=1 is set by dev-web.
+  // Any op finishing pumps the runner, which would dispatch the seeded row too, so
+  // start from an idle queue: earlier specs' work must be done (PR #11 CI).
+  await expect
+    .poll(
+      async () => {
+        const ops = (await (
+          await request.get(`${base}/api/operations?limit=200`, { headers: auth })
+        ).json()) as { state: string }[];
+        return ops.filter((o) => o.state === "queued" || o.state === "running").length;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(0);
   const seeded = await request.post(`${base}/api/dev/operations/seed-queued`, { headers: auth });
   expect(seeded.status()).toBe(201);
   const opId = (await seeded.json()).id as string;
@@ -442,7 +494,7 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
     // …and the full DM text lives in the EXPANDED detail, not the row.
     await expect(wideRow).not.toContainText("would love a referral");
     // Expand via the Started cell — the subject link swallows clicks (external).
-    await wideRow.getByTestId("log-started").click();
+    await wideRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-detail")).toContainText("would love a referral");
 
     // The failed scan's COLLAPSED row: counts only ("37 new jobs" · "12
@@ -469,12 +521,12 @@ test("the ledger fits the window — no horizontal scroll, even with worst-case 
 
     // EXPANDED, the bulk payloads appear as labeled blocks: the full source
     // list and the FULL verbatim error text.
-    await errRow.getByTestId("log-started").click();
+    await errRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-sources")).toContainText("greenhouse");
     await expect(page.getByTestId("log-sources")).toContainText("jobvite");
     await expect(page.getByTestId("log-error-full")).toContainText(longToken);
     // The query list too, on the linkedin_search row.
-    await searchRow.getByTestId("log-started").click();
+    await searchRow.getByTestId("log-time").click();
     await expect(page.getByTestId("log-sources")).toContainText("python developer remote");
 
     // The container never scrolls sideways — with the expanded row open too.

@@ -38,6 +38,7 @@ import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 import { AddLinkDialog } from "./jobs/AddLinkDialog";
+import { ApplicantDetailsDialog } from "./settings/ApplicantDetails";
 import { AddApplicationModal } from "./tracker/AddApplicationModal";
 import { ArchiveModal } from "./tracker/ArchiveModal";
 import { Card } from "./tracker/Card";
@@ -60,6 +61,7 @@ export function Tracker() {
   const attachDocument = useAttachDocument();
   const removeDocument = useRemoveDocument();
   const startApply = useStartApply();
+  const [applyDetailsFor, setApplyDetailsFor] = useState<Application | null>(null);
 
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "ALL">("ALL");
@@ -161,6 +163,12 @@ export function Tracker() {
         setApplyLink(app);
         return;
       }
+      // Applicant details are confirmed once before the first apply (audit A5); the
+      // sidecar refuses until then, so the form opens here instead.
+      if (profile && !profile.application_profile?.confirmed_at) {
+        setApplyDetailsFor(app);
+        return;
+      }
       // Failure is logged + bannered by the global MutationCache hook — this
       // catch only stops the unhandled rejection (2026-07-24 audit).
       try {
@@ -170,7 +178,7 @@ export function Tracker() {
         /* surfaced globally */
       }
     },
-    [startApply.mutateAsync],
+    [startApply.mutateAsync, profile],
   );
 
   // Stable per-card callbacks so the memoized Card only re-renders when its own
@@ -534,6 +542,21 @@ export function Tracker() {
               .catch(() => {
                 /* surfaced globally */
               });
+          }}
+        />
+      ) : null}
+
+      {applyDetailsFor ? (
+        <ApplicantDetailsDialog
+          onCancel={() => setApplyDetailsFor(null)}
+          onSaved={() => {
+            const app = applyDetailsFor;
+            setApplyDetailsFor(null);
+            void Promise.resolve(startApply.mutateAsync({ applicationId: app.id }))
+              .then((run) => {
+                if (run) setApplierPanel({ appId: app.id, runId: run.id });
+              })
+              .catch(() => undefined);
           }}
         />
       ) : null}

@@ -19,6 +19,7 @@ import {
 import type { Job, PromptSetting, PromptTestResult } from "../../api/types";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
+import { scoreText } from "../../shell/scoreText";
 
 /** What each kind needs before Run can do anything (url-less-jobs.md 11.3). */
 const NEEDS_JOB = new Set(["score", "tailor", "cover"]);
@@ -69,7 +70,7 @@ function Output({ result }: { result: PromptTestResult }) {
           <div className="text-[15px] font-semibold text-ink">{result.score}</div>
           <ul className="mt-1 space-y-1 text-[12px] text-ink-2">
             {(result.reasons ?? []).map((r, i) => (
-              <li key={i}>{r}</li>
+              <li key={i}>{scoreText(r, t)}</li>
             ))}
           </ul>
         </div>

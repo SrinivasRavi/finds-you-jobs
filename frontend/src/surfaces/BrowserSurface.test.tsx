@@ -124,3 +124,25 @@ describe("BrowserSurface auto-home", () => {
     expect(h.sendNavigate).not.toHaveBeenCalled();
   });
 });
+
+describe("BrowserSurface with no browser to launch (A18)", () => {
+  it("offers Download on a browser_missing error, and drops it once the stream is live", () => {
+    render(<BrowserSurface />);
+    pushControl({ type: "error", code: "browser_missing", message: "Executable doesn't exist" });
+    expect(screen.getByTestId("screencast-browser-download").textContent).toContain(
+      "browser.download.surfaceMissing",
+    );
+    expect(screen.queryByTestId("screencast-error")).toBeNull();
+
+    // The client's own reconnect lands once Chromium is on disk.
+    pushControl({ type: "status", state: "streaming", url: "" });
+    expect(screen.queryByTestId("screencast-browser-download")).toBeNull();
+  });
+
+  it("keeps other errors as plain text", () => {
+    render(<BrowserSurface />);
+    pushControl({ type: "error", message: "BrowserLaunchError: profile locked" });
+    expect(screen.getByTestId("screencast-error").textContent).toContain("profile locked");
+    expect(screen.queryByTestId("screencast-browser-download")).toBeNull();
+  });
+});

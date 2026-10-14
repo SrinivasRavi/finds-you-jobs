@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from sidecar.modules._shared.completion_retry import complete_and_parse
+from sidecar.modules._shared.location_line import enforce_location, location_instruction
 
 from .engine import ClaudeCliEngine, Engine
 from .job_input import resolve_job
@@ -28,15 +29,20 @@ def tailor(
     keep_scratch: bool = False,
     skill_md: str | None = None,
     cancelled: Callable[[], bool] | None = None,
+    location: tuple[str, str, str] | None = None,
 ) -> TailorResult:
     """Tailor `master_md` for `job` (JD text, a path or a URL). `skill_md` replaces
     the skill file; `cancelled` raises `CompletionCancelled` at retry checkpoints
-    (F-M7)."""
+    (F-M7). `location` is (mode, posting place, master's location line)."""
     engine = engine or ClaudeCliEngine()
     jd_md = resolve_job(job)
     samples = load_writing_samples(writing_samples_dir)
     system_prompt = skill_md if skill_md is not None else load_skill()
-    user_prompt = build_user_prompt(master_md, jd_md, guidance, samples)
+    mode, posting, master = location or ("master", "", "")
+    user_prompt = build_user_prompt(
+        master_md, jd_md, guidance, samples,
+        location_rule=location_instruction(mode, posting, master),
+    )
 
     scratch = tempfile.TemporaryDirectory(prefix="fyj-tailor-")
     try:
@@ -45,6 +51,7 @@ def tailor(
         (resume_md, notes), usage = complete_and_parse(
             engine, system_prompt, user_prompt, parse_output, TailorError, cancelled
         )
+        resume_md = enforce_location(resume_md, mode, posting, master)
         return TailorResult(resume_md=resume_md, notes=notes, usage=Usage(**usage))
     finally:
         if not keep_scratch:

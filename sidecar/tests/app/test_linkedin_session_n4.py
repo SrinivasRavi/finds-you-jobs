@@ -382,7 +382,7 @@ def test_linkedin_search_persists_into_the_feed(search_client) -> None:
 def test_linkedin_search_fills_the_missing_job_descriptions(search_client) -> None:
     """S-A6: the logged-in search returns cards with no JD body, and this path
     had no enrich phase, so 248 of 248 rows on the maintainer's install stored a
-    0-char description and could never be AI-scored. `scan()` had solved this
+    0-char description and could never be LLM-scored. `scan()` had solved this
     for every other adapter."""
     from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
