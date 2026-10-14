@@ -1,19 +1,14 @@
-"""Covers: the feature-parity utility routes carried from the prior repository.
+"""Covers: the utility routes carried from the prior repository.
 
-  US-RES-03 — /api/export/pdf renders markdown → a real PDF in Downloads
-              (collision-safe name), 422 on empty markdown.
-  A5b/A0.6  — /api/system/install-browser starts the (mocked) Chromium
-              download once; a second call reports already_running.
-  Dev tools — /api/dev/seed-application creates a Job + Saved card;
-              /api/dev/operations/fail-running fails running ops with the
-              boot-recovery note.
-
-The PDF render uses the real local Chromium print pipeline (no network);
-the browser INSTALL is monkeypatched — tests never download browsers.
-"""
+/api/export/pdf renders a real PDF (collision-safe name, 422 when empty);
+/api/system/install-browser starts the mocked download once; the dev routes seed
+an application and fail running ops. The PDF uses local Chromium; the install
+is mocked, so no download."""
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Generator, Iterator
 from pathlib import Path
 
@@ -69,6 +64,10 @@ def test_export_pdf_renders_into_downloads(
     assert Path(again["path"]).name == "My-Resume-1.pdf"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="chmod can't deny a write on Windows or to root",
+)
 def test_export_pdf_says_plainly_when_downloads_is_denied(
     app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

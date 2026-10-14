@@ -1,15 +1,9 @@
 """Cut the shipped title index from O*NET's Alternate Titles file (CC BY 4.0).
 
-Run by hand, not at boot: `python -m sidecar.modules.titles.build_data`. The file
-it writes is committed, so a build never needs the network. The figures behind
-this module's shape are in `docs/internal/evidence/2026-10-01-location-resolution/
-README.md`'s "Titles" section.
-
-O*NET's taxonomy is sparse against real postings (1 of 93 posting titles on the
-maintainer's install matches it exactly, and "backend" appears in none of its
-56,496 titles), so this index only ever suggests. See `suggest.py` for why it
-never gates.
-"""
+Run by hand (`python -m sidecar.modules.titles.build_data`); the output is
+committed, so builds need no network. O*NET is sparse against real postings (1 of
+93 titles matches exactly; evidence/2026-10-01-location-resolution, "Titles"),
+so the index only suggests, never gates."""
 
 from __future__ import annotations
 

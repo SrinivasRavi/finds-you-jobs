@@ -1,17 +1,7 @@
-// OS-style Settings navigation (maintainer directive 2026-07-23): a left
-// category rail + one focused pane per category, the way macOS/Windows Settings
-// organize a large surface — instead of one long scroll where "Prompts" was
-// invisible at the bottom.
-//
-// 2026-10-08 (url-less-jobs.md section 11.5): `Prompts & Models` dissolved into
-// the features its prompts govern, and Scoring, Resume & cover letter and
-// Applying became categories of their own. Nothing persists or deep-links the
-// active category, so adding and renaming ids breaks nothing.
-//
-// Each pane reuses the existing `Section` cards.
-// (Extracted from Settings.tsx 2026-07-25, F-M6 monolith split — pure moves,
-// zero behavior change.) Memoized: `active` is a primitive, `onPick` the
-// root's stable setState.
+// OS-style Settings navigation: a category rail and 1 pane per category, like
+// macOS or Windows Settings. Categories follow the features (url-less-jobs.md
+// section 11.5); nothing persists the active one, so renaming ids breaks nothing.
+// Memoized: `active` is a primitive, `onPick` a stable setState.
 
 import { memo } from "react";
 import { useTranslation } from "react-i18next";

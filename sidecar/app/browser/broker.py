@@ -1,37 +1,12 @@
-"""The browser-session broker: one persistent headless surface per slug.
+"""The browser-session broker: 1 persistent headless surface per slug.
 
-A surface is a real Chrome profile held open behind a CDP session, published to
-the app as a stream of JPEG screencast frames. It is vendor-agnostic by
-construction: a surface is named by a slug the caller passes at runtime, so no
-site, portal, or provider is named anywhere in this package
-(`docs/internal/plugin-architecture.md` section 8.1 rule 5).
-
-**Threading.** Playwright's sync API is greenlet-bound to the thread that
-created it, and none of it may ever run on the serving event loop — the shell
-health-polls every 2 s with a 2 s timeout and kills the backend on the third
-strike, so one blocking Playwright call on the loop can take the whole sidecar
-down (CLAUDE.md, async-first). Each surface therefore owns one OS thread that
-launches, drives, and tears down its own Chrome, and is the only thread that
-ever touches a Playwright object. The loop hands work in through two
-thread-safe queues (acks, commands) and hears back through
-`loop.call_soon_threadsafe`, the same cross-thread marshalling `EventHub` uses.
-
-**Liveness over back-pressure.** Chrome captures the next screencast frame only
-once the previous one is acked. The first design acked after the websocket send
-flushed, with the surface thread's run loop draining the acks — elegant flow
-control, and a liveness bug: a driver op runs as ONE lane action (a referral
-send holds the thread for tens of seconds of navigating and typing), the run
-loop never ticks inside an action, so after one unacked frame the stream froze
-for exactly the window the live view exists for (the maintainer watched a DM
-"send" as a still image, 2026-08-15). Every frame is therefore acked
-IMMEDIATELY, on the surface thread, inside the frame event itself — Playwright
-dispatches events while a lane action sits in its own page calls, so capture
-keeps running mid-action and the viewer genuinely watches the driver work. Flow
-control is now the viewer queue: one slot, keep-newest (a superseded live frame
-is worthless), drained by the serving loop's websocket send. A slow socket sees
-the freshest frame instead of stalling capture; one local viewer on a loopback
-socket keeps up with JPEG-60 frames in the tens of kilobytes without effort.
-"""
+A surface is a real Chrome profile behind a CDP session, streamed as JPEG frames
+and named by a runtime slug (plugin-architecture.md section 8.1 rule 5). Each
+surface owns 1 OS thread, the only one that touches its Playwright objects; the
+event loop talks to it through thread-safe queues and `call_soon_threadsafe`
+(async-first). Frames are acked at once inside the frame event, so capture keeps
+running mid-action (acking after the socket send froze the view during sends).
+Flow control is the viewer's 1-slot keep-newest queue."""
 
 from __future__ import annotations
 
@@ -73,14 +48,10 @@ SHUTDOWN_TIMEOUT_SECONDS = 5.0
 # geometry never arrives — and then we error rather than lay a page out at a
 # generic size that would betray the surface (Our Finding on real display).
 GEOMETRY_TIMEOUT_SECONDS = 10.0
-# How long a surface may sit with no viewer watching and no work in flight
-# before the broker closes it. A surface costs an OS thread, a real Chrome, and
-# that Chrome's resident memory; nothing used to reclaim one, so opening the
-# LinkedIn view kept a browser alive for the rest of the session even after the
-# modal was closed. Reopening relaunches lazily through `surface()`, and the
-# profile dir persists, so the only cost of being wrong is one relaunch.
-# Generous on purpose: a watched surface is never idle at all, and any op still
-# driving the lane holds it open, so this only elapses when nobody wants it.
+# How long a surface may sit unwatched with no work in flight before the broker
+# closes it. Each costs a thread and a real Chrome, and nothing used to reclaim
+# one. Reopening relaunches lazily with the profile intact, so being wrong costs
+# 1 relaunch. Generous: a watched or busy surface is never idle.
 IDLE_SHUTDOWN_SECONDS = 300.0
 
 # How many Chromes may be live at once (backlog S-C20). Past it, launching a
@@ -114,17 +85,9 @@ class Frame(NamedTuple):
 
 
 class Viewer:
-    """The single consumer attached to a surface (one websocket).
-
-    A one-slot queue on purpose: the viewer is showing live pixels, so holding a
-    backlog would only mean showing older ones later. Overflow keeps the NEWEST
-    (the older queued frame is evicted): frames are acked at capture now, so a
-    queued frame carries no ack debt, and a superseded live frame is worthless.
-
-    `urls` carries the surface's committed main-frame URL whenever it changes —
-    driver-driven navigations and in-page SPA route changes included, not just
-    the viewer's own typed ones. Same one-slot, keep-newest shape.
-    """
+    """The single consumer of a surface (1 websocket). 1-slot queues that keep the
+    newest: frames are acked at capture, so a superseded frame is worthless. `urls`
+    carries every committed main-frame URL change, driver and SPA navigations too."""
 
     def __init__(self) -> None:
         self.queue: asyncio.Queue[Frame] = asyncio.Queue(maxsize=1)
@@ -144,12 +107,8 @@ Opener = Callable[[Path, dict[str, Any]], SurfaceSession]
 
 
 def open_session(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
-    """Default opener. Runs on the surface thread, never on the loop.
-
-    `new_cdp_session` is the only CDP path available here:
-    `launch_persistent_context` hands back a context with no Browser object
-    behind it, so there is nothing else to attach to.
-    """
+    """Default opener, on the surface thread. `new_cdp_session` is the only CDP path:
+    a persistent context has no Browser object behind it."""
     from playwright.sync_api import sync_playwright
 
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -259,12 +218,9 @@ class BrowserSurface:
 
     @property
     def is_dead(self) -> bool:
-        """True once the surface thread has exited on its own — a crashed Chrome,
-        a dead page — rather than through `shutdown`. The broker evicts and
-        relaunches a dead surface instead of handing back a corpse whose command
-        drainer and screencast are gone; an intentional shutdown (`_stopping`
-        set) is not dead in this sense, so `shutdown` never triggers a relaunch.
-        """
+        """True once the surface thread exited on its own (a crashed Chrome, a dead
+        page), not through `shutdown`. The broker relaunches a dead surface; an
+        intentional shutdown is never dead in this sense."""
         return self._dead.is_set() and not self._stopping.is_set()
 
     @property
@@ -341,13 +297,9 @@ class BrowserSurface:
                 self._finished_one()
 
     def _watch_url(self, session: SurfaceSession) -> None:
-        """Emit the committed main-frame URL to the viewer WHENEVER it changes,
-        not only after a viewer-typed navigate. On the surface thread, once per
-        tick: `page.url` is Playwright's own locally-tracked frame URL (updated
-        through its internal navigation events, full and in-page/SPA alike), so
-        this read is a plain attribute — no CDP round-trip, no new domain
-        enable, nothing the page can observe. Publishes only on change, so the
-        wire never sees a repeat."""
+        """Emit the committed main-frame URL whenever it changes, once per tick on the
+        surface thread. `page.url` is Playwright's locally tracked URL, so the read
+        costs no CDP round-trip the page could observe. Publishes on change only."""
         url = session.page.url
         if url == self._last_url:
             return
@@ -397,15 +349,9 @@ class BrowserSurface:
     # -- frames ------------------------------------------------------------
 
     def _on_frame(self, session: SurfaceSession, params: dict[str, Any]) -> None:
-        """CDP `Page.screencastFrame`, on the surface thread. Decode here (the
-        loop should never spend time on base64), ack AT ONCE so Chrome keeps
-        capturing, then hand the bytes over.
-
-        The immediate ack is the liveness fix (module docstring): it runs inside
-        the frame event, which Playwright dispatches while a lane action sits in
-        its own page calls — the nested `cdp.send` from a handler is the same
-        documented shape as accepting a dialog from its handler. Ack-after-
-        websocket-flush froze the stream for the length of every driver op."""
+        """CDP `Page.screencastFrame` on the surface thread: decode here, ack at once so
+        Chrome keeps capturing (the liveness fix, module docstring), then hand the bytes
+        over. The nested `cdp.send` from a handler is a documented shape."""
         try:
             jpeg = base64.b64decode(params["data"])
             session_id = int(params["sessionId"])
@@ -492,18 +438,10 @@ class BrowserSurface:
     # -- commands ----------------------------------------------------------
 
     def navigate(self, url: str) -> Future[Any]:
-        """Point the surface at `url` and hand back the committed, post-redirect
-        main-frame URL through the future. The URL is a runtime argument; core
-        holds no destination of its own.
-
-        Fail-closed on display geometry: the first navigation waits until the
-        frontend's real screen metrics have been applied, and errors rather than
-        lay the page out at a generic 1280x720 that would betray the surface. The
-        wait resolves instantly once geometry is set (a latch), so only the first
-        navigation ever blocks on it, and only the surface thread does — geometry
-        is applied by an earlier queued command, so it is already set by the time
-        this drains in order.
-        """
+        """Point the surface at `url`; the future returns the committed post-redirect
+        URL. Fail-closed on geometry: the first navigation waits for the frontend's real
+        metrics and errors rather than lay out at 1280x720. A latch, so only the first
+        navigation ever waits."""
 
         def _go(session: SurfaceSession) -> str:
             if not self._geometry_ready.wait(self._geometry_timeout):
@@ -540,14 +478,9 @@ class BrowserSurface:
         return self._submit(_apply)
 
     def resize(self, width: int, height: int) -> Future[Any]:
-        """Move the screencast's frame ceiling to fit the viewer's pane.
-
-        This resizes the CAPTURE, not the page: re-issuing `startScreencast`
-        with new caps changes how large a JPEG Chrome hands back and leaves the
-        page's own viewport exactly as launched. Making the page LAY OUT at the
-        pane's size needs a display-geometry override, which this stock baseline
-        deliberately does not do.
-        """
+        """Move the screencast's frame ceiling to fit the viewer's pane. Resizes the
+        capture, not the page; making the page lay out at pane size needs a geometry
+        override this baseline doesn't do."""
         self._max_width = max(MIN_FRAME_EDGE, min(width, MAX_FRAME_EDGE))
         self._max_height = max(MIN_FRAME_EDGE, min(height, MAX_FRAME_EDGE))
         return self._submit(
@@ -581,15 +514,9 @@ class BrowserSurface:
         return self._submit(_shot)
 
     def persist_profile(self) -> Future[None]:
-        """Seal an explicit storage-state snapshot of the live session to the
-        surface directory the broker owns.
-
-        The surface runs on `launch_persistent_context`, so cookies already land
-        in the profile dir on context close with no help from here. This is the
-        extra, explicit checkpoint: `context.storage_state(path=...)` pulls the
-        live cookie jar and origin storage and writes a snapshot mid-session,
-        rather than waiting for teardown. A thin wrapper over that, not a second
-        persistence mechanism."""
+        """Seal an explicit storage-state snapshot of the live session into the surface
+        directory, mid-session. The persistent context already saves cookies on close;
+        this is an extra checkpoint, not a second mechanism."""
         path = self.storage_state_path
 
         def _seal(session: SurfaceSession) -> None:
@@ -612,22 +539,10 @@ class BrowserSurface:
         )
 
     def evaluate_isolated(self, expression: str) -> Future[Any]:
-        """Evaluate `expression` in a private ISOLATED world and return its
-        value. The page's own scripts share no JS globals with this world, so a
-        read the driver runs here leaves nothing the page can observe — the
-        reason to keep it off the main world.
-
-        Runs over CDP on the surface thread: `Page.getFrameTree` for the main
-        frame, `Page.createIsolatedWorld` for a fresh context in it, then
-        `Runtime.evaluate` pinned to that context by id. It authors no
-        Runtime-domain enable; those three sends are the whole of it (section
-        12.3, Our Finding 4).
-
-        A fresh isolated world is created per call rather than cached. Discarding
-        a cached context after a navigation commits a new document would need
-        Runtime-domain events, which stay off, so a stale context id would raise
-        instead. The two extra round-trips are cheap at the driver's read
-        cadence, so per-call creation is the simpler correct choice."""
+        """Evaluate `expression` in a fresh isolated world, so the page's scripts can't
+        observe the read. Over CDP: getFrameTree, createIsolatedWorld, then
+        Runtime.evaluate on that context, with no Runtime-domain enable (section 12.3,
+        Our Finding 4). A fresh world per call: a cached one goes stale on navigation."""
 
         def _eval(session: SurfaceSession) -> Any:
             tree = session.cdp.send("Page.getFrameTree")
@@ -664,12 +579,8 @@ class BrowserSurface:
         return future
 
     def touch(self) -> None:
-        """Mark the surface as just taken, without queueing anything. The broker
-        calls this the moment it hands a surface to a caller: a caller typically
-        submits its first action a beat later, and without a stamp here that gap
-        is reapable — the reaper would see no viewer, nothing in flight, and an
-        old timestamp, and close the Chrome out from under a caller who has
-        already been handed it."""
+        """Mark the surface as just taken. Without this stamp the gap before a caller's
+        first action is reapable, and the reaper could close a Chrome already handed out."""
         with self._activity_lock:
             self._last_activity = time.monotonic()
 
@@ -683,14 +594,9 @@ class BrowserSurface:
 
     @property
     def idle_seconds(self) -> float | None:
-        """How long this surface has been of use to nobody, or **None** while a
-        viewer is watching or submitted work is still in flight.
-
-        None rather than 0.0 deliberately: 0.0 meant "in use" in the first cut
-        of this, and `0.0 >= max_idle` is true when the reaper is asked for a
-        0-second threshold, so a pane the user was watching got closed out from
-        under them. An in-use surface must not be comparable to a threshold at
-        all."""
+        """How long this surface has been of use to nobody, or None while a viewer
+        watches or work is in flight. None, not 0.0: `0.0 >= max_idle` once closed a
+        pane the user was watching."""
         if self.has_viewer:
             return None
         with self._activity_lock:
@@ -845,12 +751,8 @@ class BrowserBroker:
             surface.shutdown()
 
     def live_surface(self, slug: str) -> BrowserSurface | None:
-        """The surface for `slug` if one is already live, else None — a PEEK that
-        never launches. Unlike `surface`, this spends no Chrome process: a caller
-        that only wants to READ an existing surface's state (the presence gate
-        reading viewer-attachment and visibility) uses this so consulting it can
-        never spin up a browser. A surface whose thread has died is treated as
-        absent."""
+        """The live surface for `slug`, or None: a peek that never launches Chrome, for
+        callers that only read state. A surface whose thread died counts as absent."""
         with self._lock:
             existing = self._surfaces.get(slug)
         if existing is None or existing.is_dead:
@@ -863,22 +765,11 @@ class BrowserBroker:
             return frozenset(self._surfaces)
 
     def reap_idle(self, max_idle: float = IDLE_SHUTDOWN_SECONDS) -> list[str]:
-        """Close every surface nobody is watching and nothing is driving.
-        Returns the slugs closed.
-
-        Until this existed the map only ever grew: an entry left it on app
-        shutdown or when its Chrome had already crashed, so one visit to the
-        LinkedIn view kept a browser and its thread alive for the rest of the
-        session. `idle_seconds` returns **None** while a viewer is attached or
-        work is in flight, so an in-use surface is never comparable to the
-        threshold at all, however long the reaper runs. Blocking (each
-        `shutdown` joins a thread): call it off the event loop.
-
-        Two steps on purpose. The map lock picks candidates and is dropped; each
-        close then takes that slug's lifecycle lock, re-checks under it, and
-        only then removes the entry and joins. Removing the entry before the
-        join would let a concurrent `surface(slug)` launch a second Chrome on a
-        profile directory the first one still holds a singleton lock on."""
+        """Close every surface nobody is watching and nothing is driving; returns the
+        slugs. In-use surfaces return None from `idle_seconds`, so they're never reaped.
+        Blocking (joins threads). 2 steps: pick candidates under the map lock, then
+        close each under its own lifecycle lock after a re-check, so a concurrent
+        `surface(slug)` can't launch a second Chrome on a locked profile."""
         closed: list[str] = []
         with self._lock:
             candidates = [

@@ -1,16 +1,7 @@
-// Application Tracker (US-TR-01..10) — 6-column kanban, card moves w/ Applied
-// freeze guardrail, detail modal (Overview/Notes/Scoring/Activity/Networking),
-// 3 per-card action slots (incl. the find-referrals popup off the Referrals
-// slot), 3-dot menu, archive modal, search/priority/hide-rejected filters,
-// priority chips. Ports jobs-tracker.html.
-//
-// Trimmed from the prior repo (no Applier/save-time-prep surface on this
-// sidecar yet): no Apply button, no Applier preview screenshot / run-summary
-// block. See inline comments at each cut. The Referrals slot + Networking tab
-// were restored 2026-07-16 (the referral-outreach backend now exists).
-//
-// Split 2026-07-25 (F-M6): Card, DetailModal, CardMenu, ArchiveModal, and
-// AddApplicationModal live in ./tracker/*; this file keeps the board state.
+// Application Tracker (US-TR-01..10): the 6-column kanban with the Applied
+// freeze, the detail modal, 3 action slots per card (Referrals opens the popup),
+// the menu, archive, filters and priority chips. Card, DetailModal, CardMenu,
+// ArchiveModal and AddApplicationModal live in ./tracker/* (F-M6).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -47,6 +38,7 @@ import { ResumeModal, type ResumeModalKind } from "../popups/ResumeModal";
 import { Chip, FilterBar, FilterGroup, FilterSep, SearchBox } from "../shell/FilterRow";
 import { Modal } from "../shell/Modal";
 import { AddLinkDialog } from "./jobs/AddLinkDialog";
+import { ApplicantDetailsDialog } from "./settings/ApplicantDetails";
 import { AddApplicationModal } from "./tracker/AddApplicationModal";
 import { ArchiveModal } from "./tracker/ArchiveModal";
 import { Card } from "./tracker/Card";
@@ -69,6 +61,7 @@ export function Tracker() {
   const attachDocument = useAttachDocument();
   const removeDocument = useRemoveDocument();
   const startApply = useStartApply();
+  const [applyDetailsFor, setApplyDetailsFor] = useState<Application | null>(null);
 
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "ALL">("ALL");
@@ -153,12 +146,9 @@ export function Tracker() {
     setDragId(null);
   }
 
-  // Apply slot (applier-as-built.md section 8.1): a card with no run starts one (the click IS
-  // the action — no pre-Apply confirm) and binds the companion to the returned
-  // run; a card that already has a run just reopens the companion to it (its
-  // snapshot drives the panel, incl. the Retry / Review & submit states).
-  // Stable (mutateAsync is referentially stable in TanStack Query v5) so the
-  // memoized Card's onSlot callback stays stable too.
+  // Apply slot (applier-as-built.md section 8.1): a card with no run starts one
+  // (the click is the action) and binds the companion to it; a card with a run
+  // reopens the companion. Stable callback, so the memoized Card stays stable.
   const onApplyClick = useCallback(
     async (app: Application) => {
       if (app.apply_run_id) {
@@ -173,6 +163,12 @@ export function Tracker() {
         setApplyLink(app);
         return;
       }
+      // Applicant details are confirmed once before the first apply (audit A5); the
+      // sidecar refuses until then, so the form opens here instead.
+      if (profile && !profile.application_profile?.confirmed_at) {
+        setApplyDetailsFor(app);
+        return;
+      }
       // Failure is logged + bannered by the global MutationCache hook — this
       // catch only stops the unhandled rejection (2026-07-24 audit).
       try {
@@ -182,7 +178,7 @@ export function Tracker() {
         /* surfaced globally */
       }
     },
-    [startApply.mutateAsync],
+    [startApply.mutateAsync, profile],
   );
 
   // Stable per-card callbacks so the memoized Card only re-renders when its own
@@ -546,6 +542,21 @@ export function Tracker() {
               .catch(() => {
                 /* surfaced globally */
               });
+          }}
+        />
+      ) : null}
+
+      {applyDetailsFor ? (
+        <ApplicantDetailsDialog
+          onCancel={() => setApplyDetailsFor(null)}
+          onSaved={() => {
+            const app = applyDetailsFor;
+            setApplyDetailsFor(null);
+            void Promise.resolve(startApply.mutateAsync({ applicationId: app.id }))
+              .then((run) => {
+                if (run) setApplierPanel({ appId: app.id, runId: run.id });
+              })
+              .catch(() => undefined);
           }}
         />
       ) : null}

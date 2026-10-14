@@ -1,11 +1,7 @@
-// Unit tests for the browser-lane queue panel's honesty rules: explicit idle,
-// ONE queue view (done rows with a green check, the live op under a spinner
-// with its step plan, waiting rows in grey), a send shows NO steps until the
-// `sending` phase declares its routed channel, outcomes stay honest (a
-// cap-refused send reads "Not sent" with the verbatim reason even though its
-// op ends `succeeded`), discover's found-count follows the real per-candidate
-// events, and settled rows age out after an hour. The event bus and API are
-// mocked; events are driven by hand.
+// Unit tests for the queue panel's honesty rules: explicit idle, 1 queue view
+// (done, live with its steps, waiting), a send shows no steps until it declares
+// its channel, a cap-refused send reads "Not sent" though its op succeeded, the
+// found-count follows real events, and settled rows age out after an hour.
 
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";

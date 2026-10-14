@@ -1,51 +1,13 @@
-"""Contact-status sync engine (US-NW-12 / FR-NW-15, 2026-07-15 — maintainer-approved).
+"""Contact-status sync (US-NW-12 / FR-NW-15): a read-only sweep that moves each
+contact's column to match LinkedIn, in 1 browser session, user-initiated only.
 
-A periodic, gentle, READ-ONLY sweep that reconciles each tracked contact's kanban
-column with its real LinkedIn state, so the Networking board self-advances instead
-of relying only on send-time flips + manual drags. Runs on the `contact_sync`
-schedule (default every 12 h), batched small (≤ `BATCH_LIMIT`/run) to keep the
-user's own account safe. The whole sweep shares ONE browser session
-(`probe_batch` → the worker's `contact_sync_states`) — per-contact pacing,
-charges, and error isolation are enforced inside the worker.
-
-**The transitions** (probe = the voyager `contact-sync` read: degree + the 1:1
-thread's last-message direction/timestamp):
-
-  a. Sent → Accepted     — now 1st-degree, our message is last (accepted, no reply).
-  b. Sent → Engagement   — now 1st-degree, their message is last (accepted + replied).
-  c. Accepted → Engagement — their message becomes last (our turn to reply).
-  d. → Ghosted           — Engagement thread quiet past `engagement_ghosted_days`;
-                           a Sent/Accepted-but-never-replied stall past the separate
-                           `sent_ghosted_days` window.
-
-**Manual wins (US-NW-12 acceptance).** `Converted` is the user's sacred referral
-record: it is never in the syncable set, so auto never enters or exits it. Every
-auto move stamps `profile_payload.status_meta = {source: "auto", changed_at}`; a
-manual drag stamps `source: "manual"` (the PATCH route). A contact whose last move
-was **manual within `MANUAL_OVERRIDE_COOLDOWN_DAYS`** never has its STATUS
-auto-moved — but a frozen accepted/engagement row with a cached urn still gets
-an unmetered thread-only probe for its display snapshot (a read-only refresh
-fights no manual move); other frozen rows rotate unprobed.
-
-**Read-budget economics (2026-08-16).** Only `sent` rows and urn-less rows pay
-a charged profile read; accepted/engagement rows with a cached
-`profile_payload.fsd_urn` sync from the sweep's ONE inbox read, unmetered —
-so a spent profile-view budget can never silence the message-driven columns.
-A budget/backoff/auth-refused row is surfaced (`stopped`), never rotated.
-
-**Display persistence.** A probe that read the thread also writes
-`profile_payload.last_thread_message = {text, direction, at, from_name}` — the
-REAL last message the kanban card and contact modal show with Me/name
-attribution (no schema change; it rides the same JSON column as `status_meta`).
-A probe with no thread never blanks a previous sync's snapshot.
-
-**Gating.** No-ops cleanly when Referral Outreach is OFF (`voyager_risk_marker_on`)
-or the LinkedIn session is not `valid` — the schedule can stay enabled; the tick
-just does nothing (zero LinkedIn traffic) until the user opts in + connects.
-
-**License firewall.** Reaches `voyager_py` only through the silo's subprocess
-driver (`DRIVER_FACTORY` → `DirectVoyagerDriver`, in-process; section 2).
-"""
+Transitions: Sent to Accepted (1st degree, ours last) or to a pending column
+(theirs last); quiet threads ghost past their windows. Manual wins: Converted
+is never touched, and a recent manual move freezes the status (a frozen row
+with a urn still refreshes its display). Only `sent` and urn-less rows pay a
+charged read; refused rows surface as `stopped`. A read thread writes
+`last_thread_message`. No-ops while Referral Outreach is off or the session
+isn't valid."""
 
 from __future__ import annotations
 
@@ -107,17 +69,10 @@ def decide_transition(
     now: datetime,
     has_replied: bool = False,
 ) -> SyncDecision:
-    """Pure transition rule. `current` is one of the syncable columns:
-    sent | accepted | pending_our_response | pending_their_response. Returns a
-    SyncDecision — never raises, never moves out of converted/ghosted (those
-    never reach here).
-
-    The split (S-N5) is by whose message is last, the only fact that decides
-    what the user should do next. `pending_our_response` means the reply is
-    owed by us, so it never ghosts: that silence is ours, and the column stays
-    an honest to-do list. `pending_their_response` is the one that can ghost.
-    `has_replied` is the sticky `first_replied_at`, which makes `accepted`
-    unreachable once someone has written back."""
+    """Pure transition rule over the syncable columns; never raises. Split by whose
+    message is last (S-N5): `pending_our_response` never ghosts (the silence is
+    ours); `pending_their_response` can. `has_replied` makes `accepted` unreachable
+    once someone has written back."""
     engagement_ghosted = settings["engagement_ghosted_days"]
     sent_ghosted = settings["sent_ghosted_days"]
     they_wrote_last = probe.last_message_direction == "them"
@@ -204,12 +159,9 @@ def payload_with_status_meta(
     contact: ContactRow, source: str, now: datetime,
     base: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The one place the `status_meta` stamp is written — this engine stamps
-    `auto`, the contact PATCH route stamps `manual`, and `_is_manual_frozen`
-    above reads both. Public so the route stamps the same shape the reader
-    expects (a key/format drift silently disables the manual-wins cooldown).
-    `base` lets a caller stamp onto a payload it is already composing (the
-    sync engine's urn/thread riders); default is the row's stored payload."""
+    """The 1 writer of the `status_meta` stamp: this engine stamps `auto`, the PATCH
+    route `manual`, and `_is_manual_frozen` reads both, so a format drift can't
+    disable the cooldown. `base` stamps onto a payload being composed."""
     return {
         **(dict(contact.profile_payload or {}) if base is None else base),
         "status_meta": {"source": source, "changed_at": now.isoformat()},
@@ -249,20 +201,11 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
     internal_calls = 0
     stopped = ""
 
-    # Partition the batch (2026-08-16, the read-budget redesign). A contact in
-    # accepted/engagement with a CACHED fsd_profile urn (`profile_payload.
-    # fsd_urn`, written back from an earlier full probe) needs no degree read:
-    # its whole sync question is the 1:1 thread, answered by the sweep's one
-    # inbox read — an unmetered thread-only probe that a spent profile-view
-    # budget can never refuse. Only `sent` rows (is the invite accepted?) and
-    # urn-less rows (the bootstrap read that learns the urn) pay a charged
-    # profile read. Manual-frozen rows used to rotate unprobed, which held
-    # their card's last message stale for the whole cooldown; a frozen
-    # accepted/engagement row with a cached urn now rides the thread-only pass
-    # with its TRANSITION suppressed (display refresh only — a read-only
-    # snapshot fights no manual move). Everything eligible probes in ONE
-    # browser session (2026-08-04 — the per-contact loop launched a full
-    # Chromium 5 times for a 5-contact sweep).
+    # Partition the batch. An accepted or engagement contact with a cached fsd urn
+    # needs only its thread, answered by the sweep's 1 unmetered inbox read; only
+    # `sent` rows and urn-less rows pay a charged profile read. A manually frozen row
+    # with a urn rides the thread pass with its transition suppressed. Everything
+    # eligible probes in 1 browser session.
     eligible: list[dict[str, Any]] = []
     for contact_id in contact_ids:
         with ctx.db.repos() as repos:
@@ -315,12 +258,9 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
                 thread_only={e["pid"] for e in eligible if e["thread_only"]},
             )
         except NetworkerError as exc:
-            # A hard batch failure (driver crash / unparseable envelope) must not
-            # kill the tick — log verbatim, rotate the whole batch, and SAY so in
-            # the result_ref (`stopped: "batch_failed"`) instead of reporting a
-            # clean zero that reads like "nothing to do".
-            # S-C14: the router names it (coded label, or the unknown path's
-            # captured evidence plus one model label) before the batch rotates.
+            # A hard batch failure mustn't kill the tick: log it, rotate the batch, and say
+            # so in result_ref (`stopped: "batch_failed"`) rather than a clean 0. S-C14: the
+            # router names the cause before the batch rotates.
             routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
             log.warning(
                 "contact_sync: batch probe failed (%s): %s", routed.diagnosis, exc
@@ -331,17 +271,11 @@ def contact_sync_entrypoint(ctx: OperationContext) -> OperationOutcome:
             probes = []
             stopped = "batch_failed"
 
-    # The worker stops the sweep on the first rate-limit/cap/auth refusal
-    # (section 0.4: the first 429 stops the batch), and it reorders (thread-only
-    # first), so probes are JOINED BY public_identifier — contacts without a
-    # result were never probed and stay first in line for the next tick. The
-    # auth stop is deliberate: a 401 is a dead SESSION, not one bad contact,
-    # so every later probe would 401 identically and probing on just burns
-    # authenticated reads. What must not happen is the stop hiding — it is
-    # surfaced in the result_ref (`stopped` + `unprobed`), never swallowed. A
-    # refused row is NOT rotated: nothing was learned from it, and the old
-    # rotate-on-refusal made every budget-refused Sync press churn one card's
-    # cursor for zero LinkedIn traffic.
+    # The worker stops on the first rate-limit, cap or auth refusal and reorders, so
+    # probes join by public_identifier; unprobed contacts stay first next tick. A 401
+    # is a dead session, so probing on just burns reads; the stop is surfaced in
+    # result_ref (`stopped`, `unprobed`). A refused row isn't rotated: nothing was
+    # learned from it.
     by_pid = {p.public_identifier: p for p in probes}
     for entry in eligible:
         probe = by_pid.get(entry["pid"])

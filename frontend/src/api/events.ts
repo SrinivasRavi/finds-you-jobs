@@ -1,18 +1,8 @@
-// SSE event bus — one EventSource for the whole app (architecture section 4.1).
-//
-// Streams typed `{type, payload}` envelopes from /api/events (token rides as a
-// query param — SSE can't set headers; acceptable on the loopback-only surface).
-// The browser's native EventSource auto-retry handles reconnection; this bus
-// makes that state visible (`connecting → live ⇄ reconnecting`) so the UI can
-// render an honest connection indicator and refetch its snapshot after a gap —
-// events missed while disconnected are never replayed, so a reconnect must
-// re-read state from the API, not trust the stream.
-//
-// Native retry only ever reconnects to the URL the EventSource was built with.
-// The shell's supervisor kill-restarts an unhealthy sidecar on a NEW random
-// port + token, so after REBUILD_AFTER_ERRORS straight failures the bus tears
-// the source down, re-resolves the handshake, and rebuilds — mirroring how
-// RealApi.req drops its cached handshake on a network-level failure (F-H3).
+// SSE event bus: 1 EventSource for the app (architecture section 4.1). It makes
+// the connection state visible (connecting, live, reconnecting) so the UI can
+// refetch after a gap; missed events are never replayed. The shell restarts a
+// sick sidecar on a new port and token, so after REBUILD_AFTER_ERRORS failures
+// the bus re-resolves the handshake and rebuilds, like RealApi.req (F-H3).
 
 import { getSidecarInfo } from "./client";
 import type { components } from "./schema";
@@ -111,15 +101,9 @@ class EventBus {
    *  answers with the restarted sidecar's new port + token; in browser dev the
    *  env handshake is static, so this degrades to the native-retry behavior. */
   private scheduleRebuild(): void {
-    // Guard on the timer ONLY. Checking `this.opening` here looked like a
-    // single-flight guard but was a livelock: open()'s `.catch` calls this
-    // BEFORE its `.finally` nulls `opening`, so a failed handshake could never
-    // arm the retry timer and the bus sat in "reconnecting" forever. The
-    // clause guarded nothing real — the only other caller, es.onerror, fires
-    // as a macrotask, which cannot run before the `.finally` microtask that
-    // clears `opening` (and in the failed-handshake path no EventSource exists
-    // to error at all). The timer callback below still re-checks
-    // `!this.source && !this.opening` before reopening.
+    // Guard on the timer only. A `this.opening` check livelocked: open()'s `.catch`
+    // calls this before `.finally` clears `opening`, so a failed handshake never armed
+    // the timer. The callback below still re-checks before reopening.
     if (this.rebuildTimer != null) return;
     this.source?.close();
     this.source = null;

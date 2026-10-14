@@ -111,7 +111,7 @@ def test_patch_application_profile_stamps_edited(
     resp = client.patch(
         "/api/profile/application-profile",
         headers=AUTH,
-        json={"name": "Edited Name", "email": "edit@example.com"},
+        json={"name": "Edited Name", "email": "edit@example.com", "location": "Pune"},
     )
     assert resp.status_code == 200
     record = resp.json()["application_profile"]

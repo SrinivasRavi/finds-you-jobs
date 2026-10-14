@@ -1,23 +1,12 @@
 """The job, contact and batch an operation is about become real columns.
 
-`operations` is one table serving 15 kinds of work, so its payload is JSON. That
-part is fine. What wasn't: the job id lived only inside that payload, so "what is
-happening with job X" loaded every score row and unpacked it in Python — 1.06 s
-at 100k rows, on the event loop, and the shell kills a sidecar that misses a 2 s
-health poll. Four of the 8 defects in the 2026-08 ledger trace to it.
-
-Indexed columns, deliberately no foreign key. The ledger is history, and history
-outlives its subjects: an FK would either block hard-deleting a job or blank the
-record of what we spent on it, and an FK pointing at this table is what made
-ledger retention fail silently for a month (S-C13).
-
-The backfill reads the same snapshot key the queries used to. `job_id: ""` from
-the retired `watch_company` kind stays NULL: "" is not a missing value.
+The job id lived only in the JSON payload, so "what's happening with job X" took
+1.06 s at 100k rows on the loop (4 of 8 defects in the 2026-08 ledger).
+Indexed, no FK: history outlives its subjects (S-C13). `job_id: ""` stays NULL.
 
 Revision ID: c41b7e0d9a35
 Revises: a3d7e1f95c24
 Create Date: 2026-08-30
-
 """
 from __future__ import annotations
 

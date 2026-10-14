@@ -82,12 +82,70 @@ const settingsPage = {
       remove: "Remove",
     },
   },
+  applicant: {
+    title: "Applicant details",
+    intro: "What the Applier types into application forms. It's read from your master resume; check and complete it before your first application.",
+    firstName: "First name",
+    lastName: "Last name",
+    email: "Email",
+    phone: "Phone",
+    location: "Where you live",
+    locationHint: "On forms, the Applier gives each job's own location instead.",
+    links: "Links",
+    linksHint: "1 per line: LinkedIn, GitHub, portfolio.",
+    workAuth: "Work authorization",
+    workAuthHint: "Add each country you can work in, or need sponsorship for. The Applier answers for the country each job is in; a country not listed counts as not authorized.",
+    country: "Country",
+    status: "Status",
+    note: "Note (optional)",
+    addCountry: "Add a country",
+    remove: "Remove",
+    status_citizen: "Citizen",
+    status_permanent_resident: "Permanent resident",
+    status_visa: "Authorized on a work visa",
+    status_needs_sponsorship: "Needs sponsorship",
+    save: "Save details",
+    saved: "Saved",
+    fill: "Fill from my resume",
+    filling: "Reading your resume…",
+    dialogTitle: "Check your details before your first application",
+    dialogBody: "The Applier fills forms with these. Save them once and Apply continues.",
+    saveAndApply: "Save and apply",
+    requiredMissing: "Add your first name and where you live to save.",
+    moreTitle: "More answers forms ask for",
+    moreHint: "Optional. The Applier fills a question from these when it can, and leaves any question it can't answer empty for you to fill at review.",
+    salaryExpectation: "Salary expectation",
+    salaryPlaceholder: "USD 150,000 / year",
+    noticePeriod: "Notice period",
+    noticePlaceholder: "30 days, or immediately",
+    yearsOfExperience: "Years of experience",
+    citizenship: "Citizenship",
+    selfIdTitle: "Voluntary self-identification",
+    selfIdHint: "Optional. Anything left empty is answered \"I don't wish to answer\".",
+    gender: "Gender",
+    raceEthnicity: "Race or ethnicity",
+    veteranStatus: "Veteran status",
+    disabilityStatus: "Disability status",
+    sid_decline: "I don't wish to answer",
+    vet_yes: "I'm a protected veteran",
+    vet_no: "I'm not a protected veteran",
+    dis_yes: "Yes, I have a disability",
+    dis_no: "No, I don't have a disability",
+    resumeLocationSection: "Your location on tailored documents",
+    resumeLocation: "Location on tailored resumes and cover letters",
+    resumeLocationHint: "What the header of each tailored resume and its cover letter says about where you are.",
+    resumeLocationShared: "This is 1 setting, also shown in Settings › {{other}}. Changing it here changes it there.",
+    resumeLocationGo: "Open {{other}}",
+    rl_posting: "The job's location",
+    rl_master: "Your master resume's",
+    rl_none: "Leave it out",
+  },
   scoring: {
     title: "Scoring",
     howTitle: "How jobs are scored",
     fallbackLabel: "Scoring fallback",
     fallbackInfo:
-      "If an AI score fails, a grey keyword score fills in — retry it from Analytics → Logs.",
+      "If an LLM score fails, a grey keyword score fills in — retry it from Analytics → Logs.",
     howHint: "Every new job gets a fit score against your master resume. Pick how.",
     // One row per method, in menu order, richest explanation first. The price is
     // per 100 jobs, measured where it says measured (docs/internal/scoring.md
@@ -95,8 +153,7 @@ const settingsPage = {
     // 2026-10-08: it used to send the user to another pane for this pane's own
     // rubric. The rubric is now further down this page, so it says where.
     rubricPointer:
-      "The rubric AI scoring follows is further down this page, and you can edit it. "
-      + "The other 3 methods have no prompt.",
+      "The rubric LLM scoring follows is further down this page, and you can edit it. The other 3 methods have no prompt.",
     weightsTitle: "What counts most",
     weightsInfo:
       "Changes how every job's number is worked out from the detail already stored. "
@@ -105,6 +162,7 @@ const settingsPage = {
     weightsReset: "Reset",
     weightsShow: "Fine-tune each one",
     weightsHide: "Hide the sliders",
+    weightsFromJev: "LLM scoring asks the model for the total, so it has no table of its own. These start from Jev scoring's.",
     preset_balanced: "Balanced",
     preset_location_first: "Location first",
     preset_seniority_first: "Seniority first",
@@ -114,7 +172,7 @@ const settingsPage = {
       "How far a job in a place you did not ask for drops. It is a penalty rather "
       + "than a weight, because some methods answer location as a confidence and a "
       + "confidence multiplied by a weight means nothing.",
-    modeLlmBlurb: "One AI call per job. The only method that writes sentences.",
+    modeLlmBlurb: "One LLM call per job. The only method that writes sentences.",
     modeLlmPrice: "About $2.22 per 100 jobs on Haiku 4.5, $23.55 on today's Opus path",
     modeJevBlurb: "One structured call per job. Score and per-axis bars, prose on demand.",
     modeJevPrice: "About $0.02 per 100 jobs",
@@ -139,6 +197,12 @@ const settingsPage = {
     parallelHint: "How many AI calls run at once.",
     atOnce: "{{n}} at once",
     unlimited: "Unlimited",
+    queueMode: "How AI work waits",
+    queueModeInfo: "1 queue per kind of work: your own requests never wait behind background scoring, but several kinds of work can call your provider at once, so a rate limit or a subscription's 5-hour window arrives sooner. 1 shared queue: never more than Parallel AI calls at once, but a request can wait for 1 running call to finish.",
+    queueModeHint: "Your own requests always go first.",
+    queuePerKind: "1 queue per kind of work",
+    queueShared: "1 shared queue",
+    parallelHintPerKind: "How many jobs score at once in the background.",
   },
   automation: {
     title: "Automation on Save",
@@ -241,7 +305,7 @@ const settingsPage = {
     titleCover: "Cover letter",
     titleExtract: "Form answers",
     titleNetworkerDraft: "Referral messages",
-    scopeScore: "This is the rubric for AI scoring only. The other 3 methods never read it: Keyword scoring is rules on your own machine, Fast scoring sends typed questions that carry their own rubric, and On-device scoring has no prompt either.",
+    scopeScore: "This is the rubric for LLM scoring only. The other 3 methods never read it: Keyword scoring is rules on your own machine, Jev scoring sends typed questions that carry their own rubric, and Laya scoring has no prompt either.",
     scopeTailor: "Used every time a resume is tailored to a posting, whichever job it is.",
     scopeCover: "Used every time a cover letter is written.",
     scopeExtract: "Runs once each time you save your master resume. It pulls out the details that fill application forms \u2014 your name, your contact details, years of experience, work authorization \u2014 so the Applier does not have to ask you again.",
@@ -251,10 +315,9 @@ const settingsPage = {
     // and `apply` had none anywhere (url-less-jobs.md section 11.5). Only the
     // 2 pickers whose prompt scope line does NOT already say when they run
     // carry a hint, so no card says the same sentence twice.
-    titleScoreModel: "The model AI scoring runs on",
+    titleScoreModel: "The model LLM scoring runs on",
     hintScoreModel:
-      "Only AI scoring uses a model. Keyword scoring runs on your own machine, "
-      + "Fast scoring sends typed questions, and On-device scoring will run locally.",
+      "Only LLM scoring uses a model. Keyword scoring runs on your own machine, Jev scoring sends typed questions, and Laya scoring will run locally.",
     titleApplyModel: "The model the Applier runs on",
     hintApplyModel:
       "The Applier reads a job application form and decides what goes in each field. "

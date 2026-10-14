@@ -1,9 +1,6 @@
-// The engine + model picker for one LLM operation kind (url-less-jobs.md
-// section 11.5). It used to live inside the prompt editor, so only the 4 kinds
-// that happened to have an editable prompt got a picker and the 2 that didn't
-// (referral drafting, the Applier) were set once at onboarding and invisible
-// forever. It's keyed on the operation kind now, so any section can carry the
-// picker for the work it owns.
+// The engine and model picker for 1 LLM operation kind (url-less-jobs.md
+// section 11.5). Keyed on the operation, so kinds with no editable prompt
+// (referral drafting, the Applier) get a picker too.
 
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";

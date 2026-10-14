@@ -24,10 +24,11 @@ class EngineNotConfiguredError(Exception):
     """No engine is routed for an LLM operation kind. Surfaced verbatim on the
     operation row (NFR-SIDE-04) — never swallowed."""
 
-    def __init__(self, kind: str) -> None:
+    def __init__(self, kind: str, message: str | None = None) -> None:
         self.kind = kind
         super().__init__(
-            f"no engine configured for {kind!r}: AI features stay off until an LLM "
+            message
+            or f"no engine configured for {kind!r}: AI features stay off until an LLM "
             "provider is set up in Settings › LLM Providers"
         )
 
@@ -42,14 +43,9 @@ class ResolvedEngine:
 
 
 class EngineRegistry:
-    """Named engines + a per-kind routing map.
-
-    An engine can be registered as a concrete instance (`register`) or as a
-    per-model **factory** (`register_factory`) — the latter lets one named
-    engine (e.g. `claude-cli`) honor a per-kind model override by building an
-    instance at the routed model on resolve. `clear_routing` lets Settings
-    re-apply the routing map at runtime without rebuilding the registry.
-    """
+    """Named engines and a per-kind routing map. `register_factory` lets 1 engine
+    honor a per-kind model override by building at the routed model; `clear_routing`
+    re-applies routing without rebuilding."""
 
     def __init__(self) -> None:
         self._engines: dict[str, Engine] = {}

@@ -1,10 +1,7 @@
-// Covers the reworked resume editor: Preview is ONE directly-editable rendered
-// surface (cursor in the formatted text, toolbar applies real formatting), Raw
-// is the same pane as markdown source, Upload PDF sits in the master header,
-// and the tailored variant is always an editable box (paste-your-own) with
-// Generate at the top. The md↔DOM fidelity contract itself is pinned by the
-// mdHtml.test.ts unit suite; the backend create-if-missing save is pinned by
-// test_patch_artifact_creates_manual_variant_when_missing.
+// Covers the resume editor: Preview is 1 editable rendered surface, Raw is the
+// same pane as markdown, Upload PDF sits in the master header, and the tailored
+// variant is always an editable box with Generate on top. The md-to-DOM contract
+// is mdHtml.test.ts; the create-if-missing save is a pytest.
 
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";

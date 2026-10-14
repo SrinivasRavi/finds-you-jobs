@@ -1,31 +1,8 @@
 """The resolved location becomes columns, and a score's factors get a table.
 
-Two changes, both from `docs/internal/scoring.md` sections 6.6 and 7.2.
-
-1. `jobs` gains 5 location columns, filled at ingest by `modules/geo/resolve.py`.
-   The location field is 1 free-text string that 3 consumers parse differently
-   today, and the measured result is that discovery's matcher calls 114 of 115
-   rows a location match, 41 of them wrongly. `location_remote` is deliberately
-   3-state: NULL for a row the resolver has not seen (which is every existing
-   row), "" for resolved and not remote, else the scope. No index: the queries
-   that would read these aren't written yet (D30).
-
-   The match verdict is NOT a column. It depends on the user's preferences, which
-   change, so it is computed on read from these facts about the posting.
-
-2. `job_score_factors` holds one row per axis per method per job, which is what
-   the per-factor bars, user weights and honest method-versus-method comparison
-   all wait on. The weight applied is not stored, because a weight is a
-   preference and the total is computed from the factors on read.
-
-   This is not a return of `job_scores`, which `d2f7a91b8c46` collapsed into
-   columns 4 weeks ago. That table's 3-part key carried a `profile_version`
-   dimension that distinguished nothing across 1,238 rows. A factor table is a
-   different cardinality, one row per axis, every column of it queried.
-
-   `jobs.llm_score_method` rides along, because 4 methods write that one score
-   slot and the board has to say which one did. Existing scored rows backfill to
-   "llm": the single LLM path is the only thing that could have written them.
+5 location columns filled at ingest (scoring.md 6.6); `location_remote` is
+3-state. `job_score_factors` holds 1 row per axis per method per job (7.2);
+weights stay computed. `llm_score_method` backfills "llm".
 
 Revision ID: b4d8e2a7c531
 Revises: f3a9c1d8e527

@@ -1,23 +1,8 @@
-// The markdown ⇄ DOM pair behind the resume views (dependency-free, on purpose).
-//
-// `mdToHtml` renders our small markdown dialect to an HTML string — the SAME
-// output whether it feeds the read-only <Markdown> view or the editable Preview
-// surface (MarkdownEditor), so the two can never drift apart.
-//
-// `domToMarkdown` is the inverse: it serializes the contentEditable DOM (which
-// the browser mutates freely — <div> paragraphs, <b>/<i> from execCommand,
-// stray <span>s, <br>s) back into that dialect. Markdown stays the document of
-// record: every keystroke in the editable Preview round-trips DOM → markdown,
-// so Raw mode, save, tailoring, and PDF export always see clean markdown and
-// nothing ever reformats a resume behind the user's back.
-//
-// Dialect (kept deliberately small — this is what the pair guarantees):
-//   #/##/### headings · **bold** · *italic* · `code` · [label](url) ·
-//   - bullets · 1. numbered · > quotes · | tables | · --- rules · paragraphs.
-//
-// Fidelity contract: for canonical input (blank line between blocks),
-// domToMarkdown(mdToHtml(md)) === md — pinned by mdHtml.test.ts. Non-canonical
-// input normalizes once (extra blank lines collapse) and is stable after.
+// The markdown and DOM pair behind the resume views, dependency-free. mdToHtml
+// renders our dialect for both the read-only view and the editable Preview;
+// domToMarkdown serializes whatever contentEditable produced back to it. Dialect:
+// headings, bold, italic, code, links, lists, quotes, tables, rules, paragraphs.
+// Canonical input round-trips exactly, pinned by mdHtml.test.ts.
 
 const INLINE_RE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*\s][^*]*\*)/g;
 
@@ -229,12 +214,9 @@ const BLOCK_TAGS = new Set([
   "UL", "OL", "BLOCKQUOTE", "HR", "TABLE", "DIV", "P", "SECTION", "ARTICLE",
 ]);
 
-/** Serialize the editable surface back to the dialect. Tolerates everything
- *  contentEditable produces: <div> paragraphs, <b>/<i>, <br>-only spacers,
- *  root-level text nodes, nested lists. Consecutive inline nodes at the root
- *  (text, spans, formatting runs) group into ONE paragraph — they are one
- *  visual line; splitting them would corrupt the text. Blocks join with one
- *  blank line. */
+/** Serialize the editable surface back to the dialect, tolerating whatever
+ *  contentEditable produces. Consecutive inline nodes at the root form 1 paragraph,
+ *  since they're 1 visual line. Blocks join with 1 blank line. */
 export function domToMarkdown(root: HTMLElement): string {
   const blocks: string[] = [];
   const push = (s: string) => {

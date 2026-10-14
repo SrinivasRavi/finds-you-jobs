@@ -1,10 +1,7 @@
-// Component tests for the contact-modal composer (addendum 2026-08-14): the
-// stage's option set fills a dropdown, the FIRST option prefills the editable
-// box on open, selecting another option refills it, the user's own typing
-// wins, and the submit hands the parent the message plus the HONEST channel
-// (DM for 1st-degree, invite note otherwise; a pending invite blocks the form
-// with a reason instead of a dead send). i18next is real English so the
-// asserted prefills are the shipped strings.
+// Component tests for the contact-modal composer: the stage's options fill a
+// dropdown and the first prefills the box, another option refills it, the user's
+// typing wins, and submit hands up the message with the honest channel (DM for
+// 1st degree, invite note otherwise, blocked with a reason while pending).
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createInstance } from "i18next";

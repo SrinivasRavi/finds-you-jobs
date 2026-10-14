@@ -1,20 +1,10 @@
 """Score a posting with TypeSafe's Jev: 1 request, 1 question per axis, no prose.
 
-Jev is a decision model. It never generates text: it takes a `state` (here the
-resume, the posting and the user's preferences) plus typed questions, and returns
-a position on each question's own rubric plus a calibrated probability. So there
-is no output contract to drift and nothing to parse.
-
-**One question per axis, graded where the axis is graded** (maintainer, 2026-10-01,
-`talk.md` D43). A noul is a probability that a proposition holds, and multiplying
-one by a user's weight produces a number with no meaning, so only the 2 genuinely
-binary axes stay nouls. The vendor allows any number of mixed questions in 1
-request and bills output at $0, so 5 score questions plus 2 nouls costs what the
-single-question version cost: $0.000223 a job, measured.
-
-The total is our arithmetic over the factors (`weights.py`), which is the point of
-asking per axis: the bars explain the number instead of accompanying it.
-"""
+Jev takes a state (resume, posting, preferences) and typed questions, and
+returns rubric positions with calibrated probabilities, so nothing to parse.
+Graded axes are graded questions and only the 2 binary ones are nouls, since a
+probability times a weight means nothing (talk.md D43): $0.000223 a job,
+measured. The total is our arithmetic over the factors (`weights.py`)."""
 
 from __future__ import annotations
 
@@ -231,12 +221,9 @@ def score_jev(
     client: DecisionsClient,
     preferences_md: str = "",
 ) -> ScoreResult:
-    """Score 1 posting with 1 decision call. Raises `ScoreError` on a bad reply.
-
-    A posting under `MIN_JD_CHARS` is refused rather than scored, the same bar and
-    the same reason as every other method: `deterministic.MIN_JD_CHARS`, imported
-    rather than restated (duplication audit D-M18).
-    """
+    """Score 1 posting with 1 decision call; `ScoreError` on a bad reply. A posting
+    under `deterministic.MIN_JD_CHARS` is refused, the same bar as every method
+    (D-M18)."""
     if len((job_text or "").strip()) < MIN_JD_CHARS:
         raise ScoreError(
             "job-input",

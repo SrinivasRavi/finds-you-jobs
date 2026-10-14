@@ -1,16 +1,7 @@
-// Every literal translation key in the source has an English string behind it.
-//
-// The gap this closes: a key with nothing behind it renders as the key. i18next
-// never throws, tsc never complains, and the 12 other locales fall back to an
-// English string that also doesn't exist. So the only thing that catches it is
-// looking at the screen, and the key that broke was on a hover title, where
-// nobody looks. Found the day `common.scoreMethod.*` shipped: `common` is
-// SPREAD into the bundle, so its keys have no `common.` prefix, and 8 call
-// sites asked for a prefix no key has.
-//
-// Scope: literal `t("…")` keys only. A key built at runtime (`t(\`a.${x}\`)`)
-// can't be checked statically, so its namespace is asserted by the test that
-// owns the feature.
+// Every literal translation key has an English string behind it. A missing key
+// renders as the key, and nothing else catches it (found when 8 call sites asked
+// for a `common.` prefix that a spread namespace doesn't have). Literal `t("…")`
+// keys only; a runtime-built key is checked by its feature's own test.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

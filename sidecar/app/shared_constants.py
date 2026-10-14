@@ -12,7 +12,12 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from sidecar.modules._shared.claude_engine import DEFAULT_MODEL
-from sidecar.modules.scorer.weights import JEV_WEIGHTS, PRESET_LOCATION_PENALTY, PRESETS
+from sidecar.modules.scorer.weights import (
+    JEV_WEIGHTS,
+    KEYWORD_WEIGHTS,
+    PRESET_LOCATION_PENALTY,
+    PRESETS,
+)
 
 from .doc_extract import SUPPORTED_SUFFIXES
 from .documents import ALLOWED_TYPES
@@ -44,6 +49,7 @@ def shared_constants_schema() -> dict[str, Any]:
         "preset_location_penalty": _literal(PRESET_LOCATION_PENALTY),
         "preset_weights": _literal(PRESETS),
         "jev_weights": _literal(JEV_WEIGHTS),
+        "keyword_weights": _literal(KEYWORD_WEIGHTS),
         "lifecycle_defaults": _literal(LIFECYCLE_DEFAULTS),
         "claude_cli_default_model": _literal(DEFAULT_MODEL),
         "scoring_mode": _union(SCORING_MODES),

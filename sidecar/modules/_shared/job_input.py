@@ -1,14 +1,8 @@
-"""Resolve a job input — markdown text, a local file path, or a URL — shared by
-module silos (extracted from the Tailorer at the second consumer, the Scorer,
-per the M1 playbook).
+"""Resolve a job input (markdown text, a file path or a URL), shared by the
+module silos, mirroring career-ops's "text or URL" rule.
 
-Mirrors career-ops's "text or URL" input rule. URL fetching here is the
-module-local minimum (stdlib only); the real fetching/normalization lives in the
-Scraper module (Track M3) and replaces this seam at integration.
-
-Modules wrap `JobInputError` into their own typed error (TailorError,
-ScoreError, ...) preserving the stage + verbatim message.
-"""
+URL fetching here is the stdlib minimum. Modules wrap `JobInputError` into their
+own typed error, keeping the stage and verbatim message."""
 
 from __future__ import annotations
 

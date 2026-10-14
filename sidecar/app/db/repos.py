@@ -17,8 +17,6 @@ if TYPE_CHECKING:
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
-from sidecar.modules.geo.resolve import resolve_location
-
 from .base import now_utc
 from .models import (
     APPLY_RUN_ACTIVE_STATUSES,
@@ -34,7 +32,6 @@ from .models import (
     EngineSettings,
     Job,
     JobDuplicate,
-    JobScoreFactor,
     LinkedInSearchCursor,
     LinkedInSession,
     MasterProfile,
@@ -46,14 +43,13 @@ from .models import (
     UserPreferences,
 )
 
-# ---------------------------------------------------------------------------
-# Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07)
-# ---------------------------------------------------------------------------
-# Summing the live ledger alone would silently forget the spend of any op that
-# got deleted, so the all-time totals surface = live-ledger sum + a persistent
-# aggregate (UserPreferences.ui_state["cost_totals"]). Nothing deletes an
-# operation today (S-C22), so the aggregate sits at zero and the live sum
-# carries everything; a deletion policy folds the doomed rows in here first.
+# The feed states the board shows: live jobs and greyed (expired) ones.
+ON_BOARD_STATES = ("active", "expired")
+
+# Lifetime cost aggregate (US-LOG-01 #2 / FR-SET-07). All-time totals are the
+# live ledger plus a persistent aggregate in ui_state["cost_totals"], so deleting
+# an op can't forget its spend. Nothing deletes ops yet (S-C22), so it's 0; a
+# deletion policy folds doomed rows in here first.
 
 CostTotals = dict[str, Any]
 
@@ -139,13 +135,20 @@ class _SingleRowRepo[M]:
         return row
 
 
+# No score, or only the Keyword floor: what the method in Settings may score on its
+# own (score-storage.md 4.3). `score_method` is NULL exactly when `score` is.
+_NO_REAL_SCORE = or_(Job.score_method.is_(None), Job.score_method == "keyword")
+
+
 class OperationsRepo:
     """The runner's durable queue + the cost ledger."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def create(self, kind: str, input_snapshot: dict[str, Any]) -> Operation:
+    def create(
+        self, kind: str, input_snapshot: dict[str, Any], *, requested_by: str = "app"
+    ) -> Operation:
         """The one place the subject ids are lifted out of the snapshot, so no
         call site has to remember to pass them twice. Empty string becomes NULL:
         the retired `watch_company` kind wrote `job_id: ""`, and "" is not a
@@ -156,6 +159,7 @@ class OperationsRepo:
             job_id=input_snapshot.get("job_id") or None,
             contact_id=input_snapshot.get("contact_id") or None,
             batch_id=input_snapshot.get("batch_id") or None,
+            requested_by=requested_by,
             input_snapshot=input_snapshot,
         )
         self._s.add(op)
@@ -184,20 +188,17 @@ class OperationsRepo:
     def list_queued_for_dispatch(
         self, *, priority_by_kind: dict[str, int], default_priority: int, limit: int
     ) -> list[Operation]:
-        """Queued operations in dispatch order, most urgent first, capped.
-
-        The runner used to read EVERY queued row and sort in Python, so
-        enqueueing N operations cost n(n+1)/2 row loads. The cap is what fixes
-        that, and the ordering has to move into SQL for the cap to be safe: with
-        a date-ordered read, a `LIMIT` would hide an `apply` the user is watching
-        behind hundreds of bulk `score` rows. Sorted here, the first `limit` rows
-        are always the most urgent ones. `created_at, id` keeps it FIFO within a
-        priority band, matching the stable Python sort this replaced."""
+        """Queued ops in dispatch order, most urgent first, capped. Reading every queued
+        row made enqueueing quadratic; the cap fixes that, and ordering in SQL keeps it
+        safe, so a watched `apply` never hides behind bulk scores. FIFO by
+        `created_at, id` within a band. A user's request comes first whatever its kind, so
+        a backlog deeper than `limit` can never hide it (queueing.md section 4)."""
         priority = case(priority_by_kind, value=Operation.kind, else_=default_priority)
+        user_first = case((Operation.requested_by == "user", 0), else_=1)
         stmt = (
             select(Operation)
             .where(Operation.state == "queued")
-            .order_by(priority, Operation.created_at, Operation.id)
+            .order_by(user_first, priority, Operation.created_at, Operation.id)
             .limit(limit)
         )
         return list(self._s.scalars(stmt))
@@ -207,14 +208,9 @@ class OperationsRepo:
         return list(self._s.scalars(stmt))
 
     def live_cost_totals(self) -> CostTotals:
-        """The cost aggregate over every operation still in the table (all states;
-        in-flight rows carry no usage and contribute only to the op count). Added
-        to the pruned aggregate to yield the all-time totals.
-
-        Reads 3 columns rather than building an ORM object per row, which is the
-        difference between 95 ms and 1.2 s at 100k operations. Still linear:
-        summing every row is inherently linear, and at 24 operations a day it
-        stays under a millisecond for years."""
+        """The cost aggregate over every op still in the table; added to the deleted-ops
+        aggregate for all-time totals. Reads 3 columns, not ORM rows: 95 ms versus 1.2 s
+        at 100k ops."""
         agg = _empty_cost_totals()
         stmt = select(Operation.kind, Operation.state, Operation.usage)
         for kind, state, usage in self._s.execute(stmt):
@@ -374,13 +370,8 @@ class OperationsRepo:
 
 
     def recent_score_cost(self, model: str | None, limit: int = 20) -> tuple[float | None, int]:
-        """What an AI score has actually cost THIS user, and over how many runs.
-
-        Measured, never estimated: the price of a model is not something the app
-        can know, and quoting a number off a doc would be a cost-honesty problem
-        the first time a user switched model. `None` means they have never paid
-        for one, which the button says rather than guessing.
-        """
+        """What an LLM score has actually cost this user, over how many runs. Measured,
+        never estimated; None means they've never paid for one."""
         stmt = (
             select(Operation.usage)
             .where(
@@ -475,29 +466,6 @@ class SchedulesRepo:
         return _update_row(self._s, Schedule, schedule_id, "schedule", fields)
 
 
-def resolved_location_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    """Fill a new job's resolved-location columns from its location string.
-
-    Here rather than at the 4 call sites that create a job, because a 5th would
-    forget. A caller that already resolved (the backfill pass) passes the columns
-    itself and is left alone, and a job with no location keeps `location_remote`
-    NULL, which is the "resolver has not seen this" state.
-    """
-    location = str(fields.get("location") or "").strip()
-    if not location or "location_remote" in fields:
-        return fields
-    resolved = resolve_location(location)
-    primary = resolved.primary
-    return {
-        **fields,
-        "location_country": primary.country if primary else None,
-        "location_admin1": primary.admin1_key if primary else None,
-        "location_city_id": primary.city_id if primary else None,
-        "location_remote": resolved.remote_scope,
-        "location_attendance": str(resolved.attendance) if resolved.attendance else None,
-    }
-
-
 class JobsRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -546,52 +514,20 @@ class JobsRepo:
         stmt = stmt.order_by(Job.ingested_at.desc(), Job.id).limit(limit)
         return list(self._s.scalars(stmt))
 
-    def list_unresolved_locations(self, *, limit: int = 500) -> list[Job]:
-        """Jobs the location resolver has never seen (`location_remote IS NULL`),
-        in any feed state: an expired job can come back."""
-        stmt = (
-            select(Job)
-            .where(Job.location_remote.is_(None), Job.location != "")
-            .order_by(Job.ingested_at.desc(), Job.id)
-            .limit(limit)
-        )
-        return list(self._s.scalars(stmt))
-
     def list_active_without_llm_score(
         self, *, limit: int | None = None, max_attempts: int | None = None
     ) -> list[Job]:
-        """Active jobs that can still earn an AI score, newest first.
-
-        The AI planner used to page the newest 1,000 active jobs and only THEN
-        filter that page down to the unscored, so on an install with more than
-        1,000 active jobs the oldest could never be planned at any tick — they
-        sat unscored with nothing to show for it. Doing the exclusion in SQL
-        makes a scored job leave the result set on its own, so every job is
-        eventually reached, and the read is O(unscored) instead of O(all
-        active). `limit=None` means no cap, which is the planner's default.
-
-        A keyword floor does NOT count: `scorer_impl` is matched so the LLM can
-        still upgrade a job the on-device floor already scored.
-
-        A job whose description is under `MIN_JD_CHARS` is excluded outright. It
-        can never earn an LLM score (`score_entrypoint` refuses it and writes a
-        0 without calling the engine — see that constant for why), so leaving it
-        in would re-plan the same job on every tick forever, each pass writing
-        another operation row. On the maintainer's install that's 248 jobs, so
-        it would be 248 pointless operations per tick. The predicate is on the
-        description rather than on the presence of a refusal row, which means a
-        later scan that fills the description in makes the job eligible again on
-        its own, with nothing to reset (S-A6).
-
-        `max_attempts` drops jobs that have already failed that many times
-        against a live provider (`Job.llm_score_attempts`). A provider outage
-        never increments that counter, so an expired key costs no job an attempt
-        and the whole backlog returns on the next tick."""
+        """Active jobs with no score or only a Keyword one, newest first: the only jobs the
+        method in Settings scores on its own (score-storage.md 4.3). The exclusion is in
+        SQL, so every job is eventually reached. Jobs
+        under `MIN_JD_CHARS` are excluded (they can never earn one) until a scan fills
+        the description (S-A6). `max_attempts` drops jobs that failed against a live
+        provider; outages never count. `limit=None` is uncapped."""
         from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
 
         stmt = select(Job).where(
             Job.feed_state == "active",
-            Job.llm_score.is_(None),
+            _NO_REAL_SCORE,
             func.length(func.coalesce(Job.description, "")) >= MIN_JD_CHARS,
         )
         if max_attempts is not None:
@@ -615,21 +551,22 @@ class JobsRepo:
         )
 
     def fingerprint_rows(self) -> list[tuple[str, int, str, str]]:
-        """`(id, fingerprint, company, title)` for every active fingerprinted job:
-        the 4 narrow columns `near_duplicate_ids` compares. A scan reads them once
-        for all the rows it writes rather than once per row."""
+        """`(id, fingerprint, company, title)` for every fingerprinted job on the
+        board, greyed ones included, since a repost after 14 days is the ghost-job
+        signal (audit A6): the 4 narrow columns `near_duplicate_ids` compares. A scan
+        reads them once for all the rows it writes rather than once per row."""
         rows = self._s.execute(
             select(Job.id, Job.fingerprint, Job.company, Job.title).where(
-                Job.feed_state == "active", Job.fingerprint.is_not(None)
+                Job.feed_state.in_(ON_BOARD_STATES), Job.fingerprint.is_not(None)
             )
         )
         return [(r[0], r[1] or 0, r[2], r[3]) for r in rows]
 
     def list_unfingerprinted(self, *, limit: int = 500) -> list[Job]:
         """Active jobs with a description and no fingerprint: rows written before
-        the column existed. Active only, because the duplicate check compares
-        nothing else; a restored job joins on the next pass. The backfill's own
-        query, so it converges."""
+        the column existed. Active only, by the maintainer's 2026-10-12 note; a
+        restored job joins on the next pass. The backfill's own query, so it
+        converges."""
         stmt = (
             select(Job)
             .where(
@@ -651,21 +588,10 @@ class JobsRepo:
         exclude_id: str,
         rows: list[tuple[str, int, str, str]] | None = None,
     ) -> list[str]:
-        """Active jobs that are probably the SAME posting as this one.
-
-        Run at INGEST, never at render, so the board pays nothing for this and
-        the answer is already on the row by the time anybody looks at it.
-
-        Deliberately a narrow scan rather than an index lookup: similarity here
-        is Hamming distance over a simhash, which no equality index can answer.
-        So it reads 4 columns and never the descriptions, which is what keeps a
-        1,000-job board at roughly 100 KB and a few thousand popcounts per
-        inserted row instead of a multi-megabyte load.
-
-        The gate is the compound one (same company, same title, similarity at or
-        above the threshold), because bare similarity was 57% precise on the
-        bench corpus and called a Senior and a Principal at one employer the
-        same job (S-C69, url-less-jobs.md 6.4)."""
+        """Board jobs that are probably the same posting, checked at ingest so the board
+        pays nothing. A narrow 4-column scan, since Hamming distance over a simhash has
+        no index. The gate is compound (same company, title, similarity at threshold):
+        bare similarity was 57% precise (S-C69, url-less-jobs.md 6.4)."""
         from sidecar.modules.scraper.fingerprint import (
             from_signed64,
             is_probable_cross_listing,
@@ -691,14 +617,14 @@ class JobsRepo:
         ]
 
     def count_score_exhausted(self, max_attempts: int) -> int:
-        """Active jobs that have spent their whole AI-scoring budget and still
+        """Active jobs that have spent their whole LLM scoring budget and still
         carry no LLM score — the ones no future tick will ever pick up. This is
         what the ledger's Retry affordance counts, so the button appears only
         when pressing it would actually do something. A job at 1 or 2 attempts
         is NOT counted: it comes back on the next tick on its own."""
         stmt = select(func.count()).select_from(Job).where(
             Job.feed_state == "active",
-            Job.llm_score.is_(None),
+            _NO_REAL_SCORE,
             Job.llm_score_attempts >= max_attempts,
         )
         return int(self._s.scalar(stmt) or 0)
@@ -732,7 +658,7 @@ class JobsRepo:
         return list(self._s.scalars(stmt))
 
     def create(self, **fields: Any) -> Job:
-        job = Job(**resolved_location_fields(fields))
+        job = Job(**fields)
         self._s.add(job)
         self._s.flush()
         return job
@@ -800,15 +726,20 @@ class JobsRepo:
         return list(self._s.scalars(stmt))
 
     def list_expired_before(self, cutoff: datetime) -> list[Job]:
-        """Expired rows past the hard-delete cutoff (same null rule as above)."""
+        """Scanned expired rows past the hard-delete cutoff (same null rule as above)."""
         stmt = select(Job).where(
-            Job.feed_state == "expired", Job.expired_at.is_not(None), Job.expired_at <= cutoff
+            Job.feed_state == "expired",
+            Job.expired_at.is_not(None),
+            Job.expired_at <= cutoff,
+            Job.origin == "scan",
         )
         return list(self._s.scalars(stmt))
 
     def list_active_before(self, cutoff: datetime) -> list[Job]:
-        """Active rows whose freshness window has run out."""
-        stmt = select(Job).where(Job.feed_state == "active", Job.feed_since <= cutoff)
+        """Scanned active rows whose freshness window has run out."""
+        stmt = select(Job).where(
+            Job.feed_state == "active", Job.feed_since <= cutoff, Job.origin == "scan"
+        )
         return list(self._s.scalars(stmt))
 
     def stamp_missing_lifecycle_dates(self, *, now: datetime | None = None) -> int:
@@ -850,28 +781,48 @@ class JobsRepo:
         breakdown_md: str,
         method: str | None = None,
         factors: Sequence[Mapping[str, Any]] | None = None,
+        profile_version: int | None = None,
+        rescore: bool = False,
     ) -> bool:
-        """Write one scorer's rating onto the job. Returns True when this is the
-        FIRST rating that scorer has produced for this job, which is what the
-        priority distribution counts: a recompute must not double count.
-
-        `method` is the named method behind the number (`llm`, `jev`, `local`,
-        `keyword`) and `factors` its per-axis detail. Both are written here, in
-        the one place a score is ever written, so a method cannot land a score
-        without its factors or leave a previous method's factors behind it."""
+        """Replace the job's 1 score; True when the method changed, so the priority
+        stats count a method's number once. Every part lands together. A Keyword write
+        never replaces a real score unless the user asked (`rescore`); then it returns
+        False and writes nothing (score-storage.md 4.2)."""
         job = self._s.get(Job, job_id)
         if job is None:
             raise KeyError(f"job {job_id!r} not found")
-        prefix = "llm" if scorer_impl == "scorer-llm" else "keyword"
-        method = method or prefix
-        is_new = getattr(job, f"{prefix}_score") is None
-        setattr(job, f"{prefix}_score", score_0_100)
-        setattr(job, f"{prefix}_reasons", list(reasons))
-        setattr(job, f"{prefix}_breakdown_md", breakdown_md)
-        if prefix == "llm":
-            job.llm_score_method = method
-        if factors is not None:
-            JobScoreFactorsRepo(self._s).replace(job_id, method, factors)
+        method = method or ("llm" if scorer_impl == "scorer-llm" else "keyword")
+        if method == "keyword" and not rescore:
+            # The guard runs inside the UPDATE, which takes the write lock, so a real score
+            # or a newer resume's score committed after this session's read still wins (A26).
+            guard = [Job.id == job_id, or_(Job.score_method.is_(None), Job.score_method == method)]
+            if profile_version is not None:
+                guard.append(func.coalesce(Job.scored_profile_version, 0) <= profile_version)
+            claim = update(Job).where(*guard).values(score_method=Job.score_method)
+            result = cast(
+                "CursorResult[Any]",
+                self._s.execute(claim.execution_options(synchronize_session=False)),
+            )
+            if not result.rowcount:
+                return False
+            self._s.refresh(job)
+        is_new = job.score_method != method
+        job.score = score_0_100
+        job.score_method = method
+        job.score_reasons = list(reasons)
+        job.score_breakdown_md = breakdown_md
+        job.score_factors = [
+            {
+                "factor": str(f["factor"]),
+                "value": float(f["value"]),
+                "kind": str(f.get("kind") or "graded"),
+                "evidence": str(f.get("evidence") or ""),
+                **({"code": f["code"]} if isinstance(f.get("code"), dict) else {}),
+            }
+            for f in factors or []
+        ]
+        job.scored_at = now_utc()
+        job.scored_profile_version = profile_version
         self._s.flush()
         return is_new
 
@@ -880,9 +831,7 @@ class JobsRepo:
         fills so no board row is ever stuck on Pending."""
         if not job_ids:
             return set()
-        stmt = select(Job.id).where(
-            Job.id.in_(job_ids), Job.llm_score.is_(None), Job.keyword_score.is_(None)
-        )
+        stmt = select(Job.id).where(Job.id.in_(job_ids), Job.score.is_(None))
         return set(self._s.scalars(stmt))
 
 
@@ -1178,8 +1127,14 @@ class ProfileRepo:
             # version, so a phantom bump would mark every score stale and
             # trigger a pointless "Re-score N jobs?" prompt (2026-07-23).
             return current
+        from sidecar.modules.profiler.resume_change import is_major_edit
+
+        major = is_major_edit(current.resume_markdown, resume_markdown)
         current.resume_markdown = resume_markdown
         current.version += 1
+        if major:
+            # Scores made before this version show a rescore-due mark (audit A3).
+            current.major_version = current.version
         return current
 
     def set_application_profile(self, profile: dict[str, Any] | None) -> MasterProfile:
@@ -1297,20 +1252,10 @@ class ContactsRepo:
         include_candidates: bool = True,
         limit: int = 10_000,
     ) -> list[Contact]:
-        """The kanban roster, most-recently-touched first and capped (S-C8).
-
-        Every filter the roster route applies is in SQL, because a LIMIT on top
-        of a Python filter bounds the wrong population: the "Deleted Contacts"
-        view could show nothing while archived rows existed past the cap, and a
-        big `candidate` pile (discovery writes one row per person found) could
-        eat the whole budget before a single kanban card was reached.
-
-        10,000, matching the board's `list_by_states`. The first cut capped at
-        1,000 and nothing in the UI says "1,000 of 1,240", so a discovery-grown
-        roster (about 10 candidate rows per company watched) would silently drop
-        people past 100 companies — the same class of defect as the scoring
-        window it shipped beside. The batched last-message query removed the
-        real cost of a big roster; this cap now bounds DTO building only."""
+        """The kanban roster, most recently touched first, capped at 10,000 like the
+        board (S-C8). Every filter is in SQL, since a LIMIT over a Python filter bounds
+        the wrong population. With the batched last-message query, the cap bounds only
+        DTO building."""
         stmt = select(Contact)
         if archived_only:
             stmt = stmt.where(Contact.archived_at.is_not(None))
@@ -1326,15 +1271,9 @@ class ContactsRepo:
     def list_for_referrals(
         self, *, company_names: set[str], contact_ids: set[str]
     ) -> list[Contact]:
-        """The find-referrals popup roster for a role (US-NW-09 / FR-NW-02).
-
-        A contact belongs on it if it is at the target company — matched
-        **case-insensitively against ANY of `company_names`** (the raw ATS
-        `job.company` AND the resolved LinkedIn entity name, which often differ,
-        e.g. `hopper` vs `Hopper`) — OR it is already associated with this job
-        (`contact_ids`, the reliable link discovery writes regardless of how the
-        employer string is spelled). Excludes archived. This replaces a brittle
-        exact-match on `job.company` that could hide a whole discovered roster."""
+        """The popup's roster for a role (US-NW-09 / FR-NW-02): contacts at the company,
+        matched case-insensitively against any of `company_names` (ATS name and LinkedIn
+        name differ), or already linked to the job (`contact_ids`). Archived excluded."""
         lowered = {n.strip().lower() for n in company_names if n and n.strip()}
         conds = []
         if lowered:
@@ -1395,12 +1334,8 @@ class ContactsRepo:
     _SYNCABLE_STATUSES = CONTACT_SYNCABLE_STATUSES
 
     def list_syncable(self, *, limit: int) -> list[Contact]:
-        """The next `limit` contacts due for a status-sync probe (US-NW-12).
-
-        Ordered by `last_touched_at` ASC (least-recently-touched first): each
-        probe bumps `last_touched_at`, so the probed contacts rotate to the back
-        and the whole live set is swept fairly over successive ticks — a natural
-        round-robin cursor with no extra bookkeeping column."""
+        """The next `limit` contacts due for a sync probe (US-NW-12), least recently
+        touched first; each probe bumps `last_touched_at`, a round-robin cursor for free."""
         stmt = (
             select(Contact)
             .where(Contact.archived_at.is_(None))
@@ -1546,8 +1481,8 @@ class JobDuplicatesRepo:
             .join(me, me.id == JobDuplicate.job_id)
             .where(
                 JobDuplicate.dismissed_at.is_(None),
-                other.feed_state == "active",
-                me.feed_state == "active",
+                other.feed_state.in_(ON_BOARD_STATES),
+                me.feed_state.in_(ON_BOARD_STATES),
             )
         )
 
@@ -1579,65 +1514,6 @@ class JobDuplicatesRepo:
             copies[row.job_id] = copies.get(row.job_id, 0) + 1
             noticed.update((row.job_id, row.other_job_id))
         return copies, noticed & set(job_ids)
-
-
-class JobScoreFactorsRepo:
-    """Per-axis score detail, one row per (job, method, factor).
-
-    A rescore `replace` instead of upserting row by row: a method that stops
-    emitting a factor must stop having it, or the bar chart would show an axis
-    the current rubric no longer scores.
-    """
-
-    def __init__(self, session: Session) -> None:
-        self._s = session
-
-    def list_for_job(self, job_id: str, method: str | None = None) -> list[JobScoreFactor]:
-        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id == job_id)
-        if method is not None:
-            stmt = stmt.where(JobScoreFactor.method == method)
-        return list(self._s.scalars(stmt.order_by(JobScoreFactor.factor)))
-
-    def list_for_jobs(self, job_ids: list[str], method: str | None = None) -> list[JobScoreFactor]:
-        """Every factor for a page of jobs in 1 query, so the board never asks
-        per card (the F-H2 lesson)."""
-        if not job_ids:
-            return []
-        stmt = select(JobScoreFactor).where(JobScoreFactor.job_id.in_(job_ids))
-        if method is not None:
-            stmt = stmt.where(JobScoreFactor.method == method)
-        return list(self._s.scalars(stmt))
-
-    def replace(
-        self, job_id: str, method: str, factors: Sequence[Mapping[str, Any]]
-    ) -> list[JobScoreFactor]:
-        """Drop this method's rows for the job and write the given ones."""
-        self._s.execute(
-            delete(JobScoreFactor).where(
-                JobScoreFactor.job_id == job_id, JobScoreFactor.method == method
-            )
-        )
-        rows = [
-            JobScoreFactor(
-                job_id=job_id,
-                method=method,
-                factor=str(f["factor"]),
-                value=float(f["value"]),
-                kind=str(f.get("kind") or "graded"),
-                evidence=str(f.get("evidence") or ""),
-            )
-            for f in factors
-        ]
-        for row in rows:
-            self._s.add(row)
-        self._s.flush()
-        return rows
-
-    def delete_for_job(self, job_id: str) -> int:
-        """Remove every factor row for a job (`foreign_keys=ON` forbids orphans
-        when the job is deleted). Returns the row count."""
-        result = self._s.execute(delete(JobScoreFactor).where(JobScoreFactor.job_id == job_id))
-        return cast("CursorResult[Any]", result).rowcount
 
 
 class OutreachLogsRepo:
@@ -1699,12 +1575,9 @@ class OutreachLogsRepo:
         return list(self._s.scalars(stmt))
 
     def latest_batches_for_jobs(self, job_ids: list[str]) -> dict[str, list[OutreachLog]]:
-        """The OutreachLog rows of the *latest* reach-out batch per role, used
-        to derive `referralsState` (FR-NW-01) — one IN query for a batch of
-        roles (F-H2). The batch is keyed by `batch_id`; a NULL batch_id
-        (legacy/manual single send) is its own settled batch. The latest batch =
-        the one containing the most-recently-created log. Roles with no logs are
-        absent from the map."""
+        """The OutreachLog rows of each role's latest batch, for `referralsState`
+        (FR-NW-01), in 1 IN query (F-H2). A NULL batch_id is its own batch; latest means
+        the newest log. Roles with no logs are absent."""
         if not job_ids:
             return {}
         stmt = select(OutreachLog).where(OutreachLog.job_id.in_(job_ids))
@@ -1846,7 +1719,6 @@ class Repos:
         self.contacts = ContactsRepo(session)
         self.company_resolutions = CompanyResolutionsRepo(session)
         self.referral_candidates = ReferralCandidatesRepo(session)
-        self.job_score_factors = JobScoreFactorsRepo(session)
         self.duplicates = JobDuplicatesRepo(session)
         self.outreach_logs = OutreachLogsRepo(session)
         self.linkedin_session = LinkedInSessionRepo(session)

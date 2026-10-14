@@ -15,6 +15,31 @@ export function workLabel(ws: WorkStyle): string {
   return map[ws] ?? "";
 }
 
+/** Where a job is, in 1 format on every surface (place-picker.md section 8.3):
+ *  "Bengaluru, Karnataka, India (Hybrid)", "+N" for more places, "Remote (United
+ *  States, Canada)". Text that names no place is shown as posted. */
+export function placeLine(job: Pick<Job, "location" | "places" | "work_style">): string {
+  const work = workLabel(job.work_style);
+  const places = job.places ?? [];
+  if (places.length === 0) {
+    // "Remote" posted on a remote job would print twice: the label already says it.
+    const bare = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+    const posted = work && bare(job.location) === bare(job.work_style) ? "" : job.location;
+    return [posted, work].filter(Boolean).join(" · ");
+  }
+  if (job.work_style === "REMOTE" && places.length <= 3) return `${work} (${places.join(", ")})`;
+  const first = places.length > 1 ? `${places[0]} +${places.length - 1}` : places[0];
+  if (!work) return first;
+  return job.work_style === "REMOTE" ? `${work} (${first})` : `${first} (${work})`;
+}
+
+/** The hover text behind `placeLine`: every place, then the text as posted. */
+export function placeTitle(job: Pick<Job, "location" | "places">): string {
+  const places = job.places ?? [];
+  if (places.length === 0) return job.location;
+  return [...places, i18n.t("jobBoard.detail.asPosted", { text: job.location })].join("\n");
+}
+
 /** Score → color tier (jobs.html matchScoreBadge). */
 export function scoreTier(score: number): { text: string; ring: string; wash: string } {
   if (score >= 85) return { text: "text-good", ring: "#059669", wash: "bg-good-wash" };
@@ -23,7 +48,7 @@ export function scoreTier(score: number): { text: string; ring: string; wash: st
   return { text: "text-bad", ring: "#dc2626", wash: "bg-bad-wash" };
 }
 
-/** The 4 scoring methods, in the vocabulary `Job.llm_score_method` stores.
+/** The 4 scoring methods, in the vocabulary `Job.score_method` stores.
  *  Theme tokens, not hexes, so both themes are right for free. */
 export const SCORE_METHODS = ["llm", "jev", "local", "keyword"] as const;
 export type ScoreMethod = (typeof SCORE_METHODS)[number];
@@ -42,14 +67,9 @@ export function methodColor(method: string): string {
   return METHOD_COLOR[method as ScoreMethod] ?? METHOD_COLOR.keyword;
 }
 
-/** The outer arc's colour: red at 0, amber at 50, green at 100, interpolated.
- *  The 3 stops are the same `--bad`/`--warn`/`--good` values `scoreTier` uses,
- *  inlined for the same reason that function inlines them: a conic-gradient
- *  stop is a colour, not a class.
- *
- *  Continuous rather than banded (maintainer, 2026-10-07): a 69 and a 70 are
- *  not different kinds of job, and the old banding put a blue at 70 to 84, so
- *  the ramp read green, blue, amber, red going down. */
+/** The outer arc's colour: red at 0, amber at 50, green at 100, interpolated
+ *  from the `--bad`/`--warn`/`--good` values (inlined: a gradient stop is a colour,
+ *  not a class). Continuous, because a 69 and a 70 aren't different kinds of job. */
 export function scoreRingColor(score: number): string {
   const stops: [number, [number, number, number]][] = [
     [0, [220, 38, 38]],
@@ -65,14 +85,9 @@ export function scoreRingColor(score: number): string {
   return `rgb(${mix[0]} ${mix[1]} ${mix[2]})`;
 }
 
-/** Whole days elapsed from `iso` until now (duplication audit D-F11 — the
- *  hand-rolled copies of this arithmetic disagreed on floor vs round, so the
- *  same age could read "3d" on one surface and "4d" on another).
- *
- *  `mode` stays explicit at every call site because each existing choice is
- *  load-bearing: "floor" counts completed days (days-in-column / days-in-status),
- *  and "round" snaps to the nearest day (relative time-ago copy).
- *  Returns NaN for an unparseable timestamp — callers guard. */
+/** Whole days from `iso` until now (D-F11). `mode` is explicit everywhere:
+ *  "floor" counts completed days (days in column), "round" snaps to the nearest
+ *  (time-ago copy). NaN for an unparseable timestamp; callers guard. */
 export function daysBetween(iso: string, mode: "floor" | "round" = "floor"): number {
   const days = (Date.now() - new Date(iso).getTime()) / 86_400_000;
   return mode === "round" ? Math.round(days) : Math.floor(days);

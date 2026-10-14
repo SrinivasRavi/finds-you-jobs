@@ -1,9 +1,7 @@
-// Covers: following a company's board (docs/internal/watch-company.md). From a
-// job with no link, the follow dialog takes a careers page, strips its search
-// filters, reads the board, and follows it even when the read fails, showing
-// the link; the job's own link is never touched. The list lives in Settings ›
-// Discover jobs, with each link shown, Change link and Remove. Offline: the
-// boards are RSS-shaped URLs on .localhost, so every read fails at once.
+// Covers: following a company's board (docs/internal/watch-company.md). The
+// follow dialog strips a careers page's filters, reads the board, follows it even
+// when the read fails, and never touches the job's own link. Settings › Discover
+// jobs lists each link with Change link and Remove. Offline: every read fails.
 
 import { expect, test } from "@playwright/test";
 import { sidecarInfo } from "./_helpers";
@@ -81,9 +79,15 @@ test("follow a company from a job with no link, then manage it in Settings", asy
   await page.getByTestId("follow-row-change").click();
   await page.getByTestId("follow-change-input").fill("https://e2e-board2.localhost/feed.rss");
   await page.getByTestId("follow-change-save").click();
-  await expect(row).toHaveCount(1, { timeout: 15_000 });
+  // The new link is followed before the old one goes, so 2 rows show for a moment;
+  // a bare count of 1 can pass on the old row before the change starts.
+  await expect(row.filter({ hasText: "https://e2e-board.localhost/jobs.rss" })).toHaveCount(0, {
+    timeout: 15_000,
+  });
+  await expect(row).toHaveCount(1);
   await expect(row).toContainText("https://e2e-board2.localhost/feed.rss");
   await expect(row).not.toContainText("https://e2e-board.localhost/jobs.rss");
+  await page.screenshot({ path: `${DIR}/02b-link-changed.png` });
 
   // Remove takes it off the list.
   await page.getByTestId("follow-remove").click();

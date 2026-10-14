@@ -19,10 +19,11 @@ import { formatWhen } from "../../shell/datetime";
 import { Icon } from "../../shell/icons";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
+import { scoreText } from "../../shell/scoreText";
 import { AddLinkDialog } from "../jobs/AddLinkDialog";
 import { downloadDocument } from "../../shell/downloadDocument";
 import { JobProvenanceChips } from "../jobs/JobProvenanceChips";
-import { scoreTier, workLabel } from "../jobFormat";
+import { placeLine, placeTitle, scoreTier } from "../jobFormat";
 
 // Translation keys for the attached-document slots' human labels (the artifact
 // kind vocabulary).
@@ -85,7 +86,7 @@ function AttachedDocuments({ docs }: { docs: ApplicationDocument[] }) {
 function JobDetail({ job }: { job: Job }) {
   const { t } = useTranslation();
   const tier = job.score ? scoreTier(job.score.score_0_100) : null;
-  const meta = [job.company, job.location, workLabel(job.work_style)].filter(Boolean).join(" · ");
+  const meta = [job.company, placeLine(job)].filter(Boolean).join(" · ");
   // Same Add-link dialog as the board's detail pane (url-less-jobs.md 9.7):
   // this is where a user looks at a job they're already pursuing, so it's
   // where they're most likely to have found the posting since.
@@ -96,7 +97,9 @@ function JobDetail({ job }: { job: Job }) {
         <Avatar name={job.company} size={10} shape="md" tone="raised" />
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-semibold leading-snug text-ink">{job.title}</div>
-          <div className="truncate text-[12px] text-ink-3">{meta}</div>
+          <div className="truncate text-[12px] text-ink-3" title={placeTitle(job)}>
+            {meta}
+          </div>
         </div>
         {job.score ? (
           <span
@@ -310,7 +313,7 @@ export function DetailModal({
                 {app.job.score.reasons.map((r, i) => (
                   <li key={i} className="flex gap-1.5">
                     <span className="mt-1 size-1 shrink-0 rounded-full bg-accent" />
-                    <span>{r}</span>
+                    <span>{scoreText(r, t)}</span>
                   </li>
                 ))}
               </ul>

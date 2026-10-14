@@ -67,13 +67,8 @@ def test_repeated_setup_does_not_stack_handlers(tmp_path):
 
 
 def test_a_symlinked_log_dir_still_counts_as_the_same_file(tmp_path):
-    """The bug this pins: `baseFilename` is `abspath`, so it keeps symlinks.
-
-    A data dir reached through one (`/tmp` on macOS is `/private/tmp`, and every
-    throwaway test profile lives there) made the idempotence guard compare
-    `/tmp/...` against `/private/tmp/...`, never match, and add a handler per
-    call — so the flight recorder wrote every line once per boot-path call.
-    """
+    """`baseFilename` keeps symlinks, so under /tmp (really /private/tmp on macOS)
+    the idempotence guard never matched and every call added a handler."""
     real = tmp_path / "real"
     real.mkdir()
     link = tmp_path / "link"

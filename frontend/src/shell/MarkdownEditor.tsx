@@ -1,18 +1,8 @@
-// The resume editor — dependency-free WYSIWYG-lite over our markdown dialect.
-//
-// Preview mode is ONE directly-editable rendered surface (contentEditable):
-// the user clicks into the formatted text and types; the toolbar applies real
-// formatting to it. Every edit serializes the DOM back to markdown
-// (shell/mdHtml.ts), so markdown stays the document of record — Raw mode, save,
-// tailoring, and PDF export all see clean markdown and nothing reformats the
-// user's text behind their back. Raw mode is the same single pane as plain
-// markdown source, for power users.
-//
-// React + contentEditable ground rule: while the user types, the DOM is the
-// source of truth — we serialize OUT on every input but never render back IN
-// (that would destroy the caret). The surface re-renders from markdown only on
-// an external value change (Generate finishing, a PDF upload, a mode switch)
-// and on blur (normalization; the caret is gone then anyway).
+// The resume editor: dependency-free WYSIWYG-lite over our markdown dialect.
+// Preview is 1 contentEditable surface; every edit serializes back to markdown
+// (shell/mdHtml.ts), which stays the document of record. While the user types the
+// DOM is the truth: serialize out on input, never render back in (it kills the
+// caret); re-render only on an external value change and on blur.
 
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";

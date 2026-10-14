@@ -1,9 +1,6 @@
-// Save an attached application document to disk.
-//
-// The bearer token can't ride on a plain href, so the blob is fetched and
-// handed to a temporary anchor. 4 copies of this routine had grown 3 different
-// failure behaviours (local state, the global banner, throw), and only one of
-// them named the file when the upload had no filename.
+// Save an attached application document to disk. The bearer token can't ride a
+// plain href, so the blob is fetched and handed to a temporary anchor; 4 copies of
+// this had grown 3 failure behaviours.
 
 import { api } from "../api";
 import i18n from "../i18n";

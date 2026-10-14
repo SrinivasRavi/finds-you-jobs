@@ -1,26 +1,8 @@
-// Update check — "is a newer release out?", and nothing more.
-//
-// finds-you-jobs does not install its own updates. This is one HTTP GET against
-// the GitHub releases API; a newer tag surfaces a link that opens the release
-// page in the user's browser, where they download the installer exactly the way
-// they got the app in the first place. That leaves a single trust chain: the OS
-// verifies our Developer ID signature when the download is opened, and nothing
-// here ever writes over the running binary.
-//
-// The unattended path (download → verify → swap → relaunch) is deliberately
-// absent, along with the Ed25519 updater keypair, the signed .sig artifacts and
-// the latest.json manifest that only existed to serve it. See
-// docs/internal/auto-update.md for what it takes to bring it back.
-//
-// The check is manual only: Settings › About, on a button press. There is no
-// launch-time check and no preference for one, so the app makes NO outbound
-// request the user did not just ask for (vision: no silent network calls). The
-// next version's single toggle is "auto update to the latest version", which
-// governs installing, and it arrives with that feature.
-//
-// Everything degrades in the browser-dev path (no Tauri): `updaterAvailable()`
-// is false and the About panel shows the controls as unavailable, which also
-// keeps the e2e run from making outbound calls.
+// Update check: is a newer release out, and nothing more. 1 GET to the GitHub
+// releases API; a newer tag shows a link to the release page, so the OS verifies
+// our signature when the download opens and nothing overwrites the running app
+// (docs/internal/auto-update.md). Manual only, from Settings › About, so the app
+// makes no request the user didn't ask for; unavailable outside Tauri.
 
 import { rawAppVersion } from "./appVersion";
 import { inTauri } from "./host";

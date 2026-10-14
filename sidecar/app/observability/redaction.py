@@ -1,48 +1,11 @@
-"""Secret-redaction net for logs + the flight recorder (defense-in-depth).
+"""Secret-redaction net for logs and the flight recorder (defense in depth).
 
-The codebase keeps every user secret (Fernet-sealed BYOK keys, the Apify/Brave
-tokens, the LinkedIn `li_at` cookie and the sealed-session token) out of log
-lines, op snapshots and span attributes by **source discipline** — the writing
-code is careful never to place a secret into a message. This module is the
-safety net for the day some future code path slips one in: a pure `redact()`
-that scrubs known secret shapes out of an arbitrary string, plus a
-`logging.Filter` and a `logging.Formatter` that run it on the flight recorder.
-
-It is a *net, not a license to log secrets* — source discipline stays the
-primary control. Precision is favoured over recall on purpose: a redactor that
-mangled normal log content (op ids, UUIDs, hashes, prose, URLs) would be worse
-than useless, so we match specific known prefixes and only fall back to a
-tightly-constrained high-entropy rule.
-
-What IS caught
---------------
-- Fernet tokens (`seal_secret` output / the sealed-session `token`): the
-  base64url `gAAAAA…` shape Fernet always emits.
-- Provider API keys: OpenAI / OpenRouter `sk-…`, Anthropic `sk-ant-…`
-  (a stricter label, matched first).
-- Apify tokens: `apify_api_…`.
-- Brave Search keys: `BSA…`.
-- `Authorization: Bearer <token>` (and bare `Bearer <token>`).
-- `token=<value>` query-string / form params.
-- The LinkedIn `li_at` cookie value — both the `li_at=<value>` header pair form
-  and the storage-state `{"name": "li_at", "value": "<value>"}` cookie-dict form.
-- A conservative high-entropy catch-all for `[A-Za-z0-9_-]` runs of length ≥ 40
-  that mix upper, lower AND digit classes and are not UUID-shaped — this rescues
-  a base64-ish secret that slipped the known prefixes.
-
-What is deliberately NOT caught (to avoid corrupting normal logs)
------------------------------------------------------------------
-- UUIDs (canonical dashed form, and the 32-char lowercase-hex `uuid4().hex`):
-  these are our operation ids / batch ids and are pure lowercase hex, so the
-  catch-all's "must contain an uppercase letter" clause skips them.
-- Lowercase-hex hashes (sha256 digests, git shas, short hex): pure lowercase hex
-  → no uppercase → skipped by the catch-all.
-- A bare UUID that happens to be the loopback API bearer token, when it appears
-  WITHOUT an `Authorization:`/`Bearer`/`token=` context — indistinguishable from
-  an op-id UUID by shape alone, so we rely on the auth-context rules (which do
-  catch it) rather than nuking every UUID in the logs.
-- Ordinary prose and plain URLs without embedded credentials.
-"""
+Source discipline keeps secrets out of logs; this `redact()`, plus a Filter and
+a Formatter, is the net for a slip. Precision over recall. Caught: Fernet
+tokens, `sk-`/`sk-ant-` keys, Apify and Brave keys, Bearer tokens, `token=`
+params, `li_at` values, and a high-entropy run of 40+ mixing upper, lower and
+digits. Not caught: UUIDs and lowercase-hex hashes (no uppercase), a bare UUID
+token outside an auth context, plain prose and URLs."""
 
 from __future__ import annotations
 
@@ -118,12 +81,8 @@ def _redact_entropy(text: str) -> str:
 
 
 def redact(text: str) -> str:
-    """Return `text` with every known secret shape replaced by `«redacted:…»`.
-
-    Pure and total: never raises for a `str` input, returns the input unchanged
-    when nothing matches. Non-`str` input is coerced with `str()` first so the
-    filter can hand us whatever a log record carried.
-    """
+    """`text` with every known secret shape replaced by `«redacted:…»`. Total: never
+    raises, returns the input unchanged when nothing matches; non-str is coerced."""
     if not isinstance(text, str):
         text = str(text)
     if not text:
@@ -146,13 +105,8 @@ def _safe_redact(text: str) -> str:
 
 
 class RedactionFilter(logging.Filter):
-    """Scrub secret-shaped substrings from a record's message (and its args).
-
-    Attached to a handler so it also sees records propagated from child loggers.
-    A `logging.Filter` must never raise — a throwing filter silently breaks the
-    whole logging call — so every step is wrapped and the record is always kept
-    (`return True`), modified only when redaction actually changed something.
-    """
+    """Scrub secret-shaped substrings from a record's message and args. A filter
+    must never raise, so every step is guarded and the record is always kept."""
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 — stdlib name
         try:
@@ -169,14 +123,8 @@ class RedactionFilter(logging.Filter):
 
 
 class RedactingFormatter(logging.Formatter):
-    """A formatter that scrubs the FULLY rendered line — message AND traceback.
-
-    The `RedactionFilter` cleans `record.msg`/`args`, but an exception's
-    traceback text is produced by the formatter (`formatException`), so the
-    flight-recorder handler wraps its formatter in this to catch a secret that
-    surfaced inside a traceback frame. Schema/format string are unchanged; only
-    the final string is passed through `redact`.
-    """
+    """Scrub the fully rendered line, traceback included, which the formatter
+    produces after `RedactionFilter` runs."""
 
     def format(self, record: logging.LogRecord) -> str:
         try:

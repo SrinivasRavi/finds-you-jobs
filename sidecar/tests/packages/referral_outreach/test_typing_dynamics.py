@@ -1,17 +1,9 @@
 # voyager_py/tests/test_typing_dynamics.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""Keystroke dynamics — the DISTRIBUTION, not just "the code runs".
-
-Regression cover for the defect where `human_type` drew one delay per message
-and handed it to Playwright's `delay=`, giving exactly zero inter-key variance
-inside a message and a flat ~93 ms dwell. Every assertion here is about the
-shape of the sampled sequence: non-zero variance, a median in the measured
-band, a right-skewed tail (mean > median), and a floor no human can beat.
-
-Targets come from `docs/internal/evidence/2026-08-06-focus-tab-probe/
-research-digest.md` ("Typing"): at ~50 WPM median IKI 164 ms, mean 245 ms,
-CV ~1.0, p5 68 ms; dwell median 105 ms, per-subject CV 0.243.
-"""
+"""Keystroke dynamics: the distribution, not just that it runs. Regression for
+1 delay per message (0 variance, a flat 93 ms dwell): non-zero variance, a
+median in band, a right skew, a human floor. Targets:
+evidence/2026-08-06-focus-tab-probe/research-digest.md ("Typing")."""
 
 # ruff: noqa: S311 — seeded PRNGs make these distribution assertions reproducible;
 # nothing here is cryptographic.

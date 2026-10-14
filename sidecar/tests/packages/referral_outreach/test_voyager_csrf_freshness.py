@@ -1,24 +1,12 @@
 # voyager_py/tests/test_voyager_csrf_freshness.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""The csrf-token header must equal the JSESSIONID cookie the SAME voyager
-fetch carries — the 2026-08-14 cold-boot 403 (`provenance.md`, "Live csrf-token
-derivation"; evidence in `docs/internal/evidence/2026-08-15-voyager-403-spike/`).
+"""The csrf-token header must equal the JSESSIONID the same voyager fetch carries
+(the 2026-08-14 cold-boot 403; provenance.md, evidence/2026-08-15-voyager-403-spike).
 
-`PlaywrightLinkedinAPI.__init__` snapshots the header from the jar at
-construction, and `_fetch`'s origin assertion can NAVIGATE after that snapshot.
-On a cold broker surface after a clean Chrome exit the jar carries no
-JSESSIONID (session cookies are purged), so the snapshot is empty; the feed
-load then mints a fresh JSESSIONID, and the fetch used to send the new cookie
-with the stale header — voyager answers 403, which the profile path misreports
-as ProfileInaccessibleError. The fix derives the header from the live jar at
-fetch time (Python re-read + in-page document.cookie as the last word).
-
-ZERO linkedin.com: the REAL client + a broker-backed `AccountSession` run over
-Playwright route interception — the feed and voyager URLs are fulfilled
-locally (the feed mints/rotates JSESSIONID via Set-Cookie; the voyager route
-enforces header == minted cookie, 403 on mismatch, exactly the live contract),
-and every other request is aborted before it can leave the machine.
-"""
+A cold surface has no JSESSIONID, so the header snapshot was empty and the feed
+then minted a fresh cookie: 403. The fix reads the live jar at fetch time.
+0 linkedin.com: route interception fulfils the feed and voyager locally and
+aborts everything else."""
 
 from __future__ import annotations
 

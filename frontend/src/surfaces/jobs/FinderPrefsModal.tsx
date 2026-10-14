@@ -71,16 +71,10 @@ export function FinderPrefsModal({
   prefs: Settings["job_prefs"];
   onClose: () => void;
 }) {
-  // Seeded from the STORED preferences and saved back through the same
-  // /api/settings path onboarding uses — which also threads the cadence into
-  // the scan schedule server-side. (2026-07-12 audit P0-2: this modal was a
-  // hardcoded mock stub whose "Save & rescan" rescanned with stale prefs.)
-  //
-  // `prefs` is a required prop, not a query read, because these are `useState`
-  // seeds: they run once and nothing re-seeds them. Reading an unresolved
-  // query here left roles and locations empty for the modal's whole life, and
-  // the first edit then autosaved those empties over the user's real excludes
-  // (S-C72).
+  // Seeded from the stored preferences and saved through the same /api/settings
+  // path onboarding uses. `prefs` is a required prop because these are useState
+  // seeds: reading an unresolved query left them empty, and the first edit
+  // autosaved the empties over the user's real excludes (S-C72).
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [roles, setRoles] = useState<string[]>(prefs.role_aliases);
@@ -100,12 +94,8 @@ export function FinderPrefsModal({
   const { data: schedules } = useSchedules();
   const scanSchedule = schedules?.find((s) => s.kind === "scan");
 
-  // Autosave (maintainer 2026-07-22 #2): edits persist on their own, matching
-  // the rest of the app's instant-persist controls (Settings toggles, the
-  // Tracked companies roster right above). "Rescan now" only triggers the
-  // scan — flushing any still-debouncing edit first so it never scans stale
-  // values. The description carries the "auto saved" promise; the footer-left
-  // "Changes saved!" is the per-edit confirmation.
+  // Autosave, like the app's other instant-persist controls. "Rescan now" only
+  // scans, flushing any debouncing edit first so it never scans stale values.
   const snapshot = JSON.stringify({
     roles,
     locations,

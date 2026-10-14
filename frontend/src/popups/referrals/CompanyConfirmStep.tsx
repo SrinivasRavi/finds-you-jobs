@@ -1,11 +1,6 @@
-// Company-confirm step (FR-NW-02) — pick the right entity before we search its
-// current employees. Single-select, distinct from the people multi-select in
-// review. (Extracted from ReferralsModal.tsx 2026-07-25, F-M6 monolith split —
-// pure move, zero behavior change. `pasteUrl` stays at the root: it must
-// survive the confirm → searching → confirm bounce after a bad pasted URL,
-// which unmounts this step.) Not memoized: it renders only during the
-// `confirm` phase, and its confirm callback closes over root state — memo
-// would buy nothing real.
+// Company-confirm step (FR-NW-02): pick the right entity before searching its
+// employees. `pasteUrl` stays at the root because it must survive the bounce back
+// here after a bad pasted URL. Not memoized: it renders only in this phase.
 
 import { Trans, useTranslation } from "react-i18next";
 

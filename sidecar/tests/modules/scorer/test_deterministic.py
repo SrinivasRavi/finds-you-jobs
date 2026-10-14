@@ -1,5 +1,5 @@
 """The zero-LLM scorer: Settings > Scoring "Keyword scoring", and the grey floor
-behind a failed AI score. See the module's own docstring for why the rubric is a
+behind a failed LLM score. See the module's own docstring for why the rubric is a
 fresh design rather than a JustHireMe port."""
 
 from __future__ import annotations
@@ -8,12 +8,9 @@ from sidecar.modules.scorer.deterministic import MIN_JD_CHARS, score_determinist
 
 
 def jd(body: str) -> str:
-    """A JD fixture of realistic length. The rubric cases below used 77-char
-    one-liners, which is shorter than any real posting (the shortest description
-    on the maintainer's install is 464 chars) and now sits under `MIN_JD_CHARS`,
-    where scoring refuses. `body` carries the signal each test is about; the
-    filler is deliberately generic so it adds no skills, no years, and no
-    red-flag terms of its own."""
+    """A JD fixture of realistic length: the old 77-char cases now sit under
+    `MIN_JD_CHARS`. `body` carries each test's signal; the filler adds no skills,
+    years or red flags."""
     filler = (
         " The team ships to production continuously and reviews each other's work. "
         "You will collaborate with product and design, take part in on-call, and "
@@ -69,12 +66,9 @@ def test_red_flag_term_caps_score_regardless_of_overlap():
 
 
 # --- the too-thin-to-score floor (S-C27) --------------------------------------
-# A JD under MIN_JD_CHARS scores 0. Before this, the score divided overlap by the
-# JD's OWN term count, so a 8-term title header scored on a handful of matches
-# while a 250-term real JD was graded strictly: measured on the maintainer's
-# install, description-less jobs averaged 53.0 against 44.9 for described ones
-# and outranked them on the board. The 0 is a refusal to rate, carried in
-# `reasons`, not a claim that the role is a bad fit.
+# A JD under MIN_JD_CHARS scores 0, a refusal carried in `reasons`. Overlap over
+# the JD's own term count had description-less jobs averaging 53.0 against 44.9
+# and outranking real ones.
 
 RESUME = "Senior backend engineer. 8 years with Python, Django, PostgreSQL, AWS. Mumbai, India."
 

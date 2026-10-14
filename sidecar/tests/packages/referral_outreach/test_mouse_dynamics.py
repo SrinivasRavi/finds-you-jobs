@@ -1,18 +1,10 @@
 # voyager_py/tests/test_mouse_dynamics.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
 # ruff: noqa: S311 — seeded PRNGs make these distribution assertions reproducible.
-"""Pointer motion and pointer pressure.
-
-Two things are asserted here that a "does it run" test would miss:
-
-  - the SHAPE of the trajectory (movement time and peak velocity on the
-    digest's reference reach, an early velocity peak, a bowed path, several
-    submovements, a Fitts fit that is deliberately NOT perfect) — section 17.3 is
-    explicit that a generator whose moments are too clean is its own signature;
-  - the values a real page observes, against REAL Chromium: moves before the
-    click (0 was the measured baseline) and `pressure === 0.5` on pointerdown
-    (0 was the measured baseline, and no physical mouse emits 0).
-"""
+"""Pointer motion and pressure. The trajectory's shape (movement time, early
+velocity peak, a bowed path, submovements, a deliberately imperfect Fitts fit;
+section 17.3) and what real Chromium sees: moves before the click, and
+`pressure === 0.5` on pointerdown (the baseline was 0 for both)."""
 
 from __future__ import annotations
 

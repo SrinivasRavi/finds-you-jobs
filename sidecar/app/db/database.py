@@ -28,16 +28,11 @@ from .repos import Repos
 # an explicit one-way importer is the only sanctioned migration path.
 _APP_DIR_NAME = "finds-you-jobs"
 
-# Windows only. The NSIS installer runs in `currentUser` mode, which puts
-# $INSTDIR at %LOCALAPPDATA%\<productName> — the SAME path _APP_DIR_NAME would
-# give us, so the program would install itself on top of the user's database.
-# The bundle identifier is Tauri's own app-data convention (it is what
-# `app_data_dir()` returns, and where the webview already keeps its profile),
-# so moving here separates the two and, for free, makes the uninstaller's
-# "delete the application data" checkbox honest: it does
-# `RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`, which until now cleared webview
-# cookies and left the database behind. Must stay in step with
-# `identifier` in src-tauri/tauri.conf.json.
+# Windows only. The NSIS installer's `currentUser` mode puts $INSTDIR where
+# _APP_DIR_NAME would put the database, so the app would install over it. The
+# bundle identifier is Tauri's app-data convention, and it makes the uninstaller's
+# "delete application data" box remove the database too. Must match `identifier`
+# in src-tauri/tauri.conf.json.
 _WINDOWS_APP_DIR_NAME = "com.finds-you-jobs.app"
 
 

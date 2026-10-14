@@ -1,21 +1,9 @@
-"""User-editable LLM prompts — file-based overrides in the app-data dir.
+"""User-editable LLM prompts: file overrides in the app-data dir.
 
-Every module's "skill" markdown (the system prompt) is exposed in Settings,
-editable, and persisted across sessions (architecture section 11). The module seam is
-a `skill_md` / `system_prompt` parameter on each bounded op (section 5): when the app
-passes an override, it replaces the module's on-disk default; absent, behavior
-is exactly as before.
-
-**The app layer owns storage** (section 4.0/section 5 — modules never read app storage). An
-override is a plain file at `<data_dir>/prompts/<kind>.md`; Reset deletes it. No
-DB migration. Each kind's *default* text is the module's own `load_skill()` (or
-the profiler's `SYSTEM_PROMPT`), so the wire's `default_md` and Reset both reflect
-whatever the shipped skill file currently says.
-
-The prior repository also registers `prep` (retired in this rebuild —
-`docs/internal/archived/applier-as-built.md` section 2) and `networker_draft` (returns with
-the Referral Outreach commits).
-"""
+Each module's skill markdown is editable in Settings (architecture section 11);
+a passed `skill_md`/`system_prompt` replaces the default. The app owns storage:
+`<data_dir>/prompts/<kind>.md`, deleted by Reset. Each kind's default is the
+module's own `load_skill()` (or the profiler's `SYSTEM_PROMPT`)."""
 
 from __future__ import annotations
 
@@ -95,12 +83,12 @@ def _networker_draft_default() -> str:
 PROMPT_KINDS: dict[str, PromptKind] = {
     p.kind: p
     for p in (
-        # "AI scoring", not "Job scoring": 3 of the 4 scoring methods never see
-        # this file. Keyword scoring is Python rules, Fast scoring sends typed
-        # questions with their own rubric bands, and On-device has no prompt
+        # "LLM scoring", not "Job scoring": 3 of the 4 scoring methods never see
+        # this file. Keyword scoring is Python rules, Jev scoring sends typed
+        # questions with their own rubric bands, and Laya scoring has no prompt
         # either. Naming it after the job rather than the method told the user
         # it governed all 4 (maintainer, 2026-10-07).
-        PromptKind("score", "AI scoring", _score_default),
+        PromptKind("score", "LLM scoring", _score_default),
         PromptKind("tailor", "Resume tailoring", _tailor_default),
         PromptKind("cover", "Cover letter", _cover_default),
         PromptKind("extract", "Application profile extraction", _extract_default),

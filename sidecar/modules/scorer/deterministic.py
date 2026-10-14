@@ -1,47 +1,25 @@
-"""The zero-LLM fit scorer: Settings > Scoring "Keyword scoring", and the grey
-floor behind a failed AI score. Free, 1 ms a job, and honest about what word
-overlap can and cannot tell you.
+"""The zero-LLM fit scorer: "Keyword scoring", and the grey floor behind a failed
+LLM score. Free, 1 ms a job.
 
-**Not a port.** JustHireMe's `ranking/scoring_engine.py` was read in full as a
-structural reference before writing this — weighted criteria plus a hard-cap
-floor is a sound shape, worth learning from. Its actual vocabulary is not:
-it's calibrated for freelance-gig postings ("Gig Title", parsing a `$` figure
-as a project *budget*, red flags like "lowest bidder"/"commission only"), not
-W2 job postings, and porting it directly would import irrelevant signal into
-this context (docs/internal/discovery.md, "JustHireMe scoring" entry,
-2026-07-21). This rubric is written fresh and deliberately simple — a real v0
-second opinion, not a claim of parity with the LLM scorer.
-
-Reuses what the codebase already has instead of re-detecting it: red-flag
-terms come straight from `scraper.quality.RED_FLAG_TERMS`, which already runs
-live in the discovery pipeline, rather than a second hand-maintained list.
-
-Weighted criteria, one modifier, one hard cap:
-- Skill/keyword overlap (55%, or 60% when no level is readable): normalized
-  word overlap between the resume and the JD text. No taxonomy, no embeddings.
-- Years-of-experience match (30%, or 40%): the JD's stated "N+ years"
-  requirement (if any) against the resume's own stated tenure (if any).
-- Level fit (15%): the rung the title states against the best rung the resume
-  states. Dropped from the weighting entirely when either side states none,
-  which is 23 of 93 real titles, so an unstated level is never scored as a bad
-  one.
-- Location modifier (-15): a posting in a location the user did not ask for,
-  from `modules/geo`. The same policy the LLM path applies, so the 2 stay
-  comparable, and a location that cannot be read from the field costs nothing.
-- Red-flag cap — a `quality.RED_FLAG_TERMS` hit clamps the score to 40
-  regardless of the weighted total (a real fabrication/scam-risk floor, not a
-  soft nudge).
-
-Tagged `scorer_impl="scorer-deterministic"` at the caller (`JobScore` is
-already schema-ready for more than one scorer implementation per job — no
-migration needed) so it is never confused with `scorer-llm` output.
-"""
+Written fresh: JustHireMe's engine was read as a structural reference, but its
+vocabulary is for freelance gigs (discovery.md, 2026-07-21). Weighted: skill
+overlap 55% (60% with no level), years 30% (40%), level 15% (dropped when either
+side states none); a -15 location modifier from `modules/geo`; and a
+`quality.RED_FLAG_TERMS` hit caps the score at 40. Tagged
+`scorer-deterministic` by the caller."""
 
 from __future__ import annotations
 
 import re
+from typing import Any
 
-from sidecar.modules.geo.resolve import Verdict, Wanted, match, resolve_location
+from sidecar.modules.geo.resolve import (
+    LOCATION_REASONS,
+    Verdict,
+    Wanted,
+    match_reason,
+    resolve_location,
+)
 from sidecar.modules.scraper.quality import RED_FLAG_TERMS
 
 from .level import LEVEL_ORDER, Level, extract_level
@@ -65,27 +43,11 @@ _STOPWORDS = frozenset(
 _WORD_RE = re.compile(r"[a-z][a-z0-9+#./-]{1,}")
 _YEARS_RE = re.compile(r"(\d{1,2})\+?\s*(?:years|yrs)\b")
 
-# Below this many characters a JD is too thin to rate, and the answer is 0.
-#
-# The skill criterion divides overlap by the JD's OWN term count, so a short JD
-# is graded on a tiny denominator: one matching word moves a 250-term posting by
-# 0.2 points and an 8-term title header by 7.5. The years criterion compounds it,
-# returning a neutral-positive 70 whenever the JD names no bar — which a header
-# never can — so 40% of such a score is a constant and the floor is 28 even with
-# zero overlap. Net effect measured on the maintainer's install 2026-08-27: jobs
-# with NO description averaged 53.0 against 44.9 for described ones, and 34% of
-# what counted as a "match" was company or city text (`india` matched 211 times).
-# The scorer was rewarding the absence of a job description and ranking those
-# jobs above properly-described ones (S-C27, and S-A6 for why they arrive empty).
-#
-# 0 is a refusal to rate, carried in `reasons`, not a claim that the role is bad.
-# It sorts an unassessable job below every assessed one, which is where it goes.
-#
-# 200 is the same bar `_shared/job_input.py` already uses to reject a fetched
-# page as "likely a JS-only page", so the codebase keeps one number for "too
-# little text to be a job description". Safely clear of real postings: on that
-# same install the shortest genuine description is 464 chars and nothing at all
-# falls between 0 and 464.
+# Below this many characters a JD is too thin to rate, and the answer is 0, a
+# refusal carried in `reasons`, which sorts it below every assessed job (S-C27,
+# S-A6). Short JDs inflated: no-description jobs averaged 53.0 against 44.9.
+# 200 matches `_shared/job_input.py`'s JS-only-page bar; the shortest real JD on
+# that install was 464 chars. Evidence: docs/internal/status.md S-C27.
 MIN_JD_CHARS = 200
 
 # A red-flag hit clamps the keyword score here. The weight lens re-applies it.
@@ -140,15 +102,21 @@ def _resume_level(master_md: str) -> Level | None:
     return max(found, key=lambda lvl: _LEVEL_RANK[lvl]) if found else None
 
 
-def _level_fit(title: str, master_md: str) -> tuple[int, str] | None:
-    """0 to 100 for how close the 2 rungs are, or None when either is unstated."""
+def _level_fit(title: str, master_md: str) -> tuple[int, str, str] | None:
+    """0 to 100 for how close the 2 rungs are, and the 2 rungs, or None when
+    either is unstated."""
     posting = extract_level(title)
     candidate = _resume_level(master_md)
     if posting is None or candidate is None:
         return None
     distance = abs(_LEVEL_RANK[posting] - _LEVEL_RANK[candidate])
     score = {0: 100, 1: 75, 2: 50}.get(distance, 25)
-    return score, f"posting reads {posting}, resume reads {candidate}"
+    return score, posting, candidate
+
+
+def _code(key: str, **args: Any) -> dict[str, Any]:
+    """A line as its key and facts: the screen words it (audit section 5)."""
+    return {"key": key, "args": args}
 
 
 def score_deterministic(
@@ -159,22 +127,19 @@ def score_deterministic(
     location: str = "",
     wanted: Wanted | None = None,
 ) -> ScoreResult:
-    """Score `master_md` against raw `job_text` with zero LLM calls.
-
-    `title`, `location` and `wanted` are optional so every existing caller keeps
-    working: without them the level and location axes are simply not assessed,
-    which is the same honest absence as a posting that states neither.
-
-    A JD under `MIN_JD_CHARS` scores 0 — see that constant for why rating one is
-    worse than refusing to."""
+    """Score `master_md` against `job_text` with 0 LLM calls. Without `title`,
+    `location` and `wanted` those axes aren't assessed. A JD under `MIN_JD_CHARS`
+    scores 0 (see that constant)."""
     if len((job_text or "").strip()) < MIN_JD_CHARS:
+        chars = len((job_text or "").strip())
         return ScoreResult(
             score=0,
             reasons=[
                 "No usable job description: "
-                f"{len((job_text or '').strip())} chars, under the {MIN_JD_CHARS}-char "
+                f"{chars} chars, under the {MIN_JD_CHARS}-char "
                 "minimum. Scoring a title and company name measures neither."
             ],
+            reason_codes=[_code("kw.no_description", chars=chars, min=MIN_JD_CHARS)],
             breakdown_md=(
                 "- No score: the posting carries no job description, so fit can't be "
                 "assessed. This is a missing-data marker, not a judgement on the role."
@@ -195,11 +160,15 @@ def score_deterministic(
         + level_weight * (level[0] if level else 0)
     )
 
+    found, total = len(overlap), len(jd_terms)
+    # `None` is "unstated"; the screen words it.
+    offered, required = offered_years or None, required_years or None
     factors = [
         Factor(
             "core_stack",
             skill_score / 100,
-            evidence=f"{len(overlap)} of {len(jd_terms)} posting terms appear in the resume",
+            evidence=f"{found} of {total} posting terms appear in the resume",
+            code=_code("ev.skills", found=found, total=total),
         ),
         Factor(
             "years",
@@ -208,41 +177,59 @@ def score_deterministic(
                 f"{offered_years or 'unstated'} on the resume against "
                 f"{required_years or 'unstated'} required"
             ),
+            code=_code("ev.years", offered=offered, required=required),
         ),
     ]
     reasons = [
-        f"Skill-keyword overlap: {len(overlap)}/{len(jd_terms)} JD terms found in "
+        f"Skill-keyword overlap: {found}/{total} JD terms found in "
         f"resume ({skill_score}/100, weight {skill_weight:.0%}).",
         f"Experience: {offered_years or 'unstated'} yrs on resume vs "
         f"{required_years or 'unstated'} yrs required ({years_score}/100, weight "
         f"{years_weight:.0%}).",
+    ]
+    reason_codes = [
+        _code("kw.skills", found=found, total=total, score=skill_score,
+              weight=round(skill_weight * 100)),
+        _code("kw.years", offered=offered, required=required, score=years_score,
+              weight=round(years_weight * 100)),
     ]
     breakdown_lines = [
         f"- Skill overlap: {skill_score}/100 (weight {skill_weight:.0%})",
         f"- Experience match: {years_score}/100 (weight {years_weight:.0%})",
     ]
     if level is not None:
-        level_score, level_why = level
-        factors.append(Factor("level", level_score / 100, evidence=level_why))
+        level_score, posting_level, resume_level = level
+        level_why = f"posting reads {posting_level}, resume reads {resume_level}"
+        factors.append(Factor(
+            "level", level_score / 100, evidence=level_why,
+            code=_code("ev.level", posting=posting_level, candidate=resume_level),
+        ))
         reasons.append(f"Seniority: {level_why} ({level_score}/100, weight {level_weight:.0%}).")
+        reason_codes.append(_code(
+            "kw.level", posting=posting_level, candidate=resume_level, score=level_score,
+            weight=round(level_weight * 100),
+        ))
         breakdown_lines.append(
             f"- Seniority fit: {level_score}/100 (weight {level_weight:.0%}), {level_why}"
         )
 
     penalty = 0
     if wanted is not None and location.strip():
-        verdict, why = match(resolve_location(location), wanted)
+        verdict, why_key, why_args = match_reason(resolve_location(location), wanted)
+        why = LOCATION_REASONS[why_key].format(**why_args)
         if verdict is not Verdict.UNVERIFIABLE:
             factors.append(
                 Factor(
                     "location_preference",
                     1.0 if verdict is Verdict.MATCH else 0.0,
                     evidence=why,
+                    code=_code(why_key, **why_args),
                 )
             )
         if verdict is Verdict.MISS:
             penalty = LOCATION_MISS_PENALTY
         reasons.append(f"Location: {why}")
+        reason_codes.append(_code("kw.location", why=_code(why_key, **why_args)))
         breakdown_lines.append(f"- Location: {why}")
 
     lowered = (job_text or "").lower()
@@ -252,11 +239,14 @@ def score_deterministic(
         breakdown_lines.append(
             f"- Location modifier: -{penalty} for a location you did not ask for"
         )
+        reasons.append(f"Location modifier: -{penalty} for a location you did not ask for.")
+        reason_codes.append(_code("kw.penalty", penalty=penalty))
     if red_flag:
         final = min(final, RED_FLAG_CAP)
         reasons.append(
             f"Cap applied: red-flag term {red_flag!r} detected — capped at {RED_FLAG_CAP}."
         )
+        reason_codes.append(_code("kw.red_flag", term=red_flag, cap=RED_FLAG_CAP))
         breakdown_lines.append(
             f"- Cap: red-flag term {red_flag!r} detected (score capped at {RED_FLAG_CAP})"
         )
@@ -266,5 +256,6 @@ def score_deterministic(
         reasons=reasons,
         breakdown_md="\n".join(breakdown_lines),
         factors=factors,
+        reason_codes=reason_codes,
         usage=Usage(),  # zero-LLM — no tokens/cost, matches Usage's "free beyond bandwidth"
     )

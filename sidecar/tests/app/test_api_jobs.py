@@ -1,14 +1,8 @@
-"""Covers: A4-followup HTTP surface (JD-gap work).
+"""Covers: the A4 follow-up HTTP surface.
 
-Route behavior through the real app (TestClient → lifespan → real migration +
-runner + seeded-disabled schedules):
-
-- schedule management (A4 flag #2): list, enable/disable + set interval,
-  run-now (score_new fan-out; scan single op) — seeded disabled by default;
-- Add a job posting's live path (A4 flag #3, US-JB-07): `/api/jobs/preview` extracts
-  editable fields (probe faked — no live network), and `POST /api/jobs` persists
-  with dedup + tombstone discipline and enqueues a score.
-"""
+Through the real app: schedule management (list, enable, interval, run-now;
+seeded disabled), and Add a job posting (US-JB-07): `/api/jobs/preview` with the
+probe faked, and `POST /api/jobs` with dedup, tombstones and a score enqueue."""
 
 from __future__ import annotations
 
@@ -424,12 +418,8 @@ def test_retry_operation_reenqueues_same_kind(
 def test_retry_stamps_failed_row_with_retried_as(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
-    """A retried FAILED row carries `result_ref.retried_as` → the ledger renders
-    it as "Retried" instead of a permanently nagging red row (2026-07-12).
-
-    The rows are created directly in the DB (never submitted to the live
-    runner) so their terminal states are OURS — an earlier version raced the
-    runner's own transitions and flaked."""
+    """A retried failed row carries `result_ref.retried_as`, so the ledger shows
+    "Retried". Rows are created in the DB directly, so the runner can't race them."""
     app, client = app_client
     with app.state.db.repos() as repos:
         op = repos.operations.create("score", {"job_id": "nope"})

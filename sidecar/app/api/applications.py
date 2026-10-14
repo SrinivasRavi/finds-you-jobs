@@ -20,14 +20,23 @@ from sidecar.modules.scraper.quality import evaluate as quality_evaluate
 
 from .. import documents as docstore
 from ..db.base import now_utc
-from ..db.models import APPLY_RUN_ACTIVE_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
+from ..db.models import (
+    APPLY_RUN_ACTIVE_STATUSES,
+    OP_ACTIVE_STATES,
+    OP_ALL_STATES,
+    apply_run_in_review,
+)
 from ..priority import STATS_KEY, zband_priority
 from ..registry import networker_ops as networker_ops
 from ..registry.apply_op import (
+    NO_APPLICATION_PROFILE_DETAIL,
     NO_POSTING_URL_DETAIL,
+    _dev_enabled,
     advance_card_to_applied,
     finalize_run_failed,
     finalize_run_interrupted,
+    has_application_profile,
+    has_extracted_profile,
     purge_run_dirs,
 )
 from ..registry.persistence import (
@@ -35,6 +44,7 @@ from ..registry.persistence import (
 )
 from . import dto
 from .deps import db as _db
+from .deps import engines as _engines
 from .deps import found as _found
 from .deps import runner as _runner
 from .jobs import (
@@ -242,13 +252,10 @@ async def create_manual_application(
     resume: Annotated[UploadFile | None, File()] = None,
     cover: Annotated[UploadFile | None, File()] = None,
 ) -> dto.ApplicationDTO:
-    """Log a job the user already applied to OUTSIDE the app ("Add a job
-    application" — the Tracker sibling of the board's Add a job posting). Upserts the
-    job with the same dedup/tombstone discipline, creates the card as
-    `origin=manual` in a post-referral stage (default Applied), and attaches the
-    resume/cover the user actually submitted (optional) as content-addressed,
-    deduped documents. No score is enqueued — they already applied, so fit
-    ranking is moot."""
+    """Log a job the user already applied to outside the app ("Add a job
+    application"). Upserts the job with the same dedup and tombstone rules, creates
+    the card as `origin=manual` (default Applied), and attaches any submitted resume
+    or cover as deduped documents. No score is enqueued: they already applied."""
     db = _db(request)
     canonical, digest = _identity(canonical_url, description)
     if canonical is None and digest is None:
@@ -360,12 +367,10 @@ async def attach_application_document(
     kind: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
 ) -> dto.ApplicationDTO:
-    """Attach a resume/cover FILE to an EXISTING application — the Upload button
-    on the Tailored resume / Cover letter editors. Stores it content-addressed
-    (deduped) and links it as the application's `kind` slot, replacing any prior
-    file for that kind (one resume + one cover per card). This is the exact
-    document the user submits on Apply / the record for a manual card logged
-    without a file. `kind` ∈ {'tailored_resume', 'cover_letter'}."""
+    """Attach a resume or cover file to an existing application (Upload in the
+    tailored and cover editors). Stored content-addressed and linked as the card's
+    `kind` slot, replacing any prior file for that kind; it's the document submitted
+    on Apply. `kind` is 'tailored_resume' or 'cover_letter'."""
     if kind not in PACKET_KINDS:
         raise HTTPException(
             status_code=422, detail=f"kind must be one of {list(PACKET_KINDS)}"
@@ -467,12 +472,9 @@ def generate_packet(
 def patch_artifact(
     request: Request, application_id: str, kind: str, payload: dto.ArtifactPatch
 ) -> dto.ApplicationDTO:
-    """Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
-
-    Targets the head (non-superseded) artifact of `kind` for this application.
-    `markdown` overwrites the text (edits apply only to this variant — the master
-    is untouched); `approved` stamps/clears `approved_at` (the `ready ⇄ approved`
-    flip). Per-artifact, so the resume and cover letter are approved separately."""
+    """Persist an edited variant and the Approve flip (US-RES-02 / FR-RES-02) on the
+    head artifact of `kind`. `markdown` overwrites this variant only; `approved`
+    stamps or clears `approved_at`. Resume and cover are approved separately."""
     if kind not in PACKET_KINDS:
         raise HTTPException(status_code=400, detail=f"unknown artifact kind {kind!r}")
     with _db(request).repos() as repos:
@@ -685,23 +687,30 @@ def start_apply(
             # Single-flight per card: reopening the companion binds to the
             # active run instead of double-launching a browser (section 8.2).
             return dto.apply_run_dto(active)
-        # Before `apply_runs.create`, never after: a run row against a job
-        # with no posting link would sit in the Applier panel as a failure the
-        # user can't act on, and the browser would launch at nothing. 409 so
-        # the card can open the Add-link dialog and start the run once the
-        # link lands (url-less-jobs.md sections 5.4 and 9.8).
-        # The dev seam carries its own form, because a local fixture is a
-        # `file://` URL and `canonicalize_url` deliberately rejects any scheme
-        # that isn't http(s) — a posting's identity cannot be a path on this
-        # machine. So a dev run's fixture has nowhere to live on the job row,
-        # and pretending otherwise is what silently cost the Applier its only
-        # end-to-end gate when the no-link guard landed. Production is
-        # unchanged: no dev knobs, no override, and a URL-less card still 409s.
-        dev_form_url = str((payload.dev or {}).get("form_url") or "")
+        # Before `apply_runs.create`: a run against a job with no link would sit in the
+        # panel as a failure the user can't act on. 409, so the card opens Add link
+        # (url-less-jobs.md sections 5.4 and 9.8). The dev seam carries its own form: a
+        # local fixture is a file:// URL, which `canonicalize_url` rejects, so it can't
+        # live on the job row. Production has no dev knobs; a URL-less card still 409s.
+        dev_form_url = str((payload.dev or {}).get("form_url") or "") if _dev_enabled() else ""
         if not job.canonical_url and not dev_form_url:
             raise HTTPException(status_code=409, detail=NO_POSTING_URL_DETAIL)
         needs_intent = app_row.intent != "apply"
         job_url = job.canonical_url or dev_form_url
+        has_master = repos.profile.get_current() is not None
+        has_facts = has_application_profile(repos)
+        has_read = has_extracted_profile(repos)
+        reading = repos.operations.any_in_flight("extract")
+
+    if not has_facts:
+        # Applicant details must be confirmed once before the first apply (audit A5).
+        # With nothing read yet, start reading the resume so the form arrives prefilled.
+        engines = _engines(request)
+        if has_master and not has_read and not reading and (
+            engines is None or engines.resolve("extract") is not None
+        ):
+            runner.submit("extract", {}, requested_by="user")
+        raise HTTPException(status_code=409, detail=NO_APPLICATION_PROFILE_DETAIL)
 
     snapshot: dict[str, Any] = {"application_id": application_id}
     if payload.retry_of_run_id:
@@ -709,14 +718,10 @@ def start_apply(
     if payload.dev:
         snapshot.update({f"dev_{k}": v for k, v in payload.dev.items()})
 
-    # Write phase — settle the exclusive intent (roadmap section 5.1) and create the
-    # durable run BEFORE enqueueing the op, in its own committed txn (no
-    # pending write is held across runner.submit — the 2026-07-17 locked-DB
-    # discipline). The worker can dispatch within milliseconds of submit, and
-    # it must adopt THIS row (by snapshot `run_id`): creating the row after
-    # submit raced the op's `get_by_operation` lookup, which then minted a
-    # duplicate run while the panel watched the route's row sit `queued`
-    # forever. Honest initial state: QUEUED until the op actually starts.
+    # Write phase: settle the intent (section 5.1) and create the run in its own
+    # committed transaction before enqueueing the op. The worker can dispatch within
+    # ms and must adopt this row by `run_id`; creating it after submit raced the op,
+    # which minted a duplicate run. QUEUED until the op starts.
     with db.repos() as repos:
         if needs_intent:
             repos.applications.update(application_id, intent="apply")
@@ -730,7 +735,7 @@ def start_apply(
         run_id = run.id
     snapshot["run_id"] = run_id
     try:
-        operation_id = runner.submit("apply", snapshot)
+        operation_id = runner.submit("apply", snapshot, requested_by="user")
     except Exception as exc:
         # Enqueue failed (2026-07-25): the just-created row would strand
         # `queued` until boot sweep — land it terminal-failed, then let the
@@ -812,20 +817,15 @@ def cancel_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
 
 @router.post("/api/apply-runs/{run_id}/submit", status_code=202)
 def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
-    """Click the form's Submit once, because the USER asked (S-A5).
-
-    P1 keeps every irreversible action behind the human: the model's tool
-    vocabulary has no submit, and this route is the only thing that can reach
-    `submit_application`. It needs the run's own browser still open, which is
-    the review window after `ready_for_human`, so a run outside that window is
-    a 409 rather than a silent no-op. The click itself happens on the op's
-    thread; the outcome arrives on the `apply` SSE stream and on the run row.
-    """
+    """Click the form's Submit once, because the user asked (S-A5). The model has no
+    submit tool, so this route is the only way to `submit_application`. It needs the
+    run's browser still open (the review window after `ready_for_human`), else 409.
+    The outcome arrives on the `apply` SSE stream and the run row."""
     from ..registry.apply_op import APPLY_CONTROL
 
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
-        if run.status != "ready_for_human":
+        if not apply_run_in_review(run):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -843,6 +843,18 @@ def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
         return dto.apply_run_dto(run)
 
 
+@router.post("/api/apply-runs/{run_id}/show")
+async def show_apply_run(request: Request, run_id: str) -> dto.ApplyRunShowResult:
+    """Bring the run's tab to the front of the Applier window, because the user
+    asked (applier/window.md section 4.5). `shown` is false once the tab is gone."""
+    from ..registry.applier_window import show_run
+
+    with _db(request).repos() as repos:
+        _found(repos.apply_runs.get(run_id), "run", run_id)
+    shown = await asyncio.to_thread(show_run, run_id)
+    return dto.ApplyRunShowResult(shown=shown)
+
+
 @router.post("/api/apply-runs/{run_id}/attest")
 def attest_apply_run(
     request: Request, run_id: str, payload: dto.ApplyAttestRequest
@@ -852,7 +864,10 @@ def attest_apply_run(
     leaves the card in its pre-submission column with the honest run result."""
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
-        if run.status not in ("ready_for_human", "interrupted", "timed_out", "blocked"):
+        handed_off = apply_run_in_review(run) or run.status in (
+            "interrupted", "timed_out", "blocked"
+        )
+        if not handed_off:
             if not (run.status == "submitted" and payload.submitted):
                 raise HTTPException(
                     status_code=409,

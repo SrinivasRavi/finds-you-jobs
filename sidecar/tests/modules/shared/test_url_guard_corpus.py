@@ -1,25 +1,9 @@
-"""Shared private-address corpus for the two URL guards (duplication audit
-D-M10).
+"""1 private-address case table run against both URL guards (D-M10).
 
-The same class of target — loopback, LAN, link-local, cloud metadata — is
-refused at two different layers by two guards that deliberately do NOT work
-the same way:
-
-- `modules/_shared/url_guard.url_refusal` (fetch layer: Scraper + job input)
-  RESOLVES the host and judges the addresses it actually gets back, so a
-  public-looking name pointing at 10.x dies here.
-- `packages/jobapplier.UrlPolicy.check` (browser-navigate layer) judges
-  LITERAL IPs only and lets an ordinary DNS name through — Playwright resolves
-  inside the browser, so a resolve-then-navigate check here would be a second
-  lookup that proves nothing.
-
-That divergence is a design decision, and it used to be carried by prose in
-each module pointing at the other. This file is the sync mechanism instead:
-ONE case table, executed against BOTH guards, with the divergence recorded as
-expectations rather than as a promise to keep two files worded alike.
-
-Zero network — host resolution is faked exactly as `test_http_guards.py` does.
-"""
+The fetch guard (`url_guard.url_refusal`) resolves the host and judges the real
+addresses; jobapplier's `UrlPolicy` judges literal IPs only, since Playwright
+resolves in the browser. The divergence is a design decision, recorded here as
+expectations. Resolution is faked; no network."""
 
 from __future__ import annotations
 

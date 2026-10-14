@@ -1,14 +1,8 @@
-"""The 2 tables no gazetteer carries: multi-country regions, and metro nicknames.
+"""The 2 tables no gazetteer carries: multi-country regions and metro nicknames.
 
-Both are editorial and both are small on purpose. GeoNames knows cities, divisions
-and countries; it does not know that "EMEA" is a hiring region or that "Bay Area"
-is a place people put in a job posting (`search_cities("Bay Area")` returns 0).
-
-A region maps to the countries a remote posting scoped to it is open to. `None`
-means every country, which is what "global" and "anywhere" mean. The country sets
-are deliberately the places a remote role in that region is actually offered to,
-not the full membership of any political body.
-"""
+Editorial and small on purpose: GeoNames doesn't know "EMEA" or "Bay Area". A
+region maps to the countries a remote role there is actually offered to; `None`
+means every country ("global", "anywhere")."""
 
 from __future__ import annotations
 
@@ -75,6 +69,14 @@ METROS: dict[str, tuple[str, tuple[str, ...]]] = {
     "mmr": ("IN", ("Mumbai", "Thane", "Navi Mumbai", "Kalyan")),
     "greater london": ("GB", ("London", "Croydon", "Bromley", "Richmond")),
     "randstad": ("NL", ("Amsterdam", "Rotterdam", "The Hague", "Utrecht")),
+}
+
+# A metro defined by its official counties or districts (place-picker.md 10.4):
+# every city in them is a member, so a data update adds cities by itself. The Bay
+# Area is its 9 counties by FIPS code; a metro absent here keeps its list above.
+METRO_DIVISIONS: dict[str, tuple[str, frozenset[str]]] = {
+    key: ("US.CA", frozenset({"001", "013", "041", "055", "075", "081", "085", "095", "097"}))
+    for key in ("bay area", "sf bay area")
 }
 
 # Words a posting puts in its location field that name no place: office labels,

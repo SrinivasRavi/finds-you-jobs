@@ -1,17 +1,9 @@
-"""Running a prompt draft without committing it (url-less-jobs.md section 11, S-C70).
+"""Running a prompt draft without committing it (url-less-jobs.md 11, S-C70).
 
-The problem it closes: Save was the only way to run a prompt, so the only way to
-try one was to overwrite the shipped default, generate on a real job, read it,
-and edit again, with the user's working default broken for the whole loop. The
-tailoring prompt is 16,285 characters and the output it governs is a resume that
-goes to an employer.
-
-The 3 invariants, each tested rather than argued:
-
-1. The draft runs. The committed prompt does not.
-2. The run writes nothing: no score on the job, no artifact, no profile.
-3. The run is an ordinary operation, so its spend reaches the ledger.
-"""
+Save was the only way to run a prompt, breaking the working default for the
+whole loop. Tested invariants: the draft runs and the committed prompt doesn't;
+the run writes nothing (no score, artifact or profile); it's an ordinary op, so
+its spend reaches the ledger."""
 
 from __future__ import annotations
 
@@ -186,7 +178,7 @@ def test_a_score_test_run_never_touches_the_job_s_real_score(tmp_path) -> None:
             assert "Backend Engineer" in op.input_snapshot["job"]
             job = repos.jobs.get(job_id)
             assert job is not None
-            assert job.llm_score == 42
+            assert job.score == 42
 
 
 def test_a_pasted_description_works_with_nothing_on_the_board(tmp_path) -> None:
@@ -412,9 +404,9 @@ def test_a_tailor_row_whose_artifact_is_gone_says_nothing(tmp_path) -> None:
         assert row["subject"]["artifact"] is None
 
 
-def test_a_score_prompt_test_runs_the_ai_scorer_whatever_the_board_uses(tmp_path) -> None:
-    """The AI scoring prompt is read by the AI scorer and nothing else. A user
-    whose board runs Fast or Keyword scoring used to get that method back from
+def test_a_score_prompt_test_runs_the_llm_scorer_whatever_the_board_uses(tmp_path) -> None:
+    """The LLM scoring prompt is read by the LLM scorer and nothing else. A user
+    whose board runs Jev or Keyword scoring used to get that method back from
     "Test scoring with this prompt", with their draft never sent anywhere."""
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False

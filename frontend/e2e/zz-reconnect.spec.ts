@@ -1,16 +1,8 @@
-// Named zz- so it runs LAST (specs execute alphabetically on one worker):
-// this test kills and respawns the shared dev-web sidecar, and its cleanup
-// leaves that sidecar dead — any spec after it would hit a dead port.
-//
-// Covers: core storage — the SSE transport renders an honest connection state:
-// live → reconnecting when the sidecar really dies → live again once it comes
-// back, with the operations snapshot refetched on every reconnect.
-//
-// The disconnect is real: an authenticated POST /shutdown ends the sidecar the
-// webServer (scripts/dev-web.mjs) spawned, then the spec respawns it on the
-// SAME port + token (FYJ_PORT / FYJ_API_TOKEN) so the browser's native
-// EventSource retry finds it again. Chromium's offline emulation is not used —
-// it does not sever loopback connections.
+// Named zz- so it runs last: it kills and respawns the shared sidecar and
+// leaves it dead. Covers: the SSE connection state goes live, reconnecting when
+// the sidecar dies, live again when it returns, with the operations snapshot
+// refetched. A real POST /shutdown, then a respawn on the same port and token
+// (Chromium's offline mode doesn't sever loopback).
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";

@@ -1,21 +1,10 @@
-"""The `view_page` operation — a user's page-view, queued like every lane op.
+"""The `view_page` operation: a user's page view, queued like every lane op.
 
-A contact row's "open in LinkedIn" click used to navigate the broker surface
-immediately (`POST /api/browser/open`), guarded only by a racy any-in-flight
-pre-check — a navigation could still land in the gap between a running op's
-lane actions. Queued as an operation instead (maintainer, 2026-08-16), the
-click waits its turn behind whatever is driving the surface (policy rule 3,
-`BROWSER_LANE_KINDS`) and shows up honestly in the queue panel.
-
-Human-shaped on purpose: a view of the page the surface already shows is a
-no-op (`skipped`) — the same already-there check `_goto_profile` makes before
-a send, so click-view-then-connect never refreshes a profile a human would
-simply keep reading. The comparison is by PATH, origin-agnostic: LinkedIn
-appends query params on redirect, and the e2e stack serves linkedin-shaped
-paths from a loopback fixture origin.
-
-Vendor-agnostic: url and surface slug are runtime arguments; this module
-names no site."""
+It waits its turn behind whatever drives the surface (policy rule 3,
+`BROWSER_LANE_KINDS`) instead of navigating mid-op, and shows in the queue panel.
+A view of the page already shown is `skipped`, compared by path (LinkedIn adds
+query params; e2e serves a loopback origin). Vendor-agnostic: url and slug are
+arguments."""
 
 from __future__ import annotations
 

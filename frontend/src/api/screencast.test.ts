@@ -1,11 +1,7 @@
-// Unit tests for the screencast surface parameterization (Phase 8): the client
-// attaches to the `?surface=` slug it is handed, url-encoded, and omits the
-// param entirely when none is given — the dev `/browser` route's behavior, which
-// lets the sidecar fall back to its generic `default` surface.
-//
-// Mocked seams: `getSidecarInfo` (./client) so the handshake resolves without a
-// real sidecar, and the global WebSocket (jsdom has none) with an inspectable
-// fake that records the URL it was opened against.
+// Unit tests for the screencast surface parameter: the client attaches to the
+// `?surface=` slug it's given, url-encoded, and omits it when none is given (the
+// dev /browser route, which falls back to `default`). The handshake and the
+// WebSocket are faked.
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 vi.mock("./client", () => ({ getSidecarInfo: vi.fn() }));

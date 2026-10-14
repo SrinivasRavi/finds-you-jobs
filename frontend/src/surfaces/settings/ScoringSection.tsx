@@ -1,14 +1,11 @@
-// Scoring pane section: a scanned job is scored before anything else happens
-// to it. Every scanned job is scored; the choice is HOW. AI failures fall back
-// to a grey keyword score (retry in Logs). (Extracted from Settings.tsx
-// 2026-07-25, F-M6 monolith split — pure moves, zero behavior change.)
-// Memoized: `settings` is the query-stable object; `patch` is a root
-// useCallback.
+// Scoring section: every scanned job is scored; the choice is how. An AI
+// failure falls back to a grey keyword score, retryable in Logs. Memoized.
 
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
+  AiQueueMode,
   ScoreWeightPreset,
   ScoringMethod,
   ScoringMode,
@@ -20,17 +17,14 @@ import { InfoDot } from "../../shell/InfoDot";
 import { Section } from "./shared";
 
 // The methods that cost money per job, and so the ones a per-tick cap is for.
-// It used to show for `llm` alone, which was right when AI scoring was the only
-// paid method; Fast scoring also bills per job, so a first scan of 1,000 jobs
+// It used to show for `llm` alone, which was right when LLM scoring was the only
+// paid method; Jev scoring also bills per job, so a first scan of 1,000 jobs
 // could run uncapped on it (maintainer, 2026-10-07).
 const METERED_METHODS: ScoringMode[] = ["llm", "jev"];
 
-// Scoring batch cap presets (audit P1-1): the scheduler's `score_new` tick
-// scores every unscored job by default (0 = uncapped) — a large first scan can
-// burn a lot of LLM cost in one tick. These presets are a UI convenience over
-// the same `thresholds.score_new_batch` the planner already reads
-// (sidecar/app/scheduler/planner.py); the planner has read this since it
-// shipped, this control is the missing writer.
+// Batch cap presets (audit P1-1): the `score_new` tick scores every unscored job
+// by default (0 = uncapped), so a large first scan can cost a lot at once. These
+// write `thresholds.score_new_batch`, which the planner already reads.
 const SCORE_BATCH_PRESETS: { value: number; label: string }[] = [
   { value: 0, label: "settingsPage.scoring.uncapped" },
   { value: 10, label: "10" },
@@ -134,15 +128,26 @@ const PRESET_WEIGHTS: Record<ScoreWeightPreset, Record<string, number>> = {
   },
 } satisfies Shared["preset_weights"];
 
-// The shipped table a `balanced` install actually scores with (`JEV_WEIGHTS`),
-// so the sliders open showing real numbers instead of 5 zeroes.
-const BALANCED_FALLBACK: Record<string, number> = {
+// The tables the methods ship with, so the sliders open on the numbers the
+// selected method really scores with (audit A10). Keyword weighs 3 axes; Laya
+// runs the keyword floor until its pack exists; LLM scoring has no table, so
+// it starts from Jev's and says so.
+const JEV_TABLE: Record<string, number> = {
   hard_requirements: 0.3,
   core_stack: 0.3,
   years: 0.15,
   level: 0.15,
   nice_to_haves: 0.1,
 } satisfies Shared["jev_weights"];
+const KEYWORD_TABLE: Record<string, number> = {
+  core_stack: 0.55,
+  years: 0.3,
+  level: 0.15,
+} satisfies Shared["keyword_weights"];
+
+function methodTable(mode: SettingsT["scoring_mode"]): Record<string, number> {
+  return mode === "keyword" || mode === "local" ? KEYWORD_TABLE : JEV_TABLE;
+}
 
 function WeightControls({
   settings,
@@ -161,11 +166,8 @@ function WeightControls({
     ? settings.score_weight_preset
     : "balanced";
   const presetTable = PRESET_WEIGHTS[preset];
-  const shown = customised
-    ? custom
-    : Object.keys(presetTable).length > 0
-      ? presetTable
-      : BALANCED_FALLBACK;
+  const fromMethod = !customised && Object.keys(presetTable).length === 0;
+  const shown = customised ? custom : fromMethod ? methodTable(settings.scoring_mode) : presetTable;
   const dirty = customised || preset !== "balanced";
   return (
     <div data-testid="score-weights">
@@ -222,6 +224,11 @@ function WeightControls({
       </button>
       {open ? (
         <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-3">
+          {fromMethod && settings.scoring_mode === "llm" ? (
+            <div className="text-[11.5px] text-ink-3" data-testid="score-weights-from-jev">
+              {t("settingsPage.scoring.weightsFromJev")}
+            </div>
+          ) : null}
           {WEIGHTED_AXES.map((axis) => (
             <label key={axis} className="flex items-center gap-3 text-[12px]">
               <span className="w-36 shrink-0 text-ink-2">{t(`scoreFactor.${axis}`)}</span>
@@ -437,7 +444,9 @@ export const ScoringSection = memo(function ScoringSection({
               </InfoDot>
             </div>
             <div className="text-[12px] text-ink-3">
-              {t("settingsPage.scoring.parallelHint")}
+              {settings.ai_queue_mode === "shared"
+                ? t("settingsPage.scoring.parallelHint")
+                : t("settingsPage.scoring.parallelHintPerKind")}
             </div>
           </div>
           <div className="flex items-center gap-1.5" data-testid="llm-concurrency-row">
@@ -455,6 +464,28 @@ export const ScoringSection = memo(function ScoringSection({
               <option value={0}>{t("settingsPage.scoring.unlimited")}</option>
             </select>
           </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <div className="flex items-center text-[13px] font-medium text-ink">
+              {t("settingsPage.scoring.queueMode")}
+              <InfoDot label={t("settingsPage.scoring.queueMode")}>
+                {t("settingsPage.scoring.queueModeInfo")}
+              </InfoDot>
+            </div>
+            <div className="text-[12px] text-ink-3">
+              {t("settingsPage.scoring.queueModeHint")}
+            </div>
+          </div>
+          <select
+            value={settings.ai_queue_mode}
+            data-testid="ai-queue-mode-select"
+            onChange={(e) => patch({ ai_queue_mode: e.target.value as AiQueueMode })}
+            className="h-[30px] rounded-md border border-border-2 bg-surface px-2 text-[12px] text-ink"
+          >
+            <option value="per_kind">{t("settingsPage.scoring.queuePerKind")}</option>
+            <option value="shared">{t("settingsPage.scoring.queueShared")}</option>
+          </select>
         </div>
       </div>
     </Section>

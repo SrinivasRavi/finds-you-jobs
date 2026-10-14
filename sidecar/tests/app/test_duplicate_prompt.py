@@ -1,18 +1,9 @@
 """The duplicate prompt, and where "they're different" lives (D15).
 
-The case: the user pasted an emailed JD on Monday, Wednesday's scan wrote its
-own row for the same posting, and the board shows the role twice. Both rows are
-correct by their own key, so nothing upstream can prevent it; the answer is to
-ask once and never again.
-
-What is pinned here:
-
-1. The flag is written at INGEST, so the board's render costs nothing.
-2. The gate is compound, so a Senior and a Principal at one employer are not
-   called the same job.
-3. A dismissal is a fact about the PAIR: it holds from either card, and it is
-   taken with the jobs when either is deleted.
-"""
+A pasted JD and a scan's row for the same posting are both correct by their own
+key, so the answer is to ask once. Pinned: the flag is written at ingest; the
+gate is compound (Senior and Principal differ); a dismissal belongs to the pair,
+holds from either card, and goes with either job."""
 
 from __future__ import annotations
 
@@ -295,3 +286,48 @@ def test_a_third_copy_is_noticed_after_the_second_is_deleted(tmp_path) -> None:
         )
         body = client.get(f"/api/jobs/{third}/duplicate", headers=AUTH).json()
         assert body is not None and body["other_job_id"] == first
+
+
+def test_a_repost_after_the_older_copy_greys_is_still_noticed(tmp_path) -> None:
+    """Audit A6: the check compared only active jobs, so a repost arriving after
+    its older copy greyed at 14 days, the ghost-job cycle, was never paired."""
+    from sidecar.app.registry.persistence import persist_scan
+    from sidecar.modules.scraper.types import NormalizedJob, ScanResult
+
+    client, app = _client(tmp_path)
+    with client:
+        old = _add(client, url="https://ex.co/old", title="Senior Software Engineer",
+                   company="Acme")
+        with app.state.db.repos() as repos:
+            repos.jobs.set_expired(old)
+        repost = NormalizedJob(
+            canonical_url="https://boards.greenhouse.io/acme/jobs/9",
+            title="Senior Software Engineer", company="Acme", location="",
+            description=JD + " Apply today.", source_adapter="greenhouse",
+        )
+        ref = persist_scan(app.state.db, ScanResult(jobs=[repost], per_source={}))
+        new = ref["scan"]["new_job_ids"][0]
+        body = client.get(f"/api/jobs/{new}/duplicate", headers=AUTH).json()
+        assert body is not None and body["other_job_id"] == old
+
+
+def test_the_notice_stays_while_both_copies_are_on_the_board(tmp_path) -> None:
+    """The notice used to vanish when the older copy greyed; it now lasts until
+    either copy leaves the board."""
+    client, app = _client(tmp_path)
+    with client:
+        old = _add(client, url="https://ex.co/old", title="Senior Software Engineer",
+                   company="Acme")
+        new = _add(client, url="https://ex.co/new", title="Senior Software Engineer",
+                   company="Acme")
+        with app.state.db.repos() as repos:
+            repos.jobs.set_expired(old)
+        body = client.get(f"/api/jobs/{new}/duplicate", headers=AUTH).json()
+        assert body is not None and body["other_job_id"] == old
+        board = client.get("/api/jobs", headers=AUTH).json()
+        chips = {j["id"]: j.get("duplicates") for j in board}
+        assert chips.get(new)
+
+        with app.state.db.repos() as repos:
+            repos.jobs.set_trash_state(old, trashed=True)
+        assert client.get(f"/api/jobs/{new}/duplicate", headers=AUTH).json() is None

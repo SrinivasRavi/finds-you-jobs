@@ -61,12 +61,9 @@ async def shutdown(request: Request) -> JSONResponse:
 
 
 # -- Dev tools (local testing only) ----------------------------------------
-# A single-user local app on the user's own machine — these fault-injection
-# endpoints power the Dev surface (US-DEV-01, dev-only): simulate an expired
-# LinkedIn cookie mid-action, a crash mid-generation, and quick seed data.
-# F-L4: they mutate/corrupt real state, so they answer only when the process
-# was started with FYJ_DEV=1 (scripts/dev-web.mjs sets it; the packaged app
-# never does) — otherwise 404, indistinguishable from an unknown route.
+# Fault injection behind the Dev surface (US-DEV-01): an expired LinkedIn cookie,
+# a crash mid-generation, seed data. They corrupt real state, so they answer only
+# under FYJ_DEV=1, which the packaged app never sets; otherwise 404 (F-L4).
 
 
 def _require_dev_mode() -> None:
@@ -76,20 +73,10 @@ def _require_dev_mode() -> None:
 
 @router.post("/api/dev/linkedin/mark-session-valid")
 def dev_mark_linkedin_session_valid(request: Request) -> dict[str, Any]:
-    """Set `LinkedInSession.status = "valid"` so session-gated UI can be
-    exercised without a real LinkedIn login.
-
-    Some controls (the Networking **Sync** button) only render once a session
-    exists, and a real session needs an interactive human login at LinkedIn's
-    own page — which a test cannot perform and must never attempt. This sets the
-    one status field the UI reads, exactly like the sibling
-    `/api/dev/linkedin/expire-cookie` route sets the opposite condition.
-
-    It writes **no** cookies and **no** storage-state file. That is the honest
-    part: the session is a real row that is genuinely unusable, so any code path
-    that actually reaches LinkedIn fails on auth as it should. Nothing about
-    LinkedIn's behaviour is faked, and no production code branches on this — the
-    row is the same row a real login writes, with the same fields."""
+    """Set `LinkedInSession.status = "valid"` so session-gated UI (the Sync button)
+    can be tested without a real login, which a test must never attempt. Writes no
+    cookies or storage state, so anything that reaches LinkedIn fails on auth as it
+    should; no production code branches on it."""
     _require_dev_mode()
     with _db(request).repos() as repos:
         repos.linkedin_session.update(status="valid", connected_as="Dev Session")
@@ -157,15 +144,9 @@ def dev_seed_linkedin_search_cursor(request: Request) -> dict[str, Any]:
 
 @router.post("/api/dev/linkedin/expire-cookie")
 def dev_expire_linkedin_cookie(request: Request) -> dict[str, Any]:
-    """Expire the `li_at` cookie in the saved session **without** touching the
-    session row — so the app still believes it's connected, and the *next* real
-    LinkedIn action fails on auth. Lets the maintainer test how an in-flight
-    action handles a session that dies midway (graceful-failure design).
-
-    Works whether the storage-state file is Fernet-sealed (NFR-SEC-01, 2026-07-09)
-    or legacy plaintext: it unseals with the session key, sets `li_at`'s expiry to
-    the past, and reseals in the SAME format. Before this fix it parsed the file
-    as plaintext and silently no-op'd on any sealed session."""
+    """Expire `li_at` in the saved session without touching the session row, so the
+    next real LinkedIn action fails on auth mid-flight. Handles a Fernet-sealed or
+    legacy plaintext file, resealing in the same format."""
     _require_dev_mode()
     from pathlib import Path
 
@@ -230,6 +211,7 @@ def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
     the sidecar renders with the same Chromium pipeline the Applier uploads
     (real selectable text) and saves collision-safe. Returns the saved path."""
     from ..registry.pdf import PdfRenderError, render_resume_pdf
+    from .browser import is_browser_missing
 
     if not payload.markdown.strip():
         raise HTTPException(status_code=422, detail="nothing to export — the document is empty")
@@ -263,6 +245,15 @@ def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
         # probes.
         render_resume_pdf(payload.markdown, str(path))
     except PdfRenderError as e:
+        if is_browser_missing(str(e)):
+            # Coded, so the screen offers the Download action (A16).
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "browser_missing",
+                    "message": "Chromium isn't downloaded yet; download it, then export again",
+                },
+            ) from e
         raise HTTPException(status_code=503, detail=str(e)) from e
     return dto.ExportPdfResult(path=str(path))
 
@@ -278,6 +269,15 @@ def install_browser(request: Request) -> dto.BrowserInstallResult:
     publish = hub.publish if hub is not None else None
     status = start_install(publish)
     return dto.BrowserInstallResult(status=status)
+
+
+@router.get("/api/system/install-browser")
+def browser_install_status() -> dto.BrowserInstallStatus:
+    """The last Chromium download's state. A client that lost the event stream
+    mid-download reads this instead of waiting forever (A21)."""
+    from .browser import install_status
+
+    return dto.BrowserInstallStatus(**install_status())
 
 
 @router.get("/api/system/scheduler")
@@ -335,12 +335,9 @@ def dev_fail_running(request: Request) -> dict[str, Any]:
 
 @router.post("/api/dev/operations/seed-queued", status_code=201)
 def dev_seed_queued_operation(request: Request) -> dict[str, Any]:
-    """Create a `queued` operation ROW directly — without pumping the runner —
-    so it STAYS queued until something else submits work. Lets the Logs Stop
-    control (F-M7) be exercised deterministically in e2e (the generic enqueue
-    dispatches almost immediately, so a queued row is otherwise a race). Kind
-    `cleanup_trash`: zero-LLM and harmless if a later pump does dispatch it.
-    Dev-only."""
+    """Create a `queued` op row without pumping the runner, so it stays queued and the
+    Logs Stop control (F-M7) can be tested deterministically. Kind `cleanup_trash`:
+    0 LLM, harmless if dispatched later. Dev-only."""
     from ..events import operation_event
 
     _require_dev_mode()

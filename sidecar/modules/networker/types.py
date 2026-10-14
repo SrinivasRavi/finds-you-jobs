@@ -53,13 +53,9 @@ DM_CHAR_LIMIT = 1200
 
 @dataclass
 class Usage:
-    """Aggregate cost record for one bounded operation (ROADMAP section 4).
-
-    Recorded always; NOT enforced as a budget pre-beta (ROADMAP section 4). `discover`
-    and `send` are zero-LLM (they delegate to the voyager subprocess: `usd`/
-    tokens stay None, `internal_calls` counts subprocess invocations). `draft`
-    is the one LLM operation and carries real token/usd figures.
-    """
+    """Aggregate cost record for 1 bounded operation, recorded, not enforced.
+    `discover` and `send` are 0 LLM (`internal_calls` counts driver calls); `draft`
+    carries real tokens and usd."""
 
     internal_calls: int = 0
     tokens_in: int | None = None
@@ -89,12 +85,9 @@ class Contact:
 
 @dataclass
 class CompanyCandidate:
-    """One LinkedIn company entity a name resolved to (FR-NW-02 company scoping).
-
-    The `urn` is what discovery scopes the `currentCompany` People facet by
-    (current-employees-only). `domain_match` is True when this candidate's public
-    website matched the employer domain parsed from the job URL — the host's
-    silent-auto-pick signal (else it confirms with the user)."""
+    """1 LinkedIn company entity a name resolved to (FR-NW-02). `urn` scopes the
+    `currentCompany` facet; `domain_match` means its website matched the job URL's
+    employer domain, the host's auto-pick signal."""
 
     urn: str
     company_id: str = ""
@@ -108,14 +101,9 @@ class CompanyCandidate:
 
 @dataclass
 class ResolveResult:
-    """Output of one resolve() operation — ranked company entities for a name.
-    Zero-LLM (one voyager typeahead call, plus optional per-candidate website
-    lookups when a domain anchor is supplied).
-
-    `error`/`reason` carry a voyager refusal (`cap_or_backoff` / `rate_limited`)
-    verbatim when the typeahead never ran — an empty `candidates` with a set
-    `error` means "refused", never "no such company" (the Kaseya 0-contact bug:
-    a spent read budget rendered as an honest empty roster)."""
+    """Ranked company entities for a name, 0 LLM. `error`/`reason` carry a voyager
+    refusal verbatim; empty `candidates` with an `error` means refused, never "no
+    such company" (the Kaseya bug)."""
 
     company: str
     candidates: list[CompanyCandidate] = field(default_factory=list)
@@ -126,12 +114,8 @@ class ResolveResult:
 
 @dataclass
 class DiscoverResult:
-    """Output of one discover() operation (US-REF-01). Zero-LLM.
-
-    `error`/`reason` mirror SendResult: a voyager refusal (`cap_or_backoff` /
-    `rate_limited`) rides here verbatim, so an empty `contacts` with a set
-    `error` is a refusal — the host must never present it as "nobody works
-    here"."""
+    """Output of 1 discover() (US-REF-01), 0 LLM. Like SendResult, an empty
+    `contacts` with an `error` is a refusal, never "nobody works here"."""
 
     company: str
     contacts: list[Contact] = field(default_factory=list)
@@ -178,19 +162,10 @@ class SendResult:
 
 @dataclass
 class ProbeResult:
-    """Output of one read-only contact-status probe (US-NW-12 / FR-NW-15). Zero-LLM.
-
-    The live LinkedIn state the sync engine maps onto the kanban lifecycle:
-    connection degree (1 ⇒ connected/accepted) plus the 1:1 thread's last-message
-    direction (`them` = they replied last; `me` = our message is last; `""` = no
-    readable history) and its timestamp (epoch seconds), text, and the contact's
-    display name (the card/modal display pair; "" = unread). Explicit-empty-allowed —
-    a read miss leaves the message fields empty/None (no transition this tick).
-
-    `ok`/`error`/`reason` carry the per-contact outcome from the batched sweep
-    (`probe_batch`): `error` ∈ "" (probed fine) | probe_failed (403/404/parse —
-    skip this contact) | cap_or_backoff | rate_limited | auth_error (the sweep
-    stopped here). The verbatim worker reason rides in `reason`."""
+    """1 read-only status probe (US-NW-12): the connection degree, plus the thread's
+    last-message direction (`them`, `me`, or "" for none), time, text and sender. A
+    read miss leaves them empty (no transition). `error` is "", probe_failed (skip),
+    or cap_or_backoff, rate_limited, auth_error (sweep stopped); `reason` verbatim."""
 
     public_identifier: str
     degree: int | None = None

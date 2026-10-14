@@ -1,19 +1,11 @@
-// The per-axis breakdown behind a score (scoring.md section 7.3). Presentational
-// only: props in, bars out, no fetching and no API types, so it renders the same
-// whichever of the 4 methods produced the factors.
-//
-// 3 rules, and each one is why a line of this file exists:
-//
-// 1. A probability is NOT a graded position. Jev answers 2 axes with a
-//    confidence that a proposition holds; the other 5 are positions on a stated
-//    rubric. Drawing them identically would invite multiplying a confidence by a
-//    user weight, which produces a number with no meaning. So a probability is
-//    drawn hollow, labelled as confidence, and never shows a weight.
-// 2. The weight shows beside the bar. A 0.40 at weight 5% and a 0.40 at weight
-//    30% are different facts about the job.
-// 3. The evidence shows. It's what makes a bar arguable instead of decorative.
+// The per-axis breakdown behind a score (scoring.md section 7.3), the same for
+// all 4 methods. A probability (Jev's 2 confidence axes) is drawn hollow and never
+// shows a weight, since confidence times weight means nothing. The weight shows
+// beside each graded bar, and the evidence shows, so a bar can be argued with.
 
 import { useTranslation } from "react-i18next";
+
+import { codedLine, scoreText } from "./scoreText";
 
 /** One axis as a scorer judged it. Mirrors `scorer/types.py:Factor`. */
 export interface ScoreFactor {
@@ -21,6 +13,8 @@ export interface ScoreFactor {
   value: number;
   kind: string;
   evidence: string;
+  /** `evidence` as a key and its facts, for the user's language (audit section 5). */
+  code?: { [key: string]: unknown } | null;
 }
 
 /** Display order, matching `scorer/output_parse.py:FACTOR_KEYS` so a bar chart
@@ -75,7 +69,11 @@ function Bar({ factor, weight }: { factor: ScoreFactor; weight?: number }) {
         />
       </div>
       {factor.evidence ? (
-        <p className="mt-1 text-[10.5px] leading-snug text-ink-3">{factor.evidence}</p>
+        <p className="mt-1 text-[10.5px] leading-snug text-ink-3">
+          {codedLine(factor.code)
+            ? scoreText({ ...codedLine(factor.code)!, text: factor.evidence }, t)
+            : factor.evidence}
+        </p>
       ) : null}
     </li>
   );

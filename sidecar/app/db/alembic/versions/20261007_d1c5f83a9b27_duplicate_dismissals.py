@@ -1,27 +1,9 @@
-"""A pair of jobs the user said are NOT the same posting.
+"""A pair of jobs the user said are not the same posting (url-less-jobs.md 9.6).
 
-The duplicate prompt (url-less-jobs.md 9.6) asks once and must never ask again
-after "They're different". D15 left where that lives open, and the 2 candidates
-were a `trust_flags` entry on one of the jobs, or this table.
-
-**Why a table rather than the JSON.** A dismissal is a fact about a PAIR, and
-neither half of a pair is its home:
-
-- A `trust_flags` entry naming the other job's id has no foreign key, so
-  deleting either job leaves a dangling id inside the surviving row's blob and
-  `delete_job_cascade` can't reach it. That is a stale prompt waiting to fire on
-  whatever row later takes that id's place.
-- The pair is symmetric and a single row's list is not, so dismissing from job
-  A's card and from job B's card are 2 write sites and 2 readers that drift.
-
-The ordered pair (`low_job_id` < `high_job_id`) makes one row answer both
-directions, so there is exactly one write site and one read.
-
-**Why it costs the board nothing.** Near-duplicate detection happens at INGEST,
-not at render: the new row gets a `probable-duplicate:<id>` trust flag, and
-`trust_flags` is a column the board already loads. So a page with no flagged
-pair never touches this table at all, and a page with one pays a single batched
-indexed read.
+A table, not `trust_flags` JSON: a pair is symmetric, and an id in a blob has no
+FK, so deleting a job would leave a stale prompt. The ordered pair
+(`low_job_id` < `high_job_id`) gives 1 write site and 1 read; detection runs at
+ingest, so the board reads this only for a flagged pair.
 
 Revision ID: d1c5f83a9b27
 Revises: c9e4a71b3f02

@@ -1,19 +1,10 @@
 """Per-engine circuit breaker (technical audit F-H5).
 
-A dead or auth-broken provider must not grind a 50-job score fan-out through
-every queued operation × its full retry/timeout budget. The runner records
-each LLM operation's outcome per routed engine NAME (the registry key — e.g.
-"openrouter", "claude-cli"); after `FAILURE_THRESHOLD` consecutive engine
-failures the circuit for that name opens, and further operations routed to it
-fail *fast* with a distinct, honest ledger message instead of holding an llm
-slot. After `COOLDOWN_S` one probe operation is allowed through (half-open):
-success closes the circuit, failure re-opens it for another cooldown.
-
-Only `EngineError` outcomes feed the breaker — module parse drift, missing
-rows, or bugs in our own code say nothing about the provider's health. Pure
-decision logic (injectable clock), unit-testable without threads or the DB,
-mirroring `policy.can_start`'s style.
-"""
+A dead provider mustn't grind a fan-out through every op's retry budget. After
+`FAILURE_THRESHOLD` consecutive engine failures per engine name the circuit
+opens and ops fail fast with an honest message; after `COOLDOWN_S` 1 probe goes
+through (half-open), and its result closes or re-opens it. Only `EngineError`
+feeds it. Pure logic with an injectable clock, like `policy.can_start`."""
 
 from __future__ import annotations
 
@@ -54,12 +45,9 @@ class EngineCircuitBreaker:
     _circuits: dict[str, _Circuit] = field(default_factory=dict, repr=False)
 
     def check(self, name: str) -> bool:
-        """Gate one operation routed to engine `name`. Returns when the call
-        may proceed — False for a closed circuit, True when this caller holds
-        the half-open probe LEASE (the caller must then settle it: success /
-        engine-failure records it, any other terminal outcome must call
-        `abandon_probe`); raises `ProviderCircuitOpen` with a clear
-        user-facing message when the provider is presumed down."""
+        """Gate 1 op routed to `name`: False when closed, True when this caller holds the
+        half-open probe lease (which it must settle: record the result or
+        `abandon_probe`), and `ProviderCircuitOpen` when the provider is presumed down."""
         with self._lock:
             circuit = self._circuits.get(name)
             if circuit is None or circuit.opened_at is None:
@@ -98,12 +86,9 @@ class EngineCircuitBreaker:
                 circuit.probing = False
 
     def abandon_probe(self, name: str) -> None:
-        """The half-open probe ended with NO verdict on the provider's health
-        (cancelled by the user, or failed with a non-`EngineError` — parse
-        drift, our own bugs). Release the probe lease so the next `check`
-        after cooldown admits a NEW probe; `opened_at` is untouched, so the
-        circuit stays open. Without this, a cancelled/derailed probe would
-        wedge the circuit open forever (probing never cleared — 2026-07-25)."""
+        """The probe ended with no verdict (cancelled, or a non-`EngineError` failure):
+        release the lease so a new probe can run after cooldown; the circuit stays open.
+        Without it a derailed probe wedged the circuit open forever."""
         with self._lock:
             circuit = self._circuits.get(name)
             if circuit is not None:

@@ -4,7 +4,7 @@ The 2 rules that make this safe, and both are tested here rather than argued:
 
 - A weight change costs nothing and spends nothing. The factors are already
   stored, so the total is arithmetic over rows we have.
-- A weight change is never written over the score. An AI score is the model's
+- A weight change is never written over the score. An LLM score is the model's
   own number, and "balanced" has to be able to return to it, so the re-total
   happens on read and the stored column is untouched.
 """
@@ -50,8 +50,8 @@ def _seed(db: Database, *, method: str = "jev", score: int = 50) -> str:
             reasons=["because"],
             breakdown_md="| a | b |",
             method=method,
+            factors=FACTORS,
         )
-        repos.job_score_factors.replace(job_id, method, FACTORS)
     return job_id
 
 
@@ -101,7 +101,7 @@ def test_a_preset_re_totals_the_same_stored_factors_in_both_directions(tmp_path)
 
 
 def test_balanced_returns_to_the_model_s_own_number(tmp_path) -> None:
-    """The reason this is computed on read. An AI score is not a weighted sum of
+    """The reason this is computed on read. An LLM score is not a weighted sum of
     anything, so a re-weighted total written over it would be unrecoverable."""
     client, app = _client(tmp_path)
     with client:
@@ -121,7 +121,7 @@ def test_balanced_returns_to_the_model_s_own_number(tmp_path) -> None:
         with db.repos() as repos:
             job = repos.jobs.get(job_id)
             assert job is not None
-            assert job.llm_score == 50
+            assert job.score == 50
 
 
 def test_custom_slider_values_outrank_the_preset(tmp_path) -> None:
@@ -191,15 +191,13 @@ def _seed_with_location_miss(db: Database, *, method: str, score: int) -> str:
     """The FACTORS job, plus a location the user did not ask for."""
     job_id = _seed(db, method=method, score=score)
     with db.repos() as repos:
-        repos.job_score_factors.replace(
-            job_id,
-            method,
-            [
-                *FACTORS,
-                {"factor": "location_preference", "value": 0.0, "kind": "probability",
-                 "evidence": ""},
-            ],
-        )
+        job = repos.jobs.get(job_id)
+        assert job is not None
+        job.score_factors = [
+            *FACTORS,
+            {"factor": "location_preference", "value": 0.0, "kind": "probability",
+             "evidence": ""},
+        ]
     return job_id
 
 
@@ -237,8 +235,8 @@ def test_the_penalty_slider_alone_moves_a_balanced_board(tmp_path) -> None:
         assert _row(client, job_id)["score"]["score_0_100"] == no_miss
 
 
-def test_location_first_leaves_an_ai_score_alone(tmp_path) -> None:
-    """AI scoring weighs location inside the model's own number and ships no
+def test_location_first_leaves_an_llm_score_alone(tmp_path) -> None:
+    """LLM scoring weighs location inside the model's own number and ships no
     axis table, so there is nothing for a penalty-only preset to re-total."""
     client, app = _client(tmp_path)
     with client:
@@ -305,12 +303,11 @@ def test_the_board_ranks_by_the_number_it_shows_across_pages(tmp_path) -> None:
             repos.jobs.set_score(
                 strong, scorer_impl="scorer-llm", score_0_100=50, reasons=[],
                 breakdown_md="", method="jev",
-            )
-            repos.job_score_factors.replace(
-                strong, "jev",
-                [{"factor": "core_stack", "value": 1.0, "kind": "graded", "evidence": ""},
-                 {"factor": "hard_requirements", "value": 1.0, "kind": "graded",
-                  "evidence": ""}],
+                factors=[
+                    {"factor": "core_stack", "value": 1.0, "kind": "graded", "evidence": ""},
+                    {"factor": "hard_requirements", "value": 1.0, "kind": "graded",
+                     "evidence": ""},
+                ],
             )
         client.post(
             "/api/settings", headers=AUTH,

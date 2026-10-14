@@ -497,12 +497,12 @@ def test_discovery_analytics_all_unscorable_source_reports_no_score(
         repos.jobs.create(
             canonical_url="https://boards.greenhouse.io/acme/jobs/1",
             title="Backend Engineer", company="Acme", location="Remote",
-            description="", source_adapter="greenhouse", keyword_score=0,
+            description="", source_adapter="greenhouse", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://boards.greenhouse.io/acme/jobs/2",
             title="Frontend Engineer", company="Acme", location="Remote",
-            description="", source_adapter="greenhouse", keyword_score=0,
+            description="", source_adapter="greenhouse", score=0, score_method="keyword",
         )
 
     data = client.get("/api/discovery/analytics", headers=AUTH).json()
@@ -523,17 +523,17 @@ def test_discovery_analytics_mixed_source_averages_only_scorable_jobs(
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/1",
             title="No description", company="Acme", location="Remote",
-            description="", source_adapter="lever", keyword_score=0,
+            description="", source_adapter="lever", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/2",
-            title="AI scored", company="Acme", location="Remote",
-            description=_LONG_JD, source_adapter="lever", llm_score=80,
+            title="LLM scored", company="Acme", location="Remote",
+            description=_LONG_JD, source_adapter="lever", score=80, score_method="llm",
         )
         repos.jobs.create(
             canonical_url="https://jobs.lever.co/acme/3",
             title="Keyword scored", company="Acme", location="Remote",
-            description=_LONG_JD, source_adapter="lever", keyword_score=60,
+            description=_LONG_JD, source_adapter="lever", score=60, score_method="keyword",
         )
 
     data = client.get("/api/discovery/analytics", headers=AUTH).json()
@@ -555,12 +555,12 @@ def test_discovery_analytics_row_counts_ignore_the_score_exclusion(
         saved_job = repos.jobs.create(
             canonical_url="https://apply.workable.com/acme/j/1",
             title="No description, saved", company="Acme", location="Remote",
-            description="", source_adapter="workable", keyword_score=0,
+            description="", source_adapter="workable", score=0, score_method="keyword",
         )
         repos.jobs.create(
             canonical_url="https://apply.workable.com/acme/j/2",
             title="No description, not saved", company="Acme", location="Remote",
-            description="", source_adapter="workable", keyword_score=0,
+            description="", source_adapter="workable", score=0, score_method="keyword",
         )
         repos.applications.create(saved_job.id)
         repos.operations.create("scan", {})
@@ -642,7 +642,15 @@ def test_watch_company_from_url_and_job_row(
         json={"url": "https://example.com/careers"},
     )
     assert bad.status_code == 422
-    assert "no adapter recognizes" in bad.json()["detail"]
+    detail = bad.json()["detail"]
+    assert detail["code"] == "unrecognised_board"
+    assert "no adapter recognizes" in detail["message"]
+    # The vendor list is the registry's, so a new board reader joins it by itself (A8).
+    from sidecar.modules.scraper import adapters
+
+    assert detail["vendors"] == [a.LABEL for a in adapters.ADAPTERS if a.KIND == "ats"]
+    assert "Greenhouse" in detail["vendors"]
+    assert "Brave Search (your own key)" not in detail["vendors"]
 
 
 def test_watch_company_domain_url_falls_back_to_covering_source(
@@ -755,7 +763,10 @@ def test_watch_search_source_job_explains_no_board(
         )
     bad = client.post("/api/discovery/watchlist", headers=AUTH, json={"job_id": job.id})
     assert bad.status_code == 422
-    assert "search source (naukri)" in bad.json()["detail"]
+    detail = bad.json()["detail"]
+    assert detail["code"] == "search_source" and detail["source"] == "naukri"
+    # It no longer names a Settings heading that was renamed (A8).
+    assert "Companies you follow" not in detail["message"]
     # The refusal is durable: Analytics → Logs (operations ledger) has it.
     with app.state.db.repos() as repos:
         ops = [o for o in repos.operations.list_recent() if o.kind == "watch_company"]

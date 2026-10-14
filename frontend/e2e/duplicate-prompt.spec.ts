@@ -65,6 +65,8 @@ test("the scanned card asks once, and never again once dismissed", async ({ page
   const prompt = page.getByTestId("duplicate-prompt");
   await expect(prompt).toBeVisible({ timeout: 10_000 });
   await expect(prompt).toContainText("Senior Software Engineer");
+  // Both copies arrived today: "today", never "0 days ago".
+  await expect(prompt).toContainText("which you added today.");
   await page.screenshot({ path: `${DIR}/prompt-on-card.png`, fullPage: true });
 
   // A notice only: it says what to do, and there is nothing to merge with.

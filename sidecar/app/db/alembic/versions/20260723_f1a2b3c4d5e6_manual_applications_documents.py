@@ -1,15 +1,11 @@
-"""manual applications + content-addressed documents (FR-TR manual-add).
+"""manual applications and content-addressed documents (FR-TR manual-add).
 
-Adds the "Add a job application" slice: an `origin` marker on applications so the
-Tracker can filter fyj-discovered vs. manually-logged cards, plus a
-content-addressed `documents` store (dedup by sha256) and an
-`application_documents` link so a manual card can carry the resume/cover letter
-the user actually submitted.
+An `origin` marker on applications, a sha256-deduped `documents` store, and an
+`application_documents` link for the files a manual card was submitted with.
 
 Revision ID: f1a2b3c4d5e6
 Revises: d7b2a91c4e58
 Create Date: 2026-07-23
-
 """
 # ruff: noqa: E501 — Alembic DDL; long create_index/constraint lines are boilerplate.
 from __future__ import annotations

@@ -38,12 +38,9 @@ def resolve_log_dir(log_dir: str | os.PathLike[str] | None = None) -> Path:
     if env:
         return Path(env)
     if getattr(sys, "frozen", False):
-        # PyInstaller build: _REPO_ROOT resolves inside the .app bundle, and a
-        # signed bundle must never be written to — macOS blocks the mkdir
-        # (boot crash, seen live 2026-08-10) and any write would invalidate
-        # the notarization seal. Logs go to the app-data dir instead.
-        # Local import: db.database must not be pulled in before __main__
-        # finishes wiring the boot path.
+        # PyInstaller build: _REPO_ROOT is inside the signed bundle, which must never be
+        # written (macOS blocks it, and a write breaks notarization), so logs go to the
+        # app-data dir. Local import: db.database must load after __main__ wires boot.
         from .db.database import resolve_data_dir
 
         return resolve_data_dir() / "logs"
@@ -73,12 +70,9 @@ def setup_flight_recorder(
     # recorder alive across migrations.
     logger.disabled = False
 
-    # Idempotence: don't add a second handler for the same file. Both sides are
-    # resolved because `baseFilename` is only `abspath`, which keeps symlinks:
-    # under `FYJ_DATA_DIR=/tmp/...` on macOS the handler holds `/tmp/...` while
-    # `log_path.resolve()` reads `/private/tmp/...`, the guard never matches,
-    # and every call stacks another handler. Observed 2026-09-20 in a packaged
-    # run on a throwaway profile: 3 boot-path calls, every line written 3 times.
+    # Idempotence: no second handler for the same file. Both sides resolve, because
+    # `baseFilename` keeps symlinks: under /tmp on macOS the guard never matched and
+    # every boot-path call stacked another handler.
     resolved = log_path.resolve()
     for handler in logger.handlers:
         if (
@@ -96,13 +90,9 @@ def setup_flight_recorder(
             datefmt="%Y-%m-%dT%H:%M:%S%z",
         )
     )
-    # Defense-in-depth redaction net: scrub any secret-shaped substring that a
-    # future code path slips into a log line or traceback before it lands in the
-    # flight recorder. Source discipline stays the primary control; this is the
-    # safety net (see observability/redaction.py). Attached at the handler so it
-    # also covers records propagated from child loggers (fyj.sidecar.*).
-    # Local import: the observability package imports get_logger from this module,
-    # so a top-level import here would be circular at boot.
+    # Redaction net: scrub secret-shaped substrings before a line reaches the flight
+    # recorder (observability/redaction.py). Source discipline is the primary control.
+    # At the handler, so child loggers are covered; local import to avoid a cycle.
     from .observability.redaction import attach_redaction
 
     attach_redaction(handler)

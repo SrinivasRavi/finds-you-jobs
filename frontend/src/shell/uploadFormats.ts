@@ -1,9 +1,6 @@
-// The upload formats each door offers, read off the sidecar rather than guessed.
-//
-// 2 server lists, not 1, and the doors had drifted from both: `documents.py`
-// ALLOWED_TYPES is what we STORE as a binary attachment, `doc_extract.py`
-// SUPPORTED_SUFFIXES is what we can PARSE into the editor. `.markdown` extracts
-// but isn't a storable attachment type, which is the only difference.
+// The upload formats each door offers, read off the sidecar. 2 lists:
+// ALLOWED_TYPES (documents.py) is what we store, SUPPORTED_SUFFIXES
+// (doc_extract.py) what we can parse; `.markdown` is the only difference.
 
 import type { components } from "../api/schema";
 

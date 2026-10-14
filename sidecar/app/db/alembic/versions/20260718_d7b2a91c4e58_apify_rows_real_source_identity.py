@@ -1,16 +1,12 @@
-"""Apify-scraped jobs carry their real board identity (maintainer directive
-2026-07-18: show "Naukri", never the "Apify" plumbing).
+"""Apify-scraped jobs carry their real board identity ("Naukri", never "Apify").
 
-Data-only backfill, no schema change: rows the Apify adapter stored as
-`source_adapter = "apify"` are re-stamped with the board the actor actually
-scraped, derived from the canonical URL's host — the same identity newly
-scanned rows now get at parse time (`adapters/apify.py ACTOR_SOURCE_IDS`).
-Rows whose host matches no known actor board keep "apify" (honest fallback).
+Data only: rows stored as `source_adapter = "apify"` are re-stamped with the
+board derived from the URL's host (`adapters/apify.py ACTOR_SOURCE_IDS`);
+unmatched hosts keep "apify".
 
 Revision ID: d7b2a91c4e58
 Revises: a33c46cd3118
 Create Date: 2026-07-18 12:00:00.000000
-
 """
 from __future__ import annotations
 

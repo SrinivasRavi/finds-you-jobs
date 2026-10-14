@@ -56,13 +56,8 @@ def test_is_known_rejects_a_title_the_taxonomy_lacks() -> None:
 
 
 def test_a_title_the_taxonomy_lacks_is_still_a_title() -> None:
-    """O*NET's Alternate Titles file names "backend" nowhere among its 56,495
-    rows (docs/internal/evidence/2026-10-01-location-resolution/README.md,
-    "Titles"), so a real posting title like "Backend Engineer" can't be known
-    to this index. That's fine: `suggest` is advisory, never a gate, so it
-    either comes back empty or offers titles that aren't "Backend Engineer"
-    itself, and `is_known` being False never stops the user from typing it.
-    """
+    """O*NET names "backend" nowhere, so "Backend Engineer" is unknown to the index.
+    Fine: `suggest` is advisory, and `is_known` False never blocks the user."""
     hits = suggest("backend")
     assert hits == [] or all(not h.lower().startswith("backend") for h in hits)
     assert is_known("Backend Engineer") is False
@@ -75,11 +70,17 @@ def test_the_index_loads_once_per_process() -> None:
 def test_suggest_is_fast_enough_for_every_keystroke() -> None:
     warm()
     queries = ["en", "ma", "se", "software eng", "manager", "director", "backend", "zzzqx"]
+    # Best of 5, so a scheduler stall isn't read as the code's cost. 15 ms, not 5: a CI
+    # runner measured about 5x a Mac (7.58 ms against 1.56 ms), and a full scan, the
+    # regression this catches, costs about 5 ms on a Mac, so it still fails here.
     for query in queries:
-        start = time.perf_counter()
-        suggest(query)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        assert elapsed_ms < 5, f"{query!r} took {elapsed_ms:.2f} ms"
+        samples = []
+        for _ in range(5):
+            start = time.perf_counter()
+            suggest(query)
+            samples.append((time.perf_counter() - start) * 1000)
+        elapsed_ms = min(samples)
+        assert elapsed_ms < 15, f"{query!r} took {elapsed_ms:.2f} ms"
 
 
 def test_the_build_script_is_shipped_beside_its_output() -> None:

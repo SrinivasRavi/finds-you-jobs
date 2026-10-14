@@ -72,29 +72,3 @@ def test_delete_job_cascade_nullifies_outreach_logs(migrated_db: Database) -> No
         surviving_log = repos.outreach_logs.get(log_id)
         assert surviving_log is not None
         assert surviving_log.job_id is None  # nullified, not deleted
-
-
-def test_delete_job_cascade_removes_score_factors(migrated_db: Database) -> None:
-    """Factor rows are score detail, not audit: they go with the job. Without
-    this the 4 delete paths IntegrityError again, one new FK child later."""
-    db = migrated_db
-    with db.repos() as repos:
-        job = repos.jobs.create(
-            canonical_url="u-cascade-3",
-            title="Test Job 3",
-            source_adapter="lever",
-        )
-        repos.job_score_factors.replace(
-            job.id,
-            "keyword",
-            [{"factor": "location_preference", "value": 1.0, "evidence": "Bengaluru"}],
-        )
-        job_id = job.id
-
-    with db.repos() as repos:
-        assert len(repos.job_score_factors.list_for_job(job_id)) == 1
-        delete_job_cascade(repos, job_id)
-
-    with db.repos() as repos:
-        assert repos.jobs.get(job_id) is None
-        assert repos.job_score_factors.list_for_job(job_id) == []

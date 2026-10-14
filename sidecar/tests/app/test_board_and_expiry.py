@@ -1,17 +1,9 @@
-"""Board correctness + Expired aging (this round's board work package).
+"""Board correctness and expired aging.
 
-Covers:
-- Score-failed derivation (FR-JB-07 / NFR-OFFLINE-02): a failed `score` op with
-  no cached score resolves the board row to `scoreStatus == "failed"`.
-- Board pagination + honest total (FR-JB-02): 50/page, `total` counts every
-  eligible row — no silent 200-row cap.
-- Real last-scan meta + explained empty/running/error status (FR-JB-10).
-- Board search (FR-JB-13 / US-JB-12): shallow list_q vs deep text_q, filtered
-  server-side before pagination; a search miss never masquerades as an empty
-  scrape.
-- Expired aging (FR-SYS-03): grey at 14d, hard-delete (no tombstone) at 30d,
-  rescued by Save, un-expire resets the timer, legacy rows backfilled once.
-"""
+Covers: score-failed derivation (FR-JB-07); pagination and an honest total
+(FR-JB-02); real last-scan meta (FR-JB-10); search filtered before pagination
+(FR-JB-13), where a miss never looks like an empty scrape; and aging (FR-SYS-03):
+grey at 14 days, delete at 30, rescued by Save."""
 
 from __future__ import annotations
 
@@ -318,7 +310,7 @@ def _filler(repos: object, n: int = 60) -> None:
     for i in range(n):
         repos.jobs.create(  # type: ignore[attr-defined]
             canonical_url=f"f{i}", title=f"F{i}", location="Berlin", description="Office role.",
-            source_adapter="lever", keyword_score=90,
+            source_adapter="lever", score=90, score_method="keyword",
         )
 
 
@@ -336,27 +328,29 @@ def test_board_filters_run_on_the_whole_board_before_pagination(
         remote = repos.jobs.create(
             canonical_url="t-remote", title="Remote Role", location="Remote",
             description="Fully remote.",
-            source_adapter="lever", keyword_score=10, posted_at=old,
+            source_adapter="lever", score=10, score_method="keyword", posted_at=old,
         ).id
         ashby = repos.jobs.create(
             canonical_url="t-ashby", title="Ashby Role", location="Berlin",
             description="Office role.",
-            source_adapter="ashby", keyword_score=10, posted_at=old,
+            source_adapter="ashby", score=10, score_method="keyword", posted_at=old,
         ).id
         ai = repos.jobs.create(
             canonical_url="t-ai", title="AI Scored", location="Berlin",
             description="Office role.",
-            source_adapter="lever", llm_score=10, llm_score_method="llm", posted_at=recent,
+            source_adapter="lever", score=10, score_method="llm", posted_at=recent,
         ).id
         paid = repos.jobs.create(
             canonical_url="t-paid", title="Paid Role", location="Berlin",
             description="Office role.",
-            source_adapter="lever", keyword_score=10, salary="$150k - $180k", posted_at=old,
+            source_adapter="lever", score=10, score_method="keyword", salary="$150k - $180k",
+            posted_at=old,
         ).id
         low = repos.jobs.create(
             canonical_url="t-low", title="Low Role", location="Berlin",
             description="Office role.",
-            source_adapter="lever", keyword_score=10, salary="$30k - $40k", posted_at=old,
+            source_adapter="lever", score=10, score_method="keyword", salary="$30k - $40k",
+            posted_at=old,
         ).id
 
     def ids(query: str) -> tuple[set[str], int]:
@@ -385,7 +379,8 @@ def test_board_recency_sort_runs_before_pagination(
     with _db(app).repos() as repos:
         _filler(repos)
         newest = repos.jobs.create(
-            canonical_url="t-new", title="Newest", source_adapter="lever", keyword_score=1,
+            canonical_url="t-new", title="Newest", source_adapter="lever", score=1,
+            score_method="keyword",
             posted_at=now_utc().isoformat(),
         ).id
     body = client.get("/api/board?sort=recency", headers=AUTH).json()
@@ -690,10 +685,9 @@ def test_hard_excludes_hide_existing_board_rows_and_restore(
 
 
 # ---------------------------------------------------------------------------
-# "New in last scan" (maintainer 2026-07-23): the scan records the job ids it
-# actually inserted in its result_ref; the board flags exactly those rows —
-# from the LATEST succeeded scan only — as isNew. Manual adds and rows from
-# older scans never carry the badge.
+# "New in last scan": the scan records the ids it inserted, and the board flags
+# exactly those, from the latest succeeded scan, as isNew. Manual adds and older
+# scans never carry the badge.
 # ---------------------------------------------------------------------------
 
 
@@ -761,3 +755,26 @@ def test_board_is_new_absent_result_ref_is_graceful(
         job_id = job.id
     rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
     assert rows[job_id]["isNew"] is False
+
+
+def test_the_board_names_a_postings_places_the_way_the_picker_does(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    """place-picker.md 8.3: 4 spellings of Bengaluru print 1 label, a containing
+    country is not repeated, and text naming no place keeps an empty list."""
+    app, client = app_client
+    spellings = ["Bangalore", "Bengaluru, IN", "India - Bangalore", "Bangalore - Engineering"]
+    ids: dict[str, str] = {}
+    with _db(app).repos() as repos:
+        for i, where in enumerate([*spellings, "Remote"]):
+            job = repos.jobs.create(
+                canonical_url=f"p{i}", title="A", description=REALISTIC_JD,
+                source_adapter="lever", location=where,
+            )
+            ids[where] = job.id
+
+    rows = {j["id"]: j for j in client.get("/api/board", headers=AUTH).json()["jobs"]}
+    for where in spellings:
+        assert rows[ids[where]]["places"] == ["Bengaluru, Karnataka, India"]
+        assert rows[ids[where]]["location"] == where  # the text as posted stays
+    assert rows[ids["Remote"]]["places"] == []

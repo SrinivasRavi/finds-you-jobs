@@ -43,7 +43,9 @@ from .policy import (
     DISPATCH_PRIORITY,
     ConcurrencyPolicy,
     can_start,
+    fit_to_pool,
     with_llm_limit,
+    with_queue_mode,
 )
 
 RESTART_NOTE = (
@@ -54,17 +56,10 @@ RESTART_NOTE = (
 PublishFn = Callable[[dict[str, Any]], None]
 OnSuccessFn = Callable[[str, str], None]  # (operation_id, kind) after a success
 
-# Ledger retention used to fire here: every completed operation pruned the table
-# back to the 250 most-recent terminal rows. It doesn't any more (maintainer,
-# 2026-08-24: "never delete anything"). Nothing deletes an operation now, the
-# Analytics ledger reads the newest 1,000, and a deletion policy the user can
-# see and control is backlogged as S-C22 in `docs/internal/status.md`.
-# The mechanism went with it (maintainer, 2026-08-28): 60 lines of retention
-# code with zero callers and its own test suite is a cost paid on every future
-# refactor. What a rebuild owes is recorded in S-C22, including the FK-clearing
-# bug it has to solve again — other rows remember which operation produced them
-# and the app runs with `PRAGMA foreign_keys=ON`, so a delete that doesn't clear
-# those references first raises `IntegrityError` and silently prunes nothing.
+# Nothing deletes an operation (maintainer, 2026-08-24: "never delete
+# anything"); the retention code that pruned to 250 rows is gone. A user-visible
+# deletion policy is S-C22, which records what a rebuild owes, including clearing
+# the FK references other rows hold (foreign_keys=ON makes a naive delete raise).
 
 # How many queued rows one dispatch pass reads. The concurrency policy can never
 # have more than roughly 10 operations in flight (llm 4, every other group 1), so
@@ -87,10 +82,10 @@ class OperationRunner:
         on_success: OnSuccessFn | None = None,
         observability: ObservabilityHandle | None = None,
         # Worker threads bound REAL parallelism; the per-group policy bounds
-        # intended parallelism. Sized generously so a raised llm_concurrency
-        # setting isn't silently capped — idle threads cost nothing. 32 is the
-        # practical ceiling for the "Unlimited" setting.
-        max_workers: int = 32,
+        # intended parallelism. Scoring gets what the other lanes' caps leave
+        # (`fit_to_pool`, audit A19), so this is sized for every lane at its cap
+        # plus the top Parallel AI calls (20). Idle threads cost nothing.
+        max_workers: int = 64,
         # Injectable for tests (short cooldowns); production uses the default.
         circuit: EngineCircuitBreaker | None = None,
     ) -> None:
@@ -109,7 +104,8 @@ class OperationRunner:
         self._max_workers = max_workers
         self._executor: ThreadPoolExecutor | None = None
         self._lock = RLock()
-        self._running: dict[str, str] = {}  # operation_id -> kind (in-flight)
+        # operation_id -> (kind, requested_by), in flight; the lane needs both.
+        self._running: dict[str, tuple[str, str]] = {}
         # Per-running-op cooperative cancel tokens (F-M7): created at dispatch,
         # exposed to the entrypoint via ctx.cancelled, dropped on completion.
         self._cancels: dict[str, Event] = {}
@@ -131,12 +127,9 @@ class OperationRunner:
         self.recover()
 
     def shutdown(self, *, drain_timeout: float | None = None) -> None:
-        """Stop accepting dispatches; wait for in-flight workers to drain.
-
-        `drain_timeout` mirrors the section 4.4 10 s shutdown window; None waits fully.
-        The Tauri shell force-kills after its own window, so overshooting here is
-        capped upstream — this just gives in-flight operations a clean chance.
-        """
+        """Stop dispatching and wait for in-flight workers. `drain_timeout` mirrors the
+        10 s window (section 4.4); None waits fully. The shell force-kills after its own
+        window anyway."""
         with self._lock:
             self._closing = True
             executor = self._executor
@@ -155,10 +148,13 @@ class OperationRunner:
         """The operation kinds this runner can dispatch (registry keys)."""
         return self._registry.kinds()
 
-    def submit(self, kind: str, input_snapshot: dict[str, Any]) -> str:
-        """Create a `queued` operation, publish, and pump. Returns the id now."""
+    def submit(
+        self, kind: str, input_snapshot: dict[str, Any], *, requested_by: str = "app"
+    ) -> str:
+        """Create a `queued` operation, publish, and pump. Returns the id now.
+        `requested_by="user"` when a click created it and someone is waiting."""
         with self._db.repos() as repos:
-            op = repos.operations.create(kind, input_snapshot)
+            op = repos.operations.create(kind, input_snapshot, requested_by=requested_by)
             operation_id = op.id
         self._log.info("operation %s enqueued (kind=%s)", operation_id, kind)
         self._publish(operation_id, kind, "queued")
@@ -166,13 +162,9 @@ class OperationRunner:
         return operation_id
 
     def submit_many(self, items: list[tuple[str, dict[str, Any]]]) -> list[str]:
-        """Enqueue a batch and pump ONCE. Returns the ids, in order.
-
-        `submit` in a loop was quadratic: each call pumped, and each pump re-read
-        the whole queue. Measured at 3.21 s of blocked event loop for 1,000
-        operations, half a million rows loaded to start a handful. One
-        transaction for the inserts and one pump at the end removes the
-        multiplier; the dispatch read below removes the rest."""
+        """Enqueue a batch and pump once; returns the ids in order. `submit` in a loop
+        was quadratic (3.21 s of blocked loop for 1,000 ops); 1 transaction and 1 pump
+        remove the multiplier."""
         if not items:
             return []
         created: list[tuple[str, str]] = []
@@ -186,20 +178,10 @@ class OperationRunner:
         return [operation_id for operation_id, _ in created]
 
     def cancel(self, operation_id: str) -> bool:
-        """Cancel an operation. A still-`queued` op (any kind) is cancelled
-        immediately.
-
-        A `running` op gets a cooperative cancel REQUEST (F-M7) — but only for
-        the kinds that actually POLL the token (`CANCELLABLE_RUNNING_KINDS`,
-        kept next to the entrypoint registry): the LLM modules check between
-        retry attempts and mid-backoff. Other kinds never observe the token
-        while running (`apply` checks once at dispatch; its real cancel is the
-        apply-run route), so accepting the request would be a lie — they
-        return False (honesty fix, 2026-07-25). A call already blocked inside
-        an engine (subprocess / HTTP read) runs to its own timeout first — we
-        never kill a live worker thread mid-syscall. Returns True when the
-        cancel was applied (queued) or genuinely accepted (running + polling
-        kind); False for unknown, already-terminal, or non-polling running ops."""
+        """Cancel an op: a queued one at once; a running one only as a cooperative
+        request for kinds that poll (`CANCELLABLE_RUNNING_KINDS`), since accepting it
+        for others would be a lie. A call blocked in an engine runs to its own timeout.
+        True when applied or accepted; False for unknown, terminal or non-polling."""
         with self._lock:
             with self._db.repos() as repos:
                 op = repos.operations.get(operation_id)
@@ -226,6 +208,12 @@ class OperationRunner:
         effect on the next pump — running ops are never interrupted."""
         with self._lock:
             self._policy = with_llm_limit(self._policy, limit)
+        self._pump()
+
+    def set_queue_mode(self, mode: str) -> None:
+        """Switch the AI queue choice live (queueing.md section 5); running ops finish."""
+        with self._lock:
+            self._policy = with_queue_mode(self._policy, mode)
         self._pump()
 
     # -- boot recovery -----------------------------------------------------
@@ -257,28 +245,29 @@ class OperationRunner:
             if self._executor is None or self._closing:
                 return
             with self._db.repos() as repos:
-                # Interactive kinds jump the bulk fan-out (policy.py
-                # DISPATCH_PRIORITY): an apply/tailor the user is watching must
-                # never sit behind dozens of queued scores. Ordered and capped in
-                # SQL — reading every queued row to start at most a handful is
-                # what made enqueueing quadratic, and ordering there is what lets
-                # the cap be safe.
+                # Interactive kinds jump the bulk fan-out (policy.py DISPATCH_PRIORITY), so an
+                # apply the user is watching never waits behind queued scores. Ordered and capped
+                # in SQL; reading every queued row made enqueueing quadratic.
                 queued = repos.operations.list_queued_for_dispatch(
                     priority_by_kind=DISPATCH_PRIORITY,
                     default_priority=DEFAULT_DISPATCH_PRIORITY,
                     limit=DISPATCH_SCAN_LIMIT,
                 )
-                running_kinds = list(self._running.values())
+                running = list(self._running.values())
+                policy = fit_to_pool(self._policy, self._max_workers, self._registry.kinds())
                 for op in queued:
                     if op.id in self._running:
                         continue
-                    if can_start(op.kind, running_kinds, self._policy):
+                    # Marked running means it has a thread, never a wait in the pool's queue.
+                    if len(running) >= self._max_workers:
+                        break
+                    if can_start(op.kind, running, policy, op.requested_by):
                         snapshot = dict(op.input_snapshot or {})
                         to_start.append((op.id, op.kind, snapshot))
-                        running_kinds.append(op.kind)
-                for op_id, kind, _snap in to_start:
+                        running.append((op.kind, op.requested_by))
+                        self._running[op.id] = (op.kind, op.requested_by)
+                for op_id, _kind, _snap in to_start:
                     repos.operations.mark_running(op_id)
-                    self._running[op_id] = kind
                     self._cancels[op_id] = Event()
             executor = self._executor
         for op_id, kind, snapshot in to_start:
@@ -290,27 +279,20 @@ class OperationRunner:
             future.add_done_callback(self._forget_future)
 
     def _run(self, operation_id: str, kind: str, snapshot: dict[str, Any]) -> None:
-        """Worker body: call the entrypoint, persist outcome + usage, publish.
-
-        The whole execution is wrapped in a per-operation Logfire span (US-SYS-05)
-        carrying id / kind / engine / model / latency / cost / outcome. A failure
-        lands in all three legs — the operations row, the span, and the SSE event
-        (NFR-SIDE-04). The span is the *only* new artifact; row + event are the
-        pre-existing legs, kept exactly as before.
-        """
+        """Worker body: call the entrypoint, persist outcome and usage, publish, all
+        inside a per-op Logfire span (US-SYS-05). A failure lands in the row, the span
+        and the SSE event (NFR-SIDE-04)."""
         content_logging = (
             self._observability.content_logging if self._observability is not None else False
         )
         with self._lock:
             cancel_token = self._cancels.get(operation_id)
         resolved = None
-        # Half-open probe lease (F-H5 follow-up, 2026-07-25): when `check`
-        # admits this op as the circuit's ONE probe, the lease must be settled
-        # on EVERY terminal path or the circuit wedges open forever. It is
-        # *transferred* by record_success / record_failure (set back to None
-        # right after) and *abandoned* in the outer finally for every other
-        # outcome — cancellation, non-EngineError failures, even a crash in
-        # the handlers themselves.
+        service: str | None = None  # the provider this op calls; the breaker's key
+        # Half-open probe lease (F-H5): when `check` admits this op as the circuit's 1
+        # probe, the lease must settle on every path or the circuit wedges open.
+        # record_success and record_failure transfer it; the outer finally abandons it for
+        # everything else, a crash in the handlers included.
         probe_engine: str | None = None
         try:
             with operation_span(
@@ -324,13 +306,16 @@ class OperationRunner:
                         self._engines.resolve(kind) if self._engines is not None else None
                     )
                     if resolved is not None:
-                        # Circuit breaker (F-H5): a provider that keeps failing
-                        # rejects fast here instead of burning an llm slot on
-                        # retries/timeouts. Raises ProviderCircuitOpen → the
-                        # generic failure path lands its message in the ledger.
-                        # True ⇒ this op holds the half-open probe lease.
-                        if self._circuit.check(resolved.name):
-                            probe_engine = resolved.name
+                        service = self._registry.service_for(
+                            kind, snapshot, self._db, resolved.name
+                        )
+                    if service is not None:
+                        # Circuit breaker (F-H5), keyed by the service the op calls,
+                        # which Jev scoring makes OpenRouter whatever `score` routes
+                        # to. Raises ProviderCircuitOpen; True ⇒ this op holds the
+                        # half-open probe lease.
+                        if self._circuit.check(service):
+                            probe_engine = service
                     ctx = OperationContext(
                         kind=kind,
                         input_snapshot=snapshot,
@@ -362,15 +347,13 @@ class OperationRunner:
                     self._publish(operation_id, kind, "cancelled")
                 except Exception as exc:  # noqa: BLE001 — verbatim capture is the contract
                     message = f"{type(exc).__name__}: {exc}"
-                    # Only real engine failures feed the breaker — module
-                    # parse drift or our own bugs say nothing about the
-                    # provider, and a ProviderCircuitOpen rejection must never
-                    # feed the breaker that produced it (it isn't EngineError).
-                    # Charged to the service that failed: Fast scoring calls
-                    # OpenRouter whatever engine the kind routes to, and its
-                    # spent key must not pause the Claude CLI.
+                    # Only real engine failures feed the breaker: parse drift or our own bugs say
+                    # nothing about the provider, and a ProviderCircuitOpen rejection mustn't feed
+                    # its own breaker. Charged to the service that failed: Jev scoring calls
+                    # OpenRouter whatever the kind routes to, and its spent key mustn't pause the
+                    # Claude CLI.
                     failed = (
-                        (getattr(exc, "provider", None) or (resolved.name if resolved else None))
+                        (getattr(exc, "provider", None) or service)
                         if isinstance(exc, EngineError)
                         else None
                     )
@@ -390,14 +373,10 @@ class OperationRunner:
                         )
                     with self._db.repos() as repos:
                         repos.operations.mark_failed(operation_id, error=message)
-                    # Full traceback into the flight recorder so a failing op is
-                    # debuggable from `logs/sidecar.log` alone — the maintainer
-                    # should never re-derive a crash from a screenshot. The
-                    # traceback is formatted INTO the message (not passed via
-                    # `exc_info=`): Logfire instruments stdlib logging, and an
-                    # exc_info record contaminates the global span provider in
-                    # certain test orderings. Any voyager subprocess stderr tail
-                    # already rides inside `message` (the driver appends it).
+                    # Full traceback into the flight recorder, so a failing op is debuggable from
+                    # logs/sidecar.log alone. Formatted into the message, not `exc_info=`: an
+                    # exc_info record contaminates Logfire's span provider in some test orders. A
+                    # voyager stderr tail already rides inside `message`.
                     tb = "".join(traceback.format_exception(exc))
                     self._log.error(
                         "operation %s (%s) failed: %s\n%s",
@@ -408,16 +387,13 @@ class OperationRunner:
                     )
                     self._publish(operation_id, kind, "failed", error=message)
                 else:
-                    if resolved is not None:
-                        self._circuit.record_success(resolved.name)
+                    if service is not None:
+                        self._circuit.record_success(service)
                         probe_engine = None  # lease transferred (probe verdict: healthy)
                     if outcome.error:
-                        # The entrypoint ran to completion and reports that what
-                        # the user asked for did not happen (an apply run that
-                        # ended `blocked`, say). It is a failed operation, and it
-                        # keeps the usage it already spent, which is why this is
-                        # not simply raised. The engine answered, so the breaker
-                        # above is left as recorded.
+                        # The entrypoint finished and reports the user's request didn't happen (an
+                        # apply run that ended `blocked`): a failed op that keeps its spent usage,
+                        # hence not raised. The engine answered, so the breaker stays as recorded.
                         try:
                             record_span_failure(span, outcome.error)
                         except Exception:  # noqa: BLE001 — the span is additive; the row must land

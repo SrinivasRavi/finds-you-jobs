@@ -1,16 +1,9 @@
 # voyager_py/tests/test_worker_contact_sync_batch.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""The one-session batched contact-status sweep (`worker.contact_sync_states`).
-
-The host used to drive one `contact_sync` op per tracked contact, and every
-browser op builds its own `_paced_session` — so a 5-contact sweep launched and
-quit a full Chromium five times (~106 s live). The batch op must open ONE
-session for N contacts while preserving the single op's per-contact semantics:
-paced reads, charge-on-attempt profile views, 403/404 isolation,
-first-429-stops-the-batch backoff, auth-stop-and-surface.
-
-Zero live LinkedIn traffic — the session and the probe action are monkeypatched.
-"""
+"""The batched contact-status sweep (`worker.contact_sync_states`): 1 session for
+N contacts (5 launches took about 106 s), keeping per-contact semantics: paced
+reads, charge-on-attempt, 403/404 isolation, first-429 backoff, auth stop. The
+session and probe are monkeypatched."""
 
 from __future__ import annotations
 

@@ -1,28 +1,11 @@
-"""The Networker black box: discover / draft / send (ROADMAP section 66).
+"""The Networker black box: discover, draft, send.
 
-- `discover(company, job) → contacts[]` — zero-LLM; delegates to the voyager
-  subprocess (driver), then tags each contact by audience + warmth.
-- `draft(contact, job, guidance?) → message` — the one LLM operation; grounded
-  in the seeker's master profile, per the bound audience playbook.
-- `send(message, contact) → result` — zero-LLM; routes warm→DM / cold→connection
-  -request-with-note through the voyager subprocess. Caps/backoff are voyager's;
-  we surface its verbatim quota + errors, never swallowing them.
-
-**Two seams, mirroring the other silos:** the voyager subprocess sits behind the
-`VoyagerDriver` protocol (production = `DirectVoyagerDriver`; test = a fake),
-and the LLM sits behind the `Engine` protocol. Teardown of the driver happens in
-`finally` (NFR-MEM-02 / section 4). Storage stance (section 4): the module owns no persistent
-storage; `draft` uses a per-operation scratch dir deleted on return.
-
-**Design note — deterministic audience tagging (flagged).** FR-REF-01 says "the
-LLM assigns each contact an audience tag". P1 here uses a **deterministic
-role-title heuristic** (`playbooks.tag_audience`) instead, so discovery stays
-zero-LLM and free (tagging 10 contacts is not 10 LLM calls — that would strain
-the per-operation cost bound, NFR-COST-01) and is fully unit-testable. The
-per-contact JD-aware LLM tagging remains a possible enhancement; `job` is
-accepted by `discover`/`draft` and `draft` already feeds the JD to the model.
-Open question for the maintainer — see the ROADMAP N2 as-built note.
-"""
+`discover(company, job)`: 0 LLM, via the voyager driver, each contact tagged by
+audience and warmth. `draft(contact, job)`: the 1 LLM op, grounded in the master
+profile and the audience playbook. `send(message, contact)`: 0 LLM, DM or invite
+note, voyager's quota and errors surfaced verbatim. Seams: `VoyagerDriver` and
+`Engine`. Audience tagging is a deterministic title heuristic, not the LLM
+FR-REF-01 names, to keep discovery free (NFR-COST-01)."""
 
 from __future__ import annotations
 
@@ -81,13 +64,9 @@ def resolve(
     limit: int = 5,
     dry_run: bool = False,
 ) -> ResolveResult:
-    """Resolve a company → ranked LinkedIn company entities (FR-NW-02).
-
-    Zero-LLM; delegates to voyager. `url` (a pasted LinkedIn company URL) is the
-    authoritative single-entity path. Otherwise typeahead on `company`;
-    `prefer_domain` (the employer domain from the job URL) flags the
-    website-matched candidate for the host's silent auto-pick. The host applies the
-    pick policy (domain-match → auto; else → user confirm/paste) and caches it."""
+    """Resolve a company to ranked LinkedIn entities (FR-NW-02), 0 LLM. A pasted
+    company `url` is authoritative; otherwise typeahead, with `prefer_domain`
+    flagging the website match. The host applies the pick policy and caches it."""
     if not company and not url:
         raise NetworkerError("resolve", "company or url is required")
     drv = driver or DirectVoyagerDriver()
@@ -128,12 +107,9 @@ def discover(
     company_urn: str | None = None,
     page: int = 1,
 ) -> DiscoverResult:
-    """Discover ≤ `limit` current employees of `company`, tagged by audience +
-    warmth (US-REF-01/02/10). Zero-LLM. `company_urn` (resolved + disambiguated
-    by the host) scopes the People search by the `currentCompany` facet — the
-    current-employees-only correctness fix. `page` fetches the next batch for
-    "find 10 more" (voyager paginates the results page). `job` is accepted per the
-    section 66 contract and reserved for future JD-aware relevance (module note)."""
+    """Discover up to `limit` current employees of `company`, tagged (US-REF-01/02/10).
+    `company_urn` scopes the People search to current employees; `page` fetches the
+    next batch; `job` is reserved for JD-aware relevance."""
     if not company:
         raise NetworkerError("discover", "company is required")
     drv = driver or DirectVoyagerDriver()
@@ -160,20 +136,10 @@ def draft(
     skill_md: str | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> DraftResult:
-    """Draft one grounded referral-ask for `contact` (US-REF-03 / FR-REF-02).
-
-    The one LLM operation. Warmth/channel derive from the contact's connection
-    degree (US-REF-10); the audience playbook is bound from `contact.audience`.
-    `master_md` is the seeker's sole evidence (no fabrication — the skill enforces
-    it, surfacing any refusal in `notes`).
-
-    `skill_md`, when provided, replaces the on-disk draft skill file as the
-    system prompt (the app's user-editable-prompt override, section 5). None → the
-    default. The bound audience playbook is unaffected — it stays appended to the
-    user prompt.
-
-    `cancelled`, when provided, is polled at the retry checkpoints (loop top,
-    mid-backoff); True raises `CompletionCancelled` (cooperative Stop, F-M7)."""
+    """Draft 1 grounded referral ask (US-REF-03 / FR-REF-02), the 1 LLM op. Warmth
+    comes from the connection degree, the playbook from `contact.audience`, evidence
+    from `master_md` only. `skill_md` replaces the skill file (the playbook stays);
+    `cancelled` raises `CompletionCancelled` (F-M7)."""
     if not contact.public_identifier:
         raise NetworkerError("draft", "contact.public_identifier is required")
     engine = engine or ClaudeCliEngine()
@@ -213,17 +179,10 @@ def send(
     dry_run: bool = False,
     on_step: Callable[[str], None] | None = None,
 ) -> SendResult:
-    """Send `message` to `contact` via the voyager subprocess (US-REF-04 /
-    FR-NW-03). Warm → DM; cold → connection-request-with-note. Zero-LLM.
-
-    `on_step`, when given, receives each completed send step's key (the
-    `dm1..dm4` / `invite1..invite5` plan the host's queue panel renders) as
-    the driver finishes it — real progress, reported from the code driving
-    the page (2026-08-16).
-
-    A voyager-reported not-sent (cap hit / backoff / UI failure) returns a
-    SendResult with `sent=False` + the verbatim reason; only a subprocess crash
-    or unparseable output raises NetworkerError (both via the driver)."""
+    """Send `message` to `contact` (US-REF-04 / FR-NW-03): warm gets a DM, cold an
+    invite with a note. `on_step` gets each completed step key as the driver
+    finishes it. A not-sent (cap, backoff, UI failure) returns `sent=False` with the
+    reason; only a crash or unparseable output raises NetworkerError."""
     if not message.strip():
         raise NetworkerError("send", "message is empty")
     warmth = warmth_for_degree(contact.connection_degree)
@@ -276,23 +235,11 @@ def probe_batch(
     thread_only: set[str] | None = None,
     dry_run: bool = False,
 ) -> list[ProbeResult]:
-    """Probe many contacts' live LinkedIn state in ONE browser session (US-NW-12
-    / FR-NW-15). Zero-LLM, READ-ONLY — one `contact-sync-states` driver call
-    instead of a browser launch/quit cycle per contact.
-
-    `urns` maps public_identifier → the contact's cached fsd_profile urn (from
-    an earlier probe's `target_urn`); `thread_only` names the contacts whose
-    degree question is settled. A contact in both runs as an UNMETERED
-    thread-only probe off the sweep's one inbox read; the rest are full paced
-    profile probes, and each full probe's result carries the `target_urn` it
-    resolved for the caller to cache.
-
-    Returns one ProbeResult per PROBED contact — thread-only probes first, NOT
-    input order (join by `public_identifier`). The worker stops the sweep on
-    the first rate-limit/cap refusal or auth failure, so the list may be
-    shorter than `contacts` — the stop reason rides on the last result
-    (`ok=False`, `error`, verbatim `reason`); untouched contacts get no result.
-    A hard driver failure raises NetworkerError, exactly like `probe`."""
+    """Probe many contacts in 1 browser session (US-NW-12 / FR-NW-15), read-only.
+    A contact in both `urns` and `thread_only` gets a free thread-only probe; the
+    rest are paced full probes that return a `target_urn` to cache. Results come
+    thread-only first (join by `public_identifier`) and stop at the first refusal,
+    whose reason rides on the last result. A driver crash raises NetworkerError."""
     for contact in contacts:
         if not contact.public_identifier:
             raise NetworkerError("probe", "contact.public_identifier is required")

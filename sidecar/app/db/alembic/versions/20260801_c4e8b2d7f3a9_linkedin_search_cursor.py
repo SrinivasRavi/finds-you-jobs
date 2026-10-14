@@ -1,14 +1,11 @@
-"""linkedin_search_cursors — Fresh search / Next page pagination cursor.
+"""linkedin_search_cursors: the Fresh search / Next page cursor.
 
-The one-shot LinkedIn job search grows a Next-page button: a Fresh search
-snapshots its queries here with each pair's next offset, Next page resumes the
-snapshot within a 12 h freshness window (host policy — LinkedIn's own
-pagination is stateless and never expires; the TTL is for result coherence).
+A Fresh search snapshots its queries with each pair's next offset; Next page
+resumes it within 12 h (result coherence; LinkedIn's paging never expires).
 
 Revision ID: c4e8b2d7f3a9
 Revises: f1a2b3c4d5e6
 Create Date: 2026-08-01
-
 """
 from __future__ import annotations
 

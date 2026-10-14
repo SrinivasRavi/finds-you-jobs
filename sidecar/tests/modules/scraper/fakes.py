@@ -19,15 +19,9 @@ PAYLOADS = Path(__file__).resolve().parent / "payloads"
 
 
 class FakeFetcher(Fetcher):
-    """Same surface as http.Fetcher; serves canned payloads keyed by URL substring.
-
-    `routes` maps a URL substring → payload file name (under payloads/), a
-    dict/list (returned as-is), an Exception instance (raised), or a callable
-    `(url, body) -> payload` — the seam for endpoints whose response depends on
-    the request (Workday CxS pagination; LinkedIn per-page results). A bare
-    string route is a *filename*; a callable returns already-resolved content
-    (literal text or a dict/list), never a filename.
-    """
+    """Same surface as http.Fetcher, serving canned payloads by URL substring: a
+    payload file name, a dict or list, an Exception (raised), or a callable `(url,
+    body) -> payload` for request-dependent responses."""
 
     routes: dict[str, object] = {}
 

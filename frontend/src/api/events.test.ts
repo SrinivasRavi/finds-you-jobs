@@ -1,12 +1,7 @@
-// Unit tests for the EventBus rebuild path (F-H3): a rejected handshake must
-// arm the backoff timer (the fixed scheduleRebuild livelock), repeated
-// failures retry once per backoff window (no tight spin), and a successful
-// open resets the consecutive-error count.
-//
-// Mocked seams: `getSidecarInfo` (./client) so each test scripts handshake
-// outcomes, and the global EventSource (jsdom has none) with an inspectable
-// fake. The bus singleton is re-imported fresh per test via vi.resetModules;
-// timers are vitest fake timers so REBUILD_BACKOFF_MS is stepped exactly.
+// Unit tests for the EventBus rebuild path (F-H3): a rejected handshake arms
+// the backoff timer, repeated failures retry once per window, and a successful
+// open resets the error count. getSidecarInfo and EventSource are faked, the bus
+// is re-imported per test, and fake timers step REBUILD_BACKOFF_MS exactly.
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 vi.mock("./client", () => ({

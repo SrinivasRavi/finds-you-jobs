@@ -1,16 +1,8 @@
-// Networking kanban — Track N3 (US-NW-01/02/03/07/11), restored 2026-07-16 from
-// the prior repo (the referral-outreach backend now exists on this sidecar): a
-// contact lifecycle kanban (Sent / Accepted → Engagement → Converted | Ghosted),
-// cards with a last-message snippet + days-in-column, a company/audience scope
-// row, and a manual add-contact-by-URL modal (the rank-don't-gate escape hatch).
-// Always reachable (2026-07-09 always-on decision): the CRM carries no account
-// risk; the LinkedIn risk toggle gates only automated actions (FR-SET-03).
-//
-// The LinkedIn status button below (2026-08-16, was a read-only pill) is the
-// one opener for the LinkedIn browser modal: it shows the session status —
-// plus a live "in progress" state while an op drives the surface — and opens
-// the modal, except in the expired/never-connected states, where it lands on
-// Settings (the connect flow lives there).
+// Networking kanban (US-NW-01/02/03/07/11): contact columns from Sent to
+// Converted or Ghosted, cards with a last-message snippet and days in column, a
+// company and audience scope row, and add-contact-by-URL. The LinkedIn status
+// button is the opener for the browser modal; when the session is expired or never
+// connected it lands on Settings instead.
 
 import { useMemo, useState } from "react";
 import type { TFunction } from "i18next";
@@ -87,13 +79,10 @@ export function lastMessageAttribution(
   return { key: "networking.card.me" };
 }
 
-/** The instant a card's shown activity happened, for ordering a kanban column
- *  (most recent first, maintainer ask 2026-08-16). Exactly the timestamp the
- *  card displays (`last_message_at ?? sent_at`), then the row's other
- *  lifecycle stamps so undated cards still order deterministically — and NEVER
- *  `last_touched_at`, the sync engine's rotation cursor, whose churn is what
- *  made the board reshuffle on every Sync press. Exported for its unit
- *  tests. */
+/** When a card's shown activity happened, for ordering a column most recent
+ *  first: the timestamp the card displays, then its other lifecycle stamps, and
+ *  never `last_touched_at`, the sync cursor whose churn reshuffled the board.
+ *  Exported for its unit tests. */
 export function cardActivityAt(
   c: Pick<NetContact, "last_message_at" | "sent_at" | "accepted_at" | "added_at">,
 ): number {
@@ -165,16 +154,10 @@ export function Networking() {
   const contacts = useMemo(() => contactsQ.data ?? [], [contactsQ.data]);
   const update = useUpdateContact();
   const sync = useSyncContacts();
-  // Manual-only sync (maintainer decision, 2026-08-15): the Sync button below
-  // is the ONE trigger. No on-open refresh, no interval, no background timer —
-  // opening this tab causes zero LinkedIn traffic.
-  //
-  // Busy state follows the real operation, not the 202: the POST returns the
-  // moment the sweep is enqueued while the paced read probes run on for a
-  // while, so `syncInFlight` tracks the live `contact_sync` op off the SSE bus
-  // (with a ledger seed for one already running at mount) and holds the button
-  // in "Syncing…" until the op actually settles — at which point the SSE
-  // terminal handler refetches the kanban and the "Synced just now" stamp.
+  // Manual-only sync: the Sync button is the 1 trigger, so opening this tab makes
+  // 0 LinkedIn requests. Busy follows the operation, not the 202: `syncInFlight`
+  // tracks the live `contact_sync` op off SSE until it settles, when the terminal
+  // handler refetches the kanban and the stamp.
   const syncInFlight = useContactSyncInFlight();
   const syncBusy = sync.isPending || syncInFlight;
   // Refreshing needs both the master toggle and a live session; without either
@@ -190,12 +173,9 @@ export function Networking() {
   const [error, setError] = useState<string | null>(null);
   const reachOut = useReachOut();
 
-  // The ONE send path (useReachOut → POST /api/referrals/reach-out), owned here
-  // so it outlives the modal that asked for it. A send is meant to be WATCHED
-  // (vision: transparency; the live view is the point of the broker surface),
-  // so starting one closes the composer and opens the LinkedIn browser modal
-  // before the operation's first step — the maintainer sees the whole send,
-  // not its aftermath.
+  // The 1 send path (useReachOut), owned here so it outlives the modal that asked.
+  // A send is meant to be watched, so starting one closes the composer and opens the
+  // LinkedIn browser modal before the first step.
   function startSend(contactId: string, message: string) {
     reachOut.mutate(
       { contacts: [{ contact_id: contactId, message }] },
@@ -622,12 +602,9 @@ function ContactDetailModal({
             type="button"
             data-testid="contact-open-linkedin"
             onClick={() => {
-              // Show the profile on the in-app LinkedIn surface (2026-08-16 —
-              // never an external browser). The view is a QUEUED operation:
-              // it waits behind whatever is driving the surface instead of
-              // interrupting it, and the modal opens to watch either way. A
-              // mutation so a failed enqueue surfaces (MutationErrorBanner),
-              // never a silent nothing.
+              // Show the profile on the in-app LinkedIn surface, as a queued view that waits
+              // behind whatever drives the surface; the modal opens to watch either way. A
+              // mutation, so a failed enqueue shows in the banner.
               viewInBrowser.mutate({
                 url: contact.linkedin_url,
                 surface: "linkedin",

@@ -1,15 +1,9 @@
-"""Covers: US-NW-12 / FR-NW-15 — the contact-status sync engine.
+"""Covers: the contact-status sync engine (US-NW-12 / FR-NW-15).
 
-  a. Sent → Accepted (now 1st-degree, our message last)
-  b. Sent → Engagement (now 1st-degree, their message last)
-  c. Accepted → Engagement (their message becomes last)
-  d. → Ghosted (engagement quiet / sent-stall past the configurable windows)
-  - Converted is never auto-touched; a recent MANUAL move is never overridden;
-  - the disabled toggle / disconnected session no-op cleanly (zero LinkedIn).
-
-ZERO live LinkedIn traffic: every probe goes through FakeVoyagerDriver (the
-`DRIVER_FACTORY` seam). The wire stays cold.
-"""
+Sent to Accepted or a pending column, Accepted to pending, ghosting past the
+windows; Converted never touched; a recent manual move never overridden; a
+disabled toggle or dead session is a clean no-op. Every probe uses
+FakeVoyagerDriver."""
 
 from __future__ import annotations
 

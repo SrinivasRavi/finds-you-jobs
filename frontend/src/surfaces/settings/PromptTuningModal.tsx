@@ -1,16 +1,8 @@
-// Try a prompt before you commit it (url-less-jobs.md section 11, backlog S-C70).
-//
-// The problem: Save was the only way to run a prompt. So trying one out meant
-// overwriting the shipped default, generating on a real job, reading the output
-// and editing again, with the user's working default broken for the whole loop.
-// The tailoring prompt is 16,285 characters and the output it governs is a
-// resume that goes to an employer.
-//
-// The shape is the maintainer's (2026-10-06): the draft and its test runs live
-// inside this modal, 1 button in here commits, and the shipped prompt stays
-// reachable with Reset on the Settings row outside. That also settles which
-// prompt runs where without a word of copy, because the boundary is a window: a
-// test runs the draft, everything else runs the saved one.
+// Try a prompt before committing it (url-less-jobs.md section 11, S-C70). Save
+// used to be the only way to run one, breaking the working default for the whole
+// loop. The draft and its test runs live in this modal and 1 button commits; a
+// test runs the draft, everything else the saved prompt, and Reset on the
+// Settings row restores the shipped one.
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -27,6 +19,7 @@ import {
 import type { Job, PromptSetting, PromptTestResult } from "../../api/types";
 import { Markdown } from "../../shell/Markdown";
 import { Modal } from "../../shell/Modal";
+import { scoreText } from "../../shell/scoreText";
 
 /** What each kind needs before Run can do anything (url-less-jobs.md 11.3). */
 const NEEDS_JOB = new Set(["score", "tailor", "cover"]);
@@ -77,7 +70,7 @@ function Output({ result }: { result: PromptTestResult }) {
           <div className="text-[15px] font-semibold text-ink">{result.score}</div>
           <ul className="mt-1 space-y-1 text-[12px] text-ink-2">
             {(result.reasons ?? []).map((r, i) => (
-              <li key={i}>{r}</li>
+              <li key={i}>{scoreText(r, t)}</li>
             ))}
           </ul>
         </div>

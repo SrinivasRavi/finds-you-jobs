@@ -1,16 +1,9 @@
 """Stock launch configuration for a core browser surface.
 
-Deliberately unremarkable. Real installed Chrome through Playwright's own
-defaults, the Chromium sandbox on, and the bundled Chromium build as the
-fallback when no Chrome channel is installed. Nothing here shapes what a page
-observes: no argv of ours, no headers, no identity or geometry overrides. That
-is the point of this module — it is the stock baseline every later measurement
-is taken against, so it stays greppable-clean and a switch that isn't here is a
-switch nobody added by accident.
-
-Playwright authors its own debugging transport when it launches a browser. That
-is upstream's business, not ours, and this file never adds one.
-"""
+Deliberately unremarkable: installed Chrome through Playwright's defaults, the
+sandbox on, the bundled Chromium as fallback. No argv, headers, identity or
+geometry of ours, so it's the clean baseline every measurement is taken
+against. Playwright's own debugging transport is upstream's; this adds none."""
 
 from __future__ import annotations
 
@@ -19,30 +12,54 @@ from typing import Any
 
 from ..logging_setup import get_logger
 
+# The Applier and the PDF render use the user's installed Chrome first and
+# Playwright's Chromium second, so a Chrome user never needs the download
+# (applier/window.md section 4.2). Tests set None to reach the bundled build.
+PREFERRED_CHANNEL: str | None = "chrome"
+
+
+def launch_browser(chromium: Any, **kwargs: Any) -> Any:
+    """`chromium.launch`, installed Chrome first (sync Playwright)."""
+    if PREFERRED_CHANNEL:
+        try:
+            return chromium.launch(channel=PREFERRED_CHANNEL, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
+            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
+    return chromium.launch(**kwargs)
+
+
+async def launch_browser_async(chromium: Any, **kwargs: Any) -> Any:
+    """`chromium.launch`, installed Chrome first (async Playwright)."""
+    if PREFERRED_CHANNEL:
+        try:
+            return await chromium.launch(channel=PREFERRED_CHANNEL, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
+            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
+    return await chromium.launch(**kwargs)
+
+
+async def launch_persistent_context_async(chromium: Any, profile_dir: str, **kwargs: Any) -> Any:
+    """`chromium.launch_persistent_context`, installed Chrome first (async Playwright)."""
+    if PREFERRED_CHANNEL:
+        try:
+            return await chromium.launch_persistent_context(
+                profile_dir, channel=PREFERRED_CHANNEL, **kwargs
+            )
+        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
+            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
+    return await chromium.launch_persistent_context(profile_dir, **kwargs)
+
 
 def stock_launch_kwargs() -> dict[str, Any]:
     """The launch configuration the broker uses, and the whole of it."""
     return {"headless": True, "channel": "chrome", "chromium_sandbox": True}
 
 
-# Automation quality-of-life switches Playwright sets by default and a person
-# never would (Our Finding 23). Dropping them leaves the process argv reading
-# like a hand-launched Chrome. `ignore_default_args` is an EXACT-string filter —
-# Playwright runs `defaultArgs().filter(arg => ignore.indexOf(arg) === -1)` — so
-# every entry has to be the switch verbatim; a prefix does not match.
-#
-# `--enable-automation` leads the list because the transport policy names it
-# (`docs/internal/plugin-architecture.md` section 12.3) and because a future
-# Playwright could add it back. It is a no-op on the pinned Playwright, which
-# does not emit it (measured); the switch that actually clears
-# `navigator.webdriver` is the blink flag in `minimal_launch_kwargs`, not this.
-#
-# Deliberately NOT listed: Playwright's `--disable-features=` / `--enable-features=`
-# bundles. Their values are version-specific comma lists, and an exact-match
-# filter against a value that shifts on a Playwright bump would silently STOP
-# dropping them — a switch reappearing that nobody re-added, the opposite of what
-# this module promises. They do not affect webdriver or UA coherence (measured),
-# so they stay untouched rather than dropped by a brittle exact string.
+# Automation switches Playwright sets that a person never would (Our Finding 23).
+# `ignore_default_args` matches exact strings, so each entry is verbatim.
+# `--enable-automation` is named by the transport policy (plugin-architecture.md
+# section 12.3); it's a no-op on the pinned Playwright. The version-specific
+# feature bundles stay: an exact match would silently stop working on a bump.
 _AUTOMATION_SWITCHES_TO_DROP = [
     "--enable-automation",
     "--disable-background-networking",
@@ -72,13 +89,9 @@ def deheadless_user_agent(user_agent: str) -> str:
 
 
 def resolve_user_agent() -> str:
-    """The de-headlessed Chrome UA, read once from a throwaway stock launch.
-
-    Chrome only reveals its exact version in the UA it reports, so we launch it,
-    read `navigator.userAgent`, de-headless it, and throw the browser away. This
-    is a real Chrome launch, so it runs on a surface thread, never the serving
-    loop. The broker caches the result: one throwaway launch per process.
-    """
+    """The de-headlessed Chrome UA, read from a throwaway stock launch, since Chrome
+    reveals its exact version only there. A real launch, so it runs on a surface
+    thread; the broker caches it, 1 launch per process."""
     from playwright.sync_api import sync_playwright
 
     with tempfile.TemporaryDirectory(prefix="fyj-ua-") as tmp:
@@ -97,23 +110,10 @@ def resolve_user_agent() -> str:
 
 def minimal_launch_kwargs(user_agent: str) -> dict[str, Any]:
     """The guardrailed launch: stock Chrome minus the automation switches, plus a
-    de-headlessed identity nailed on at the process level.
-
-    The user agent is a LAUNCH flag, never a CDP override. The CDP override
-    (`Emulation.setUserAgentOverride`) fixes the page but leaves the surface's
-    service worker still reporting "HeadlessChrome" with its client-hint brands
-    blanked to `[]`; the `--user-agent` flag is process-global, so it beats the
-    worker into existence with a coherent identity too (measured, both surfaces).
-
-    `--disable-blink-features=AutomationControlled` is what actually clears
-    `navigator.webdriver` on the pinned Chrome: it is set by the headless run
-    itself, not by `--enable-automation` (absent from Playwright's defaults), so
-    the drop list alone leaves webdriver true. This one flag flips it, page and
-    worker alike (measured). It is not a forbidden switch (section 12.3).
-
-    Playwright's own debugging pipe is left exactly as Playwright authors it —
-    neither added here nor listed to drop — because it is Playwright's transport.
-    """
+    de-headlessed UA as a launch flag (a CDP override leaves the service worker
+    saying HeadlessChrome). `--disable-blink-features=AutomationControlled` is what
+    clears `navigator.webdriver` (measured; not forbidden, section 12.3).
+    Playwright's debugging pipe is left as Playwright authors it."""
     return {
         "headless": True,
         "channel": "chrome",
@@ -136,15 +136,9 @@ def _is_sandbox_launch_error(message: str) -> bool:
 
 
 def open_persistent_context(playwright: Any, profile_dir: str, **kwargs: Any) -> Any:
-    """Open a persistent context on `profile_dir` with the launch discipline the
-    existing sync-Playwright path established.
-
-    Two fallbacks, both narrow. The installed-Chrome channel drops to the
-    bundled Chromium build when that channel is absent. The sandbox drops off
-    only for a sandbox-launch failure, which in practice means a Linux host
-    without unprivileged user namespaces; desktop macOS and Windows always keep
-    it on.
-    """
+    """Open a persistent context on `profile_dir`. 2 narrow fallbacks: the Chrome
+    channel drops to bundled Chromium when absent, and the sandbox drops only on a
+    sandbox-launch failure (a Linux host without user namespaces)."""
     log = get_logger()
     channel = kwargs.pop("channel", None)
     sandbox = bool(kwargs.pop("chromium_sandbox", True))

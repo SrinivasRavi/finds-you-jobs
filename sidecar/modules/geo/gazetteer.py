@@ -1,14 +1,9 @@
-"""The shipped place index: names in, places out, no network and no model.
+"""The shipped place index: names in, places out, no network or model.
 
-Loads the 4 committed GeoNames cuts in `data/` (built by `build_data.py`) into 3
-dicts, once per process, behind `gazetteer()`. The load is pure CPU and takes
-long enough to matter on the event loop, so the first caller should be a worker
-thread; `warm()` exists for a caller that wants to pay the cost deliberately.
-
-Every lookup takes a folded key (`fold()`): lowercase, accents stripped, dashes
-normalized. An alias that names several places keeps all of them, biggest first,
-and is listed in `ambiguous` (docs/internal/place-picker.md).
-"""
+Loads the 4 GeoNames cuts in `data/` into 3 dicts once per process behind
+`gazetteer()`; the load is CPU-heavy, so the first caller should be a worker
+(`warm()`). Lookups take a folded key (`fold()`). An alias naming several places
+keeps them all, biggest first, listed in `ambiguous` (place-picker.md)."""
 
 from __future__ import annotations
 
@@ -38,6 +33,8 @@ class City:
     admin1: str
     country: str
     population: int
+    # The county or district code: what defines a metro (place-picker.md 10.4).
+    admin2: str = ""
 
     @property
     def admin1_key(self) -> str:
@@ -100,7 +97,8 @@ def _rows(name: str) -> list[list[str]]:
 def gazetteer() -> Gazetteer:
     cities: dict[int, City] = {}
     for row in _rows("cities.tsv.gz"):
-        city = City(int(row[0]), row[1], row[2], row[3], int(row[4] or 0))
+        admin2 = row[5] if len(row) > 5 else ""
+        city = City(int(row[0]), row[1], row[2], row[3], int(row[4] or 0), admin2)
         cities[city.geonameid] = city
 
     ids_by_alias: dict[str, set[int]] = {}

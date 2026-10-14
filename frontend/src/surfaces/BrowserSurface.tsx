@@ -1,16 +1,8 @@
-// Browser surface (browser broker, commit 1) — paints the sidecar's headless
-// Chrome into a canvas over the screencast WebSocket. Vendor-agnostic and
-// parameterized: `surface` names which broker surface to attach to (omitted →
-// the dev `/browser` route's generic `default`; a vendor slug is passed by the
-// add-on that mounts it).
-//
-// WATCH-ONLY (maintainer, 2026-08-16): the bar is a read-only view of the live
-// page URL — users watch the agent work, they don't steer the surface, so
-// there is no typable URL field to interrupt an operation with. `origin`
-// (optional) is the surface's home: when the attach status reports no page
-// yet, the surface auto-opens it (`autoHome`, on by default) so the canvas is
-// never dead blank. The origin is a runtime argument the mounting add-on
-// passes; this component still names no site of its own.
+// Browser surface: paints the sidecar's Chrome into a canvas over the screencast
+// socket. Vendor-agnostic: `surface` names the broker surface (default: the dev
+// route's `default`). Watch-only: the bar shows the live URL, so nobody can
+// interrupt an operation by typing. A pageless surface auto-opens the `origin`
+// its add-on passes; this component names no site itself.
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,6 +12,7 @@ import {
   type ScreencastControl,
   type ScreencastState,
 } from "../api/screencast";
+import { BrowserDownloadStrip } from "../shell/BrowserDownload";
 
 export function BrowserSurface({
   surface,
@@ -38,6 +31,9 @@ export function BrowserSurface({
   const [frames, setFrames] = useState(0);
   const [pageUrl, setPageUrl] = useState("");
   const [error, setError] = useState("");
+  // `browser_missing`: no Chrome and no Chromium; the strip offers Download, and
+  // the client's own reconnect picks the browser up once it lands (A18).
+  const [errorCode, setErrorCode] = useState("");
   // Set when the attach status says the surface has no page yet ("" URL);
   // cleared the moment any page URL lands. While set (and `autoHome` allows),
   // the effect below opens the frozen origin so the canvas is never dead blank.
@@ -101,8 +97,10 @@ export function BrowserSurface({
             setNeedsHome(true);
           }
           setError("");
+          setErrorCode("");
         } else {
           setError(msg.message);
+          setErrorCode(msg.code ?? "");
         }
       },
       onState: (next: ScreencastState) => {
@@ -131,12 +129,9 @@ export function BrowserSurface({
   }, [surface]);
 
   useEffect(() => {
-    // Auto-open the frozen origin over a pageless surface ("always on, never a
-    // blank canvas"). `needsHome` comes only from the attach status, so a page
-    // that is already somewhere is never re-navigated; `autoHome={false}` (the
-    // add-on passes it while one of its operations is queued or running on this
-    // surface) defers the open until the lane is quiet again. Idempotent: the
-    // origin navigation publishes a URL, which clears `needsHome`.
+    // Auto-open the origin over a pageless surface, so the canvas is never blank.
+    // `needsHome` comes only from the attach status, so a page already somewhere is
+    // never moved; `autoHome={false}` defers it while an add-on op runs. Idempotent.
     if (origin && autoHome && needsHome) {
       clientRef.current?.sendNavigate(origin);
     }
@@ -179,7 +174,12 @@ export function BrowserSurface({
         </span>
       </header>
       <main className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-4">
-        {error ? (
+        {errorCode === "browser_missing" ? (
+          <BrowserDownloadStrip
+            testId="screencast-browser-download"
+            missingText={t("browser.download.surfaceMissing")}
+          />
+        ) : error ? (
           <p className="text-[12.5px] text-bad" data-testid="screencast-error">
             {error}
           </p>

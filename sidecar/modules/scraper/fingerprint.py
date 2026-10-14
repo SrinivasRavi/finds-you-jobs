@@ -1,18 +1,10 @@
-"""Content fingerprinting — cross-posting detection the URL key can't do.
+"""Content fingerprinting: cross-posting detection the URL key can't do.
 
-The dedup invariant (canonical URL) can't catch the same role posted on a
-company's Greenhouse board *and* on LinkedIn: different hosts, different
-canonical URLs, two rows. This module flags those probable cross-listings by
-content identity: a 64-bit SimHash (Charikar) over 3-token shingles of the
-normalized JD text; two descriptions whose hashes agree on ≥ 90% of bits are
-candidates for the same posting, confirmed by company and title. Technique per
-career-ops's `fingerprint-core.mjs` (MIT) — reimplemented from its design
-(Python `hashlib` in place of Node `crypto`), no upstream code carried; see
-`UPSTREAMS.md`.
-
-Flag, never drop: a match becomes a row in `job_duplicates` and the user
-decides (url-less-jobs.md section 5.5). Zero deps, zero LLM.
-"""
+The same role on Greenhouse and LinkedIn has 2 URLs. A 64-bit SimHash over
+3-token shingles flags pairs agreeing on 90% of bits, confirmed by company and
+title. Technique from career-ops's `fingerprint-core.mjs` (MIT), reimplemented;
+see UPSTREAMS.md. Flag, never drop: a match is a `job_duplicates` row and the
+user decides (url-less-jobs.md 5.5)."""
 
 from __future__ import annotations
 

@@ -114,3 +114,26 @@ def test_an_optional_field_with_no_grounded_answer_is_left_blank() -> None:
     state = DecideState()
     assert _ungrounded(_field("Pronouns", name="pronouns"), state) is None
     assert (state.declined, state.reported) == (1, 0)
+
+
+# --- the app's own fact names (audit B7) -------------------------------------------
+
+
+def test_the_name_derivers_read_the_apps_record_and_the_bench_persona() -> None:
+    """The app's facts name "first name" and "last name" (applicant.apply_facts); the
+    bench persona's 1 "legal name" line still works."""
+    from sidecar.packages.jobapplier.decide import _derive
+
+    app = {"first name": "Asha", "last name": "Rao", "years of experience": "9",
+           "notice period": "30 days"}
+    assert _derive("first_name", app) == "Asha"
+    assert _derive("last_name", app) == "Rao"
+    assert _derive("full_name", app) == "Asha Rao"
+    assert _derive("years_total", app) == "9"
+    assert _derive("notice_days", app) == "30"
+    assert _derive("adult", app) == "Yes"
+    assert _derive("full_name", {"name": "Asha Rao"}) == "Asha Rao"
+    bench = {"legal name": "Asha Rao (first Asha, last Rao)"}
+    assert _derive("first_name", bench) == "Asha"
+    assert _derive("last_name", bench) == "Rao"
+    assert _derive("full_name", bench) == "Asha Rao"

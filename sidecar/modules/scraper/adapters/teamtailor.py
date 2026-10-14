@@ -1,18 +1,8 @@
-"""Teamtailor adapter — per-tenant public jobs RSS (no auth, no key).
+"""Teamtailor adapter: per-tenant public jobs RSS, no key.
 
-Every Teamtailor career site exposes a zero-auth feed at
-`https://<slug>.teamtailor.com/jobs.rss`. This adapter auto-detects any
-`*.teamtailor.com` careers URL and normalizes it to that feed — so the user
-pastes the human careers URL, not the raw feed path (the value over the generic
-`rss` adapter, which needs the exact `.rss` URL + `type = "rss"`).
-
-Host is pinned to `*.teamtailor.com` (anchored regex) so an untrusted careers
-URL can never steer the fetch elsewhere. Parsed with ElementTree (same as the
-`rss` adapter) — no new dependency.
-
-Ported from career-ops `providers/teamtailor.mjs` (MIT) — see
-THIRD_PARTY_NOTICES.md.
-"""
+Detects any `*.teamtailor.com` careers URL (anchored regex) and reads its
+`/jobs.rss` with ElementTree, so the user pastes the human URL. Ported from
+career-ops `providers/teamtailor.mjs` (MIT)."""
 
 from __future__ import annotations
 

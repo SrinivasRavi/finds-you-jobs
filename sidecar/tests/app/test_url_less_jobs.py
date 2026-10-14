@@ -1,14 +1,9 @@
 """Covers: a job with no posting URL, end to end (url-less-jobs.md).
 
-Layer 1, identity. The migration gives a URL-less row its own key, so these
-tests are the layer's acceptance bar: post the same JD twice and get 1 row.
-
-- identity: a URL row keys on its URL, a URL-less row on its description hash,
-  and neither population collides with the other;
-- the dedup branch, the tombstone lookup and Trash restore all read whichever
-  key the row has;
-- `age_expired_jobs` never touches a row the feed can't replace (section 5.6).
-"""
+Identity: post the same JD twice, get 1 row. A URL row keys on its URL, a
+URL-less row on its description hash, and the 2 never collide; dedup, tombstone
+lookup and Trash restore read whichever key a row has; `age_expired_jobs` skips
+rows the feed can't replace (section 5.6)."""
 
 from __future__ import annotations
 
@@ -24,7 +19,7 @@ from sidecar.modules.scraper import ScraperError
 from sidecar.modules.scraper.identity import content_hash
 from sidecar.modules.scraper.types import NormalizedJob
 
-from ._support import AUTH
+from ._support import AUTH, seed_application_profile
 
 _JD = (
     "We are hiring a Senior Software Engineer to own our ingestion pipeline. "
@@ -249,32 +244,56 @@ def test_a_trashed_paste_comes_back_on_a_re_paste(
 # ---------------------------------------------------------------------------
 
 
-def test_a_typed_in_job_never_ages_out(
+def test_a_hand_added_job_never_ages_out_link_or_not(
     app_client: tuple[FastAPI, TestClient],
 ) -> None:
     app, client = app_client
     typed = _paste(client, _JD)
-    scanned = _paste(
+    linked = _paste(
         client,
-        _JD + " Different text so this is its own row.",
-        canonical_url="https://boards.greenhouse.io/acme/jobs/7",
+        _JD + " Pasted with its link, from a board no scan reads.",
+        canonical_url="https://careers.smallco.example/jobs/42",
     )
+    with app.state.db.repos() as repos:
+        scanned = repos.jobs.create(
+            canonical_url="https://boards.greenhouse.io/acme/jobs/7", title="Eng",
+            company="Acme", description=_JD + " A scanned row.", source_adapter="greenhouse",
+        )
+        scanned_id = scanned.id
     old = now_utc() - timedelta(days=400)
     with app.state.db.repos() as repos:
-        for job_id in (typed["id"], scanned["id"]):
+        for job_id in (typed["id"], linked["id"], scanned_id):
             repos.jobs.update(job_id, feed_since=old, ingested_at=old)
 
     result = age_expired_jobs(app.state.db)
-    assert result["expired"] == [scanned["id"]]
+    assert result["expired"] == [scanned_id]
 
     with app.state.db.repos() as repos:
-        repos.jobs.update(scanned["id"], expired_at=old)
+        for job_id in (typed["id"], linked["id"], scanned_id):
+            repos.jobs.update(job_id, expired_at=old)
     result = age_expired_jobs(app.state.db)
-    assert result["deleted"] == [scanned["id"]]
+    assert result["deleted"] == [scanned_id]
 
     with app.state.db.repos() as repos:
-        assert repos.jobs.get(typed["id"]) is not None
-        assert repos.jobs.get(typed["id"]).feed_state == "active"
+        for job_id in (typed["id"], linked["id"]):
+            assert repos.jobs.get(job_id).feed_state == "active"
+
+
+def test_a_job_given_its_link_later_stays_hand_added(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, client = app_client
+    typed = _paste(client, _JD)
+    monkeypatch.setattr("sidecar.app.api.jobs.probe_url", _probe(_JD))
+    resp = client.post(f"/api/jobs/{typed['id']}/link", headers=AUTH, json={"url": _URL})
+    assert resp.status_code == 200, resp.text
+    old = now_utc() - timedelta(days=400)
+    with app.state.db.repos() as repos:
+        repos.jobs.update(typed["id"], feed_since=old, ingested_at=old)
+    assert age_expired_jobs(app.state.db)["expired"] == []
+    with app.state.db.repos() as repos:
+        job = repos.jobs.get(typed["id"])
+        assert job.canonical_url and job.origin == "manual" and job.feed_state == "active"
 
 
 # ---------------------------------------------------------------------------
@@ -488,17 +507,13 @@ def test_apply_refuses_a_url_less_card_before_writing_a_run(
 
 
 def test_a_dev_run_may_carry_its_own_form_because_a_fixture_is_not_a_posting(
-    app_client: tuple[FastAPI, TestClient],
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A local fixture form is a `file://` URL, and `canonicalize_url` rejects
-    any scheme that is not http(s), because a posting's identity cannot be a
-    path on this machine. So the Applier's own end-to-end gate stores its job
-    URL-less, and the no-link refusal silently took that whole test with it.
-
-    The fixture travels in the dev knobs instead, where `allow_local` and the
-    scripted engine already live. Production is untouched: the test above still
-    gets its 409, because no dev knobs means no override."""
+    """A fixture form is a file:// URL, which `canonicalize_url` rejects, so the
+    no-link guard took the Applier's end-to-end test with it. The fixture rides the
+    dev knobs instead; production still gets its 409."""
     app, client = app_client
+    seed_application_profile(app.state.db)
     job = _paste(client, _JD)
     saved = client.post(
         "/api/applications",
@@ -506,11 +521,12 @@ def test_a_dev_run_may_carry_its_own_form_because_a_fixture_is_not_a_posting(
         json={"job_id": job["id"], "generate_resume": False, "generate_cover": False},
     ).json()
 
-    resp = client.post(
-        f"/api/applications/{saved['id']}/apply",
-        headers=AUTH,
-        json={"dev": {"form_url": "file:///tmp/fixture-form.html", "allow_local": True}},
-    )
+    dev = {"dev": {"form_url": "file:///tmp/fixture-form.html", "allow_local": True}}
+    # Outside dev mode the knob is ignored, as every dev knob is (PR #12 review).
+    resp = client.post(f"/api/applications/{saved['id']}/apply", headers=AUTH, json=dev)
+    assert resp.status_code == 409
+    monkeypatch.setenv("FYJ_APPLY_DEV", "1")
+    resp = client.post(f"/api/applications/{saved['id']}/apply", headers=AUTH, json=dev)
     assert resp.status_code in (200, 201, 202), resp.text
     with app.state.db.repos() as repos:
         run = repos.apply_runs.latest_for_application(saved["id"])

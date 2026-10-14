@@ -1,10 +1,7 @@
-// "This looks like the job you added on Monday" (url-less-jobs.md 9.6).
-//
-// The case: the user pasted an emailed JD on Monday, Wednesday's scan wrote its
-// own row for the same posting, and the board shows the role twice. The app
-// says so and stops there: the user deletes the one they don't need, and the
-// app never merges or picks a survivor (maintainer, url-less-jobs.md section 5.5).
-// "They're different" silences the notice for that pair, from either card.
+// "This looks like the job you added on Monday" (url-less-jobs.md 9.6): a pasted
+// JD and a later scan's row for the same posting. The app says so and stops: the
+// user deletes one, and nothing is merged (section 5.5). "They're different"
+// silences the notice for that pair.
 
 import { useTranslation } from "react-i18next";
 
@@ -18,17 +15,20 @@ export function DuplicatePrompt({ job }: { job: Job }) {
   const { data } = useJobDuplicate(jobId, job.duplicate_notice);
   const dismiss = useDismissJobDuplicate();
   if (!data) return null;
-  const days = daysBetween(data.other_added_at, "round");
+  const raw = daysBetween(data.other_added_at, "round");
+  const days = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+  // "0 days ago" and "1 days ago" read wrong in every language.
+  const looksLikeKey =
+    days === 0 ? "jobBoard.duplicate.looksLikeToday"
+    : days === 1 ? "jobBoard.duplicate.looksLikeYesterday"
+    : "jobBoard.duplicate.looksLike";
   return (
     <div
       data-testid="duplicate-prompt"
       className="mb-3 rounded-md border border-warn bg-warn-wash px-3 py-2"
     >
       <p className="text-[12px] text-ink">
-        {t("jobBoard.duplicate.looksLike", {
-          title: data.other.title,
-          days: Number.isFinite(days) ? days : 0,
-        })}{" "}
+        {t(looksLikeKey, { title: data.other.title, days })}{" "}
         {t("jobBoard.duplicate.resolveHint")}
       </p>
       <div className="mt-1.5 flex gap-2">

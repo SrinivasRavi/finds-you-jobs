@@ -1,15 +1,8 @@
-"""How per-axis factors become one 0-to-100 number, in one place.
+"""How per-axis factors become 1 number from 0 to 100, in 1 place.
 
-A method emits typed factors (`types.Factor`); this turns them into the score the
-board sorts on. 2 rules the arithmetic obeys, both from `scoring.md` section 7.4:
-
-- **An axis the method could not assess drops out of the weighting**, and the
-  remaining weights renormalize. Scoring an unassessed axis as 0 would punish a
-  posting for what it failed to say.
-- **A blocker is a flag, not a weight.** Work authorization and the like are
-  reported beside the score and never deflate it, because the score ranks skill
-  fit and the obstacle is its own axis (rank, don't gate).
-"""
+2 rules (scoring.md 7.4): an axis the method couldn't assess drops out and the
+rest renormalize, so silence isn't punished; and a blocker (work authorization)
+is a flag beside the score, never a deflating weight (rank, don't gate)."""
 
 from __future__ import annotations
 
@@ -66,14 +59,10 @@ def weighted_total(factors: Sequence[Factor], weights: Mapping[str, float]) -> i
 
 
 # --- user weights (scoring.md 7.4) -------------------------------------------
-#
-# One table over the 5 GRADED axes, applied to whatever factors a job has and
-# renormalized over the ones present, so it works whichever method scored it.
-# The 2 modifier axes are deliberately not in it: location and logistics are
-# answered as confidences by Jev, and multiplying a confidence by a weight
-# produces a number with no meaning (talk.md D43). Location gets its own dial
-# instead, the size of the miss penalty, which is what "location first"
-# actually means in this arithmetic.
+# 1 table over the 5 graded axes, renormalized over the factors a job has, so it
+# works for every method. Location and logistics aren't in it: Jev answers them
+# as confidences, and confidence times weight means nothing (talk.md D43).
+# Location gets its own dial, the size of the miss penalty.
 
 WEIGHTED_AXES: tuple[str, ...] = (
     "hard_requirements",
@@ -115,7 +104,7 @@ PRESET_LOCATION_PENALTY: Mapping[str, int] = {
     "skills_only": 0,
 }
 
-# The table a method shipped with, for a job scored by that method. AI scoring
+# The table a method shipped with, for a job scored by that method. LLM scoring
 # is absent because it asks a model for the total rather than weighting axes.
 METHOD_WEIGHTS: Mapping[str, Mapping[str, float]] = {
     "jev": JEV_WEIGHTS,
@@ -126,7 +115,7 @@ METHOD_WEIGHTS: Mapping[str, Mapping[str, float]] = {
 def method_weights(method: str, factor_names: set[str]) -> Mapping[str, float]:
     """The table a method actually used for a job, given the factors it stored:
     the 1 answer the scorer, the bars and the weight lens all read (audit
-    finding 7). Empty for AI scoring, which asks a model for the total."""
+    finding 7). Empty for LLM scoring, which asks a model for the total."""
     if method == "keyword" and "level" not in factor_names:
         return KEYWORD_WEIGHTS_NO_LEVEL
     return METHOD_WEIGHTS.get(method, {})
@@ -138,13 +127,8 @@ def user_total(
     *,
     location_penalty: int = LOCATION_MISS_PENALTY,
 ) -> int | None:
-    """The score these factors deserve under the user's own weights.
-
-    `None` when the factors can't answer: no graded axis the table names is
-    present, so there is nothing to weight and the stored score stands. That is
-    the honest outcome for a job whose method recorded no factors, and it is why
-    this returns an option rather than a 0.
-    """
+    """The score these factors earn under the user's weights, or None when no graded
+    axis the table names is present, so the stored score stands."""
     by_key = {f.factor: f for f in factors}
     present = {
         key: w

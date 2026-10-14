@@ -1,9 +1,6 @@
-// The toolbar toggle contract for the editable Preview surface: clicking B / I
-// / `</>` on already-formatted text must REMOVE the formatting, never stack
-// another layer of markers (**Postgres** → click Bold again → Postgres, not
-// *****Postgres*****). Exercised at the DOM level (jsdom) because the logic is
-// pure Range/selection manipulation; the md↔DOM fidelity it feeds is pinned by
-// mdHtml.test.ts, and the live click path by e2e/resume-editor.spec.ts.
+// The toolbar toggle contract: B, I or `</>` on formatted text removes the
+// formatting instead of stacking markers. jsdom, because it's pure Range work;
+// fidelity is mdHtml.test.ts and the live click is e2e/resume-editor.spec.ts.
 
 import { afterEach, describe, expect, it } from "vitest";
 

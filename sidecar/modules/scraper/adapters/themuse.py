@@ -1,15 +1,8 @@
-"""The Muse adapter — public jobs JSON API (no auth, no key).
+"""The Muse adapter: public jobs JSON API, no key.
 
-Claims `board = "themuse"` and `themuse.com` URLs. The API pages at ~20 rows:
-`GET themuse.com/api/public/jobs?page=N` → `{"results": [...], "page_count"}`
-with `name`, `company {name}`, `locations [{name}]`, `refs {landing_page}`,
-`contents` (HTML JD, carried in the list payload) and `publication_date`.
-Bounded at `MAX_PAGES` requests per scan (same request-budget discipline as
-the Workday adapter; the fetcher counts each call into Usage).
-
-Re-derived from the public payload shape (JustHireMe carries the same keyless
-board — behavioral precedent only, no code seen or copied).
-"""
+Claims `board = "themuse"` and themuse.com URLs. Pages about 20 rows up to
+`MAX_PAGES`; the JD is in the list. Re-derived from the payload (JustHireMe as
+precedent only)."""
 
 from __future__ import annotations
 

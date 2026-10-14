@@ -1,16 +1,9 @@
-"""Shared Claude-subscription engine (ROADMAP section 5 M1 playbook step 4).
+"""Shared Claude-subscription engine.
 
-One reusable way for every module (Tailorer, CoverLetterer, Scorer, parity
-runners, ...) to call Claude on the maintainer's Max subscription: the
-`claude` CLI in print mode, driven as a subprocess. No API key involved —
-`claude` must be logged in. Model defaults to Opus 4.8 (maintainer decision
-2026-07-03) and is pinned per run for reproducible parity.
-
-Extracted from `sidecar/modules/tailorer/engine.py` at the second consumer
-(the M1.2/M1.5 parity runner), exactly as the M1 replication playbook
-prescribed. Module-specific engines wrap this and convert `EngineError` /
-`EngineUsage` into their own typed contract.
-"""
+Every module calls Claude through the logged-in `claude` CLI in print mode, as a
+subprocess, with no API key. The model is pinned per run (`DEFAULT_MODEL`).
+Module engines wrap this and convert `EngineError`/`EngineUsage` into their own
+typed contract."""
 
 from __future__ import annotations
 
@@ -25,12 +18,9 @@ from pathlib import Path
 
 DEFAULT_MODEL = "claude-opus-5-5"
 
-# Env vars that, when present in the child env, silently flip the `claude` CLI
-# from subscription billing to pay-per-token API billing. The provider is named
-# "Claude subscription" — cost honesty demands the subscription actually pays,
-# so every subprocess here scrubs them. (Insight credited to JustHireMe's
-# subscription-CLI provider — concept re-implemented, no code copied; see
-# THIRD_PARTY_NOTICES.md.)
+# Env vars that flip the `claude` CLI from subscription to pay-per-token
+# billing. The provider is "Claude subscription", so every subprocess scrubs them.
+# (Idea credited to JustHireMe, reimplemented; see THIRD_PARTY_NOTICES.md.)
 _SCRUB_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 _CLAUDE_PATH: str | None = None
@@ -44,16 +34,9 @@ def _subscription_env() -> dict[str, str]:
 
 
 def resolve_claude(refresh: bool = False) -> str | None:
-    """Locate the `claude` binary the way the user's terminal would.
-
-    A GUI-launched desktop app inherits a minimal PATH (Finder on macOS gives it
-    no `~/.zshrc` edits and no Homebrew shellenv), so a bare `shutil.which`
-    misses a `claude` that works fine in the user's terminal — the root cause of
-    onboarding's "not found" / "Load failed" verify failures. When the direct
-    lookup fails, fall back to the user's login+interactive shell's PATH: the
-    exact environment `claude` runs in when they type it. Cached once found;
-    `refresh` forces a re-probe (e.g. the user installs the CLI, then Verifies).
-    """
+    """Locate `claude` the way the user's terminal would. A GUI-launched app gets a
+    minimal PATH, so when `shutil.which` misses, fall back to the login shell's PATH.
+    Cached once found; `refresh` re-probes (after an install)."""
     global _CLAUDE_PATH
     if _CLAUDE_PATH and not refresh:
         return _CLAUDE_PATH
@@ -83,13 +66,9 @@ def resolve_claude(refresh: bool = False) -> str | None:
 
 
 def claude_auth_status(exe: str | None = None) -> dict[str, object] | None:
-    """Login state via `claude auth status` — instant JSON metadata, no LLM call.
-
-    Returns `{logged_in, email, plan}` (email/plan may be None), or None when
-    the probe can't answer (CLI missing, an older CLI without the subcommand,
-    unparseable output) — callers then fall back to a minimal real completion.
-    Scrubbed env for a truthful answer about the *subscription* login.
-    """
+    """Login state via `claude auth status`, instant and free: `{logged_in, email,
+    plan}`, or None when it can't answer (callers then try a minimal completion).
+    Scrubbed env, for the subscription login."""
     exe = exe or resolve_claude()
     if exe is None:
         return None
@@ -130,25 +109,10 @@ class EngineUsage:
 
 
 class EngineError(RuntimeError):
-    """The engine call failed; the message carries the verbatim cause.
-
-    Optional structured fields let the shared retry policy
-    (`completion_retry.retry_delay_s`) classify the failure instead of
-    guessing from message text (technical audit F-H5):
-
-    - `status` — the provider's HTTP status when the failure was an HTTP
-      error response (None for CLI/subprocess/network failures).
-    - `retryable` — an explicit classification override from the raise site:
-      False for deterministic failures a same-input retry can never fix
-      (bad key, missing binary, a full subprocess-timeout budget already
-      spent); True to force retry despite a normally-permanent status.
-      None (default) defers to the status-based table.
-    - `retry_after_s` — the provider's `Retry-After` hint in seconds, when
-      it sent one (429/503); honored (capped) over computed backoff.
-    - `provider` — which service failed, when it isn't the engine routed for
-      the operation (Fast scoring's OpenRouter call); the circuit breaker
-      charges the failure to it.
-    """
+    """An engine call failed; the message is the verbatim cause. Structured fields
+    for the retry policy (F-H5): `status` (HTTP status), `retryable` (an explicit
+    override), `retry_after_s` (the provider's hint), and `provider` (the service
+    that failed, when not the routed engine), which the breaker charges."""
 
     def __init__(
         self,
@@ -202,17 +166,10 @@ def run_cli(
     cwd: str | Path | None = None,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """`subprocess.run(capture_output=True, text=True, check=False)` equivalent
-    that launches the CLI in its OWN process group and kills the whole group on
-    timeout (technical audit F-L9).
-
-    Why not plain `subprocess.run(timeout=)`: the subscription CLIs are agents
-    that spawn tool subprocesses. On timeout, `run` kills only the direct
-    child — on POSIX the grandchildren survive until app exit; on Windows the
-    post-kill `communicate()` blocks *forever* on pipe handles the grandchildren
-    inherited, wedging the worker thread. Group-kill fixes both. Timeout still
-    raises `subprocess.TimeoutExpired`, so callers' error mapping is unchanged.
-    """
+    """`subprocess.run` that starts the CLI in its own process group and kills the
+    whole group on timeout (F-L9). The CLIs spawn tool subprocesses, and plain `run`
+    left them alive on POSIX and blocked forever on Windows. Still raises
+    `TimeoutExpired`."""
     # Windows: CREATE_NEW_PROCESS_GROUP (the attribute only exists there).
     # POSIX: start_new_session → setsid, so the child leads its own group.
     creationflags = 0
@@ -246,12 +203,8 @@ def run_cli(
 
 
 class ClaudeCliEngine:
-    """`claude -p` subprocess on the maintainer's subscription.
-
-    `cwd` and `extra_args` exist for callers that drive a repo-rooted agent
-    (e.g. the career-ops parity runner sets cwd to the career-ops checkout and
-    passes permission-mode flags). Plain completions leave both unset.
-    """
+    """`claude -p` on the maintainer's subscription. `cwd` and `extra_args` serve
+    repo-rooted agent callers (the career-ops parity runner)."""
 
     def __init__(
         self,

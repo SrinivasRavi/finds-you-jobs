@@ -64,7 +64,7 @@ def create_operation(
         )
     if kind not in runner.known_kinds():
         raise HTTPException(status_code=404, detail=f"unknown operation kind {kind!r}")
-    operation_id = runner.submit(kind, input_snapshot or {})
+    operation_id = runner.submit(kind, input_snapshot or {}, requested_by="user")
     return dto.OperationAccepted(id=operation_id, kind=kind, state="queued")
 
 
@@ -83,7 +83,7 @@ def retry_operation(request: Request, operation_id: str) -> dto.OperationAccepte
             status_code=422,
             detail=f"{kind} cannot be retried from the ledger — re-run it from its own surface",
         )
-    new_id = _runner(request).submit(kind, snapshot)
+    new_id = _runner(request).submit(kind, snapshot, requested_by="user")
     # Durable old→new link (no schema change: result_ref is JSON): a FAILED row
     # that was retried renders as "Retried" instead of nagging red forever,
     # while staying in the ledger as the honest cost/audit record (US-LOG-01).
@@ -96,13 +96,10 @@ def retry_operation(request: Request, operation_id: str) -> dto.OperationAccepte
 
 @router.post("/api/operations/{operation_id}/cancel", status_code=202)
 def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccepted:
-    """Cancel an operation (F-M7): a still-`queued` op (any kind) is cancelled
-    outright; a `running` one is accepted ONLY for the kinds that cooperatively
-    poll the cancel token (score/tailor/cover — `CANCELLABLE_RUNNING_KINDS`),
-    landing `cancelled` at the entrypoint's next checkpoint. 404 for an unknown
-    id; 409 when there is nothing this endpoint can honestly cancel — the op is
-    already terminal, or it is running a kind that never observes the token
-    (a running `apply` is cancelled via POST /api/apply-runs/{id}/cancel)."""
+    """Cancel an op (F-M7): any queued op outright; a running one only for kinds that
+    poll the token (`CANCELLABLE_RUNNING_KINDS`). 404 for an unknown id; 409 when
+    it's terminal or running a kind that never polls (a running apply cancels via
+    POST /api/apply-runs/{id}/cancel)."""
     runner = _runner(request)
     db = _db(request)
     with db.repos() as repos:
@@ -121,13 +118,10 @@ def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccept
         raise HTTPException(
             status_code=409, detail=f"operation {operation_id!r} is not cancellable"
         )
-    # Cancelling a QUEUED `apply` op strands its ApplyRun row live forever
-    # (the entrypoint that would finalize it never runs), so start_apply's
-    # single-flight keeps returning the dead run on every later Apply click.
-    # Land it `interrupted` (never `failed`) — a user cancel. Guarded to ACTIVE
-    # rows, so a run the entrypoint already finalized is left untouched. Only a
-    # queued apply reaches here: a running apply is refused above (409) and
-    # cancelled via POST /api/apply-runs/{id}/cancel instead (2026-07-25).
+    # Cancelling a queued `apply` op would strand its ApplyRun live forever, and
+    # Apply would keep returning the dead run. Land it `interrupted`, a user cancel,
+    # guarded to active rows. A running apply is refused above (409) and cancelled
+    # through POST /api/apply-runs/{id}/cancel.
     if kind == "apply" and apply_run_id:
         finalize_run_interrupted(db, apply_run_id, "cancelled before the run started")
     # Honest post-cancel state: a queued op is already `cancelled`; a running
@@ -138,13 +132,10 @@ def cancel_operation(request: Request, operation_id: str) -> dto.OperationAccept
     return dto.OperationAccepted(id=operation_id, kind=kind, state=state)
 
 
-# The ledger's per-row human subjects (US-LOG-01 legibility, maintainer
-# directive 2026-08-03): WHICH entity each operation acted on, resolved from
-# the row's own snapshot/result refs with one IN query per table per page
-# (the `_application_dtos` batch-loader pattern — never per-row queries). A row
-# whose refs don't resolve (historical snapshots, deleted entities) gets no
-# subject and renders as before — nothing is fabricated. Every field is
-# verbatim entity data; the frontend adds count nouns / mode names via i18n.
+# The ledger's per-row subjects (US-LOG-01): which entity each op acted on,
+# resolved from its refs with 1 IN query per table per page, never per row. A row
+# whose refs don't resolve gets no subject; nothing is invented. Fields are
+# verbatim; the frontend adds nouns via i18n.
 
 _JOB_SUBJECT_KINDS = frozenset({"score", "tailor", "cover"})
 _CONTACT_SUBJECT_KINDS = frozenset({"draft", "send", "view_page"})
@@ -354,17 +345,9 @@ def list_operations(request: Request, limit: int = 100) -> list[dto.OperationDTO
 
 @router.get("/api/cost/totals")
 def cost_totals(request: Request) -> dto.CostTotalsDTO:
-    """All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
-
-    Live-ledger sum + the persisted pruned-ops aggregate (NFR-COST-02: the
-    running spend total stays honest as an install ages). Since 2026-08-24
-    nothing prunes, so the aggregate sits at zero and the live sum carries every
-    operation ever recorded; the addition stays because a future S-C22 deletion
-    policy has to be able to fold spend forward again.
-
-    Off the loop: summing every operation is inherently linear, so however cheap
-    the read gets it must not be the thing holding a 2 s health poll (S-C23) —
-    a plain `def` handler runs in Starlette's threadpool automatically."""
+    """All-time cost totals (FR-SET-07 / US-LOG-01 #2): the live ledger plus the
+    deleted-ops aggregate (NFR-COST-02), which stays for a future S-C22 policy.
+    Off the loop: the sum is linear (S-C23)."""
     with _db(request).repos() as repos:
         return dto.cost_totals_dto(repos.all_time_cost_totals())
 

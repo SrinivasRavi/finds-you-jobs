@@ -1,14 +1,11 @@
-"""jobs discovery — the scraper slice (database-design.md section 2/section 3 slice).
+"""jobs discovery: the scraper slice.
 
-Creates the job-discovery tables for the source-registry commit
-(`docs/internal/roadmap.md` section 7.2 #7): jobs (canonical-URL dedup key),
-job_scores (the per-profile-version score cache), tombstones (permanent
-discards), and schedules (the recurring-operation rows the scheduler ticks).
+Creates jobs (canonical-URL dedup key), job_scores, tombstones and schedules
+(roadmap.md 7.2 #7).
 
 Revision ID: c7e91d3f5a24
 Revises: 8d4a2b6c1e90
 Create Date: 2026-07-16
-
 """
 # ruff: noqa: E501 — Alembic DDL; long create_index/constraint lines are boilerplate.
 from __future__ import annotations

@@ -1,11 +1,7 @@
-// The 2 provenance axes a job card carries (url-less-jobs.md section 9.3):
-// where the job came from, and whether it has a posting link. The source chip
-// already shipped and answers the first; these answer the second, plus the
-// first reader `trust_flags` has ever had.
-//
-// Both axes are wanted because they disagree on purpose: a job pasted on
-// Monday and promoted on Friday keeps `source_adapter = paste-text` and now
-// has a URL, and both of those facts are true.
+// The 2 provenance axes on a job card (url-less-jobs.md section 9.3): where it
+// came from (the source chip) and whether it has a posting link, plus the trust
+// chip. They disagree on purpose: a job pasted Monday and given a link Friday is
+// still `paste-text`, and has a URL.
 
 import { useTranslation } from "react-i18next";
 

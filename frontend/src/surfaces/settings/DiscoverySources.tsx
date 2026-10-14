@@ -14,13 +14,10 @@ import {
   useToggleDiscoverySource,
 } from "../../api/queries";
 
-// Discovery sources (maintainer directive 2026-07-18): one checkbox per
-// scraper source family, all ON by default — pure opt-out. Lets a user drop a
-// family that yields nothing for their role/location, and lets source efficacy
-// be tested in isolation. Grouped by kind so the list of 18+ reads at a glance.
-// Each section title carries its own master checkbox (2026-07-18 #5) that
-// flips the whole section in one atomic POST; Apify actors are their own
-// section (`sectionOf` routes their rows past the kind grouping).
+// Discovery sources: 1 checkbox per source family, all on by default, pure
+// opt-out, so a user can drop a family that yields nothing and efficacy can be
+// tested alone. Grouped by kind; each section title has a master checkbox that
+// flips the section in 1 POST. Apify actors are their own section.
 const SOURCE_KIND_GROUPS: { kind: string; heading: string; blurb: string }[] = [
   {
     kind: "ats",

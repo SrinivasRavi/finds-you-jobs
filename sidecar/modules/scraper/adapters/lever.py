@@ -1,14 +1,8 @@
-"""Lever adapter — public postings JSON API (no auth, no key).
+"""Lever adapter: public postings JSON API, no key.
 
-Claims `jobs.lever.co/<slug>` (+ the `jobs.eu.lever.co` EU variant). One request
-per board: `GET api.lever.co/v0/postings/<slug>?mode=json` (EU host →
-`api.eu.lever.co`). The list payload ships `descriptionPlain` free, so — per the
-adapter contract — we take the description from the list and never fetch per job.
-
-A pasted single-posting URL takes `fetch_posting` instead: the whole-board list
-is 20 MB on a big tenant and the fetcher refuses it, so probing one job by
-reading every job on the board was the wrong request (maintainer, 2026-10-08).
-"""
+Claims `jobs.lever.co/<slug>` and the EU host. 1 request per board; the list
+carries `descriptionPlain`. A pasted posting uses `fetch_posting`, since a big
+tenant's 20 MB list is refused by the fetcher."""
 
 from __future__ import annotations
 
