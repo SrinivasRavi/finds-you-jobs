@@ -11,6 +11,7 @@ from datetime import timedelta
 
 from sidecar.app.db.base import now_utc
 from sidecar.app.db.database import Database
+from sidecar.app.db.models import Job
 from sidecar.app.registry.persistence import persist_scan
 from sidecar.modules.scraper.types import NormalizedJob, ScanResult
 
@@ -21,6 +22,12 @@ BOARD = "greenhouse:acme"
 def _scanned(repos, url: str, **over):  # type: ignore[no-untyped-def]
     return repos.jobs.create(canonical_url=url, title="SWE", company="Acme",
                              source_adapter="greenhouse", **over)
+
+
+def _get(repos, job_id: str) -> Job:  # type: ignore[no-untyped-def]
+    job = repos.jobs.get(job_id)
+    assert job is not None, job_id
+    return job
 
 
 def _listing(*urls: str) -> ScanResult:
@@ -35,7 +42,7 @@ def test_a_job_its_board_no_longer_lists_is_closed_and_greyed(migrated_db: Datab
     persist_scan(migrated_db, _listing("https://x/a"))
 
     with migrated_db.repos() as repos:
-        ja, jb = repos.jobs.get(a), repos.jobs.get(b)
+        ja, jb = _get(repos, a), _get(repos, b)
         assert ja.closed_at is None and ja.source_board == BOARD and ja.last_seen_at
         assert jb.closed_at is not None
         assert jb.feed_state == "expired" and jb.expired_at == jb.closed_at
@@ -47,7 +54,7 @@ def test_a_board_that_was_not_read_in_full_closes_nothing(migrated_db: Database)
     persist_scan(migrated_db, _listing("https://x/b"))
     persist_scan(migrated_db, ScanResult(listed={}))  # board errored or was capped
     with migrated_db.repos() as repos:
-        assert repos.jobs.get(b).closed_at is None
+        assert _get(repos, b).closed_at is None
 
 
 def test_a_saved_or_hand_added_job_is_marked_never_greyed(migrated_db: Database) -> None:
@@ -59,7 +66,7 @@ def test_a_saved_or_hand_added_job_is_marked_never_greyed(migrated_db: Database)
     persist_scan(migrated_db, _listing("https://x/other"))
     with migrated_db.repos() as repos:
         for job_id in (saved, manual):
-            job = repos.jobs.get(job_id)
+            job = _get(repos, job_id)
             assert job.closed_at is not None
             assert job.feed_state == "active"
 
@@ -71,7 +78,7 @@ def test_a_posting_that_comes_back_reopens(migrated_db: Database) -> None:
     persist_scan(migrated_db, _listing("https://x/a"))
     persist_scan(migrated_db, _listing("https://x/b"))
     with migrated_db.repos() as repos:
-        job = repos.jobs.get(b)
+        job = _get(repos, b)
         assert job.closed_at is None and job.feed_state == "active"
 
 
@@ -83,7 +90,7 @@ def test_an_aged_job_that_comes_back_stays_aged(migrated_db: Database) -> None:
         repos.jobs.set_expired(b, now=now - timedelta(days=2))
     persist_scan(migrated_db, _listing("https://x/b"))
     with migrated_db.repos() as repos:
-        assert repos.jobs.get(b).feed_state == "expired"
+        assert _get(repos, b).feed_state == "expired"
 
 
 def test_a_new_job_from_a_complete_board_is_stamped(migrated_db: Database) -> None:
@@ -92,7 +99,7 @@ def test_a_new_job_from_a_complete_board_is_stamped(migrated_db: Database) -> No
     persist_scan(migrated_db, ScanResult(jobs=[job], listed={BOARD: ["https://x/n"]}))
     with migrated_db.repos() as repos:
         row = repos.jobs.get_by_canonical_url("https://x/n")
-        assert row.source_board == BOARD and row.last_seen_at is not None
+        assert row is not None and row.source_board == BOARD and row.last_seen_at is not None
 
 
 # --- the daily read, for a job no complete board lists ----------------------
@@ -141,9 +148,9 @@ def test_the_daily_read_closes_what_the_page_says_is_closed(migrated_db: Databas
     assert report == {"checked": 5, "closed": 3, "unknown": 1}
     with migrated_db.repos() as repos:
         for job_id in (gone, text, moved):
-            assert repos.jobs.get(job_id).closed_at is not None, job_id
+            assert _get(repos, job_id).closed_at is not None, job_id
         for job_id in (live, blocked):
-            job = repos.jobs.get(job_id)
+            job = _get(repos, job_id)
             assert job.closed_at is None and job.liveness_checked_at is not None
 
 
@@ -165,7 +172,7 @@ def test_each_job_is_read_at_most_once_a_day(migrated_db: Database) -> None:
     # A board nobody has scanned for 3 days no longer vouches for its jobs.
     assert sorted(pages.reads) == ["https://x/b", "https://x/d"]
     with migrated_db.repos() as repos:
-        assert repos.jobs.get(due).liveness_checked_at == now
+        assert _get(repos, due).liveness_checked_at == now
 
 
 def test_a_page_that_comes_back_reopens(migrated_db: Database) -> None:
@@ -176,7 +183,7 @@ def test_a_page_that_comes_back_reopens(migrated_db: Database) -> None:
     pages = _Pages({"https://x/a": (200, "https://x/a", "<p>Apply</p>")})
     liveness.check_due(migrated_db, read=pages, now=now)
     with migrated_db.repos() as repos:
-        assert repos.jobs.get(job).closed_at is None
+        assert _get(repos, job).closed_at is None
 
 
 def test_reserved_test_domains_are_never_read(migrated_db: Database) -> None:

@@ -324,6 +324,7 @@ def test_a_cap_stopped_send_is_retried_a_day_later_and_a_sent_one_never(
         for op in repos.operations.list_for_job("send", {"queued"}, job_id):
             repos.operations.mark_running(op.id)
             repos.operations.mark_succeeded(op.id)
+            assert op.contact_id is not None
             outcome = "failed" if op.contact_id == capped else "sent"
             log = repos.outreach_logs.create(
                 op.contact_id, job_id=job_id, channel="connection_note", body_sent="Hi",

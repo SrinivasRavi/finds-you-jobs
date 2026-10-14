@@ -514,7 +514,7 @@ def test_smartrecruiters_links_move_to_the_shape_the_site_serves(tmp_path: Path)
 
     command.upgrade(cfg, "head")
     with engine.connect() as conn:
-        urls = dict(conn.execute(text("SELECT id, canonical_url FROM jobs")).all())
+        urls = {r[0]: r[1] for r in conn.execute(text("SELECT id, canonical_url FROM jobs"))}
         tomb = conn.execute(text("SELECT canonical_url FROM tombstones")).scalar()
     assert urls == {
         "a": new.format(1),
