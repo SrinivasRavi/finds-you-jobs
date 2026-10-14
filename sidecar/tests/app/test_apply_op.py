@@ -731,7 +731,7 @@ async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> 
     because the run's own timing is not what is under test."""
     from playwright.async_api import async_playwright
 
-    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.apply_op import _run_submit
     from sidecar.app.registry.operations import OperationContext
 
     app, client = app_client
@@ -750,7 +750,7 @@ async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> 
         page = await browser.new_page()
         try:
             await page.goto((FIXTURES / "submit_form.html").as_uri())
-            await _run_user_submit(ctx, run_id, page)
+            await _run_submit(ctx, run_id, page)
         finally:
             await browser.close()
 
@@ -772,7 +772,7 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
     """A page with no submit control must not advance the card or claim a send."""
     from playwright.async_api import async_playwright
 
-    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.apply_op import _run_submit
     from sidecar.app.registry.operations import OperationContext
 
     app, client = app_client
@@ -787,7 +787,7 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
         page = await browser.new_page()
         try:
             await page.goto((FIXTURES / "jd.html").as_uri())
-            await _run_user_submit(ctx, run_id, page)
+            await _run_submit(ctx, run_id, page)
         finally:
             await browser.close()
 
@@ -803,7 +803,7 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
 async def _user_submit_on(app_client, html: str, tmp_path: Path, *, evidence: str = "none"):
     from playwright.async_api import async_playwright
 
-    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.apply_op import _run_submit
     from sidecar.app.registry.operations import OperationContext
 
     app, client = app_client
@@ -825,7 +825,7 @@ async def _user_submit_on(app_client, html: str, tmp_path: Path, *, evidence: st
         page = await browser.new_page()
         try:
             await page.goto(page_file.as_uri())
-            await _run_user_submit(ctx, run_id, page)
+            await _run_submit(ctx, run_id, page)
         finally:
             await browser.close()
     with db.repos() as repos:
@@ -1199,3 +1199,64 @@ def test_only_a_filled_form_is_in_review() -> None:
     for status, phase, want in rows:
         run = ApplyRun(application_id="a", status=status, phase=phase)
         assert apply_run_in_review(run) is want, (status, phase)
+
+
+# -- Submit autopilot (audit-2026-10-14.md section 8.10) ---------------------
+
+
+def _card_on(client: TestClient, app: FastAPI, fixture: str) -> str:
+    resp = client.post(
+        "/api/profile", headers=AUTH, json={"resume_markdown": "# Ada Lovelace\n\nEngineer."}
+    )
+    assert resp.status_code in (200, 201)
+    seed_application_profile(app.state.db)
+    job_id = _seed_fixture_job(app, fixture)
+    return client.post(
+        "/api/applications", headers=AUTH,
+        json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
+    ).json()["id"]
+
+
+def _apply_with(client: TestClient, app_id: str, script: list[str]) -> dict:
+    resp = client.post(
+        f"/api/applications/{app_id}/apply", headers=AUTH,
+        json={"dev": {
+            "engine_script": script, "allow_local": True, "headed": False,
+            "review_wait_s": 0,
+        }},
+    )
+    assert resp.status_code == 202, resp.text
+    return _wait_terminal(client, resp.json()["id"])
+
+
+def test_submit_autopilot_submits_a_clean_fill_once(app_client) -> None:
+    app, client = app_client
+    app_id = _card_on(client, app, "autopilot_form.html")
+    client.post("/api/settings", headers=AUTH, json={"autopilot_apply": True})
+    final = _apply_with(client, app_id, [_action("finish", reason="all fields prefilled")])
+    assert final["status"] == "submitted", final
+    assert final["submit_evidence"] == "autopilot_submitted"
+    assert "Submissions: 1" not in final["summary"]  # redacted summary, never page text
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] == "applied"
+
+
+def test_submit_autopilot_leaves_a_fill_with_a_blocker_for_the_user(app_client) -> None:
+    app, client = app_client
+    app_id = _card_on(client, app, "autopilot_form.html")
+    client.post("/api/settings", headers=AUTH, json={"autopilot_apply": True})
+    final = _apply_with(client, app_id, [
+        _action("report_blocked", kind="needs_answer", detail="visa question",
+                field_label="Visa"),
+        _action("finish", reason="1 question left"),
+    ])
+    assert final["status"] == "ready_for_human", final
+    assert final["submit_evidence"] == "none"
+
+
+def test_with_submit_on_confirm_a_clean_fill_waits_for_the_user(app_client) -> None:
+    app, client = app_client
+    app_id = _card_on(client, app, "autopilot_form.html")
+    final = _apply_with(client, app_id, [_action("finish", reason="all fields prefilled")])
+    assert final["status"] == "ready_for_human", final
+    assert final["submit_evidence"] == "none"

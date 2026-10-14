@@ -358,6 +358,13 @@ async def _apply_async(
                 control,
                 policy=UrlPolicy(allow_local=allow_local),
             )
+            if result.status is ApplyStatus.READY_FOR_HUMAN and _submits_on_autopilot(db, result):
+                # Submit autopilot (section 8.10): a clean fill submits once, through the
+                # same settle-by-reading path as the user's own request. Doubt or a missed
+                # button falls through to the review window, for the user.
+                if await _run_submit(ctx, run_id, page, by="autopilot"):
+                    await _save_post_submit_shot(ctx, run_id, page)
+                    review_wait_s = 0
             if result.status is ApplyStatus.READY_FOR_HUMAN and review_wait_s > 0:
                 # The row stays `running` while the tab is held, so the panel needs the
                 # fill's outcome now, not once the window ends (audit A22).
@@ -506,12 +513,14 @@ def _persist_event(ctx: OperationContext, run_id: str, event: ApplyEvent) -> Non
             repos.apply_runs.update(run_id, **fields)
 
 
-async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> bool:
-    """Click Submit once, because the USER asked (S-A5). The agent cannot reach
-    this: `submit_application` sits outside the model's tool vocabulary and the
-    only caller is the request the human made from the review surface. The
-    outcome is recorded verbatim, including a failure, and the confirmation
-    poll below keeps running either way."""
+async def _run_submit(
+    ctx: OperationContext, run_id: str, page: Any, *, by: str = "user"
+) -> bool:
+    """Click Submit once, because the user asked (S-A5) or Submit autopilot is on
+    (`by="autopilot"`, section 8.10). The agent cannot reach this:
+    `submit_application` sits outside the model's tool vocabulary. The outcome is
+    recorded verbatim, including a failure, and the confirmation poll below keeps
+    running either way."""
     db = ctx.db
     assert db is not None
     with db.repos() as repos:
@@ -524,14 +533,14 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
             fields["final_url"] = outcome.final_url
         if outcome.confirmed:
             fields["status"] = "submitted"
-            fields["submit_evidence"] = "user_submitted"
+            fields["submit_evidence"] = f"{by}_submitted"
         elif outcome.unconfirmed:
             fields["submit_evidence"] = "unconfirmed"
         repos.apply_runs.update(run_id, **fields)
         if outcome.confirmed:
             run = repos.apply_runs.get(run_id)
             if run is not None:
-                advance_card_to_applied(repos, run.application_id, by="user_submitted")
+                advance_card_to_applied(repos, run.application_id, by=f"{by}_submitted")
     if ctx.publish is not None:
         ctx.publish(
             make_event(
@@ -540,6 +549,7 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
                     "run_id": run_id,
                     "operation_id": ctx.operation_id,
                     "event": "apply.user_submitted",
+                    "by": by,
                     "clicked": outcome.clicked,
                     "confirmed": outcome.confirmed,
                     "unconfirmed": outcome.unconfirmed,
@@ -548,6 +558,15 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
             )
         )
     return outcome.confirmed
+
+
+def _submits_on_autopilot(db: Database, result: ApplyResult) -> bool:
+    """Submit autopilot is on, and the fill left nothing for the user: no blocker
+    and no field that failed."""
+    if result.blockers or not all(f.ok for f in result.fields):
+        return False
+    with db.repos() as repos:
+        return repos.preferences.get_or_create().autopilot_apply
 
 
 async def _save_post_submit_shot(ctx: OperationContext, run_id: str, page: Any) -> None:
@@ -584,7 +603,7 @@ async def _review_window(
         if page.is_closed():
             return result  # user closed after reviewing; run stays ready_for_human
         if control.take_submit_request():
-            if await _run_user_submit(ctx, run_id, page):
+            if await _run_submit(ctx, run_id, page):
                 await _save_post_submit_shot(ctx, run_id, page)
                 return result  # sent and confirmed; nothing left to watch for
             continue

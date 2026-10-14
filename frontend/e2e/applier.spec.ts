@@ -508,3 +508,75 @@ test("closing the Applier window mid-run says so in words, never Playwright's te
   await expect(panel).not.toContainText("window_closed");
   await page.screenshot({ path: `${DIR}/window-closed.png`, fullPage: true });
 });
+
+const AUTOPILOT_FORM = pathToFileURL(
+  join(SPEC_DIR, "..", "..", "sidecar", "tests", "packages", "jobapplier", "fixtures", "autopilot_form.html"),
+).href;
+
+test("Submit autopilot submits a clean fill and the panel credits it (audit 8.10)", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.patch(`${base}/api/profile/application-profile`, {
+    headers: auth,
+    data: { name: "E2E Candidate", email: "e2e@example.com", location: "Bengaluru, Karnataka, India" },
+  });
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "",
+        title: "Autopilot Engineer",
+        company: "Initech",
+        location: "Remote",
+        description: "A prefilled form that confirms at once.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  const application = await (
+    await request.post(`${base}/api/applications`, {
+      headers: auth,
+      data: { job_id: job.id, generate_resume: false, generate_cover: false },
+    })
+  ).json();
+  await request.post(`${base}/api/settings`, { headers: auth, data: { autopilot_apply: true } });
+  try {
+    const started = await request.post(`${base}/api/applications/${application.id}/apply`, {
+      headers: auth,
+      data: {
+        dev: {
+          form_url: AUTOPILOT_FORM,
+          engine_script: [JSON.stringify({ tool: "finish", reason: "all fields prefilled" })],
+          allow_local: true,
+          headed: false,
+          review_wait_s: 0,
+        },
+      },
+    });
+    expect(started.status(), await started.text()).toBe(202);
+    const run = await started.json();
+    await expect(async () => {
+      const snap = await (await request.get(`${base}/api/apply-runs/${run.id}`, { headers: auth })).json();
+      expect([snap.status, snap.submit_evidence], snap.summary).toEqual(["submitted", "autopilot_submitted"]);
+    }).toPass({ timeout: 60_000 });
+  } finally {
+    await request.post(`${base}/api/settings`, { headers: auth, data: { autopilot_apply: false } });
+  }
+
+  await page.goto("/applications");
+  await page
+    .getByTestId("tracker-card")
+    .filter({ hasText: "Autopilot Engineer" })
+    .getByTestId("card-apply-slot")
+    .click();
+  const panel = page.getByTestId("applier-panel");
+  await expect(panel).toContainText("Submit autopilot submitted it, and the page confirmed it.");
+  await expect(panel).toContainText("this application moved to Applied");
+  await expect(page.getByTestId("applier-screenshot").locator("img")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/autopilot-submitted.png`, fullPage: true });
+});

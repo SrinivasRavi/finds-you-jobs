@@ -99,11 +99,12 @@ type ApplyEventPayload = {
   clicked?: boolean;
   confirmed?: boolean;
   unconfirmed?: boolean;
+  by?: "user" | "autopilot";
 };
 
 /** Map one redacted `apply` SSE event to a feed line. Returns null for events
  *  that carry no narration (screenshot_ready drives the image, not the feed). */
-function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
+export function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
   const id = `ev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const who = p.label || p.tool || i18n.t("popups.applier.feed.actionFallback");
   switch (p.event) {
@@ -152,6 +153,14 @@ function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
         iSubmitted: i18n.t("popups.applier.iSubmitted"),
         didntSubmit: i18n.t("popups.applier.didntSubmit"),
       };
+      if (p.by === "autopilot") {
+        if (p.confirmed) {
+          return { id, text: i18n.t("popups.applier.feed.autopilotSubmitConfirmed"), tone: "ok" };
+        }
+        const key = p.unconfirmed ? "autopilotSubmitUnconfirmed" : "autopilotSubmitNotFound";
+        const tone = p.unconfirmed ? "warn" : "bad";
+        return { id, text: i18n.t(`popups.applier.feed.${key}`, labels), tone };
+      }
       if (p.confirmed) {
         const key = p.clicked ? "userSubmitConfirmed" : "userSubmitSettled";
         return { id, text: i18n.t(`popups.applier.feed.${key}`), tone: "ok" };
@@ -203,6 +212,7 @@ const EVIDENCE_KEY: Record<string, string> = {
   user_submitted: "evidenceUserSubmitted",
   confirmation_detected: "evidenceConfirmationDetected",
   user_attested: "evidenceUserAttested",
+  autopilot_submitted: "evidenceAutopilotSubmitted",
 };
 
 function fmtRemaining(ms: number): string {
@@ -495,7 +505,7 @@ export function ApplierPanel({
                       .map((b) => `${blockerLabel(b.kind)}${b.field_label ? ` (${b.field_label})` : ""}`)
                       .join(", "),
                   })
-                : " " + t("popups.applier.neverSubmits")}
+                : " " + t("popups.applier.reviewHint")}
             </div>
             {run?.submit_evidence === "unconfirmed" ? (
               <div
