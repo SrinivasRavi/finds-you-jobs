@@ -7,8 +7,10 @@ the runner's thread pool inside the scan operation, never on the event loop."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 from sidecar.modules.scraper.http import BROWSER_HEADERS, Fetcher, page_pause
 from sidecar.modules.scraper.liveness import page_verdict
@@ -37,6 +39,14 @@ def _default_reader() -> PageReader:
     return read
 
 
+_RESERVED = re.compile(r"(^|\.)(example\.(com|net|org)|localhost)$|\.(test|invalid|localhost)$")
+
+
+def _reserved(url: str) -> bool:
+    """An RFC 2606 host: never a real posting, never read (the e2e stack's jobs)."""
+    return bool(_RESERVED.search((urlsplit(url).hostname or "").lower()))
+
+
 def check_due(
     db: Database | None,
     *,
@@ -54,6 +64,12 @@ def check_due(
         due = [(j.id, j.canonical_url) for j in rows]
     if not due:
         return report
+    reserved = [job_id for job_id, url in due if _reserved(url or "")]
+    if reserved:  # stamped, so they leave the queue instead of crowding it
+        with db.repos() as repos:
+            for job in repos.jobs.get_many(reserved).values():
+                job.liveness_checked_at = now
+    due = [(job_id, url) for job_id, url in due if job_id not in set(reserved)]
     read = read or _default_reader()
     for job_id, url in due:
         status, final_url, html = read(url or "")

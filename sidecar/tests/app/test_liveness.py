@@ -177,3 +177,19 @@ def test_a_page_that_comes_back_reopens(migrated_db: Database) -> None:
     liveness.check_due(migrated_db, read=pages, now=now)
     with migrated_db.repos() as repos:
         assert repos.jobs.get(job).closed_at is None
+
+
+def test_reserved_test_domains_are_never_read(migrated_db: Database) -> None:
+    """RFC 2606 names (example.com, .test, .invalid, localhost) host no real
+    posting, so the daily read never calls them: the e2e stack stays offline."""
+    with migrated_db.repos() as repos:
+        for url in ("https://example.com/e2e-job-1", "https://jobs.acme.test/1",
+                    "http://localhost:8000/x", "https://www.example.org/y"):
+            _search_job(repos, url)
+    pages = _Pages({})
+    report = liveness.check_due(migrated_db, read=pages, now=now_utc())
+    assert pages.reads == []
+    assert report == {"checked": 0, "closed": 0, "unknown": 0}
+    # Stamped, so the next scan's 60 reads go to real postings.
+    with migrated_db.repos() as repos:
+        assert repos.jobs.list_liveness_due(now_utc() - liveness.RECHECK_AFTER, 60) == []
