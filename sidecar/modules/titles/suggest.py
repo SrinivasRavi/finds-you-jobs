@@ -12,6 +12,7 @@ the user typed, and `is_known()` is advisory, not a gate.
 from __future__ import annotations
 
 import gzip
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from sidecar.modules.geo.gazetteer import fold
 DATA = Path(__file__).parent / "data"
 
 MIN_QUERY_LEN = 2
+_GAPS = re.compile(r"[\s\-]+")
 DEFAULT_LIMIT = 8
 
 
@@ -39,12 +41,13 @@ class TitleIndex:
     outranks a substring, so the scan stops once it has `limit` prefix hits, which
     keeps a 2-letter query fast."""
 
-    __slots__ = ("titles", "folded", "known")
+    __slots__ = ("titles", "folded", "compact", "known")
 
     def __init__(self, rows: list[tuple[str, str]]) -> None:
         pairs = sorted(((title, fold(title)) for title, _code in rows), key=_rank)
         self.titles = [p[0] for p in pairs]
         self.folded = [p[1] for p in pairs]
+        self.compact = [_compact(f) for f in self.folded]
         self.known = frozenset(self.folded)
 
 
@@ -63,23 +66,41 @@ def warm() -> None:
     _index()
 
 
-def suggest(text: str, limit: int = DEFAULT_LIMIT) -> list[str]:
+def _compact(folded: str) -> str:
+    """Spaces and hyphens out, so "backend" and "back-end" meet "Back End"."""
+    return _GAPS.sub("", folded)
+
+
+def suggest(
+    text: str, limit: int = DEFAULT_LIMIT, *, board_titles: list[str] | None = None
+) -> list[str]:
+    """Titles for what's typed, best first: a title the user's own board carries,
+    then a prefix match, a word starting with it, and a plain substring last.
+    Spacing is ignored, and nothing typed is ever refused."""
     if len(text) < MIN_QUERY_LEN:
         return []
     index = _index()
     query = fold(text)
+    tight = _compact(query)
+    board = " | ".join(_compact(fold(t)) for t in board_titles or ())
 
-    prefix: list[str] = []
-    substring: list[str] = []
-    for title, folded in zip(index.titles, index.folded, strict=True):
-        if folded.startswith(query):
-            prefix.append(title)
-            if len(prefix) >= limit:
-                break
-        elif query in folded and len(substring) < limit:
-            substring.append(title)
-
-    return (prefix + substring)[:limit]
+    tiers: tuple[list[str], ...] = ([], [], [], [])  # on board, prefix, word, substring
+    for title, folded, compact in zip(index.titles, index.folded, index.compact, strict=True):
+        if folded.startswith(query) or compact.startswith(tight):
+            tier = 1
+        elif f" {query}" in folded:
+            tier = 2
+        elif query in folded or tight in compact:
+            tier = 3
+        else:
+            continue
+        if board and compact in board:
+            tier = 0
+        if len(tiers[tier]) < limit:
+            tiers[tier].append(title)
+        if len(tiers[0]) >= limit or (not board and len(tiers[1]) >= limit):
+            break
+    return [t for tier in tiers for t in tier][:limit]
 
 
 def is_known(text: str) -> bool:

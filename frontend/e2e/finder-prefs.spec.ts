@@ -72,3 +72,41 @@ test("excludes round-trip through the modal", async ({
     keywords: ["unpaid"],
   });
 });
+
+test("the role field suggests job titles, the board's first, and never replaces what you typed (10-10 report 4.3)", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.post(`${base}/api/jobs`, {
+    headers: auth,
+    data: {
+      canonical_url: "https://example.com/e2e-role-suggest",
+      title: "Staff Backend Engineer",
+      company: "Acme",
+      location: "Remote",
+      description: "A posting whose title ranks Back End Engineer first.",
+      source_adapter: "paste-url",
+    },
+  });
+  await page.goto("/jobs");
+  await page.getByTestId("finder-prefs").click();
+  const input = page.getByTestId("fp-roles-input");
+  await input.fill("back");
+  const options = page.getByTestId("fp-roles-option");
+  await expect(options.first()).toHaveText("Back End Engineer");
+  await page.screenshot({ path: `${DIR}/role-suggestions.png`, fullPage: true });
+
+  // Enter keeps the typed text; a click adds the suggestion.
+  await input.fill("backend");
+  await input.press("Enter");
+  await expect(page.getByTestId("fp-roles")).toContainText("backend");
+  await input.fill("back");
+  await options.first().dispatchEvent("mousedown");
+  await expect(page.getByTestId("fp-roles")).toContainText("Back End Engineer");
+});

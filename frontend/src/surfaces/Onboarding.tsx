@@ -13,7 +13,7 @@ import { api } from "../api";
 import { qk } from "../api/queries";
 import type { components } from "../api/schema";
 import type { EngineSaveInput, EngineVerifyResult, PlaceChip } from "../api/types";
-import { ChipInput } from "../shell/ChipInput";
+import { RoleInput } from "../shell/RoleInput";
 import { PlaceInput } from "../shell/PlaceInput";
 import { InfoDot } from "../shell/InfoDot";
 import { LanguageSelect } from "../shell/LanguageSelect";
@@ -482,7 +482,7 @@ export function Onboarding() {
           ) : step === 1 ? (
             <div className="space-y-4">
               <h1 className="text-[18px] font-semibold text-ink">{t("onboarding.titlePreferences")}</h1>
-              <ChipInput
+              <RoleInput
                 variant="plain"
                 label={t("onboarding.aliasLabel")}
                 testid="alias"

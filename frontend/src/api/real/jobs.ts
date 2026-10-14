@@ -288,6 +288,11 @@ export class JobsApi extends Transport {
   }
 
   /** The location picker's suggestions (place-picker.md section 3). */
+  /** Role-field suggestions: O*NET titles, the user's board's first (10-10 report 4.3). */
+  async suggestTitles(q: string): Promise<string[]> {
+    return this.req<string[]>(`/api/titles/suggest?q=${encodeURIComponent(q)}`);
+  }
+
   async suggestPlaces(q: string): Promise<PlaceSuggestion[]> {
     return this.req<PlaceSuggestion[]>(`/api/geo/suggest?q=${encodeURIComponent(q)}`);
   }

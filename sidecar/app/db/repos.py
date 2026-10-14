@@ -717,6 +717,17 @@ class JobsRepo:
         job.feed_state = "active"
         return job
 
+    def titles_on_board(self, limit: int = 2000) -> list[str]:
+        """Distinct titles of the jobs on the board, newest first."""
+        stmt = (
+            select(Job.title)
+            .where(Job.feed_state.in_(ON_BOARD_STATES))
+            .group_by(Job.title)
+            .order_by(func.max(Job.ingested_at).desc())
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
     def list_by_canonical_urls(self, urls: list[str]) -> list[Job]:
         if not urls:
             return []

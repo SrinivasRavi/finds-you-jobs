@@ -1,9 +1,10 @@
 # Referral Outreach — provenance
 
 The finds-you-jobs Referral Outreach package pairs a finds-you-jobs-owned,
-AGPL-3.0-only facade (`client.py`, `types.py`, `fake.py`, this package's
-`__init__.py`) with a trimmed, GPLv3, OpenOutreach-derived browser core under
-`upstream/`.
+AGPL-3.0-only facade (`facade.py` and this package's `__init__.py`) with a
+trimmed, GPLv3, OpenOutreach-derived browser core under `upstream/`. The typed
+`ReferralAutomation` protocol and its fake (`client.py`, `types.py`, `fake.py`)
+had no production caller and were deleted 2026-10-15 (10-10 report 4.3).
 
 ## Licensing posture
 

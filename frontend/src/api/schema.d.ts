@@ -2016,6 +2016,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/titles/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggest Titles
+         * @description The role field's suggestions (10-10 report 4.3): O*NET titles, the ones the
+         *     user's own board carries first. Advisory only; the field takes any text. A
+         *     plain `def`, so the first index load runs in the threadpool.
+         */
+        get: operations["suggest_titles_api_titles_suggest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profile/ingest": {
         parameters: {
             query?: never;
@@ -7417,6 +7439,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DiscoveryCredentialDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_titles_api_titles_suggest_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
             /** @description Validation Error */

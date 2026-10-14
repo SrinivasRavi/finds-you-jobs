@@ -91,6 +91,16 @@ export function useExplainCost(enabled: boolean) {
 
 /** The location picker's suggestions for what's typed (place-picker.md section 3).
  *  Cached per query, so backspacing re-uses answers instead of re-asking. */
+export function useTitleSuggestions(q: string) {
+  const query = q.trim();
+  return useQuery({
+    queryKey: ["titleSuggest", query.toLowerCase()],
+    queryFn: () => api.suggestTitles(query),
+    enabled: query.length >= 2,
+    staleTime: 60_000,
+  });
+}
+
 export function usePlaceSuggestions(q: string) {
   const query = q.trim();
   return useQuery({
