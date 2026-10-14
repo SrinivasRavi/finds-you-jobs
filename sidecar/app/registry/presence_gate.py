@@ -1,18 +1,10 @@
 """The presence gate for logged-in LinkedIn runs (invariant 3, Our Claim 9).
 
-finds-you-jobs-owned (AGPL-3.0-only). LinkedIn traffic happens only when the
-user asked for it: every gated run must carry the `user_initiated` marker that
-only an explicit click sets, so a background timer or scheduler can never start
-one. That click IS the presence signal.
-
-History (maintainer decision, 2026-08-14): the first live version also required
-an attached screencast viewer and a visible surface. Lived experience killed
-both signals the same evening they shipped: they gate on *attention*, not
-presence, pinning the user to the Browser tab for the whole send while the
-composer couldn't even render there. The click already proves the user is
-present and chose this send; the Browser tab stays as optional observability,
-never a requirement.
-"""
+AGPL-3.0-only. LinkedIn traffic happens only when the user asked: every gated
+run must carry the `user_initiated` marker only a click sets, and that click is
+the presence signal. Requiring an attached viewer and a visible surface was
+dropped on 2026-08-14: it gated on attention, not presence; the Browser tab
+stays optional observability."""
 
 from __future__ import annotations
 

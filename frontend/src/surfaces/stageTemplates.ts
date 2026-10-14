@@ -1,17 +1,8 @@
-// Stage-dependent message templates for the contact detail modal's composer
-// (maintainer spec, 2026-08-14). Each mapped kanban stage offers a FEW plain
-// starting points — the user picks one from a dropdown, the box prefills, and
-// the text stays fully editable before the per-action confirm.
-//
-// The mapping: Accepted → a reminder (they accepted but never responded);
-// Engagement → a referral ask personalized with the contact's own employer;
-// Ghosted → a reminder after a long silence. Engagement degrades to "your
-// company" when the employer field is blank; the greeting degrades to a plain
-// "Hi," when the name is blank.
-//
-// FUTURE (explicit maintainer direction, deliberately NOT built yet): a later
-// iteration auto-picks or randomizes the option instead of this manual
-// dropdown. Until the maintainer asks, selection stays manual.
+// Stage-dependent message templates for the contact modal's composer: a few
+// plain starting points per stage, picked from a dropdown and fully editable.
+// Accepted and Ghosted get reminders; Engagement gets a referral ask naming the
+// contact's employer ("your company" when blank). Selection stays manual until
+// the maintainer asks for auto-pick.
 
 import type { ConnectionStatus } from "../api/types";
 

@@ -1,26 +1,20 @@
-"""The Muse adapter — public jobs JSON API (no auth, no key).
+"""The Muse adapter: public jobs JSON API, no key.
 
-Claims `board = "themuse"` and `themuse.com` URLs. The API pages at ~20 rows:
-`GET themuse.com/api/public/jobs?page=N` → `{"results": [...], "page_count"}`
-with `name`, `company {name}`, `locations [{name}]`, `refs {landing_page}`,
-`contents` (HTML JD, carried in the list payload) and `publication_date`.
-Bounded at `MAX_PAGES` requests per scan (same request-budget discipline as
-the Workday adapter; the fetcher counts each call into Usage).
-
-Re-derived from the public payload shape (JustHireMe carries the same keyless
-board — behavioral precedent only, no code seen or copied).
-"""
+Claims `board = "themuse"` and themuse.com URLs. Pages about 20 rows up to
+`MAX_PAGES`; the JD is in the list. Re-derived from the payload (JustHireMe as
+precedent only)."""
 
 from __future__ import annotations
-
-from urllib.parse import urlsplit
 
 from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher, paced_pages
 from ..types import NormalizedJob, ScraperError
+from .base import detect_board
 
 ID = "themuse"
+LABEL = "The Muse"
+KIND = "board"
 INLINE_DESCRIPTION = True
 _CLAIM = "themuse.com"
 _HOSTS = {"themuse.com", "www.themuse.com"}
@@ -30,12 +24,7 @@ MAX_PAGES = 3  # ~60 rows; a keyword board, not a per-company feed
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.board == ID:
-        return _CLAIM
-    host = urlsplit(entry.url).netloc.lower() if entry.url else ""
-    return _CLAIM if host in _HOSTS else ""
+    return detect_board(entry, ID, _CLAIM, _HOSTS)
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:

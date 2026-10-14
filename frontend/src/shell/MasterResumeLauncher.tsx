@@ -1,9 +1,6 @@
-// The "Master Resume" header button, shared by the Job Board, Applications, and
-// Networking tabs so the master resume is reachable from every surface and the
-// button lands on the SAME pixel in each (it sits immediately left of the
-// shared Deleted+Add cluster, whose widths are identical across tabs — see
-// HeaderAddButton.tsx for the shared-right-edge alignment idea). It owns its own
-// modal so the open/save behavior can't drift between tabs.
+// The "Master Resume" header button, shared by the 3 tabs so it lands on the
+// same pixel in each, left of the Deleted and Add cluster. It owns its modal, so
+// open and save can't drift between tabs.
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -39,7 +36,7 @@ export function MasterResumeLauncher() {
           onSaveMaster={(md: string) => {
             // Save the resume. Keyword mode re-scores the board server-side for
             // free at save; AI mode never re-spends on a job that already has a
-            // score, so the prior AI scores stay visible (S-C24, maintainer
+            // score, so the prior LLM scores stay visible (S-C24, maintainer
             // 2026-08-28). An unchanged save bumps nothing.
             void updateProfile.mutateAsync(md).then(() => invalidateFeed(qc));
           }}

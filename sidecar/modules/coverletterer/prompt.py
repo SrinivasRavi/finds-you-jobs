@@ -27,6 +27,7 @@ def build_user_prompt(
     jd_md: str,
     guidance: str = "",
     writing_samples: list[tuple[str, str]] | None = None,
+    location_rule: str = "",
 ) -> str:
     parts = [
         "=== MASTER RESUME (sole candidate evidence) ===",
@@ -37,6 +38,9 @@ def build_user_prompt(
     ]
     if guidance.strip():
         parts += ["", "=== PER-JOB GUIDANCE (from the user) ===", guidance.strip()]
+    if location_rule.strip():
+        parts += ["", "=== LOCATION (the user's setting, overrides the master) ===",
+                  location_rule.strip()]
     for name, text in writing_samples or []:
         parts += ["", f"=== WRITING SAMPLE: {name} (style calibration only) ===", text.strip()]
     parts += [

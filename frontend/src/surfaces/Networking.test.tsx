@@ -1,13 +1,8 @@
-// Integration tests for the watchable single-click send (maintainer,
-// 2026-08-15): a Send from the contact composer fires the ONE reach-out path
-// with no second confirm dialog, closes the composer, and opens the LinkedIn
-// browser modal (app-level since 2026-08-16) so the send is watched from its
-// first step. Also covers the header's LinkedIn status button (opens the
-// modal / lands on Settings / pulses while an op runs), the card/modal
-// last-message attribution ("Me:" vs the contact's first name), and that the
-// removed "Reach out by URL" entry stays gone. The queries module and the
-// browser-modal provider are mocked; the composer, the modals, and the
-// navigation are the real code (MemoryRouter).
+// Integration tests for the watched single-click send: Send fires the 1
+// reach-out path with no second confirm, closes the composer and opens the
+// LinkedIn browser modal. Also the header status button, last-message
+// attribution, and "Reach out by URL" staying gone. Queries and the provider are
+// mocked; the composer, modals and navigation are real.
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";

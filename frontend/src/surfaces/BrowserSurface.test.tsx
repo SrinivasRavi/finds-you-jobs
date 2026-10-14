@@ -1,10 +1,7 @@
-// Unit tests for the WATCH-ONLY BrowserSurface (maintainer, 2026-08-16): the
-// read-only bar follows every server-pushed `status{url}` (driver-driven and
-// SPA navigations alike) — there is no typable URL field, no Go button, and no
-// way to steer the surface from here. Auto-home still holds: a pageless attach
-// opens the surface's `origin` (deferred while `autoHome` is off), so the
-// canvas is never dead blank. The ScreencastClient is mocked (no socket, no
-// frames); react-i18next is mocked t→key per the established pattern.
+// Unit tests for the watch-only BrowserSurface: the read-only bar follows every
+// server-pushed `status{url}`, with no way to steer from here, and a pageless
+// attach opens the surface's `origin` (deferred while `autoHome` is off). The
+// ScreencastClient and react-i18next are mocked.
 
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -125,5 +122,27 @@ describe("BrowserSurface auto-home", () => {
     render(<BrowserSurface />);
     pushControl({ type: "status", state: "streaming", surface: "default", url: "" });
     expect(h.sendNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("BrowserSurface with no browser to launch (A18)", () => {
+  it("offers Download on a browser_missing error, and drops it once the stream is live", () => {
+    render(<BrowserSurface />);
+    pushControl({ type: "error", code: "browser_missing", message: "Executable doesn't exist" });
+    expect(screen.getByTestId("screencast-browser-download").textContent).toContain(
+      "browser.download.surfaceMissing",
+    );
+    expect(screen.queryByTestId("screencast-error")).toBeNull();
+
+    // The client's own reconnect lands once Chromium is on disk.
+    pushControl({ type: "status", state: "streaming", url: "" });
+    expect(screen.queryByTestId("screencast-browser-download")).toBeNull();
+  });
+
+  it("keeps other errors as plain text", () => {
+    render(<BrowserSurface />);
+    pushControl({ type: "error", message: "BrowserLaunchError: profile locked" });
+    expect(screen.getByTestId("screencast-error").textContent).toContain("profile locked");
+    expect(screen.queryByTestId("screencast-browser-download")).toBeNull();
   });
 });

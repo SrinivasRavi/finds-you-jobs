@@ -1,19 +1,8 @@
-// External-link opening (2026-07-11 beta feedback: NO link opened in the
-// desktop app — the WebView blocks window.open/target=_blank for external
-// origins). Every outbound URL routes through the shell's `open_external`
-// command (OS default browser); the browser-dev path falls back to
-// window.open. `installExternalLinkInterceptor` makes this automatic for
-// every `<a target="_blank">` in the app — no per-link wiring.
+// External links. The WebView blocks window.open for external origins, so every
+// outbound URL goes through the shell's `open_external` (the OS browser), falling
+// back to window.open in dev. The interceptor covers every `<a target="_blank">`.
 
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown;
-  }
-}
-
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+import { inTauri } from "./host";
 
 export function openExternal(url: string): void {
   if (!/^https?:\/\//i.test(url)) return;

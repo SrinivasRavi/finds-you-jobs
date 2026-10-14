@@ -1,23 +1,11 @@
-"""BYOK provider surface — verify + CRUD (FR-SET-06 / US-SET-07 / US-OB-04).
+"""BYOK provider surface: verify and CRUD (FR-SET-06 / US-SET-07 / US-OB-04).
 
-A dedicated router (kept out of the contested `routes.py`). It backs both the
-Settings → AI Providers panel and the Onboarding Verify gate:
-
-- `POST /api/engines/verify` — a provider-appropriate real check. Anthropic /
-  OpenAI / OpenRouter / Local use the free authenticated models-list call;
-  `claude-cli` runs a minimal real completion. Returns `{ok, detail, provider}`
-  with the provider's **verbatim** failure text on `ok=False`.
-- `GET /api/engines` — the persisted engine configs, masked (`key_hint`, never
-  the key).
-- `POST /api/engines` — save/replace a provider config. A sent `key` is
-  **sealed** with the app Fernet key (`get_app_key`) into
-  `EngineSettings.key_encrypted`; `key_ref` carries only a masked hint. Omitting
-  `key` leaves an existing sealed key intact. After the write the engine
-  registry is rebuilt so routing to the provider works immediately.
-- `DELETE /api/engines/{provider}` — remove a provider config + rebuild.
-
-Keys never appear in a response (masked only), a log line, or an error message.
-"""
+Backs Settings › AI providers and onboarding's Verify. POST /api/engines/verify
+runs a real check (a free models-list call, or a minimal completion for a CLI)
+and returns the provider's verbatim failure. GET lists configs, masked. POST
+saves one, sealing a sent key with the app Fernet key; omitting `key` keeps the
+old one, and the registry rebuilds at once. DELETE removes one. Keys never
+appear in a response, a log line or an error."""
 
 from __future__ import annotations
 
@@ -27,13 +15,20 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from ..registry.engine_config import PROVIDERS, configure_engines, verify_provider
+from ..registry.apply_op import has_extracted_profile
+from ..registry.engine_config import (
+    PROVIDERS,
+    adopt_off_kinds,
+    configure_engines,
+    verify_provider,
+)
 from ..registry.engines_http import HttpTransport
 from ..security import get_app_key, mask_key, seal_secret
 from . import dto
 from .deps import data_dir as _data_dir
 from .deps import db as _db
 from .deps import engines as _engines
+from .deps import runner as _runner
 
 router = APIRouter()
 
@@ -42,6 +37,23 @@ def _transport(request: Request) -> HttpTransport | None:
     """The verify HTTP transport. None ⇒ the engines' default `UrllibTransport`.
     Tests set `app.state.http_transport` to a fake so no real network call runs."""
     return getattr(request.app.state, "http_transport", None)
+
+
+def _adopt_off_kinds(request: Request, provider: str) -> None:
+    """A provider just set up takes over the kinds onboarding's Skip turned off,
+    then reads the application profile that Skip left unread (audit A5)."""
+    with _db(request).repos() as repos:
+        prefs = repos.preferences.get_or_create()
+        routing = adopt_off_kinds(prefs.engine_routing, provider)
+        if routing is None:
+            return
+        repos.preferences.update(engine_routing=routing)
+        needs_extract = repos.profile.get_current() is not None and not has_extracted_profile(
+            repos
+        )
+    _reconfigure(request)
+    if needs_extract:
+        _runner(request).submit("extract", {})
 
 
 def _reconfigure(request: Request) -> None:
@@ -96,12 +108,9 @@ def _cli_not_found(provider: str, detail: str) -> dto.EngineVerifyResult:
 def _verify_by_completion(
     engine_cls: Callable[..., Any], *, timeout_s: int, provider: str, ok_detail: str
 ) -> dto.EngineVerifyResult:
-    """The shared fallback tail: prove a subscription CLI with one minimal REAL
-    completion. An `EngineError` comes back verbatim, classified `not_logged_in`
-    when its text reads like an auth failure and `error` otherwise. Only the
-    engine class, its timeout, and the two strings are per-provider.
-
-    Blocking (subprocess); callers must run it off the event loop."""
+    """The shared fallback: prove a subscription CLI with 1 minimal real completion.
+    An `EngineError` comes back verbatim, classed `not_logged_in` when it reads like
+    auth, else `error`. Blocking; run it off the event loop."""
     from sidecar.modules._shared.claude_engine import EngineError
 
     try:
@@ -121,18 +130,10 @@ def _verify_by_completion(
 
 
 def _verify_claude_cli() -> dto.EngineVerifyResult:
-    """Verify the Claude-subscription CLI, cheapest-first. Distinguishes 'not
-    installed' from 'not logged in' so onboarding can guide the exact fix.
-
-    1. Resolve the binary (login-shell PATH, so a GUI launch finds it).
-    2. `claude auth status` — an instant, free auth probe that also names the
-       account (email + plan), matching how the API providers verify (a free
-       authenticated check, not a completion).
-    3. Older CLI without `auth status` → fall back to a minimal real completion.
-
-    Blocking (subprocesses, up to 60s on the fallback); callers must run it off
-    the event loop.
-    """
+    """Verify the Claude CLI, cheapest first, telling "not installed" from "not
+    logged in": resolve the binary (login-shell PATH), then `claude auth status`
+    (free, names the account), else fall back to a minimal completion. Blocking (up
+    to 60 s); run it off the event loop."""
     from sidecar.modules._shared.claude_engine import (
         ClaudeCliEngine,
         claude_auth_status,
@@ -236,7 +237,11 @@ async def verify_engine(
     # heartbeat and every concurrent request) — the "Load failed" root cause.
     cli_verifier = _CLI_VERIFIERS.get(payload.provider)
     if cli_verifier is not None:
-        return await run_in_threadpool(cli_verifier)
+        verified = await run_in_threadpool(cli_verifier)
+        if verified.ok:
+            await run_in_threadpool(_adopt_off_kinds, request, payload.provider)
+            await run_in_threadpool(_reconfigure, request)
+        return verified
     result = await run_in_threadpool(
         verify_provider,
         payload.provider,
@@ -292,9 +297,8 @@ def save_engine(
             row = repos.engine_settings.create(payload.provider, **fields)
         else:
             row = repos.engine_settings.update(existing.id, **fields)
-        result = dto.engine_setting_dto(row) if row is not None else None
-    if result is None:  # pragma: no cover — update-after-existing always finds it
-        raise HTTPException(status_code=500, detail="failed to persist engine")
+        result = dto.engine_setting_dto(row)
+    _adopt_off_kinds(request, payload.provider)
     _reconfigure(request)
     return result
 

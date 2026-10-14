@@ -21,7 +21,7 @@ When third-party material is added, the same change must:
 - **What is not carried:** no career-ops runtime code. The module `.py` implementations are independently written; behavioral inspiration is documented, not copied.
 - Verbatim source snapshots of the six distilled upstream files ship publicly at `third_party/career-ops@8369b40/` (with the upstream MIT LICENSE and a provenance README) so every distillation is reviewable against its source in the distributed tree.
 - The MIT grant and copyright notice for the carried portions remain with career-ops; nothing here relabels that material as AGPL-only.
-- **Referenced — NOT carried (design):** the discovery module's filter/config/quality layer (`sidecar/modules/scraper/{config,filters,types,quality,salary}.py` and several adapters) follows career-ops's `portals.yml` filter model and named heuristics (the #1169/#1101 word-boundary lessons; `content_filter`/`visa_filter`/`salary_filter` semantics), and `sidecar/modules/scraper/fingerprint.py` reimplements the SimHash cross-posting-detection technique documented by career-ops's `fingerprint-core.mjs` (64-bit SimHash over 3-token shingles, 0.92 similarity threshold). These are design references with inline citations; no career-ops source text or code is copied, so nothing additional is license-carried.
+- **Referenced — NOT carried (design):** the discovery module's filter/config/quality layer (`sidecar/modules/scraper/{config,filters,types,quality,salary}.py` and several adapters) follows career-ops's `portals.yml` filter model and named heuristics (the #1169/#1101 word-boundary lessons; `content_filter`/`visa_filter`/`salary_filter` semantics), and `sidecar/modules/scraper/fingerprint.py` reimplements the SimHash cross-posting-detection technique documented by career-ops's `fingerprint-core.mjs` (64-bit SimHash over 3-token shingles, 0.92 similarity threshold; ours uses 0.90 behind a company and title match). These are design references with inline citations; no career-ops source text or code is copied, so nothing additional is license-carried.
 
 ### OpenOutreach — GPL-3.0-only (LinkedIn/Voyager core, carried directly)
 
@@ -30,6 +30,23 @@ When third-party material is added, the same change must:
 - **Direct in-process (no subprocess firewall).** Unlike the prior MIT-era repository — which isolated this GPL code behind a `python -m voyager_py` subprocess — finds-you-jobs is AGPL-3.0-only, so GPLv3 + AGPLv3 combine directly. The finds-you-jobs-owned facade (`client.py`/`types.py`/`fake.py`, AGPL) calls the `upstream/` core in-process; the subprocess JSON-CLI is **not carried**.
 - **Deliberately NOT taken:** OpenOutreach's remote-controlled *freemium promotional actions* (connection requests + promo messages sent from the user's account) and its *auto-newsletter subscription* in non-GDPR jurisdictions, plus the Django/Celery CRM, ML qualifier/embeddings, and mem0 vendor tree.
 - **GPL source availability:** the GPLv3 source ships in this public repository at `sidecar/packages/referral_outreach/upstream/`, satisfying the source-availability requirement (reinforced by the whole aggregate being AGPL-3.0-only).
+
+### GeoNames — CC BY 4.0 (gazetteer data, carried)
+
+- Upstream: [GeoNames](https://www.geonames.org), the `cities15000`, `admin1CodesASCII` and `countryInfo` dumps from <https://download.geonames.org/export/dump/>, taken 2026-10-01. License: **CC BY 4.0**, full text retained at `third_party/geonames/LICENSE-CC-BY-4.0.txt`.
+- **Required attribution, carried in the app and here:** "This product includes data created by GeoNames (https://www.geonames.org), used under CC BY 4.0."
+- **What is carried:** data, no code. 4 gzipped tab-separated cuts at `sidecar/modules/geo/data/` (0.95 MB total) holding 34,152 cities (geonameid, name, admin1, country, population), 67,588 latin-script name keys for cities over 200,000 people, 3,865 admin1 divisions and 252 countries.
+- **What was changed, which the license requires stating:** reduction only. 14 of the 19 city columns are dropped, every non-latin alternate name is dropped, names are folded to lowercase with accents stripped, and the result is written as gzipped TSV. No value is edited, corrected or invented. The per-field table is at `third_party/geonames/README.md` and `sidecar/modules/geo/build_data.py` is the executable record.
+- **Dependency closure of the carried subset:** none. The loader is stdlib `gzip` plus `unicodedata`.
+
+### O*NET — CC BY 4.0 (job-title data, carried)
+
+- Upstream: [O*NET Resource Center](https://www.onetcenter.org), the Alternate Titles file of O*NET database release 30.0, downloaded 2026-10-01. License: **CC BY 4.0**, full text retained at `third_party/onet/LICENSE-CC-BY-4.0.txt`.
+- **Required attribution, carried in the app and here:** "This product includes information from O*NET OnLine by the U.S. Department of Labor, Employment and Training Administration (USDOL/ETA), used under CC BY 4.0. O*NET is a trademark of USDOL/ETA."
+- **What is carried:** data, no code. 1 gzipped tab-separated cut at `sidecar/modules/titles/data/titles.tsv.gz` (0.29 MB) holding 46,087 job titles and their O*NET-SOC codes.
+- **What was changed, which the license requires stating:** column selection and deduplication only. The `Short Title` and `Source(s)` columns are dropped, as are 10,408 titles that duplicate an earlier row case-insensitively. No title string is edited, corrected or added. `third_party/onet/README.md` holds the table and `sidecar/modules/titles/build_data.py` is the executable record.
+- **What it is not used for:** gating. 1 of 93 real posting titles on the maintainer's install matches an O*NET title exactly, and "backend" appears in none of the 56,495, so the index suggests titles and the user's own text always wins.
+- **Dependency closure of the carried subset:** none. The loader is stdlib `gzip`.
 
 ### Skyvern — AGPL-3.0 (browser observation core, carried directly)
 

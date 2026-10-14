@@ -1,11 +1,14 @@
-// Typed API surface — mirrors the sidecar's architecture section 4.2 shapes and the
-// module result dataclasses (ROADMAP section 4 / sidecar/modules/*/types.py).
-//
-// This repo's sidecar implements a SUBSET of the prior API surface so far:
-// jobs/board/trash/tombstone/preview/add-by-url, operations, cost totals,
-// schedules, profile, settings, engines, SSE. Tracker/networking/apply/prep/
-// packet/prompts/spans/ingest/dev-tools types are trimmed until their
-// sidecar surface lands — see schema.d.ts for exactly what's live.
+// Typed API surface: the view types the surfaces consume, mirroring the
+// sidecar's DTOs (architecture section 4.2) and module result dataclasses
+// (sidecar/modules/*/types.py). schema.d.ts is the generated source of truth.
+
+import type { ScoreReason } from "../shell/scoreText";
+import type { components } from "./schema";
+
+/** A shape the sidecar's generated schema already states exactly is aliased
+ *  here instead of restated, so a server-side change can't drift from it
+ *  (audit D-F31). */
+type Schemas = components["schemas"];
 
 // ─── Module result shapes (sidecar/modules/*/types.py) ──────────────────────
 
@@ -24,12 +27,85 @@ export interface Usage {
 /** ScoreResult — scorer/types.py. `reasons` is 2–4 bullets (US-JB-05). */
 export interface ScoreResult {
   score_0_100: number;
-  reasons: string[];
+  /** A string, or a keyword line as `{key, args, text}` (audit section 5). */
+  reasons: ScoreReason[];
   breakdown_md: string;
   /** "scorer-llm" (AI) or "scorer-deterministic" (keyword — rendered grey,
-   *  never styled like an AI score). Scoring modes, 2026-07-22. */
+   *  never styled like an LLM score). Scoring modes, 2026-07-22. */
   scorer_impl: string;
+  /** True when the user's own axis weights produced this number instead of the
+   *  method's, so the card can say the score is theirs. */
+  weighted: boolean;
+  /** Which of the 4 methods ran: "llm" | "jev" | "local" | "keyword". The
+   *  board's inner ring (maintainer, 2026-10-07). Finer than `scorer_impl`,
+   *  which reads a Jev score as an LLM one. */
+  method: string;
+  /** Made against a resume older than its last major edit: the row shows a
+   *  rescore-due mark (score-storage.md, audit A3). */
+  stale: boolean;
 }
+
+/** The per-axis breakdown behind one job's score (`JobFactorsDTO`).
+ *  `weights` is empty for LLM scoring, which asks a model for the total rather
+ *  than weighting its own axes. */
+export type ScoreWeightPreset =
+  | "balanced"
+  | "location_first"
+  | "seniority_first"
+  | "skills_only";
+
+/** The 5 graded axes a user weight may multiply. The 2 modifier axes
+ *  (location, logistics) are deliberately absent — see `score_location_penalty`. */
+export const WEIGHTED_AXES = [
+  "hard_requirements",
+  "core_stack",
+  "years",
+  "level",
+  "nice_to_haves",
+] as const;
+
+/** What "Explain this one" will run, and what it has cost this user before. */
+export interface ExplainCost {
+  engine: string;
+  model: string;
+  avg_usd: number | null;
+  samples: number;
+  ready: boolean;
+}
+
+/** What a prompt-tuning test run needs, per kind (url-less-jobs.md section 11.3). */
+export interface PromptTestInput {
+  markdown: string;
+  job_id?: string;
+  job_description?: string;
+  contact_id?: string;
+  guidance?: string;
+}
+
+/** What one came back with. `output_md` for tailor and cover, `score` plus
+ *  `reasons` for score, `profile` for extract, `message` for a referral draft. */
+export interface PromptTestResult {
+  state: "succeeded" | "failed";
+  error?: string | null;
+  output_md?: string;
+  notes?: string[];
+  score?: number;
+  reasons?: ScoreReason[];
+  message?: string;
+  profile?: Record<string, unknown>;
+  usd?: number | null;
+}
+
+/** The "this looks like the job you added on Monday" prompt (url-less-jobs.md
+ *  9.6). Null whenever there is nothing to ask. */
+export interface DuplicatePrompt {
+  job_id: string;
+  other_job_id: string;
+  other: LinkCandidate;
+  other_added_at: string;
+}
+
+export type JobFactors = Schemas["JobFactorsDTO"];
 
 // ─── /api/jobs ──────────────────────────────────────────────────────────────
 
@@ -45,12 +121,9 @@ export type BoardState = "active" | "trashed" | "expired";
  *  (S-C24 D5 / S-A6). */
 export type ScoreStatus = "scored" | "pending" | "failed" | "unscorable";
 
-/**
- * Thrown by `previewJob` / `addJobByUrl` when the pasted URL was permanently
- * deleted (tombstoned). Trash is recoverable, a tombstone is final — a re-add
- * is impossible, so the modal shows the honest copy instead of an editable form
- * (2026-07-09 ruling; US-JB-07 / FR-JB-09).
- */
+/** Thrown by `previewJob` / `addJobByUrl` when the pasted URL was permanently
+ * deleted. Trash is recoverable and a tombstone is final, so the modal shows the
+ * honest copy instead of a form (US-JB-07 / FR-JB-09). */
 export class JobTombstonedError extends Error {
   constructor(message = "This job was permanently deleted and can't be re-added.") {
     super(message);
@@ -59,26 +132,21 @@ export class JobTombstonedError extends Error {
 }
 
 /** Result of Empty Trash / Delete forever (US-JB-11 / FR-SYS-04). */
-export interface TombstoneResult {
-  tombstoned: number;
-  canonical_urls: string[];
-}
+export type TombstoneResult = Schemas["TombstoneResultDTO"];
 
 export type WorkStyle = "REMOTE" | "HYBRID" | "ONSITE" | "";
 
 /**
  * Job — the NormalizedJob (scraper/types.py) plus the app-side columns the
  * board needs (score, saved, board_state). Snake_case matches the sidecar DTOs.
- *
- * FLAGGED (US-JB-01 row spec vs as-built contract): the story promises
- * `work_style`, skill `tags`, and `N applicants` per row, but the as-built
- * NormalizedJob contract (ROADMAP section 4) carries none of them and no adapter
- * provides `applicants` — they render empty on the live path.
  */
 export interface Job {
   id: string;
   title: string;
-  canonical_url: string;
+  /** null on a job the user typed in (url-less-jobs.md section 5.3). Every
+   *  reader treating it as somewhere to go needs a branch: "Open posting"
+   *  becomes "Add link", and Apply asks for the link instead of failing. */
+  canonical_url: string | null;
   company: string;
   location: string;
   description: string;
@@ -88,21 +156,35 @@ export interface Job {
   trust_score: number;
   trust_flags: string[];
   work_style: WorkStyle;
-  /** Skill chips shown on the list row (US-JB-01). */
-  tags: string[];
-  /** Applicant count — no adapter provides this today (see FLAGGED note). */
-  applicants: number | null;
+  /** The posting's places as the picker names them, computed by the sidecar from
+   *  `location`; empty when the text names no place (place-picker.md section 8.3). */
+  places: string[];
   /** null while the scorer operation is still in flight. */
   score: ScoreResult | null;
   /** Score lifecycle — resolves a null score to `pending` vs `failed` (US-JB-06). */
   score_status: ScoreStatus;
   /** True when this row was inserted by the LATEST succeeded scan — the "NEW" badge. */
   is_new: boolean;
+  /** Open duplicate pairs this job is the newer copy in: the "reposted" chip. */
+  duplicates: number;
+  /** Whether any open duplicate pair touches this job: the detail pane's notice. */
+  duplicate_notice: boolean;
   saved: boolean;
   board_state: BoardState;
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */
+/** The board's chip filters and sort, sent to `/api/board` and applied before
+ *  pagination (audit finding 6). An empty value means no filter. */
+export interface BoardFilters {
+  source?: string;
+  work_style?: "" | "REMOTE" | "HYBRID" | "ONSITE" | "REMOTE_FRIENDLY";
+  method?: "" | "model" | "keyword";
+  posted_days?: number;
+  salary_min?: number;
+  sort?: "match" | "recency";
+}
+
 export interface BoardPage {
   jobs: Job[];
   total: number;
@@ -116,7 +198,7 @@ export interface BoardPage {
 }
 
 /**
- * JobDraft — the editable fields the Add-by-URL modal shows (US-JB-07). Step 1
+ * JobDraft — the editable fields the Add a job posting form shows (US-JB-07). Step 1
  * (`previewJob`) fetches the pasted URL and returns this best-effort; the user
  * edits, then step 2 (`addJobByUrl`) persists it.
  */
@@ -150,6 +232,23 @@ export const STAGES: Stage[] = [
   "Offer",
   "Rejected",
 ];
+
+/** The stages where the application has already gone out. 4 copies of this
+ *  list existed under 4 names (`frozen` in Tracker, `POST_APPLICATION` in Card,
+ *  `MANUAL_STAGES` in AddApplicationModal, and an inline `Extract<>` below).
+ *  3 rules read it: a card can't be dragged back out of these, the Apply slot
+ *  can't start a run in one, and a manually-logged application starts in one. */
+export const POST_APPLICATION_STAGES = [
+  "Applied",
+  "Interviewing",
+  "Offer",
+  "Rejected",
+] as const;
+
+export type PostApplicationStage = (typeof POST_APPLICATION_STAGES)[number];
+
+/** The pre-submission stages, where moves are free. */
+export const PRE_APPLICATION_STAGES = ["Saved", "Seeking Referral"] as const;
 
 /** Card-level triage priority — z-band against the score distribution (US-TR-10). */
 export type Priority = "P0" | "P1" | "P2" | "P3";
@@ -187,13 +286,8 @@ export interface ActivityEntry {
   at: string | null;
 }
 
-/** A tracked application (one per saved/applied job). Trimmed from the prior
- *  repo's shape: no apply_state/form_prep/form_prep_summary/
- *  active_apply_operation_id — the Applier and save-time prep surfaces
- *  haven't landed on this sidecar. `intent` is new (section 5.1 exclusive value on
- *  ApplicationUpdate). `referrals_state`/`referrals_count` restored
- *  (2026-07-16, referral-outreach frontend) — the networking surface now
- *  exists on this sidecar. */
+/** A tracked application, 1 per saved or applied job. `intent` is the exclusive
+ *  value on ApplicationUpdate (section 5.1). */
 /** A document the user attached to a manually-logged application (the resume /
  *  cover letter they actually submitted). Downloaded, authed, via
  *  `api.fetchDocument(document_id)`. */
@@ -218,7 +312,7 @@ export interface ManualApplicationInput {
   salary: string;
   source_adapter: string;
   /** Post-referral stage the record lands in (default Applied). */
-  stage: Extract<Stage, "Applied" | "Interviewing" | "Offer" | "Rejected">;
+  stage: PostApplicationStage;
   notes: string;
   resume: File | null;
   cover: File | null;
@@ -230,7 +324,7 @@ export interface Application {
   stage: Stage;
   priority: Priority;
   /** How the card entered the pipeline — drives the Tracker source filter.
-   *  "discovered" = the fyj flow (scan / add-by-URL → Save); "manual" = logged
+   *  "discovered" = the fyj flow (scan / Add a job posting → Save); "manual" = logged
    *  via "Add a job application" for a job applied to outside the app. */
   origin: "discovered" | "manual";
   /** Documents the user attached to a manual card (empty for discovered cards). */
@@ -261,12 +355,10 @@ export interface Application {
   /** Save-time liveness (2026-07-11): true when a prep run found the posting
    *  dead. Always false on this sidecar (no save-time prep surface yet). */
   posting_closed: boolean;
-  /** Referral progress for the tracker Referrals slot (restored 2026-07-16) —
-   *  the canonical FR-NW-01 enum (backend `none` renders as `notStarted`):
-   *  `none` (grey) → `finding` (grey+spinner, discovery running) → `pending`
-   *  (yellow — roster found, or a partial/cap-stopped batch) → `sending`
-   *  (yellow+spinner, batch in flight) → `reachedOut` (green, all selected
-   *  sent). `failed` (red) = latest batch all-failed. */
+  /** Referral progress for the Referrals slot, the FR-NW-01 enum: `none` (grey),
+   *  `finding` (discovery running), `pending` (roster found or a partial batch),
+   *  `sending` (batch in flight), `reachedOut` (all selected sent), and `failed`
+   *  (the latest batch all failed). */
   referrals_state:
     | "none"
     | "finding"
@@ -505,35 +597,17 @@ export interface ReferralQuota {
  *  button gates on `next_page_available`; the rest explains why. The 12 h TTL
  *  is a host freshness policy (result coherence) — LinkedIn's own pagination
  *  is stateless and never expires. */
-export interface LinkedInSearchCursorState {
-  expired: boolean;
-  exhausted: boolean;
-  next_page_available: boolean;
-}
+export type LinkedInSearchCursorState = Schemas["LinkedInSearchCursorDTO"];
 
 /** One self-imposed cap the user can override. `effective` is the enforced
  *  number (override, or ceiling × risk%); `ceiling` is the estimated LinkedIn
  *  limit (100% reference); `overridden` flags a manual pin. */
-export interface LinkedInCap {
-  key: string;
-  meter: string;
-  window: string;
-  label: string;
-  effective: number;
-  ceiling: number;
-  overridden: boolean;
-}
+export type LinkedInCap = Schemas["LinkedInCapDTO"];
 
 /** The self-imposed LinkedIn rate-limit profile (2026-08-01): membership picks
  *  the estimated ceilings, `risk_pct` (10–100) scales them (100% = at the
  *  estimated real limit), each cap independently overridable. */
-export interface LinkedInRateLimitsState {
-  membership_type: string;
-  risk_pct: number;
-  memberships: string[];
-  caps: LinkedInCap[];
-  job_search_hour_remaining: number;
-}
+export type LinkedInRateLimitsState = Schemas["LinkedInRateLimitsDTO"];
 
 /** LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
  *  The send path unlocks only when `enabled` AND `status === "valid"`. The
@@ -563,13 +637,7 @@ export interface LinkedInSessionState {
 /** Outcome of the newest contact-sync attempt (US-NW-12 honesty). `stopped`
  *  is "" for a clean sweep, else cap_or_backoff | rate_limited | auth_error |
  *  batch_failed, with `unprobed` sizing the untouched tail. */
-export interface ContactSyncOutcome {
-  at: string;
-  synced: number;
-  failed: number;
-  stopped: string;
-  unprobed: number;
-}
+export type ContactSyncOutcome = Schemas["ContactSyncOutcomeDTO"];
 
 /** Result of a Sync-button contact-status refresh (FR-NW-15, manual-only).
  *  `queued` — a sync started. `already_running` — joined the one in flight.
@@ -622,8 +690,21 @@ export interface ApplicationProfile {
   phone?: string;
   location?: string;
   country?: string;
+  /** Legacy free text, read from the resume; superseded by `work_authorizations`. */
   work_authorization?: string;
+  /** 1 entry per country (audit A5); the Applier picks the job's country. */
+  work_authorizations?: WorkAuthorization[];
   links?: Record<string, string>;
+  /** Optional answers forms ask for (audit B4); an empty one stays out of the facts. */
+  salary_expectation?: string;
+  notice_period?: string;
+  years_of_experience?: string;
+  citizenship?: string;
+  /** Voluntary self-identification: empty means "I don't wish to answer". */
+  gender?: string;
+  race_ethnicity?: string;
+  veteran_status?: SelfIdAnswer;
+  disability_status?: SelfIdAnswer;
   education?: {
     school?: string;
     degree?: string;
@@ -634,6 +715,23 @@ export interface ApplicationProfile {
   /** "extracted" (LLM at save) or "edited" (manual Settings edits — win). */
   source?: "extracted" | "edited";
   profile_version?: number;
+  /** Set when the user saved Applicant details; Apply waits for it (audit A5). */
+  confirmed_at?: string;
+}
+
+export type SelfIdAnswer = "" | "yes" | "no";
+
+export type WorkAuthStatus = "citizen" | "permanent_resident" | "visa" | "needs_sponsorship";
+
+export interface WorkAuthorization {
+  country: string;
+  status: WorkAuthStatus;
+  note?: string;
+}
+
+export interface Country {
+  code: string;
+  name: string;
 }
 
 export interface Profile {
@@ -652,15 +750,29 @@ export interface ProfileIngestResult {
   text: string;
   filename: string;
   chars: number;
+  /** `not_a_resume` / `instructions` (resume_check.py, S-C57): shown, never blocking. */
+  warnings?: string[];
 }
 
 /** Onboarding/job-finder preferences (FR-OB-05 / US-OB-03 / US-SET-01). Maps to
  *  the `UserPreferences` columns via `POST /api/settings`; `scrape_cadence`
  *  rides in `ui_state` and the backend threads it into the `scan` schedule
  *  server-side on every save (enables + retimes it — 2026-07-12 audit P0-1). */
+/** A location chip (place-picker.md section 3): a place the user picked from the
+ *  picker, or a plain string saved before the picker or typed as-is. */
+export type PlaceChip = string | PlaceSuggestion;
+export interface PlaceSuggestion {
+  /** The full name people read: "London, Ontario, Canada". */
+  label: string;
+  /** The short word discovery's filter matches: "London". */
+  name: string;
+  level: "city" | "admin1" | "country" | "metro" | "region" | "remote" | "text";
+  id: string;
+}
+
 export interface OnboardingPrefsInput {
   role_aliases: string[];
-  locations: string[];
+  locations: PlaceChip[];
   freshness_days: number;
   scrape_cadence: string;
   /** Omitted → the stored value is left untouched (the job-finder-preferences
@@ -716,15 +828,13 @@ export interface EngineRoute {
   model: string;
 }
 
-/** A user-editable LLM prompt (module skill markdown) — US-SET-12 / FR-SET-11.
- *  `default_md` is the shipped text; `override_md` is the saved edit or null
- *  (→ default). `routed` kinds also carry an engine/model selector; the one
- *  unrouted kind (`networker_draft`) is prompt-only. The list is server-driven
- *  (`GET /api/settings/prompts`), so whatever kinds the sidecar exposes render. */
+/** A user-editable LLM prompt (US-SET-12 / FR-SET-11). `override_md` is the saved
+ *  edit or null; `op_kind` is the operation whose engine runs it, which differs
+ *  from `kind` only for `networker_draft` (runs as `draft`). Server-driven list. */
 export interface PromptSetting {
   kind: string;
   title: string;
-  routed: boolean;
+  op_kind: string;
   default_md: string;
   override_md: string | null;
 }
@@ -775,44 +885,25 @@ export interface DiscoverySource {
 }
 
 /** A BYO scraper key row (Apify / Brave) — masked hint only, never the key. */
-export interface DiscoveryCredential {
-  id: string;
-  label: string;
-  has_key: boolean;
-  key_hint: string | null;
-}
+export type DiscoveryCredential = Schemas["DiscoveryCredentialDTO"];
 
 /** Per-source efficacy row (Analytics → Discovery). */
-export interface DiscoverySourceStats {
-  id: string;
-  label: string;
-  kind: string;
-  jobs: number;
-  saved: number;
-  scored: number;
-  avg_score: number | null;
-  fetched: number;
-  kept: number;
-  http_calls: number;
-  latency_ms: number;
-  errors: number;
-}
+export type DiscoverySourceStats = Schemas["DiscoverySourceStatsDTO"];
 
-export interface DiscoveryAnalytics {
-  sources: DiscoverySourceStats[];
-  scans: number;
-  last_scan_at: string | null;
-}
+export type DiscoveryAnalytics = Schemas["DiscoveryAnalyticsDTO"];
 
 export interface WatchCompanyResult {
   added: boolean;
   source_url: string;
   adapter: string;
   company: string;
+  /** What reading the board once found (watch-company.md section 3). Null
+   *  with a `read_error` when the read failed; the follow happened anyway. */
+  openings: number | null;
+  sample_titles: string[];
+  read_error: string;
 }
 
-/** One tracked company board (a `watched` [[sources]] row) — the roster view
- *  in Job finder preferences of the same data "Watch company" writes. */
 /** One background schedule row (GET /api/schedules) — surfaced so the
  *  preferences modal can show WHEN the next automatic scan fires (the cadence
  *  was invisible before: it worked, but nothing proved it — 2026-07-22). */
@@ -828,7 +919,22 @@ export interface WatchlistEntry {
   url: string;
   company: string;
   adapter: string;
+  /** Openings found the last time the board was checked; null if never read. */
+  openings: number | null;
+  /** Why the last check couldn't read the board; "" when it could. */
+  read_error: string;
 }
+
+export type ScoringMode = "llm" | "jev" | "local" | "keyword";
+
+/** What a method still needs before it can run. `null` means it is ready. */
+export type ScoringMethodNeed = "openrouter_key" | "model_pack";
+
+export type ScoringMethod = {
+  id: ScoringMode;
+  ready: boolean;
+  needs: ScoringMethodNeed | null;
+};
 
 export interface Settings {
   /** Legacy combined flag = resume && cover. Kept for consumers that read a
@@ -841,12 +947,19 @@ export interface Settings {
   /** Find referrals on Save — default OFF (experimental, account-risk); only
    *  effective when Referral Outreach (networking) is enabled. */
   auto_referrals_on_save: boolean;
-  /** Scoring mode (2026-07-22): "llm" — AI scoring, best quality, costs
-   *  tokens; "keyword" — on-device keyword scorer, free and instant. Scoring
-   *  itself is always on (the old off-switch is retired). */
-  scoring_mode: "llm" | "keyword";
+  /** Which method scores a job; scoring is always on, and a method missing its
+   *  prerequisite is cleared, never hidden (talk.md D44). "llm": 1 AI call, the only
+   *  one with prose. "jev": 1 structured call, needs OpenRouter. "local": on-device,
+   *  needs its pack. "keyword": on-device rules, free and always available. */
+  scoring_mode: ScoringMode;
+  /** Per-method readiness from the server: facts only, the copy lives in i18n. */
+  scoring_methods: ScoringMethod[];
   // 0 = unlimited (runner ceiling applies); otherwise 2-20.
   llm_concurrency: number;
+  /** The tailored resume's header location: the job's, the master's, or none. */
+  resume_location: ResumeLocation;
+  /** How AI work queues (queueing.md section 5): a lane per kind, or 1 shared. */
+  ai_queue_mode: AiQueueMode;
   /** Applier submit mode default (FR-APP-01): "assisted" (fill + hand off to
    *  the human — the default) or "auto" (legacy fill-and-submit). */
   /** Save-time form prep (FR-APP-01, 2026-07-11): visit the job's real form,
@@ -855,6 +968,17 @@ export interface Settings {
    *  (audit P1-1) — 0 = uncapped (planner default). Read by
    *  `plan_score_new` via `thresholds["score_new_batch"]`. */
   score_new_batch: number;
+  /** The user's own axis weights (scoring.md 7.4). "balanced" is the shipped
+   *  default and means "use whatever table the method that ran shipped with",
+   *  so an untouched install sees exactly the numbers it saw before. */
+  score_weight_preset: ScoreWeightPreset;
+  /** Custom slider values, which outrank the preset when any is set. Empty
+   *  until the user opens the disclosure and moves one. */
+  score_weights: Record<string, number>;
+  /** How far a location the user did not ask for pushes a job down. Location
+   *  is a modifier rather than a weighted axis, because Jev answers it as a
+   *  confidence and a confidence must never be multiplied by a weight. */
+  score_location_penalty: number;
   providers: ProviderConfig[];
   routing: EngineRoute[];
   networking_enabled: boolean;
@@ -877,7 +1001,7 @@ export interface Settings {
    *  2026-07-12 audit found it seeded from hardcoded mock chips). */
   job_prefs: {
     role_aliases: string[];
-    locations: string[];
+    locations: PlaceChip[];
     freshness_days: number;
     scrape_cadence: string;
     /** `hard_excludes.companies` / `.keywords` — the personal excludes the
@@ -919,10 +1043,7 @@ export type OperationState = "queued" | "running" | "succeeded" | "failed" | "ca
 
 /** Whether the 60 s tick loop that plans background work is running, and
  *  whether a degraded boot is why it is not (D27). */
-export interface SchedulerStatus {
-  running: boolean;
-  degradedBoot: boolean;
-}
+export type SchedulerStatus = Schemas["SchedulerStatus"];
 
 export interface Operation {
   id: string;
@@ -936,6 +1057,36 @@ export interface Operation {
   /** verbatim error message on failure (never swallowed). */
   error: string | null;
   created_at: string;
+  /** What the op produced, when the op is its own home for it: a triage
+   *  score's number and reasons (no job row to put them on), a scan's
+   *  per-source report, a draft's message. Null until the op finishes. */
+  result_ref: Record<string, unknown> | null;
+}
+
+/** One side of the Add-link mismatch confirm (url-less-jobs.md section 9.5). */
+export interface LinkCandidate {
+  title: string;
+  company: string;
+  location: string;
+  /** 0..1 against the card's description; null when there's nothing to compare. */
+  similarity: number | null;
+}
+
+/** What the Add-link dialog renders next (section 5.4 / 5.5). */
+export interface AttachLinkResult {
+  status: "attached" | "mismatch" | "unreadable" | "duplicate";
+  job: Job | null;
+  pasted: LinkCandidate | null;
+  card: LinkCandidate | null;
+  other_job_id: string | null;
+}
+
+export interface AttachLinkInput {
+  job_id: string;
+  url: string;
+  /** Attach despite a mismatch or an unreadable page — always available,
+   *  never the default (rank-don't-gate applied to a field). */
+  confirm?: boolean;
 }
 
 // ─── Operations ledger (Logs/Analytics reads this — section 10) ────────────────────
@@ -950,7 +1101,16 @@ export interface LedgerSubject {
   context: string | null; // secondary line (the role a send was for; search mode)
   detail: string | null; // long text for the EXPANDED row (the DM/note sent)
   count: number | null; // entities touched (contacts found, jobs persisted…)
+  /** A short trailing mark: the score a `score` row produced, or that the row
+   *  was a prompt test rather than real work. */
+  badge: string | null;
+  /** The document this row wrote, when the app can open it in place: a tailor
+   *  or cover run's artifact, named by its application and its slot. */
+  artifact: { application_id: string; kind: "tailored" | "cover" } | null;
 }
+
+export type AiQueueMode = "per_kind" | "shared";
+export type ResumeLocation = "posting" | "master" | "none";
 
 export interface LedgerEntry {
   id: string;
@@ -965,6 +1125,9 @@ export interface LedgerEntry {
   error: string | null;
   created_at: string;
   started_at: string | null; // when the op went running (US-LOG-01 timestamp)
+  finished_at: string | null;
+  /** "user" when a click started it, "app" otherwise (queueing.md section 4). */
+  requested_by: "user" | "app";
   /** Absent on rows whose snapshot/result refs don't resolve (historical rows,
    *  deleted entities) — the row then renders kind-only, nothing fabricated. */
   subject: LedgerSubject | null;
@@ -995,14 +1158,7 @@ export interface DevResult {
 /** All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
  *  Live-ledger sum + the pruned-ops aggregate, so the figures stay honest as an
  *  install ages even if operations are deleted. Mirrors CostTotalsDTO. */
-export interface CostTotals {
-  usd: number;
-  tokens_in: number;
-  tokens_out: number;
-  operations: number;
-  failed: number;
-  by_kind: Record<string, number>;
-}
+export type CostTotals = Schemas["CostTotalsDTO"];
 
 /** Board-level scan + scoring progress (observed-issue #2) — the source for the
  *  Job Board's Rescan status pill. Derived server-side from the operations

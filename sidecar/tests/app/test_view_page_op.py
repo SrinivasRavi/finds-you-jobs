@@ -1,17 +1,9 @@
-"""Covers: the `view_page` operation — user page-views ride the op queue.
+"""Covers: `view_page`, user page views riding the op queue.
 
-- US-NW-09 / US-REF-06 — a contact's "open in LinkedIn" click shows the profile
-  on the watch-only broker surface, WITHOUT interrupting a running LinkedIn op:
-  the click enqueues a `view_page` operation that waits its turn on the same
-  single lane every browser-driving op uses (NFR-LI-*: one account, one lane).
-- Human-shaped flow (maintainer, 2026-08-16): a view of a page the surface is
-  already showing is a no-op (`skipped`), mirroring `_goto_profile`'s
-  already-there check — no pointless refresh for LinkedIn to profile.
-
-ZERO live browser traffic: `networker_ops.SURFACE_PROVIDER` is replaced with an
-in-memory fake surface; the real bridge is covered by
-`test_networker_surface_provider.py`.
-"""
+An "open in LinkedIn" click enqueues a `view_page` op that waits its turn on the
+single lane (US-NW-09, NFR-LI-*), never interrupting a running op; a view of the
+page already shown is `skipped`. `SURFACE_PROVIDER` is an in-memory fake; the
+real bridge is test_networker_surface_provider.py."""
 
 from __future__ import annotations
 

@@ -19,6 +19,8 @@ from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
 
 ID = "rss"
+LABEL = "RSS feeds"
+KIND = "fallback"
 INLINE_DESCRIPTION = True
 _ATOM = "http://www.w3.org/2005/Atom"
 _FEED_SUFFIXES = (".rss", ".xml", ".atom")

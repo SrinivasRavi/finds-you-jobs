@@ -290,31 +290,6 @@ def test_jsonl_row_shape_matches_contract():
     }
 
 
-# --- CLI ---
-
-
-def test_cli_dry_run_prints_claims_no_network(capsys, tmp_path):
-    from sidecar.modules.scraper.__main__ import main
-
-    portals = tmp_path / "portals.toml"
-    portals.write_text(
-        '[[sources]]\nurl = "https://boards.greenhouse.io/gleanwork"\n'
-        '[[sources]]\nurl = "https://unknown.example.com/x"\n',
-        encoding="utf-8",
-    )
-    assert main(["--portals", str(portals), "--dry-run"]) == 0
-    out = capsys.readouterr().out
-    assert "greenhouse:gleanwork" in out
-    assert "UNRESOLVED" in out
-
-
-def test_cli_missing_config_fails_typed(capsys, tmp_path):
-    from sidecar.modules.scraper.__main__ import main
-
-    assert main(["--portals", str(tmp_path / "nope.toml"), "--dry-run"]) == 1
-    assert "[portals-config]" in capsys.readouterr().err
-
-
 def test_example_portals_config_parses_and_resolves():
     from pathlib import Path
 

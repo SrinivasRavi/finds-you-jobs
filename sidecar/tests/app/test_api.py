@@ -56,12 +56,9 @@ def test_shutdown_invokes_hook() -> None:
     assert fired["value"] is True
 
 
-# Regression coverage for a packaged-build-only bug (distribution.md section 2/section 7):
-# every real fetch from the packaged app's actual webview origin was silently
-# rejected by CORS, because the origin regex only ever matched http(s)://
-# loopback — never the tauri://localhost / http://tauri.localhost origins the
-# packaged webview actually loads from. Invisible until the first packaged
-# build was ever run, since dev's origin (http://localhost:1420) did match.
+# Regression for a packaged-only bug (distribution.md section 7): the CORS regex
+# matched only http(s) loopback, never the tauri://localhost or
+# http://tauri.localhost origins the packaged webview loads from.
 @pytest.mark.parametrize(
     "origin",
     [
@@ -129,12 +126,10 @@ def test_unhandled_route_error_is_logged_to_flight_recorder(
     )
 
 
-# ─── F-M10: BearerAuthMiddleware is pure ASGI — behavior preserved exactly ───
-# The middleware no longer rides on BaseHTTPMiddleware (whose per-request task
-# group buffers streams and can delay SSE unsubscribe on webview drop). These
-# tests pin every behavior of the old dispatch at the ASGI level: the /healthz
-# exemption, header tokens, the `?token=` allowance for the SSE stream and
-# screenshot GETs (and ONLY those), the 401 shape, and non-http pass-through.
+# ─── F-M10: BearerAuthMiddleware is pure ASGI, behavior preserved ───
+# BaseHTTPMiddleware buffered streams and could delay SSE unsubscribe. These pin
+# the old behavior at the ASGI level: /healthz exempt, header tokens, `?token=`
+# only for SSE and screenshot GETs, the 401 shape, and non-http pass-through.
 
 
 def _asgi_scope(path: str, query: bytes = b"", headers: list | None = None) -> dict:

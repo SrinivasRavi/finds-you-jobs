@@ -1,9 +1,5 @@
-// Appearance pane (theme + language). Untitled card — the pane header already
-// says "Appearance" (maintainer 2026-07-24 #5: stop repeating it). (Extracted
-// from Settings.tsx 2026-07-25, F-M6 monolith split — pure moves, zero
-// behavior change; the useThemeMode hook moved in with it — it is a
-// useSyncExternalStore over localStorage, so relocating the subscriber changes
-// nothing.) Memoized (no props).
+// Appearance pane: theme and language, in an untitled card under the pane's own
+// header (F-M6). Memoized; no props.
 
 import { memo } from "react";
 import { useTranslation } from "react-i18next";

@@ -1,9 +1,6 @@
-// Read-only markdown view — a thin wrapper over the shared mdToHtml renderer
-// (shell/mdHtml.ts), the SAME renderer the editable Preview surface uses, so
-// the read-only and editable views can never drift apart. The dialect is small
-// on purpose (headings, bold, italic, code, links, lists, quotes, tables,
-// rules, paragraphs); mdToHtml escapes all text and refuses non-http(s)/mailto
-// link schemes, so scraped/LLM content can't inject markup.
+// Read-only markdown view over mdToHtml, the same renderer as the editable
+// Preview, so the 2 can't drift. mdToHtml escapes all text and refuses
+// non-http(s)/mailto links, so scraped or LLM content can't inject markup.
 
 import { mdToHtml } from "./mdHtml";
 

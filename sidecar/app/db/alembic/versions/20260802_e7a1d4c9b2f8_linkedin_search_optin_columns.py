@@ -1,17 +1,11 @@
-"""linkedin_search_enabled + linkedin_search_ack_at as typed preference columns.
+"""linkedin_search_enabled and linkedin_search_ack_at as typed columns.
 
-The sidecar hard-403s the LinkedIn job search on these two flags, but they
-lived in the free-form `ui_state` JSON blob (originally frontend-only scratch
-space) — a frontend key rename could silently flip a safety gate with no
-schema, validation, or migration protecting it (maintainer directive
-2026-08-02: enforced config always gets a real column). Backfills from the
-blob so an existing opt-in survives the upgrade, then leaves the blob keys
-behind as inert history.
+The job search hard-403s on these, and in the `ui_state` blob a frontend rename
+could flip a safety gate. Backfilled from the blob; enforced config gets a column.
 
 Revision ID: e7a1d4c9b2f8
 Revises: d5f9c3a8e21b
 Create Date: 2026-08-02
-
 """
 from __future__ import annotations
 

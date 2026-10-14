@@ -1,18 +1,8 @@
-// Compose-and-send block inside the contact detail modal (maintainer spec,
-// 2026-08-14): the contact's kanban stage picks the template candidate set, a
-// dropdown picks one (first option prefilled on open), the box stays fully
-// editable, and the send routes through the ONE gated path the parent owns
-// (useReachOut). No second send path. The single "Send" here IS the per-action
-// confirmation (maintainer, 2026-08-15): recipient, editable message, and the
-// channel + irreversibility line all sit on this surface, so no second dialog
-// re-asks.
-//
-// Messageability is stated honestly, mirroring the server's routing
-// (`networker_ops.send_entrypoint`): a 1st-degree contact gets a DM; anyone
-// else gets a connection request with the text as its note — except a contact
-// whose invite is still pending (`sent`, not 1st-degree), where a DM would
-// certainly fail and a second invite isn't a thing we send, so the composer
-// says why instead of offering a dead button.
+// Compose-and-send in the contact modal: the stage picks the templates, the box
+// stays editable, and the send goes through the 1 gated path the parent owns
+// (useReachOut). This Send is the per-action confirm. The channel mirrors the
+// server's routing (`send_entrypoint`): 1st degree gets a DM, others an invite
+// note, and a pending invite gets a reason instead of a dead button.
 
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";

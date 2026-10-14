@@ -1,44 +1,12 @@
-"""Secrets-at-rest (NFR-SEC-01) — the app key and the sealing primitives.
+"""Secrets at rest (NFR-SEC-01): the app key and the sealing primitives.
 
-One symmetric Fernet key per install seals every locally stored secret (BYOK
-API keys and the LinkedIn session storage-state). There is exactly ONE store
-per machine: the OS keychain via `keyring` (macOS Keychain, Windows Credential
-Manager, Linux Secret Service). The owner-only key file is not a parallel store, it
-is what a machine with no working keychain falls back to, and without it a
-Linux box lacking a Secret Service could not save an API key at all.
-
-Resolution (`get_app_key`), in order, resolved ONCE per data dir and cached:
-
-1. env `FYJ_SESSION_KEY` — explicit override, read on every call so tests stay
-   isolated from each other
-2. the OS keychain
-3. an existing owner-only key file
-4. nothing anywhere: if this install has ever sealed a secret, RAISE
-   (`AppKeyUnavailable`); otherwise it is a fresh profile, so mint a key and
-   store it
-
-Step 4 is the whole point. Before 2026-08-24 a keychain that THREW and a
-keychain that was merely EMPTY both came back as None, so a store that stopped
-answering was indistinguishable from a new install and the file path quietly
-minted a SECOND key on top of data sealed with the first — every stored API key
-silently unreadable, with no error anywhere. An error the user can act on beats
-that every time.
-
-Nothing rotates the key, so the cache never needs invalidating; `clear_key_cache`
-exists for tests that swap a data dir's backing store underneath it.
-
-Threat-model honesty (F-L2): on the key-FILE fallback the key sits beside the
-ciphertext it protects, so an attacker with read access to the data dir gets
-both — that path is obfuscation with an owner-only permission bar, not
-encryption against them. `os.open` mode bits do not map onto Windows ACLs, so
-there the bar is an explicit `icacls` grant instead (`_harden_owner_only`);
-the keychain stays primary on every platform regardless.
-
-The LinkedIn session-file seal/read/write helpers interoperate with
-`referral_outreach/upstream/secure_store.py` (the GPL side) via the shared
-sealed-JSON shape `{"fyj_sealed": 1, "token": "<Fernet token>"}` — the two
-sides never import each other, only agree on that format and the key env var.
-"""
+1 Fernet key per install seals every stored secret. Resolved once per data dir:
+env `FYJ_SESSION_KEY`, then the OS keychain, then the owner-only key file, then
+mint only on a profile that never sealed anything; otherwise raise
+`AppKeyUnavailable` (a silent second key once made every API key unreadable).
+The key-file fallback sits beside its ciphertext, so it's obfuscation behind
+owner-only permissions, not encryption (F-L2). The session-file helpers share
+the `{"fyj_sealed": 1, "token": ...}` shape with the GPL side, never imports."""
 
 from __future__ import annotations
 
@@ -60,12 +28,9 @@ KEY_FILE_NAME = "session_store.key"
 
 
 class AppKeyUnavailable(RuntimeError):
-    """This install has sealed secrets but its key can no longer be found.
-
-    Raised instead of minting a replacement, because a fresh key would leave
-    every sealed secret permanently unreadable while the app carried on looking
-    healthy. Recovery is to restore the keychain entry (or the key file), or to
-    re-enter the affected secrets."""
+    """This install has sealed secrets but its key can't be found. Raised instead of
+    minting a replacement, which would leave every secret unreadable while the app
+    looked healthy. Recover by restoring the key, or re-entering the secrets."""
 
 
 def _new_key() -> str:
@@ -120,14 +85,9 @@ def _read_key_file(data_dir: Path) -> str | None:
 
 
 def _harden_owner_only(path: Path) -> None:
-    """Make the key file owner-only on Windows, which has no POSIX mode bits.
-
-    The 0o600 handed to `os.open` there sets only the read-only attribute, so
-    the file inherits the data dir's ACL and `stat` reports 0o666 whatever we
-    asked for. `icacls` drops that inheritance and grants the running account.
-    SYSTEM and Administrators survive where they hold explicit ACEs of their
-    own, which is the POSIX bar too: 0600 never shut out root. Best effort, as
-    the key is already on disk by now, so a failure is logged, never fatal."""
+    """Make the key file owner-only on Windows, which ignores mode bits: `icacls`
+    drops inheritance and grants the running account (SYSTEM and Administrators
+    keep explicit ACEs, as root ignores 0600). Best effort; a failure is logged."""
     if os.name != "nt":
         return
     user = os.environ.get("USERNAME") or getpass.getuser()
@@ -154,17 +114,10 @@ def _harden_owner_only(path: Path) -> None:
 
 
 def _write_key_file(data_dir: Path, key: str) -> None:
-    """App-managed key file, owner-only — the NFR-SEC-01 fallback.
-
-    Honest guarantee (F-L2): this key lives in the SAME data dir as the
-    ciphertext it seals, so against an attacker who can read the user's files
-    it is obfuscation plus an owner-only permission bar, not real encryption —
-    they can read the key exactly as the app does. True at-rest secrecy on
-    this path exists only with the OS keychain (or the env override); the file
-    fallback keeps secrets out of casual greps/backups, no more.
-
-    Owner-only means 0600 on POSIX and an explicit ACL on Windows, which
-    ignores the mode entirely (`_harden_owner_only`)."""
+    """The owner-only key file, the NFR-SEC-01 fallback. It sits beside the
+    ciphertext, so against someone who can read the user's files it's obfuscation,
+    not encryption (F-L2); real secrecy needs the keychain. 0600 on POSIX, an
+    explicit ACL on Windows."""
     data_dir.mkdir(parents=True, exist_ok=True)
     path = data_dir / KEY_FILE_NAME
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -175,16 +128,9 @@ def _write_key_file(data_dir: Path, key: str) -> None:
 
 
 def _has_sealed_secret(data_dir: Path) -> bool:
-    """Has this install ever sealed anything? Separates a genuinely fresh
-    profile (mint a key) from one whose key store stopped answering (raise).
-
-    Read directly with stdlib sqlite3 rather than through the ORM: this runs
-    before the app is up, needs one existence check, and importing the db layer
-    here would tie the key resolver to schema load order.
-
-    On any doubt this answers False, which minting-side is the LESS bad error:
-    a false True refuses to start a working fresh install, while a false False
-    costs the user re-entering their API keys. Both are logged."""
+    """Has this install ever sealed anything? Tells a fresh profile (mint) from a key
+    store that stopped answering (raise). stdlib sqlite3, since it runs before the
+    app is up. On doubt it says False: re-entering keys beats refusing to start."""
     state = data_dir / "linkedin" / "storage_state.json"
     if state.exists():
         try:
@@ -269,14 +215,9 @@ def get_session_key(data_dir: Path, *, use_keyring: bool = True) -> str:
 
 
 async def resolve_app_key_once(data_dir: Path) -> None:
-    """Warm the cache during startup, on a worker thread.
-
-    `keyring` is blocking and on some desktops opens a GUI prompt, so the first
-    resolution must never happen on the event loop: the Tauri shell health-polls
-    the sidecar on a 2s timeout and kills the process group on a single failure,
-    so one prompt left waiting takes the backend down. Every later call is a
-    cache hit. A failure here is logged, not raised — the app still starts, and
-    the error surfaces on the first request that actually needs a secret."""
+    """Warm the key cache at startup on a worker thread: `keyring` blocks and can
+    open a GUI prompt, which on the loop would get the sidecar killed. A failure is
+    logged and surfaces on the first request that needs a secret."""
     import asyncio
 
     try:
@@ -324,26 +265,16 @@ def mask_key(plaintext: str) -> str:
 
 
 def _sealed_envelope(token: bytes) -> str:
-    """The sealed-JSON envelope — `{"fyj_sealed": 1, "token": "<Fernet token>"}`.
-
-    Constructed HERE and nowhere else on this side of the license firewall: it
-    is the wire contract `referral_outreach/upstream/secure_store.py` (the GPL
-    side) reads, and the two sides interoperate only while this shape has a
-    single spelling. Takes the already-encrypted token so a caller that
-    roundtrip-verifies (`seal_session_file`) writes the exact token it
-    verified."""
+    """The sealed-JSON envelope `{"fyj_sealed": 1, "token": ...}`, built only here:
+    it's the contract the GPL side's `secure_store.py` reads. Takes the already
+    encrypted token so a verifying caller writes exactly what it verified."""
     return json.dumps({SEALED_MARKER: 1, "token": token.decode()})
 
 
 def _atomic_write_text(path: Path, payload: str) -> None:
-    """Write `payload` to `path` via a tmp file in the SAME dir + `os.replace`,
-    so the file is never observed half-written and a failed write leaves no tmp
-    behind. `mkstemp` creates the tmp 0600 and `os.replace` carries that mode
-    over, so a secret never lands world-readable.
-
-    The host's ONE copy: the GPL subtree keeps its own (`secure_store`/`pacing`)
-    — cross-boundary duplication is the license firewall's accepted cost, inside
-    one side it is not (D-M4)."""
+    """Write via a same-dir tmp file and `os.replace`, so nobody sees a half-written
+    file; mkstemp's 0600 carries over. The host's 1 copy; the GPL side keeps its own
+    (D-M4)."""
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as out:
@@ -358,13 +289,9 @@ def _atomic_write_text(path: Path, payload: str) -> None:
 
 
 def seal_session_file(path: Path, key: str) -> bool:
-    """One-time migration: encrypt a legacy plaintext storage-state file in
-    place. Roundtrip-verified before the atomic replace — on ANY doubt the
-    original file is left untouched (an intact plaintext session beats a
-    destroyed one; the gap is then loud in the logs, not silent).
-
-    Returns True when the file was migrated, False when there was nothing to
-    do (missing, already sealed) or the migration could not be verified."""
+    """One-time migration: encrypt a legacy plaintext storage-state file in place,
+    roundtrip-verified first; on any doubt the original stays. True when migrated;
+    False when there was nothing to do or it couldn't be verified."""
     if not path.exists():
         return False
     try:
@@ -389,12 +316,9 @@ def seal_session_file(path: Path, key: str) -> bool:
 
 
 def read_session_state(path: Path, key: str) -> tuple[dict, bool]:
-    """Load a storage-state file, transparently unsealing a Fernet-sealed one
-    (`{"fyj_sealed": 1, "token": …}`). Returns `(state_dict, was_sealed)` — so a
-    caller that mutates and re-persists can reseal in the SAME format. Legacy
-    plaintext files come back with `was_sealed=False`. Raises on missing/corrupt/
-    undecryptable input: callers (the dev fault-injection tool) surface that
-    honestly rather than silently no-op'ing on a sealed file."""
+    """Load a storage-state file, unsealing a sealed one; returns `(state,
+    was_sealed)` so a caller can reseal in the same format. Raises on missing,
+    corrupt or undecryptable input."""
     raw = path.read_text(encoding="utf-8")
     data = json.loads(raw)
     was_sealed = bool(isinstance(data, dict) and data.get(SEALED_MARKER))

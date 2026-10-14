@@ -1,18 +1,8 @@
-"""Teamtailor adapter — per-tenant public jobs RSS (no auth, no key).
+"""Teamtailor adapter: per-tenant public jobs RSS, no key.
 
-Every Teamtailor career site exposes a zero-auth feed at
-`https://<slug>.teamtailor.com/jobs.rss`. This adapter auto-detects any
-`*.teamtailor.com` careers URL and normalizes it to that feed — so the user
-pastes the human careers URL, not the raw feed path (the value over the generic
-`rss` adapter, which needs the exact `.rss` URL + `type = "rss"`).
-
-Host is pinned to `*.teamtailor.com` (anchored regex) so an untrusted careers
-URL can never steer the fetch elsewhere. Parsed with ElementTree (same as the
-`rss` adapter) — no new dependency.
-
-Ported from career-ops `providers/teamtailor.mjs` (MIT) — see
-THIRD_PARTY_NOTICES.md.
-"""
+Detects any `*.teamtailor.com` careers URL (anchored regex) and reads its
+`/jobs.rss` with ElementTree, so the user pastes the human URL. Ported from
+career-ops `providers/teamtailor.mjs` (MIT)."""
 
 from __future__ import annotations
 
@@ -25,8 +15,11 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
+from .base import detect_url
 
 ID = "teamtailor"
+LABEL = "Teamtailor"
+KIND = "ats"
 INLINE_DESCRIPTION = True
 
 _HOST_RE = re.compile(r"^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.teamtailor\.com$")
@@ -59,11 +52,7 @@ def _rfc822(value: str) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    return _slug(entry.url) if entry.url else ""
+    return detect_url(entry, ID, _slug)
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:

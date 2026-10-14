@@ -1,42 +1,13 @@
 # voyager_py/tests/test_referral_workflow_e2e.py — GPL v3 (see ../LICENSE).
 # SPDX-License-Identifier: GPL-3.0-only
-"""Phase-9 acceptance (fixture tier): the COMPLETE referral workflow, wire cold.
+"""Phase 9 acceptance (fixture tier): the complete referral workflow, wire-cold.
 
-Chains the three Networker stages end to end and stops at the per-action confirm,
-with zero linkedin.com, zero real LLM, and zero account:
-
-1. DISCOVER — the module orchestrator (`networker.discover`) against a fake
-   `VoyagerDriver` that returns one fixture 2nd-degree contact. No network.
-2. DRAFT   — the one LLM stage (`networker.draft`) against a fake engine that
-   returns a fixed grounded connection-note. No real LLM.
-3. COMPOSE — the drafted note is carried into the verbatim GPL connect-with-note
-   flow (`actions.find_and_click_connect` → `actions._click_with_note`), run on
-   the CORE browser broker's serialized surface lane against a LOCAL fixture
-   profile shaped like LinkedIn's connect-with-note DOM (its markup matches
-   `actions.CONNECT_SELECTORS`). Connect is clicked, the note composer opens, and
-   the drafted message is human-typed into it.
-
-Then it asserts the composer holds the EXACT drafted message and the surface can
-be screenshotted (the text is really on screen), and it STOPS: the fixture's
-"Send invitation" is INERT — it copies the composed note into a JS variable and
-posts NOWHERE. The real send (`networker.send` → the driver → the network) is
-never invoked; that is the per-action-confirm boundary this fixture tier
-deliberately stops short of, reserved for the maintainer's live tier (one real
-login, one real send).
-
-The synchronous worker→lane bridge is exercised authentically: `run_browser` is
-invoked from a worker thread (`asyncio.to_thread`, as the operation runner does),
-so it `.result()`s the surface's `concurrent.futures.Future` off the serving loop.
-
-Earlier phases proved the pieces — Phase 3 the connect-with-note flow on the
-broker lane, Phase 8 the paste-URL → kanban → confirm UI; Phase 9 chains discover
-+ draft + compose into ONE deterministic, hermetic CI proof. It touches no
-`upstream/*.py` (it imports the verbatim GPL actions/session unchanged), so no
-fork edit was needed for this phase (see `provenance.md`).
-
-Anchors: US-REF-01/03/04, FR-NW-03 (the referral ask rides in the connect note);
-the broker's `run_on_lane` hook (section 5.4, "one account, one lane").
-"""
+Discover (a fake driver returns 1 contact), draft (a fake engine returns a
+grounded note), then compose: the verbatim GPL connect-with-note flow on the
+broker's lane against a local fixture types the note. It asserts the exact
+message is on screen, then stops: the fixture's Send is inert, and the real send
+is the maintainer's live tier. No `upstream/*.py` edits. Anchors:
+US-REF-01/03/04, FR-NW-03, `run_on_lane`."""
 
 from __future__ import annotations
 

@@ -65,6 +65,262 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dev/linkedin/mark-session-valid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Mark Linkedin Session Valid
+         * @description Set `LinkedInSession.status = "valid"` so session-gated UI (the Sync button)
+         *     can be tested without a real login, which a test must never attempt. Writes no
+         *     cookies or storage state, so anything that reaches LinkedIn fails on auth as it
+         *     should; no production code branches on it.
+         */
+        post: operations["dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/browser/navigate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Navigate Browser Surface
+         * @description Navigate a broker surface server-side, exactly the way an operation
+         *     does (2026-08-16). The user-facing surface went WATCH-ONLY (no URL bar),
+         *     and a surface holds ONE viewer — a test driving it over a second
+         *     screencast socket steals the stream from the page under test. This is the
+         *     e2e stack's navigation lever; same FYJ_DEV gate as every dev tool.
+         */
+        post: operations["dev_navigate_browser_surface_api_dev_browser_navigate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/linkedin/seed-search-cursor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Seed Linkedin Search Cursor
+         * @description Write a live (non-expired, non-exhausted) job-search pagination cursor
+         *     so the Next-page button can be exercised without a real LinkedIn search —
+         *     which needs a real logged-in session a test must never use. Same honesty
+         *     contract as `mark-session-valid`: the row is the same row a real Fresh
+         *     search writes, and nothing in production branches on this.
+         */
+        post: operations["dev_seed_linkedin_search_cursor_api_dev_linkedin_seed_search_cursor_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/linkedin/expire-cookie": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Expire Linkedin Cookie
+         * @description Expire `li_at` in the saved session without touching the session row, so the
+         *     next real LinkedIn action fails on auth mid-flight. Handles a Fernet-sealed or
+         *     legacy plaintext file, resealing in the same format.
+         */
+        post: operations["dev_expire_linkedin_cookie_api_dev_linkedin_expire_cookie_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/export/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Pdf
+         * @description Render markdown → PDF into ~/Downloads (US-RES-03 slice, 2026-07-12).
+         *
+         *     The webview can neither print nor download, so "Export to PDF" posts here;
+         *     the sidecar renders with the same Chromium pipeline the Applier uploads
+         *     (real selectable text) and saves collision-safe. Returns the saved path.
+         */
+        post: operations["export_pdf_api_export_pdf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/install-browser": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser Install Status
+         * @description The last Chromium download's state. A client that lost the event stream
+         *     mid-download reads this instead of waiting forever (A21).
+         */
+        get: operations["browser_install_status_api_system_install_browser_get"];
+        put?: never;
+        /**
+         * Install Browser
+         * @description Download Playwright's Chromium (never bundled — section 4.5). Coarse progress is
+         *     published on the SSE stream as `browser_install` events. Idempotent: a second
+         *     call while one is running returns `already_running`.
+         */
+        post: operations["install_browser_api_system_install_browser_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/scheduler": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scheduler Status
+         * @description Whether background work is running, and whether this boot is why it isn't.
+         *
+         *     `degraded_boot` means the shell started us with no scheduler because the
+         *     last 3 runs all ended the same bad way. The banner reads this.
+         */
+        get: operations["scheduler_status_api_system_scheduler_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/scheduler/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Scheduler
+         * @description Turn background work back on after a degraded boot. Idempotent.
+         *
+         *     `async def` on purpose: starting the tick loop creates an asyncio task, and
+         *     a plain `def` handler runs in Starlette's threadpool where there is no
+         *     running loop to create it on. It touches no database, so nothing blocks.
+         */
+        post: operations["resume_scheduler_api_system_scheduler_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/operations/fail-running": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Fail Running
+         * @description Mark every currently-`running` operation failed with the boot-recovery
+         *     note — simulates the app crashing mid-generation so the Logs 'App restarted
+         *     while generating — Retry' path (US-LOG-01) can be exercised on demand.
+         */
+        post: operations["dev_fail_running_api_dev_operations_fail_running_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/operations/seed-queued": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Seed Queued Operation
+         * @description Create a `queued` op row without pumping the runner, so it stays queued and the
+         *     Logs Stop control (F-M7) can be tested deterministically. Kind `cleanup_trash`:
+         *     0 LLM, harmless if dispatched later. Dev-only.
+         */
+        post: operations["dev_seed_queued_operation_api_dev_operations_seed_queued_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dev/seed-application": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Seed Application
+         * @description Create a sample Job + Saved Application so the Tracker has a card to drive
+         *     (drag, generate, apply) without a live scrape/score. Dev-only.
+         */
+        post: operations["dev_seed_application_api_dev_seed_application_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -77,7 +333,7 @@ export interface paths {
         put?: never;
         /**
          * Create Job
-         * @description Add-by-URL step 2 (US-JB-07) + programmatic ingest: persist one job with
+         * @description Add a job posting, step 2 (US-JB-07) + programmatic ingest: persist one job with
          *     the same dedup/tombstone discipline as scan, then enqueue a score so the new
          *     row lands on the board with a fit rating.
          */
@@ -97,18 +353,10 @@ export interface paths {
         };
         /**
          * Board
-         * @description The paginated Job Board feed + header meta (FR-JB-02/10). Saved jobs are
-         *     excluded server-side; Expired jobs stay (greyed). One honest `total` count and
-         *     a real last-scan time/status — never a silent 200-row cap or hardcoded refresh.
-         *     `list_q` / `text_q` (FR-JB-13) filter server-side *before* pagination — the
-         *     feed is paginated, so a client-side filter over loaded pages would silently
-         *     miss matches on unloaded pages.
-         *
-         *     A plain `def` handler runs off the event loop in Starlette's threadpool
-         *     automatically (async-first rule / F-H2 — at a few thousand jobs this could
-         *     hold the loop past the shell's 2 s health window), and the DTO build (three
-         *     regexes over the full JD each) happens only for the returned page, not every
-         *     eligible row.
+         * @description The paginated board and its header (FR-JB-02/10): saved jobs excluded, expired
+         *     ones greyed, 1 honest total. Search and `link` (has or none, read from
+         *     `canonical_url`) filter before pagination, so no match hides on an unloaded
+         *     page. A plain `def`, so off the loop; DTOs are built for the returned page only.
          */
         get: operations["board_api_board_get"];
         put?: never;
@@ -128,17 +376,9 @@ export interface paths {
         };
         /**
          * Scan Progress
-         * @description Board-level scan + scoring progress (observed-issue #2): a small,
-         *     schema-free read the board polls to show "scanning…" and "M of N scored".
-         *
-         *     Assembled entirely from the operations ledger (no new persisted state):
-         *     `scan_running` = a scan op is in flight; `last_scan_at` = the latest
-         *     succeeded scan's finish time; `new_found` = that scan's recorded
-         *     `new_job_ids` count; and the scoring split — `score_pending` is the live
-         *     (queued/running) score-op count, `score_done` is how many of THIS scan's
-         *     new jobs have reached a terminal (succeeded/failed) score. Off the event
-         *     loop (async-first rule): a plain `def` handler runs in Starlette's
-         *     threadpool automatically.
+         * @description Board scan and scoring progress, polled while a scan runs, assembled from the
+         *     ledger: `scan_running`, `last_scan_at`, `new_found`, `score_pending`, and
+         *     `score_done` (this scan's new jobs with a terminal score). Off the loop.
          */
         get: operations["scan_progress_api_scan_progress_get"];
         put?: never;
@@ -160,15 +400,9 @@ export interface paths {
         put?: never;
         /**
          * Preview Job
-         * @description Add-by-URL step 1 (US-JB-07): fetch the pasted URL and extract editable
-         *     fields — best-effort, not persisted. 20 s fetch, no auto-retry (section 17b). The
-         *     blocking probe runs off the event loop: a plain `def` handler runs in
-         *     Starlette's threadpool automatically.
-         *
-         *     Two DB short-circuits before the network probe: a **tombstoned** URL fails
-         *     fast with the honest 409 (re-add is impossible); an **existing** URL (active
-         *     or Trashed) returns its stored fields — we "fetch it back" from our own copy
-         *     rather than re-scrape.
+         * @description Add a job posting, step 1 (US-JB-07): fetch the URL and extract editable
+         *     fields, not persisted; 20 s, no retry, off the loop. A tombstoned URL fails fast
+         *     with 409; an existing one returns its stored fields instead of a re-scrape.
          */
         post: operations["preview_job_api_jobs_preview_post"];
         delete?: never;
@@ -200,6 +434,71 @@ export interface paths {
         patch: operations["update_job_api_jobs__job_id__patch"];
         trace?: never;
     };
+    "/api/jobs/{job_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach Job Link
+         * @description Promotion (url-less-jobs.md section 5.4): a URL-less job gets its URL and
+         *     becomes an ordinary URL job. The check is compound (section 6.4): equal hashes
+         *     accept, same company and title with similarity at least 0.90 accept, anything
+         *     else returns `mismatch`. Re-keying is 1 UPDATE, so every child survives; the old
+         *     hash stays for re-paste lookups. Off the loop.
+         */
+        post: operations["attach_job_link_api_jobs__job_id__link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job Duplicate
+         * @description The other job this one probably duplicates, or null (url-less-jobs.md 9.6).
+         *     1 indexed read of `job_duplicates`, from either side of the pair.
+         */
+        get: operations["get_job_duplicate_api_jobs__job_id__duplicate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/duplicate/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Job Duplicate
+         * @description "They're different." Stamped on the pair, so neither card asks again.
+         */
+        post: operations["dismiss_job_duplicate_api_jobs__job_id__duplicate_dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}/tombstone": {
         parameters: {
             query?: never;
@@ -213,7 +512,8 @@ export interface paths {
          * Tombstone Job
          * @description Delete forever from Trash (US-JB-11): write a `Tombstone` for the job's
          *     canonical URL, then hard-delete the row. A tombstone is final — a future
-         *     scan or Add-by-URL can never re-surface it (FR-SYS-04).
+         *     scan or Add a job posting can never re-surface it (FR-SYS-04). A job with no URL
+         *     is only deleted, so its description can be pasted again.
          */
         post: operations["tombstone_job_api_jobs__job_id__tombstone_post"];
         delete?: never;
@@ -233,16 +533,99 @@ export interface paths {
         put?: never;
         /**
          * Empty Trash
-         * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every Trashed job's URL and
-         *     hard-delete the rows immediately, bypassing the 7-day TTL.
-         *
-         *     Off the event loop (S-C6): a full Trash is up to 10,000 rows and each one
-         *     costs an existence check, an insert, and a delete, so on the loop a big
-         *     empty could hold it past the shell's 2 s /healthz window and cost a sidecar
-         *     restart. A plain `def` handler runs in Starlette's threadpool
-         *     automatically, same shape as `board`.
+         * @description Empty Trash (US-JB-11 / FR-SYS-04): tombstone every trashed job's URL and
+         *     delete the rows now; a job with no URL gets no tombstone. Off the loop (S-C6):
+         *     up to 10,000 rows, 3 statements each.
          */
         post: operations["empty_trash_api_jobs_trash_empty_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/factors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job Factors
+         * @description The bars behind one job's number (scoring.md 7.3).
+         *
+         *     Read-only and free: every method stores its axes on the job row when it
+         *     scores, so this never calls a model.
+         */
+        get: operations["get_job_factors_api_jobs__job_id__factors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scoring/explain-cost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Explain Cost
+         * @description The price on the button before it is pressed (vision.md, cost honesty).
+         */
+        get: operations["explain_cost_api_scoring_explain_cost_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explain Job
+         * @description 1 click, 1 job, 1 AI call (scoring-build.md T13): prose for the jobs a user
+         *     opens, at about $0.24 each. An ordinary `score` op, so the ledger, concurrency
+         *     cap, Stop and Retry apply. The job adopts the LLM score (scoring-build.md section
+         *     4 choice 1, pending). It can run again; both spends are in the ledger.
+         */
+        post: operations["explain_job_api_jobs__job_id__explain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/rescore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rescore Job
+         * @description Rescore on a board row (score-storage.md 4.4): 1 `score` op with the method in
+         *     Settings, as the user's request. It always runs, whatever score the job has, and
+         *     its result replaces the stored one, Keyword included.
+         */
+        post: operations["rescore_job_api_jobs__job_id__rescore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -281,12 +664,9 @@ export interface paths {
         put?: never;
         /**
          * Scoring Retry
-         * @description Hand every job that spent its budget the budget back, so the next
-         *     scheduler tick re-plans it. This is the recovery path for a provider-wide
-         *     failure the per-job attempt cap can't tell apart from a bad job (an expired
-         *     key, an exhausted quota). It enqueues nothing itself: the tick does the
-         *     work, batched, off this request. Jobs with no usable description are
-         *     untouched — retrying one can't help until a scan fills the JD in (S-A6).
+         * @description Give every job that spent its budget the budget back, for the next tick: the
+         *     recovery from a provider-wide failure (expired key, quota). Enqueues nothing.
+         *     Jobs with no usable description are untouched (S-A6).
          */
         post: operations["scoring_retry_api_scoring_retry_post"];
         delete?: never;
@@ -349,9 +729,10 @@ export interface paths {
         head?: never;
         /**
          * Patch Application Profile
-         * @description Persist manual edits to the application profile (Settings editor).
-         *     The payload replaces the stored record verbatim, stamped `source: edited`
-         *     — deterministic user edits always win over extraction.
+         * @description Save Applicant details (Settings > Applying, or the dialog before the first
+         *     apply). The payload replaces the stored record, stamped `source: edited` and
+         *     `confirmed_at`: saving is the review Apply waits for (audit A5), and a later
+         *     resume read never overwrites what was saved here.
          */
         patch: operations["patch_application_profile_api_profile_application_profile_patch"];
         trace?: never;
@@ -372,6 +753,135 @@ export interface paths {
         put: operations["replace_settings_api_settings_put"];
         /** Update Settings */
         post: operations["update_settings_api_settings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Schedules
+         * @description The recurring-enqueue rules (scan / score_new). Seeded disabled (section 7 seed).
+         */
+        get: operations["list_schedules_api_schedules_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Schedule
+         * @description Enable/disable a schedule or change its cadence. Enabling a seeded-
+         *     disabled schedule makes it due on the next tick (next_due_at → now).
+         */
+        patch: operations["update_schedule_api_schedules__schedule_id__patch"];
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Schedule
+         * @description Run a schedule now, regardless of enabled/due — the explicit user trigger
+         *     (score_new fans out to a `score` op per unscored job; scan enqueues one scan).
+         *     Idempotent for score_new: the planner skips already-scored + pending jobs.
+         */
+        post: operations["run_schedule_api_schedules__schedule_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Prompts
+         * @description Every editable prompt with its default + current override (US-SET-12).
+         */
+        get: operations["list_prompts_api_settings_prompts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/prompts/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Prompt
+         * @description Save an override for `kind` (404 unknown kind, 422 empty markdown).
+         */
+        put: operations["set_prompt_api_settings_prompts__kind__put"];
+        post?: never;
+        /**
+         * Reset Prompt
+         * @description Reset `kind` to its shipped default (delete the override file).
+         */
+        delete: operations["reset_prompt_api_settings_prompts__kind__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/prompts/{kind}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Prompt
+         * @description Run a prompt draft once without committing it (url-less-jobs.md section 11).
+         *     The draft rides the op's snapshot and the run writes nothing (no score, artifact
+         *     or profile); its output comes back on the op's own result.
+         */
+        post: operations["test_prompt_api_settings_prompts__kind__test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -407,13 +917,10 @@ export interface paths {
         put?: never;
         /**
          * Create Manual Application
-         * @description Log a job the user already applied to OUTSIDE the app ("Add a job
-         *     application" — the Tracker sibling of the board's Add-by-URL). Upserts the
-         *     job with the same dedup/tombstone discipline, creates the card as
-         *     `origin=manual` in a post-referral stage (default Applied), and attaches the
-         *     resume/cover the user actually submitted (optional) as content-addressed,
-         *     deduped documents. No score is enqueued — they already applied, so fit
-         *     ranking is moot.
+         * @description Log a job the user already applied to outside the app ("Add a job
+         *     application"). Upserts the job with the same dedup and tombstone rules, creates
+         *     the card as `origin=manual` (default Applied), and attaches any submitted resume
+         *     or cover as deduped documents. No score is enqueued: they already applied.
          */
         post: operations["create_manual_application_api_applications_manual_post"];
         delete?: never;
@@ -433,12 +940,10 @@ export interface paths {
         put?: never;
         /**
          * Attach Application Document
-         * @description Attach a resume/cover FILE to an EXISTING application — the Upload button
-         *     on the Tailored resume / Cover letter editors. Stores it content-addressed
-         *     (deduped) and links it as the application's `kind` slot, replacing any prior
-         *     file for that kind (one resume + one cover per card). This is the exact
-         *     document the user submits on Apply / the record for a manual card logged
-         *     without a file. `kind` ∈ {'tailored_resume', 'cover_letter'}.
+         * @description Attach a resume or cover file to an existing application (Upload in the
+         *     tailored and cover editors). Stored content-addressed and linked as the card's
+         *     `kind` slot, replacing any prior file for that kind; it's the document submitted
+         *     on Apply. `kind` is 'tailored_resume' or 'cover_letter'.
          */
         post: operations["attach_application_document_api_applications__application_id__documents_post"];
         delete?: never;
@@ -525,12 +1030,9 @@ export interface paths {
         head?: never;
         /**
          * Patch Artifact
-         * @description Persist an edited variant + the Approve-and-Save flip (US-RES-02 / FR-RES-02).
-         *
-         *     Targets the head (non-superseded) artifact of `kind` for this application.
-         *     `markdown` overwrites the text (edits apply only to this variant — the master
-         *     is untouched); `approved` stamps/clears `approved_at` (the `ready ⇄ approved`
-         *     flip). Per-artifact, so the resume and cover letter are approved separately.
+         * @description Persist an edited variant and the Approve flip (US-RES-02 / FR-RES-02) on the
+         *     head artifact of `kind`. `markdown` overwrites this variant only; `approved`
+         *     stamps or clears `approved_at`. Resume and cover are approved separately.
          */
         patch: operations["patch_artifact_api_applications__application_id__artifacts__kind__patch"];
         trace?: never;
@@ -580,785 +1082,6 @@ export interface paths {
         get: operations["application_activity_api_applications__application_id__activity_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/schedules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Schedules
-         * @description The recurring-enqueue rules (scan / score_new). Seeded disabled (section 7 seed).
-         */
-        get: operations["list_schedules_api_schedules_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/schedules/{schedule_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Schedule
-         * @description Enable/disable a schedule or change its cadence. Enabling a seeded-
-         *     disabled schedule makes it due on the next tick (next_due_at → now).
-         */
-        patch: operations["update_schedule_api_schedules__schedule_id__patch"];
-        trace?: never;
-    };
-    "/api/schedules/{schedule_id}/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run Schedule
-         * @description Run a schedule now, regardless of enabled/due — the explicit user trigger
-         *     (score_new fans out to a `score` op per unscored job; scan enqueues one scan).
-         *     Idempotent for score_new: the planner skips already-scored + pending jobs.
-         */
-        post: operations["run_schedule_api_schedules__schedule_id__run_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operations/{kind}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Operation
-         * @description Enqueue an operation; return its id immediately (architecture section 4.2).
-         */
-        post: operations["create_operation_api_operations__kind__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operations/{operation_id}/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Retry Operation
-         * @description Re-enqueue a failed operation with its original input snapshot — the Logs
-         *     "App restarted while generating — retry?" affordance (US-LOG-01). Same kind,
-         *     same inputs; a fresh operation id (the failed row stays as the audit record).
-         *     `apply`/`linkedin_login` are excluded (interactive, non-generic paths).
-         */
-        post: operations["retry_operation_api_operations__operation_id__retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operations/{operation_id}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Cancel Operation
-         * @description Cancel an operation (F-M7): a still-`queued` op (any kind) is cancelled
-         *     outright; a `running` one is accepted ONLY for the kinds that cooperatively
-         *     poll the cancel token (score/tailor/cover — `CANCELLABLE_RUNNING_KINDS`),
-         *     landing `cancelled` at the entrypoint's next checkpoint. 404 for an unknown
-         *     id; 409 when there is nothing this endpoint can honestly cancel — the op is
-         *     already terminal, or it is running a kind that never observes the token
-         *     (a running `apply` is cancelled via POST /api/apply-runs/{id}/cancel).
-         */
-        post: operations["cancel_operation_api_operations__operation_id__cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Operations
-         * @description Recent operations — the ledger the Logs/Analytics surfaces read (section 10),
-         *     each row carrying its batched-resolved human subject (US-LOG-01).
-         */
-        get: operations["list_operations_api_operations_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cost/totals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Cost Totals
-         * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
-         *
-         *     Live-ledger sum + the persisted pruned-ops aggregate (NFR-COST-02: the
-         *     running spend total stays honest as an install ages). Since 2026-08-24
-         *     nothing prunes, so the aggregate sits at zero and the live sum carries every
-         *     operation ever recorded; the addition stays because a future S-C22 deletion
-         *     policy has to be able to fold spend forward again.
-         *
-         *     Off the loop: summing every operation is inherently linear, so however cheap
-         *     the read gets it must not be the thing holding a 2 s health poll (S-C23) —
-         *     a plain `def` handler runs in Starlette's threadpool automatically.
-         */
-        get: operations["cost_totals_api_cost_totals_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operations/{operation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Operation */
-        get: operations["get_operation_api_operations__operation_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/applications/{application_id}/networking": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Application Networking
-         * @description The referral contacts linked to this role + their statuses — the detail
-         *     modal's Networking tab (US-TR-03, shown only when LinkedIn is ON).
-         */
-        get: operations["application_networking_api_applications__application_id__networking_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/contacts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Contacts
-         * @description The networking kanban roster (US-NW-01). Excludes archived and, by
-         *     default, `candidate` rows (discovered-but-not-reached — off the kanban).
-         *     `archived=true` flips it to the "Deleted Contacts" recovery view: only the
-         *     archived rows, so a user can restore a contact they removed.
-         *
-         *     Bounded, batched, and off the event loop (S-C8): a plain `def` handler
-         *     runs in Starlette's threadpool automatically. It used to read every
-         *     contact row with no LIMIT and then run one outreach-log query per row, so a
-         *     roster grown by discovery (one `candidate` per person found, at 10 people a
-         *     company) cost 1 + N queries on the loop. Both filters now live in the repo
-         *     query so the cap bounds the population the caller actually wants.
-         */
-        get: operations["list_contacts_api_contacts_get"];
-        put?: never;
-        /**
-         * Create Contact
-         * @description Manual add-a-contact by URL/name (US-NW-02) — the rank-don't-gate escape
-         *     hatch. Always available regardless of LinkedIn state. Dedups on linkedin_url.
-         *
-         *     Re-adding a URL that belongs to an *archived* (deleted) contact restores it
-         *     to the kanban rather than silently returning a still-hidden row — the same
-         *     "put it back" semantics as un-trashing a job (2026-07-10 re-add fix). Its
-         *     prior outreach history is preserved; only the requested live column is set.
-         */
-        post: operations["create_contact_api_contacts_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/contacts/{contact_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Contact
-         * @description Move a contact between kanban columns (US-NW-07) / archive / re-tag.
-         */
-        patch: operations["update_contact_api_contacts__contact_id__patch"];
-        trace?: never;
-    };
-    "/api/jobs/{job_id}/referrals/candidates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Referral Candidates
-         * @description The find-referrals popup candidate list for one role (US-NW-09). Contacts
-         *     at the job's company + per-contact template drafts + already-reached derived
-         *     from the OutreachLog. Run discover first to populate candidates.
-         */
-        get: operations["list_referral_candidates_api_jobs__job_id__referrals_candidates_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{job_id}/referrals/discover": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Discover Referrals
-         * @description Kick off referral discovery for a job's company (US-REF-01 / FR-NW-02).
-         *     Enqueues a `discover` op; live progress streams as `networker` SSE events for
-         *     the popup. `limit` is how many candidates to pull — the "find 10 more" /
-         *     `Load more` control bumps it (10 → 20 → …) so voyager returns a larger roster
-         *     that merges into the shared pool.
-         *
-         *     The op first resolves the company name to a LinkedIn company entity (URN) and
-         *     scopes the People search by it — current-employees-only, no name collisions.
-         *     When that resolution is ambiguous the op emits a `needs_company_confirm`
-         *     event instead of discovering; the popup then re-calls this with the user's
-         *     chosen `company_urn` (+ name/vanity/industry), which is cached and used.
-         */
-        post: operations["discover_referrals_api_jobs__job_id__referrals_discover_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/contacts/{contact_id}/draft": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Draft Referral
-         * @description Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate).
-         *     Enqueues a `draft` op; read the message from the operation's result_ref.
-         */
-        post: operations["draft_referral_api_contacts__contact_id__draft_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/referrals/reach-out": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reach Out
-         * @description Batch reach-out (US-NW-09). Enqueues one single-flight `send` op per
-         *     selected contact — each carrying its own per-audience message. The per-action
-         *     confirmation lives in the UI; the send path runs only when the master toggle
-         *     is on (the UI gates it, and `_require_networking_enabled` gates it server-side
-         *     too — audit P2-4; a dry-run plans without touching LinkedIn).
-         */
-        post: operations["reach_out_api_referrals_reach_out_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/referrals/quota": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Referrals Quota
-         * @description Rolling outreach quota for the popup counter (US-NW-09/10).
-         *
-         *     Used-counts AND caps both come from the package's enforcing ledger
-         *     (maintainer 2026-08-02, closing the "divergent ledgers" item): the popup
-         *     can never show head-room the send path will refuse. `OutreachLog` stays the
-         *     per-send product history; it is no longer recounted as a quota source.
-         *     Zero LinkedIn traffic — a local file read, off the event loop (a plain
-         *     `def` handler runs in Starlette's threadpool automatically).
-         */
-        get: operations["referrals_quota_api_referrals_quota_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/networking/contact-sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Networking Contact Sync
-         * @description Refresh LinkedIn contact statuses for the Networking kanban (US-NW-12 /
-         *     FR-NW-15). **Manual-only**: the Sync button is the one caller (maintainer
-         *     decision, 2026-08-15).
-         *
-         *     No schedule, no on-open refresh, no background timer. Each press is an
-         *     on-demand refresh the user asked for, no more LinkedIn traffic than them
-         *     opening linkedin.com and looking at their invitations themselves. The old
-         *     12 h schedule and the later throttled on-open refresh are both retired
-         *     (`docs/internal/linkedin-addon.md` section 5, `docs/internal/status.md`).
-         *
-         *     Already-running syncs are joined rather than duplicated, so a double click
-         *     does not fan out.
-         */
-        post: operations["networking_contact_sync_api_networking_contact_sync_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Linkedin Session
-         * @description LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
-         *     Reads the persisted session (fast — local only); the popup send path
-         *     unlocks only when enabled AND status == 'valid'.
-         */
-        get: operations["linkedin_session_api_linkedin_session_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/connect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Connect
-         * @description Start the headed-login session capture (US-SET-06 as-built). Enqueues the
-         *     exclusive `linkedin_login` op — a visible browser opens at LinkedIn's login
-         *     page; the user logs in themselves (the password never touches finds-you-jobs).
-         *     `login_url` (maintainer/tests only) overrides the target with a LOCAL fixture.
-         *
-         *     Gated on at least one LinkedIn feature being enabled: this route *opens a
-         *     real browser at linkedin.com*, and it accepted that request with both
-         *     opt-ins off until 2026-08-01 (posture doc section 4 #8).
-         */
-        post: operations["linkedin_connect_api_linkedin_connect_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Search
-         * @description Run a one-shot logged-in LinkedIn job search (discovery-expansion #6).
-         *
-         *     User-clicked only — never a scheduled scan (scheduled scans must never touch
-         *     a logged-in session). Gated server-side on **this feature's own** toggle +
-         *     typed ack and a connected session; otherwise a clear error, not a silent
-         *     no-op. (It used to check the *Referral Outreach* toggle instead — the wrong
-         *     consent, in both directions: enabling referrals alone unlocked searches the
-         *     user never acknowledged, while a search-only user was refused. Posture doc
-         *     section 4 #8.) Results land in the same discovery funnel as every other source.
-         *
-         *     `mode` (2026-08-01): `fresh` runs page 0 from current prefs and resets the
-         *     pagination cursor; `next` continues the last Fresh search's snapshot from
-         *     each pair's own offset. Next is refused (409) when no continuable cursor
-         *     exists — never run, expired past `SEARCH_CURSOR_TTL`, or every pair
-         *     exhausted. The op re-checks the same precondition (self-gate).
-         */
-        post: operations["linkedin_search_api_linkedin_search_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Cancel
-         * @description Cancel an in-flight headed login (the Cancel button). Closes the browser.
-         */
-        post: operations["linkedin_cancel_api_linkedin_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/disconnect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Disconnect
-         * @description Disconnect: cancel any in-flight login, clear the session row, and delete
-         *     BOTH on-disk session stores — the sealed storage-state JSON and the
-         *     persistent Chromium profile (US-SET-06 Disconnect). Before 2026-07-12 the
-         *     profile dir survived, so a "disconnected" user's next login window opened
-         *     already logged in. This is local deletion only — it never logs the user out
-         *     of LinkedIn server-side (the UI says so).
-         */
-        post: operations["linkedin_disconnect_api_linkedin_disconnect_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/validate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Validate
-         * @description Re-check the saved session LOCALLY (li_at presence/expiry) — **never hits
-         *     LinkedIn** (US-SET-06 Validate). Flips status to valid / expired / never_set
-         *     and stamps `last_validated_at`.
-         */
-        post: operations["linkedin_validate_api_linkedin_validate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Resume
-         * @description Clear the voyager-owned backoff pause (Settings → Networking manual resume,
-         *     FR-NW-05 / US-REF-09). Resets the local pacing ledger and re-validates.
-         *
-         *     Gated: this is the one route that *switches a safety mechanism off* — it
-         *     clears the 24 h backoff LinkedIn's own throttle signal put us in — and it ran
-         *     ungated until 2026-08-01 (posture doc section 4 #8).
-         */
-        post: operations["linkedin_resume_api_linkedin_resume_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/linkedin/rate-limits": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Linkedin Set Rate Limits
-         * @description Set the self-imposed LinkedIn rate-limit profile (maintainer directive
-         *     2026-08-01, replacing the New/Seasoned tier + Free/Premium plan selectors).
-         *
-         *     The package owns the cap *values*; this stores only the user's choices:
-         *     - **membership_type** and/or **risk_pct** — the basis. Changing either
-         *       RESETS every per-meter override to the freshly computed default (the
-         *       maintainer's "both reset" rule): the ceilings or the scale changed, so any
-         *       old absolute pin is stale.
-         *     - **override_key / override_value** — pin one `{meter}_{window}` cap to an
-         *       absolute number (only when NOT also changing the basis).
-         *     - **reset_overrides** — drop all pins back to the computed defaults.
-         *
-         *     voyager still enforces the numbers (NFR-LI-02); this is the selection only.
-         */
-        post: operations["linkedin_set_rate_limits_api_linkedin_rate_limits_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/browser/view": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * View Browser Page
-         * @description Queue a `view_page` operation that shows `url` on a watch-only broker
-         *     surface (2026-08-16 — the queued successor to /api/browser/open's immediate
-         *     navigation). The op waits its admission turn behind any browser-driving
-         *     operation (policy rule 3), so a user's click can never corrupt a running
-         *     op's page state — and a view of the already-shown page settles as a
-         *     no-op (`skipped`). Gated on the Referral Outreach toggle, NOT on session
-         *     validity: a never-connected session can still watch a page; validity gates
-         *     the ops that act. Vendor-agnostic: url and slug are runtime arguments.
-         */
-        post: operations["view_browser_page_api_browser_view_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/dev/linkedin/mark-session-valid": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Mark Linkedin Session Valid
-         * @description Set `LinkedInSession.status = "valid"` so session-gated UI can be
-         *     exercised without a real LinkedIn login.
-         *
-         *     Some controls (the Networking **Sync** button) only render once a session
-         *     exists, and a real session needs an interactive human login at LinkedIn's
-         *     own page — which a test cannot perform and must never attempt. This sets the
-         *     one status field the UI reads, exactly like the sibling
-         *     `/api/dev/linkedin/expire-cookie` route sets the opposite condition.
-         *
-         *     It writes **no** cookies and **no** storage-state file. That is the honest
-         *     part: the session is a real row that is genuinely unusable, so any code path
-         *     that actually reaches LinkedIn fails on auth as it should. Nothing about
-         *     LinkedIn's behaviour is faked, and no production code branches on this — the
-         *     row is the same row a real login writes, with the same fields.
-         */
-        post: operations["dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/dev/browser/navigate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Navigate Browser Surface
-         * @description Navigate a broker surface server-side, exactly the way an operation
-         *     does (2026-08-16). The user-facing surface went WATCH-ONLY (no URL bar),
-         *     and a surface holds ONE viewer — a test driving it over a second
-         *     screencast socket steals the stream from the page under test. This is the
-         *     e2e stack's navigation lever; same FYJ_DEV gate as every dev tool.
-         */
-        post: operations["dev_navigate_browser_surface_api_dev_browser_navigate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/dev/linkedin/seed-search-cursor": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Seed Linkedin Search Cursor
-         * @description Write a live (non-expired, non-exhausted) job-search pagination cursor
-         *     so the Next-page button can be exercised without a real LinkedIn search —
-         *     which needs a real logged-in session a test must never use. Same honesty
-         *     contract as `mark-session-valid`: the row is the same row a real Fresh
-         *     search writes, and nothing in production branches on this.
-         */
-        post: operations["dev_seed_linkedin_search_cursor_api_dev_linkedin_seed_search_cursor_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/dev/linkedin/expire-cookie": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Expire Linkedin Cookie
-         * @description Expire the `li_at` cookie in the saved session **without** touching the
-         *     session row — so the app still believes it's connected, and the *next* real
-         *     LinkedIn action fails on auth. Lets the maintainer test how an in-flight
-         *     action handles a session that dies midway (graceful-failure design).
-         *
-         *     Works whether the storage-state file is Fernet-sealed (NFR-SEC-01, 2026-07-09)
-         *     or legacy plaintext: it unseals with the session key, sets `li_at`'s expiry to
-         *     the past, and reseals in the SAME format. Before this fix it parsed the file
-         *     as plaintext and silently no-op'd on any sealed session.
-         */
-        post: operations["dev_expire_linkedin_cookie_api_dev_linkedin_expire_cookie_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1478,16 +1201,33 @@ export interface paths {
         put?: never;
         /**
          * Submit Apply Run
-         * @description Click the form's Submit once, because the USER asked (S-A5).
-         *
-         *     P1 keeps every irreversible action behind the human: the model's tool
-         *     vocabulary has no submit, and this route is the only thing that can reach
-         *     `submit_application`. It needs the run's own browser still open, which is
-         *     the review window after `ready_for_human`, so a run outside that window is
-         *     a 409 rather than a silent no-op. The click itself happens on the op's
-         *     thread; the outcome arrives on the `apply` SSE stream and on the run row.
+         * @description Click the form's Submit once, because the user asked (S-A5). The model has no
+         *     submit tool, so this route is the only way to `submit_application`. It needs the
+         *     run's browser still open (the review window after `ready_for_human`), else 409.
+         *     The outcome arrives on the `apply` SSE stream and the run row.
          */
         post: operations["submit_apply_run_api_apply_runs__run_id__submit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apply-runs/{run_id}/show": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Show Apply Run
+         * @description Bring the run's tab to the front of the Applier window, because the user
+         *     asked (applier/window.md section 4.5). `shown` is false once the tab is gone.
+         */
+        post: operations["show_apply_run_api_apply_runs__run_id__show_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1516,7 +1256,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/prompts": {
+    "/api/operations/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Operation
+         * @description Enqueue an operation; return its id immediately (architecture section 4.2).
+         */
+        post: operations["create_operation_api_operations__kind__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{operation_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Operation
+         * @description Re-enqueue a failed operation with its original input snapshot — the Logs
+         *     "App restarted while generating — retry?" affordance (US-LOG-01). Same kind,
+         *     same inputs; a fresh operation id (the failed row stays as the audit record).
+         *     `apply`/`linkedin_login` are excluded (interactive, non-generic paths).
+         */
+        post: operations["retry_operation_api_operations__operation_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{operation_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Operation
+         * @description Cancel an op (F-M7): any queued op outright; a running one only for kinds that
+         *     poll the token (`CANCELLABLE_RUNNING_KINDS`). 404 for an unknown id; 409 when
+         *     it's terminal or running a kind that never polls (a running apply cancels via
+         *     POST /api/apply-runs/{id}/cancel).
+         */
+        post: operations["cancel_operation_api_operations__operation_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations": {
         parameters: {
             query?: never;
             header?: never;
@@ -1524,10 +1330,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Prompts
-         * @description Every editable prompt with its default + current override (US-SET-12).
+         * List Operations
+         * @description Recent operations — the ledger the Logs/Analytics surfaces read (section 10),
+         *     each row carrying its batched-resolved human subject (US-LOG-01).
          */
-        get: operations["list_prompts_api_settings_prompts_get"];
+        get: operations["list_operations_api_operations_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1536,25 +1343,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/prompts/{kind}": {
+    "/api/cost/totals": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
         /**
-         * Set Prompt
-         * @description Save an override for `kind` (404 unknown kind, 422 empty markdown).
+         * Cost Totals
+         * @description All-time cost totals (FR-SET-07 / US-LOG-01 #2): the live ledger plus the
+         *     deleted-ops aggregate (NFR-COST-02), which stays for a future S-C22 policy.
+         *     Off the loop: the sum is linear (S-C23).
          */
-        put: operations["set_prompt_api_settings_prompts__kind__put"];
+        get: operations["cost_totals_api_cost_totals_get"];
+        put?: never;
         post?: never;
-        /**
-         * Reset Prompt
-         * @description Reset `kind` to its shipped default (delete the override file).
-         */
-        delete: operations["reset_prompt_api_settings_prompts__kind__delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Operation */
+        get: operations["get_operation_api_operations__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1584,53 +1406,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/export/pdf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Export Pdf
-         * @description Render markdown → PDF into ~/Downloads (US-RES-03 slice, 2026-07-12).
-         *
-         *     The webview can neither print nor download, so "Export to PDF" posts here;
-         *     the sidecar renders with the same Chromium pipeline the Applier uploads
-         *     (real selectable text) and saves collision-safe. Returns the saved path.
-         */
-        post: operations["export_pdf_api_export_pdf_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/system/install-browser": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Install Browser
-         * @description Download Playwright's Chromium (never bundled — section 4.5). Coarse progress is
-         *     published on the SSE stream as `browser_install` events. Idempotent: a second
-         *     call while one is running returns `already_running`.
-         */
-        post: operations["install_browser_api_system_install_browser_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/system/scheduler": {
+    "/api/applications/{application_id}/networking": {
         parameters: {
             query?: never;
             header?: never;
@@ -1638,13 +1414,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Scheduler Status
-         * @description Whether background work is running, and whether this boot is why it isn't.
-         *
-         *     `degraded_boot` means the shell started us with no scheduler because the
-         *     last 3 runs all ended the same bad way. The banner reads this.
+         * Application Networking
+         * @description The referral contacts linked to this role + their statuses — the detail
+         *     modal's Networking tab (US-TR-03, shown only when LinkedIn is ON).
          */
-        get: operations["scheduler_status_api_system_scheduler_get"];
+        get: operations["application_networking_api_applications__application_id__networking_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1653,31 +1427,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/system/scheduler/resume": {
+    "/api/contacts": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Contacts
+         * @description The kanban roster (US-NW-01): no archived rows and, by default, no
+         *     `candidate` rows. `archived=true` is the Deleted Contacts view. Bounded, batched
+         *     and off the loop (S-C8); both filters live in the repo query.
+         */
+        get: operations["list_contacts_api_contacts_get"];
         put?: never;
         /**
-         * Resume Scheduler
-         * @description Turn background work back on after a degraded boot. Idempotent.
-         *
-         *     `async def` on purpose: starting the tick loop creates an asyncio task, and
-         *     a plain `def` handler runs in Starlette's threadpool where there is no
-         *     running loop to create it on. It touches no database, so nothing blocks.
+         * Create Contact
+         * @description Manual add-a-contact by URL or name (US-NW-02), always available; dedups on
+         *     linkedin_url. Re-adding an archived contact's URL restores it to the kanban with
+         *     its history, like un-trashing a job.
          */
-        post: operations["resume_scheduler_api_system_scheduler_resume_post"];
+        post: operations["create_contact_api_contacts_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/dev/operations/fail-running": {
+    "/api/contacts/{contact_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1686,20 +1464,40 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
         /**
-         * Dev Fail Running
-         * @description Mark every currently-`running` operation failed with the boot-recovery
-         *     note — simulates the app crashing mid-generation so the Logs 'App restarted
-         *     while generating — Retry' path (US-LOG-01) can be exercised on demand.
+         * Update Contact
+         * @description Move a contact between kanban columns (US-NW-07) / archive / re-tag.
          */
-        post: operations["dev_fail_running_api_dev_operations_fail_running_post"];
+        patch: operations["update_contact_api_contacts__contact_id__patch"];
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/referrals/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Referral Candidates
+         * @description The find-referrals popup candidate list for one role (US-NW-09). Contacts
+         *     at the job's company + per-contact template drafts + already-reached derived
+         *     from the OutreachLog. Run discover first to populate candidates.
+         */
+        get: operations["list_referral_candidates_api_jobs__job_id__referrals_candidates_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/dev/operations/seed-queued": {
+    "/api/jobs/{job_id}/referrals/discover": {
         parameters: {
             query?: never;
             header?: never;
@@ -1709,22 +1507,20 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Dev Seed Queued Operation
-         * @description Create a `queued` operation ROW directly — without pumping the runner —
-         *     so it STAYS queued until something else submits work. Lets the Logs Stop
-         *     control (F-M7) be exercised deterministically in e2e (the generic enqueue
-         *     dispatches almost immediately, so a queued row is otherwise a race). Kind
-         *     `cleanup_trash`: zero-LLM and harmless if a later pump does dispatch it.
-         *     Dev-only.
+         * Discover Referrals
+         * @description Start referral discovery for a job's company (US-REF-01 / FR-NW-02) as a
+         *     `discover` op, streaming `networker` events. `limit` grows with "find 10 more".
+         *     The op resolves the company to a LinkedIn URN first; if that's ambiguous it emits
+         *     `needs_company_confirm`, and the popup re-calls with the chosen `company_urn`.
          */
-        post: operations["dev_seed_queued_operation_api_dev_operations_seed_queued_post"];
+        post: operations["discover_referrals_api_jobs__job_id__referrals_discover_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/dev/seed-application": {
+    "/api/contacts/{contact_id}/draft": {
         parameters: {
             query?: never;
             header?: never;
@@ -1734,11 +1530,261 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Dev Seed Application
-         * @description Create a sample Job + Saved Application so the Tracker has a card to drive
-         *     (drag, generate, apply) without a live scrape/score. Dev-only.
+         * Draft Referral
+         * @description Grounded LLM rewrite of a contact's referral draft (US-REF-03 Regenerate).
+         *     Enqueues a `draft` op; read the message from the operation's result_ref.
          */
-        post: operations["dev_seed_application_api_dev_seed_application_post"];
+        post: operations["draft_referral_api_contacts__contact_id__draft_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/referrals/reach-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reach Out
+         * @description Batch reach-out (US-NW-09). Enqueues one single-flight `send` op per
+         *     selected contact — each carrying its own per-audience message. The per-action
+         *     confirmation lives in the UI; the send path runs only when the master toggle
+         *     is on (the UI gates it, and `_require_networking_enabled` gates it server-side
+         *     too — audit P2-4; a dry-run plans without touching LinkedIn).
+         */
+        post: operations["reach_out_api_referrals_reach_out_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/referrals/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Referrals Quota
+         * @description Rolling outreach quota for the popup (US-NW-09/10). Counts and caps come from
+         *     the package's enforcing ledger, so the popup never shows room the send path
+         *     refuses. A local file read, off the loop; 0 LinkedIn traffic.
+         */
+        get: operations["referrals_quota_api_referrals_quota_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/networking/contact-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Networking Contact Sync
+         * @description Refresh contact statuses for the kanban (US-NW-12 / FR-NW-15). Manual only:
+         *     the Sync button is the 1 caller, with no schedule or timer
+         *     (linkedin-addon.md section 5). A running sync is joined, so a double click
+         *     doesn't fan out.
+         */
+        post: operations["networking_contact_sync_api_networking_contact_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Linkedin Session
+         * @description LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+         *     Reads the persisted session (fast — local only); the popup send path
+         *     unlocks only when enabled AND status == 'valid'.
+         */
+        get: operations["linkedin_session_api_linkedin_session_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Connect
+         * @description Start the headed-login capture (US-SET-06): the exclusive `linkedin_login` op
+         *     opens a visible browser at LinkedIn's login; the password never touches us.
+         *     `login_url` (tests only) points at a local fixture. Needs a LinkedIn feature on
+         *     (posture doc section 4 #8).
+         */
+        post: operations["linkedin_connect_api_linkedin_connect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Search
+         * @description A one-shot logged-in LinkedIn job search, user-clicked only, never scheduled.
+         *     Gated on this feature's own toggle, ack and a connected session (posture doc
+         *     section 4 #8). `fresh` runs page 0 and resets the cursor; `next` continues each
+         *     pair's offset, 409 when nothing is continuable (none, expired past
+         *     `SEARCH_CURSOR_TTL`, or exhausted). The op re-checks.
+         */
+        post: operations["linkedin_search_api_linkedin_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Disconnect
+         * @description Disconnect: cancel any login, clear the session row, and delete both session
+         *     stores, the sealed storage-state and the Chromium profile (a surviving profile
+         *     once reopened logged in). Local only; never logs out of LinkedIn server-side.
+         */
+        post: operations["linkedin_disconnect_api_linkedin_disconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Validate
+         * @description Re-check the saved session LOCALLY (li_at presence/expiry) — **never hits
+         *     LinkedIn** (US-SET-06 Validate). Flips status to valid / expired / never_set
+         *     and stamps `last_validated_at`.
+         */
+        post: operations["linkedin_validate_api_linkedin_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Resume
+         * @description Clear the backoff pause (FR-NW-05 / US-REF-09): reset the pacing ledger and
+         *     re-validate. Gated, since it switches a safety mechanism off (posture doc
+         *     section 4 #8).
+         */
+        post: operations["linkedin_resume_api_linkedin_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/linkedin/rate-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linkedin Set Rate Limits
+         * @description Set the self-imposed rate-limit profile; the package owns the cap values.
+         *     `membership_type` or `risk_pct` change the basis and reset every override;
+         *     `override_key`/`override_value` pin 1 cap; `reset_overrides` drops all pins.
+         *     voyager enforces the numbers (NFR-LI-02).
+         */
+        post: operations["linkedin_set_rate_limits_api_linkedin_rate_limits_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * View Browser Page
+         * @description Queue a `view_page` op that shows `url` on a watch-only surface. It waits its
+         *     turn behind any browser op (policy rule 3), and a view of the page already shown
+         *     is `skipped`. Gated on the Referral Outreach toggle, not session validity.
+         *     Vendor-agnostic: url and slug are arguments.
+         */
+        post: operations["view_browser_page_api_browser_view_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1848,6 +1894,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/geo/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggest Places
+         * @description The location picker's suggestions (place-picker.md section 3). A plain
+         *     `def`, so the first call's gazetteer load runs in the threadpool, off the
+         *     event loop.
+         */
+        get: operations["suggest_places_api_geo_suggest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/geo/countries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Countries
+         * @description Every country in the shipped gazetteer, by name, for Applicant details' work
+         *     authorizations. A plain `def`, so the first load runs off the event loop.
+         */
+        get: operations["list_countries_api_geo_countries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/discovery/analytics": {
         parameters: {
             query?: never;
@@ -1857,21 +1946,10 @@ export interface paths {
         };
         /**
          * Discovery Analytics
-         * @description Aggregates existing records only (no migration): stored `jobs` ×
-         *     `source_adapter`, scores, applications, and the last `_RECENT_SCANS`
-         *     scans' `result_ref.per_source` fetch/keep/error/latency numbers.
-         *
-         *     `scored` and `avg_score` exclude `unscorable` jobs (no usable
-         *     description — the board's own rule, dto.py `job_dto`), so a source with
-         *     no description-bearing rows reports no score rather than a 0-dragged
-         *     one. Every other count (`jobs`, `saved`, `fetched`, `kept`, ...) still
-         *     counts them: the source did return those rows.
-         *
-         *     Off the event loop (S-C7): the fold walks every job the board can hold
-         *     (`list_by_states` defaults to 10,000) plus its scores, so on the loop a full
-         *     install could hold it past the shell's 2 s /healthz window and cost a
-         *     sidecar restart. `board` and `list_jobs` got this in the F-H2 pass; this
-         *     route is the one it missed.
+         * @description Per-source analytics from existing records: jobs by `source_adapter`, scores,
+         *     applications, and the last `_RECENT_SCANS` scans' per-source numbers. `scored`
+         *     and `avg_score` skip unscorable jobs, as the board does. Off the event loop
+         *     (S-C7): the fold walks up to 10,000 jobs.
          */
         get: operations["discovery_analytics_api_discovery_analytics_get"];
         put?: never;
@@ -2156,6 +2234,14 @@ export interface components {
             ended_at: string | null;
         };
         /**
+         * ApplyRunShowResult
+         * @description The `POST /api/apply-runs/{id}/show` response (applier/window.md section 4.5).
+         */
+        ApplyRunShowResult: {
+            /** Shown */
+            shown: boolean;
+        };
+        /**
          * ApplyStartRequest
          * @description POST /api/applications/{id}/apply — no pre-confirm modal (section 8.1); the
          *     click IS the action. `retry_of_run_id` links a Retry / Reopen-and-refill
@@ -2214,6 +2300,43 @@ export interface components {
             approved?: boolean | null;
         };
         /**
+         * AttachLinkRequest
+         * @description Promotion (url-less-jobs.md section 5.4): give a URL-less job its URL.
+         *
+         *     `confirm` attaches despite a mismatch or an unreadable page, which is
+         *     rank-don't-gate applied to a field: always available, never the default.
+         */
+        AttachLinkRequest: {
+            /** Url */
+            url: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+        };
+        /**
+         * AttachLinkResultDTO
+         * @description What the Add-link dialog renders next: `attached` (passed or confirmed),
+         *     `mismatch` (`pasted` and `card` fill the side-by-side; confirm attaches anyway),
+         *     `unreadable` (nothing to compare), or `duplicate` (another job holds the URL,
+         *     named in `pasted` and `other_job_id`; nothing is written).
+         */
+        AttachLinkResultDTO: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "attached" | "mismatch" | "unreadable" | "duplicate";
+            job?: components["schemas"]["JobDTO"] | null;
+            pasted?: components["schemas"]["LinkCandidateDTO"] | null;
+            card?: components["schemas"]["LinkCandidateDTO"] | null;
+            /** Other Job Id */
+            other_job_id?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
          * BoardPageDTO
          * @description One page of the Job Board feed (FR-JB-02) plus the header meta the board
          *     needs (FR-JB-10): a real last-scan time + scrape status so the empty state is
@@ -2244,7 +2367,10 @@ export interface components {
         };
         /** Body_create_manual_application_api_applications_manual_post */
         Body_create_manual_application_api_applications_manual_post: {
-            /** Canonical Url */
+            /**
+             * Canonical Url
+             * @default
+             */
             canonical_url: string;
             /**
              * Title
@@ -2315,13 +2441,24 @@ export interface components {
             status: string;
         };
         /**
+         * BrowserInstallStatus
+         * @description The `GET /api/system/install-browser` response: the last download's state in
+         *     this sidecar, so a client that missed the event can catch up (A21).
+         */
+        BrowserInstallStatus: {
+            /** State */
+            state: string;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+        };
+        /**
          * BrowserViewRequest
-         * @description POST /api/browser/view — queue a `view_page` operation that shows `url`
-         *     on a watch-only broker surface once the lane is free (2026-08-16; the
-         *     queued successor to the immediate /api/browser/open). `width`/`height`/
-         *     `dpr` are the caller's display metrics (fail-closed geometry);
-         *     `contact_id` links the ledger row to the contact whose button was
-         *     clicked.
+         * @description POST /api/browser/view: queue a `view_page` op that shows `url` on a
+         *     watch-only surface once the lane is free. `width`, `height` and `dpr` are the
+         *     caller's display metrics; `contact_id` links the ledger row.
          */
         BrowserViewRequest: {
             /** Url */
@@ -2485,12 +2622,9 @@ export interface components {
         };
         /**
          * CostTotalsDTO
-         * @description All-time cost totals for the Analytics cost tiles (FR-SET-07 / US-LOG-01 #2).
-         *
-         *     Live-ledger sum + the pruned-ops aggregate, so the figures are lifetime
-         *     totals that survive any deletion of an operation row. Nothing deletes one
-         *     today, so the aggregate is empty and the live sum carries it all. `by_kind`
-         *     maps each operation kind to its all-time usd spend.
+         * @description All-time cost totals for the Analytics tiles (FR-SET-07 / US-LOG-01 #2): the
+         *     live ledger plus the deleted-ops aggregate (0 today; nothing deletes).
+         *     `by_kind` maps each kind to its all-time spend.
          */
         CostTotalsDTO: {
             /** Usd */
@@ -2509,13 +2643,20 @@ export interface components {
             };
         };
         /**
+         * CountryDTO
+         * @description 1 country, for the work-authorization editor (audit A5).
+         */
+        CountryDTO: {
+            /** Code */
+            code: string;
+            /** Name */
+            name: string;
+        };
+        /**
          * DiscoverReferralsRequest
-         * @description Kick off / resume referral discovery for a role (US-REF-01 / FR-NW-02).
-         *
-         *     `limit` bumps for the "find 10 more" control. `company_urn` (+ name/vanity/
-         *     industry) is set only when re-calling after a `needs_company_confirm` event —
-         *     it's the company the user picked in the confirm popup; the op caches + uses
-         *     it, skipping resolution.
+         * @description Start or resume referral discovery (US-REF-01 / FR-NW-02). `limit` grows with
+         *     "find 10 more". `company_urn` and its details are set only after a
+         *     `needs_company_confirm`: the company the user picked, cached and used.
          */
         DiscoverReferralsRequest: {
             /**
@@ -2636,6 +2777,33 @@ export interface components {
             enabled: boolean;
         };
         /**
+         * DuplicateActionRequest
+         * @description Which other job the user is answering about.
+         */
+        DuplicateActionRequest: {
+            /** Other Job Id */
+            other_job_id: string;
+        };
+        /**
+         * DuplicatePromptDTO
+         * @description The "this looks like the job you added on Monday" prompt (9.6).
+         *
+         *     Absent (null) whenever there is nothing to ask: no flag, the counterpart is
+         *     gone or archived, or the user already said they are different.
+         */
+        DuplicatePromptDTO: {
+            /** Job Id */
+            job_id: string;
+            /** Other Job Id */
+            other_job_id: string;
+            other: components["schemas"]["LinkCandidateDTO"];
+            /**
+             * Other Added At
+             * Format: date-time
+             */
+            other_added_at: string;
+        };
+        /**
          * EngineSettingDTO
          * @description Engine config sans secret — `has_key` reports presence, `key_hint` is a
          *     masked display fragment (e.g. `sk-…abc4`), never the key itself.
@@ -2707,6 +2875,30 @@ export interface components {
             status: "ok" | "not_found" | "not_logged_in" | "error";
         };
         /**
+         * ExplainCostDTO
+         * @description What "Explain this one" will run and what it has cost this user. `avg_usd` is
+         *     measured off their own score ops on that model, never a price list; None means
+         *     they've never paid for an LLM score.
+         */
+        ExplainCostDTO: {
+            /** Engine */
+            engine: string;
+            /** Model */
+            model: string;
+            /** Avg Usd */
+            avg_usd?: number | null;
+            /**
+             * Samples
+             * @default 0
+             */
+            samples: number;
+            /**
+             * Ready
+             * @default true
+             */
+            ready: boolean;
+        };
+        /**
          * ExportPdfRequest
          * @description Export a markdown document (resume / cover letter) as a PDF into the
          *     user's Downloads folder (US-RES-03 slice, 2026-07-12 — the webview can't
@@ -2720,6 +2912,12 @@ export interface components {
              * @default document
              */
             filename: string;
+            /**
+             * Destination
+             * @default downloads
+             * @enum {string}
+             */
+            destination: "downloads" | "temp";
         };
         /** ExportPdfResult */
         ExportPdfResult: {
@@ -2733,10 +2931,17 @@ export interface components {
         };
         /**
          * JobCreate
-         * @description Add-by-URL (US-JB-07) + programmatic ingest.
+         * @description Add a job (US-JB-07) + programmatic ingest.
+         *
+         *     The link is recommended, never required: a job with no usable URL is keyed
+         *     on its description instead (url-less-jobs.md section 5.1). One of the 2
+         *     has to be there, which the route enforces.
          */
         JobCreate: {
-            /** Canonical Url */
+            /**
+             * Canonical Url
+             * @default
+             */
             canonical_url: string;
             /** Title */
             title: string;
@@ -2770,7 +2975,7 @@ export interface components {
             /** Id */
             id: string;
             /** Canonical Url */
-            canonical_url: string;
+            canonical_url: string | null;
             /** Title */
             title: string;
             /** Company */
@@ -2801,6 +3006,8 @@ export interface components {
              * @default
              */
             workStyle: string;
+            /** Places */
+            places?: string[];
             score?: components["schemas"]["JobScoreDTO"] | null;
             /**
              * Scorestatus
@@ -2812,10 +3019,38 @@ export interface components {
              * @default false
              */
             isNew: boolean;
+            /**
+             * Duplicates
+             * @default 0
+             */
+            duplicates: number;
+            /**
+             * Duplicatenotice
+             * @default false
+             */
+            duplicateNotice: boolean;
+        };
+        /**
+         * JobFactorsDTO
+         * @description The per-axis breakdown behind a job's displayed score. `weights` is the table
+         *     the total used; empty for LLM scoring, which asks the model for the total, so the
+         *     bars show no invented weight.
+         */
+        JobFactorsDTO: {
+            /** Job Id */
+            job_id: string;
+            /** Method */
+            method: string;
+            /** Factors */
+            factors: components["schemas"]["ScoreFactorDTO"][];
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
         };
         /**
          * JobPreviewDTO
-         * @description The editable review payload the Add-by-URL modal shows before submit.
+         * @description The editable review payload the Add a job posting form shows before submit.
          *
          *     Best-effort — a known ATS URL comes back fully structured; a generic page
          *     fills what it can and the user edits the rest.
@@ -2840,7 +3075,7 @@ export interface components {
         };
         /**
          * JobPreviewRequest
-         * @description Add-by-URL step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist.
+         * @description Add a job posting, step 1 (US-JB-07): fetch a pasted URL, extract fields, no persist.
          */
         JobPreviewRequest: {
             /** Url */
@@ -2862,6 +3097,21 @@ export interface components {
              * @default scorer-llm
              */
             scorer_impl: string;
+            /**
+             * Method
+             * @default llm
+             */
+            method: string;
+            /**
+             * Weighted
+             * @default false
+             */
+            weighted: boolean;
+            /**
+             * Stale
+             * @default false
+             */
+            stale: boolean;
         };
         /**
          * JobUpdate
@@ -2870,6 +3120,20 @@ export interface components {
         JobUpdate: {
             /** Feed State */
             feed_state?: string | null;
+        };
+        /**
+         * LinkCandidateDTO
+         * @description One side of the mismatch confirm's side-by-side.
+         */
+        LinkCandidateDTO: {
+            /** Title */
+            title: string;
+            /** Company */
+            company: string;
+            /** Location */
+            location: string;
+            /** Similarity */
+            similarity?: number | null;
         };
         /**
          * LinkedInCapDTO
@@ -2982,15 +3246,10 @@ export interface components {
         };
         /**
          * LinkedInSessionDTO
-         * @description LinkedIn session + master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
-         *
-         *     `enabled` is the master networking toggle (prefs.voyager_risk_marker_on);
-         *     `status` is the session validity. The popup send path unlocks only when
-         *     enabled AND status == 'valid'. N4 adds the session-capture metadata the
-         *     Settings → LinkedIn session UI renders (connected-as, expiry, backoff);
-         *     `search_cursor` (2026-08-01) is the job-search pagination state — None
-         *     until a Fresh search has run; `rate_limits` is the self-imposed
-         *     membership/risk/override profile.
+         * @description LinkedIn session and master-toggle state (US-NW-09 / US-SET-06 / FR-SET-03).
+         *     `enabled` is the networking toggle, `status` the session validity; sends unlock
+         *     only when enabled and valid. Plus connected-as, expiry and backoff;
+         *     `search_cursor` (None until a Fresh search) and `rate_limits`.
          */
         LinkedInSessionDTO: {
             /** Enabled */
@@ -3055,6 +3314,16 @@ export interface components {
             /** State */
             state: string;
         };
+        /**
+         * OperationArtifactDTO
+         * @description The in-app destination behind a ledger row's View button.
+         */
+        OperationArtifactDTO: {
+            /** Application Id */
+            application_id: string;
+            /** Kind */
+            kind: string;
+        };
         /** OperationDTO */
         OperationDTO: {
             /** Id */
@@ -3082,6 +3351,11 @@ export interface components {
             /** Model */
             model: string | null;
             /**
+             * Requested By
+             * @default app
+             */
+            requested_by: string;
+            /**
              * Created At
              * Format: date-time
              */
@@ -3098,13 +3372,9 @@ export interface components {
         };
         /**
          * OperationSubjectDTO
-         * @description What one ledger row acted ON — its human subject (US-LOG-01 legibility,
-         *     maintainer directive 2026-08-03). Every field is verbatim entity data
-         *     (a contact's name, "title · company", the note text) — never localized
-         *     here; the frontend adds its own chrome (count nouns, mode names) via i18n.
-         *     Computed batched in the ledger route from the row's snapshot/result refs;
-         *     absent whenever those refs don't resolve (historical rows, deleted
-         *     entities) — the row then renders as before, nothing is fabricated.
+         * @description What 1 ledger row acted on (US-LOG-01). Verbatim entity data, never localized
+         *     here. Computed in batch from the row's refs; absent when they don't resolve,
+         *     and nothing is invented.
          */
         OperationSubjectDTO: {
             /**
@@ -3120,6 +3390,9 @@ export interface components {
             detail?: string | null;
             /** Count */
             count?: number | null;
+            /** Badge */
+            badge?: string | null;
+            artifact?: components["schemas"]["OperationArtifactDTO"] | null;
         };
         /**
          * PacketRequest
@@ -3141,6 +3414,21 @@ export interface components {
              * @default
              */
             guidance: string;
+        };
+        /**
+         * PlaceSuggestionDTO
+         * @description 1 row of the location picker (place-picker.md section 3): what the user
+         *     reads, and what the chip stores when they pick it.
+         */
+        PlaceSuggestionDTO: {
+            /** Label */
+            label: string;
+            /** Name */
+            name: string;
+            /** Level */
+            level: string;
+            /** Id */
+            id: string;
         };
         /** PreferencesDTO */
         PreferencesDTO: {
@@ -3257,6 +3545,11 @@ export interface components {
             filename: string;
             /** Chars */
             chars: number;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
         };
         /** ProfileUpsert */
         ProfileUpsert: {
@@ -3267,19 +3560,41 @@ export interface components {
          * PromptDTO
          * @description One user-editable LLM prompt (module skill markdown). `default_md` is the
          *     shipped text; `override_md` is the saved edit or None when unset (→ default).
-         *     `routed` marks the kinds that also carry an engine/model selector.
+         *     `op_kind` is the `LLM_KINDS` operation whose engine and model it runs on.
          */
         PromptDTO: {
             /** Kind */
             kind: string;
             /** Title */
             title: string;
-            /** Routed */
-            routed: boolean;
+            /** Op Kind */
+            op_kind: string;
             /** Default Md */
             default_md: string;
             /** Override Md */
             override_md: string | null;
+        };
+        /**
+         * PromptTestRequest
+         * @description Run an unsaved prompt draft once (url-less-jobs.md section 11.3), validated per
+         *     kind. score, tailor, cover: a board job (`job_id`, comparable with the saved
+         *     prompt's output) or a pasted `job_description`. extract: nothing.
+         *     networker_draft: a real `contact_id`.
+         */
+        PromptTestRequest: {
+            /** Markdown */
+            markdown: string;
+            /** Job Id */
+            job_id?: string | null;
+            /** Job Description */
+            job_description?: string | null;
+            /** Contact Id */
+            contact_id?: string | null;
+            /**
+             * Guidance
+             * @default
+             */
+            guidance: string;
         };
         /**
          * PromptUpdate
@@ -3333,15 +3648,10 @@ export interface components {
         };
         /**
          * ReachOutRequest
-         * @description Reach-out (US-NW-09). Each contact gets ITS audience/warmth template
-         *     (fanned out per person, not one string). The pre-send confirmation gate
-         *     lives in the UI (per contact since 2026-07-30 — each row's Connect/Message
-         *     button confirms and sends one person); `dry_run` plans without touching
-         *     LinkedIn.
-         *
-         *     `contacts` is hard-capped: an unbounded list meant one HTTP request could
-         *     authorise arbitrarily many real sends (posture doc section 5.1 — a user-control
-         *     ceiling, not a compliance claim). The UI sends one contact per confirm.
+         * @description Reach-out (US-NW-09): each contact gets its own audience and warmth template.
+         *     The confirm lives in the UI, 1 contact per confirm; `dry_run` plans without
+         *     LinkedIn. `contacts` is hard-capped so 1 request can't authorise unbounded sends
+         *     (posture doc section 5.1).
          */
         ReachOutRequest: {
             /** Job Id */
@@ -3440,16 +3750,10 @@ export interface components {
         };
         /**
          * ScanProgressDTO
-         * @description Board-level scan + scoring progress (observed-issue #2 backend). A small,
-         *     schema-free read the board polls while a scan runs — derived entirely from
-         *     the operations ledger, no new persisted state.
-         *
-         *     `scan_running` — a scan op is queued/in-flight. `last_scan_at` — the latest
-         *     succeeded scan's finish time (null before any scan lands). `new_found` — how
-         *     many jobs that scan inserted (its recorded `new_job_ids`), the "N" of the
-         *     board's "M of N scored". `score_pending` — the live (queued/running) score-op
-         *     count. `score_done` — how many of THIS scan's new jobs have reached a
-         *     terminal score, the "M".
+         * @description Board scan and scoring progress, derived from the operations ledger.
+         *     `scan_running`, `last_scan_at` (latest succeeded scan), `new_found` (its
+         *     inserted ids, the board's N), `score_pending` (live score ops) and `score_done`
+         *     (this scan's new jobs with a terminal score, the M).
          */
         ScanProgressDTO: {
             /** Scan Running */
@@ -3515,9 +3819,31 @@ export interface components {
             degradedBoot: boolean;
         };
         /**
+         * ScoreFactorDTO
+         * @description One axis of one job's score (an entry of `Job.score_factors`). `value` is 0 to 1, and
+         *     `kind` says what it means: a `graded` position on a stated rubric, or a
+         *     `probability` that the factor holds. The bar chart draws the 2 differently
+         *     because a user weight may multiply the first and must never multiply the
+         *     second.
+         */
+        ScoreFactorDTO: {
+            /** Factor */
+            factor: string;
+            /** Value */
+            value: number;
+            /** Kind */
+            kind: string;
+            /** Evidence */
+            evidence: string;
+            /** Code */
+            code?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
          * ScoreRetryDTO
          * @description The ledger's Retry-scoring affordance (S-C24). `count` on the GET is how
-         *     many active jobs have spent the whole attempt budget with no AI score, so
+         *     many active jobs have spent the whole attempt budget with no LLM score, so
          *     the button hides when pressing it would do nothing; `reset` on the POST is
          *     how many got their budget back. Jobs with no usable description are in
          *     neither number — they never spent an attempt (S-A6).
@@ -3534,11 +3860,30 @@ export interface components {
              */
             reset: number;
         };
+        /**
+         * ScoringMethodDTO
+         * @description One scoring-menu row and whether it can run now. The server reports facts, the
+         *     client owns copy and prices; a method is never hidden for a missing
+         *     prerequisite (talk.md D44), so `ready` drives an inline fix.
+         */
+        ScoringMethodDTO: {
+            /** Id */
+            id: string;
+            /** Ready */
+            ready: boolean;
+            /** Needs */
+            needs?: string | null;
+        };
         /** SettingsDTO */
         SettingsDTO: {
             preferences: components["schemas"]["PreferencesDTO"];
             /** Engines */
             engines: components["schemas"]["EngineSettingDTO"][];
+            /**
+             * Scoring Methods
+             * @default []
+             */
+            scoring_methods: components["schemas"]["ScoringMethodDTO"][];
         };
         /**
          * SpanDTO
@@ -3581,7 +3926,8 @@ export interface components {
         /**
          * TombstoneResultDTO
          * @description Result of a permanent-discard action (Empty Trash / Delete forever /
-         *     TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned.
+         *     TTL eviction — US-JB-11 / FR-SYS-04): how many URLs were tombstoned. A job
+         *     with no URL is deleted without one, so it counts in neither field.
          */
         TombstoneResultDTO: {
             /** Tombstoned */
@@ -3629,6 +3975,18 @@ export interface components {
             adapter: string;
             /** Company */
             company: string;
+            /** Openings */
+            openings?: number | null;
+            /**
+             * Sample Titles
+             * @default []
+             */
+            sample_titles: string[];
+            /**
+             * Read Error
+             * @default
+             */
+            read_error: string;
         };
         /** WatchRemoveResult */
         WatchRemoveResult: {
@@ -3653,6 +4011,13 @@ export interface components {
             company: string;
             /** Adapter */
             adapter: string;
+            /** Openings */
+            openings?: number | null;
+            /**
+             * Read Error
+             * @default
+             */
+            read_error: string;
         };
         /** ApplyProgressEvent */
         ApplyProgressEvent: {
@@ -3824,6 +4189,112 @@ export interface components {
          * @enum {string}
          */
         LlmKind: "score" | "tailor" | "cover" | "extract" | "draft" | "apply";
+        SharedConstants: {
+            preset_location_penalty: {
+                /** @enum {number} */
+                balanced: 15;
+                /** @enum {number} */
+                location_first: 35;
+                /** @enum {number} */
+                seniority_first: 15;
+                /** @enum {number} */
+                skills_only: 0;
+            };
+            preset_weights: {
+                balanced: Record<string, never>;
+                location_first: Record<string, never>;
+                seniority_first: {
+                    /** @enum {number} */
+                    hard_requirements: 0.25;
+                    /** @enum {number} */
+                    core_stack: 0.25;
+                    /** @enum {number} */
+                    years: 0.1;
+                    /** @enum {number} */
+                    level: 0.35;
+                    /** @enum {number} */
+                    nice_to_haves: 0.05;
+                };
+                skills_only: {
+                    /** @enum {number} */
+                    hard_requirements: 0.45;
+                    /** @enum {number} */
+                    core_stack: 0.55;
+                    /** @enum {number} */
+                    years: 0;
+                    /** @enum {number} */
+                    level: 0;
+                    /** @enum {number} */
+                    nice_to_haves: 0;
+                };
+            };
+            jev_weights: {
+                /** @enum {number} */
+                hard_requirements: 0.3;
+                /** @enum {number} */
+                core_stack: 0.3;
+                /** @enum {number} */
+                years: 0.15;
+                /** @enum {number} */
+                level: 0.15;
+                /** @enum {number} */
+                nice_to_haves: 0.1;
+            };
+            keyword_weights: {
+                /** @enum {number} */
+                core_stack: 0.55;
+                /** @enum {number} */
+                years: 0.3;
+                /** @enum {number} */
+                level: 0.15;
+            };
+            lifecycle_defaults: {
+                /** @enum {number} */
+                engagement_ghosted_days: 14;
+                /** @enum {number} */
+                sent_ghosted_days: 21;
+                /** @enum {number} */
+                expire_listing_days: 14;
+                /** @enum {number} */
+                contact_purge_days: 60;
+                /** @enum {number} */
+                trashed_jobs_purge_days: 7;
+                /** @enum {number} */
+                archived_applications_purge_days: 30;
+            };
+            /** @enum {string} */
+            claude_cli_default_model: "claude-opus-5-5";
+            /** @enum {string} */
+            scoring_mode: "jev" | "keyword" | "llm" | "local";
+            /** @enum {string} */
+            score_weight_preset: "balanced" | "location_first" | "seniority_first" | "skills_only";
+            /** @enum {string} */
+            cancellable_running_kind: "cover" | "score" | "tailor";
+            /** @enum {string} */
+            browser_lane_kind: "contact_sync" | "discover" | "linkedin_login" | "linkedin_search" | "send" | "view_page";
+            /** @enum {string} */
+            cli_provider: "antigravity-cli" | "claude-cli" | "codex-cli";
+            attach_types: {
+                /** @enum {string} */
+                ".pdf": "application/pdf";
+                /** @enum {string} */
+                ".doc": "application/msword";
+                /** @enum {string} */
+                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                /** @enum {string} */
+                ".odt": "application/vnd.oasis.opendocument.text";
+                /** @enum {string} */
+                ".pages": "application/vnd.apple.pages";
+                /** @enum {string} */
+                ".txt": "text/plain";
+                /** @enum {string} */
+                ".md": "text/markdown";
+                /** @enum {string} */
+                ".rtf": "application/rtf";
+            };
+            /** @enum {string} */
+            extract_suffix: ".doc" | ".docx" | ".markdown" | ".md" | ".odt" | ".pages" | ".pdf" | ".rtf" | ".txt";
+        };
     };
     responses: never;
     parameters: never;
@@ -3891,6 +4362,288 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    dev_navigate_browser_surface_api_dev_browser_navigate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dev_seed_linkedin_search_cursor_api_dev_linkedin_seed_search_cursor_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    dev_expire_linkedin_cookie_api_dev_linkedin_expire_cookie_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    export_pdf_api_export_pdf_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportPdfRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportPdfResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_install_status_api_system_install_browser_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserInstallStatus"];
+                };
+            };
+        };
+    };
+    install_browser_api_system_install_browser_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserInstallResult"];
+                };
+            };
+        };
+    };
+    scheduler_status_api_system_scheduler_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatus"];
+                };
+            };
+        };
+    };
+    resume_scheduler_api_system_scheduler_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatus"];
+                };
+            };
+        };
+    };
+    dev_fail_running_api_dev_operations_fail_running_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    dev_seed_queued_operation_api_dev_operations_seed_queued_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    dev_seed_application_api_dev_seed_application_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -3966,6 +4719,13 @@ export interface operations {
                 page_size?: number;
                 list_q?: string;
                 text_q?: string;
+                link?: string;
+                source?: string;
+                work_style?: "" | "REMOTE" | "HYBRID" | "ONSITE" | "REMOTE_FRIENDLY";
+                method?: "" | "model" | "keyword";
+                posted_days?: number;
+                salary_min?: number;
+                sort?: "match" | "recency";
             };
             header?: never;
             path?: never;
@@ -4112,6 +4872,107 @@ export interface operations {
             };
         };
     };
+    attach_job_link_api_jobs__job_id__link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachLinkResultDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_duplicate_api_jobs__job_id__duplicate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DuplicatePromptDTO"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_job_duplicate_api_jobs__job_id__duplicate_dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     tombstone_job_api_jobs__job_id__tombstone_post: {
         parameters: {
             query?: never;
@@ -4159,6 +5020,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TombstoneResultDTO"];
+                };
+            };
+        };
+    };
+    get_job_factors_api_jobs__job_id__factors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobFactorsDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explain_cost_api_scoring_explain_cost_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplainCostDTO"];
+                };
+            };
+        };
+    };
+    explain_job_api_jobs__job_id__explain_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rescore_job_api_jobs__job_id__rescore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4397,6 +5371,213 @@ export interface operations {
             };
         };
     };
+    list_schedules_api_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleDTO"][];
+                };
+            };
+        };
+    };
+    update_schedule_api_schedules__schedule_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_schedule_api_schedules__schedule_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRunResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_prompts_api_settings_prompts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptDTO"][];
+                };
+            };
+        };
+    };
+    set_prompt_api_settings_prompts__kind__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_prompt_api_settings_prompts__kind__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_prompt_api_settings_prompts__kind__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_applications_api_applications_get: {
         parameters: {
             query?: {
@@ -4468,7 +5649,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_create_manual_application_api_applications_manual_post"];
             };
@@ -4789,48 +5970,28 @@ export interface operations {
             };
         };
     };
-    list_schedules_api_schedules_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScheduleDTO"][];
-                };
-            };
-        };
-    };
-    update_schedule_api_schedules__schedule_id__patch: {
+    start_apply_api_applications__application_id__apply_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                schedule_id: string;
+                application_id: string;
             };
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["ScheduleUpdate"];
+                "application/json": components["schemas"]["ApplyStartRequest"] | null;
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScheduleDTO"];
+                    "application/json": components["schemas"]["ApplyRunDTO"];
                 };
             };
             /** @description Validation Error */
@@ -4844,12 +6005,137 @@ export interface operations {
             };
         };
     };
-    run_schedule_api_schedules__schedule_id__run_post: {
+    list_apply_runs_api_applications__application_id__apply_runs_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                schedule_id: string;
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_apply_run_api_apply_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_apply_run_screenshot_api_apply_runs__run_id__screenshots__index__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_apply_run_api_apply_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_apply_run_api_apply_runs__run_id__submit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
             };
             cookie?: never;
         };
@@ -4861,7 +6147,73 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScheduleRunResult"];
+                    "application/json": components["schemas"]["ApplyRunDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    show_apply_run_api_apply_runs__run_id__show_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunShowResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attest_apply_run_api_apply_runs__run_id__attest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyAttestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyRunDTO"];
                 };
             };
             /** @description Validation Error */
@@ -5043,6 +6395,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_operation_spans_api_operations__operation_id__spans_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpanDTO"][];
                 };
             };
             /** @description Validation Error */
@@ -5448,28 +6831,6 @@ export interface operations {
             };
         };
     };
-    linkedin_cancel_api_linkedin_cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     linkedin_disconnect_api_linkedin_disconnect_post: {
         parameters: {
             query?: never;
@@ -5592,611 +6953,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dev_mark_linkedin_session_valid_api_dev_linkedin_mark_session_valid_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    dev_navigate_browser_surface_api_dev_browser_navigate_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dev_seed_linkedin_search_cursor_api_dev_linkedin_seed_search_cursor_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    dev_expire_linkedin_cookie_api_dev_linkedin_expire_cookie_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    start_apply_api_applications__application_id__apply_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                application_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ApplyStartRequest"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApplyRunDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_apply_runs_api_applications__application_id__apply_runs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                application_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApplyRunDTO"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_apply_run_api_apply_runs__run_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApplyRunDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_apply_run_screenshot_api_apply_runs__run_id__screenshots__index__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-                index: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cancel_apply_run_api_apply_runs__run_id__cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApplyRunDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    submit_apply_run_api_apply_runs__run_id__submit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApplyRunDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    attest_apply_run_api_apply_runs__run_id__attest_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApplyAttestRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApplyRunDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_prompts_api_settings_prompts_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PromptDTO"][];
-                };
-            };
-        };
-    };
-    set_prompt_api_settings_prompts__kind__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                kind: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PromptUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PromptDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reset_prompt_api_settings_prompts__kind__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                kind: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PromptDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_operation_spans_api_operations__operation_id__spans_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                operation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SpanDTO"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_pdf_api_export_pdf_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExportPdfRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExportPdfResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    install_browser_api_system_install_browser_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrowserInstallResult"];
-                };
-            };
-        };
-    };
-    scheduler_status_api_system_scheduler_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SchedulerStatus"];
-                };
-            };
-        };
-    };
-    resume_scheduler_api_system_scheduler_resume_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SchedulerStatus"];
-                };
-            };
-        };
-    };
-    dev_fail_running_api_dev_operations_fail_running_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    dev_seed_queued_operation_api_dev_operations_seed_queued_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    dev_seed_application_api_dev_seed_application_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };
@@ -6449,6 +7205,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_places_api_geo_suggest_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceSuggestionDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_countries_api_geo_countries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CountryDTO"][];
                 };
             };
         };

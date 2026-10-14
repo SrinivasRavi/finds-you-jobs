@@ -1,38 +1,13 @@
-"""Bounded retry support for one LLM completion + parse step, shared by the
-score/tailor/cover black boxes (extracted at the third consumer, per the M1
-playbook — see `skill_md.py`'s own extraction note).
+"""Bounded retry for 1 LLM completion plus parse, shared by score, tailor and
+cover.
 
-A single non-deterministic completion occasionally comes back empty (a
-provider hiccup, or a reasoning model spending its whole token budget on
-hidden reasoning) or drifts off the module's strict `===...===` output
-contract. Both are worth one immediate re-ask before the whole operation
-fails and the user has to notice a FAILED row and click Retry by hand. A
-deliberate business-logic outcome (the cover module's JD-gate `REFUSED:`) is
-NOT a transient failure and must never be retried — that decision stays in
-each module's own retry predicate, not here.
-
-Retries mean more than one billed completion can precede a success; `usd`
-being an honest ledger (never swallowed, never guessed) means every billed
-attempt's cost/tokens must be counted, not just the winning one — that's what
-`merge_usage` is for. A completion that raises before returning has no usage
-to bill (the `Engine.complete()` contract only returns usage on success —
-this includes a timed-out attempt, whose spend the provider may still bill
-but never reports back to us; acknowledged, unattributable — F-L11), so only
-attempts that *produced output* (whether or not it parsed) contribute.
-
-Retry POLICY (technical audit F-H5): engine failures are classified via the
-structured fields `EngineError` carries (`status` / `retryable` /
-`retry_after_s` — see `claude_engine.EngineError`). Deterministic provider
-rejections (bad key, bad request, missing model) fail fast — re-asking can
-never fix them and only burns slot time. Transient failures (429, 5xx,
-network, empty content) retry after an exponential backoff with full jitter,
-honoring the provider's `Retry-After` when sent, so a rate-limited fan-out
-stops hammering in lockstep. Parse-contract drift keeps its immediate re-ask
-(it's model non-determinism, not provider load). The backoff sleeps run on
-the runner's worker threads (module code never runs on the event loop), so
-`time.sleep` is safe here. `wait_before_retry` also polls a cancellation
-check so a user's Stop lands between attempts, not after them (F-M7).
-"""
+An empty completion or output-contract drift gets a re-ask; a deliberate refusal
+(the cover JD gate) never does, and that stays each module's call. Every billed
+attempt that produced output is counted (`merge_usage`); a raised attempt
+reports no usage (F-L11). Policy (F-H5): deterministic rejections fail fast;
+429, 5xx, network and empty content back off with full jitter, honoring
+Retry-After; parse drift re-asks at once. Sleeps run on worker threads and poll
+for cancellation (F-M7)."""
 
 from __future__ import annotations
 
@@ -40,6 +15,8 @@ import random
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
+
+from .claude_engine import EngineError
 
 # 1 initial attempt + 2 retries. LLM output is non-deterministic enough that a
 # same-prompt re-ask clears most transient empty-content/parse-contract misses;
@@ -79,13 +56,9 @@ def retry_delay_s(
     *,
     rng: Callable[[float, float], float] = random.uniform,
 ) -> float | None:
-    """How long to wait before re-asking after failed attempt number `attempt`
-    (1-based), or None when the failure must NOT be retried (deterministic
-    rejection, an explicit `retryable=False`, or attempts exhausted).
-
-    Reads `EngineError`'s structured fields via getattr so a module-typed
-    error that carries the same fields classifies identically. An explicit
-    `retryable` from the raise site always wins over the status table."""
+    """Seconds to wait before re-asking after attempt `attempt` (1-based), or None
+    when it mustn't retry. Reads `EngineError`'s fields via getattr; an explicit
+    `retryable` wins over the status table."""
     if attempt >= MAX_ATTEMPTS:
         return None
     retryable = getattr(exc, "retryable", None)
@@ -151,3 +124,43 @@ def merge_usage(usages: Sequence[_UsageLike]) -> dict[str, Any]:
         # engine/model, so this is never actually a mix in practice.
         "model": usages[-1].model,
     }
+
+
+class _EngineLike(Protocol):
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Any]: ...
+
+
+def complete_and_parse[T](
+    engine: _EngineLike,
+    system_prompt: str,
+    user_prompt: str,
+    parse: Callable[[str], T],
+    parse_error: type[Exception],
+    cancelled: Callable[[], bool] | None = None,
+) -> tuple[T, dict[str, Any]]:
+    """1 completion plus its parse, under the policy above: an engine failure
+    backs off or fails fast, a `parse_error` whose `stage` is "parse" is
+    re-asked at once, any other stage (a deliberate refusal) raises. Returns
+    the parsed value and the merged usage of every attempt that produced
+    output, so a retry never hides a billed attempt."""
+    billed: list[Any] = []
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        raise_if_cancelled(cancelled)
+        try:
+            raw, usage = engine.complete(system_prompt, user_prompt)
+        except EngineError as e:
+            delay = retry_delay_s(e, attempt)
+            if delay is None:
+                raise
+            wait_before_retry(delay, cancelled)
+            continue
+        billed.append(usage)
+        try:
+            value = parse(raw)
+        except parse_error as e:
+            stage = getattr(e, "stage", "")
+            if stage != "parse" or attempt == MAX_ATTEMPTS:
+                raise
+            continue
+        return value, merge_usage(billed)
+    raise AssertionError("unreachable: the loop always returns or raises")

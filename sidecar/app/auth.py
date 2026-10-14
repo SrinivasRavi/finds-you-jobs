@@ -50,13 +50,9 @@ def token_ok(presented: str | None, expected: str) -> bool:
 
 
 class BearerAuthMiddleware:
-    """Rejects any non-open request lacking a valid bearer token with 401.
-
-    Pure ASGI on purpose (F-M10): BaseHTTPMiddleware wraps every response in a
-    per-request task group that buffers streams and has documented quirks around
-    client-disconnect propagation — wrapping the app-lifetime `/api/events` SSE
-    stream in it could delay unsubscribe after the webview drops. Same reason
-    `main.py`'s flight-recorder middleware is pure ASGI."""
+    """Rejects any non-open request without a valid bearer token, 401. Pure ASGI
+    (F-M10): BaseHTTPMiddleware buffers streams and could delay the SSE stream's
+    unsubscribe after the webview drops."""
 
     def __init__(self, app: ASGIApp, *, token: str) -> None:
         self.app = app
@@ -64,13 +60,10 @@ class BearerAuthMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            # `websocket` and `lifespan` scopes pass straight through, by
-            # design: a `Request` view over them is meaningless, and a browser's
-            # websocket handshake can't set an Authorization header anyway. So
-            # every websocket route checks the token itself, from `?token=`, and
-            # closes 1008 before `accept()` when it's missing or wrong
-            # (`api/screencast_ws.py`) — same loopback-only reasoning as the SSE
-            # query-token path above (NFR-SEC-03).
+            # `websocket` and `lifespan` scopes pass through by design: a browser's
+            # websocket handshake can't set an Authorization header, so every websocket route
+            # checks `?token=` itself and closes 1008 before `accept()`
+            # (`api/screencast_ws.py`), the same loopback reasoning as SSE (NFR-SEC-03).
             await self.app(scope, receive, send)
             return
         # Request(scope) is a cheap view over the scope (no body access) — it

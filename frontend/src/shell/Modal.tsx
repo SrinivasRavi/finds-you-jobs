@@ -1,28 +1,35 @@
-// Shared modal shell — ports the prototype dialog pattern (backdrop +
-// centered card, close on backdrop/escape). Used by Add-by-URL, the resume
-// trio, cover letter, guidance, and the application detail modal.
+// Shared modal shell: backdrop, centered card, close on backdrop or Escape.
+// 5 named sizes and no caller picks its own number (maintainer, 2026-10-08); the
+// tree had 11 widths, so 2 dialogs doing the same job came out different.
 
 import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Icon } from "./icons";
 
+/** The size scale. `sm` confirms, `md` forms, `lg` detail panes and rosters,
+ *  `xl` editors and workbenches, `full` the 2-column and browser surfaces. */
+export const MODAL_WIDTHS = { sm: 440, md: 560, lg: 780, xl: 1200, full: 1840 } as const;
+
+export type ModalSize = keyof typeof MODAL_WIDTHS;
+
 export function Modal({
   title,
   onClose,
   children,
-  width = 520,
+  size = "md",
   footer,
   headerExtra,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
-  width?: number;
+  size?: ModalSize;
   footer?: ReactNode;
   /** Rendered in the title bar next to the × close button (e.g. Share). */
   headerExtra?: ReactNode;
 }) {
+  const width = MODAL_WIDTHS[size];
   const { t } = useTranslation();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

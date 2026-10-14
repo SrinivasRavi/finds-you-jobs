@@ -6,6 +6,7 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
+import type { GuidanceKind } from "../../popups/GuidanceDialog";
 import type { Application } from "../../api/types";
 
 export function CardMenu({
@@ -19,7 +20,7 @@ export function CardMenu({
   app: Application;
   anchor: DOMRect;
   onClose: () => void;
-  onGenerate: (label: string) => void;
+  onGenerate: (kind: GuidanceKind) => void;
   onArchive: () => void;
   onReturn: () => void;
 }) {
@@ -59,13 +60,13 @@ export function CardMenu({
         {canGen ? (
           <>
             <button
-              onClick={() => onGenerate("tailored resume")}
+              onClick={() => onGenerate("tailored")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
               {t("tracker.menu.generateResume")}
             </button>
             <button
-              onClick={() => onGenerate("cover letter")}
+              onClick={() => onGenerate("cover")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
               {t("tracker.menu.generateCover")}
@@ -75,13 +76,13 @@ export function CardMenu({
         {canRegen ? (
           <>
             <button
-              onClick={() => onGenerate("tailored resume")}
+              onClick={() => onGenerate("tailored")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
               {t("tracker.menu.regenResume")}
             </button>
             <button
-              onClick={() => onGenerate("cover letter")}
+              onClick={() => onGenerate("cover")}
               className="rounded px-3 py-2 text-left text-ink-2 hover:bg-surface-3"
             >
               {t("tracker.menu.regenCover")}

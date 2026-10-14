@@ -1,14 +1,8 @@
-"""Resolve a job input — markdown text, a local file path, or a URL — shared by
-module silos (extracted from the Tailorer at the second consumer, the Scorer,
-per the M1 playbook).
+"""Resolve a job input (markdown text, a file path or a URL), shared by the
+module silos, mirroring career-ops's "text or URL" rule.
 
-Mirrors career-ops's "text or URL" input rule. URL fetching here is the
-module-local minimum (stdlib only); the real fetching/normalization lives in the
-Scraper module (Track M3) and replaces this seam at integration.
-
-Modules wrap `JobInputError` into their own typed error (TailorError,
-ScoreError, ...) preserving the stage + verbatim message.
-"""
+URL fetching here is the stdlib minimum. Modules wrap `JobInputError` into their
+own typed error, keeping the stage and verbatim message."""
 
 from __future__ import annotations
 
@@ -21,7 +15,7 @@ from pathlib import Path
 from .url_guard import GuardedRedirects as _GuardedRedirects
 from .url_guard import url_refusal as _url_refusal
 
-_FETCH_TIMEOUT_S = 20  # matches the Add-by-URL contract (FR-JB-09)
+_FETCH_TIMEOUT_S = 20  # matches the pasted-link fetch contract (FR-JB-09)
 _MAX_BYTES = 20 * 1024 * 1024  # same cap as scraper/http.py — refuse absurd pages
 
 

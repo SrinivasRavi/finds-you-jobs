@@ -1,12 +1,6 @@
-// Pre-send confirmation for ONE contact (US-NW-09 / vision). Reworked
-// 2026-07-30: the batch "Send {{count}} messages?" confirm went away with the
-// multi-select — each row's Connect/Message button opens this for exactly one
-// person, showing the message that will actually go out (per-contact confirm;
-// posture doc section 5.1). Since 2026-08-16 this is also THE editor for a
-// connected send: the message box is an editable textarea (the maintainer:
-// edit where you confirm, not in a row box that only expands to be revealed).
-// Not memoized: it only mounts while the confirm overlay is open, so there is
-// no tree to shield.
+// Pre-send confirm for 1 contact (US-NW-09; posture doc section 5.1), showing
+// the message that will go out. For a connected send it's also the editor: edit
+// where you confirm. Not memoized: it mounts only while the overlay is open.
 
 import { Trans, useTranslation } from "react-i18next";
 

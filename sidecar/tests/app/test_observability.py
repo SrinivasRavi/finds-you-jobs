@@ -1,15 +1,8 @@
-"""Covers: A6 Observability (US-SYS-05, FR-SYS-05, NFR-SIDE-04, NFR-OBS-01/02).
+"""Covers: A6 observability (US-SYS-05, FR-SYS-05, NFR-SIDE-04, NFR-OBS-01/02).
 
-Three planes:
-
-1. The local SQLite span store (`SqliteSpanExporter`) — export, per-operation
-   read, retention prune. No network, ever.
-2. The `ui_state` → observability-config parser (defaults are the safe,
-   no-network baseline).
-3. The runner emits a per-operation Logfire span with the US-SYS-05 attribute
-   list; a failure lands in **all three legs** — operations row + span + SSE
-   event (NFR-SIDE-04, the explicit three-legged assertion).
-"""
+The local SQLite span store (export, per-op read, retention; no network); the
+`ui_state` config parser (no-network defaults); and the runner's per-op span,
+where a failure lands in the row, the span and the SSE event."""
 
 from __future__ import annotations
 

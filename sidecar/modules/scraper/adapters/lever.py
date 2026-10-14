@@ -1,10 +1,8 @@
-"""Lever adapter — public postings JSON API (no auth, no key).
+"""Lever adapter: public postings JSON API, no key.
 
-Claims `jobs.lever.co/<slug>` (+ the `jobs.eu.lever.co` EU variant). One request
-per board: `GET api.lever.co/v0/postings/<slug>?mode=json` (EU host →
-`api.eu.lever.co`). The list payload ships `descriptionPlain` free, so — per the
-adapter contract — we take the description from the list and never fetch per job.
-"""
+Claims `jobs.lever.co/<slug>` and the EU host. 1 request per board; the list
+carries `descriptionPlain`. A pasted posting uses `fetch_posting`, since a big
+tenant's 20 MB list is refused by the fetcher."""
 
 from __future__ import annotations
 
@@ -14,9 +12,12 @@ from urllib.parse import urlsplit
 from ..config import SourceEntry
 from ..http import Fetcher
 from ..types import NormalizedJob, ScraperError
-from .base import first_path_segment
+from .base import detect_url, first_path_segment, path_segments
 
 ID = "lever"
+LABEL = "Lever"
+KIND = "ats"
+BOARD_URLS = ("https://jobs.lever.co/{}",)
 INLINE_DESCRIPTION = True
 
 _HOSTS = {
@@ -31,6 +32,14 @@ def _slug_and_region(url: str) -> tuple[str, str]:
         return "", ""
     slug = first_path_segment(url)
     return (slug, _HOSTS[host]) if slug else ("", "")
+
+
+def _posting_id(url: str) -> str:
+    """The posting's own uuid, the 2nd path segment of a job URL. A board root
+    (`jobs.lever.co/<slug>`) has none, which is what makes this the single-job
+    test."""
+    segments = path_segments(url)
+    return segments[1] if len(segments) > 1 else ""
 
 
 def _posted_at(raw: dict) -> str:
@@ -63,12 +72,7 @@ def _salary(raw: dict) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    slug, _ = _slug_and_region(entry.url) if entry.url else ("", "")
-    return slug
+    return detect_url(entry, ID, lambda url: _slug_and_region(url)[0])
 
 
 def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
@@ -83,19 +87,36 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
     for raw in payload:
         if not isinstance(raw, dict):
             continue  # one malformed element never sinks the feed (workday precedent)
-        categories = raw.get("categories") or {}
-        if not isinstance(categories, dict):
-            categories = {}
-        jobs.append(
-            NormalizedJob(
-                title=str(raw.get("text") or ""),
-                canonical_url=str(raw.get("hostedUrl") or ""),
-                company=entry.company or str(raw.get("company") or "") or slug,
-                location=_location(categories),
-                description=str(raw.get("descriptionPlain") or ""),
-                posted_at=_posted_at(raw),
-                salary=_salary(raw),
-                source_adapter=ID,
-            )
-        )
+        jobs.append(_normalize(raw, slug, entry.company))
     return jobs
+
+
+def _normalize(raw: dict, slug: str, company: str = "") -> NormalizedJob:
+    categories = raw.get("categories") or {}
+    if not isinstance(categories, dict):
+        categories = {}
+    return NormalizedJob(
+        title=str(raw.get("text") or ""),
+        canonical_url=str(raw.get("hostedUrl") or ""),
+        company=company or str(raw.get("company") or "") or slug,
+        location=_location(categories),
+        description=str(raw.get("descriptionPlain") or ""),
+        posted_at=_posted_at(raw),
+        salary=_salary(raw),
+        source_adapter=ID,
+    )
+
+
+def fetch_posting(url: str, fetcher: Fetcher) -> NormalizedJob | None:
+    """One posting, by its own endpoint. None when `url` isn't a single job, so
+    the caller falls back to the board list."""
+    slug, region = _slug_and_region(url)
+    posting_id = _posting_id(url)
+    if not slug or not posting_id:
+        return None
+    payload = fetcher.get_json(
+        f"https://api.{region}lever.co/v0/postings/{slug}/{posting_id}?mode=json"
+    )
+    if not isinstance(payload, dict) or not payload.get("text"):
+        return None
+    return _normalize(payload, slug)

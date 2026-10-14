@@ -1,21 +1,9 @@
 """Resume ingestion for onboarding (FR-OB-04 / US-OB-02).
 
-A dedicated router (kept out of the concurrently-edited `routes.py`, wired via
-`include_router` in `main.py` exactly like `api/engines.py`). It backs the
-onboarding Resume step's upload affordance:
-
-- `POST /api/profile/ingest` — takes a multipart file and returns the extracted
-  text for the user to review/edit before it is persisted. Format handling lives
-  in `app/doc_extract.py` (`.md`/`.txt` UTF-8 as-is; `.pdf` via the layout-aware
-  `app/pdf_markdown.py` reconstruction; `.docx`/`.odt` via stdlib ZIP+XML;
-  `.pages` via its embedded preview PDF; `.rtf` best-effort). The reviewed text
-  is persisted separately by `POST /api/profile`
-  (`ProfileUpsert.resume_markdown`) — this endpoint never writes to the DB.
-
-**Honest failure (non-negotiable #3 — never persist garbage).** An empty or
-undecodable extraction returns **422** with a clear message telling the user to
-paste their resume instead, rather than yielding an empty/garbled draft.
-"""
+POST /api/profile/ingest takes a file and returns its extracted text for review;
+formats live in `app/doc_extract.py`. It never writes the DB: the reviewed text
+is saved by POST /api/profile. An empty or undecodable extraction is a 422
+asking the user to paste instead, never a garbled draft."""
 
 from __future__ import annotations
 
@@ -25,6 +13,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..doc_extract import ExtractionError, extract_markdown
+from ..resume_check import resume_warnings
 
 router = APIRouter()
 
@@ -39,6 +28,8 @@ class ProfileIngestResult(BaseModel):
     text: str
     filename: str
     chars: int
+    # `not_a_resume` / `instructions` (resume_check.py, S-C57); shown, never blocking.
+    warnings: list[str] = []
 
 
 @router.post("/api/profile/ingest")
@@ -65,4 +56,6 @@ async def ingest_resume(file: UploadFile = File(...)) -> ProfileIngestResult:  #
     except ExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return ProfileIngestResult(text=text, filename=filename, chars=len(text))
+    return ProfileIngestResult(
+        text=text, filename=filename, chars=len(text), warnings=resume_warnings(text)
+    )

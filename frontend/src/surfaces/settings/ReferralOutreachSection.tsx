@@ -1,17 +1,7 @@
-// Referral Outreach risk toggle — the canonical feature name for the automated
-// LinkedIn module (maintainer, 2026-07-10). The Networking tab (contact CRM +
-// kanban + manual tracking) is ALWAYS available and carries no risk; this gates
-// only the automated actions. This section is deliberately the feature's ONE
-// reveal point (it is never advertised elsewhere), so the copy carries the full
-// context. (Extracted from Settings.tsx 2026-07-25, F-M6 monolith split — pure
-// moves, zero behavior change. The `ack` checkbox state stays at the Settings
-// root so it survives pane switches exactly as before.) Not memoized: `ack` /
-// `onAck` change with root state by design.
-//
-// The consent scaffold itself (hazard badge, risk line, ack checkbox, gated
-// toggle, durable ack timestamp) is `LinkedInOptIn` — shared with the LinkedIn
-// job-search opt-in since 2026-08-02 (duplication audit D-F3), so an
-// ack-semantics fix can no longer land on one opt-in and miss the other.
+// Referral Outreach risk toggle: gates only the automated LinkedIn actions; the
+// Networking CRM is always available. This is the feature's 1 reveal point, so the
+// copy carries the full context. `ack` lives at the Settings root to survive pane
+// switches, so it isn't memoized; the scaffold is `LinkedInOptIn` (D-F3).
 
 import { Trans, useTranslation } from "react-i18next";
 

@@ -1,18 +1,10 @@
-"""Multi-format resume extraction → markdown, behind the Upload affordance
-(Master resume ingest — FR-OB-04 / US-OB-02, extended 2026-07-28 from PDF-only).
+"""Multi-format resume extraction to markdown (FR-OB-04 / US-OB-02).
 
-One entry point, `extract_markdown(filename, data)`, dispatches by extension.
-Dependency-free on purpose, matching `pdf_markdown.py`: DOCX and ODT are ZIP+XML
-and are parsed with the stdlib; `.pages` reuses its own embedded preview PDF
-through the PDF path; RTF is stripped heuristically. Legacy `.doc` (an OLE
-binary) has no reliable in-process reader, so it fails with an honest
-"export to PDF/DOCX" message (it can still be *attached* as a binary document —
-that path never parses the bytes).
-
-Raises `ExtractionError` (its message is safe to show the user) when a file
-can't be read; callers map it to HTTP 422. An empty extraction is an error, not
-a silently-empty draft (non-negotiable #3 — never persist garbage).
-"""
+`extract_markdown(filename, data)` dispatches by extension, dependency-free:
+DOCX and ODT via stdlib ZIP+XML, `.pages` via its preview PDF, RTF stripped
+heuristically. Legacy `.doc` fails with an "export to PDF/DOCX" message (it can
+still be attached). `ExtractionError` carries a user-safe message (HTTP 422);
+an empty extraction is an error, never an empty draft."""
 
 from __future__ import annotations
 
@@ -52,14 +44,9 @@ def suffix_of(filename: str) -> str:
 
 
 def _extract_pdf(data: bytes) -> str:
-    """PDF → markdown, layout-aware first, flat fallback second.
-
-    The structured pass (pdfplumber words → `pages_to_markdown`) rebuilds
-    headings/bullets/bold and — critically — inter-word spacing, which pypdf's
-    flat extraction drops entirely on some generators (a Google-Docs-exported
-    resume came back with the words fused together). Any structured-pass
-    failure falls through to pypdf so an odd PDF still yields *something*;
-    a fully unreadable file raises the honest error."""
+    """PDF to markdown: the layout-aware pass first (it keeps the inter-word spacing
+    pypdf drops on some generators), then pypdf flat as fallback; an unreadable file
+    raises the honest error."""
     from .pdf_markdown import pages_to_markdown
 
     try:
@@ -129,12 +116,8 @@ def _read_zip_member(z: zipfile.ZipFile, name: str) -> bytes:
 
 
 def _parse_xml(content: bytes) -> ET.Element:
-    """Parse an OOXML/ODF part, refusing DTDs/custom entities first.
-
-    Legitimate Office/OpenDocument parts never declare a DOCTYPE or custom
-    entities, so rejecting them closes the "billion laughs" / XXE class of
-    attacks on untrusted uploads; ElementTree's expat resolves no external
-    entities by default, and the uncompressed size is capped upstream."""
+    """Parse an OOXML/ODF part, refusing DTDs and custom entities, which real Office
+    parts never declare; closes the billion-laughs and XXE class on uploads."""
     if b"<!DOCTYPE" in content or b"<!ENTITY" in content:
         raise ExtractionError(
             "That file declares a document type we won't process for safety. "

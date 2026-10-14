@@ -1,30 +1,11 @@
 """Networking operation entrypoints (Track N3).
 
-Wires the N2 Networker silo (`sidecar.modules.networker`) into the operation
-runner as three bounded ops (US-REF-01/03/04, FR-REF-*):
-
-- `discover` — zero-LLM; delegates to the voyager subprocess driver, then
-  upserts each candidate as a `Contact` row (status `candidate`, off the kanban
-  until reached) + a per-job `ReferralCandidate`. Streams `networker` SSE events
-  for the find-referrals popup's live list.
-- `draft`   — the one LLM op; routed engine (like tailor/cover). Grounds one
-  per-audience referral draft in the master profile. Returned in `result_ref`
-  (a transient preview — not persisted as an artifact).
-- `send`    — zero-LLM; routes warm→DM / cold→connection-note through the
-  voyager driver. Persists an `OutreachLog` (verbatim voyager error per
-  NFR-SIDE-04), flips the contact onto the kanban, and moves a Saved card to
-  Seeking Referral on the first real send (US-NW-09 batch-settle guard).
-
-**Direct in-process.** This is `app/` importing `modules/` (the allowed one-way
-direction, section 5.2). The GPLv3 OpenOutreach-derived worker is reached through the
-silo's `DirectVoyagerDriver`, which calls it in-process — the subprocess firewall
-the prior MIT-era repository used is retired (AGPL host; section 2).
-
-**Test seam.** The voyager driver is built through `DRIVER_FACTORY` so tests
-inject a fake driver (zero live LinkedIn traffic — the wire stays cold; the
-maintainer dogfoods the live send path). The LLM engine for `draft` comes from
-`ctx.engine` (routed), so tests pass a FakeEngine the same way as tailor/cover.
-"""
+`discover` (0 LLM): voyager finds people, upserted as `candidate` Contacts plus a
+per-job ReferralCandidate, streaming `networker` events. `draft`: the 1 LLM op,
+a per-audience draft in `result_ref`. `send` (0 LLM): DM or connection note,
+with an OutreachLog per attempt (NFR-SIDE-04), the kanban flip, and Saved to
+Seeking Referral on the first real send. The GPLv3 worker runs in-process via
+`DirectVoyagerDriver`; tests inject `DRIVER_FACTORY`."""
 
 from __future__ import annotations
 
@@ -69,14 +50,11 @@ if TYPE_CHECKING:
 # override this seam with a fake that ignores the arg.
 DriverFactory = Callable[["PacingProfile | None"], VoyagerDriver]
 
-# Broker seam (Phase-3 referral integration). A `(slug) -> ready surface`
-# callable over the core browser broker; the slug is a runtime argument owned
-# inside the GPL package, so this module never names the vendor. When set (by the
-# host — see `build_surface_provider`), the real driver runs every referral page
-# action on the broker's single serialized surface lane instead of launching its
-# own Chromium. None (the default) keeps the self-launch path — the only path the
-# automated tests exercise, since they inject a fake driver through
-# `DRIVER_FACTORY` and never reach this seam.
+# Broker seam: a `(slug) -> ready surface` callable over the core broker; the
+# slug is owned inside the GPL package, so this module never names the vendor.
+# When the host sets it (`build_surface_provider`), the driver runs on the broker's
+# serialized lane instead of its own Chromium. None keeps the self-launch path,
+# which the tests use via `DRIVER_FACTORY`.
 SurfaceProvider = Callable[[str], Any]
 SURFACE_PROVIDER: SurfaceProvider | None = None
 
@@ -84,18 +62,10 @@ SURFACE_PROVIDER: SurfaceProvider | None = None
 def build_surface_provider(
     broker: Any, loop: asyncio.AbstractEventLoop
 ) -> SurfaceProvider:
-    """A `(slug) -> ready surface` provider over the core browser broker, built by
-    the host (which holds the broker and the serving loop) and safe to invoke
-    from an operation WORKER THREAD.
-
-    The bridge that makes a synchronous worker op able to drive an async-launched
-    surface: `broker.surface(slug)` starts the surface's own thread synchronously,
-    but waiting for it to come up (`wait_ready`) awaits a loop-bound event, so we
-    marshal that await onto the serving loop with `run_coroutine_threadsafe` and
-    block only THIS worker thread on the returned `concurrent.futures.Future` —
-    never the serving loop (async-first). Actions then run on the surface's lane,
-    whose `run_on_lane` hands back a `concurrent.futures.Future` the sync worker
-    likewise `.result()`s. The serving loop is never blocked at any point."""
+    """A `(slug) -> ready surface` provider over the broker, safe from a worker
+    thread. `wait_ready` awaits a loop-bound event, so it's marshalled with
+    `run_coroutine_threadsafe` and only this worker blocks on the future; lane
+    actions return futures the same way. The serving loop never blocks."""
 
     def _provider(slug: str) -> Any:
         surface = broker.surface(slug)
@@ -111,15 +81,9 @@ def build_surface_provider(
 
 
 def _require_presence(ctx: OperationContext) -> None:
-    """Refuse a logged-in LinkedIn run unless the user asked for it (invariant 3).
-
-    Presence IS the user's explicit click: gated runs must carry the
-    `user_initiated` snapshot marker that only a click path sets, so a background
-    timer or scheduler can never start one. The first live version also demanded
-    an attached screencast viewer and a visible surface; the maintainer killed
-    both signals on 2026-08-14 (they gate on attention, not presence — see
-    `presence_gate.py`). Raises `PresenceAbsent`, surfaced verbatim on the op
-    row."""
+    """Refuse a logged-in LinkedIn run unless the user asked (invariant 3): the run
+    must carry the `user_initiated` marker only a click sets. Viewer and visibility
+    checks were dropped on 2026-08-14 (presence_gate.py). Raises `PresenceAbsent`."""
     verdict = decide_presence(
         user_initiated=bool(ctx.input_snapshot.get("user_initiated"))
     )
@@ -135,20 +99,10 @@ def linkedin_data_dir() -> Path:
 
 
 def linkedin_broker_profile_dir() -> Path:
-    """The core browser broker's PER-SLUG persistent profile dir for the referral
-    surface — `<data>/browser/<slug>/profile`.
-
-    Phase-5 reconciliation (2026-08): the one-time headed login and every later
-    referral op now share ONE Chromium profile with the broker's headless surface
-    for this slug, so a session captured by the login is the session a broker
-    surface (launched on the same slug) reads back. Two invariants hold it
-    together, both deliberate:
-      - The slug is the package's runtime value (`referral_surface_slug()`), owned
-        inside the GPL package — no broker-slug vendor literal is added to core.
-      - The `<data>/browser/<slug>/profile` layout is the broker's OWN derivation
-        (`BrowserBroker.profile_dir`), reused here so the login-write dir and the
-        surface-read dir can never drift. The throwaway broker launches nothing
-        (construction only computes the path)."""
+    """The broker's per-slug profile dir for the referral surface,
+    `<data>/browser/<slug>/profile`, shared by the headed login and the headless
+    surface so 1 session serves both. The slug is the package's runtime value, and
+    the layout is `BrowserBroker.profile_dir`'s own derivation, so they can't drift."""
     from sidecar.app.browser import BrowserBroker
     from sidecar.packages.referral_outreach import referral_surface_slug
 
@@ -156,15 +110,9 @@ def linkedin_broker_profile_dir() -> Path:
 
 
 def linkedin_profile_dir() -> Path:
-    """`<app-data>/browser/<slug>/profile/` — the PERSISTENT Chromium user-data-dir
-    the one-time headed login writes into and a headless broker surface reads back
-    (Phase 5). Cookies live here across sessions; the user can reopen this profile
-    and log out to end the app's session. Secret-at-rest like the JSON.
-
-    **Maintainer-only live path.** The real login runs a VISIBLE Chrome the
-    maintainer signs into by hand (2FA, most-trusted fingerprint); it writes the
-    session here. Automated tests never touch it — they inject a fake driver, or
-    drive `capture_login` against a LOCAL fixture into a temp profile dir."""
+    """The persistent Chromium profile the headed login writes and the broker surface
+    reads; secret at rest. Only the maintainer runs the real login; tests use a fake
+    driver or a local fixture in a temp dir."""
     return linkedin_broker_profile_dir()
 
 
@@ -185,19 +133,10 @@ def linkedin_state_dir() -> Path:
 
 
 def _default_driver_factory(profile: PacingProfile | None) -> VoyagerDriver:
-    """Build the production in-process driver from the app-data dir.
-
-    `storage_state` is the saved-cookie file the LinkedIn-connect flow writes
-    (the path is always passed — `login` *creates* it, and discover/send fail
-    cleanly with a typed "no session" error when it is absent); `state_dir` is the
-    voyager pacing ledger. Both live under the data dir. The session-store
-    encryption key rides in the child env (NFR-SEC-01) so voyager seals/reads
-    the storage-state file — env, never argv. This is only ever *run* live by
-    the maintainer — automated tests inject a fake driver (wire stays cold).
-
-    `profile` (membership × risk% × overrides) drives every cap. `linkedin_plan`
-    is derived from the membership purely so the note-budget path (which still
-    branches on free-vs-paid) keeps working: any paid membership → 'premium'."""
+    """Build the production in-process driver from the app-data dir: the saved-cookie
+    `storage_state` path and the pacing-ledger `state_dir`, with the session key in
+    the env, never argv (NFR-SEC-01). `profile` drives every cap; `linkedin_plan`
+    derives from it for the note budget. Run live only by the maintainer."""
     from ..security import SESSION_KEY_ENV, get_session_key
 
     plan = plan_for_membership(profile.membership if profile is not None else None)
@@ -261,15 +200,9 @@ CAP_LABELS: dict[str, str] = {
 
 
 def linkedin_caps_snapshot(profile: PacingProfile) -> dict:
-    """The effective self-imposed caps for `profile`, for the Settings UI and
-    Next-page gating. The NUMBERS come from the package (`resolve_profile`,
-    `resolve_membership`) — the host never computes them — and the live hourly
-    job-search usage is read from the same ledger the worker charges, so the
-    display and the enforcement can never disagree (NFR-LI-02).
-
-    DB-free on purpose: it reads the pacing-ledger FILE, so async routes call it
-    through `asyncio.to_thread` (async-first rule) after resolving the profile
-    inside their repos context."""
+    """The effective caps for `profile`, for Settings and Next-page gating. Numbers
+    come from the package, and hourly usage from the ledger the worker charges, so
+    display and enforcement agree (NFR-LI-02). A file read: use `asyncio.to_thread`."""
     from sidecar.packages.referral_outreach import (
         MEMBERSHIPS,
         OVERRIDABLE,
@@ -313,12 +246,8 @@ def linkedin_caps_snapshot(profile: PacingProfile) -> dict:
 
 
 def linkedin_quota_snapshot(profile: PacingProfile) -> dict:
-    """The referral-quota payload (used + caps per window) read from the SAME
-    pacing ledger the send path enforces — the popup's numbers and the refusals
-    can never disagree (the old app-side OutreachLog recount drifted: it saw
-    only confirmed sends, while enforcement charges attempts and refunds proven
-    no-sends). DB-free; async routes call it via `asyncio.to_thread` (ledger
-    file read)."""
+    """The referral quota (used and caps per window) from the ledger the send path
+    enforces, so the popup and refusals agree. A file read: use `asyncio.to_thread`."""
     from sidecar.packages.referral_outreach import resolve_profile
     from sidecar.packages.referral_outreach.facade import Pacer
 
@@ -340,12 +269,8 @@ def linkedin_feature_flags(repos: Repos) -> tuple[bool, bool]:
 
 
 def _public_id_from_url(url: str) -> str:
-    """The /in/<slug> public identifier from a LinkedIn profile URL.
-
-    Live-dogfood fix 2026-07-08: this used to pass the FULL URL as the
-    public_identifier, so voyager navigated to
-    `linkedin.com/in/https://www.linkedin.com/in/<slug>/` — a genuine 404 —
-    and every send failed. (Clean-room parse; no GPL import — NFR-LIC-01.)"""
+    """The /in/<slug> public identifier from a profile URL. Passing the full URL
+    once sent every send to a 404. Clean-room parse (NFR-LIC-01)."""
     from urllib.parse import unquote, urlparse
 
     parts = urlparse(url.strip()).path.strip("/").split("/")
@@ -413,23 +338,11 @@ def _resolve_company_urn(
     company_url: str | None,
     dry_run: bool,
 ) -> tuple[str | None, str, list[dict], dict, str]:
-    """Resolve `company` → the LinkedIn company URN to scope discovery by (FR-NW-02).
-
-    Precedence: a pasted LinkedIn company URL (authoritative) → a prior cached
-    choice → a fresh typeahead where ONLY a domain-website match auto-picks →
-    otherwise the candidate list (possibly empty) is returned for the user to
-    confirm or paste. **There is no name-keyword fallback**: if we can't resolve a
-    real entity, the caller does NOT discover — it asks the user. This is the fix
-    for the "zip" failure, where a 0-hit typeahead silently reverted to a keyword
-    search and returned employees of unrelated namesake companies.
-
-    Returns (company_urn | None, resolved_name, confirm_candidates, usage,
-    refusal_reason). A `company_urn is None` return with an empty
-    `refusal_reason` ALWAYS means "ask the user" (never "discover anyway");
-    `confirm_candidates` may be empty (→ the popup offers paste-only). A set
-    `refusal_reason` means voyager REFUSED to look (cap/backoff) — the caller
-    must surface the refusal, never the confirm step (a spent read budget is
-    not "we couldn't find this company")."""
+    """Resolve `company` to the LinkedIn URN that scopes discovery (FR-NW-02): a
+    pasted company URL, then a cached choice, then typeahead where only a website
+    match auto-picks, else candidates for the user. No keyword fallback (the "zip"
+    bug). URN None with no `refusal_reason` means ask the user; a set reason means
+    voyager refused, and the caller shows that."""
     assert ctx.db is not None  # caller guarantees a DB context
     key = resolution_key(canonical_url, source_adapter, company)
 
@@ -476,12 +389,9 @@ def _refused_outcome(
     ctx: OperationContext, *, company: str, job_id: str | None, reason: str,
     usage: dict,
 ) -> OperationOutcome:
-    """The discover outcome for a voyager read refusal (cap/backoff).
-
-    Emits `discover_refused` (the popup stops its spinner and shows the verbatim
-    reason) and marks the result_ref `refused` so the candidates endpoint can
-    tell "we were not allowed to look" apart from "we looked and found nobody"
-    — the distinction the Kaseya 0-contact bug collapsed."""
+    """The discover outcome for a voyager refusal: emits `discover_refused` and marks
+    result_ref `refused`, so "not allowed to look" never reads as "found nobody"
+    (the Kaseya bug)."""
     if ctx.publish is not None:
         ctx.publish(make_event("networker", {
             "id": ctx.operation_id, "phase": "discover_refused",
@@ -495,13 +405,9 @@ def _refused_outcome(
 
 
 def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
-    """Resolve the target company to a LinkedIn entity, then discover ≤ limit of
-    its CURRENT employees and upsert them as candidate rows (US-REF-01 / FR-NW-02).
-
-    A `company_urn` in the snapshot is the user's confirmed pick (from the
-    company-confirm popup) — it's cached and used directly. Otherwise resolution
-    runs: an unambiguous result discovers immediately; an ambiguous one returns
-    `needs_company_confirm` (nothing discovered) so the popup can ask the user."""
+    """Resolve the company to a LinkedIn entity, then discover up to `limit` current
+    employees as candidates (US-REF-01 / FR-NW-02). A snapshot `company_urn` is the
+    user's pick; an ambiguous resolution returns `needs_company_confirm`."""
     snap = ctx.input_snapshot
     company = snap.get("company", "")
     job_id = snap.get("job_id")
@@ -520,7 +426,7 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile = resolve_pacing_profile(repos)
         job = repos.jobs.get(job_id) if job_id else None
         job_text = job.description if job is not None else ""
-        canonical_url = job.canonical_url if job is not None else ""
+        canonical_url = (job.canonical_url or "") if job is not None else ""
         source_adapter = job.source_adapter if job is not None else ""
 
     resolve_usage: dict = {}
@@ -669,12 +575,14 @@ def draft_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile = repos.profile.get_current()
         master_md = profile.resume_markdown if profile is not None else ""
 
-    from ..prompt_overrides import get_override
+    from .operations import prompt_for
 
+    # `draft` already persists nothing and returns the message in its result,
+    # so a prompt-tuning test run of this kind needs only the draft prompt.
     result = net_draft(
         net_contact, job_text, guidance=guidance,
         master_md=master_md, engine=ctx.engine.engine,
-        skill_md=get_override("networker_draft"),
+        skill_md=prompt_for(ctx, "networker_draft"),
         cancelled=ctx.cancelled,
     )
     return llm_outcome(
@@ -717,15 +625,10 @@ def _maybe_move_on_batch_settle(
     application_id: str | None,
     job_id: str | None,
 ) -> None:
-    """Advance a Saved card → Seeking Referral once, at *batch settle* (FR-NW-03).
-
-    The move fires only when every send op of the batch is terminal — so the
-    *last* send to finish triggers it, never the first — and only if ≥1 send in
-    the batch actually landed and the card is still in Saved (never dragging an
-    Applied+/frozen card backward). A lone send (no `batch_id`) is its own settled
-    batch, preserving the single-send move. The current op is still `running`
-    while this executes, so it is excluded from the "siblings still in flight"
-    check and its just-written OutreachLog carries its outcome."""
+    """Move a Saved card to Seeking Referral once, at batch settle (FR-NW-03): when
+    every send of the batch is terminal, at least 1 landed, and the card is still
+    Saved. A lone send is its own batch. The current op is excluded from the
+    in-flight check."""
     if not application_id or not job_id:
         return
     member_ids: set[str] = {current_op_id} if current_op_id else set()
@@ -797,12 +700,9 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
 
-    # The send announces itself (`sending`, with the routed channel), then
-    # narrates REAL progress: the driver reports each completed step
-    # (`send_step` with the plan key) from the code that drove it — the
-    # pacing wait, the profile open, the click, the note, the verified send
-    # (maintainer, 2026-08-16: the queue panel ticks live, no fabrication
-    # needed since we are the ones driving).
+    # The send announces itself (`sending`, with the routed channel), then reports
+    # each completed step (`send_step`) from the code that drove it: the pacing wait,
+    # the profile open, the click, the note, the verified send.
     routed_channel = "dm" if is_first_degree else "connection_note"
     op_id = ctx.operation_id or ""
     _progress_start(op_id, routed_channel)
@@ -835,26 +735,18 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
             on_step=_publish_step,
         )
     except (NetworkerError, OSError, RuntimeError) as exc:
-        # Only `NetworkerError` was caught until 2026-09-20, and the driver wraps
-        # nothing but `VoyagerError` (`modules/networker/driver.py`). So a browser
-        # that failed to launch (`BrowserLaunchError`, a RuntimeError), a browser
-        # that stopped answering (`BrowserUnresponsiveError`, an OSError), an
-        # exhausted 5xx retry (OSError) and a navigation guard (a bare
-        # RuntimeError) all escaped this block: no OutreachLog row, no
-        # `send_failed` event, and the referrals row spun on "Sending" until the
-        # modal was closed. `route_cause` already walks `__cause__` and clamps an
-        # unrecognized one to `unknown`, so the body below needs no change.
+        # Catches every exception, not just `NetworkerError`: the driver wraps only
+        # `VoyagerError`, so launch failures, an unresponsive browser, an exhausted 5xx
+        # retry and navigation guards all escaped, leaving no OutreachLog row and a row
+        # stuck on "Sending". `route_cause` clamps an unrecognized cause to `unknown`.
         SEND_PROGRESS.pop(op_id, None)
         # S-C14: name the failure. A recognized worker state routes to its coded
         # label; an unrecognized one hard-stops, captures evidence and asks the
         # model for one label. The router never picks an action.
         routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
-        # A hard voyager failure (stale selector, subprocess crash, unparseable
-        # JSON) used to skip the OutreachLog write entirely — the "6 failed sends,
-        # outreach_logs empty" dogfood bug. The audit row is a hard requirement for
-        # EVERY attempt incl. failures (FR-REF OutreachLog / NFR-SIDE-04), so we
-        # persist the verbatim failure here, emit the send_failed event, then
-        # re-raise so the operation is still marked failed (traceback → recorder).
+        # Every attempt gets an OutreachLog row, failures included (NFR-SIDE-04); a hard
+        # failure once skipped it (6 failed sends, 0 logs). Persist the verbatim failure,
+        # emit send_failed, then re-raise so the op still fails.
         channel = "dm" if is_first_degree else "connection_note"
         detail = str(exc)
         now = now_utc()
@@ -901,13 +793,9 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         )
         log_id = log.id
         if result.sent and not dry_run:
-            # Flip onto the kanban. A 1st-degree contact is already connected —
-            # a DM lands them in Accepted; a cold connect-note lands them in Sent.
-            #
-            # S-N4: this used to write "accepted" unconditionally, erasing the
-            # fact that a contact had ever written back. A DM we just sent means
-            # ours is the last message, so anyone who has replied before belongs
-            # in `pending_their_response`, never back in `accepted`.
+            # Flip onto the kanban: a DM to a 1st-degree contact lands in Accepted, a cold
+            # connect note in Sent. S-N4: a DM we just sent makes ours the last message, so a
+            # contact who has replied before goes to `pending_their_response`, not `accepted`.
             if is_first_degree:
                 row = repos.contacts.get(contact_id)
                 payload = (row.profile_payload or {}) if row else {}

@@ -1,27 +1,10 @@
-"""Workday adapter — public CxS JSON API (no auth, no key).
+"""Workday adapter: public CxS JSON API, no key.
 
-Claims `{tenant}.wd{N}.myworkdayjobs.com/...{site}` career-site URLs (with or
-without a locale segment like `en-US`). The public list endpoint answers only
-to POST:
-
-    POST https://{host}/wday/cxs/{tenant}/{site}/jobs
-    {"limit": 20, "offset": N, "searchText": "", "appliedFacets": {}}
-
-→ `{"total": T, "jobPostings": [{title, externalPath, locationsText,
-postedOn, ...}]}`. The server caps `limit` at 20, so unlike every GET adapter
-this one paginates — bounded at `MAX_PAGES` requests per scan (the fetcher
-counts each into the source's Usage; the per-source request budget stays
-visible, discovery-expansion decision 2026-07-17).
-
-Honest field notes: the list payload has no JD body (per-job fetch
-deliberately avoided — SmartRecruiters/Recruitee precedent, `description=""`
-and quality flags it) and `postedOn` is relative human text ("Posted Today",
-"Posted 3 Days Ago"); the parseable forms convert to an ISO date, "30+ Days
-Ago" honestly stays empty rather than guessing.
-
-Re-derived from the public CxS payload shape; career-ops's MIT provider is
-the behavioral reference (no code copied — see THIRD_PARTY_NOTICES.md).
-"""
+Claims `{tenant}.wd{N}.myworkdayjobs.com/...{site}` URLs. The list answers only
+POST `/wday/cxs/{tenant}/{site}/jobs`, capped at 20 per page, so it paginates up
+to `MAX_PAGES`. `fetch_detail` fills the JD. `postedOn` is relative text;
+parseable forms become a date, "30+ Days Ago" stays empty. career-ops's MIT
+provider as behavioral reference."""
 
 from __future__ import annotations
 
@@ -35,6 +18,8 @@ from ..types import NormalizedJob, ScraperError
 from .base import path_segments
 
 ID = "workday"
+LABEL = "Workday"
+KIND = "ats"
 
 _HOST_RE = re.compile(r"^([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com$")
 _LOCALE_RE = re.compile(r"^[a-z]{2}-[A-Z]{2}$")

@@ -1,48 +1,17 @@
-// Covers: manual-only contact-sync (maintainer decision, 2026-08-15) and the
-// honest busy state. The on-open auto-sync is gone, so mounting the Networking
-// tab must fire ZERO contact-sync requests; the Sync button fires exactly one;
-// the button disables with a spinning icon while the work is genuinely in
-// flight; and completion lands visibly — the "Synced just now" stamp appears
-// and the kanban's contact list refetches, so a card a sweep moved repaints
-// without a manual reload. The tooltip states the manual-only reality and no
-// longer mentions the retired on-open path.
-//
-// ZERO live LinkedIn: the session is dev-marked valid (no cookies exist) and
-// the ONE Sync click runs against an EMPTY contact roster — the sync op's
-// batch is empty, so the voyager driver is never constructed and no browser
-// ever launches (`contact_sync_op.py` builds the driver only for a non-empty
-// eligible set). This spec must therefore run on a fresh profile with no
-// seeded contacts; it seeds none itself, and it hard-fails before clicking if
-// any exist.
-//
-// The empty sweep settles in well under a second, too fast to reliably catch
-// the op-driven half of the busy state here, so the POST is held ~1.2 s via
-// route interception to make the visible busy window deterministic. The
-// op-tracking half (busy from SSE enqueue to terminal, the ledger seed) is
-// unit-covered in `src/api/queries.test.ts` (useContactSyncInFlight).
-//
-// The `-aa-` in the filename is load-bearing (the aa-onboarding / zz-reconnect
-// ordering convention): this spec must run BEFORE networking-browser.spec.ts,
-// whose fixture-mode tests seed contacts into the shared profile — with any
-// contact present, the empty-roster guard below would (rightly) refuse to
-// click Sync.
+// Covers: manual-only contact sync. Opening Networking fires 0 sync requests,
+// the Sync button fires 1, shows busy while the work is in flight, then stamps
+// "Synced just now" and refetches the kanban. Zero LinkedIn: an empty roster
+// means no driver is built, so this needs a fresh profile and refuses to click
+// otherwise; `-aa-` makes it run before networking-browser.spec.ts seeds any.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { sidecarInfo } from "./_helpers";
 
 const DIR = "e2e/_screenshots/networking";
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
-
-function sidecarInfo(): { base: string; token: string } {
-  const env = readFileSync(join(SPEC_DIR, "..", ".env.local"), "utf8");
-  const port = /VITE_SIDECAR_PORT=(\d+)/.exec(env)?.[1];
-  const token = /VITE_SIDECAR_TOKEN=(.+)/.exec(env)?.[1];
-  if (!port || !token) throw new Error(".env.local missing sidecar handshake");
-  return { base: `http://127.0.0.1:${port}`, token };
-}
 
 test("mount syncs nothing; Sync fires once, stays busy for the run, and lands visibly", async ({
   page,

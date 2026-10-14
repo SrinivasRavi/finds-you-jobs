@@ -1,16 +1,8 @@
-"""SmartRecruiters adapter — public postings API (no auth, no key).
+"""SmartRecruiters adapter: public postings API, no key.
 
-Claims `careers.smartrecruiters.com/<slug>` / `jobs.smartrecruiters.com/<slug>`.
-Postings come from `api.smartrecruiters.com/v1/companies/<slug>/postings`, which
-caps at 100 rows/page, so this adapter pages with a bounded loop (unlike the
-single-request ATS adapters). The `ref` on each posting is the API URL; we
-rewrite it to the public `jobs.smartrecruiters.com/<slug>/postings/<id>`
-careers URL — the list payload carries no JD body, so `fetch_detail` fills it
-per row from the single-posting API (approved-plan #8).
-
-Ported from career-ops `providers/smartrecruiters.mjs` (MIT) — see
-THIRD_PARTY_NOTICES.md.
-"""
+Claims `careers.` and `jobs.smartrecruiters.com/<slug>`. Pages the postings API
+(100 per page) in a bounded loop and rewrites each `ref` to the public careers
+URL; `fetch_detail` fills the JD. Ported from career-ops (MIT)."""
 
 from __future__ import annotations
 
@@ -20,9 +12,12 @@ from ..config import SourceEntry
 from ..htmltext import strip_html
 from ..http import Fetcher, paced_pages
 from ..types import NormalizedJob, ScraperError
-from .base import first_path_segment, path_segments
+from .base import detect_url, first_path_segment, path_segments
 
 ID = "smartrecruiters"
+LABEL = "SmartRecruiters"
+KIND = "ats"
+BOARD_URLS = ("https://jobs.smartrecruiters.com/{}",)
 
 _CAREERS_HOSTS = {"careers.smartrecruiters.com", "jobs.smartrecruiters.com"}
 _API_HOST = "api.smartrecruiters.com"
@@ -74,11 +69,7 @@ def _public_url(raw: dict, slug: str) -> str:
 
 
 def detect(entry: SourceEntry) -> str:
-    if entry.type and entry.type != ID:
-        return ""
-    if entry.type == ID and not entry.url:
-        return ""
-    return _slug(entry.url) if entry.url else ""
+    return detect_url(entry, ID, _slug)
 
 
 def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
@@ -89,10 +80,15 @@ def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
     unexpected."""
     if urlsplit(job.canonical_url).netloc.lower() not in _CAREERS_HOSTS:
         return ""
+    # 2 shapes: the `/<slug>/postings/<id>` this adapter writes, and the
+    # `/<slug>/<id>-<title>` the site itself serves (a pasted link).
     segments = path_segments(job.canonical_url)
-    if len(segments) < 3 or segments[1] != "postings":
+    if len(segments) >= 3 and segments[1] == "postings":
+        slug, posting_id = segments[0], segments[2]
+    elif len(segments) == 2 and segments[1].split("-", 1)[0].isdigit():
+        slug, posting_id = segments[0], segments[1].split("-", 1)[0]
+    else:
         return ""
-    slug, posting_id = segments[0], segments[2]
     payload = fetcher.get_json(f"https://{_API_HOST}/v1/companies/{slug}/postings/{posting_id}")
     if not isinstance(payload, dict):
         return ""

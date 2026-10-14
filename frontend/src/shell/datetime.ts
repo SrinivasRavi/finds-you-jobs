@@ -5,14 +5,9 @@
 
 import i18n from "../i18n";
 
-/** The BCP-47 tag `Intl` formats against, or `undefined` to defer to the
- *  runtime's own regional settings.
- *
- *  English is the fallback language, and every formatter in the app that wasn't
- *  hardcoded already deferred to the OS/browser locale — so "en" keeps doing
- *  exactly that and a UK install still reads 02/08/2026, not 8/2/2026. A
- *  deliberately selected non-English UI formats in that language instead
- *  (i18next only ever holds one of the 13 short codes; never a region subtag). */
+/** The BCP-47 tag `Intl` formats with, or undefined for the OS locale. English
+ *  defers to the OS, so a UK install still reads 02/08/2026; a chosen non-English
+ *  UI formats in that language (i18next holds only the 13 short codes). */
 function appLocale(): string | undefined {
   const lng = i18n.language;
   return !lng || lng === "en" ? undefined : lng;

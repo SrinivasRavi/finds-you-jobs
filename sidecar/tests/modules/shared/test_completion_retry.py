@@ -9,6 +9,8 @@ sleep / clock, no threads, no network.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from sidecar.modules._shared.claude_engine import EngineError
@@ -18,6 +20,7 @@ from sidecar.modules._shared.completion_retry import (
     MAX_ATTEMPTS,
     RETRY_AFTER_CAP_S,
     CompletionCancelled,
+    complete_and_parse,
     raise_if_cancelled,
     retry_delay_s,
     wait_before_retry,
@@ -166,3 +169,54 @@ def test_raise_if_cancelled() -> None:
     raise_if_cancelled(lambda: False)
     with pytest.raises(CompletionCancelled):
         raise_if_cancelled(lambda: True)
+
+
+@dataclass
+class _U:
+    internal_calls: int = 1
+    tokens_in: int | None = 10
+    tokens_out: int | None = 5
+    usd: float | None = 0.01
+    latency_ms: int | None = 100
+    model: str | None = "m"
+
+
+class _Drift(Exception):
+    def __init__(self, stage: str) -> None:
+        super().__init__(stage)
+        self.stage = stage
+
+
+class _Engine:
+    def __init__(self, outputs: list[str]) -> None:
+        self.outputs = outputs
+        self.calls = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, _U]:
+        self.calls += 1
+        return self.outputs.pop(0), _U()
+
+
+def _parse(raw: str) -> str:
+    if raw.startswith("REFUSED"):
+        raise _Drift("jd-gate")
+    if raw != "ok":
+        raise _Drift("parse")
+    return raw
+
+
+def test_complete_and_parse_reasks_a_parse_miss_and_bills_both_attempts() -> None:
+    engine = _Engine(["garbled", "ok"])
+    value, usage = complete_and_parse(engine, "s", "u", _parse, _Drift)
+    assert value == "ok"
+    assert engine.calls == 2
+    assert usage["internal_calls"] == 2
+    assert usage["usd"] == pytest.approx(0.02)
+
+
+def test_complete_and_parse_never_retries_a_refusal() -> None:
+    engine = _Engine(["REFUSED: not a job", "ok"])
+    with pytest.raises(_Drift) as exc:
+        complete_and_parse(engine, "s", "u", _parse, _Drift)
+    assert exc.value.stage == "jd-gate"
+    assert engine.calls == 1

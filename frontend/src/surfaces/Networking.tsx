@@ -1,16 +1,8 @@
-// Networking kanban — Track N3 (US-NW-01/02/03/07/11), restored 2026-07-16 from
-// the prior repo (the referral-outreach backend now exists on this sidecar): a
-// contact lifecycle kanban (Sent / Accepted → Engagement → Converted | Ghosted),
-// cards with a last-message snippet + days-in-column, a company/audience scope
-// row, and a manual add-contact-by-URL modal (the rank-don't-gate escape hatch).
-// Always reachable (2026-07-09 always-on decision): the CRM carries no account
-// risk; the LinkedIn risk toggle gates only automated actions (FR-SET-03).
-//
-// The LinkedIn status button below (2026-08-16, was a read-only pill) is the
-// one opener for the LinkedIn browser modal: it shows the session status —
-// plus a live "in progress" state while an op drives the surface — and opens
-// the modal, except in the expired/never-connected states, where it lands on
-// Settings (the connect flow lives there).
+// Networking kanban (US-NW-01/02/03/07/11): contact columns from Sent to
+// Converted or Ghosted, cards with a last-message snippet and days in column, a
+// company and audience scope row, and add-contact-by-URL. The LinkedIn status
+// button is the opener for the browser modal; when the session is expired or never
+// connected it lands on Settings instead.
 
 import { useMemo, useState } from "react";
 import type { TFunction } from "i18next";
@@ -41,7 +33,11 @@ import { opBusy } from "./BrowserOpPlan";
 import { ContactComposer } from "./ContactComposer";
 import { daysBetween } from "./jobFormat";
 import { useLinkedInBrowser } from "./LinkedInBrowserProvider";
-import { type LinkedInPillState, type LinkedInPillTone, linkedInStatusPill } from "./linkedInStatus";
+import {
+  HEADER_PILL_CLS,
+  HEADER_PILL_LABEL,
+  linkedInStatusPill,
+} from "./linkedInStatus";
 
 // label/empty hold i18n keys — wrapped with t(...) at render.
 const COLUMNS: { id: ConnectionStatus; label: string; dot: string; empty: string }[] = [
@@ -61,22 +57,6 @@ function statusLabel(status: ConnectionStatus, t: TFunction): string {
   const column = COLUMNS.find((col) => col.id === status);
   return column ? t(column.label) : status;
 }
-
-// The header's read-only session chip. Tone + which state a status means come
-// from the shared table (duplication audit D-F8); the classes and the copy stay
-// here because this chip is not the one Settings renders.
-const PILL_CLS: Record<LinkedInPillTone, string> = {
-  good: "bg-good-wash border-good text-good",
-  warn: "bg-warn-wash border-warn text-warn",
-  bad: "bg-bad-wash border-bad text-bad",
-};
-const PILL_LABEL: Record<LinkedInPillState, string> = {
-  connected: "networking.linkedinPill.connected",
-  connecting: "networking.linkedinPill.connecting",
-  backingOff: "networking.linkedinPill.backingOff",
-  expired: "networking.linkedinPill.expired",
-  disconnected: "networking.linkedinPill.connect",
-};
 
 function daysSince(iso: string | null): number | null {
   if (!iso) return null;
@@ -99,13 +79,10 @@ export function lastMessageAttribution(
   return { key: "networking.card.me" };
 }
 
-/** The instant a card's shown activity happened, for ordering a kanban column
- *  (most recent first, maintainer ask 2026-08-16). Exactly the timestamp the
- *  card displays (`last_message_at ?? sent_at`), then the row's other
- *  lifecycle stamps so undated cards still order deterministically — and NEVER
- *  `last_touched_at`, the sync engine's rotation cursor, whose churn is what
- *  made the board reshuffle on every Sync press. Exported for its unit
- *  tests. */
+/** When a card's shown activity happened, for ordering a column most recent
+ *  first: the timestamp the card displays, then its other lifecycle stamps, and
+ *  never `last_touched_at`, the sync cursor whose churn reshuffled the board.
+ *  Exported for its unit tests. */
 export function cardActivityAt(
   c: Pick<NetContact, "last_message_at" | "sent_at" | "accepted_at" | "added_at">,
 ): number {
@@ -177,16 +154,10 @@ export function Networking() {
   const contacts = useMemo(() => contactsQ.data ?? [], [contactsQ.data]);
   const update = useUpdateContact();
   const sync = useSyncContacts();
-  // Manual-only sync (maintainer decision, 2026-08-15): the Sync button below
-  // is the ONE trigger. No on-open refresh, no interval, no background timer —
-  // opening this tab causes zero LinkedIn traffic.
-  //
-  // Busy state follows the real operation, not the 202: the POST returns the
-  // moment the sweep is enqueued while the paced read probes run on for a
-  // while, so `syncInFlight` tracks the live `contact_sync` op off the SSE bus
-  // (with a ledger seed for one already running at mount) and holds the button
-  // in "Syncing…" until the op actually settles — at which point the SSE
-  // terminal handler refetches the kanban and the "Synced just now" stamp.
+  // Manual-only sync: the Sync button is the 1 trigger, so opening this tab makes
+  // 0 LinkedIn requests. Busy follows the operation, not the 202: `syncInFlight`
+  // tracks the live `contact_sync` op off SSE until it settles, when the terminal
+  // handler refetches the kanban and the stamp.
   const syncInFlight = useContactSyncInFlight();
   const syncBusy = sync.isPending || syncInFlight;
   // Refreshing needs both the master toggle and a live session; without either
@@ -202,12 +173,9 @@ export function Networking() {
   const [error, setError] = useState<string | null>(null);
   const reachOut = useReachOut();
 
-  // The ONE send path (useReachOut → POST /api/referrals/reach-out), owned here
-  // so it outlives the modal that asked for it. A send is meant to be WATCHED
-  // (vision: transparency; the live view is the point of the broker surface),
-  // so starting one closes the composer and opens the LinkedIn browser modal
-  // before the operation's first step — the maintainer sees the whole send,
-  // not its aftermath.
+  // The 1 send path (useReachOut), owned here so it outlives the modal that asked.
+  // A send is meant to be watched, so starting one closes the composer and opens the
+  // LinkedIn browser modal before the first step.
   function startSend(contactId: string, message: string) {
     reachOut.mutate(
       { contacts: [{ contact_id: contactId, message }] },
@@ -270,14 +238,14 @@ export function Networking() {
   const connState = pill
     ? laneBusy
       ? {
-          cls: PILL_CLS.good,
+          cls: HEADER_PILL_CLS.good,
           label: t("networking.linkedinPill.inProgress"),
           live: true,
           opensModal: true,
         }
       : {
-          cls: PILL_CLS[pill.tone],
-          label: t(PILL_LABEL[pill.state]),
+          cls: HEADER_PILL_CLS[pill.tone],
+          label: t(HEADER_PILL_LABEL[pill.state]),
           live: false,
           opensModal: pill.state !== "expired" && pill.state !== "disconnected",
         }
@@ -626,7 +594,7 @@ function ContactDetailModal({
   const composeEnabled = Boolean(session.data?.enabled);
 
   return (
-    <Modal title={contact.name} onClose={onClose} width={520}>
+    <Modal title={contact.name} onClose={onClose} size="md">
       <div className="flex flex-col gap-4 px-5 py-5">
         <div className="text-[13px] text-ink-2">
           {contact.current_role} · {contact.current_company}
@@ -634,12 +602,9 @@ function ContactDetailModal({
             type="button"
             data-testid="contact-open-linkedin"
             onClick={() => {
-              // Show the profile on the in-app LinkedIn surface (2026-08-16 —
-              // never an external browser). The view is a QUEUED operation:
-              // it waits behind whatever is driving the surface instead of
-              // interrupting it, and the modal opens to watch either way. A
-              // mutation so a failed enqueue surfaces (MutationErrorBanner),
-              // never a silent nothing.
+              // Show the profile on the in-app LinkedIn surface, as a queued view that waits
+              // behind whatever drives the surface; the modal opens to watch either way. A
+              // mutation, so a failed enqueue shows in the banner.
               viewInBrowser.mutate({
                 url: contact.linkedin_url,
                 surface: "linkedin",
@@ -705,7 +670,7 @@ function AddContactModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title={t("networking.add.title")} onClose={onClose} width={520}>
+    <Modal title={t("networking.add.title")} onClose={onClose} size="md">
       <form
         data-testid="add-contact-form"
         onSubmit={(e) => { e.preventDefault(); submit(); }}

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from sidecar.app.registry.company_anchor import (
+    ats_slug,
     employer_domain,
     registrable_domain,
     resolution_key,
@@ -79,3 +80,19 @@ def test_registrable_domain_two_level_suffixes() -> None:
     assert registrable_domain("bjak.my") == "bjak.my"
     # A bare suffix host stays itself (nothing better to say).
     assert registrable_domain("co.in") == "co.in"
+
+
+def test_non_url_identity_never_becomes_a_domain():
+    # url-less-jobs.md section 7.1: `//`-prepending made `fyj-local:<uuid>`
+    # parse as a hostname, so every URL-less job of every company collapsed
+    # onto one resolution key and reused another employer's confirmed entity.
+    for value in ("fyj-local:7f3a9c21", "fyj:sha256-abc123", "local-jd-7f3a", "not a url"):
+        assert employer_domain(value) == ""
+        assert ats_slug(value) == ""
+        assert resolution_key(value, "paste-text", "Acme Corp") == "name:acme corp"
+
+
+def test_two_url_less_jobs_at_different_companies_get_different_keys():
+    a = resolution_key("", "paste-text", "Acme Corp")
+    b = resolution_key("", "paste-text", "Globex")
+    assert a != b

@@ -1,14 +1,8 @@
-"""Title/location filters — the shared pipeline's user-facing gates.
+"""Title and location filters: the pipeline's user-facing gates.
 
-Word-boundary matching throughout: the career-ops substring lessons ("CTO"
-matching inside "Director", #1169; short acronyms, #1101). `always_allow`
-exists to rescue multi-location postings ("Remote, New York or India" passes
-even with a blocked location present) — career-ops `location_filter` model.
-
-Unknown (empty) location passes the location filter: the scanner can't
-confidently exclude what a source didn't state (rank-don't-gate); quality
-flags it `no-location` so the user still sees the gap.
-"""
+Word-boundary matching (career-ops #1169, #1101). `always_allow` rescues
+multi-location postings. An empty location passes (rank, don't gate), and
+quality flags it `no-location`."""
 
 from __future__ import annotations
 
@@ -43,11 +37,14 @@ def passes_title(title: str, prefs: ScanPrefs) -> bool:
 
 
 def passes_location(location: str, prefs: ScanPrefs) -> bool:
-    """always_allow → pass; block → fail; empty allow or unknown location → pass."""
+    """always_allow → pass; block → fail; inside a wanted place → pass; empty allow or
+    unknown location → pass. The place test is what keeps "Pune" for "Maharashtra"."""
     if keyword_match(location, prefs.location_always_allow):
         return True
     if keyword_match(location, prefs.location_block):
         return False
+    if prefs.location_match is not None and location.strip() and prefs.location_match(location):
+        return True
     if not prefs.location_allow or not location.strip():
         return True
     return keyword_match(location, prefs.location_allow)

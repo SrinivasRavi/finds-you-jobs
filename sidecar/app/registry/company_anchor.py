@@ -1,24 +1,15 @@
-"""Company anchoring — parse a job's canonical URL into the signals that resolve
-its LinkedIn company entity (FR-NW-02).
+"""Company anchoring: parse a job's URL into the signals that resolve its
+LinkedIn company (FR-NW-02).
 
-Two outputs, both from the posting URL the scraper already stored:
-- `employer_domain` — the employer's own website domain, when the URL host is the
-  employer's site rather than an ATS host or a multi-employer job board (common
-  on Greenhouse embeds, e.g. `abnormal.ai/careers/…`, `careers.airbnb.com/…`).
-  This is the strongest anchor: a website match against a LinkedIn company
-  entity ⇒ silent auto-pick. Job-board and board-provider domains never count
-  as employer domains — a shared `domain:naukri.com` key would let one
-  employer's confirm silently poison every company resolved from that board.
-- `resolution_key` — the stable cache key for a resolved company, so every job of
-  the same employer reuses one typeahead + one user choice (no re-prompting).
-
-MIT (own code). Deliberately does NOT import the scraper adapters (framework-free
-silos, section 5.2) nor `voyager_py` (GPL, NFR-LIC-01) — the URL parsing is a small,
-independent clean-room reimplementation.
-"""
+`employer_domain` is the employer's own site when the host isn't an ATS or a
+multi-employer board, the strongest anchor (a website match auto-picks); board
+domains never count, or 1 confirm would poison a whole board. `resolution_key`
+is the per-employer cache key. Clean-room, importing neither the scraper
+adapters (section 5.2) nor GPL code (NFR-LIC-01)."""
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 # ATS / aggregator hosts whose domain is the *board provider*, never the employer.
@@ -35,14 +26,11 @@ _ATS_HOSTS = frozenset({
     "news.ycombinator.com",
 })
 
-# Multi-employer job boards / aggregators / tenant-subdomain ATS providers,
-# matched at the registrable-domain level (any subdomain). Their domain is the
-# *board's*, never the employer's — without this, a scraped board job mints a
-# shared `domain:<board>` cache key and the first employer resolved under it is
-# silently reused for every other employer on that board (live data bug
-# 2026-08-02: `domain:naukri.com` → Coupang, reapplied to a Virtusa job).
-# `news.ycombinator.com` stays exact-host in `_ATS_HOSTS` above — registrable
-# `ycombinator.com` is also YC's own employer site.
+# Multi-employer boards, aggregators and tenant-subdomain ATS hosts, matched at
+# the registrable domain. Their domain is the board's, so without this the first
+# employer resolved under `domain:<board>` was reused for every other one
+# (`domain:naukri.com` gave Virtusa's job Coupang). `news.ycombinator.com` stays
+# exact in `_ATS_HOSTS`: ycombinator.com is also YC's own site.
 _JOB_BOARD_DOMAINS = frozenset({
     # Boards/aggregators our own adapters scrape (sidecar/modules/scraper/adapters/).
     "naukri.com", "linkedin.com", "seek.com", "seek.com.au",
@@ -70,13 +58,9 @@ def _is_job_board_host(host: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in _JOB_BOARD_DOMAINS)
 
 
-# Common two-level public suffixes (co.in, co.uk, com.au, …): the registrable
-# domain under one of these is the last THREE labels, not two. A small inline
-# set on purpose — no PSL dependency (the module stays dependency-free). An
-# unlisted multi-part TLD still collapses to its suffix, which only ever costs
-# a user-confirm; the listed ones stop the shared-key poison (`domain:co.in`
-# minted for every Indian employer on a `.co.in` site — same class as the
-# 2026-08-02 naukri.com bug).
+# Common 2-level public suffixes (co.in, co.uk, com.au): the registrable domain
+# is the last 3 labels. Inline, no PSL dependency; an unlisted one only costs a
+# user confirm, and these stop a shared `domain:co.in` key.
 _TWO_LEVEL_PUBLIC_SUFFIXES = frozenset({
     "co.in", "net.in", "org.in", "gov.in", "ac.in",
     "co.uk", "org.uk", "ac.uk", "gov.uk",
@@ -90,17 +74,10 @@ _TWO_LEVEL_PUBLIC_SUFFIXES = frozenset({
 
 
 def registrable_domain(url_or_host: str | None) -> str:
-    """Best-effort registrable domain from a URL or bare host, lowercased.
-
-    `https://www.Abnormal.ai/careers` → `abnormal.ai`;
-    `careers.tataelxsi.co.in` → `tataelxsi.co.in` (two-level public suffixes in
-    `_TWO_LEVEL_PUBLIC_SUFFIXES` take three labels). Not a full public-suffix
-    parse (no PSL dep) — outside that set it takes the last two labels, right
-    for the vast majority of employer domains; a wrong guess only ever costs a
-    user-confirm, never a wrong pick. (Clean-room; mirrors
-    voyager_py.company.registrable_domain by behaviour — including the same
-    inline suffix set, each side its own copy — not by import, MIT/GPL
-    boundary.)"""
+    """Best-effort registrable domain, lowercased: `www.Abnormal.ai` to `abnormal.ai`,
+    `careers.tataelxsi.co.in` to `tataelxsi.co.in` (2-level suffixes take 3
+    labels). No PSL; a wrong guess only costs a user confirm. Mirrors voyager's
+    behaviour by its own copy, not import (MIT/GPL boundary)."""
     if not url_or_host:
         return ""
     raw = url_or_host.strip().lower()
@@ -119,11 +96,16 @@ def registrable_domain(url_or_host: str | None) -> str:
 
 
 def _host(canonical_url: str) -> str:
+    """The host of an http(s) URL, "" for anything else.
+
+    The scheme guard is load-bearing: without it `//`-prepending turns a
+    non-URL identity such as `fyj-local:<uuid>` into `host=fyj-local`, which
+    collapses every URL-less job of every company onto one resolution key."""
     if not canonical_url:
         return ""
     raw = canonical_url.strip()
-    if "//" not in raw:
-        raw = "//" + raw
+    if not re.match(r"(?i)^https?://", raw):
+        return ""
     return (urlparse(raw).netloc or "").split("@")[-1].split(":")[0].lower()
 
 
@@ -138,12 +120,9 @@ def employer_domain(canonical_url: str) -> str:
 
 
 def ats_slug(canonical_url: str) -> str:
-    """The per-employer ATS board slug from a Greenhouse/Lever/Ashby/Workable URL.
-
-    `boards.greenhouse.io/6sense/…` → `6sense`; `jobs.lever.co/coupa/…` → `coupa`;
-    `jobs.ashbyhq.com/hopper/…` → `hopper`. "" when the host isn't a known
-    slug-first ATS (the slug is not reliably the LinkedIn vanity — it's only a
-    cache-key/ranking hint, never used to build a company URL)."""
+    """The board slug from a Greenhouse, Lever, Ashby or Workable URL
+    (`jobs.lever.co/coupa/…` to `coupa`), or "". A cache-key and ranking hint only,
+    never used to build a company URL."""
     host = _host(canonical_url)
     parts = [p for p in urlparse(
         canonical_url if "//" in canonical_url else "//" + canonical_url

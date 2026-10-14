@@ -1,19 +1,11 @@
 # finds-you-jobs — AGPL-3.0-only. finds-you-jobs-owned (no upstream code).
-"""App-side submit executor.
+"""App-side submit executor, outside the model's tool vocabulary.
 
-Deliberately OUTSIDE the model's tool vocabulary: the agent loop still cannot
-submit — ``actions.py`` has no submit tool and the executor would refuse one.
-The app calls this exactly once, after the user's Submit click in the review
-modal (the ruled P1 operating model: the user's click drives the real submit),
-on the same live page the loop left at ``ready_for_human``.
-
-Finding the control is deterministic: a type=submit button or submit-worded
-control inside the filled form, with a deny-list for the lookalikes the sweep
-measured ("Apply Later" outranked the real button on a text-plus-area scorer;
-applier.md, Our Finding 11.1). Confirmation is then classified the same way
-the loop classifies everything else; the caller keeps polling afterwards, so
-a slow confirmation is not lost.
-"""
+Called once after the user's Submit click, on the page the loop left at
+`ready_for_human`. The control is found deterministically (a submit button or
+submit-worded control in the form, with a deny-list for lookalikes like "Apply
+Later"; applier.md Our Finding 11.1); confirmation is classified like
+everything else, and the caller keeps polling."""
 
 from __future__ import annotations
 

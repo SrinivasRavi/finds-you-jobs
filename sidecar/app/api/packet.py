@@ -1,14 +1,9 @@
-"""Save → packet enqueue (architecture section 4.2 long-op UX, AM5).
+"""Save to packet enqueue (architecture section 4.2, AM5).
 
-Saving a job (or a manual regenerate) enqueues the tailored-resume and
-cover-letter operations as two independent ops and pre-creates one empty
-`Artifact` row per op — carrying `operation_id` — so `packetState` reads
-*generating* immediately. The entrypoint fills that same row on success;
-regeneration chains the prior head via `superseded_by`.
-
-The prior repository also enqueued a Save-time `prep` op here; Save-time
-form-prep is retired in this rebuild (`docs/internal/archived/applier-as-built.md` section 2).
-"""
+Saving a job, or regenerating, enqueues the tailor and cover ops independently
+and pre-creates 1 empty Artifact per op, carrying `operation_id`, so
+`packetState` reads generating at once. The entrypoint fills that row;
+regeneration chains the prior head via `superseded_by`."""
 
 from __future__ import annotations
 
@@ -70,7 +65,7 @@ def enqueue_packet(
             "guidance": guidance,
             "profile_version": profile_version,
         }
-        op_id = runner.submit(op_kind, snapshot)
+        op_id = runner.submit(op_kind, snapshot, requested_by="user")
         op_ids.append(op_id)
         artifact_kind = _ARTIFACT_KIND[op_kind]
         with db.repos() as repos:

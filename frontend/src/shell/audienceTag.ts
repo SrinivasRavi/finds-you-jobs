@@ -1,11 +1,6 @@
-// The one audience-tag vocabulary (duplication audit D-F9). The Networking
-// kanban and the find-referrals popup each carried their own label map, and the
-// popup's had drifted: `other` pointed at the *peer* key, so a contact tagged
-// "other" rendered as "Peer" — a wrong claim about who the person is.
-//
-// The two surfaces keep separate i18n keys on purpose: the kanban filter spells
-// the audiences out ("Hiring Team", "Top Management") while the narrow popup row
-// uses the short forms ("HM", "Leadership"). One map, two label slots.
+// The one audience-tag vocabulary (D-F9); a second copy had mapped `other` to
+// Peer. The kanban spells audiences out and the narrow popup row uses short
+// forms, so 1 map carries 2 label slots.
 
 import type { AudienceTag } from "../api/types";
 

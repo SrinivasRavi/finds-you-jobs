@@ -20,16 +20,10 @@ POLL_INTERVAL_SECONDS = 2.0
 
 
 def pid_alive(pid: int) -> bool:
-    """Liveness probe for `pid`.
-
-    POSIX: the classic signal-0 no-op check. Windows: NEVER `os.kill(pid, 0)` —
-    `signal.CTRL_C_EVENT == 0` there, so that call does not probe anything, it
-    SENDS a real Ctrl-C to the whole console. This exact call was the
-    2026-07-19 Windows killer: the watchdog's first 2-second "is the shell
-    alive?" tick Ctrl-C'd the console group — Tauri exe dead with
-    STATUS_CONTROL_C_EXIT, cargo/pnpm wrappers interrupted, on every install.
-    Use OpenProcess + GetExitCodeProcess instead (access-denied counts as
-    alive: the process exists, we just can't open it)."""
+    """Liveness probe for `pid`. POSIX: signal 0. Windows: never `os.kill(pid, 0)`,
+    which sends a real Ctrl-C to the console (it killed every Windows install on
+    2026-07-19); OpenProcess plus GetExitCodeProcess instead, access denied
+    counting as alive."""
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes
@@ -56,13 +50,8 @@ def pid_alive(pid: int) -> bool:
 
 
 def is_orphaned(original_ppid: int, current_ppid: int) -> bool:
-    """True when the sidecar has been reparented away from its original parent.
-
-    Pure decision function. `original_ppid` is captured at startup (the shell's
-    pid); `current_ppid` is `os.getppid()` now. A change means the shell died and
-    the OS reparented us — or (POSIX) we were reparented to the init/subreaper
-    process (pid 1). Either way, we are orphaned and should exit.
-    """
+    """True when the sidecar was reparented away from its original parent (the
+    shell), including to pid 1 on POSIX. Pure."""
     if current_ppid != original_ppid:
         return True
     # Belt-and-suspenders on POSIX: a live shell is never pid 1.
@@ -80,18 +69,10 @@ async def watch_parent(
     shell_pid: int | None = None,
     is_alive: Callable[[int], bool] = pid_alive,
 ) -> None:
-    """Poll for orphaning; call `on_orphaned` once, then stop.
-
-    Two independent triggers (2026-07-17 dogfood — dev left uv+uvicorn alive):
-    - the immediate parent changed (classic reparenting — covers the packaged
-      build, where the shell spawns the sidecar binary directly);
-    - `shell_pid` (FYJ_SHELL_PID, the Tauri shell's own pid) is no longer
-      alive — covers dev, where the immediate parent is the `uv run` wrapper
-      that survives the shell and keeps the ppid check blind.
-
-    `get_ppid`/`is_alive` are injectable for tests. The coroutine ends after
-    firing the callback (or when cancelled at shutdown).
-    """
+    """Poll for orphaning; call `on_orphaned` once, then stop. 2 triggers: the
+    immediate parent changed (the packaged build), or `shell_pid` (FYJ_SHELL_PID)
+    died (dev, where `uv run` outlives the shell). `get_ppid` and `is_alive` are
+    injectable."""
     log = get_logger()
     log.debug(
         "orphan watchdog started (original_ppid=%d shell_pid=%s)",

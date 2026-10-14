@@ -51,15 +51,9 @@ const queryClient = new QueryClient({
   }),
 });
 
-// First-launch guard (FR-OB-01 / US-OB-01): `MasterProfile` exists ⟺ onboarded.
-// No profile → the app opens onboarding and the board is unreachable; a completed
-// (or pre-existing) profile → the wizard can't reopen and `/` lands on the board.
-// The query resolves before first paint (returns null while pending, so no board
-// flash before the redirect).
-// Visible boot state instead of a silent white window (2026-07-19: on Windows
-// the backend can take seconds on first launch, and a blank window reads as
-// "broken" — users Ctrl-C a healthy boot). The profile-gate query retries
-// forever (queries.ts), so this self-heals the moment the sidecar answers.
+// First-launch guard (FR-OB-01): a profile exists if and only if onboarding is
+// done. This splash shows instead of a blank window while the backend boots (slow
+// on a first Windows launch); the profile query retries forever, so it self-heals.
 // eslint-disable-next-line react-refresh/only-export-components -- entry-file boot state, not HMR'd
 function BootSplash() {
   const { t } = useTranslation();
@@ -96,12 +90,10 @@ function OnboardingRoute() {
   return <Onboarding />;
 }
 
-// Explicit React Router config (the pinned choice — architecture section 6). Routes are
-// internal navigation only; this is a desktop app, no URL-bar-driven flows.
-// Every route carries the SurfaceError boundary (2026-07-24, customer-reported
-// crash): a child-route error renders the panel INSIDE the Layout — the rail
-// stays usable — and a root-level error (or unmatched path) gets it full-page.
-// Without these, React Router's developer-facing default page hijacks the app.
+// Explicit router config (architecture section 6); internal navigation only.
+// Every route carries the SurfaceError boundary: a child error renders inside the
+// Layout so the rail stays usable, and a root error or unmatched path gets it full
+// page, instead of React Router's developer page.
 const router = createBrowserRouter([
   { path: "/onboarding", element: <OnboardingRoute />, errorElement: <SurfaceError /> },
   {

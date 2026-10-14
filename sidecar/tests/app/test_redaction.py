@@ -1,16 +1,8 @@
-"""Covers: the secret-redaction net (defense-in-depth for logs + flight recorder).
+"""Covers: the secret-redaction net.
 
-Three planes:
-
-1. The pure `redact()` function — every known secret shape is scrubbed, and a
-   curated set of legitimate log content (UUID op-ids, hex hashes, prose, URLs)
-   is left untouched (precision-biased: false positives corrupt logs).
-2. The `RedactionFilter` — scrubs a record's message/args and NEVER raises, even
-   on a malformed record.
-3. The flight-recorder write path — a real `RotatingFileHandler` wired by
-   `setup_flight_recorder` scrubs a secret out of both a message and a traceback
-   before it hits disk, without changing the log schema.
-"""
+`redact()` scrubs every known shape and leaves UUIDs, hashes, prose and URLs
+alone; `RedactionFilter` scrubs and never raises; the flight recorder's real
+handler removes a secret from a message and a traceback before disk."""
 
 from __future__ import annotations
 

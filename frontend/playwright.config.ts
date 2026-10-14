@@ -3,14 +3,10 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig, devices } from "@playwright/test";
 
-// The e2e runs against the real sidecar-backed browser-dev path:
-// `scripts/dev-web.mjs` spawns the sidecar (PORT/TOKEN handshake), writes
-// frontend/.env.local, then starts vite — so the page under test talks to a
-// live sidecar over loopback, exactly like the shell-managed runtime.
-//
-// FYJ_DATA_DIR points the sidecar (and any sidecar a spec respawns — see
-// e2e/reconnect.spec.ts) at a throwaway dir under e2e/_results so test runs
-// never touch the developer's real app-data.
+// The e2e runs against the real browser-dev path: scripts/dev-web.mjs spawns
+// the sidecar, writes frontend/.env.local, then starts vite, so the page talks to
+// a live sidecar over loopback. FYJ_DATA_DIR points every sidecar, respawned ones
+// included, at a throwaway dir so a run never touches real app data.
 export const E2E_DATA_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
   "e2e",
@@ -24,15 +20,10 @@ export const E2E_DATA_DIR = join(
 // reuseExistingServer would attach the tests to the developer's live session.
 const WEB_PORT = Number(process.env.FYJ_WEB_PORT ?? 1420);
 
-// The LinkedIn surface's frozen origin is really linkedin.com, so the 4 specs
-// that mount it skip themselves unless this points at the loopback fixture
-// networking-browser.spec.ts serves. It used to be the caller's job to set it,
-// which meant a plain `npx playwright test` reported green while never opening
-// the modal. Default it here instead: the fixture port tracks FYJ_WEB_PORT so
-// 2 stacks on different ports never fight over it, and an explicit override
-// still wins. Nothing in the suite may name the real origin.
-// Set rather than `??=`: an exported-but-empty value is not an override, and
-// `??=` would keep it, which skips the specs again for the same reason.
+// The LinkedIn surface's origin is really linkedin.com, so the 4 specs that
+// mount it skip unless this points at the loopback fixture. Defaulted here so a
+// plain `npx playwright test` runs them; the port tracks FYJ_WEB_PORT, an explicit
+// override wins, and an empty value counts as unset. Nothing may name the real origin.
 if (!process.env.VITE_LINKEDIN_ORIGIN) {
   process.env.VITE_LINKEDIN_ORIGIN = `http://127.0.0.1:${WEB_PORT + 1000}/`;
 }
@@ -57,16 +48,10 @@ export default defineConfig({
     // TERM first so dev-web's own cleanup (child process groups, .env.local)
     // runs before Playwright escalates to a group SIGKILL.
     gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
-    // FYJ_APPLY_DEV unlocks the apply op's dev knobs (scripted engine, local
-    // fixture URLs, headless) so the applier e2e runs with zero model calls
-    // and zero external traffic — same seam the sidecar tests use.
-    // FYJ_FAKE_LLM swaps every builtin CLI engine for an instant fake: without
-    // it, each spec's profile save enqueued an `extract` op that ran a REAL
-    // `claude -p` on the dev machine's subscription (2026-07-18 finding) —
-    // real tokens, ~10s child subprocesses, shutdown-drain flakes.
-    // FYJ_DATA_DIR honours an explicit caller override (an agent's scratchpad
-    // profile, say) but still always lands on a throwaway dir, never the real
-    // app data.
+    // FYJ_APPLY_DEV unlocks the apply op's dev knobs, so the applier e2e makes 0
+    // model calls. FYJ_FAKE_LLM swaps every CLI engine for an instant fake; without it
+    // each profile save ran a real `claude -p` (2026-07-18). FYJ_DATA_DIR honours a
+    // caller's override but always lands on a throwaway dir.
     env: {
       FYJ_DATA_DIR: process.env.FYJ_DATA_DIR ?? E2E_DATA_DIR,
       FYJ_APPLY_DEV: "1",

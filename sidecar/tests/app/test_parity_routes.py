@@ -1,19 +1,14 @@
-"""Covers: the feature-parity utility routes carried from the prior repository.
+"""Covers: the utility routes carried from the prior repository.
 
-  US-RES-03 — /api/export/pdf renders markdown → a real PDF in Downloads
-              (collision-safe name), 422 on empty markdown.
-  A5b/A0.6  — /api/system/install-browser starts the (mocked) Chromium
-              download once; a second call reports already_running.
-  Dev tools — /api/dev/seed-application creates a Job + Saved card;
-              /api/dev/operations/fail-running fails running ops with the
-              boot-recovery note.
-
-The PDF render uses the real local Chromium print pipeline (no network);
-the browser INSTALL is monkeypatched — tests never download browsers.
-"""
+/api/export/pdf renders a real PDF (collision-safe name, 422 when empty);
+/api/system/install-browser starts the mocked download once; the dev routes seed
+an application and fail running ops. The PDF uses local Chromium; the install
+is mocked, so no download."""
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Generator, Iterator
 from pathlib import Path
 
@@ -46,7 +41,7 @@ def test_export_pdf_renders_into_downloads(
 ) -> None:
     _app, client = app_client
     downloads = tmp_path / "downloads"
-    from sidecar.app.api import routes as routes_mod
+    from sidecar.app.api import system as routes_mod
 
     monkeypatch.setattr(routes_mod, "downloads_dir", lambda: downloads)
 
@@ -67,6 +62,52 @@ def test_export_pdf_renders_into_downloads(
         json={"markdown": "# Second", "filename": "My Resume"},
     ).json()
     assert Path(again["path"]).name == "My-Resume-1.pdf"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="chmod can't deny a write on Windows or to root",
+)
+def test_export_pdf_says_plainly_when_downloads_is_denied(
+    app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S-C53: macOS can deny the app its Downloads folder. That was a raw
+    error; it's now a 403 that says what happened and what to do."""
+    _app, client = app_client
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    downloads.chmod(0o500)
+    from sidecar.app.api import system as routes_mod
+
+    monkeypatch.setattr(routes_mod, "downloads_dir", lambda: downloads)
+    try:
+        resp = client.post(
+            "/api/export/pdf", headers=AUTH, json={"markdown": "# Ada", "filename": "cv"}
+        )
+    finally:
+        downloads.chmod(0o700)
+    assert resp.status_code == 403, resp.text
+    assert "Downloads" in resp.json()["detail"]
+
+
+def test_export_pdf_to_temp_renders_for_the_shell_to_save(
+    app_client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S-C53: in the app, the shell asks where to save at export time and
+    copies the file there, so the sidecar renders into its own exports folder."""
+    _app, client = app_client
+    exports = tmp_path / "exports"
+    from sidecar.app.api import system as routes_mod
+
+    monkeypatch.setattr(routes_mod, "export_temp_dir", lambda: exports)
+    resp = client.post(
+        "/api/export/pdf",
+        headers=AUTH,
+        json={"markdown": "# Ada", "filename": "My Resume", "destination": "temp"},
+    )
+    assert resp.status_code == 200, resp.text
+    path = Path(resp.json()["path"])
+    assert path.parent == exports and path.read_bytes()[:5] == b"%PDF-"
 
 
 def test_export_pdf_rejects_empty(app_client) -> None:

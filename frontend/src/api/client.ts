@@ -1,10 +1,8 @@
-// Typed sidecar client.
-//
-// A1 hand-writes the minimal handshake + /healthz path. In A3 the generated
-// OpenAPI client + types land in this same `src/api/` directory
-// (openapi-typescript against the sidecar's /openapi.json — architecture section 4.3);
-// the app imports its typed operations from here. Keep hand-written helpers that
-// sit outside the generated surface (the handshake itself) in this file.
+// Typed sidecar client: the handshake and /healthz. The generated OpenAPI types
+// live beside it in src/api/ (architecture section 4.3); hand-written helpers
+// outside the generated surface stay in this file.
+
+import { inTauri } from "../shell/host";
 
 export interface SidecarInfo {
   port: number;
@@ -13,16 +11,11 @@ export interface SidecarInfo {
 
 declare global {
   interface Window {
-    __TAURI_INTERNALS__?: unknown;
     // e2e-only handshake override (zzz-reconnect-newport.spec.ts): outside
     // Tauri there is no shell to re-ask after a sidecar restart, so the spec
     // injects the respawned sidecar's port + token here.
     __FYJ_SIDECAR_INFO__?: SidecarInfo;
   }
-}
-
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 async function fromTauri(): Promise<SidecarInfo | null> {

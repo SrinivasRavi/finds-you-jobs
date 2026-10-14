@@ -286,8 +286,12 @@ def test_price_usd_unknown_model_is_none_not_guessed():
     # Current Anthropic list prices, per Mtok in / out.
     assert price_usd("claude-opus-5", 1_000_000, 1_000_000) == pytest.approx(30.0)
     assert price_usd("claude-fable-5", 1_000_000, 1_000_000) == pytest.approx(60.0)
-    assert price_usd("claude-sonnet-5", 1_000_000, 1_000_000) == pytest.approx(18.0)
+    assert price_usd("claude-sonnet-5", 1_000_000, 1_000_000) == pytest.approx(12.0)
     assert price_usd("claude-haiku-4-5", 1_000_000, 1_000_000) == pytest.approx(6.0)
+    assert price_usd("claude-opus-5-5", 1_000_000, 1_000_000) == pytest.approx(24.0)
+    assert price_usd("claude-sonnet-5-5", 1_000_000, 1_000_000) == pytest.approx(12.0)
+    assert price_usd("claude-haiku-5-5", 1_000_000, 1_000_000) == pytest.approx(0.6)
+    assert price_usd("claude-fable-5-1", 1_000_000, 1_000_000) == pytest.approx(60.0)
 
 
 # ---------------------------------------------------------------------------

@@ -1,23 +1,9 @@
 """Covers: the browser-session broker's contract (`sidecar/app/browser`).
 
-No real Chrome (except the two `test_real_*` cases). A fake CDP session, page,
-context and Playwright handle go in through the broker's `opener` seam, so the
-tests drive the real surface thread, the real cross-thread marshalling and the
-real ack accounting — everything the broker actually owns — with only the
-browser itself faked.
-
-The three things worth breaking a build over:
-
-- **Exactly one ack per frame, at capture.** Chrome captures the next frame
-  only once the previous one is acked, so a missing ack stalls the stream
-  forever and a double ack lets capture outrun the viewer.
-- **The ack never waits for the run loop.** A driver op is one long lane
-  action; an ack the run loop has to drain freezes the stream for its whole
-  length (the watchability defect, fixed 2026-08-15).
-- **Keep the newest**: overflow evicts the older queued frame — a viewer of a
-  live surface always wants the freshest capture, and acked frames carry no
-  debt.
-"""
+No real Chrome except the `test_real_*` cases: fakes enter through the `opener`
+seam, so the real thread, marshalling and ack accounting run. Worth breaking a
+build over: exactly 1 ack per frame, at capture; the ack never waits for the
+run loop (the watchability fix); overflow keeps the newest frame."""
 
 from __future__ import annotations
 
@@ -368,13 +354,9 @@ async def test_detach_stops_delivery_without_stalling_capture(
 async def test_frames_keep_flowing_while_a_lane_action_holds_the_surface_thread(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
-    """THE watchability invariant (maintainer priority, 2026-08-15): a driver op
-    is ONE long lane action — a referral send navigates and types for tens of
-    seconds without returning to the run loop — and the frames Chrome captures
-    mid-action must be acked mid-action, or the live view freezes on a stale
-    frame for the whole op. The frame handler fires from inside the action's own
-    page calls (Playwright dispatches events there), so the ack must complete
-    before the action ends, never wait for the run loop."""
+    """The watchability invariant: a driver op is 1 long lane action, and frames
+    captured mid-action must be acked mid-action, inside the action's own page calls,
+    or the live view freezes for the whole op."""
     surface = broker.surface("pane-a")
     await surface.wait_ready()
     viewer = Viewer()
@@ -892,13 +874,9 @@ async def test_real_surface_driving_primitives_over_cdp(tmp_path: Path) -> None:
 async def test_real_screencast_stays_live_through_a_long_lane_action(
     tmp_path: Path,
 ) -> None:
-    """The watchability fix against REAL Chrome: one lane action holds the
-    surface thread while it clicks and types into a page — the exact shape of a
-    referral send — and screencast frames must keep arriving at the viewer
-    THROUGHOUT. Under the old ack-after-flush design the ack queue drained only
-    between lane actions, so the stream froze after a single frame for the
-    length of every driver op (the maintainer watched a DM send as a still
-    image, 2026-08-15). A `data:` page and local typing only; no network."""
+    """The watchability fix against real Chrome: 1 lane action clicks and types, and
+    frames must keep arriving throughout (the old design froze after 1 frame). A
+    `data:` page, no network."""
     pytest.importorskip("playwright.sync_api")
     broker = BrowserBroker(
         tmp_path / "data",
@@ -951,11 +929,9 @@ async def test_real_screencast_stays_live_through_a_long_lane_action(
 
 
 # --- idle reclamation -------------------------------------------------------
-# A surface costs an OS thread, a real Chrome, and that Chrome's memory. Nothing
-# used to reclaim one: an entry left `_surfaces` only on app shutdown or after
-# its Chrome had already crashed, so a single visit to the LinkedIn view kept a
-# browser alive for the rest of the session. These pin both halves — that idle
-# surfaces go, and that in-use ones never do.
+# Nothing used to reclaim a surface (a thread and a real Chrome), so 1 visit to
+# the LinkedIn view kept a browser alive all session. These pin both halves: idle
+# surfaces go, in-use ones never do.
 
 
 async def test_reap_idle_closes_a_surface_nobody_is_watching(
@@ -994,6 +970,40 @@ async def test_reap_idle_never_touches_a_watched_surface(broker: BrowserBroker) 
     assert broker.reap_idle(max_idle=60.0) == []
 
 
+async def test_past_the_cap_the_longest_idle_surface_makes_room(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S-C20: at the cap, a new surface closes the longest-idle one, never a
+    watched one, and launches past the cap rather than close a pane in use."""
+    monkeypatch.setattr(broker_module, "MAX_SURFACES", 2)
+    fakes = {slug: FakeBrowser() for slug in ("pane-a", "pane-b", "pane-c", "pane-d")}
+
+    def opener(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
+        return fakes[profile_dir.parent.name].opener(profile_dir, launch_kwargs)
+
+    broker = BrowserBroker(
+        tmp_path / "data", asyncio.get_running_loop(), opener=opener,
+        user_agent_resolver=lambda: FAKE_UA,
+    )
+    try:
+        a = broker.surface("pane-a")
+        await a.wait_ready()
+        await asyncio.sleep(0.02)
+        b = broker.surface("pane-b")
+        await b.wait_ready()
+        await broker.surface("pane-c").wait_ready()
+        assert broker.live_slugs == frozenset({"pane-b", "pane-c"})
+        assert fakes["pane-a"].context.closed == 1
+
+        b.set_viewer(Viewer())
+        broker.surface("pane-c").set_viewer(Viewer())
+        await broker.surface("pane-d").wait_ready()
+        assert broker.live_slugs == frozenset({"pane-b", "pane-c", "pane-d"})
+        assert fakes["pane-b"].context.closed == 0
+    finally:
+        broker.shutdown()
+
+
 async def test_a_reaped_surface_relaunches_on_the_next_ask(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
@@ -1014,12 +1024,9 @@ async def test_a_reaped_surface_relaunches_on_the_next_ask(
 async def test_taking_a_surface_protects_it_from_the_next_reaper_tick(
     broker: BrowserBroker,
 ) -> None:
-    """The take-then-submit gap. A caller gets a surface and submits its first
-    action a beat later; a reaper tick landing in between used to see no viewer,
-    nothing in flight and an old timestamp, close the Chrome, and leave the
-    caller's submit failing with "browser surface is shut down". `surface()`
-    stamps activity under the same lock the reaper reads idleness through, so
-    the decision can't straddle the handover."""
+    """The take-then-submit gap: a reaper tick between `surface()` and the first
+    action once closed the Chrome. `surface()` stamps activity under the reaper's
+    lock, so the decision can't straddle the handover."""
     surface = broker.surface("pane-taken")
     await surface.wait_ready()
     # Age it past the threshold. There is no public way to fake the clock, and

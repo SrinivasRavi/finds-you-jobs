@@ -24,6 +24,7 @@ export function ChipInput({
   placeholder,
   testid,
   variant = "boxed",
+  onDraftChange,
 }: {
   label: string;
   hint?: string;
@@ -34,6 +35,8 @@ export function ChipInput({
   /** Container testid; the text field carries `${testid}-input`. */
   testid: string;
   variant?: ChipInputVariant;
+  /** The uncommitted text, so a parent can treat a typed entry as given. */
+  onDraftChange?: (v: string) => void;
 }) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
@@ -41,10 +44,12 @@ export function ChipInput({
   // Enter and comma both commit, and the field swallows them either way — even
   // on empty text. Job finder preferences renders inside a <form>, where a bare
   // Enter used to fall through and submit it ("Rescan now" + close the modal).
+  // Leaving the field commits too, so a typed value is never dropped (S-C58).
   function commit() {
     const v = input.trim();
     if (v && !items.includes(v)) onAdd(v);
     setInput("");
+    onDraftChange?.("");
   }
 
   const chips = items.map((it) => (
@@ -76,7 +81,11 @@ export function ChipInput({
     <input
       value={input}
       data-testid={`${testid}-input`}
-      onChange={(e) => setInput(e.target.value)}
+      onChange={(e) => {
+        setInput(e.target.value);
+        onDraftChange?.(e.target.value);
+      }}
+      onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === ",") {
           e.preventDefault();

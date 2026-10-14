@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { eventBus, type StreamState } from "../api/events";
 import i18n from "../i18n";
 import { LinkedInBrowserProvider } from "../surfaces/LinkedInBrowserProvider";
+import { inTauri } from "./host";
 import { LeftRail } from "./LeftRail";
 import { DegradedBootBanner } from "./DegradedBootBanner";
 import { MutationErrorBanner } from "./MutationErrorBanner";
@@ -19,7 +20,7 @@ import { MutationErrorBanner } from "./MutationErrorBanner";
 function useSidecarFatal(): string {
   const [fatal, setFatal] = useState("");
   useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
+    if (!inTauri()) return;
     let unlisten: (() => void) | undefined;
     let disposed = false;
     void import("@tauri-apps/api/event").then(({ listen }) =>

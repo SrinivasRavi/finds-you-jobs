@@ -27,11 +27,21 @@ afterEach(() => {
 });
 
 describe("DegradedBootBanner", () => {
-  it("shows when the boot was degraded and work is paused", () => {
+  it("asks first, in a dialog, when the boot was degraded and work is paused", () => {
     status = { running: false, degradedBoot: true };
     render(<DegradedBootBanner />);
+    expect(screen.getByTestId("degraded-boot-dialog")).toBeTruthy();
+    expect(screen.getByText("shell.degradedBootBody")).toBeTruthy();
+    expect(screen.queryByTestId("degraded-boot-banner")).toBeNull();
+  });
+
+  it("keeping work paused leaves the banner up", () => {
+    status = { running: false, degradedBoot: true };
+    render(<DegradedBootBanner />);
+    fireEvent.click(screen.getByText("shell.degradedBootKeepPaused"));
+    expect(screen.queryByTestId("degraded-boot-dialog")).toBeNull();
     expect(screen.getByTestId("degraded-boot-banner")).toBeTruthy();
-    expect(screen.getByText("shell.degradedBoot")).toBeTruthy();
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it("stays away on a normal boot", () => {
@@ -54,16 +64,17 @@ describe("DegradedBootBanner", () => {
     expect(screen.queryByTestId("degraded-boot-banner")).toBeNull();
   });
 
-  it("resumes background work on the button", () => {
+  it("resumes background work from the dialog", () => {
     status = { running: false, degradedBoot: true };
     render(<DegradedBootBanner />);
     fireEvent.click(screen.getByText("shell.degradedBootResume"));
     expect(mutate).toHaveBeenCalledTimes(1);
   });
 
-  it("dismisses without resuming", () => {
+  it("dismisses the banner without resuming", () => {
     status = { running: false, degradedBoot: true };
     render(<DegradedBootBanner />);
+    fireEvent.click(screen.getByText("shell.degradedBootKeepPaused"));
     fireEvent.click(screen.getByText("shell.degradedBootDismiss"));
     expect(screen.queryByTestId("degraded-boot-banner")).toBeNull();
     expect(mutate).not.toHaveBeenCalled();

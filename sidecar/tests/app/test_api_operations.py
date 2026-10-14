@@ -216,3 +216,14 @@ def test_cancel_running_polling_kind_is_202_and_lands_cancelled(tmp_path: Path) 
         assert body["id"] == op_id and body["kind"] == "score"
         assert body["state"] in ("running", "cancelled")  # honest — not yet terminal
         _wait_for_state(client, op_id, "cancelled")
+
+
+def test_a_click_records_the_user_and_the_ledger_carries_all_3_times(
+    client: TestClient,
+) -> None:
+    """Audit A1: an operation started from a route is the user's, so it goes first
+    and takes the requests lane; the ledger row carries queued, started, finished."""
+    op_id = client.post("/api/operations/echo", json={}, headers=AUTH).json()["id"]
+    done = _wait_for_state(client, op_id, "succeeded")
+    assert done["requested_by"] == "user"
+    assert done["created_at"] <= done["started_at"] <= done["finished_at"]

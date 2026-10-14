@@ -1,26 +1,20 @@
-"""Content fingerprinting — cross-posting detection the URL key can't do.
+"""Content fingerprinting: cross-posting detection the URL key can't do.
 
-The dedup invariant (canonical URL) can't catch the same role posted on a
-company's Greenhouse board *and* on LinkedIn: different hosts, different
-canonical URLs, two rows. This module flags those probable cross-listings by
-content identity: a 64-bit SimHash (Charikar) over 3-token shingles of the
-normalized JD text; two descriptions whose hashes agree on ≥ 92% of bits are
-near-certainly the same posting. Technique per career-ops's
-`fingerprint-core.mjs` (MIT) — reimplemented here from its documented design
-(Python `hashlib` in place of Node `crypto`), no upstream code carried; see
-`UPSTREAMS.md`.
-
-Flag, never drop: a cross-listing *annotation* rides `trust_flags` and the
-user decides — silently merging risks collapsing genuinely distinct postings
-(the exact failure the dedup doc warns about). Zero deps, zero LLM.
-"""
+The same role on Greenhouse and LinkedIn has 2 URLs. A 64-bit SimHash over
+3-token shingles flags pairs agreeing on 90% of bits, confirmed by company and
+title. Technique from career-ops's `fingerprint-core.mjs` (MIT), reimplemented;
+see UPSTREAMS.md. Flag, never drop: a match is a `job_duplicates` row and the
+user decides (url-less-jobs.md 5.5)."""
 
 from __future__ import annotations
 
 import hashlib
 import re
 
-SIMILARITY_THRESHOLD = 0.92
+# 0.90 with the company+title gate below. Similarity alone is 57% precise at
+# 0.92 on the 112-posting bench corpus, because employer boilerplate puts any
+# 2 postings from 1 company on a high floor (url-less-jobs.md section 6.4).
+SIMILARITY_THRESHOLD = 0.90
 _SHINGLE = 3
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -54,5 +48,40 @@ def similarity(a: int, b: int) -> float:
     return 1.0 - ((a ^ b).bit_count() / 64)
 
 
-def is_probable_cross_listing(a: int, b: int) -> bool:
-    return similarity(a, b) >= SIMILARITY_THRESHOLD
+def to_signed64(value: int) -> int:
+    """The same 64 bits, reinterpreted as signed.
+
+    SQLite's INTEGER is a signed 64-bit value, so an unsigned SimHash with the
+    top bit set overflows on insert. Storing the signed reinterpretation keeps
+    every bit, and `from_signed64` is its exact inverse."""
+    return value - (1 << 64) if value >= (1 << 63) else value
+
+
+def from_signed64(value: int) -> int:
+    """The inverse of `to_signed64`: a stored column back to a fingerprint."""
+    return value + (1 << 64) if value < 0 else value
+
+
+def normalize_label(value: str) -> str:
+    """Company/title normalized for equality: lowercase alphanumeric tokens."""
+    return " ".join(_TOKEN_RE.findall((value or "").lower()))
+
+
+def is_probable_cross_listing(
+    a: int,
+    b: int,
+    *,
+    company_a: str = "",
+    company_b: str = "",
+    title_a: str = "",
+    title_b: str = "",
+) -> bool:
+    """Same company, same title, and descriptions at or above the threshold.
+
+    The 3 parts are one gate: 0 clear false positives on the bench corpus,
+    against 9 for the bare similarity test it replaces (section 6.4)."""
+    if similarity(a, b) < SIMILARITY_THRESHOLD:
+        return False
+    if normalize_label(company_a) != normalize_label(company_b):
+        return False
+    return normalize_label(title_a) == normalize_label(title_b)

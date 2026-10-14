@@ -1,11 +1,7 @@
-// Unit tests for the Sending-state reconcile (2026-08-16): the popup's
-// per-row Sending badges follow the SERVER's in-flight send ops on every
-// candidates refresh. This is what makes the badge survive a close/reopen
-// (the op is still queued/running server-side) AND what un-wedges a row whose
-// terminal SSE event was missed (a reconnect gap — or dev HMR — swallowed it:
-// the live 2026-08-16 stuck "Sending" row). Just-clicked rows get a grace
-// window, because a refetch racing the click's 202 would otherwise strip the
-// fresh badge.
+// Unit tests for the Sending-state reconcile: per-row Sending badges follow the
+// server's in-flight send ops on every refresh, so a badge survives close and
+// reopen and a row whose terminal event was missed can't stay stuck. Fresh clicks
+// get a grace window so a refetch racing the 202 doesn't strip the badge.
 
 import { describe, expect, it } from "vitest";
 

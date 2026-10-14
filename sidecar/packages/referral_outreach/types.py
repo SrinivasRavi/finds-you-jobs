@@ -1,14 +1,8 @@
-"""Typed request/result values + errors for the Referral Outreach facade.
+"""Typed request and result values plus errors for the Referral Outreach facade.
 
-finds-you-jobs-owned (AGPL-3.0-only). These are the plain dataclasses the
-`ReferralAutomation` facade speaks (`docs/internal/referral-outreach.md` section 3.1) —
-no SQLAlchemy, no FastAPI, no browser types cross this line. The
-OpenOutreach-derived browser core lives under `upstream/` (GPLv3) and is reached
-only through the facade's concrete implementation, never by callers.
-
-Errors carry a safe `message` for the UI — never cookies, access tokens, or
-saved storage state.
-"""
+AGPL-3.0-only plain dataclasses (referral-outreach.md section 3.1); no ORM, web
+or browser types cross this line. Errors carry a UI-safe `message`, never
+cookies, tokens or storage state."""
 
 from __future__ import annotations
 

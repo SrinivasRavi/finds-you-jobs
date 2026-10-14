@@ -1,24 +1,10 @@
 """Host-facing facade over the GPLv3 `upstream/` core (seam F-P10).
 
-finds-you-jobs-owned (AGPL-3.0-only). The one-way import rule keeps core
-(`sidecar.app.*`, `sidecar.modules.*`) off `upstream.*`. Core imports the few
-symbols it needs from here, and only this file, which lives inside the GPL
-package, reaches into `upstream.*`. A thin pass-through with no logic: the same
-`Pacer`/`PacingProfile` classes, the same `VoyagerError`, and the same worker
-module the app already drove directly, exposed under one AGPL-owned name.
-
-`worker` stays behind `worker_module()`, a lazy accessor, and is never a
-top-level re-export. Importing this facade for the pacing types (the caps/quota
-display path) or to build the driver never pulls the browser worker chain in;
-the worker is imported only when an op actually runs, exactly as the prior
-direct `from .upstream import worker` did.
-
-The typed worker errors (`AuthenticationError` … `CapExceeded`) are re-exported
-here too, so the app-side exception router classifies them through this seam
-rather than reaching into `upstream.errors` directly (the F-P10 one-way rule the
-`test_upstream_import_boundary` guard enforces). They're plain exception classes
-with no browser dependency, so re-exporting them adds no import cost.
-"""
+AGPL-3.0-only. Core never imports `upstream.*`; it imports from here, the 1 file
+inside the GPL package that does. A thin pass-through: `Pacer`, `PacingProfile`,
+`VoyagerError` and the typed worker errors (for the exception router). `worker`
+stays behind the lazy `worker_module()`, so reading pacing types never loads
+the browser chain (`test_upstream_import_boundary` enforces the rule)."""
 
 from __future__ import annotations
 
@@ -46,18 +32,10 @@ def worker_module():
 
 
 def referral_surface_slug() -> str:
-    """The runtime slug that names the referral browser surface AND its per-slug
-    profile dir under the core broker's data root (`session.SURFACE_SLUG`, the
-    single source of truth, owned inside the GPL package so core never spells the
-    vendor). Exposed behind this F-P10 facade so the host can point the one-time
-    login's persistent profile at the broker's `<data>/browser/<slug>/profile` —
-    the Phase-5 profile reconciliation, which lets a session captured by the
-    headed login be read back by a headless broker surface on the same slug.
-
-    The import is function-local (it pulls `upstream.session`, hence Playwright)
-    so reading the slug never loads the browser chain at facade-import time. It is
-    resolved only when a driver is being built for a real op, which is about to
-    touch a browser anyway."""
+    """The runtime slug naming the referral surface and its broker profile dir
+    (`session.SURFACE_SLUG`, owned in the GPL package so core never spells the
+    vendor), so the headed login and the broker surface share 1 profile. A
+    function-local import, so reading it loads Playwright only when a real op runs."""
     from .upstream.session import SURFACE_SLUG
 
     return SURFACE_SLUG

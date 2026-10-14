@@ -28,6 +28,14 @@ from sidecar.app.runner import (
     ProviderCircuitOpen,
     can_start,
 )
+from sidecar.app.runner.policy import (
+    APPLY_PARALLEL,
+    QUEUE_PER_KIND,
+    QUEUE_SHARED,
+    fit_to_pool,
+    policy_from,
+    with_queue_mode,
+)
 from sidecar.modules._shared.claude_engine import EngineError
 from sidecar.modules._shared.completion_retry import CompletionCancelled
 
@@ -76,10 +84,37 @@ def _running_count(db: Database) -> int:
 # -- pure policy -----------------------------------------------------------
 
 
-def test_can_start_llm_group_caps_at_default() -> None:
-    # Default parallelism is 4 (user-tunable via thresholds.llm_concurrency).
-    assert can_start("score", ["score", "cover", "draft"], DEFAULT_POLICY) is True
-    assert can_start("tailor", ["score", "cover", "draft", "score"], DEFAULT_POLICY) is False
+def test_can_start_shared_queue_caps_every_ai_kind_together() -> None:
+    # queueing.md 5.2: 1 lane for all AI work, capped by Parallel AI calls (4).
+    shared = with_queue_mode(DEFAULT_POLICY, QUEUE_SHARED)
+    assert can_start("score", ["score", "cover", "draft"], shared) is True
+    assert can_start("tailor", ["score", "cover", "draft", "score"], shared) is False
+    assert can_start("extract", ["score"] * 4, shared) is False
+
+
+def test_can_start_per_kind_queue_lanes_each_kind_of_work() -> None:
+    # queueing.md 5.1, the default: background scoring fills only its own lane.
+    four_scores = ["score"] * 4
+    assert can_start("score", four_scores, DEFAULT_POLICY) is False
+    assert can_start("tailor", four_scores, DEFAULT_POLICY) is True
+    assert can_start("extract", four_scores, DEFAULT_POLICY) is True
+    assert can_start("score", four_scores, DEFAULT_POLICY, "user") is True
+    # A user's request is never counted against the background lane, either.
+    user_scores = [("score", "user")] * 4
+    assert can_start("score", user_scores, DEFAULT_POLICY) is True
+    assert can_start("score", user_scores, DEFAULT_POLICY, "user") is False
+    # Writing has its own lane; the app's extract is single-flight.
+    assert can_start("cover", ["tailor", "cover", "draft", "tailor"], DEFAULT_POLICY) is False
+    assert can_start("extract", ["extract"], DEFAULT_POLICY) is False
+
+
+def test_policy_from_reads_the_saved_cap_and_queue_choice() -> None:
+    assert policy_from({}).ai_queue_mode == QUEUE_PER_KIND
+    assert policy_from({}).limit_for_group("llm") == 4
+    saved = policy_from({"llm_concurrency": 2, "ai_queue_mode": "shared"})
+    assert saved.ai_queue_mode == QUEUE_SHARED
+    assert saved.limit_for_group("llm") == 2
+    assert policy_from({"ai_queue_mode": "nonsense"}).ai_queue_mode == QUEUE_PER_KIND
 
 
 def test_can_start_scan_is_single_flight() -> None:
@@ -87,13 +122,15 @@ def test_can_start_scan_is_single_flight() -> None:
     assert can_start("scan", ["scan"], DEFAULT_POLICY) is False
 
 
-def test_apply_runs_beside_llm_ops_but_single_flight() -> None:
+def test_apply_runs_beside_llm_ops_up_to_its_tab_cap() -> None:
     # The agentic apply op WAITS for a still-generating tailored resume
     # (applier-as-built.md section 8.1), so `tailor` MUST be startable while apply runs —
     # exclusivity here dead-locked the packet wait (2026-07-17 dogfood).
     assert can_start("apply", ["score"], DEFAULT_POLICY) is True
     assert can_start("tailor", ["apply"], DEFAULT_POLICY) is True
-    assert can_start("apply", ["apply"], DEFAULT_POLICY) is False  # one run at a time
+    # 1 tab per application in the shared window (applier/window.md section 4.7).
+    assert can_start("apply", ["apply"] * (APPLY_PARALLEL - 1), DEFAULT_POLICY) is True
+    assert can_start("apply", ["apply"] * APPLY_PARALLEL, DEFAULT_POLICY) is False
     assert can_start("apply", [], DEFAULT_POLICY) is True
 
 
@@ -194,6 +231,7 @@ def test_unconfigured_engine_fails_cleanly(migrated_db: Database) -> None:
         assert op.error is not None
         assert EngineNotConfiguredError.__name__ in op.error
         assert "no engine configured" in op.error
+        assert "Settings › LLM Providers" in op.error
 
 
 def test_scan_is_single_flight_live(migrated_db: Database) -> None:
@@ -228,9 +266,10 @@ def test_llm_group_caps_at_two_live(migrated_db: Database) -> None:
     )
     runner.start()
     try:
+        # Background scoring's lane is the one Parallel AI calls caps.
         runner.submit("score", {})
-        runner.submit("tailor", {})
-        runner.submit("cover", {})
+        runner.submit("score", {})
+        runner.submit("score", {})
         assert blocking.started.acquire(timeout=3)
         assert blocking.started.acquire(timeout=3)  # two started
         assert blocking.started.acquire(timeout=0.4) is False  # third held back
@@ -239,6 +278,112 @@ def test_llm_group_caps_at_two_live(migrated_db: Database) -> None:
         blocking.release.set()
         runner.shutdown(drain_timeout=3)
     assert blocking.max_concurrent == 2
+
+
+def test_a_user_request_starts_while_background_scoring_fills_its_lane(
+    migrated_db: Database,
+) -> None:
+    """Audit A1: "Score it first" queued after 5 batch scores, with 1 scoring slot,
+    starts at once under the default (per kind) and first under the shared queue."""
+    from sidecar.app.runner.policy import with_llm_limit
+
+    for mode, user_starts_at_once in ((QUEUE_PER_KIND, True), (QUEUE_SHARED, False)):
+        db = migrated_db
+        with db.repos() as repos:
+            for op in repos.operations.list_by_state("queued"):
+                repos.operations.mark_cancelled(op.id)
+        order: list[str] = []
+        gate = threading.Event()
+
+        def entry(ctx: OperationContext, order: list[str] = order,
+                  gate: threading.Event = gate) -> OperationOutcome:
+            order.append(ctx.input_snapshot.get("tag", ""))
+            gate.wait(timeout=5)
+            return OperationOutcome()
+
+        runner = OperationRunner(
+            db,
+            policy=with_queue_mode(with_llm_limit(DEFAULT_POLICY, 1), mode),
+            registry=OperationRegistry({"score": entry}),
+        )
+        runner.start()
+        try:
+            for i in range(5):
+                runner.submit("score", {"tag": f"batch{i}"})
+            runner.submit("score", {"tag": "user"}, requested_by="user")
+            deadline = time.monotonic() + 3
+            want = 2 if user_starts_at_once else 1
+            while len(order) < want and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if user_starts_at_once:
+                assert sorted(order) == ["batch0", "user"], mode
+            else:
+                assert order == ["batch0"], mode
+                gate.set()
+                deadline = time.monotonic() + 3
+                while len(order) < 2 and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                assert order[1] == "user", mode  # next in line, ahead of batch1
+        finally:
+            gate.set()
+            runner.shutdown(drain_timeout=3)
+
+
+def test_scoring_gets_only_the_threads_other_lanes_leave() -> None:
+    """Audit A19: every lane at its cap still fits the pool, so Unlimited (and 20)
+    means what's left after the others, never a thread a click needs."""
+    from sidecar.app.registry.operations import default_operation_registry
+
+    kinds = default_operation_registry().kinds()
+    for mode in (QUEUE_PER_KIND, QUEUE_SHARED):
+        for setting in (0, 20, 4):
+            policy = fit_to_pool(
+                policy_from({"llm_concurrency": setting, "ai_queue_mode": mode}), 64, kinds
+            )
+            groups = {policy.group_for(k, by) for k in kinds for by in ("app", "user")}
+            assert sum(policy.limit_for_group(g) for g in groups) <= 64, (mode, setting)
+            if setting:
+                assert policy.limit_for_group("llm") == setting, (mode, setting)
+    # A pool too small for the other lanes still leaves scoring 1 thread.
+    assert fit_to_pool(policy_from({"llm_concurrency": 0}), 8, kinds).limit_for_group("llm") == 1
+
+
+def test_unlimited_scoring_never_queues_a_click_behind_it(migrated_db: Database) -> None:
+    """Audit A19, live: Unlimited plus 60 queued batch scores, then 1 "Score it
+    first". The click's code starts at once, and nothing marked running waits."""
+    from sidecar.app.registry.operations import default_operation_registry
+
+    db = migrated_db
+    started: list[str] = []
+    gate = threading.Event()
+
+    def entry(ctx: OperationContext) -> OperationOutcome:
+        started.append(ctx.input_snapshot.get("tag", ""))
+        gate.wait(timeout=10)
+        return OperationOutcome()
+
+    kinds = default_operation_registry().kinds()
+    runner = OperationRunner(
+        db,
+        policy=policy_from({"llm_concurrency": 0}),
+        registry=OperationRegistry({k: entry for k in kinds}),
+    )
+    runner.start()
+    try:
+        for i in range(60):
+            runner.submit("score", {"tag": f"batch{i}"})
+        user = runner.submit("score", {"tag": "user"}, requested_by="user")
+        deadline = time.monotonic() + 3
+        while "user" not in started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert "user" in started
+        wait_for_state(db, user, "running")
+        # Every op marked running is executing its code: none sits in the pool's queue.
+        time.sleep(0.3)
+        assert _running_count(db) == len(started) <= 64
+    finally:
+        gate.set()
+        runner.shutdown(drain_timeout=5)
 
 
 def test_on_success_hook_fires_on_success_only_and_is_contained(
@@ -327,12 +472,8 @@ def _seed_terminal_ops(db: Database, n: int, *, usd: float = 0.01) -> None:
 def test_a_completed_operation_no_longer_prunes_the_ledger(
     migrated_db: Database,
 ) -> None:
-    """Maintainer, 2026-08-24: "never delete anything".
-
-    Every completion used to end in `prune_ledger(250)`, so a ledger 300 rows
-    deep lost its oldest 50 the instant the next operation settled. Nothing
-    deletes an operation now; a deletion policy the user can see is S-C22.
-    """
+    """"Never delete anything" (2026-08-24): completions once pruned the ledger to
+    250 rows. Nothing deletes an op now; a visible policy is S-C22."""
     db = migrated_db
     _seed_terminal_ops(db, 300)
     runner = OperationRunner(db, registry=OperationRegistry({"score": _success}))
@@ -396,14 +537,14 @@ def test_llm_concurrency_setting_parses_and_clamps() -> None:
     assert llm_concurrency_from({"llm_concurrency": 999}) == 20  # clamp high
     assert llm_concurrency_from({"llm_concurrency": -3}) == 1  # clamp low
     assert llm_concurrency_from({"llm_concurrency": "junk"}) == DEFAULT_LLM_CONCURRENCY
-    # 0 = Unlimited: effectively uncapped by policy (the worker pool is the
-    # practical ceiling).
+    # 0 = Unlimited: uncapped here; the runner's `fit_to_pool` caps it at the
+    # threads the other lanes leave (audit A19).
     unlimited = llm_concurrency_from({"llm_concurrency": 0})
     assert unlimited >= 1_000_000
 
     raised = with_llm_limit(DEFAULT_POLICY, 6)
-    assert can_start("tailor", ["score"] * 5, raised) is True
-    assert can_start("tailor", ["score"] * 6, raised) is False
+    assert can_start("score", ["score"] * 5, raised) is True
+    assert can_start("score", ["score"] * 6, raised) is False
     # Only the llm group changed; scan stays single-flight.
     assert can_start("scan", ["scan"], raised) is False
 
@@ -590,6 +731,129 @@ def test_circuit_breaker_fails_fast_after_consecutive_engine_failures(
         runner.shutdown(drain_timeout=3)
 
 
+def test_a_failure_is_charged_to_the_service_that_failed(migrated_db: Database) -> None:
+    """Jev scoring calls OpenRouter whatever engine the kind routes to. Its
+    spent key used to open the ROUTED engine's circuit, pausing every kind
+    routed there (seen 2026-10: 42 scores failed "provider 'claude-cli'
+    paused" on OpenRouter 403s)."""
+    db = migrated_db
+    calls = {"n": 0}
+
+    def _entry(ctx: OperationContext) -> OperationOutcome:
+        calls["n"] += 1
+        raise EngineError("decisions API 403: Key limit exceeded", status=403,
+                          provider="openrouter")
+
+    circuit = EngineCircuitBreaker(threshold=2, cooldown_s=60.0)
+    runner = OperationRunner(
+        db, registry=OperationRegistry({"score": _entry}), engines=_routed_engines(),
+        circuit=circuit,
+    )
+    runner.start()
+    try:
+        for _ in range(3):
+            op_id = runner.submit("score", {})
+            assert wait_for_state(db, op_id, "failed") == "failed"
+        assert calls["n"] == 3  # the routed engine's circuit never opened
+        with pytest.raises(ProviderCircuitOpen):
+            circuit.check("openrouter")
+    finally:
+        runner.shutdown(drain_timeout=3)
+
+
+def _set_scoring_mode(db: Database, mode: str) -> None:
+    with db.repos() as repos:
+        repos.preferences.get_or_create()
+        repos.preferences.update(thresholds={"scoring_mode": mode})
+
+
+def test_an_open_openrouter_circuit_stops_the_next_jev_score(migrated_db: Database) -> None:
+    """Audit A4: the circuit was charged to OpenRouter but only the routed
+    engine's was checked, so every Jev score still called a spent key and
+    spent 1 of the job's 3 attempts."""
+    from sidecar.app.registry.operations import score_service
+
+    db = migrated_db
+    _set_scoring_mode(db, "jev")
+    calls = {"n": 0}
+
+    def _jev(ctx: OperationContext) -> OperationOutcome:
+        calls["n"] += 1
+        raise EngineError("decisions API 403: Key limit exceeded", status=403,
+                          provider="openrouter")
+
+    circuit = EngineCircuitBreaker(threshold=2, cooldown_s=60.0)
+    runner = OperationRunner(
+        db, registry=OperationRegistry({"score": _jev}, services={"score": score_service}),
+        engines=_routed_engines(), circuit=circuit,
+    )
+    runner.start()
+    try:
+        ops = [runner.submit("score", {}) for _ in range(5)]
+        for op_id in ops:
+            assert wait_for_state(db, op_id, "failed") == "failed"
+    finally:
+        runner.shutdown(drain_timeout=3)
+    assert calls["n"] == 2  # the 3rd to 5th never reached OpenRouter
+    with db.repos() as repos:
+        last = repos.operations.get(ops[-1])
+        error = (last.error if last is not None else None) or ""
+    assert "provider 'openrouter' paused" in error
+    circuit.check("deadprov")  # the routed engine was never charged
+
+
+def test_a_jev_score_success_leaves_the_routed_engines_count_alone(
+    migrated_db: Database,
+) -> None:
+    from sidecar.app.registry.operations import score_service
+
+    db = migrated_db
+    _set_scoring_mode(db, "jev")
+    circuit = EngineCircuitBreaker(threshold=2, cooldown_s=60.0)
+    circuit.record_failure("deadprov", "timeout")
+    runner = OperationRunner(
+        db,
+        registry=OperationRegistry(
+            {"score": lambda ctx: OperationOutcome(result_ref={})},
+            services={"score": score_service},
+        ),
+        engines=_routed_engines(), circuit=circuit,
+    )
+    runner.start()
+    try:
+        assert wait_for_state(db, runner.submit("score", {}), "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=3)
+    circuit.record_failure("deadprov", "timeout")  # 2nd in a row: Jev never reset it
+    with pytest.raises(ProviderCircuitOpen):
+        circuit.check("deadprov")
+
+
+def test_keyword_scoring_is_never_gated_by_an_open_circuit(migrated_db: Database) -> None:
+    """Keyword scoring calls no provider, so a paused routed engine must not stop it."""
+    from sidecar.app.registry.operations import score_service
+
+    db = migrated_db
+    _set_scoring_mode(db, "keyword")
+    circuit = EngineCircuitBreaker(threshold=1, cooldown_s=60.0)
+    circuit.record_failure("deadprov", "down")
+    runner = OperationRunner(
+        db,
+        registry=OperationRegistry(
+            {"score": lambda ctx: OperationOutcome(result_ref={})},
+            services={"score": score_service},
+        ),
+        engines=_routed_engines(), circuit=circuit,
+    )
+    runner.start()
+    try:
+        assert wait_for_state(db, runner.submit("score", {}), "succeeded") == "succeeded"
+    finally:
+        runner.shutdown(drain_timeout=3)
+    with pytest.raises(ProviderCircuitOpen):
+        circuit.check("deadprov")  # still open: a keyword score is no verdict on it
+
+
 def test_non_engine_failures_never_feed_the_breaker(migrated_db: Database) -> None:
     """Module bugs / parse drift say nothing about provider health — ops keep
     reaching the entrypoint no matter how many fail."""
@@ -644,12 +908,8 @@ def _open_circuit_then(migrated_db: Database, probe_mode: dict) -> OperationRunn
 
 
 def test_cancelled_probe_releases_the_lease_for_a_new_probe(migrated_db: Database) -> None:
-    """A half-open probe the user cancels lands `cancelled` with no provider
-    verdict — the lease is abandoned, so the next op after cooldown becomes a
-    fresh probe instead of every op being rejected until restart.
-
-    Pins the ordering too: the retry is submitted the moment the row reads
-    `cancelled`, so the lease must already be released by then."""
+    """A cancelled half-open probe releases its lease, so the next op after cooldown
+    is a fresh probe; the lease is already free when the row reads `cancelled`."""
     db = migrated_db
     probe_mode = {"value": "engine_fail"}
     runner = _open_circuit_then(db, probe_mode)

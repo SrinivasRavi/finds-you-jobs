@@ -15,7 +15,7 @@ import pytest
 
 from sidecar.modules._shared.claude_engine import EngineError
 from sidecar.modules._shared.completion_retry import MAX_ATTEMPTS
-from sidecar.modules.coverletterer.coverletterer import cover, dry_run_prompt
+from sidecar.modules.coverletterer.coverletterer import cover
 from sidecar.modules.coverletterer.engine import Engine  # noqa: F401  (protocol import sanity)
 from sidecar.modules.coverletterer.job_input import resolve_job
 from sidecar.modules.coverletterer.output_parse import parse_output
@@ -225,13 +225,6 @@ def test_cover_jd_gate_refusal_is_not_retried():
     assert eng.calls == 1  # no retry burned on a deliberate refusal
 
 
-def test_dry_run_prompt_contains_skill_and_inputs_without_llm():
-    p = dry_run_prompt("# Master resume body", "responsibilities " * 20, "lead with Kafka")
-    assert "SYSTEM (skill)" in p and "USER" in p
-    assert "cover-letter writing engine" in p
-    assert "# Master resume body" in p and "lead with Kafka" in p
-
-
 # ---------------------------------------------------------------------------
 # Retry classification (technical audit F-H5)
 # ---------------------------------------------------------------------------
@@ -242,11 +235,11 @@ def _record_backoff_no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """Backoff delays are classified and recorded but never slept — semantics
     under test, not wall-clock waits (the wait itself is unit-tested in
     tests/modules/shared/test_completion_retry.py)."""
-    import sidecar.modules.coverletterer.coverletterer as cover_mod
+    import sidecar.modules._shared.completion_retry as retry_mod
 
     waits: list[float] = []
     monkeypatch.setattr(
-        cover_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
+        retry_mod, "wait_before_retry", lambda delay, cancelled=None: waits.append(delay)
     )
     return waits
 
@@ -280,3 +273,21 @@ def test_cover_cancel_checkpoint_precedes_any_attempt() -> None:
     with pytest.raises(CompletionCancelled):
         cover("# Master", "responsibilities " * 20, engine=Never(), cancelled=lambda: True)
     assert calls["n"] == 0
+
+
+def test_the_cover_letter_follows_the_resume_location_setting():
+    """1 setting for both documents (maintainer, 2026-10-13): the contact line takes
+    the posting's place, and the company's own city line is left alone."""
+    fake = FakeEngine()
+    result = cover("# Master", "responsibilities " * 20, engine=fake,
+                   location=("posting", "London, Ontario, Canada", "Bengaluru"))
+    lines = result.cover_letter_md.splitlines()
+    assert lines[1] == "London, Ontario, Canada | jane@example.com"
+    assert any(line.startswith("Glean, Bengaluru") for line in lines)
+    assert "London, Ontario, Canada" in fake.calls[0][1]  # the model was told
+    removed = cover("# Master", "responsibilities " * 20, engine=FakeEngine(),
+                    location=("none", "", "Bengaluru"))
+    assert removed.cover_letter_md.splitlines()[1] == "jane@example.com"
+    kept = cover("# Master", "responsibilities " * 20, engine=FakeEngine(),
+                 location=("master", "London", "Bengaluru"))
+    assert kept.cover_letter_md.splitlines()[1] == "Bengaluru | jane@example.com"

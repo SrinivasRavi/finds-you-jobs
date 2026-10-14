@@ -1,14 +1,6 @@
-// TanStack Query hooks over the (sidecar-backed) client + SSE invalidation.
-// Server state lives in Query; the SSE bus invalidates the relevant keys so
-// feed deltas / operation progress flow into the UI (architecture section 6:
-// "TanStack Query, invalidated by SSE events").
-//
-// Job Board / Dev status page / main.tsx guard hooks, plus the applications/
-// tracker hooks (restored — `/api/applications` now exists) and the
-// networking hooks (restored 2026-07-16 — the referral-outreach backend now
-// exists: /api/contacts, /api/jobs/{id}/referrals/*, /api/referrals/*,
-// /api/linkedin/*). Apply/prep/packet-prompts/spans hooks return with their
-// own commits, once the sidecar grows that surface.
+// TanStack Query hooks over the sidecar-backed client. Server state lives in
+// Query, and the SSE bus invalidates the keys an event affects, so feed deltas
+// and operation progress reach the UI (architecture section 6).
 
 import {
   useInfiniteQuery,
@@ -20,10 +12,16 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { asReasons, type ScoreReason } from "../shell/scoreText";
 import { eventBus, type StreamState } from "./events";
 import { api } from "./index";
 import type {
+  ApplicationProfile,
+  BoardFilters,
   Application,
+  Operation,
+  AttachLinkInput,
+  AttachLinkResult,
   BoardPage,
   CompanyConfirmPick,
   ContactInput,
@@ -35,6 +33,8 @@ import type {
   ManualApplicationInput,
   NetContact,
   Priority,
+  PromptTestInput,
+  PromptTestResult,
   ReachOutInput,
   Settings,
   Stage,
@@ -61,6 +61,9 @@ export const qk = {
   ledger: ["ledger"] as const,
   costTotals: ["costTotals"] as const,
   retryableScores: ["retryableScores"] as const,
+  jobFactors: ["jobFactors"] as const,
+  jobDuplicate: ["jobDuplicate"] as const,
+  explainCost: ["explainCost"] as const,
   schedulerStatus: ["schedulerStatus"] as const,
   spans: ["spans"] as const,
   contacts: ["contacts"] as const,
@@ -77,14 +80,69 @@ export const qk = {
 export function useJobs() {
   return useQuery({ queryKey: qk.jobs, queryFn: () => api.listJobs() });
 }
+/** The price on the Explain button before it is pressed. */
+export function useExplainCost(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.explainCost,
+    queryFn: () => api.getExplainCost(),
+    enabled,
+  });
+}
+
+/** The location picker's suggestions for what's typed (place-picker.md section 3).
+ *  Cached per query, so backspacing re-uses answers instead of re-asking. */
+export function usePlaceSuggestions(q: string) {
+  const query = q.trim();
+  return useQuery({
+    queryKey: ["placeSuggest", query.toLowerCase()],
+    queryFn: () => api.suggestPlaces(query),
+    enabled: query.length >= 2,
+    staleTime: Infinity,
+  });
+}
+
+/** The duplicate notice for one open card (url-less-jobs.md 9.6). Asked only
+ *  when the board row says the job has an open pair. */
+export function useJobDuplicate(jobId: string | null, hasNotice: boolean) {
+  return useQuery({
+    queryKey: [...qk.jobDuplicate, jobId],
+    queryFn: () => api.getJobDuplicate(jobId!),
+    enabled: !!jobId && hasNotice,
+  });
+}
+
+/** "They're different", remembered on the pair so it never asks again. */
+export function useDismissJobDuplicate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, otherJobId }: { jobId: string; otherJobId: string }) =>
+      api.dismissJobDuplicate(jobId, otherJobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.jobDuplicate });
+      // The board's "reposted" chip reads the same pair.
+      void qc.invalidateQueries({ queryKey: qk.board });
+    },
+  });
+}
+
+/** The per-axis bars behind one job's score. Only the open card asks, so the
+ *  board's 50 rows never fan out into 50 reads. */
+export function useJobFactors(jobId: string | null) {
+  return useQuery({
+    queryKey: [...qk.jobFactors, jobId],
+    queryFn: () => api.getJobFactors(jobId!),
+    enabled: !!jobId,
+  });
+}
 /** The paginated Job Board feed (FR-JB-02) — infinite scroll over 50-row pages
  *  with a live total + real last-scan meta (FR-JB-10). Saved-excluded server-side.
  *  `listQ`/`textQ` (FR-JB-13) are server-side search filters keyed into the
  *  query, so clearing a search falls back to the cached unfiltered feed. */
-export function useBoard(listQ = "", textQ = "") {
+export function useBoard(listQ = "", textQ = "", link = "", filters: BoardFilters = {}) {
   return useInfiniteQuery({
-    queryKey: [...qk.board, listQ, textQ],
-    queryFn: ({ pageParam }) => Promise.resolve(api.getBoard(pageParam, listQ, textQ)),
+    queryKey: [...qk.board, listQ, textQ, link, filters],
+    queryFn: ({ pageParam }) =>
+      Promise.resolve(api.getBoard(pageParam, listQ, textQ, link, filters)),
     initialPageParam: 0,
     getNextPageParam: (last, all) => {
       const loaded = all.reduce((n, p) => n + p.jobs.length, 0);
@@ -161,6 +219,39 @@ export function useDiscoverySources() {
     queryFn: () => api.listDiscoverySources(),
   });
 }
+/** Buy prose for 1 job. The board and its factors both change underneath, so
+ *  both are invalidated when the operation lands, not when the click returns. */
+export function useExplainJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.explainJob(jobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.ledger });
+      void qc.invalidateQueries({ queryKey: qk.costTotals });
+    },
+  });
+}
+
+/** Rescore 1 row. Pending until the operation ends, so the row can say so while
+ *  it waits in its queue and runs; the board refetches on the terminal event. */
+export function useRescoreJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      const { id } = await api.rescoreJob(jobId);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const op = await api.getOperation(id);
+        if (op && ["succeeded", "failed", "cancelled"].includes(op.state)) return op;
+      }
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.ledger });
+      void qc.invalidateQueries({ queryKey: qk.costTotals });
+    },
+  });
+}
+
 export function useToggleDiscoverySource() {
   const qc = useQueryClient();
   return useMutation({
@@ -294,7 +385,7 @@ export function useLedger() {
 export function useCostTotals() {
   return useQuery({ queryKey: qk.costTotals, queryFn: () => api.getCostTotals() });
 }
-/** How many jobs are stuck with a spent AI-scoring budget (S-C24). Drives the
+/** How many jobs are stuck with a spent LLM scoring budget (S-C24). Drives the
  *  ledger's Retry-scoring button, which stays hidden at 0. */
 export function useRetryableScores() {
   return useQuery({ queryKey: qk.retryableScores, queryFn: () => api.retryableScoreCount() });
@@ -452,7 +543,7 @@ export function useTombstoneJob() {
   });
 }
 
-/** Add-by-URL step 1: fetch the pasted URL → editable draft (no persist).
+/** Add a job posting, step 1: fetch the pasted URL → editable draft (no persist).
  *  Every call site renders the failure inline — no global banner. */
 export function useJobPreview() {
   return useMutation({
@@ -461,12 +552,139 @@ export function useJobPreview() {
   });
 }
 
-/** Add-by-URL step 2: persist the (edited) draft. Failure renders inline. */
+/** Add a job posting, step 2: persist the (edited) draft. Failure renders inline. */
 export function useAddJobByUrl() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (draft: JobDraft): Promise<Job> => Promise.resolve(api.addJobByUrl(draft)),
     onSuccess: () => invalidateFeed(qc),
+    meta: { errorHandledLocally: true },
+  });
+}
+
+/** Promotion (url-less-jobs.md section 5.4): attach a posting link to a job
+ *  that has none. A non-`attached` status is a question for the user, so the
+ *  dialog renders it inline rather than as a failure. */
+export function useAttachJobLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AttachLinkInput): Promise<AttachLinkResult> =>
+      Promise.resolve(api.attachJobLink(input)),
+    onSuccess: (result) => {
+      if (result.status === "attached") invalidateFeed(qc);
+    },
+    meta: { errorHandledLocally: true },
+  });
+}
+
+/** Triage (url-less-jobs.md section 9.1.1): score a pasted JD with nothing
+ *  saved, resolving with the score, method and reasons from `result_ref`. Polled
+ *  rather than SSE-driven: the strip lives a few seconds inside 1 modal. */
+export interface TriageResult {
+  score: number;
+  method: string;
+  reasons: ScoreReason[];
+}
+
+/** How long a prompt test or a triage score may run before it's cancelled for
+ *  the user, so a forgotten run can't keep spending on their key (audit
+ *  finding 4, maintainer 2026-10-12). Stop cancels sooner. */
+export const RUN_LIMIT_MS = 240_000;
+
+/** A run that ended without a result: the user pressed Stop, or the limit hit. */
+export class RunStoppedError extends Error {
+  constructor(readonly reason: "stopped" | "timeout") {
+    super(reason);
+  }
+}
+
+/** Wait for an operation to finish. It keeps asking for as long as the run
+ *  lasts, and at the limit it cancels the run itself rather than abandoning it. */
+async function waitForOperation(opId: string): Promise<Operation> {
+  // The limit counts running time only: a queued run spends nothing
+  // (queueing.md section 6, audit A1).
+  let runningSince: number | null = null;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (runningSince !== null && Date.now() - runningSince >= RUN_LIMIT_MS) {
+      await api.cancelOperation(opId).catch(() => undefined);
+      throw new RunStoppedError("timeout");
+    }
+    const op = await api.getOperation(opId);
+    if (op === undefined) continue;
+    if (op.state === "cancelled") throw new RunStoppedError("stopped");
+    if (op.state === "succeeded" || op.state === "failed") return op;
+    if (op.state === "running" && runningSince === null) runningSince = Date.now();
+  }
+}
+
+/** Run a prompt draft and wait for its output (url-less-jobs.md section 11.2).
+ *
+ *  The run goes through the runner like every other LLM call, so its spend
+ *  reaches Analytics, the concurrency cap applies and Stop works. Polled the
+ *  same way triage is, because it is the same shape of wait. */
+export function usePromptTest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      kind,
+      input,
+      onStarted,
+    }: {
+      kind: string;
+      input: PromptTestInput;
+      /** The run's operation id, so the window can offer Stop. */
+      onStarted?: (opId: string) => void;
+    }): Promise<PromptTestResult> => {
+      const opId = await api.testPrompt(kind, input);
+      onStarted?.(opId);
+      const op = await waitForOperation(opId);
+      if (op.state === "failed") return { state: "failed", error: op.error };
+      const ref = (op.result_ref ?? {}) as Record<string, unknown>;
+      return {
+          state: "succeeded",
+          output_md: typeof ref.output_md === "string" ? ref.output_md : undefined,
+          notes: Array.isArray(ref.notes) ? ref.notes.map(String) : undefined,
+          score: typeof ref.score === "number" ? ref.score : undefined,
+          reasons: Array.isArray(ref.reasons) ? asReasons(ref.reasons) : undefined,
+          message: typeof ref.message === "string" ? ref.message : undefined,
+          profile:
+            typeof ref.profile === "object" && ref.profile !== null
+              ? (ref.profile as Record<string, unknown>)
+              : undefined,
+          usd:
+            typeof op.usage?.usd === "number" ? op.usage.usd : null,
+      };
+    },
+    onSettled: () => {
+      // A test run is real spend, so the dashboard moves with it.
+      void qc.invalidateQueries({ queryKey: qk.ledger });
+      void qc.invalidateQueries({ queryKey: qk.costTotals });
+    },
+    meta: { errorHandledLocally: true },
+  });
+}
+
+export function useTriageScore() {
+  return useMutation({
+    mutationFn: async ({
+      description,
+      onStarted,
+    }: {
+      description: string;
+      onStarted?: (opId: string) => void;
+    }): Promise<TriageResult> => {
+      const opId = await api.scoreJobText(description);
+      onStarted?.(opId);
+      const op = await waitForOperation(opId);
+      if (op.state === "failed") throw new Error(op.error ?? "scoring failed");
+      const ref = op.result_ref ?? {};
+      return {
+        score: Number(ref.score ?? 0),
+        method: String(ref.method ?? ""),
+        reasons: asReasons(ref.reasons),
+      };
+    },
     meta: { errorHandledLocally: true },
   });
 }
@@ -506,6 +724,31 @@ export function useUpdateProfile() {
   return useMutation({
     mutationFn: (master_md: string) => Promise.resolve(api.updateProfile(master_md)),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.profile }),
+  });
+}
+
+/** Read the application profile from the master resume now (FR-APP-01, audit A5). */
+export function useExtractApplicationProfile() {
+  return useMutation({
+    mutationFn: () => Promise.resolve(api.extractApplicationProfile()),
+  });
+}
+
+/** Save Applicant details; saving is the review Apply waits for (audit A5). */
+export function useSaveApplicantDetails() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fields: ApplicationProfile) =>
+      Promise.resolve(api.patchApplicationProfile(fields)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.profile }),
+  });
+}
+
+export function useCountries() {
+  return useQuery({
+    queryKey: ["countries"] as const,
+    queryFn: () => api.getCountries(),
+    staleTime: Infinity,
   });
 }
 
@@ -577,7 +820,7 @@ export function useRetryOperation() {
   });
 }
 
-/** Hand every stuck job its AI-scoring budget back (S-C24). The recovery path
+/** Hand every stuck job its LLM scoring budget back (S-C24). The recovery path
  *  for a provider-wide failure — an expired key, an exhausted quota — that the
  *  per-job attempt cap can't tell apart from a job that simply won't score.
  *  The next scheduler tick does the re-scoring, batched. */
@@ -732,17 +975,15 @@ export function useGeneratePacket() {
   return useMutation({
     mutationFn: ({
       id,
-      fail,
       resume = true,
       cover = true,
       guidance = "",
     }: {
       id: string;
-      fail?: boolean;
       resume?: boolean;
       cover?: boolean;
       guidance?: string;
-    }) => Promise.resolve(api.generatePacket(id, fail, { resume, cover }, guidance)),
+    }) => Promise.resolve(api.generatePacket(id, { resume, cover }, guidance)),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.applications }),
   });
 }
@@ -975,12 +1216,9 @@ export function useSyncContacts() {
   });
 }
 
-/** Queue a `view_page` operation that shows a page on the browser surface
- *  (2026-08-16). No invalidation: the queue panel tracks the op off the SSE
- *  operation events. A mutation, not a bare api call, ON PURPOSE — the old
- *  fire-and-forget swallowed its failure, so a click against a sidecar
- *  without the route showed nothing anywhere; now the global
- *  MutationErrorBanner nets it. */
+/** Queue a `view_page` op that shows a page on the browser surface. A mutation
+ *  on purpose: the old fire-and-forget call swallowed its failure, and now the
+ *  global MutationErrorBanner shows it. */
 export function useViewInBrowser() {
   return useMutation({
     mutationFn: (args: { url: string; surface?: string; contactId?: string }) =>
@@ -988,14 +1226,10 @@ export function useViewInBrowser() {
   });
 }
 
-/** True while a `contact_sync` operation is genuinely in flight (queued or
- *  running). The POST above answers 202 the moment the sweep is enqueued, but
- *  the sweep itself runs for a while in the background (paced read probes), so
- *  the Sync button's busy state must follow the OPERATION, not the request:
- *  SSE operation events drive this from enqueue to terminal, and a ledger read
- *  seeds a sweep already in flight at mount (tab switch, reload, or a join via
- *  `already_running`). Same tracking pattern as `useBrowserOp`
- *  (BrowserOpPlan.tsx), scoped to the one kind. */
+/** True while a `contact_sync` op is queued or running. The POST answers 202 at
+ *  enqueue but the sweep runs on, so the Sync button follows the operation: SSE
+ *  events drive it, and a ledger read seeds a sweep already running at mount.
+ *  Same pattern as `useBrowserOp` (BrowserOpPlan.tsx). */
 export function useContactSyncInFlight(): boolean {
   const [op, setOp] = useState<{ id: string; state: string } | null>(null);
 
@@ -1123,12 +1357,9 @@ export function useReachOut() {
 
 // ─── SSE invalidation bridge ─────────────────────────────────────────────────
 
-/** Leading+trailing throttle for invalidation bursts (F-H4). The first call
- *  fires immediately (terminal-state freshness); further calls within
- *  `intervalMs` collapse into ONE trailing call, so the final event of a burst
- *  is never lost — a re-score of 300 jobs invalidates at a bounded rate instead
- *  of once per event. Pure and exported for testability (no frontend unit
- *  runner exists today — see the e2e + typecheck coverage note). */
+/** Leading and trailing throttle for invalidation bursts (F-H4). The first call
+ *  fires at once; later calls inside `intervalMs` collapse into 1 trailing call,
+ *  so a burst's last event is never lost. Exported for its unit test. */
 export interface TrailingThrottle {
   (): void;
   /** Drop any pending trailing call — for effect cleanup, so an unmounted
@@ -1237,13 +1468,9 @@ export function useSSEInvalidation(qc: QueryClient): void {
         // both so the Tracker repaints without a manual reload.
         const packetAffecting = p.kind === "tailor" || p.kind === "cover";
         if (packetAffecting && terminal) invalidatePacket();
-        // Restored 2026-07-16: a terminal discover/send/linkedin_login/
-        // contact_sync op means the referral roster, the contact kanban, the
-        // card's Referrals slot, or the LinkedIn session may have changed —
-        // refresh contacts + referral quota + applications so the Tracker/
-        // Networking surfaces repaint without a manual reload. `draft` is
-        // deliberately excluded — nothing subscribes to its result yet
-        // (see useDraftReferral).
+        // A terminal discover, send, linkedin_login or contact_sync op may have changed
+        // the roster, the kanban, the Referrals slot or the session, so contacts, quota
+        // and applications refresh. `draft` is excluded: nothing reads its result yet.
         const networkingAffecting =
           p.kind === "discover" ||
           p.kind === "send" ||
@@ -1265,6 +1492,10 @@ export function useSSEInvalidation(qc: QueryClient): void {
         // (applyRunStatus) + writes an Activity event — refresh all three so the
         // Tracker/companion repaint without a manual reload (applier-as-built.md section 8.4).
         // One event per run — no throttle needed.
+        // A finished resume read fills the facts Apply needs (audit A5).
+        if (p.kind === "extract" && terminal) {
+          qc.invalidateQueries({ queryKey: qk.profile });
+        }
         if (p.kind === "apply" && terminal) {
           qc.invalidateQueries({ queryKey: qk.applications });
           qc.invalidateQueries({ queryKey: qk.applyRun });
@@ -1279,14 +1510,10 @@ export function useSSEInvalidation(qc: QueryClient): void {
       if (ev.type === "apply" && APPLY_PHASE_EVENTS.has(ev.payload.event)) {
         invalidateApplications();
       }
-      // Networking live-updates (Track N3): discover/send progress for the
-      // popup + kanban (US-NW-09) — the popup's own SSE subscription (in
-      // ReferralsModal) reads company-confirm / per-contact send outcomes off
-      // this same event; here we just keep the cached lists honest. Per-contact
-      // `candidate` events grow the roster LIVE through their own wider
-      // throttle group (they burst once per found contact); everything else —
-      // including the `discovered` summary that closes every discover pass,
-      // the final-consistency backstop — keeps the tighter group (F-H4).
+      // Networking live updates (US-NW-09): the popup reads its own outcomes off this
+      // event; here the cached lists stay honest. Per-contact `candidate` events grow
+      // the roster through their own wider throttle group; everything else, including
+      // the closing `discovered` summary, uses the tighter one (F-H4).
       if (ev.type === "networker") {
         if (ev.payload.phase === "candidate") invalidateRosterCandidates();
         else invalidateReferralRoster();

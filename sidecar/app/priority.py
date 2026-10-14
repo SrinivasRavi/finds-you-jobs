@@ -1,17 +1,9 @@
-"""Priority z-band assignment via Welford's online algorithm (FR-TR-09 / US-TR-10).
+"""Priority z-bands via Welford's online algorithm (FR-TR-09 / US-TR-10).
 
-The system keeps a running mean (μ) and variance (via M2) over the match scores
-of *all jobs ever scored* — three O(1) accumulators (`count / mean / m2`), no
-scores stored. At Save, an application's priority is the z-band of its score at
-the normal-quartile cut-points (±0.674σ). A card saved while its score is still
-`Pending` skips the z-band and is stamped `P0` (the strongest priority signal —
-the user kept it regardless of the number). Priority is set once at Save, stored
-on the `Application`, and never auto-recalculated; a manual override always wins.
-
-The accumulators live in `UserPreferences.thresholds["score_stats"]` (no schema
-change): the scorer feeds `welford_update` when a *new* score is cached; Save
-reads the snapshot and calls `zband_priority`.
-"""
+A running mean and variance over every score ever made, in 3 accumulators in
+`thresholds["score_stats"]`. At Save a card's priority is its score's z-band at
+±0.674σ; a card saved while pending gets P0. Set once at Save; a manual
+override always wins."""
 
 from __future__ import annotations
 

@@ -1,20 +1,65 @@
 """Parse the skill's output contract: ===SCORE=== int, ===REASONS=== bullets,
-===BREAKDOWN=== markdown."""
+===BREAKDOWN=== markdown, and the optional ===FACTORS=== lines."""
 
 from __future__ import annotations
 
 import re
 
-from .types import ScoreError
+from .types import Factor, ScoreError
 
 _SCORE_RE = re.compile(r"===\s*SCORE\s*===\s*\n(.*?)\n===\s*REASONS\s*===", re.DOTALL)
 _REASONS_RE = re.compile(r"===\s*REASONS\s*===\s*\n(.*?)\n===\s*BREAKDOWN\s*===", re.DOTALL)
 # \s* (not \s*\n) so a trailing-whitespace-only block still matches and hits
 # the dedicated "empty" error below instead of the generic contract error.
-_BREAKDOWN_RE = re.compile(r"===\s*BREAKDOWN\s*===\s*(.*)\Z", re.DOTALL)
+# The breakdown stops at FACTORS when that block is present and runs to the end
+# when it is not, because the skill file is user-editable: an override that
+# predates FACTORS has to keep parsing.
+_BREAKDOWN_RE = re.compile(r"===\s*BREAKDOWN\s*===\s*(.*?)(?:\n===\s*FACTORS\s*===|\Z)", re.DOTALL)
+_FACTORS_RE = re.compile(r"===\s*FACTORS\s*===\s*(.*)\Z", re.DOTALL)
+_FACTOR_LINE_RE = re.compile(r"^[-*\s]*([a-z_]{3,40})\s*:\s*([0-9]*\.?[0-9]+)\s*(?:\|(.*))?$")
+
+# The axes the product draws and weights. A key outside this set is dropped
+# rather than stored: the bar chart, the weights and the cross-method comparison
+# all read a fixed vocabulary, so a model inventing an 8th axis must not reach
+# the database (`scoring.md` section 7.2).
+FACTOR_KEYS: tuple[str, ...] = (
+    "hard_requirements",
+    "core_stack",
+    "years",
+    "level",
+    "location_preference",
+    "logistics",
+    "nice_to_haves",
+)
 
 
-def parse_output(raw: str) -> tuple[int, list[str], str]:
+def parse_factors(block: str) -> list[Factor]:
+    """`key: value | evidence` lines into typed factors; junk lines are skipped.
+
+    Tolerant on purpose. The factors are an addition to a contract whose score
+    and prose already parsed, so a malformed line costs a bar, never the call.
+    """
+    factors: list[Factor] = []
+    seen: set[str] = set()
+    for line in block.strip().splitlines():
+        match = _FACTOR_LINE_RE.match(line.strip())
+        if match is None:
+            continue
+        key = match.group(1)
+        if key not in FACTOR_KEYS or key in seen:
+            continue
+        try:
+            value = float(match.group(2))
+        except ValueError:
+            continue
+        if not 0.0 <= value <= 1.0:
+            continue
+        seen.add(key)
+        factors.append(Factor(key, value, evidence=(match.group(3) or "").strip()))
+    return sorted(factors, key=lambda f: FACTOR_KEYS.index(f.factor))
+
+
+def parse_output(raw: str) -> tuple[int, list[str], str, list[Factor]]:
     # Models sometimes wrap the whole contract in a markdown fence; strip one if present.
     stripped = raw.strip()
     fenced = re.fullmatch(r"```(?:markdown|md)?\s*\n(.*)\n```", stripped, re.DOTALL)
@@ -59,4 +104,7 @@ def parse_output(raw: str) -> tuple[int, list[str], str]:
     if not breakdown_md:
         raise ScoreError("parse", "BREAKDOWN block is empty")
 
-    return score, reasons, breakdown_md
+    m_factors = _FACTORS_RE.search(stripped)
+    factors = parse_factors(m_factors.group(1)) if m_factors else []
+
+    return score, reasons, breakdown_md, factors

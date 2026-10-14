@@ -7,23 +7,28 @@ import { useTranslation } from "react-i18next";
 
 import { Modal } from "../shell/Modal";
 
+/** Which document is being generated. It used to travel as the English display
+ *  string "cover letter", and `Tracker` decided the API payload by comparing
+ *  against that literal, so translating the label would have silently flipped
+ *  generation to the resume. */
+export type GuidanceKind = "tailored" | "cover";
+
 export function GuidanceDialog({
   onClose,
   onGenerate,
-  label = "tailored resume",
+  kind = "tailored",
 }: {
   onClose: () => void;
   onGenerate: (guidance: string) => void;
-  label?: string;
+  kind?: GuidanceKind;
 }) {
   const { t } = useTranslation();
   const [guidance, setGuidance] = useState("");
-  // The label prop is a stable identifier from the caller; translate it here.
   const labelText = t(
-    label === "cover letter" ? "popups.guidance.labelCover" : "popups.guidance.labelResume",
+    kind === "cover" ? "popups.guidance.labelCover" : "popups.guidance.labelResume",
   );
   return (
-    <Modal title={t("popups.guidance.generate", { label: labelText })} onClose={onClose} width={480}>
+    <Modal title={t("popups.guidance.generate", { label: labelText })} onClose={onClose} size="md">
       <div className="flex flex-col gap-3 p-5">
         <p className="text-[12.5px] text-ink-2">
           {t("popups.guidance.blurb", { label: labelText })}

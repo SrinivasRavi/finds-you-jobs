@@ -7,19 +7,21 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from sidecar.app.db import Database
 from sidecar.app.db.migrate import upgrade_to_head
+from sidecar.app.main import create_app
+
+from ._support import TOKEN
 
 
 @pytest.fixture(autouse=True)
 def _no_real_llm_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Background ops enqueued by routes (extract at profile-save) resolve the
-    default claude-cli engine — never let a unit test spawn the real `claude -p`
-    subprocess (cost + nondeterminism). Ops that hit this fail fast with a typed
-    EngineError, which is harmless: route tests assert enqueueing, not op
-    outcomes. A test that needs a working engine overrides this with its own
-    fake."""
+    """Never let a unit test spawn a real `claude -p`. Background ops that hit this
+    fail fast with an EngineError, which is harmless; a test needing an engine
+    overrides it."""
     from sidecar.modules._shared import claude_engine
 
     def _refuse(self, system_prompt: str, user_prompt: str):  # noqa: ANN001, ANN202, ARG001
@@ -63,3 +65,17 @@ def wait_for_state(
             return state  # type: ignore[return-value]
         time.sleep(0.02)
     raise AssertionError(f"operation {operation_id} never reached {targets} (last={state})")
+
+
+@pytest.fixture
+def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    """A booted app and its client on a throwaway data dir, scheduler off. Shared by
+    10 modules (D-T2); the 9 that need more keep their own."""
+    app = create_app(
+        token=TOKEN,
+        original_ppid=None,
+        data_dir=tmp_path / "data",
+        enable_scheduler=False,
+    )
+    with TestClient(app) as client:
+        yield app, client
