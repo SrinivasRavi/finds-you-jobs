@@ -820,6 +820,9 @@ export type OperationKind =
   // A user's queued page-view on the browser surface (2026-08-16) — ledger'd
   // with the contact as its subject, so Analytics must know it.
   | "view_page"
+  // The autopilot tick (audit-2026-10-14.md section 8.10): enqueues the work the
+  // user put on autopilot, and lands in the ledger like every kind.
+  | "autopilot"
   // Watch-company attempts (2026-07-22): synchronous API action recorded into
   // the ledger so Analytics → Logs keeps the verbatim refusal reason.
   | "watch_company";
@@ -987,6 +990,17 @@ export interface Settings {
   providers: ProviderConfig[];
   routing: EngineRoute[];
   networking_enabled: boolean;
+  /** Autopilot (audit-2026-10-14.md section 8.10): each switch off means the user
+   *  confirms each action. Typed preference columns; the sidecar refuses on them. */
+  autopilot_apply: boolean;
+  autopilot_invite: boolean;
+  autopilot_dm: boolean;
+  /** 0-100: the lowest score autopilot acts on. */
+  autopilot_min_score: number;
+  /** 1-100: background applies in any 24 hours. */
+  autopilot_applies_per_day: number;
+  /** 1-10: people autopilot asks per job. */
+  autopilot_contacts_per_job: number;
   /** LinkedIn Job Search (logged-in one-shot search) — its own experimental
    *  opt-in, separate from Referral Outreach but sharing the same LinkedIn
    *  session. Both break LinkedIn's ToS; each gates independently. */

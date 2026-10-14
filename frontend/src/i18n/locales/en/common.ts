@@ -21,6 +21,8 @@ const common = {
     applyingBlurb: "Form answers & the Applier's model",
     networking: "Networking",
     networkingBlurb: "Referral outreach & LinkedIn",
+    autopilot: "Autopilot",
+    autopilotBlurb: "What runs without asking",
     data: "Privacy & Data",
     dataBlurb: "Logging & data cleanup",
     appearance: "Appearance",

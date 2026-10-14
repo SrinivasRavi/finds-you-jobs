@@ -29,6 +29,16 @@ import {
 } from "./mappers";
 import { ApplicationsApi } from "./applications";
 
+// Typed preference columns, sent as-is (audit-2026-10-14.md section 8.10).
+const AUTOPILOT_KEYS = [
+  "autopilot_apply",
+  "autopilot_invite",
+  "autopilot_dm",
+  "autopilot_min_score",
+  "autopilot_applies_per_day",
+  "autopilot_contacts_per_job",
+] as const;
+
 export class SettingsApi extends ApplicationsApi {
   // ── profile ────────────────────────────────────────────────────────────
   async getProfile(): Promise<Profile> {
@@ -212,6 +222,12 @@ export class SettingsApi extends ApplicationsApi {
         model: routing[kind]?.model ?? "claude-opus-5-5",
       })),
       networking_enabled: p.voyager_risk_marker_on,
+      autopilot_apply: p.autopilot_apply,
+      autopilot_invite: p.autopilot_invite,
+      autopilot_dm: p.autopilot_dm,
+      autopilot_min_score: p.autopilot_min_score,
+      autopilot_applies_per_day: p.autopilot_applies_per_day,
+      autopilot_contacts_per_job: p.autopilot_contacts_per_job,
       networking_ack_at: (ui.networking_ack_at as string | undefined) ?? null,
       // LinkedIn Job Search — its own experimental opt-in (shares the session).
       // Typed preference columns since 2026-08-02 (the sidecar 403s on them).
@@ -284,6 +300,9 @@ export class SettingsApi extends ApplicationsApi {
     }
     if (patch.networking_enabled !== undefined) {
       body.voyager_risk_marker_on = patch.networking_enabled;
+    }
+    for (const key of AUTOPILOT_KEYS) {
+      if (patch[key] !== undefined) body[key] = patch[key];
     }
     if (patch.routing !== undefined) {
       body.engine_routing = Object.fromEntries(

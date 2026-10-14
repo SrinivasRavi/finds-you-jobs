@@ -11,6 +11,7 @@ import { AIProvidersPanel } from "./settings/AIProvidersPanel";
 import { ApplicantDetailsForm } from "./settings/ApplicantDetails";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { AutomationSection } from "./settings/AutomationSection";
+import { AutopilotSection } from "./settings/AutopilotSection";
 import { DiscoveryKeysSection, DiscoverySourcesSection } from "./settings/DiscoverySources";
 import { FollowedCompaniesSection } from "./settings/FollowedCompaniesSection";
 import { LifecycleSection } from "./settings/LifecycleSection";
@@ -177,6 +178,8 @@ export function Settings() {
           </Section>
           </div>
           )}
+
+          {cat === "autopilot" && <AutopilotSection settings={settings} patch={patch} />}
 
           {cat === "providers" && (
           <div className="space-y-8">

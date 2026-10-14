@@ -59,7 +59,7 @@ const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
     kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search", "view_page"],
   },
   { key: "apply", label: "analytics.groups.apply", kinds: ["apply", "extract", "prep"] },
-  { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company"] },
+  { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company", "autopilot"] },
 ];
 
 const KIND_TO_GROUP: Record<string, string> = Object.fromEntries(
