@@ -250,10 +250,19 @@ async def test_nothing_launches_until_a_surface_is_asked_for(
     broker.shutdown()
 
 
-async def test_screencast_starts_once_with_the_expected_params(
+async def test_the_screencast_runs_only_while_a_viewer_watches(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
-    await broker.surface("pane-a").wait_ready()
+    """Audit 2026-10-14 section 8.5: an unwatched surface captured all day. rAF runs
+    without a screencast (measured), so capture follows the viewer."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    await asyncio.sleep(0.05)
+    assert fake.cdp.methods("Page.startScreencast") == []
+
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+    assert await _until(lambda: len(fake.cdp.methods("Page.startScreencast")) == 1)
     assert fake.cdp.methods("Page.startScreencast") == [
         {
             "format": "jpeg",
@@ -263,6 +272,33 @@ async def test_screencast_starts_once_with_the_expected_params(
             "everyNthFrame": 1,
         }
     ]
+    surface.detach(viewer)
+    assert await _until(lambda: len(fake.cdp.methods("Page.stopScreencast")) == 1)
+
+
+async def test_an_unwatched_surface_sleeps_and_still_runs_work_at_once(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """The 8 ms poll cost about 10% of a core on an idle page (audit 8.5). With no
+    viewer the thread sleeps on a wake event; a command wakes it at once."""
+    calls = 0
+    real_wait = fake.page.wait_for_timeout
+
+    def counting_wait(ms: float) -> None:
+        nonlocal calls
+        calls += 1
+        real_wait(ms)
+
+    fake.page.wait_for_timeout = counting_wait  # type: ignore[method-assign]
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    calls = 0
+    await asyncio.sleep(0.5)
+    assert calls <= 1  # an 8 ms poll would be about 60
+
+    started = time.monotonic()
+    assert await asyncio.wrap_future(surface.evaluate("1 + 1")) == "evaluated:1 + 1"
+    assert time.monotonic() - started < 0.1
 
 
 async def test_the_launcher_gets_the_guardrailed_kwargs(
@@ -581,6 +617,8 @@ async def test_resize_moves_the_frame_ceiling_and_clamps_it(
 ) -> None:
     surface = broker.surface("pane-a")
     await surface.wait_ready()
+    surface.set_viewer(Viewer())
+    assert await _until(lambda: len(fake.cdp.methods("Page.startScreencast")) == 1)
 
     await asyncio.wrap_future(surface.resize(960, 540))
     await asyncio.wrap_future(surface.resize(99999, 1))
@@ -799,6 +837,11 @@ async def test_a_dead_surface_fails_queued_and_later_work(tmp_path: Path) -> Non
     try:
         surface = broker.surface("pane-a")
         await surface.wait_ready()
+        # A watched surface parks inside Playwright between frames.
+        viewer = Viewer()
+        surface.set_viewer(viewer)
+        assert await _until(lambda: bool(dying.cdp.methods("Page.startScreencast")))
+        await asyncio.sleep(0.05)
         queued = surface.evaluate("1 + 1")
         await asyncio.sleep(0.05)
         assert not queued.done()  # parked: the thread hasn't drained it
@@ -809,6 +852,7 @@ async def test_a_dead_surface_fails_queued_and_later_work(tmp_path: Path) -> Non
         assert await _until(lambda: surface.is_dead)
         with pytest.raises(BrowserLaunchError, match="shut down"):
             surface.evaluate("2 + 2").result(timeout=0)
+        surface.detach(viewer)
         assert surface.idle_seconds is not None  # nothing left counted in flight
     finally:
         broker.shutdown()

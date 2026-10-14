@@ -36,9 +36,12 @@ DEFAULT_MAX_HEIGHT = 800
 MIN_FRAME_EDGE = 160
 MAX_FRAME_EDGE = 3840
 
-# Each pass the surface thread parks inside Playwright for this long, which is
-# what lets the sync `.on` handlers fire, and bounds command latency.
+# While a viewer watches, the surface thread parks inside Playwright for this long
+# each pass, which is what lets the sync frame handlers fire.
 THREAD_TICK_MS = 8
+# With no viewer it sleeps on a wake event instead, and pumps Playwright's events
+# this often. The 8 ms poll alone cost about 10% of a core (audit 8.5).
+IDLE_PUMP_SECONDS = 1.0
 # How long a caller waits for Chrome to come up before calling it a failure.
 LAUNCH_TIMEOUT_SECONDS = 60.0
 # How long `shutdown` waits for a surface thread to finish its teardown.
@@ -190,6 +193,11 @@ class BrowserSurface:
             tuple[Future[Any], Callable[[SurfaceSession], Any], float]
         ] = queue.SimpleQueue()
         self._viewer: Viewer | None = None
+        # Set by anything the idle surface thread must act on now: a command, a
+        # viewer coming or going, a kill, a shutdown.
+        self._wake = threading.Event()
+        # Whether Chrome is capturing, owned by the surface thread.
+        self._casting = False
         self._max_width = DEFAULT_MAX_WIDTH
         self._max_height = DEFAULT_MAX_HEIGHT
         # Committed main-frame URL tracking. `_last_url` is the surface thread's
@@ -226,6 +234,7 @@ class BrowserSurface:
         """Stop the screencast, close the profile, join the thread. Idempotent —
         the second call finds no thread and returns."""
         self._stopping.set()
+        self._wake.set()
         thread, self._thread = self._thread, None
         self._viewer = None
         if thread is None:
@@ -262,11 +271,8 @@ class BrowserSurface:
                 "Page.screencastFrame",
                 lambda params: self._on_frame(session, params),
             )
-            # The continuous screencast (everyNthFrame:1) is also the surface's
-            # requestAnimationFrame cadence source: Chrome services rAF while it is
-            # capturing. It must never be paused while a surface is live, or the
-            # page's animation loop stalls with it.
-            session.cdp.send("Page.startScreencast", self._screencast_params())
+            # No screencast until a viewer attaches. rAF runs at 60/s without one
+            # (measured, audit-2026-10-14.md section 8.5).
         except Exception as exc:  # noqa: BLE001 — reported through `wait_ready`
             self._error = exc
             self._log.exception("browser surface %r failed to start", self.slug)
@@ -279,11 +285,16 @@ class BrowserSurface:
             # A deadline kill marks the surface dead from another thread; the loop
             # stops there rather than drive a Chrome that's gone.
             while not self._stopping.is_set() and not self._dead.is_set():
+                self._wake.clear()
+                self._sync_screencast(session)
                 self._drain_commands(session)
                 self._watch_url(session)
-                # Parking inside Playwright is what lets its sync event
-                # handlers run, so the frame callbacks fire from here.
-                session.page.wait_for_timeout(THREAD_TICK_MS)
+                if self._casting:
+                    # Parking inside Playwright is what lets its sync event
+                    # handlers run, so the frame callbacks fire from here.
+                    session.page.wait_for_timeout(THREAD_TICK_MS)
+                elif not self._wake.wait(IDLE_PUMP_SECONDS):
+                    session.page.wait_for_timeout(1)  # deliver queued events
         except Exception:  # noqa: BLE001 — a dead page ends the surface, not the app
             self._log.exception("browser surface %r stopped", self.slug)
         finally:
@@ -293,6 +304,16 @@ class BrowserSurface:
             # Chrome for the slug instead of handing back this corpse.
             self._dead.set()
             self._fail_pending()
+
+    def _sync_screencast(self, session: SurfaceSession) -> None:
+        """Capture exactly while a viewer is attached, on the surface thread."""
+        wanted = self._viewer is not None
+        if wanted and not self._casting:
+            session.cdp.send("Page.startScreencast", self._screencast_params())
+            self._casting = True
+        elif not wanted and self._casting:
+            session.cdp.send("Page.stopScreencast", {})
+            self._casting = False
 
     def _screencast_params(self) -> dict[str, Any]:
         return {
@@ -335,6 +356,7 @@ class BrowserSurface:
         # error must not be what the caller sees.
         _resolve(future, error=BrowserActionTimeout(self.slug, deadline_s))
         self._dead.set()
+        self._wake.set()
         self._fail_pending()
         try:
             self._killer(self._profile_dir)
@@ -345,6 +367,7 @@ class BrowserSurface:
         """Kill this surface's Chrome from any thread. Whatever is running on the lane
         fails, queued work fails, and the next `surface(slug)` launches a fresh one."""
         self._dead.set()
+        self._wake.set()
         self._fail_pending()
         self._killer(self._profile_dir)
 
@@ -448,6 +471,7 @@ class BrowserSurface:
         stops receiving (its queued frame is already acked, so nothing stalls).
         """
         self._viewer = viewer
+        self._wake.set()
         # Seed the incoming viewer with where the page already is, so a
         # reconnect (or a tab re-mount) never reads "no page yet" over a live,
         # fully loaded page.
@@ -462,6 +486,7 @@ class BrowserSurface:
         if self._viewer is not viewer:
             return
         self._viewer = None
+        self._wake.set()
         # Start the idle clock HERE, not from the last submitted action. A
         # viewer can watch a static page for an hour without submitting
         # anything, and reaping the instant they close the pane would make a
@@ -535,9 +560,12 @@ class BrowserSurface:
         override this baseline doesn't do."""
         self._max_width = max(MIN_FRAME_EDGE, min(width, MAX_FRAME_EDGE))
         self._max_height = max(MIN_FRAME_EDGE, min(height, MAX_FRAME_EDGE))
-        return self._submit(
-            lambda s: s.cdp.send("Page.startScreencast", self._screencast_params())
-        )
+
+        def _recast(session: SurfaceSession) -> None:
+            if self._casting:  # else the next attach starts at the new size
+                session.cdp.send("Page.startScreencast", self._screencast_params())
+
+        return self._submit(_recast)
 
     def evaluate(self, expression: str) -> Future[Any]:
         """Evaluate `expression` in the page and return its value through the
@@ -636,6 +664,7 @@ class BrowserSurface:
             self._last_activity = time.monotonic()
             self._inflight += 1
         self._commands.put((future, action, deadline_s))
+        self._wake.set()
         # The thread may have died between the check above and the put, after
         # its own final drain; nothing else would ever resolve this future.
         if self._dead.is_set():
