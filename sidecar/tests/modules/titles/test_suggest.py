@@ -70,7 +70,9 @@ def test_the_index_loads_once_per_process() -> None:
 def test_suggest_is_fast_enough_for_every_keystroke() -> None:
     warm()
     queries = ["en", "ma", "se", "software eng", "manager", "director", "backend", "zzzqx"]
-    # Best of 5, so a scheduler stall on a shared CI runner isn't read as the code's cost.
+    # Best of 5, so a scheduler stall isn't read as the code's cost. 15 ms, not 5: a CI
+    # runner measured about 5x a Mac (7.58 ms against 1.56 ms), and a full scan, the
+    # regression this catches, costs about 5 ms on a Mac, so it still fails here.
     for query in queries:
         samples = []
         for _ in range(5):
@@ -78,7 +80,7 @@ def test_suggest_is_fast_enough_for_every_keystroke() -> None:
             suggest(query)
             samples.append((time.perf_counter() - start) * 1000)
         elapsed_ms = min(samples)
-        assert elapsed_ms < 5, f"{query!r} took {elapsed_ms:.2f} ms"
+        assert elapsed_ms < 15, f"{query!r} took {elapsed_ms:.2f} ms"
 
 
 def test_the_build_script_is_shipped_beside_its_output() -> None:
