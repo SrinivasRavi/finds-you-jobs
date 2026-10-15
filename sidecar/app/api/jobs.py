@@ -26,6 +26,7 @@ from sidecar.modules.scraper.types import ScanPrefs
 from ..db.base import now_utc
 from ..db.models import OP_ACTIVE_STATES
 from ..registry import networker_ops as networker_ops
+from ..registry.autonomy import caller
 from ..registry.persistence import (
     delete_job_cascade,
     saved_job_ids,
@@ -481,7 +482,7 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
         _runner(request).submit(
             "score",
             {"job_id": job_id, "profile_version": profile_version},
-            requested_by="user",
+            requested_by=caller(),
         )
     return result
 
@@ -752,7 +753,7 @@ def explain_job(request: Request, job_id: str) -> dto.OperationAccepted:
     operation_id = _runner(request).submit(
         "score",
         {"job_id": job_id, "profile_version": version, "force_mode": "llm"},
-        requested_by="user",
+        requested_by=caller(),
     )
     return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
 
@@ -771,7 +772,7 @@ def rescore_job(request: Request, job_id: str) -> dto.OperationAccepted:
     operation_id = _runner(request).submit(
         "score",
         {"job_id": job_id, "profile_version": version, "rescore": True},
-        requested_by="user",
+        requested_by=caller(),
     )
     return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
 

@@ -1,13 +1,16 @@
 """Who may start a send, a LinkedIn read or a Submit (audit-2026-10-14.md section 8.10).
 
 AGPL-3.0-only. A click (`requested_by="user"`) always runs. A background caller
-(`"app"`: the scheduler or the autopilot) runs an action only if the user switched
-that action from "confirm each" to autopilot in Settings. The caller is the op
-row's `requested_by`, set by the code that created the row; a snapshot field
-proves nothing, because a retry copies it."""
+(`"app"`: the scheduler or the autopilot) or the chat agent (`"agent"`) runs an
+action only if the user switched it from "confirm each" to autopilot in Settings.
+The caller is the op row's `requested_by`, set by the code that created the row; a
+snapshot field proves nothing, because a retry copies it."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 # The op kinds that send, submit or read a logged-in LinkedIn session, so each
@@ -29,6 +32,27 @@ _LABEL = {
 }
 
 
+# Who is calling a route. Only in-process code sets it (the chat agent calls routes
+# through the ASGI app), so an HTTP request is always the user's click.
+_CALLER: ContextVar[str] = ContextVar("fyj_caller", default="user")
+# Callers that run an action only where its autopilot switch is on.
+_SWITCHED_CALLERS = frozenset({"app", "agent"})
+
+
+def caller() -> str:
+    """The `requested_by` for an op a route creates."""
+    return _CALLER.get()
+
+
+@contextmanager
+def as_caller(name: str) -> Iterator[None]:
+    token = _CALLER.set(name)
+    try:
+        yield
+    finally:
+        _CALLER.reset(token)
+
+
 class NotAuthorized(Exception):
     """A background caller asked for an action the user keeps on "confirm each".
     The reason lands on the op row verbatim."""
@@ -42,7 +66,7 @@ def refusal(prefs: Any, action: str, requested_by: str) -> str | None:
     """Why this caller may not run `action`, or None if it may. Pure."""
     if requested_by == "user":
         return None
-    if requested_by != "app":
+    if requested_by not in _SWITCHED_CALLERS:
         return f"unknown caller {requested_by!r}"
     if action == "view":
         return "the live view opens only on a click"

@@ -46,7 +46,7 @@ class ConcurrencyPolicy:
                 return "llm"
             if kind in WRITING_KINDS:
                 return "ai_writing"
-            if requested_by == "user":
+            if requested_by in ("user", "agent"):  # someone is waiting for it
                 return "ai_requests"
             return "llm" if kind == "score" else kind
         return self.groups.get(kind, kind)

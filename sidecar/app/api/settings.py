@@ -12,6 +12,7 @@ from ..db.base import now_utc
 from ..observability import reconfigure_observability
 from ..observability.config import observability_config
 from ..registry import networker_ops as networker_ops
+from ..registry.autonomy import caller
 from ..registry.engine_config import apply_routing
 from ..registry.persistence import (
     scoring_mode,
@@ -70,7 +71,7 @@ def extract_application_profile(request: Request) -> dto.OperationAccepted:
     with _db(request).repos() as repos:
         if repos.profile.get_current() is None:
             raise HTTPException(status_code=404, detail="no master profile to extract from")
-    operation_id = _runner(request).submit("extract", {}, requested_by="user")
+    operation_id = _runner(request).submit("extract", {}, requested_by=caller())
     return dto.OperationAccepted(id=operation_id, kind="extract", state="queued")
 
 
@@ -392,7 +393,7 @@ def test_prompt(
     # cap, Stop and Retry come for free and its spend compares with a real run's
     # (url-less-jobs.md section 11.4).
     op_kind = spec.operation_kind()
-    operation_id = _runner(request).submit(op_kind, snap, requested_by="user")
+    operation_id = _runner(request).submit(op_kind, snap, requested_by=caller())
     return dto.OperationAccepted(id=operation_id, kind=op_kind, state="queued")
 
 
