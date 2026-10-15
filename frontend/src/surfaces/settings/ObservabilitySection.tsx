@@ -2,7 +2,7 @@
 // monolith split — pure moves, zero behavior change). Memoized: `settings` is
 // the query-stable object, `patch` a root useCallback.
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { Settings as SettingsT } from "../../api/types";
@@ -38,6 +38,11 @@ export const ObservabilitySection = memo(function ObservabilitySection({
   patch: (p: Partial<SettingsT>) => void;
 }) {
   const { t } = useTranslation();
+  // The typed text lives here: "x" parses to no header, and a box fed back from
+  // the parsed value blanked on the first key.
+  const [headersText, setHeadersText] = useState(() =>
+    otlpHeadersToText(settings.observability.otlp_headers),
+  );
   return (
     <Section title={t("settingsPage.observability.title")}>
       <div className="space-y-3">
@@ -104,15 +109,16 @@ export const ObservabilitySection = memo(function ObservabilitySection({
               {t("settingsPage.observability.otlpHeaders")}
             </div>
             <input
-              value={otlpHeadersToText(settings.observability.otlp_headers)}
-              onChange={(e) =>
+              value={headersText}
+              onChange={(e) => {
+                setHeadersText(e.target.value);
                 patch({
                   observability: {
                     ...settings.observability,
                     otlp_headers: otlpHeadersFromText(e.target.value),
                   },
-                })
-              }
+                });
+              }}
               placeholder="key1=val1,key2=val2"
               className="w-64 rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink placeholder:text-ink-4"
             />

@@ -56,6 +56,9 @@ export default defineConfig({
       FYJ_DATA_DIR: process.env.FYJ_DATA_DIR ?? E2E_DATA_DIR,
       FYJ_APPLY_DEV: "1",
       FYJ_FAKE_LLM: "1",
+      // A fixed throwaway Fernet key: a saved API key in a spec never reaches
+      // the OS keychain, which can open a prompt and block the sidecar.
+      FYJ_SESSION_KEY: "ZTJlLW9ubHktdGhyb3dhd2F5LWtleS0wMDAwMDAwMDA=",
       // vite bakes VITE_* at serve time, so the spawned dev-web needs the
       // fixture origin the specs above default.
       VITE_LINKEDIN_ORIGIN: process.env.VITE_LINKEDIN_ORIGIN!,

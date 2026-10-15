@@ -767,9 +767,23 @@ export function useCountries() {
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
+    // Each write reads, merges and posts the whole record, and a pane builds its
+    // patch from the cached settings. So writes run 1 at a time, the cache takes
+    // each patch at once, and only the last write refetches; else 2 quick edits
+    // lost 1 (journey-settings.spec.ts).
+    mutationKey: qk.settings,
+    scope: { id: "settings" },
     mutationFn: (patch: Partial<Settings>) => Promise.resolve(api.updateSettings(patch)),
+    onMutate: async (patch) => {
+      await qc.cancelQueries({ queryKey: qk.settings });
+      qc.setQueryData<Settings>(qk.settings, (cur) => (cur ? { ...cur, ...patch } : cur));
+    },
+    onSettled: () => {
+      if (qc.isMutating({ mutationKey: qk.settings }) <= 1) {
+        qc.invalidateQueries({ queryKey: qk.settings });
+      }
+    },
     onSuccess: (_r, patch) => {
-      qc.invalidateQueries({ queryKey: qk.settings });
       // Switching to keyword mode backfills scores server-side in the same
       // request — refetch the board so the grey scores appear immediately.
       if (patch.scoring_mode !== undefined) invalidateFeed(qc);
