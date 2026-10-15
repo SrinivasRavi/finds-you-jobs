@@ -458,6 +458,22 @@ def test_fake_llm_env_swaps_every_cli_engine(monkeypatch: pytest.MonkeyPatch) ->
         assert usage.tokens_in == 0 and usage.usd == 0.0
 
 
+def test_fake_llm_answers_the_tailor_and_cover_contracts() -> None:
+    """The e2e suite clicks Generate resume and Generate cover letter; a fake that
+    answers "{}" fails both parses, so the generate-then-approve path had no e2e."""
+    from sidecar.app.registry.engine_config import FakeInstantEngine
+    from sidecar.modules.coverletterer.output_parse import parse_output as parse_cover
+    from sidecar.modules.coverletterer.prompt import build_user_prompt as cover_prompt
+    from sidecar.modules.tailorer.output_parse import parse_output as parse_tailor
+    from sidecar.modules.tailorer.prompt import build_user_prompt as tailor_prompt
+
+    fake = FakeInstantEngine()
+    resume, notes = parse_tailor(fake.complete("sys", tailor_prompt("# Me", "Build things."))[0])
+    assert resume.startswith("# ") and notes
+    letter, notes = parse_cover(fake.complete("sys", cover_prompt("# Me", "Build things."))[0])
+    assert letter and notes
+
+
 def test_cli_engines_always_registered_and_routable() -> None:
     """configure_engines registers the CLI family unconditionally, so a routing
     entry naming codex-cli/antigravity-cli resolves (call-time errors stay the

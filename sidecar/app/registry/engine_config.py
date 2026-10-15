@@ -214,13 +214,25 @@ class FakeInstantEngine:
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Any]:
         from sidecar.modules._shared.claude_engine import EngineUsage
 
-        text = _fake_chat(user_prompt) if system_prompt.startswith(_CHAT_MARK) else "{}"
+        if system_prompt.startswith(_CHAT_MARK):
+            text = _fake_chat(user_prompt)
+        elif "(===RESUME===" in user_prompt:
+            text = _FAKE_RESUME
+        elif "(===COVER_LETTER===" in user_prompt:
+            text = _FAKE_COVER
+        else:
+            text = "{}"
         return text, EngineUsage(
             internal_calls=1, tokens_in=0, tokens_out=0, usd=0.0, model=self.model
         )
 
 
 _CHAT_MARK = "You are the assistant inside finds-you-jobs"
+# The tailor and cover contracts, so the e2e suite can click Generate and Approve.
+_FAKE_RESUME = (
+    "===RESUME===\n# Fake Tailored Resume\n\n- Tailored bullet\n===NOTES===\n- Fake tailor note"
+)
+_FAKE_COVER = "===COVER_LETTER===\nDear team,\n\nFake cover letter.\n===NOTES===\n- Fake cover note"
 
 
 def _fake_chat(transcript: str) -> str:
