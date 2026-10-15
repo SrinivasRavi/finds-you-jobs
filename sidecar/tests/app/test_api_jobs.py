@@ -470,3 +470,31 @@ def test_scrape_cadence_enables_scan_schedule(app_client: tuple[FastAPI, TestCli
     )
     assert scan["enabled"] is True and scan["interval_minutes"] == 360
 
+
+
+def test_a_double_submit_returns_the_first_row_not_a_500(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2 identical creates at once both miss the identity read, and the second
+    insert hit the unique index as a 500 (backlog S-C81). First seen wins."""
+    from sidecar.app.db.repos import JobsRepo
+
+    _app, client = app_client
+    first = _add_job(client, "https://example.com/double-submit")
+    real = JobsRepo.get_by_identity
+    misses = {"left": 1}
+
+    def racing_read(self: JobsRepo, **kw: str) -> object:
+        if misses["left"]:
+            misses["left"] -= 1
+            return None  # the other request's insert landed after this read
+        return real(self, **kw)
+
+    monkeypatch.setattr(JobsRepo, "get_by_identity", racing_read)
+    second = client.post(
+        "/api/jobs",
+        headers=AUTH,
+        json={"canonical_url": "https://example.com/double-submit", "title": "T"},
+    )
+    assert second.status_code in (200, 201), second.text
+    assert second.json()["id"] == first["id"]
