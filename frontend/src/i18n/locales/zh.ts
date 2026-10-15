@@ -800,6 +800,7 @@ const zh: DeepPartial<Messages> = {
       cover: "求职信",
       networking: "人脉",
       apply: "申请",
+      chat: "聊天",
       system: "系统",
     },
     tiles: {

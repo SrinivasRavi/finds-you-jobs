@@ -18,7 +18,7 @@ from dataclasses import dataclass, field, replace
 
 # The AI kinds the 2 queue choices lane (queueing.md section 5). `apply` calls a
 # model too, but holds a browser, so it keeps its own lane of 1 in both.
-AI_KINDS = frozenset({"score", "tailor", "cover", "draft", "extract"})
+AI_KINDS = frozenset({"score", "tailor", "cover", "draft", "extract", "chat"})
 WRITING_KINDS = frozenset({"tailor", "cover", "draft"})
 QUEUE_PER_KIND = "per_kind"
 QUEUE_SHARED = "shared"

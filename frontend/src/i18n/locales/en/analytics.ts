@@ -14,6 +14,7 @@ const analytics = {
     cover: "Cover letters",
     networking: "Networking",
     apply: "Applying",
+    chat: "Chat",
     system: "System",
   },
   tiles: {

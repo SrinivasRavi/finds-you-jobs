@@ -836,6 +836,7 @@ const ru: DeepPartialWithRuPlurals<Messages> = {
       cover: "Сопроводительные",
       networking: "Нетворкинг",
       apply: "Подача",
+      chat: "Чат",
       system: "Система",
     },
     tiles: {

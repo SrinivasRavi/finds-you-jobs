@@ -888,7 +888,7 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
 # ops a cancel can reach (F-M7). Next to the registry so a new kind faces the
 # question. `apply` checks once at dispatch; its real cancel is the apply-run
 # route. Queued ops of any kind stay cancellable.
-CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover"})
+CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover", "chat"})
 
 
 def default_operation_registry() -> OperationRegistry:
@@ -899,6 +899,7 @@ def default_operation_registry() -> OperationRegistry:
     # actually wired.
     from .apply_op import apply_entrypoints
     from .autopilot_op import autopilot_entrypoint
+    from .chat_op import chat_entrypoint
     from .contact_sync_op import contact_sync_entrypoints
     from .linkedin_op import linkedin_entrypoints
     from .networker_ops import networker_entrypoints
@@ -918,6 +919,7 @@ def default_operation_registry() -> OperationRegistry:
             **apply_entrypoints(),  # apply (the Applier agent)
             **view_page_entrypoints(),  # view_page (queued watch-surface show)
             "autopilot": autopilot_entrypoint,  # enqueues work the user put on autopilot
+            "chat": chat_entrypoint,  # 1 turn of the chat agent
         },
         services={"score": score_service},
     )

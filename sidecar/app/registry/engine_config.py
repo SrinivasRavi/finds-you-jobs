@@ -49,7 +49,7 @@ CLI_PROVIDERS = (DEFAULT_ENGINE, "codex-cli", "antigravity-cli")
 # routed and dies EngineNotConfiguredError in production. `extract` is the small
 # application-profile call at master save (FR-APP-01); `draft` is the Networker;
 # `apply` is the Applier loop. `prep` is retired (applier-as-built.md section 2).
-LLM_KINDS = ("score", "tailor", "cover", "extract", "draft", "apply")
+LLM_KINDS = ("score", "tailor", "cover", "extract", "draft", "apply", "chat")
 
 # The routing value onboarding's Skip writes (S-C60): the kind stays unrouted,
 # so it fails with EngineNotConfiguredError, until a provider is saved or a CLI
@@ -213,9 +213,26 @@ class FakeInstantEngine:
     def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, Any]:
         from sidecar.modules._shared.claude_engine import EngineUsage
 
-        return "{}", EngineUsage(
+        text = _fake_chat(user_prompt) if system_prompt.startswith(_CHAT_MARK) else "{}"
+        return text, EngineUsage(
             internal_calls=1, tokens_in=0, tokens_out=0, usd=0.0, model=self.model
         )
+
+
+_CHAT_MARK = "You are the assistant inside finds-you-jobs"
+
+
+def _fake_chat(transcript: str) -> str:
+    """The chat agent's e2e script: after a tool result, say what came back; on
+    "invite", call reach_out (a confirmation card with autopilot off); else read
+    the applications."""
+    last = [ln for ln in transcript.splitlines() if ln.startswith("[")][-1]
+    if last.startswith("[tool "):
+        tool = last[len("[tool "):].split("]", 1)[0]
+        return json.dumps({"say": f"Done: {tool} answered."})
+    if "invite" in last.lower():
+        return json.dumps({"call": {"tool": "reach_out", "args": {"body": {}}}})
+    return json.dumps({"call": {"tool": "list_applications", "args": {}}})
 
 
 def register_builtin_engines(registry: EngineRegistry) -> None:

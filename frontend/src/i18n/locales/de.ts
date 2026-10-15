@@ -811,6 +811,7 @@ const de: DeepPartial<Messages> = {
       cover: "Anschreiben",
       networking: "Netzwerk",
       apply: "Bewerben",
+      chat: "Chat",
       system: "System",
     },
     tiles: {

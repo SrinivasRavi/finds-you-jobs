@@ -848,6 +848,7 @@ const ar = {
       cover: "خطابات التقديم",
       networking: "التواصل",
       apply: "التقديم",
+      chat: "الدردشة",
       system: "النظام",
     },
     tiles: {

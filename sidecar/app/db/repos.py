@@ -26,6 +26,8 @@ from .models import (
     ApplicationEvent,
     ApplyRun,
     Artifact,
+    Chat,
+    ChatMessage,
     CompanyResolution,
     Contact,
     Document,
@@ -1804,6 +1806,49 @@ class ApplyRunsRepo:
         return list(self._s.scalars(stmt))
 
 
+class ChatsRepo:
+    """The chat agent's conversations and their messages, oldest message first."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def create(self, title: str = "") -> Chat:
+        chat = Chat(title=title)
+        self._s.add(chat)
+        self._s.flush()
+        return chat
+
+    def get(self, chat_id: str) -> Chat | None:
+        return self._s.get(Chat, chat_id)
+
+    def list_recent(self, limit: int = 50) -> list[Chat]:
+        stmt = select(Chat).order_by(Chat.updated_at.desc()).limit(limit)
+        return list(self._s.scalars(stmt))
+
+    def add_message(
+        self, chat_id: str, role: str, payload: dict[str, Any],
+        *, operation_id: str | None = None,
+    ) -> ChatMessage:
+        msg = ChatMessage(chat_id=chat_id, role=role, payload=payload, operation_id=operation_id)
+        self._s.add(msg)
+        chat = self._s.get(Chat, chat_id)
+        if chat is not None:
+            chat.updated_at = now_utc()
+        self._s.flush()
+        return msg
+
+    def get_message(self, message_id: str) -> ChatMessage | None:
+        return self._s.get(ChatMessage, message_id)
+
+    def messages(self, chat_id: str) -> list[ChatMessage]:
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.chat_id == chat_id)
+            .order_by(ChatMessage.created_at, ChatMessage.id)
+        )
+        return list(self._s.scalars(stmt))
+
+
 class Repos:
     """One session, every aggregate repo. Feature commits add their repos here."""
 
@@ -1828,6 +1873,7 @@ class Repos:
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)
         self.apply_runs = ApplyRunsRepo(session)
+        self.chats = ChatsRepo(session)
 
     def all_time_cost_totals(self) -> CostTotals:
         """Live-ledger sum + the pruned aggregate = every op ever recorded. The

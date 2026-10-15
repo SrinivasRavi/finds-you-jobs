@@ -800,6 +800,7 @@ const ja: DeepPartial<Messages> = {
       cover: "カバーレター",
       networking: "人脈",
       apply: "応募",
+      chat: "チャット",
       system: "システム",
     },
     tiles: {

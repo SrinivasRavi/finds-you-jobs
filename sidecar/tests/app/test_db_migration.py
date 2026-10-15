@@ -35,6 +35,8 @@ _EXPECTED = {
     "apply_runs",
     "documents",
     "job_duplicates",
+    "chats",
+    "chat_messages",
 }
 
 

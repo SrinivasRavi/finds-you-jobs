@@ -101,6 +101,7 @@ const LLM_KIND_ROWS: Record<components["schemas"]["LlmKind"], true> = {
   score: true,
   tailor: true,
   cover: true,
+  chat: true,
   extract: true,
   draft: true,
   apply: true,

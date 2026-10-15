@@ -698,3 +698,36 @@ class LinkedInSearchCursor(Base):
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
     )
+
+
+class Chat(Base):
+    """1 conversation with the chat agent (audit-2026-10-14.md section 8.11)."""
+
+    __tablename__ = "chats"
+
+    id: Mapped[str] = _pk()
+    title: Mapped[str] = mapped_column(String, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )
+
+
+class ChatMessage(Base):
+    """1 message: the user's, the agent's, a tool call and its result, or a
+    confirmation card. `payload` is read back whole."""
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_messages_chat_created", "chat_id", "created_at"),)
+
+    id: Mapped[str] = _pk()
+    chat_id: Mapped[str] = mapped_column(
+        String, ForeignKey("chats.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String, nullable=False)  # user|agent|tool|confirm
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # The `chat` op that wrote it, or, on the user's message, the turn it started.
+    operation_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("operations.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=now_utc)

@@ -809,6 +809,7 @@ const es: DeepPartial<Messages> = {
       cover: "Cartas de presentación",
       networking: "Networking",
       apply: "Solicitudes",
+      chat: "Chat",
       system: "Sistema",
     },
     tiles: {

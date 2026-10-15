@@ -2055,6 +2055,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Chats
+         * @description The chats, most recent first.
+         */
+        get: operations["list_chats_api_chats_get"];
+        put?: never;
+        /**
+         * Send Chat Message
+         * @description Store the user's message and queue 1 agent turn. No `chat_id` starts a chat.
+         */
+        post: operations["send_chat_message_api_chats_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats/{chat_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chat */
+        get: operations["get_chat_api_chats__chat_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats/{chat_id}/cards/{message_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Chat Card
+         * @description The user's click on a card: run the card's call as the user, once.
+         */
+        post: operations["confirm_chat_card_api_chats__chat_id__cards__message_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats/{chat_id}/cards/{message_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss Chat Card */
+        post: operations["dismiss_chat_card_api_chats__chat_id__cards__message_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2516,6 +2594,63 @@ export interface components {
             dpr?: number | null;
             /** Contact Id */
             contact_id?: string | null;
+        };
+        /** ChatDTO */
+        ChatDTO: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Messages */
+            messages: components["schemas"]["ChatMessageDTO"][];
+            /** Busy */
+            busy: boolean;
+        };
+        /**
+         * ChatMessageDTO
+         * @description `payload` by role: `text` (user, agent); `tool`, `args`, `result` (tool);
+         *     `tool`, `args`, `reason`, `state`, `result` (confirm).
+         */
+        ChatMessageDTO: {
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ChatSendAccepted */
+        ChatSendAccepted: {
+            /** Chat Id */
+            chat_id: string;
+            /** Operation Id */
+            operation_id: string;
+        };
+        /** ChatSendRequest */
+        ChatSendRequest: {
+            /** Text */
+            text: string;
+            /** Chat Id */
+            chat_id?: string | null;
+        };
+        /** ChatSummaryDTO */
+        ChatSummaryDTO: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * ContactCreate
@@ -4266,7 +4401,7 @@ export interface components {
          * @description The routable LLM operation kinds (single source: registry/engine_config.LLM_KINDS).
          * @enum {string}
          */
-        LlmKind: "score" | "tailor" | "cover" | "extract" | "draft" | "apply";
+        LlmKind: "score" | "tailor" | "cover" | "extract" | "draft" | "apply" | "chat";
         SharedConstants: {
             preset_location_penalty: {
                 /** @enum {number} */
@@ -4347,7 +4482,7 @@ export interface components {
             /** @enum {string} */
             score_weight_preset: "balanced" | "location_first" | "seniority_first" | "skills_only";
             /** @enum {string} */
-            cancellable_running_kind: "cover" | "score" | "tailor";
+            cancellable_running_kind: "chat" | "cover" | "score" | "tailor";
             /** @enum {string} */
             browser_lane_kind: "contact_sync" | "discover" | "linkedin_login" | "linkedin_search" | "send" | "view_page";
             /** @enum {string} */
@@ -7528,6 +7663,154 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProfileIngestResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chats_api_chats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSummaryDTO"][];
+                };
+            };
+        };
+    };
+    send_chat_message_api_chats_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSendAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_api_chats__chat_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_chat_card_api_chats__chat_id__cards__message_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_chat_card_api_chats__chat_id__cards__message_id__dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessageDTO"];
                 };
             };
             /** @description Validation Error */

@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 from sidecar.modules.geo.gazetteer import warm as warm_gazetteer
 
 from .api.applications import router as applications_router
+from .api.chat import router as chat_router
 from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
@@ -316,6 +317,11 @@ def create_app(
 
         autopilot_op.RUNNER = runner
 
+        # The chat agent calls routes in-process, on this loop, as caller "agent".
+        from .chat import dispatch as chat_dispatch
+
+        chat_dispatch.bind(app, asyncio.get_running_loop())
+
         # Referral Outreach runs on the browser broker's serialized lane, and
         # the exception router reads the broker's live surface. Wiring both here
         # activates the broker-backed path; unset, the referral ops self-launch
@@ -472,6 +478,7 @@ def create_app(
     app.include_router(discovery_router)
     app.include_router(ingest_router)
     app.include_router(screencast_router)
+    app.include_router(chat_router)
 
     # Schema-emission glue only (F-M2/F-L3): /api/events streams the SSEEnvelope
     # union, which FastAPI can't infer from a StreamingResponse — inject those

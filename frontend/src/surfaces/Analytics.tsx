@@ -59,6 +59,7 @@ const GROUPS: { key: string; label: string; kinds: OperationKind[] }[] = [
     kinds: ["discover", "draft", "send", "linkedin_login", "linkedin_search", "view_page"],
   },
   { key: "apply", label: "analytics.groups.apply", kinds: ["apply", "extract", "prep"] },
+  { key: "chat", label: "analytics.groups.chat", kinds: ["chat"] },
   { key: "system", label: "analytics.groups.system", kinds: ["cleanup_trash", "contact_sync", "archive_stale_contacts", "watch_company", "autopilot"] },
 ];
 
@@ -275,7 +276,7 @@ function RetryScoringButton() {
 const CANCELLABLE_RUNNING_ROWS: Record<
   components["schemas"]["SharedConstants"]["cancellable_running_kind"],
   true
-> = { score: true, tailor: true, cover: true };
+> = { score: true, tailor: true, cover: true, chat: true };
 const CANCELLABLE_RUNNING_KINDS = Object.keys(CANCELLABLE_RUNNING_ROWS) as OperationKind[];
 
 // `apply` cancellation is never a generic ledger Stop — even a queued apply is

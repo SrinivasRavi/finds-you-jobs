@@ -823,6 +823,8 @@ export type OperationKind =
   // The autopilot tick (audit-2026-10-14.md section 8.10): enqueues the work the
   // user put on autopilot, and lands in the ledger like every kind.
   | "autopilot"
+  // 1 turn of the chat agent (audit-2026-10-14.md section 8.11).
+  | "chat"
   // Watch-company attempts (2026-07-22): synchronous API action recorded into
   // the ledger so Analytics → Logs keeps the verbatim refusal reason.
   | "watch_company";

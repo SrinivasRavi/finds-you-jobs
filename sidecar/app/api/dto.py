@@ -1799,3 +1799,40 @@ def cost_totals_dto(totals: dict[str, Any]) -> CostTotalsDTO:
         failed=int(totals.get("failed", 0)),
         by_kind={k: float(v) for k, v in (totals.get("by_kind") or {}).items()},
     )
+
+
+# -- the chat agent (audit-2026-10-14.md section 8.11) -------------------------
+
+
+class ChatSummaryDTO(BaseModel):
+    id: str
+    title: str
+    updated_at: datetime
+
+
+class ChatMessageDTO(BaseModel):
+    """`payload` by role: `text` (user, agent); `tool`, `args`, `result` (tool);
+    `tool`, `args`, `reason`, `state`, `result` (confirm)."""
+
+    id: str
+    role: str
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class ChatDTO(BaseModel):
+    id: str
+    title: str
+    messages: list[ChatMessageDTO]
+    # A turn is queued or running, so more messages are on their way.
+    busy: bool
+
+
+class ChatSendRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    chat_id: str | None = None
+
+
+class ChatSendAccepted(BaseModel):
+    chat_id: str
+    operation_id: str
