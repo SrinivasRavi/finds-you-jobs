@@ -363,7 +363,6 @@ async def _apply_async(
                 # same settle-by-reading path as the user's own request. Doubt or a missed
                 # button falls through to the review window, for the user.
                 if await _run_submit(ctx, run_id, page, by="autopilot"):
-                    await _save_post_submit_shot(ctx, run_id, page)
                     review_wait_s = 0
             if result.status is ApplyStatus.READY_FOR_HUMAN and review_wait_s > 0:
                 # The row stays `running` while the tab is held, so the panel needs the
@@ -527,6 +526,8 @@ async def _run_submit(
         prior = repos.apply_runs.get(run_id)
     after_doubt = prior is not None and prior.submit_evidence == "unconfirmed"
     outcome = await submit_application(page, after_doubt=after_doubt)
+    # The proof first, then 1 write: a run never reads "submitted" without it.
+    shot = await _post_submit_shot(run_id, page) if outcome.confirmed else None
     with db.repos() as repos:
         fields: dict[str, Any] = {"summary": outcome.note}
         if outcome.final_url:
@@ -534,6 +535,9 @@ async def _run_submit(
         if outcome.confirmed:
             fields["status"] = "submitted"
             fields["submit_evidence"] = f"{by}_submitted"
+            current = repos.apply_runs.get(run_id)
+            if shot and current is not None:
+                fields["screenshots"] = list(current.screenshots) + [shot]
         elif outcome.unconfirmed:
             fields["submit_evidence"] = "unconfirmed"
         repos.apply_runs.update(run_id, **fields)
@@ -569,19 +573,14 @@ def _submits_on_autopilot(db: Database, result: ApplyResult) -> bool:
         return repos.preferences.get_or_create().autopilot_apply
 
 
-async def _save_post_submit_shot(ctx: OperationContext, run_id: str, page: Any) -> None:
+async def _post_submit_shot(run_id: str, page: Any) -> str | None:
     """The confirmation page, kept as the run's evidence that it was sent."""
     shot = _run_dir(run_id) / "screenshots" / "post-submit.png"
     try:
         await page.screenshot(path=str(shot))
     except Exception:
-        return
-    db = ctx.db
-    assert db is not None
-    with db.repos() as repos:
-        run = repos.apply_runs.get(run_id)
-        if run is not None:
-            repos.apply_runs.update(run_id, screenshots=list(run.screenshots) + [str(shot)])
+        return None
+    return str(shot)
 
 
 async def _review_window(
@@ -604,7 +603,6 @@ async def _review_window(
             return result  # user closed after reviewing; run stays ready_for_human
         if control.take_submit_request():
             if await _run_submit(ctx, run_id, page):
-                await _save_post_submit_shot(ctx, run_id, page)
                 return result  # sent and confirmed; nothing left to watch for
             continue
         try:
@@ -612,14 +610,17 @@ async def _review_window(
         except Exception:
             return result
         if PageState.CONFIRMATION in classify(obs):
-            await _save_post_submit_shot(ctx, run_id, page)
+            shot = await _post_submit_shot(run_id, page)
             db = ctx.db
             assert db is not None
             with db.repos() as repos:
+                run = repos.apply_runs.get(run_id)
+                shots = list(run.screenshots) if run is not None else []
                 repos.apply_runs.update(
                     run_id,
                     submit_evidence="confirmation_detected",
                     final_url=obs.url,
+                    screenshots=shots + [shot] if shot else shots,
                 )
             if ctx.publish is not None:
                 ctx.publish(

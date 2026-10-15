@@ -761,6 +761,9 @@ async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> 
         assert row.submit_evidence == "user_submitted"
         assert "Submit application" in row.summary
         assert "confirmation detected" in row.summary
+        # A run reads "submitted" only with its proof saved, in the same write:
+        # the e2e read a sent run with no confirmation shot (2026-10-15).
+        assert row.screenshots and row.screenshots[-1].endswith("post-submit.png")
     card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
     assert card["column"] == "applied"
 
