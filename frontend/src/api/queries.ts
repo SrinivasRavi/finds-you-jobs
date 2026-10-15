@@ -73,6 +73,8 @@ export const qk = {
   linkedinSession: ["linkedinSession"] as const,
   applyRun: ["applyRun"] as const,
   applyRuns: ["applyRuns"] as const,
+  chats: ["chats"] as const,
+  chat: ["chat"] as const,
 };
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
@@ -1562,4 +1564,53 @@ export function useSSEInvalidation(qc: QueryClient): void {
       invalidateApplications.cancel();
     };
   }, [qc]);
+}
+
+// ─── The chat agent (audit-2026-10-14.md section 8.11) ─────────────────────────
+
+const CHAT_POLL_MS = 1_000;
+
+export function useChats(enabled: boolean) {
+  return useQuery({ queryKey: qk.chats, queryFn: () => api.listChats(), enabled });
+}
+
+/** 1 chat. Polls while a turn runs, since each step lands as its own message. A
+ *  finished turn may have changed anything the agent touched, so every query
+ *  refetches then. */
+export function useChat(id: string | null) {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: [...qk.chat, id],
+    queryFn: () => api.getChat(id as string),
+    enabled: id != null,
+    refetchInterval: (q) => (q.state.data?.busy ? CHAT_POLL_MS : false),
+  });
+  const busy = query.data?.busy ?? false;
+  const [wasBusy, setWasBusy] = useState(false);
+  useEffect(() => {
+    if (wasBusy && !busy) void qc.invalidateQueries();
+    setWasBusy(busy);
+  }, [busy, wasBusy, qc]);
+  return query;
+}
+
+export function useSendChatMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ text, chatId }: { text: string; chatId: string | null }) =>
+      api.sendChatMessage(text, chatId),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: [...qk.chat, r.chat_id] });
+      void qc.invalidateQueries({ queryKey: qk.chats });
+    },
+  });
+}
+
+export function useAnswerChatCard(chatId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ messageId, answer }: { messageId: string; answer: "confirm" | "dismiss" }) =>
+      api.answerChatCard(chatId as string, messageId, answer),
+    onSettled: () => void qc.invalidateQueries(),
+  });
 }

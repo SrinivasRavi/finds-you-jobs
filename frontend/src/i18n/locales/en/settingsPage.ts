@@ -237,6 +237,8 @@ const settingsPage = {
   },
   providers: {
     title: "Select the LLM Providers",
+    chatModelTitle: "Assistant model",
+    chatModelHint: "The model the Assistant runs on. Each reply takes 1 model call or more.",
     unconfiguredWarning:
       "An operation is routed to a provider that isn't set up yet — verify and save it below, or pick a different engine under Prompts & Models.",
     aiOffWarning: "AI features are off, because no provider is set up yet. Set one up below and every AI feature turns on.",

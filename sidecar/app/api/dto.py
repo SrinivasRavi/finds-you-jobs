@@ -1826,6 +1826,8 @@ class ChatDTO(BaseModel):
     messages: list[ChatMessageDTO]
     # A turn is queued or running, so more messages are on their way.
     busy: bool
+    # Why the last turn failed, verbatim; None when it didn't.
+    error: str | None = None
 
 
 class ChatSendRequest(BaseModel):

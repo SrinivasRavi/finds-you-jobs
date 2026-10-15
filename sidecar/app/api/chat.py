@@ -40,9 +40,13 @@ def send_chat_message(request: Request, payload: dto.ChatSendRequest) -> dto.Cha
             chat_id = repos.chats.create(title=text[:_TITLE_CHARS]).id
         else:
             chat_id = _found(repos.chats.get(payload.chat_id), "chat", payload.chat_id).id
+        # Stored before the turn is queued: the runner may start it at once.
+        message_id = repos.chats.add_message(chat_id, "user", {"text": text}).id
     operation_id = _runner(request).submit("chat", {"chat_id": chat_id}, requested_by=caller())
     with db.repos() as repos:
-        repos.chats.add_message(chat_id, "user", {"text": text}, operation_id=operation_id)
+        message = repos.chats.get_message(message_id)
+        if message is not None:
+            message.operation_id = operation_id
     return dto.ChatSendAccepted(chat_id=chat_id, operation_id=operation_id)
 
 
@@ -62,6 +66,7 @@ def get_chat(request: Request, chat_id: str) -> dto.ChatDTO:
                 for m in messages
             ],
             busy=last is not None and last.state in OP_ACTIVE_STATES,
+            error=last.error if last is not None and last.state == "failed" else None,
         )
 
 
@@ -90,10 +95,14 @@ async def confirm_chat_card(request: Request, chat_id: str, message_id: str) -> 
     """The user's click on a card: run the card's call as the user, once."""
     from ..chat import dispatch
 
+    # No await between the check and the mark, so 2 clicks can't both run it.
     card = _pending_card(request, chat_id, message_id)
     _settle_card(request, message_id, state="running")
-    result = await asyncio.to_thread(dispatch.call, card["tool"], card.get("args") or {},
-                                     who="user")
+    try:
+        result = await asyncio.to_thread(dispatch.call, card["tool"], card.get("args") or {},
+                                         who="user")
+    except Exception as e:  # noqa: BLE001 — the card must not stay "running"
+        result = {"error": f"{type(e).__name__}: {e}"}
     state = "failed" if "error" in result else "done"
     return _settle_card(request, message_id, state=state, result=result)
 

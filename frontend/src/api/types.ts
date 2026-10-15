@@ -1208,3 +1208,9 @@ export interface Span {
   attributes: Record<string, unknown>;
   events: { name: string; attributes: Record<string, unknown> }[];
 }
+
+// ─── The chat agent (audit-2026-10-14.md section 8.11) ─────────────────────────
+export type ChatSummary = Schemas["ChatSummaryDTO"];
+export type Chat = Schemas["ChatDTO"];
+export type ChatMessage = Schemas["ChatMessageDTO"];
+export type ChatSendAccepted = Schemas["ChatSendAccepted"];

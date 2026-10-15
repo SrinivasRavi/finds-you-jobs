@@ -2605,6 +2605,8 @@ export interface components {
             messages: components["schemas"]["ChatMessageDTO"][];
             /** Busy */
             busy: boolean;
+            /** Error */
+            error?: string | null;
         };
         /**
          * ChatMessageDTO

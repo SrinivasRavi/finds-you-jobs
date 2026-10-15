@@ -187,6 +187,14 @@ export function Settings() {
           <Section title={t("settingsPage.providers.title")}>
             <AIProvidersPanel settings={settings} />
           </Section>
+          <Section title={t("settingsPage.providers.chatModelTitle")}>
+            <ModelPicker
+              kind="chat"
+              settings={settings}
+              patch={patch}
+              hint={t("settingsPage.providers.chatModelHint")}
+            />
+          </Section>
           </div>
           )}
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -61,7 +62,8 @@ def _request(tool: str, args: dict[str, Any]) -> tuple[str, str, dict, Any] | st
         if where == "path":
             if name not in values:
                 return f"missing argument {name!r}"
-            path = path.replace("{" + name + "}", str(values[name]))
+            # Encoded, so a value like "../settings?x=" can't reach another route.
+            path = path.replace("{" + name + "}", quote(str(values[name]), safe=""))
     query = {k: v for k, v in values.items() if route.params.get(k) == "query"}
     return route.method, path, query, args.get("body")
 

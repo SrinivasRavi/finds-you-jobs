@@ -76,3 +76,18 @@ def test_the_agent_cannot_press_submit_while_submit_is_confirm(app_client) -> No
     refused = client.portal.call(call)
     assert refused.status_code == 403 and "autopilot is off" in refused.json()["detail"]
     assert client.post("/api/apply-runs/no-such-run/submit", headers=AUTH).status_code == 404
+
+
+def test_the_agent_cannot_write_settings(app_client) -> None:  # noqa: ANN001
+    """A second door behind the tool list: the switches can't be flipped by an agent."""
+    app, client = app_client
+
+    async def call() -> httpx.Response:
+        with as_caller("agent"):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://x") as c:
+                return await c.post("/api/settings", headers=AUTH, json={"autopilot_apply": True})
+
+    assert client.portal.call(call).status_code == 403
+    prefs = client.get("/api/settings", headers=AUTH).json()["preferences"]
+    assert prefs["autopilot_apply"] is False

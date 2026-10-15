@@ -182,6 +182,9 @@ def _thread_scan_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
 def update_settings(
     request: Request, payload: dto.PreferencesUpdate
 ) -> dto.SettingsDTO:
+    # The autopilot switches live here, so only the user's click may write them.
+    if caller() != "user":
+        raise HTTPException(status_code=403, detail="only the user changes settings")
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
         before_mode = scoring_mode(repos.preferences.get_or_create())

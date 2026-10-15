@@ -1,6 +1,31 @@
 // English — the shell namespace (shared modal/dialog/filter primitives, the
 // app chrome banners, and cross-surface display labels).
 const shell = {
+  chat: {
+    rail: "Assistant",
+    title: "Assistant",
+    history: "Earlier chats",
+    newChat: "New chat",
+    close: "Close",
+    empty: "Ask about your jobs and applications, or say what to do. For example: \"Which saved jobs score above 80?\" or \"Draft referral asks for my Stripe application.\"",
+    placeholder: "Ask, or say what to do",
+    send: "Send",
+    working: "Working…",
+    turnFailed: "The assistant stopped: {{reason}}",
+    toolUsed: "Used: {{tool}}",
+    toolFailed: "Failed: {{tool}}",
+    card: {
+      title: "Needs your OK: {{tool}}",
+      confirm: "Do it",
+      dismiss: "Don't",
+      state: {
+        running: "Running…",
+        done: "Done",
+        failed: "It failed",
+        dismissed: "Dismissed",
+      },
+    },
+  },
   close: "Close",
   confirm: "Confirm",
   cancel: "Cancel",

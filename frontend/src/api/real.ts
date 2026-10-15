@@ -4,12 +4,12 @@
 // The class is assembled from 1 file per surface under real/ (F-P3).
 
 import type { DevResult } from "./types";
-import { NetworkingApi } from "./real/networking";
+import { ChatApi } from "./real/chat";
 
 export { ApiError } from "./real/transport";
 export { refusalOf, stubOperation, usdOrNull } from "./real/mappers";
 
-export class RealApi extends NetworkingApi {
+export class RealApi extends ChatApi {
   // ── Dev tools (local fault injection — US-DEV-01) ──────────────────────────
   async devExpireCookie(): Promise<DevResult> {
     return (await this.json("POST", "/api/dev/linkedin/expire-cookie", {})) as DevResult;

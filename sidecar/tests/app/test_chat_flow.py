@@ -79,3 +79,61 @@ def test_a_confirmed_card_runs_its_call_as_the_user(app_client) -> None:  # noqa
     done = client.post(f"/api/chats/{chat_id}/cards/{card_id}/confirm", headers=AUTH).json()
     assert done["payload"]["state"] == "done"
     assert done["payload"]["result"]["status"] == 200
+
+
+def test_a_turn_that_fails_says_why(app_client) -> None:  # noqa: ANN001
+    app, client = app_client
+    _route(app, {"no": "say or call"}, {"no": 1}, {"no": 2})  # 3 unreadable replies
+    chat_id = client.post("/api/chats", headers=AUTH, json={"text": "hi"}).json()["chat_id"]
+    chat = _settled(client, chat_id)
+    assert chat["error"] and "a reply needs a message or a call" in chat["error"]
+    assert [m["role"] for m in chat["messages"]] == ["user"]
+
+
+def test_the_message_is_stored_before_its_turn_is_queued(app_client, monkeypatch) -> None:  # noqa: ANN001
+    """The runner may start a turn the instant it's queued; the turn must see the
+    message it answers (an e2e caught a turn reading an empty chat)."""
+    app, client = app_client
+    _route(app, {"say": "ok"})
+    seen: list[list[str]] = []
+    submit = app.state.runner.submit
+
+    def watching(kind, snapshot, **kw):  # noqa: ANN001, ANN003, ANN202
+        with app.state.db.repos() as repos:
+            seen.append([m.role for m in repos.chats.messages(snapshot["chat_id"])])
+        return submit(kind, snapshot, **kw)
+
+    monkeypatch.setattr(app.state.runner, "submit", watching)
+    sent = client.post("/api/chats", headers=AUTH, json={"text": "hi"}).json()
+    assert seen == [["user"]]
+    chat = _settled(client, sent["chat_id"])
+    assert chat["messages"][0]["payload"]["text"] == "hi"
+
+
+def test_a_path_argument_cannot_reach_another_route(app_client) -> None:  # noqa: ANN001
+    """A posting's text could tell the model to pass "../settings?x=" as an id."""
+    app, client = app_client
+    from sidecar.app.chat import dispatch
+
+    before = client.get("/api/settings", headers=AUTH).json()["preferences"]["autopilot_apply"]
+    result = dispatch.call("tombstone_job", {"job_id": "../settings?x=",
+                                             "body": {"autopilot_apply": True}})
+    assert result["status"] in (404, 405, 422), result
+    after = client.get("/api/settings", headers=AUTH).json()["preferences"]["autopilot_apply"]
+    assert before is after is False
+
+
+def test_a_card_whose_call_raises_lands_failed(app_client, monkeypatch) -> None:  # noqa: ANN001
+    app, client = app_client
+    from sidecar.app.chat import dispatch
+
+    def boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise TimeoutError("slow")
+
+    monkeypatch.setattr(dispatch, "call", boom)
+    with app.state.db.repos() as repos:
+        chat_id = repos.chats.create("t").id
+        card_id = repos.chats.add_message(chat_id, "confirm", {
+            "tool": "list_applications", "args": {}, "reason": "r", "state": "pending"}).id
+    done = client.post(f"/api/chats/{chat_id}/cards/{card_id}/confirm", headers=AUTH)
+    assert done.status_code == 200 and done.json()["payload"]["state"] == "failed"
