@@ -67,6 +67,7 @@ const fr: DeepPartial<Messages> = {
     resumeTextLabel: "Texte du CV de référence : collez-le, ou modifiez ce qui vient de votre fichier",
     resumePlaceholder: "# Votre nom\n\nCollez votre CV ici, ou importez un fichier ci-dessus.",
     resumeCheck: {
+      flat: "Ce CV n'a ni titres ni puces, donc les CV adaptés qui en sont tirés ont moins de puces. Si possible, ajoute des titres de section (# Expérience) et une puce (- ) par résultat. Tu peux quand même continuer.",
       not_a_resume: "Cela ne ressemble pas à un CV : presque aucune date et aucune section Expérience, Formation ou Compétences. Vérifiez que vous avez choisi le bon fichier. Vous pouvez quand même continuer.",
       instructions: "Ce texte contient des instructions adressées à une IA. Chaque note et chaque CV adapté le lisent, retirez-les donc avant de continuer.",
     },

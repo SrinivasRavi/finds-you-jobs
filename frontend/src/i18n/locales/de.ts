@@ -69,6 +69,7 @@ const de: DeepPartial<Messages> = {
     resumeTextLabel: "Text des Master-Lebenslaufs: einfügen oder das aus deiner Datei Übernommene bearbeiten",
     resumePlaceholder: "# Dein Name\n\nFüge hier deinen Lebenslauf ein oder lade oben eine Datei hoch.",
     resumeCheck: {
+      flat: "Dieser Lebenslauf hat keine Überschriften und keine Aufzählungspunkte, daher haben angepasste Lebensläufe daraus weniger Punkte. Füge wenn möglich Abschnittsüberschriften (# Erfahrung) und einen Punkt (- ) pro Ergebnis hinzu. Du kannst trotzdem weitermachen.",
       not_a_resume: "Das sieht nicht nach einem Lebenslauf aus: kaum Jahreszahlen und kein Abschnitt zu Berufserfahrung, Ausbildung oder Kenntnissen. Prüfe, ob du die richtige Datei gewählt hast. Du kannst trotzdem weitermachen.",
       instructions: "Dieser Text enthält Anweisungen an eine KI. Jede Bewertung und jeder angepasste Lebenslauf liest ihn, also entferne sie, bevor du weitermachst.",
     },

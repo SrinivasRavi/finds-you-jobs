@@ -80,6 +80,22 @@ test("an upload that isn't a resume is flagged, and the user can continue", asyn
   await expect(page.getByTestId("onboarding-continue")).toBeEnabled();
 });
 
+// TAILOR-FLAT: a real resume with no headings or bullets gets a plain warning.
+test("a flat resume upload is flagged, and the user can continue", async ({ page }) => {
+  await page.goto("/onboarding");
+  await page.getByTestId("resume-upload").setInputFiles({
+    name: "resume.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "Ada Lovelace\nBackend engineer, London.\n\nExperience\nSenior Engineer, Analytical Co. 2019 - 2024. Built Python services and the billing pipeline; led a team of 4.\nEngineer, Difference Ltd. 2015 - 2019. PostgreSQL, AWS, on-call.\n\nEducation\nBSc Mathematics, University of London, 2015.\n\nSkills\nPython, Go, PostgreSQL, Kubernetes.\n",
+    ),
+  });
+  await expect(page.getByTestId("resume-warning-flat")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("resume-warning-not_a_resume")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/resume-warning-flat.png`, fullPage: true });
+  await expect(page.getByTestId("onboarding-continue")).toBeEnabled();
+});
+
 // S-C58: a role typed but not yet a chip counts, so Continue isn't greyed out.
 test("a typed role is enough to continue", async ({ page }) => {
   await page.goto("/onboarding");

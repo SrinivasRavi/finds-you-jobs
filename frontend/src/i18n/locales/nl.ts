@@ -67,6 +67,7 @@ const nl: DeepPartial<Messages> = {
     resumeTextLabel: "Tekst van je master-cv: plak hem, of bewerk wat uit je bestand kwam",
     resumePlaceholder: "# Je naam\n\nPlak hier je cv, of upload hierboven een bestand.",
     resumeCheck: {
+      flat: "Dit cv heeft geen koppen en geen opsommingstekens, dus aangepaste cv's die ervan worden gemaakt hebben minder punten. Voeg zo mogelijk sectiekoppen (# Ervaring) en een punt (- ) per resultaat toe. Je kunt toch doorgaan.",
       not_a_resume: "Dit lijkt geen cv: bijna geen jaartallen en geen kopje Ervaring, Opleiding of Vaardigheden. Controleer of je het juiste bestand koos. Je kunt toch doorgaan.",
       instructions: "Deze tekst bevat instructies aan een AI. Elke score en elk aangepast cv leest hem, dus haal ze weg voordat je doorgaat.",
     },

@@ -67,6 +67,7 @@ const it: DeepPartial<Messages> = {
     resumeTextLabel: "Testo del curriculum principale: incollalo o modifica ciò che è arrivato dal file",
     resumePlaceholder: "# Il tuo nome\n\nIncolla qui il tuo curriculum, oppure carica un file qui sopra.",
     resumeCheck: {
+      flat: "Questo curriculum non ha titoli né elenchi puntati, quindi i curriculum adattati che ne derivano hanno meno punti. Se puoi, aggiungi titoli di sezione (# Esperienza) e un punto (- ) per risultato. Puoi comunque continuare.",
       not_a_resume: "Non sembra un curriculum: quasi nessuna data e nessuna sezione Esperienza, Istruzione o Competenze. Controlla di aver scelto il file giusto. Puoi comunque continuare.",
       instructions: "Questo testo contiene istruzioni rivolte a un'IA. Ogni valutazione e ogni curriculum su misura lo leggono, quindi rimuovile prima di continuare.",
     },

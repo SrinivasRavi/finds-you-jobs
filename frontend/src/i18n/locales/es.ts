@@ -67,6 +67,7 @@ const es: DeepPartial<Messages> = {
     resumeTextLabel: "Texto del currículum maestro: pégalo o edita lo que salió de tu archivo",
     resumePlaceholder: "# Tu nombre\n\nPega aquí tu currículum, o sube un archivo arriba.",
     resumeCheck: {
+      flat: "Este currículum no tiene títulos ni viñetas, así que los currículums adaptados a partir de él salen con menos viñetas. Si puedes, añade títulos de sección (# Experiencia) y una viñeta (- ) por logro. Puedes continuar igualmente.",
       not_a_resume: "Esto no parece un currículum: casi no tiene fechas ni secciones de experiencia, educación o habilidades. Comprueba que elegiste el archivo correcto. Aun así puedes continuar.",
       instructions: "Este texto contiene instrucciones dirigidas a una IA. Cada puntuación y cada currículum adaptado lo leen, así que elimínalas antes de continuar.",
     },

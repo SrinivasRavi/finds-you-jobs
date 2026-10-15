@@ -22,6 +22,7 @@ const onboarding = {
     resumeTextLabel: "Master resume text: paste it, or edit what came from your file",
     resumePlaceholder: "# Your name\n\nPaste your resume here, or upload a file above.",
     resumeCheck: {
+      flat: "This resume has no headings or bullet points, so tailored resumes built from it come out with fewer bullets. Add section headings (# Experience) and a bullet (- ) per result if you can. You can still continue.",
       not_a_resume: "This doesn't look like a resume: it has hardly any dates and no Experience, Education or Skills section. Check you picked the right file. You can still continue.",
       instructions: "This text contains instructions addressed to an AI. Every score and tailored resume reads it, so remove them before you continue.",
     },

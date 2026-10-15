@@ -67,6 +67,7 @@ const pt: DeepPartial<Messages> = {
     resumeTextLabel: "Texto do currículo mestre: cole-o ou edite o que veio do seu ficheiro",
     resumePlaceholder: "# Seu nome\n\nCole seu currículo aqui ou envie um arquivo acima.",
     resumeCheck: {
+      flat: "Este currículo não tem títulos nem marcadores, então os currículos adaptados a partir dele saem com menos marcadores. Se puder, adicione títulos de seção (# Experiência) e um marcador (- ) por resultado. Você ainda pode continuar.",
       not_a_resume: "Isto não parece um currículo: quase não tem datas nem secções de experiência, formação ou competências. Confirme que escolheu o ficheiro certo. Pode continuar na mesma.",
       instructions: "Este texto contém instruções dirigidas a uma IA. Cada avaliação e cada currículo adaptado o leem, por isso remova-as antes de continuar.",
     },

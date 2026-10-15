@@ -72,6 +72,7 @@ const pl: DeepPartial<Messages> = {
     resumeTextLabel: "Tekst głównego CV: wklej go albo popraw to, co przyszło z pliku",
     resumePlaceholder: "# Twoje imię i nazwisko\n\nWklej tutaj swoje CV albo prześlij plik powyżej.",
     resumeCheck: {
+      flat: "To CV nie ma nagłówków ani punktorów, więc dopasowane CV tworzone na jego podstawie mają mniej punktów. Jeśli możesz, dodaj nagłówki sekcji (# Doświadczenie) i punktor (- ) dla każdego wyniku. Możesz mimo to kontynuować.",
       not_a_resume: "To nie wygląda na CV: prawie brak dat i brak sekcji Doświadczenie, Wykształcenie lub Umiejętności. Sprawdź, czy wybrałeś właściwy plik. Możesz mimo to kontynuować.",
       instructions: "Ten tekst zawiera polecenia skierowane do AI. Czyta go każda ocena i każde dopasowane CV, więc usuń je, zanim przejdziesz dalej.",
     },
