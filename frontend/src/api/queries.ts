@@ -37,6 +37,7 @@ import type {
   PromptTestResult,
   ReachOutInput,
   Settings,
+  SettingsPatch,
   Stage,
 } from "./types";
 
@@ -773,10 +774,19 @@ export function useUpdateSettings() {
     // lost 1 (journey-settings.spec.ts).
     mutationKey: qk.settings,
     scope: { id: "settings" },
-    mutationFn: (patch: Partial<Settings>) => Promise.resolve(api.updateSettings(patch)),
+    mutationFn: (patch: SettingsPatch) => Promise.resolve(api.updateSettings(patch)),
     onMutate: async (patch) => {
       await qc.cancelQueries({ queryKey: qk.settings });
-      qc.setQueryData<Settings>(qk.settings, (cur) => (cur ? { ...cur, ...patch } : cur));
+      qc.setQueryData<Settings>(qk.settings, (cur) =>
+        cur
+          ? {
+              ...cur,
+              ...patch,
+              observability: { ...cur.observability, ...patch.observability },
+              lifecycle: { ...cur.lifecycle, ...patch.lifecycle },
+            }
+          : cur,
+      );
     },
     onSettled: () => {
       if (qc.isMutating({ mutationKey: qk.settings }) <= 1) {

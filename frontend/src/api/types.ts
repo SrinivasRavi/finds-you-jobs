@@ -946,6 +946,13 @@ export type ScoringMethod = {
   needs: ScoringMethodNeed | null;
 };
 
+/** A settings write. The 2 grouped records take only the fields that changed,
+ *  so an edit never writes back another field from an older copy. */
+export type SettingsPatch = Omit<Partial<Settings>, "observability" | "lifecycle"> & {
+  observability?: Partial<Settings["observability"]>;
+  lifecycle?: Partial<Settings["lifecycle"]>;
+};
+
 export interface Settings {
   /** Legacy combined flag = resume && cover. Kept for consumers that read a
    *  single value (JobBoard per-job slider seed); the Settings UI drives the

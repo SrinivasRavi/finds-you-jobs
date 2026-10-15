@@ -5,7 +5,7 @@
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { Settings as SettingsT } from "../../api/types";
+import type { SettingsPatch, Settings as SettingsT } from "../../api/types";
 import { InfoDot } from "../../shell/InfoDot";
 import { Section, Toggle } from "./shared";
 
@@ -35,7 +35,7 @@ export const ObservabilitySection = memo(function ObservabilitySection({
   patch,
 }: {
   settings: SettingsT;
-  patch: (p: Partial<SettingsT>) => void;
+  patch: (p: SettingsPatch) => void;
 }) {
   const { t } = useTranslation();
   // The typed text lives here: "x" parses to no header, and a box fed back from
@@ -61,7 +61,7 @@ export const ObservabilitySection = memo(function ObservabilitySection({
           <Toggle
             on={settings.observability.content_logging}
             onChange={(v) =>
-              patch({ observability: { ...settings.observability, content_logging: v } })
+              patch({ observability: { content_logging: v } })
             }
             testid="content-logging-toggle"
           />
@@ -81,7 +81,7 @@ export const ObservabilitySection = memo(function ObservabilitySection({
           <Toggle
             on={settings.observability.otlp_enabled}
             onChange={(v) =>
-              patch({ observability: { ...settings.observability, otlp_enabled: v } })
+              patch({ observability: { otlp_enabled: v } })
             }
             testid="otlp-toggle"
           />
@@ -95,7 +95,7 @@ export const ObservabilitySection = memo(function ObservabilitySection({
               value={settings.observability.otlp_endpoint}
               onChange={(e) =>
                 patch({
-                  observability: { ...settings.observability, otlp_endpoint: e.target.value },
+                  observability: { otlp_endpoint: e.target.value },
                 })
               }
               placeholder="https://otlp.example.com:4318/v1/traces"
@@ -114,7 +114,6 @@ export const ObservabilitySection = memo(function ObservabilitySection({
                 setHeadersText(e.target.value);
                 patch({
                   observability: {
-                    ...settings.observability,
                     otlp_headers: otlpHeadersFromText(e.target.value),
                   },
                 });
@@ -140,7 +139,6 @@ export const ObservabilitySection = memo(function ObservabilitySection({
             onChange={(e) =>
               patch({
                 observability: {
-                  ...settings.observability,
                   retention_days: Number(e.target.value) || 0,
                 },
               })

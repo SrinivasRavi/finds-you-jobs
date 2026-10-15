@@ -72,7 +72,7 @@ test("language: German translates the app and stays; Arabic reads right to left"
 
 test("lifecycle windows save as typed and as picked", async ({ page, request }) => {
   await openPane(page, "data");
-  await page.getByTestId("lifecycle-sent-ghosted").fill("21");
+  await page.getByTestId("lifecycle-sent-ghosted").fill("25");
   await page.getByTestId("lifecycle-contact-purge").fill("120");
   await page.getByTestId("lifecycle-expire-listing").selectOption("30");
   await page.getByTestId("lifecycle-trashed-jobs-purge").fill("9");
@@ -86,11 +86,11 @@ test("lifecycle windows save as typed and as picked", async ({ page, request }) 
         lc.trashed_jobs_purge_days,
       ];
     })
-    .toEqual([21, 120, 30, 9]);
+    .toEqual([25, 120, 30, 9]);
 
   await page.reload();
   await page.getByTestId("settings-nav-data").click();
-  await expect(page.getByTestId("lifecycle-sent-ghosted")).toHaveValue("21");
+  await expect(page.getByTestId("lifecycle-sent-ghosted")).toHaveValue("25");
   await expect(page.getByTestId("lifecycle-expire-listing")).toHaveValue("30");
   await page.getByTestId("lifecycle-sent-ghosted-row").scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${DIR}/lifecycle.png`, fullPage: true });

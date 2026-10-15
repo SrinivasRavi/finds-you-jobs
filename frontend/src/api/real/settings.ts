@@ -16,6 +16,7 @@ import type {
   ScoringMethod,
   ScoringMode,
   Settings,
+  SettingsPatch,
 } from "../types";
 import {
   asPlaceChip,
@@ -258,7 +259,7 @@ export class SettingsApi extends ApplicationsApi {
     };
   }
 
-  async updateSettings(patch: Partial<Settings>): Promise<Settings> {
+  async updateSettings(patch: SettingsPatch): Promise<Settings> {
     const cur = await this.req<SettingsDTO>("/api/settings");
     const p = cur.preferences;
     const body: Record<string, unknown> = {};
@@ -316,11 +317,10 @@ export class SettingsApi extends ApplicationsApi {
       uiTouched = true;
     }
     if (patch.observability !== undefined) {
-      ui.content_logging = patch.observability.content_logging;
-      ui.otlp_enabled = patch.observability.otlp_enabled;
-      ui.otlp_endpoint = patch.observability.otlp_endpoint;
-      ui.otlp_headers = patch.observability.otlp_headers;
-      ui.retention_days = patch.observability.retention_days;
+      // Only the fields sent: the rest stay as the sidecar holds them.
+      for (const [k, v] of Object.entries(patch.observability)) {
+        if (v !== undefined) ui[k] = v;
+      }
       uiTouched = true;
     }
     if (patch.lifecycle !== undefined) {

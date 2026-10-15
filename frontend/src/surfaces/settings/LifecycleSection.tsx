@@ -5,7 +5,7 @@
 import { memo } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
-import type { Settings as SettingsT } from "../../api/types";
+import type { SettingsPatch, Settings as SettingsT } from "../../api/types";
 import { Section } from "./shared";
 
 function LifecycleRow({
@@ -67,14 +67,13 @@ export const LifecycleSection = memo(function LifecycleSection({
   patch,
 }: {
   settings: SettingsT;
-  patch: (p: Partial<SettingsT>) => void;
+  patch: (p: SettingsPatch) => void;
 }) {
   const { t } = useTranslation();
   const lc = settings.lifecycle;
   // Merge-patch a single field so unrelated windows aren't clobbered (mirrors the
   // observability patch shape — the mock/real clients replace the whole object).
-  const set = (k: keyof SettingsT["lifecycle"]) => (v: number) =>
-    patch({ lifecycle: { ...lc, [k]: v } });
+  const set = (k: keyof SettingsT["lifecycle"]) => (v: number) => patch({ lifecycle: { [k]: v } });
   return (
     <Section title={t("settingsPage.lifecycle.title")}>
       <div className="space-y-4">
