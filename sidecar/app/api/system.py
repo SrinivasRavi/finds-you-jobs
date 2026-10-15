@@ -239,10 +239,8 @@ def export_pdf(payload: dto.ExportPdfRequest) -> dto.ExportPdfResult:
         path = target_dir / f"{stem}-{n}.pdf"
         n += 1
     try:
-        # Sync Playwright refuses to start inside a running asyncio loop (the
-        # exact 503 users saw) and would block the loop anyway — a plain `def`
-        # handler renders in Starlette's threadpool, like the engine-verify
-        # probes.
+        # The render runs on the browser host and this waits for it, so a plain
+        # `def` handler waits in Starlette's threadpool, never on the loop.
         render_resume_pdf(payload.markdown, str(path))
     except PdfRenderError as e:
         if is_browser_missing(str(e)):
