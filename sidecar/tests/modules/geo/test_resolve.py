@@ -195,3 +195,16 @@ def test_resolving_a_posting_stays_well_under_a_millisecond(wanted) -> None:
         match(resolve_location(location), wanted)
     per_call_ms = (time.perf_counter() - start) * 1000 / len(CASES)
     assert per_call_ms < 1.0, f"{per_call_ms:.3f} ms per call"
+
+
+@pytest.mark.parametrize(
+    ("text", "city", "country"),
+    [("Ufa, Russia", "Ufa", "RU"), ("Hue, Vietnam", "Huế", "VN"), ("Fes, Morocco", "Fes", "MA")],
+)
+def test_a_3_letter_city_of_200k_or_more_resolves_to_the_city(
+    text: str, city: str, country: str
+) -> None:
+    """3-letter names had no alias row, so Ufa (1.1M people) read as Russia only
+    (backlog S-C76)."""
+    places = resolve_location(text).places
+    assert [(p.city, p.country) for p in places] == [(city, country)]
