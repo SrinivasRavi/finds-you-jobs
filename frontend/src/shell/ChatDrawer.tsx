@@ -19,8 +19,14 @@ interface ChatState {
 // The default lets a surface render without the provider (unit tests).
 const ChatContext = createContext<ChatState>({ open: false, toggle: () => {} });
 
+const CHAT_WIDTH_PX = 380; // the drawer's `w-[380px]` and the page's `pr-[380px]`
+
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  // A modal centres in the room the drawer leaves, so it never hides under it.
+  useEffect(() => {
+    document.documentElement.style.setProperty("--fyj-chat-w", open ? `${CHAT_WIDTH_PX}px` : "0px");
+  }, [open]);
   return (
     <ChatContext.Provider value={{ open, toggle: () => setOpen((o) => !o) }}>
       {/* The page makes room for the drawer rather than hide under it. */}

@@ -1838,3 +1838,49 @@ class ChatSendRequest(BaseModel):
 class ChatSendAccepted(BaseModel):
     chat_id: str
     operation_id: str
+
+
+class BrowserPageDTO(BaseModel):
+    """What the in-app browser shows: its URL, its title, and 1 line per element
+    the agent can act on, by id (`e1`, `e2`, ...). The ids hold until the next read."""
+
+    url: str
+    title: str
+    elements: str
+
+
+class BrowserTextDTO(BaseModel):
+    """The page's visible text, cut to a bound."""
+
+    url: str
+    text: str
+    truncated: bool
+
+
+class BrowserNavigateRequest(BaseModel):
+    url: str
+
+
+class BrowserElementRequest(BaseModel):
+    element_id: str  # an id from the last page read
+
+
+class BrowserTypeRequest(BrowserElementRequest):
+    text: str
+
+
+class BrowserChooseRequest(BrowserElementRequest):
+    option: str
+
+
+class BrowserUploadRequest(BrowserElementRequest):
+    # "master_resume", or the id of 1 of the user's tailored resumes or cover letters.
+    document_id: str
+
+
+class BrowserActionResult(BaseModel):
+    """1 browser action, read back: `ok` is what the page shows after it."""
+
+    ok: bool
+    note: str
+    url: str

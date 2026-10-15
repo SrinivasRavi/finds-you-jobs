@@ -71,6 +71,8 @@ def refusal(prefs: Any, action: str, requested_by: str) -> str | None:
         return f"unknown caller {requested_by!r}"
     if action == "view":
         return "the live view opens only on a click"
+    if action == "browse":  # a click, an upload or a URL can carry data out
+        return "the assistant waits for your OK in the browser"
     if action == "linkedin_read":
         allowed = prefs.autopilot_invite or prefs.autopilot_dm
     elif action in ("invite", "dm", "apply"):

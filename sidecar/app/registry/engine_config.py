@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -224,12 +225,19 @@ _CHAT_MARK = "You are the assistant inside finds-you-jobs"
 
 def _fake_chat(transcript: str) -> str:
     """The chat agent's e2e script: after a tool result, say what came back; on
-    "invite", call reach_out (a confirmation card with autopilot off); else read
-    the applications."""
+    "invite", call reach_out (a confirmation card with autopilot off); on "click",
+    read the browser, then click its first button (a card); else read the
+    applications."""
     last = [ln for ln in transcript.splitlines() if ln.startswith("[")][-1]
     if last.startswith("[tool "):
         tool = last[len("[tool "):].split("]", 1)[0]
+        button = re.search(r"(e\d+) <button", last)  # ids follow a JSON "\\n"
+        if tool == "browser_page" and button:
+            body = {"element_id": button.group(1)}
+            return json.dumps({"call": {"tool": "browser_click", "args": {"body": body}}})
         return json.dumps({"say": f"Done: {tool} answered."})
+    if "click" in last.lower():
+        return json.dumps({"call": {"tool": "browser_page", "args": {}}})
     if "invite" in last.lower():
         return json.dumps({"call": {"tool": "reach_out", "args": {"body": {}}}})
     return json.dumps({"call": {"tool": "list_applications", "args": {}}})

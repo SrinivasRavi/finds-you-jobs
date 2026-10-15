@@ -95,6 +95,14 @@ TOOLS: dict[str, Tool] = {
     "suggest_titles": _t("suggest_titles"),
     "watch_company": _t("watch_company", FREE, REVERSIBLE),
     "unwatch_company": _t("unwatch_company", FREE, REVERSIBLE),
+    # The in-app browser, the Chrome the LinkedIn view shows
+    "browser_page": _t("browser_page"),
+    "browser_page_text": _t("browser_page_text"),
+    "browser_navigate": _t("browser_navigate", LINKEDIN, REVERSIBLE),
+    "browser_type": _t("browser_type", FREE, REVERSIBLE),
+    "browser_choose": _t("browser_choose", FREE, REVERSIBLE),
+    "browser_upload": _t("browser_upload", FREE, REVERSIBLE),
+    "browser_click": _t("browser_click", FREE, IRREVERSIBLE),
 }
 
 _USER_ONLY = (
@@ -135,7 +143,7 @@ EXCLUDED: dict[str, str] = {
     "linkedin_validate": _USER_ONLY,
     "linkedin_resume": _USER_ONLY,
     "linkedin_set_rate_limits": _USER_ONLY,
-    "view_browser_page": "the live view opens on a click; browser tools come in part B",
+    "view_browser_page": "the live view opens on a click; browser_navigate opens a page",
     "verify_engine": _USER_ONLY,
     "list_engines": _USER_ONLY,
     "save_engine": _USER_ONLY,

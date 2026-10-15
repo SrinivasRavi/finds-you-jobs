@@ -2133,6 +2133,152 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/browser/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser Page
+         * @description Read the in-app browser: its URL, title and every element you can act on, as
+         *     `e1`, `e2`, ... Read it before you click, type, choose or upload, and again
+         *     after the page changes: the ids hold until the next read.
+         */
+        get: operations["browser_page_api_browser_page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/page/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser Page Text
+         * @description The visible text of the page the in-app browser shows.
+         */
+        get: operations["browser_page_text_api_browser_page_text_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/navigate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Navigate
+         * @description Open a URL in the in-app browser, logged in as the user. A LinkedIn page load
+         *     counts as a LinkedIn read.
+         */
+        post: operations["browser_navigate_api_browser_navigate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/click": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Click
+         * @description Click an element from the last page read. A click can send or submit, so the
+         *     user confirms each one you ask for.
+         */
+        post: operations["browser_click_api_browser_click_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Type
+         * @description Type text into a field from the last page read, replacing its value, and read
+         *     it back. It never presses Enter and never fills a password.
+         */
+        post: operations["browser_type_api_browser_type_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/choose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Choose
+         * @description Choose an option in a select or a dropdown from the last page read.
+         */
+        post: operations["browser_choose_api_browser_choose_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Upload
+         * @description Attach 1 of the user's documents to a file field from the last page read, as
+         *     a PDF: "master_resume", or the id of a tailored resume or cover letter.
+         */
+        post: operations["browser_upload_api_browser_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2554,6 +2700,30 @@ export interface components {
             file: string;
         };
         /**
+         * BrowserActionResult
+         * @description 1 browser action, read back: `ok` is what the page shows after it.
+         */
+        BrowserActionResult: {
+            /** Ok */
+            ok: boolean;
+            /** Note */
+            note: string;
+            /** Url */
+            url: string;
+        };
+        /** BrowserChooseRequest */
+        BrowserChooseRequest: {
+            /** Element Id */
+            element_id: string;
+            /** Option */
+            option: string;
+        };
+        /** BrowserElementRequest */
+        BrowserElementRequest: {
+            /** Element Id */
+            element_id: string;
+        };
+        /**
          * BrowserInstallResult
          * @description The `POST /api/system/install-browser` response (A5b / A0.6).
          */
@@ -2574,6 +2744,50 @@ export interface components {
              * @default
              */
             message: string;
+        };
+        /** BrowserNavigateRequest */
+        BrowserNavigateRequest: {
+            /** Url */
+            url: string;
+        };
+        /**
+         * BrowserPageDTO
+         * @description What the in-app browser shows: its URL, its title, and 1 line per element
+         *     the agent can act on, by id (`e1`, `e2`, ...). The ids hold until the next read.
+         */
+        BrowserPageDTO: {
+            /** Url */
+            url: string;
+            /** Title */
+            title: string;
+            /** Elements */
+            elements: string;
+        };
+        /**
+         * BrowserTextDTO
+         * @description The page's visible text, cut to a bound.
+         */
+        BrowserTextDTO: {
+            /** Url */
+            url: string;
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** BrowserTypeRequest */
+        BrowserTypeRequest: {
+            /** Element Id */
+            element_id: string;
+            /** Text */
+            text: string;
+        };
+        /** BrowserUploadRequest */
+        BrowserUploadRequest: {
+            /** Element Id */
+            element_id: string;
+            /** Document Id */
+            document_id: string;
         };
         /**
          * BrowserViewRequest
@@ -7813,6 +8027,211 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatMessageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_page_api_browser_page_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserPageDTO"];
+                };
+            };
+        };
+    };
+    browser_page_text_api_browser_page_text_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserTextDTO"];
+                };
+            };
+        };
+    };
+    browser_navigate_api_browser_navigate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserNavigateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_click_api_browser_click_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserElementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_type_api_browser_type_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserTypeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_choose_api_browser_choose_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserChooseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_upload_api_browser_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
                 };
             };
             /** @description Validation Error */
