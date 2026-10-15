@@ -38,6 +38,10 @@
 #   - Lane deadline sized from the typing (finds-you-jobs, 2026-10-14): a send that
 #     types a message waits `typed_action_timeout_s`, not a flat 45 s. See
 #     `provenance.md`.
+#   - 1 browser host (finds-you-jobs, 2026-10-15): self-launch and the headed login
+#     open Chrome through the app's browser host (`_host_launch`) and drive it
+#     through its sync proxies; the 2 local launch copies are gone. See
+#     `provenance.md`.
 """Standalone LinkedIn browser session: launch Chromium, load saved cookies,
 navigate at a human pace. Chromium is fetched on first use, never bundled, and
 torn down after each run (NFR-MEM-02)."""
@@ -53,7 +57,6 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
 
 from .errors import BrowserUnresponsiveError, SkipProfile
 from .secure_store import UnreadableStateFile, load_state_file, save_state_file
@@ -191,73 +194,22 @@ _LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled", "--no-first-run
 _IGNORE_DEFAULT_ARGS = ["--enable-automation"]
 
 
-def _is_sandbox_launch_error(message: str) -> bool:
-    # Conservative: Chromium's sandbox-launch failures name the sandbox ("No
-    # usable sandbox!", "--no-sandbox") or the missing kernel facility ("Failed
-    # to move to new namespace…"). Anything else is not a sandbox problem and
-    # must not silently drop the sandbox.
-    msg = message.lower()
-    return "sandbox" in msg or "namespace" in msg
+def _host_launch(user_data_dir: str | None, *, headless: bool):
+    """A persistent context on `user_data_dir`, or a browser when it is None, opened
+    by the app's 1 browser host and returned as a sync proxy. The host holds the
+    launch policy: installed Chrome first, the sandbox on (2026-08-02 dogfood)."""
+    from sidecar.app.browser.host import get_host, launch
 
+    host = get_host()
 
-def _sandboxed_launch(launch: Callable[[bool], object]):
-    """Launch with the Chromium sandbox ON (2026-08-02 headed dogfood: Playwright
-    disables it by default — the "--no-sandbox" banner — leaving LinkedIn's
-    pages rendering outside Chromium's exploit containment). Desktop macOS and
-    Windows always support the sandbox; the single warned retry with it off
-    exists only for Linux setups without unprivileged user namespaces, where
-    the sandboxed launch fails outright."""
-    try:
-        return launch(True)
-    except Exception as e:  # noqa: BLE001 — non-sandbox failures re-raise below
-        if not _is_sandbox_launch_error(str(e)):
-            raise
-        logger.warning(
-            "Chromium sandbox unavailable (%s) — retrying with "
-            "chromium_sandbox=False; expected only on Linux without "
-            "unprivileged user namespaces", e
-        )
-        return launch(False)
-
-
-def _launch_persistent(playwright, user_data_dir: str, *, headless: bool):
-    kwargs = {
-        "headless": headless,
-        "args": _LAUNCH_ARGS,
-        "ignore_default_args": _IGNORE_DEFAULT_ARGS,
-    }
-    try:
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch_persistent_context(
-                user_data_dir, channel="chrome", chromium_sandbox=sandbox, **kwargs
-            )
-        )
-    except Exception as e:  # noqa: BLE001 — no installed Chrome → bundled build
-        logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch_persistent_context(
-                user_data_dir, chromium_sandbox=sandbox, **kwargs
-            )
+    async def _open():
+        pw = await host.playwright()
+        return await launch(
+            pw.chromium, user_data_dir, headless=headless,
+            args=_LAUNCH_ARGS, ignore_default_args=_IGNORE_DEFAULT_ARGS,
         )
 
-
-def _launch_browser(playwright, *, headless: bool):
-    kwargs = {
-        "headless": headless,
-        "args": _LAUNCH_ARGS,
-        "ignore_default_args": _IGNORE_DEFAULT_ARGS,
-    }
-    try:
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch(
-                channel="chrome", chromium_sandbox=sandbox, **kwargs
-            )
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch(chromium_sandbox=sandbox, **kwargs)
-        )
+    return host.proxy(host.run(_open))
 
 
 def dismiss_comply_gate(page, timeout_ms: int = 5000) -> bool:
@@ -332,7 +284,6 @@ class AccountSession:
         self.page = None
         self.context = None
         self.browser = None
-        self.playwright = None
 
     # --- lifecycle ---
     def _load_storage_state(self) -> dict | None:
@@ -348,10 +299,7 @@ class AccountSession:
         assert self.user_data_dir is not None
         first_run = not self.user_data_dir.exists() or not any(self.user_data_dir.iterdir())
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
-        self.playwright = sync_playwright().start()
-        self.context = _launch_persistent(
-            self.playwright, str(self.user_data_dir), headless=not self.headed
-        )
+        self.context = _host_launch(str(self.user_data_dir), headless=not self.headed)
         self.browser = None  # persistent context owns its own browser
         self.context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
         self.context.set_default_navigation_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
@@ -382,8 +330,7 @@ class AccountSession:
             self._start_persistent()
             return
         storage_state = self._load_storage_state()
-        self.playwright = sync_playwright().start()
-        self.browser = _launch_browser(self.playwright, headless=not self.headed)
+        self.browser = _host_launch(None, headless=not self.headed)
         self.context = self.browser.new_context(storage_state=storage_state)
         self.context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
         self.context.set_default_navigation_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
@@ -552,16 +499,16 @@ class AccountSession:
             self._surface = None
             logger.info("voyager session detached from broker surface")
             return
+        # The browser host owns the Playwright driver, so nothing here stops it.
         for closer in (
             lambda: self.context and self.context.close(),
             lambda: self.browser and self.browser.close(),
-            lambda: self.playwright and self.playwright.stop(),
         ):
             try:
                 closer()
             except Exception as e:  # noqa: BLE001 - teardown must never mask the real error
                 logger.debug("teardown step raised: %s", e)
-        self.page = self.context = self.browser = self.playwright = None
+        self.page = self.context = self.browser = None
         logger.info("voyager session closed")
 
 
@@ -744,14 +691,13 @@ def capture_login(
     The password is never handled here: the human logs in in the visible browser.
     """
     out_path = Path(storage_state_path)
-    playwright = sync_playwright().start()
     browser = None
     if user_data_dir is not None:
         Path(user_data_dir).mkdir(parents=True, exist_ok=True)
-        context = _launch_persistent(playwright, str(user_data_dir), headless=not headed)
+        context = _host_launch(str(user_data_dir), headless=not headed)
         page = context.pages[0] if context.pages else context.new_page()
     else:
-        browser = _launch_browser(playwright, headless=not headed)
+        browser = _host_launch(None, headless=not headed)
         context = browser.new_context()
         page = context.new_page()
     context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
@@ -805,7 +751,6 @@ def capture_login(
         closers = [context.close]
         if browser is not None:
             closers.append(browser.close)
-        closers.append(playwright.stop)
         for closer in closers:
             try:
                 closer()

@@ -640,6 +640,18 @@ published `send_step` events verbatim.
 
 **Verification:** `test_send_settles_by_reading.py`, 10 cases: landed, not landed, unreadable, a compose error after it opened, a failure before it, the 3 retry outcomes, and 2 invite outcomes.
 
+### Self-launch and login run on the app's browser host (2026-10-15)
+
+**Files:** `upstream/session.py` (GPL-3.0-only; finds-you-jobs-authored lines). Removed: `tests/test_session_sandbox.py`.
+
+**What changed and why.** The app drove Chrome 3 ways, so 1 browser fix had to land up to 3 times (`docs/internal/audit-2026-10-14.md` section 8.9, AUD-12). All 3 now go through 1 browser host in core (`sidecar/app/browser/host.py`, AGPL-3.0-only): 1 thread, 1 event loop, 1 async Playwright driver.
+- `session.py`: `_host_launch` replaces `_launch_persistent`, `_launch_browser`, `_sandboxed_launch` and `_is_sandbox_launch_error`. `start()`, `_start_persistent()` and `capture_login()` open Chrome through the host and drive it through its sync proxies, so the page-driving actions run unchanged. The host owns the Playwright driver, so `close()` and the login teardown no longer stop one; `AccountSession.playwright` is gone.
+- The launch policy (installed Chrome first, the sandbox on, 1 warned retry without it) is unchanged and lives in the host's `launch`. Its tests moved to core as `tests/app/browser/test_host_launch.py`.
+- A side effect: `kill_browser()` on a self-launched session now closes the context from any thread. The sync API refused that call off its own thread.
+- The package now imports core (`sidecar.app.browser.host`). GPLv3 section 13 permits combining GPLv3 and AGPLv3 code, and the whole aggregate ships as AGPL-3.0-only.
+
+**Verification:** `test_session_on_host.py` (both launch paths on real Chromium against a local feed fixture; fails on the old code), `test_login_capture.py` (5 cases, real Chromium), and the broker-lane tests, which now drive the GPL actions through the same proxies.
+
 ## Upstream
 
 - **Project:** OpenOutreach — <https://github.com/eracle/OpenOutreach>
