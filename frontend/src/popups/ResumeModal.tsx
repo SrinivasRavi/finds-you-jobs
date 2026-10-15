@@ -653,7 +653,7 @@ export function ResumeModal({
             </div>
           </div>
           <div className="flex min-h-0 flex-col">
-            <div className="mb-1 flex items-center gap-2 text-[12px] font-medium text-ink-3">
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-[12px] font-medium text-ink-3">
               {t("popups.resume.tailoredVariant")}
               <span className="rounded-full bg-good-wash px-1.5 py-px text-[9.5px] text-good">
                 {t("popups.resume.editable")}
