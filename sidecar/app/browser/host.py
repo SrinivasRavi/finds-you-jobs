@@ -79,6 +79,7 @@ class BrowserHost:
         # The same target always gets the same proxy, so `is` holds across calls.
         self._proxies: weakref.WeakKeyDictionary[Any, SyncProxy] = weakref.WeakKeyDictionary()
         self._proxies_lock = threading.Lock()  # workers and the loop both wrap
+        self._tasks: set[asyncio.Task[Any]] = set()  # `spawn` keeps them from GC
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -104,6 +105,15 @@ class BrowserHost:
     def submit(self, coro: Coroutine[Any, Any, T]) -> Future[T]:
         """Run `coro` on the host loop from any other thread."""
         return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+    def spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
+        """Start `coro` on the host loop and return at once, from any thread."""
+        if not self.on_loop():
+            self.submit(coro)
+            return
+        task = self._loop.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def run_async(self, coro: Coroutine[Any, Any, T]) -> T:
         """Await `coro` on the host loop from another loop."""
@@ -175,7 +185,8 @@ class SyncProxy:
 
     A method call runs on the host loop; its result comes back wrapped the same way.
     An event handler is called on the host loop with wrapped arguments, so it must
-    only record what it is given: a sync call from there is refused, not deadlocked."""
+    only record what it is given or `fire`: a sync call from there is refused, not
+    deadlocked."""
 
     __slots__ = ("__weakref__", "_handlers", "_host", "_target")
 
@@ -188,6 +199,20 @@ class SyncProxy:
     def target(self) -> Any:
         """The async object behind this proxy, for code already on the host loop."""
         return self._target
+
+    def fire(self, name: str, *args: Any) -> None:
+        """Call method `name` without waiting for it; safe on the host loop, where an
+        event handler runs. A failure is logged, never raised."""
+        method = getattr(self._target, name)
+        args = tuple(_unwrap(a) for a in args)
+
+        async def _call() -> None:
+            try:
+                await method(*args)
+            except Exception:  # noqa: BLE001 — nobody waits on a fired call
+                get_logger().debug("fired browser call %s failed", name, exc_info=True)
+
+        self._host.spawn(_call())
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._target, name)

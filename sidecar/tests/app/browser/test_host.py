@@ -82,3 +82,16 @@ def test_playwright_errors_keep_their_type(page: SyncProxy) -> None:
 def test_a_sync_call_from_the_host_loop_is_refused(host: BrowserHost) -> None:
     with pytest.raises(RuntimeError, match="host's own loop"):
         host.run(lambda: host.run(lambda: 1), timeout=5)
+
+
+def test_a_handler_on_the_host_loop_can_fire_a_call(page: SyncProxy) -> None:
+    """The screencast ack's shape: a handler runs on the host loop, so it cannot
+    wait on a call, but it can fire one."""
+
+    def on_console(_msg) -> None:  # noqa: ANN001
+        page.fire("evaluate", "() => { document.title = 'fired' }")
+
+    page.on("console", on_console)
+    page.evaluate("() => console.log('ping')")
+    page.wait_for_timeout(300)
+    assert page.title() == "fired"

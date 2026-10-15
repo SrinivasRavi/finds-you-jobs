@@ -1,12 +1,11 @@
 """The browser-session broker: 1 persistent headless surface per slug.
 
 A surface is a real Chrome profile behind a CDP session, streamed as JPEG frames
-and named by a runtime slug (plugin-architecture.md section 8.1 rule 5). Each
-surface owns 1 OS thread, the only one that touches its Playwright objects; the
-event loop talks to it through thread-safe queues and `call_soon_threadsafe`
-(async-first). Frames are acked at once inside the frame event, so capture keeps
-running mid-action (acking after the socket send froze the view during sends).
-Flow control is the viewer's 1-slot keep-newest queue."""
+and named by a runtime slug (plugin-architecture.md section 8.1 rule 5). Chrome
+runs on the 1 browser host (`host.py`); each surface keeps 1 lane thread that runs
+its actions in order through sync proxies. Frames, URL changes and a closed page
+arrive as host events, so nothing polls, and frames flow while an action runs.
+Each frame is acked at capture; the viewer's 1-slot queue keeps the newest."""
 
 from __future__ import annotations
 
@@ -22,7 +21,8 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from ..logging_setup import get_logger
-from .launch import minimal_launch_kwargs, open_persistent_context, resolve_user_agent
+from .host import get_host, launch
+from .launch import minimal_launch_kwargs, resolve_user_agent
 from .process import kill_browser
 
 # Screencast wire settings. JPEG at 60 keeps a full-page frame in the tens of
@@ -36,12 +36,6 @@ DEFAULT_MAX_HEIGHT = 800
 MIN_FRAME_EDGE = 160
 MAX_FRAME_EDGE = 3840
 
-# While a viewer watches, the surface thread parks inside Playwright for this long
-# each pass, which is what lets the sync frame handlers fire.
-THREAD_TICK_MS = 8
-# With no viewer it sleeps on a wake event instead, and pumps Playwright's events
-# this often. The 8 ms poll alone cost about 10% of a core (audit 8.5).
-IDLE_PUMP_SECONDS = 1.0
 # How long a caller waits for Chrome to come up before calling it a failure.
 LAUNCH_TIMEOUT_SECONDS = 60.0
 # How long `shutdown` waits for a surface thread to finish its teardown.
@@ -96,7 +90,7 @@ class BrowserActionTimeout(RuntimeError):
 
 class Frame(NamedTuple):
     """One decoded screencast frame. `session_id` is Chrome's capture id (the
-    ack already quoted it back, at capture, on the surface thread)."""
+    ack already quoted it back, at capture, on the browser host)."""
 
     jpeg: bytes
     session_id: int
@@ -115,9 +109,8 @@ class Viewer:
 
 
 class SurfaceSession(NamedTuple):
-    """What one launch yields — the four objects the surface thread drives."""
+    """What one launch yields: the 3 objects the lane drives, as sync proxies."""
 
-    playwright: Any
     context: Any
     page: Any
     cdp: Any
@@ -128,21 +121,23 @@ Killer = Callable[[Path], int]
 
 
 def open_session(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
-    """Default opener, on the surface thread. `new_cdp_session` is the only CDP path:
-    a persistent context has no Browser object behind it."""
-    from playwright.sync_api import sync_playwright
-
+    """Default opener, on the surface thread: launch on the host, hand back proxies.
+    `new_cdp_session` is the only CDP path: a persistent context has no Browser."""
+    host = get_host()
     profile_dir.mkdir(parents=True, exist_ok=True)
-    playwright = sync_playwright().start()
-    try:
-        context = open_persistent_context(playwright, str(profile_dir), **launch_kwargs)
-    except Exception:
-        playwright.stop()
-        raise
-    page = context.pages[0] if context.pages else context.new_page()
-    return SurfaceSession(
-        playwright=playwright, context=context, page=page, cdp=context.new_cdp_session(page)
-    )
+
+    async def _open() -> tuple[Any, Any, Any]:
+        context = await launch((await host.playwright()).chromium, str(profile_dir),
+                               **launch_kwargs)
+        try:
+            page = context.pages[0] if context.pages else await context.new_page()
+            return context, page, await context.new_cdp_session(page)
+        except Exception:
+            await context.close()
+            raise
+
+    context, page, cdp = host.run(_open)
+    return SurfaceSession(context=host.proxy(context), page=host.proxy(page), cdp=host.proxy(cdp))
 
 
 class BrowserSurface:
@@ -196,12 +191,14 @@ class BrowserSurface:
         # Set by anything the idle surface thread must act on now: a command, a
         # viewer coming or going, a kill, a shutdown.
         self._wake = threading.Event()
-        # Whether Chrome is capturing, owned by the surface thread.
+        # Whether Chrome is capturing. The lane and the serving loop both toggle it.
         self._casting = False
+        self._cast_lock = threading.Lock()
+        self._session: SurfaceSession | None = None
         self._max_width = DEFAULT_MAX_WIDTH
         self._max_height = DEFAULT_MAX_HEIGHT
-        # Committed main-frame URL tracking. `_last_url` is the surface thread's
-        # change detector; `_page_url` is the serving-loop copy a late-attaching
+        # Committed main-frame URL tracking. `_last_url` is the host's change
+        # detector; `_page_url` is the serving-loop copy a late-attaching
         # viewer is seeded from, so a reconnect shows where the page already is.
         self._last_url = ""
         self._page_url = ""
@@ -267,12 +264,17 @@ class BrowserSurface:
             # Compute the launch kwargs here, on the surface thread: it may spend a
             # throwaway Chrome launch to de-headless the UA (`resolve_user_agent`).
             session = self._opener(self._profile_dir, self._launch_kwargs())
-            session.cdp.on(
-                "Page.screencastFrame",
-                lambda params: self._on_frame(session, params),
-            )
+            opened = session
+            # The handlers run on the browser host, never on this thread.
+            session.cdp.on("Page.screencastFrame", lambda params: self._on_frame(opened, params))
+            session.page.on("framenavigated", self._on_navigated)
+            for target, event in ((session.page, "close"), (session.page, "crash"),
+                                  (session.context, "close")):
+                target.on(event, self._on_closed)
+            self._session = session
             # No screencast until a viewer attaches. rAF runs at 60/s without one
             # (measured, audit-2026-10-14.md section 8.5).
+            self._sync_screencast(session)
         except Exception as exc:  # noqa: BLE001 — reported through `wait_ready`
             self._error = exc
             self._log.exception("browser surface %r failed to start", self.slug)
@@ -284,20 +286,16 @@ class BrowserSurface:
         try:
             # A deadline kill marks the surface dead from another thread; the loop
             # stops there rather than drive a Chrome that's gone.
+            # Events need no pump, so the thread sleeps until there is work.
             while not self._stopping.is_set() and not self._dead.is_set():
                 self._wake.clear()
-                self._sync_screencast(session)
                 self._drain_commands(session)
-                self._watch_url(session)
-                if self._casting:
-                    # Parking inside Playwright is what lets its sync event
-                    # handlers run, so the frame callbacks fire from here.
-                    session.page.wait_for_timeout(THREAD_TICK_MS)
-                elif not self._wake.wait(IDLE_PUMP_SECONDS):
-                    session.page.wait_for_timeout(1)  # deliver queued events
+                if not self._stopping.is_set() and not self._dead.is_set():
+                    self._wake.wait()
         except Exception:  # noqa: BLE001 — a dead page ends the surface, not the app
             self._log.exception("browser surface %r stopped", self.slug)
         finally:
+            self._session = None
             self._teardown(session)
             # The run loop is over, cleanly or crashed. Mark it so the broker
             # can tell this surface apart from a live one and relaunch a fresh
@@ -305,15 +303,19 @@ class BrowserSurface:
             self._dead.set()
             self._fail_pending()
 
-    def _sync_screencast(self, session: SurfaceSession) -> None:
-        """Capture exactly while a viewer is attached, on the surface thread."""
-        wanted = self._viewer is not None
-        if wanted and not self._casting:
-            session.cdp.send("Page.startScreencast", self._screencast_params())
-            self._casting = True
-        elif not wanted and self._casting:
-            session.cdp.send("Page.stopScreencast", {})
-            self._casting = False
+    def _sync_screencast(self, session: SurfaceSession | None) -> None:
+        """Capture exactly while a viewer is attached. Fired, not awaited, so the
+        serving loop calls it too and a viewer sees frames even mid-action."""
+        if session is None:
+            return
+        with self._cast_lock:
+            wanted = self._viewer is not None
+            if wanted and not self._casting:
+                session.cdp.fire("send", "Page.startScreencast", self._screencast_params())
+                self._casting = True
+            elif not wanted and self._casting:
+                session.cdp.fire("send", "Page.stopScreencast", {})
+                self._casting = False
 
     def _screencast_params(self) -> dict[str, Any]:
         return {
@@ -371,11 +373,19 @@ class BrowserSurface:
         self._fail_pending()
         self._killer(self._profile_dir)
 
-    def _watch_url(self, session: SurfaceSession) -> None:
-        """Emit the committed main-frame URL whenever it changes, once per tick on the
-        surface thread. `page.url` is Playwright's locally tracked URL, so the read
-        costs no CDP round-trip the page could observe. Publishes on change only."""
-        url = session.page.url
+    def _on_closed(self, *_args: Any) -> None:
+        """Chrome closed the page or the context (a crash, a kill), on the host: the
+        lane stops, and the broker relaunches on the next ask."""
+        self._dead.set()
+        self._wake.set()
+
+    def _on_navigated(self, frame: Any) -> None:
+        """Publish the committed main-frame URL on change, on the host. SPA route
+        changes fire this too. `frame.url` is Playwright's own record, so the read
+        costs no CDP round-trip the page could observe."""
+        if frame.parent_frame is not None:
+            return
+        url = frame.url
         if url == self._last_url:
             return
         self._last_url = url
@@ -407,11 +417,11 @@ class BrowserSurface:
     def _teardown(self, session: SurfaceSession | None) -> None:
         if session is None:
             return
+        # The host owns the Playwright driver, so it outlives every surface.
         for label, action in (
             ("stop screencast", lambda: session.cdp.send("Page.stopScreencast", {})),
             ("detach cdp", session.cdp.detach),
             ("close context", session.context.close),
-            ("stop playwright", session.playwright.stop),
         ):
             try:
                 action()
@@ -424,19 +434,16 @@ class BrowserSurface:
     # -- frames ------------------------------------------------------------
 
     def _on_frame(self, session: SurfaceSession, params: dict[str, Any]) -> None:
-        """CDP `Page.screencastFrame` on the surface thread: decode here, ack at once so
-        Chrome keeps capturing (the liveness fix, module docstring), then hand the bytes
-        over. The nested `cdp.send` from a handler is a documented shape."""
+        """CDP `Page.screencastFrame` on the host: decode here, ack at once so Chrome
+        keeps capturing (the liveness fix), then hand the bytes over. The ack is
+        fired: a handler on the host loop cannot wait on a call."""
         try:
             jpeg = base64.b64decode(params["data"])
             session_id = int(params["sessionId"])
         except Exception:  # noqa: BLE001 — one unreadable frame is not fatal
             self._log.warning("unreadable screencast frame", exc_info=True)
             return
-        try:
-            session.cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
-        except Exception:  # noqa: BLE001 — the session may already be gone
-            self._log.debug("screencast ack dropped", exc_info=True)
+        session.cdp.fire("send", "Page.screencastFrameAck", {"sessionId": session_id})
         metadata = params.get("metadata") or {}
         self._call_on_loop(
             self._offer,
@@ -471,7 +478,7 @@ class BrowserSurface:
         stops receiving (its queued frame is already acked, so nothing stalls).
         """
         self._viewer = viewer
-        self._wake.set()
+        self._sync_screencast(self._session)
         # Seed the incoming viewer with where the page already is, so a
         # reconnect (or a tab re-mount) never reads "no page yet" over a live,
         # fully loaded page.
@@ -486,7 +493,7 @@ class BrowserSurface:
         if self._viewer is not viewer:
             return
         self._viewer = None
-        self._wake.set()
+        self._sync_screencast(self._session)
         # Start the idle clock HERE, not from the last submitted action. A
         # viewer can watch a static page for an hour without submitting
         # anything, and reaping the instant they close the pane would make a
@@ -562,8 +569,9 @@ class BrowserSurface:
         self._max_height = max(MIN_FRAME_EDGE, min(height, MAX_FRAME_EDGE))
 
         def _recast(session: SurfaceSession) -> None:
-            if self._casting:  # else the next attach starts at the new size
-                session.cdp.send("Page.startScreencast", self._screencast_params())
+            with self._cast_lock:
+                if self._casting:  # else the next attach starts at the new size
+                    session.cdp.fire("send", "Page.startScreencast", self._screencast_params())
 
         return self._submit(_recast)
 
