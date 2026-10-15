@@ -1,10 +1,11 @@
 """The Applier's browser window: 1 Chrome window shared by every apply run, each
 run in its own tab (docs/internal/applier/window.md).
 
-The window owns 1 thread running 1 asyncio loop, the only one that touches its
-Playwright objects. An apply op hands its whole coroutine to that loop and
-blocks its runner thread on the result. Tabs open in the background over CDP,
-so a new run never takes the user's focus (window.md section 3)."""
+The window lives on the browser host's loop (`app/browser/host.py`), the only
+one that touches its Playwright objects. An apply op hands its whole coroutine
+to that loop and blocks its runner thread on the result. Tabs open in the
+background over CDP, so a new run never takes the user's focus (window.md
+section 3)."""
 
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from concurrent.futures import Future
 from typing import Any, TypeVar
 
 from ..api.browser import is_browser_missing
-from ..browser.launch import launch_persistent_context_async
+from ..browser.host import get_host, launch
 from ..logging_setup import get_logger
 
 T = TypeVar("T")
@@ -42,14 +43,8 @@ class BrowserMissingError(RuntimeError):
 class ApplierWindow:
     def __init__(self, *, headless: bool) -> None:
         self.headless = headless
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._loop.run_forever,
-            name=f"fyj-applier-window-{'headless' if headless else 'headed'}",
-            daemon=True,
-        )
-        self._thread.start()
-        self._pw: Any = None
+        self._host = get_host()
+        self._loop = self._host.loop
         self._context: Any = None
         self._cdp: Any = None
         self._profile: str | None = None
@@ -65,7 +60,7 @@ class ApplierWindow:
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
         """Run `coro` on the window's loop and wait for it. Never call from the loop."""
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        future = self._host.submit(coro)
         self._futures.add(future)
         try:
             return future.result()
@@ -100,23 +95,17 @@ class ApplierWindow:
         for future in list(self._futures):
             future.cancel()
         if self._loop.is_running():
-            done = asyncio.run_coroutine_threadsafe(self._close_window(), self._loop)
+            done = self._host.submit(self._close_window())
             try:
                 done.result(timeout=_SHUTDOWN_TIMEOUT_S)
             except Exception:  # noqa: BLE001 — shutting down regardless
                 get_logger().debug("applier window close failed", exc_info=True)
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=_SHUTDOWN_TIMEOUT_S)
 
     # -- called on the loop ---------------------------------------------------
 
     async def playwright(self) -> Any:
-        """The window's Playwright, started on first use. The PDF render shares it."""
-        if self._pw is None:
-            from playwright.async_api import async_playwright
-
-            self._pw = await async_playwright().start()
-        return self._pw
+        """The host's Playwright. The PDF render shares it."""
+        return await self._host.playwright()
 
     async def open_tab(self, run_id: str) -> Any:
         """A tab for `run_id`, launching the window if it isn't up. Serialized:
@@ -173,7 +162,7 @@ class ApplierWindow:
         if not self.headless:
             kwargs["no_viewport"] = True  # pages follow the window the user resizes
         try:
-            context = await launch_persistent_context_async(pw.chromium, self._profile, **kwargs)
+            context = await launch(pw.chromium, self._profile, **kwargs)
         except Exception as exc:
             shutil.rmtree(self._profile, ignore_errors=True)
             self._profile = None
@@ -223,9 +212,6 @@ class ApplierWindow:
         if self._profile is not None:
             shutil.rmtree(self._profile, ignore_errors=True)
             self._profile = None
-        if self._pw is not None:
-            pw, self._pw = self._pw, None
-            await pw.stop()
 
 
 _windows: dict[bool, ApplierWindow] = {}

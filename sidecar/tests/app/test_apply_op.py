@@ -1073,12 +1073,14 @@ def test_apply_with_no_browser_at_all_is_coded(
 ) -> None:
     """A18: no installed Chrome and no downloaded Chromium. The run lands failed with
     a `browser_missing` blocker, never Playwright's raw "Executable doesn't exist"."""
-    from sidecar.app.browser import launch
+    from sidecar.app.browser import host
     from sidecar.app.registry.applier_window import BROWSER_MISSING_DETAIL, shutdown_windows
 
-    shutdown_windows()  # a window started under the real browser path
+    # The driver reads the browsers path when it starts, so restart the host after it.
+    shutdown_windows()
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
-    monkeypatch.setattr(launch, "PREFERRED_CHANNEL", None)
+    host.shutdown_host()
+    monkeypatch.setattr(host, "PREFERRED_CHANNEL", None)
     app, client = app_client
     _job_id, app_id = _seed_card(client, app)
     run = client.post(

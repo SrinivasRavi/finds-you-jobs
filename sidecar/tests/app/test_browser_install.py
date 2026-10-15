@@ -71,9 +71,10 @@ def test_export_without_chromium_is_coded(
 ) -> None:
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
     from sidecar.app.api import system as routes_mod
-    from sidecar.app.browser import launch
+    from sidecar.app.browser import host
 
-    monkeypatch.setattr(launch, "PREFERRED_CHANNEL", None)  # no installed Chrome either
+    monkeypatch.setattr(host, "PREFERRED_CHANNEL", None)  # no installed Chrome either
+    host.shutdown_host()  # the driver reads the browsers path when it starts
     monkeypatch.setattr(routes_mod, "downloads_dir", lambda: tmp_path / "downloads")
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False

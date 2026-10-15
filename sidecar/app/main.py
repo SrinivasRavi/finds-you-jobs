@@ -429,6 +429,9 @@ def create_app(
             from .registry.applier_window import shutdown_windows
 
             shutdown_windows()
+            from .browser.host import shutdown_host
+
+            shutdown_host()
             db.dispose()
             log.info("sidecar app stopped")
 
