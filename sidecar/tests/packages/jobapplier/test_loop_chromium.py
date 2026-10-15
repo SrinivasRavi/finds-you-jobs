@@ -443,3 +443,26 @@ async def test_a_closed_window_is_a_coded_interruption(tmp_path: Path) -> None:
     assert result.status is ApplyStatus.INTERRUPTED
     assert [b.kind for b in result.blockers] == ["window_closed"]
     assert "Target" not in result.summary and "closed" in result.summary
+
+
+async def test_a_hung_page_ends_the_run_at_the_step_deadline(tmp_path: Path) -> None:
+    """AUD-12: the 20-minute budget was checked between steps only, and a page read
+    has no timeout of its own, so a page whose script never yields held the run
+    forever. A step past its deadline now ends the run as interrupted, in words."""
+    hung = tmp_path / "hung.html"
+    hung.write_text(
+        "<html><body><form><label>Full name <input name='n'></label></form>"
+        "<script>setTimeout(() => { for (;;) {} }, 1500)</script></body></html>"
+    )
+    script: list[FakeStep] = [
+        _action("wait", seconds=2),
+        _action("scroll", direction="down"),  # input to a page that never yields
+        _action("finish", reason="done"),
+    ]
+    request = replace(_request(tmp_path, hung.as_uri()), step_deadline_s=2.0)
+    started = asyncio.get_running_loop().time()
+    result, _, _ = await asyncio.wait_for(_run(request, FakeApplyEngine(script)), 30)
+
+    assert asyncio.get_running_loop().time() - started < 15
+    assert result.status is ApplyStatus.INTERRUPTED
+    assert [b.kind for b in result.blockers] == ["page_died"]
