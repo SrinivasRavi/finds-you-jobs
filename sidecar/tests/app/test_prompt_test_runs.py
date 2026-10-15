@@ -197,6 +197,24 @@ def test_a_pasted_description_works_with_nothing_on_the_board(tmp_path) -> None:
         assert resp.json()["kind"] == "tailor"
 
 
+def test_a_score_test_on_too_short_a_description_is_refused(tmp_path) -> None:
+    """Below MIN_JD_CHARS the scorer runs Keyword whatever the mode, so a score test
+    there showed a Keyword score as the draft prompt's result (backlog S-C80)."""
+    app = create_app(
+        token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
+    )
+    with TestClient(app) as client:
+        with app.state.db.repos() as repos:
+            repos.profile.upsert("# Candidate\n\nPython.")
+        resp = client.post(
+            "/api/settings/prompts/score/test",
+            headers=AUTH,
+            json={"markdown": "# DRAFT", "job_description": "A pasted job description."},
+        )
+        assert resp.status_code == 422
+        assert "200" in resp.json()["detail"]
+
+
 def test_a_job_kind_with_neither_a_job_nor_a_description_is_refused(tmp_path) -> None:
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False

@@ -374,6 +374,16 @@ def test_prompt(
                     status_code=422,
                     detail="pick a job from the board or paste a job description",
                 )
+            if kind == "score":
+                from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
+                # Shorter, the scorer runs Keyword whatever the draft says (S-C80).
+                if len(str(snap["job"]).strip()) < MIN_JD_CHARS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"a score test needs a job description of {MIN_JD_CHARS}"
+                        " characters or more; shorter, the app scores it by keywords",
+                    )
             # Deliberately NO job_id in the snapshot: that is what stops the
             # score path persisting onto the real job row.
             profile = repos.profile.get_current()
