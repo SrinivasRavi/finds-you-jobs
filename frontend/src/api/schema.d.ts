@@ -2186,8 +2186,8 @@ export interface paths {
         put?: never;
         /**
          * Browser Navigate
-         * @description Open a URL in the in-app browser, logged in as the user. A LinkedIn page load
-         *     counts as a LinkedIn read.
+         * @description Open a URL in the in-app browser, logged in as the user. The user confirms
+         *     each one you ask for: a URL can carry data out.
          */
         post: operations["browser_navigate_api_browser_navigate_post"];
         delete?: never;
@@ -2270,7 +2270,8 @@ export interface paths {
         /**
          * Browser Upload
          * @description Attach 1 of the user's documents to a file field from the last page read, as
-         *     a PDF: "master_resume", or the id of a tailored resume or cover letter.
+         *     a PDF: "master_resume", or the id of a tailored resume or cover letter. A page
+         *     can send a file the moment it is picked, so the user confirms each one.
          */
         post: operations["browser_upload_api_browser_upload_post"];
         delete?: never;
