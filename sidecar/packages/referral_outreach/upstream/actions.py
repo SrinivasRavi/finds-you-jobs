@@ -276,7 +276,7 @@ def find_and_click_connect(page, *, wait_ms: int = 3000, capture=None) -> str:
     tried.append("top-card-connect")
     direct = scope.locator(CONNECT_SELECTORS["invite_to_connect"])
     if direct.count() > 0:
-        direct.first.click()
+        _click_through_overlay(direct.first)
         _raise_on_error_toast(page)
         return "top-card-connect"
 
@@ -303,13 +303,11 @@ def _raise_on_error_toast(page) -> None:
         raise SkipProfile(error.first.inner_text().strip())
 
 
-# Overlay-hardened click (2026-08-02 live timeout: LinkedIn's SDUI shell keeps a
-# full-bleed <div id="interop-outlet" data-testid="interop-shadowdom"> overlay
-# above the top card that intercepted pointer events over the "More" button for
-# the whole 30s default timeout). One normal, bounded click; on THAT
-# interception signature — and only that — one force=True retry. force skips
-# only the hit-target check the overlay is failing; the target itself was
-# already located and visible. Any other failure re-raises unchanged.
+# Overlay-hardened click. LinkedIn's SDUI shell puts layers over the action
+# row: a full-bleed interop outlet (2026-08-02), a headline paragraph over the
+# Connect link (2026-10-16). A press at the target's screen point lands on such
+# a layer and opens nothing, and so does force=True. A trial click reads the hit
+# target first; on that interception, and only that, the click goes to the target.
 _CLICK_TIMEOUT_MS = 10_000
 _INTERCEPT_SIGNATURES = ("intercepts pointer events", "interop-outlet")
 
@@ -320,12 +318,14 @@ def _is_pointer_intercepted(message: str) -> bool:
 
 def _click_through_overlay(locator, *, timeout_ms: int = _CLICK_TIMEOUT_MS) -> None:
     try:
-        human_click(locator, timeout_ms=timeout_ms,
-                    fallback=lambda: locator.click(timeout=timeout_ms))
+        locator.click(trial=True, timeout=timeout_ms)
     except PlaywrightTimeoutError as e:
         if not _is_pointer_intercepted(str(e)):
             raise
-        locator.click(timeout=timeout_ms, force=True)
+        locator.dispatch_event("click")
+        return
+    human_click(locator, timeout_ms=timeout_ms,
+                fallback=lambda: locator.click(timeout=timeout_ms))
 
 
 def _open_more_and_click_connect(page, scope, wait_ms: int) -> bool:
