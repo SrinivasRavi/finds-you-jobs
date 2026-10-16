@@ -221,3 +221,30 @@ async def test_a_click_that_raises_after_landing_is_unconfirmed(
     assert outcome.clicked
     assert outcome.unconfirmed
     assert not outcome.confirmed
+
+
+async def test_the_confirm_wait_is_wall_time_not_a_count_of_polls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 2026-10-16 CI, macOS: each poll also reads the page, and the loop counted
+    # only the poll step, so a "0.2 s" wait ran past 2 s on a slow runner.
+    import asyncio
+    import time
+
+    async def slow_observe(_page: object) -> object:
+        await asyncio.sleep(0.3)
+        return object()
+
+    class _Page:
+        url = "about:blank"
+
+        async def wait_for_timeout(self, ms: float) -> None:
+            await asyncio.sleep(ms / 1000)
+
+    monkeypatch.setattr(submit_mod, "observe", slow_observe)
+    monkeypatch.setattr(submit_mod, "classify", lambda _obs: set())
+    monkeypatch.setattr(submit_mod, "_CONFIRM_POLL_S", 0.05)
+    started = time.monotonic()
+    verdict, _url = await submit_mod._read_outcome(_Page(), 0.2)  # type: ignore[arg-type]
+    assert verdict == "silent"
+    assert time.monotonic() - started < 0.8

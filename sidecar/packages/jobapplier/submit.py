@@ -11,6 +11,7 @@ sent" (audit-2026-10-14.md section 8.2)."""
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -93,10 +94,10 @@ def _best_control(obs: Any) -> tuple[int, ObservedElement] | None:
 
 async def _read_outcome(page: Page, wait_s: float) -> tuple[str, str]:
     """Poll the page up to `wait_s`: ("confirmed" | "error" | "closed" | "silent", url)."""
-    waited = 0.0
-    while waited < wait_s:
+    # The clock, not a count of polls: each poll also reads the page.
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
         await page.wait_for_timeout(_CONFIRM_POLL_S * 1000)
-        waited += _CONFIRM_POLL_S
         try:
             states = classify(await observe(page))
         except PlaywrightError:
