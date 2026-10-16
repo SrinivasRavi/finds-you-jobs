@@ -650,6 +650,30 @@ def test_send_raised_error_still_writes_outreach_log(wired: Wired) -> None:
     assert any(e["payload"]["phase"] == "send_failed" for e in events)
 
 
+def test_a_playwright_timeout_mid_send_still_writes_outreach_log(wired: Wired) -> None:
+    # 2026-10-16 live: an overlay covered Connect, `Locator.click` timed out, and
+    # Playwright's TimeoutError is none of NetworkerError, OSError or RuntimeError.
+    # It escaped with no OutreachLog, and the autopilot then waited on the
+    # contact for good ("a send ran and wrote no log yet").
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/lee-tech")).id
+    verbatim = "Locator.click: Timeout 30000ms exceeded."
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        raise_on="send_connection", error=PlaywrightTimeoutError(verbatim),
+    )
+    with pytest.raises(PlaywrightTimeoutError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Lee"}))
+    with wired.db.repos() as repos:
+        logs = repos.outreach_logs.list_for_contact(cid)
+        assert len(logs) == 1
+        assert logs[0].outcome == "failed"
+        assert verbatim in logs[0].outcome_detail
+
+
 def test_send_dry_run_plans_without_flip(wired: Wired) -> None:
     ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
     _seed(wired, with_job=False)

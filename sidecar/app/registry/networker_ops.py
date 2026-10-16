@@ -23,7 +23,7 @@ from sidecar.modules.networker import draft as net_draft
 from sidecar.modules.networker import resolve as net_resolve
 from sidecar.modules.networker import send as net_send
 from sidecar.modules.networker.driver import DirectVoyagerDriver, VoyagerDriver
-from sidecar.modules.networker.types import Audience, NetworkerError, Warmth
+from sidecar.modules.networker.types import Audience, Warmth
 from sidecar.packages.referral_outreach import PacingProfile, plan_for_membership
 
 from ..db.base import now_utc
@@ -749,11 +749,11 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
             message, net_contact, driver=driver, dry_run=dry_run,
             on_step=_publish_step, unconfirmed_since=unconfirmed_since,
         )
-    except (NetworkerError, OSError, RuntimeError) as exc:
-        # Catches every exception, not just `NetworkerError`: the driver wraps only
-        # `VoyagerError`, so launch failures, an unresponsive browser, an exhausted 5xx
-        # retry and navigation guards all escaped, leaving no OutreachLog row and a row
-        # stuck on "Sending". `route_cause` clamps an unrecognized cause to `unknown`.
+    except Exception as exc:
+        # Every exception: the driver wraps only `VoyagerError`, and a 3-class tuple
+        # here let Playwright's TimeoutError escape (2026-10-16 live), with no
+        # OutreachLog row and an autopilot that waited on the contact for good.
+        # `route_cause` clamps an unrecognized cause to `unknown`.
         SEND_PROGRESS.pop(op_id, None)
         # S-C14: name the failure. A recognized worker state routes to its coded
         # label; an unrecognized one hard-stops, captures evidence and asks the
