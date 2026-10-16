@@ -295,3 +295,21 @@ def test_quota_returns_voyager_quota_and_closes():
     assert out["quota"]["daily_remaining"] == 7
     assert drv.calls[0] == ("quota",)
     assert drv.closed is True
+
+
+# 2026-10-16 live: "Lead Data Scientist" was tagged a hiring manager. "Lead"
+# before an IC role names a senior IC; "Team Lead" and "Tech Lead" still lead.
+@pytest.mark.parametrize(("title", "audience"), [
+    ("Lead Data Scientist", Audience.PEER),
+    ("Lead Software Engineer", Audience.PEER),
+    ("Lead Backend Developer", Audience.PEER),
+    ("Team Lead", Audience.HM),
+    ("Tech Lead", Audience.HM),
+    ("Engineering Lead, Payments", Audience.HM),
+    ("Lead Engineer and Engineering Manager", Audience.HM),
+    ("Engineering Manager", Audience.HM),
+])
+def test_lead_tags_a_peer_only_before_an_ic_role(title, audience):
+    from sidecar.modules.networker.playbooks import tag_audience
+
+    assert tag_audience(title) is audience
