@@ -7,6 +7,7 @@ import { invalidateFeed, qk } from "../../api/queries";
 import { useProfile, useSchedules, useTriggerScan } from "../../api/queries";
 import { type PlaceChip, type Settings } from "../../api/types";
 import { ChipInput } from "../../shell/ChipInput";
+import { RoleInput } from "../../shell/RoleInput";
 import { PlaceInput } from "../../shell/PlaceInput";
 import { Modal } from "../../shell/Modal";
 import { CADENCE_OPTIONS, FRESHNESS_DAYS, FRESHNESS_LABEL, FRESHNESS_OPTIONS } from "../scanPrefs";
@@ -161,7 +162,7 @@ export function FinderPrefsModal({
         <p className="-mt-2 text-[12px] text-ink-3">
           {t("jobBoard.prefs.intro")}
         </p>
-        <ChipInput
+        <RoleInput
           label={t("jobBoard.prefs.roles.label")}
           hint={t("jobBoard.prefs.roles.hint")}
           items={roles}

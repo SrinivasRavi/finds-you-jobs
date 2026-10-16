@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,21 @@ from .pacing import (
 )
 
 logger = logging.getLogger("voyager_py.worker")
+
+# A send that ends in doubt is settled by reading LinkedIn's own record, never by
+# guessing: the thread's last message for a DM, the profile's Pending state for an
+# invite (architecture-audit-2026-10-14.md section 4.2). The inbox can lag a send by
+# seconds, so the read is retried after each wait, on a fresh browser if need be.
+SETTLE_WAITS_S = (5.0, 15.0, 30.0)
+# A retry of an unconfirmed send reads first, right away.
+PRECHECK_WAITS_S = (0.0, 5.0, 15.0)
+# How far LinkedIn's delivered-at clock may sit behind ours.
+CLOCK_SKEW_S = 120.0
+SENT, NOT_SENT = "sent", "not_sent"
+# The step after which a failure no longer proves a no-send: the DM compose is open
+# (typing can submit), or the Connect control was clicked.
+DM_POINT_OF_DOUBT = "dm3"
+INVITE_POINT_OF_DOUBT = "invite3"
 
 # The host's hook to the core browser broker: given the referral surface slug
 # (owned by `session.SURFACE_SLUG`), return that surface's ready handle. Core
@@ -309,10 +325,12 @@ def discover(
             remaining_views = pacer.usage("profile_views").get("day_remaining")
             if remaining_views is not None:
                 limit = max(1, min(limit, int(remaining_views)))
-            contacts = session.run_browser(
-                lambda: discover_company_contacts(
-                    session, company, limit=limit, page=page, company_urn=company_urn
-                )
+            # 1 lane action for the search, then 1 per candidate: the whole walk
+            # in 1 action outran its 45 s deadline past about 4 candidates, so
+            # every larger company's discover failed (2026-10-10 live, 46.0 s).
+            contacts = discover_company_contacts(
+                session, company, limit=limit, page=page, company_urn=company_urn,
+                run=session.run_browser,
             )
             # Charge one profile view per candidate we actually enriched. Filtered-out
             # candidates still cost a request upstream, so this under-counts slightly;
@@ -447,6 +465,85 @@ def _normalize_public_id(value: str) -> str:
     return value
 
 
+def _tracking(on_step, steps: list[str]):
+    """Wrap the host's narration so the worker knows how far a send got."""
+
+    def _step(key: str) -> None:
+        steps.append(key)
+        if on_step is not None:
+            on_step(key)
+
+    return _step
+
+
+def _settle(session, read: Callable[[], str | None], precheck: bool = False) -> str | None:
+    """SENT or NOT_SENT as LinkedIn shows it, or None if it couldn't be read. A
+    throttle or a dead session stops at once: reading harder is the wrong answer."""
+    for wait in PRECHECK_WAITS_S if precheck else SETTLE_WAITS_S:
+        if wait:
+            time.sleep(wait)
+        try:
+            verdict = session.run_browser(read)
+        except (AuthenticationError, RateLimited) as e:
+            logger.warning("send check stopped: %s", e)
+            return None
+        except Exception as e:  # noqa: BLE001, the next read gets a fresh browser
+            logger.warning("send check failed, retrying: %s", e)
+            continue
+        if verdict is not None:
+            return verdict
+    return None
+
+
+def _dm_verdict(session, public_identifier: str, since: float) -> str | None:
+    """Our message is the thread's last, delivered at or after `since`: SENT. The
+    thread's last message predates `since`, or no thread exists: NOT_SENT. A newer
+    message from them hides ours: None, undecided."""
+    from .actions import get_contact_sync_state
+
+    session._fyj_inbox = None  # this read must be fresh, never the sweep's cache
+    state = get_contact_sync_state(session, public_identifier)
+    at = state.get("last_message_at")
+    recent = at is not None and at >= since - CLOCK_SKEW_S
+    if recent and state.get("last_message_direction") == "me":
+        return SENT
+    return None if recent else NOT_SENT
+
+
+def _invite_verdict(session, public_identifier: str) -> str:
+    """Pending or already connected: the invite went out. Connectable: it didn't."""
+    from .actions import STATUS_CONNECTED, STATUS_PENDING, get_connection_status
+
+    status = get_connection_status(session, public_identifier)
+    return SENT if status in (STATUS_PENDING, STATUS_CONNECTED) else NOT_SENT
+
+
+def _settled(op: str, public_identifier: str, verdict: str | None, cause: str,
+             pacer: Pacer, refunds: tuple[str, ...], **extra: Any) -> dict:
+    """The result for a send settled by reading LinkedIn. A proven no-send gives its
+    attempt charges back; an unconfirmed one keeps them (the safe direction)."""
+    if verdict == SENT:
+        pacer.save()
+        return {"op": op, "ok": True, "sent": True, "public_identifier": public_identifier,
+                "confirmed_after": cause, "quota": pacer.remaining(), **extra}
+    if verdict == NOT_SENT:
+        for meter in refunds:
+            pacer.refund(meter)
+        pacer.save()
+        return {"op": op, "ok": False, "sent": False, "public_identifier": public_identifier,
+                "error": "not_sent",
+                "reason": f"It didn't go out: LinkedIn shows no new message or invite "
+                          f"after the browser failed ({cause}). Sending again is safe.",
+                "quota": pacer.remaining()}
+    pacer.save()
+    return {"op": op, "ok": False, "sent": False, "public_identifier": public_identifier,
+            "error": "unconfirmed",
+            "reason": f"The browser failed mid-send ({cause}) and LinkedIn couldn't be read "
+                      "to check. Send again reads LinkedIn first and only sends if it "
+                      "didn't go out.",
+            "quota": pacer.remaining()}
+
+
 def send_connection(
     public_identifier: str,
     *,
@@ -460,6 +557,7 @@ def send_connection(
     headed: bool = False,
     surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
+    unconfirmed_since: float | None = None,
 ) -> dict:
     """Send a cold connection request (with the drafted `note` when given —
     FR-NW-03; note-less otherwise, US-REF-04).
@@ -472,7 +570,10 @@ def send_connection(
     gates note-bearing sends on the notes meter while `premium` never does.
     A note-bearing send on a free plan whose allowance is out is REFUSED, not
     silently stripped — the note is the referral ask; the user decides whether
-    to send note-less."""
+    to send note-less.
+
+    `unconfirmed_since` marks a retry of a send LinkedIn couldn't confirm: the
+    profile is read first, and the invite goes out only if it isn't Pending."""
     if not public_identifier:
         raise VoyagerError("send-connection requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
@@ -508,12 +609,22 @@ def send_connection(
     # is real wall-clock silence rather than a gap between two page loads. The
     # runner dispatches a batch as N separate single-flight `send` ops, so this
     # is what keeps a batch from going out at machine pace.
+    if unconfirmed_since is not None:
+        with _paced_session(pacer, storage_state=storage_state,
+                            user_data_dir=user_data_dir, headed=headed,
+                            surface_provider=surface_provider) as session:
+            verdict = _settle(session, lambda: _invite_verdict(session, public_identifier),
+                              precheck=True)
+        if verdict != NOT_SENT:
+            return _settled("send-connection", public_identifier, verdict,
+                            "an earlier attempt", pacer, refunds=())
     waited_s = pacer.wait_before_send()
     if on_step is not None:
         try:
             on_step("invite1")
         except Exception:  # noqa: BLE001 — narration, never load-bearing
             pass
+    steps: list[str] = []
 
     # Charge on ATTEMPT, before the browser launches (posture doc section 4 fix 4): a
     # send that reached LinkedIn but died in post-send verification must not go
@@ -525,6 +636,7 @@ def send_connection(
     pacer.save()
 
     from .actions import send_connection_request
+    from .session import typed_action_timeout_s
 
     # `_paced_session`'s finally persists whatever is pending even on an
     # unexpected error mid-send: an unproven send stays charged (unsafe-direction
@@ -536,8 +648,10 @@ def send_connection(
         try:
             status, note_outcome = session.run_browser(
                 lambda: send_connection_request(
-                    session, public_identifier, note=note, on_step=on_step
-                )
+                    session, public_identifier, note=note,
+                    on_step=_tracking(on_step, steps),
+                ),
+                timeout_s=typed_action_timeout_s(note or ""),
             )
         except ReachedConnectionLimit as e:
             # LinkedIn's weekly-cap dialog appeared INSTEAD of the invite going
@@ -552,6 +666,14 @@ def send_connection(
                 "public_identifier": public_identifier, "error": "rate_limited",
                 "reason": str(e), "paused_until": deadline, "quota": pacer.remaining(),
             }
+        except Exception as e:  # noqa: BLE001, past the Connect click LinkedIn says
+            if INVITE_POINT_OF_DOUBT not in steps:
+                raise
+            cause = f"{type(e).__name__}: {e}"
+            verdict = _settle(session, lambda: _invite_verdict(session, public_identifier))
+            refunds = ("invites", "notes") if charge_note else ("invites",)
+            return _settled("send-connection", public_identifier, verdict, cause, pacer,
+                            refunds, waited_s=round(waited_s, 1))
         if charge_note and note_outcome != "with_note":
             # The invite went out but the note did not (Premium upsell / markup
             # churn) — refund the note charge; on the upsell, LinkedIn itself
@@ -586,11 +708,13 @@ def send_dm(
     headed: bool = False,
     surface_provider: SurfaceProvider | None = None,
     dry_run: bool = False,
+    unconfirmed_since: float | None = None,
 ) -> dict:
     """Send a warm 1st-degree referral-ask DM (US-REF-10). DMs have their own
     daily/weekly budget (a policy cap of ours — no corroborated LinkedIn DM
     limit exists), are blocked during backoff, and never decrement the invite
-    counter."""
+    counter. `unconfirmed_since` marks a retry of a send LinkedIn couldn't
+    confirm: the thread is read first, and the DM goes out only if it isn't there."""
     if not public_identifier:
         raise VoyagerError("send-dm requires a public_identifier")
     public_identifier = _normalize_public_id(public_identifier)
@@ -615,6 +739,17 @@ def send_dm(
             "reason": reason, "quota": pacer.remaining(),
         }
 
+    if unconfirmed_since is not None:
+        since = unconfirmed_since
+        with _paced_session(pacer, storage_state=storage_state,
+                            user_data_dir=user_data_dir, headed=headed,
+                            surface_provider=surface_provider) as session:
+            verdict = _settle(session, lambda: _dm_verdict(session, public_identifier, since),
+                              precheck=True)
+        if verdict != NOT_SENT:
+            return _settled("send-dm", public_identifier, verdict, "an earlier attempt",
+                            pacer, refunds=())
+
     # Same inter-send spacing as the invite path — one account, one clock
     # (NFR-LI-01).
     waited_s = pacer.wait_before_send()
@@ -629,6 +764,7 @@ def send_dm(
     pacer.save()
 
     from .actions import send_dm as _send_dm
+    from .session import typed_action_timeout_s
 
     # An unexpected error mid-send keeps its attempt charge (unsafe-direction
     # drift is the one we refuse) — `_paced_session`'s finally still saves;
@@ -636,10 +772,17 @@ def send_dm(
     with _paced_session(pacer, storage_state=storage_state,
                         user_data_dir=user_data_dir, headed=headed,
                         surface_provider=surface_provider) as session:
+        steps: list[str] = []
+        attempted_at = time.time()
         try:
             sent = session.run_browser(
-                lambda: _send_dm(session, public_identifier, message, on_step=on_step)
+                lambda: _send_dm(session, public_identifier, message,
+                                 on_step=_tracking(on_step, steps)),
+                timeout_s=typed_action_timeout_s(message),
             )
+            if not sent and DM_POINT_OF_DOUBT in steps:
+                # The compose was open: a UI error there doesn't prove a no-send.
+                raise VoyagerError("the DM compose failed after it opened")
             if not sent:
                 # actions.send_dm returned a definite "did not send" (no thread /
                 # no compose) — a proven no-send, so the attempt charge goes back.
@@ -660,6 +803,15 @@ def send_dm(
                 "public_identifier": public_identifier, "error": "rate_limited",
                 "reason": str(e), "paused_until": deadline,
             }
+        except Exception as e:  # noqa: BLE001, past the compose LinkedIn says
+            if DM_POINT_OF_DOUBT not in steps:
+                raise
+            cause = f"{type(e).__name__}: {e}"
+            verdict = _settle(
+                session, lambda: _dm_verdict(session, public_identifier, attempted_at)
+            )
+            return _settled("send-dm", public_identifier, verdict, cause, pacer, ("dms",),
+                            waited_s=round(waited_s, 1))
 
 
 def contact_sync(

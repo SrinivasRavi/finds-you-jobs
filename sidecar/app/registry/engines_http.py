@@ -65,6 +65,18 @@ class HttpTransport(Protocol):
     ) -> HttpResponse: ...
 
 
+def _app_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("finds-you-jobs")
+    except Exception:  # noqa: BLE001 — a frozen build may carry no metadata
+        return "0"
+
+
+_USER_AGENT = f"finds-you-jobs/{_app_version()}"
+
+
 class UrllibTransport:
     """stdlib `urllib` transport. Returns non-2xx as an `HttpResponse` (with the
     error body) rather than raising — the engines translate status → typed error
@@ -81,6 +93,9 @@ class UrllibTransport:
     ) -> HttpResponse:
         if not url.startswith("https://") and not url.startswith("http://"):
             raise EngineError(f"refusing non-http(s) engine URL: {url}", retryable=False)
+        # Cloudflare-fronted providers refuse Python's default User-Agent (OpenCode,
+        # 403 "error code: 1010"), so the app names itself.
+        headers = {"user-agent": _USER_AGENT, **headers}
         req = urllib.request.Request(url, data=body, headers=headers, method=method)  # noqa: S310
         try:
             with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310
@@ -210,6 +225,10 @@ class DecisionsHttpClient:
 class VerifyResult:
     ok: bool
     detail: str
+    # The model ids `/models` listed, in the provider's order (OpenAI-style only).
+    models: tuple[str, ...] = ()
+    # The first preferred id this account serves, for a provider with no safe default.
+    suggested_model: str | None = None
 
 
 def _verbatim(resp: HttpResponse) -> str:
@@ -458,5 +477,17 @@ def verify_openai_compatible(
         headers["authorization"] = f"Bearer {api_key}"
     resp = transport.request("GET", f"{base_url.rstrip('/')}/models", headers=headers)
     if resp.status == 200:
-        return VerifyResult(ok=True, detail="Endpoint verified")
+        return VerifyResult(ok=True, detail="Endpoint verified", models=_model_ids(resp))
     return VerifyResult(ok=False, detail=f"LLM API {resp.status}: {_verbatim(resp)}")
+
+
+def _model_ids(resp: HttpResponse) -> tuple[str, ...]:
+    """The ids in an OpenAI-style `{"data": [{"id": ...}]}` listing, capped at 500."""
+    try:
+        data = json.loads(resp.body).get("data")
+    except (ValueError, AttributeError):
+        return ()
+    if not isinstance(data, list):
+        return ()
+    ids = [str(m["id"]) for m in data if isinstance(m, dict) and m.get("id")]
+    return tuple(ids[:500])

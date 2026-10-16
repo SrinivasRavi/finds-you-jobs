@@ -53,6 +53,10 @@ const networking = {
     stoppedRate: "Sync stopped: LinkedIn throttled the read — backing off",
     stoppedAuth: "Sync stopped: LinkedIn session expired — reconnect in Settings",
     stoppedOther: "Sync stopped before finishing",
+    stoppedTransient: "Sync stopped: LinkedIn didn't load in time, try again later",
+    stoppedDrift: "Sync stopped: LinkedIn's page changed",
+    stoppedThrottle: "Sync stopped: LinkedIn is limiting this account, wait before syncing again",
+    stoppedWall: "Sync stopped: LinkedIn wants you to verify the account, open LinkedIn to clear it",
     notChecked: "{{n}} not checked",
   },
   filters: {

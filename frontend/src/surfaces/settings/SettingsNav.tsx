@@ -15,6 +15,7 @@ export type SettingsCat =
   | "documents"
   | "applying"
   | "networking"
+  | "autopilot"
   | "data"
   | "appearance"
   | "about";
@@ -31,6 +32,7 @@ export const SETTINGS_CATS: {
   { id: "documents", label: "settingsNav.documents", icon: "file", blurb: "settingsNav.documentsBlurb" },
   { id: "applying", label: "settingsNav.applying", icon: "check", blurb: "settingsNav.applyingBlurb" },
   { id: "networking", label: "settingsNav.networking", icon: "share", blurb: "settingsNav.networkingBlurb" },
+  { id: "autopilot", label: "settingsNav.autopilot", icon: "refreshCw", blurb: "settingsNav.autopilotBlurb" },
   { id: "data", label: "settingsNav.data", icon: "barChart", blurb: "settingsNav.dataBlurb" },
   { id: "appearance", label: "settingsNav.appearance", icon: "sun", blurb: "settingsNav.appearanceBlurb" },
   { id: "about", label: "settingsNav.about", icon: "info", blurb: "settingsNav.aboutBlurb" },

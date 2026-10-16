@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- The More-menu layout with its More button under a paragraph whose wrapper
+     intercepts pointer events, like the 2026-10-16 live Connect link. A click
+     on the paragraph opens nothing; only a click on More injects Connect. -->
+<html>
+  <head><meta charset="utf-8" /><title>Rahul Covered</title>
+    <style>
+      .actions { position: relative; }
+      .cover { position: absolute; inset: 0; z-index: 10; }
+      .cover p { margin: 0; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="unknown-sdui-shell">
+        <h1>Rahul Covered</h1>
+        <div class="actions">
+          <button aria-label="Message Rahul"><span>Message</span></button>
+          <button
+            aria-label="More actions"
+            onclick="document.getElementById('overflow-menu').innerHTML =
+              '<div role=\'menuitem\' aria-label=\'Invite Rahul Covered to connect\'>Connect</div>';"
+          ><span>More</span></button>
+          <div class="cover"><p>A long headline over the action row</p></div>
+        </div>
+        <div id="overflow-menu" role="menu"></div>
+      </div>
+    </main>
+  </body>
+</html>

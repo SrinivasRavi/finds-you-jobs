@@ -109,10 +109,21 @@ export function sortColumn(cards: NetContact[]): NetContact[] {
 /** The i18n key for a stopped sync attempt's header note (null = nothing to
  *  say: no attempt yet, or the newest attempt swept cleanly). Exported for
  *  its unit tests. */
+// A failed batch says what the exception router made of it; `unknown` keeps the
+// generic line.
+const DIAGNOSIS_KEYS: Record<string, string> = {
+  transient: "networking.sync.stoppedTransient",
+  interface_drift: "networking.sync.stoppedDrift",
+  throttle_signal: "networking.sync.stoppedThrottle",
+  account_wall: "networking.sync.stoppedWall",
+};
+
 export function syncStoppedKey(
-  outcome: { stopped: string } | null | undefined,
+  outcome: { stopped: string; diagnosis?: string } | null | undefined,
 ): string | null {
   if (!outcome?.stopped) return null;
+  const diagnosed = DIAGNOSIS_KEYS[outcome.diagnosis ?? ""];
+  if (outcome.stopped === "batch_failed" && diagnosed) return diagnosed;
   switch (outcome.stopped) {
     case "cap_or_backoff":
       return "networking.sync.stoppedCap";

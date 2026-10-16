@@ -10,44 +10,7 @@ from __future__ import annotations
 import tempfile
 from typing import Any
 
-from ..logging_setup import get_logger
-
-# The Applier and the PDF render use the user's installed Chrome first and
-# Playwright's Chromium second, so a Chrome user never needs the download
-# (applier/window.md section 4.2). Tests set None to reach the bundled build.
-PREFERRED_CHANNEL: str | None = "chrome"
-
-
-def launch_browser(chromium: Any, **kwargs: Any) -> Any:
-    """`chromium.launch`, installed Chrome first (sync Playwright)."""
-    if PREFERRED_CHANNEL:
-        try:
-            return chromium.launch(channel=PREFERRED_CHANNEL, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
-            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
-    return chromium.launch(**kwargs)
-
-
-async def launch_browser_async(chromium: Any, **kwargs: Any) -> Any:
-    """`chromium.launch`, installed Chrome first (async Playwright)."""
-    if PREFERRED_CHANNEL:
-        try:
-            return await chromium.launch(channel=PREFERRED_CHANNEL, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
-            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
-    return await chromium.launch(**kwargs)
-
-
-async def launch_persistent_context_async(chromium: Any, profile_dir: str, **kwargs: Any) -> Any:
-    """`chromium.launch_persistent_context`, installed Chrome first (async Playwright)."""
-    if PREFERRED_CHANNEL:
-        try:
-            return await chromium.launch_persistent_context(
-                profile_dir, channel=PREFERRED_CHANNEL, **kwargs
-            )
-        except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
-            get_logger().info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
-    return await chromium.launch_persistent_context(profile_dir, **kwargs)
+from .host import get_host, launch
 
 
 def stock_launch_kwargs() -> dict[str, Any]:
@@ -90,22 +53,21 @@ def deheadless_user_agent(user_agent: str) -> str:
 
 def resolve_user_agent() -> str:
     """The de-headlessed Chrome UA, read from a throwaway stock launch, since Chrome
-    reveals its exact version only there. A real launch, so it runs on a surface
-    thread; the broker caches it, 1 launch per process."""
-    from playwright.sync_api import sync_playwright
+    reveals its exact version only there. A real launch on the host, waited on from
+    a surface thread; the broker caches it, 1 launch per process."""
+    host = get_host()
 
-    with tempfile.TemporaryDirectory(prefix="fyj-ua-") as tmp:
-        playwright = sync_playwright().start()
-        try:
-            context = open_persistent_context(playwright, tmp, **stock_launch_kwargs())
+    async def _read() -> str:
+        with tempfile.TemporaryDirectory(prefix="fyj-ua-") as tmp:
+            pw = await host.playwright()
+            context = await launch(pw.chromium, tmp, **stock_launch_kwargs())
             try:
-                page = context.pages[0] if context.pages else context.new_page()
-                user_agent = str(page.evaluate("navigator.userAgent"))
+                page = context.pages[0] if context.pages else await context.new_page()
+                return str(await page.evaluate("navigator.userAgent"))
             finally:
-                context.close()
-        finally:
-            playwright.stop()
-    return deheadless_user_agent(user_agent)
+                await context.close()
+
+    return deheadless_user_agent(host.run(_read))
 
 
 def minimal_launch_kwargs(user_agent: str) -> dict[str, Any]:
@@ -124,47 +86,3 @@ def minimal_launch_kwargs(user_agent: str) -> dict[str, Any]:
             "--disable-blink-features=AutomationControlled",
         ],
     }
-
-
-def _is_sandbox_launch_error(message: str) -> bool:
-    # Conservative, mirroring the sync-Playwright path the referral package
-    # already proved out: Chromium's sandbox-launch failures name the sandbox or
-    # the missing kernel facility. Anything else is not a sandbox problem and
-    # must not silently drop the sandbox.
-    msg = message.lower()
-    return "sandbox" in msg or "namespace" in msg
-
-
-def open_persistent_context(playwright: Any, profile_dir: str, **kwargs: Any) -> Any:
-    """Open a persistent context on `profile_dir`. 2 narrow fallbacks: the Chrome
-    channel drops to bundled Chromium when absent, and the sandbox drops only on a
-    sandbox-launch failure (a Linux host without user namespaces)."""
-    log = get_logger()
-    channel = kwargs.pop("channel", None)
-    sandbox = bool(kwargs.pop("chromium_sandbox", True))
-
-    def _open(*, use_channel: bool, use_sandbox: bool) -> Any:
-        extra = {"channel": channel} if use_channel and channel else {}
-        return playwright.chromium.launch_persistent_context(
-            profile_dir, chromium_sandbox=use_sandbox, **extra, **kwargs
-        )
-
-    def _sandboxed(*, use_channel: bool) -> Any:
-        try:
-            return _open(use_channel=use_channel, use_sandbox=sandbox)
-        except Exception as exc:  # noqa: BLE001 — non-sandbox failures re-raise
-            if not sandbox or not _is_sandbox_launch_error(str(exc)):
-                raise
-            log.warning(
-                "Chromium sandbox unavailable (%s) — retrying with it off; "
-                "expected only on Linux without unprivileged user namespaces", exc
-            )
-            return _open(use_channel=use_channel, use_sandbox=False)
-
-    try:
-        return _sandboxed(use_channel=True)
-    except Exception as exc:  # noqa: BLE001 — no installed Chrome → bundled build
-        if not channel:
-            raise
-        log.info("installed Chrome unavailable (%s) — using bundled Chromium", exc)
-        return _sandboxed(use_channel=False)

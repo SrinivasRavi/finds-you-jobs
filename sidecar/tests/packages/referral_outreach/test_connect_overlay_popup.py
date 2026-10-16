@@ -3,9 +3,10 @@
 """Decision logic for the two 2026-08-02 live-send hardenings, with fakes (no
 browser — the logic under test is pure control flow):
 
-  - `_click_through_overlay`: a click blocked by LinkedIn's SDUI
-    `interop-outlet` overlay (pointer-events interception timeout) is retried
-    ONCE with force=True; every other failure re-raises unchanged.
+  - `_click_through_overlay`: a trial click reads the hit target. If an SDUI
+    overlay intercepts it, the click event goes to the target ONCE (a force
+    click still lands on the overlay, 2026-10-16); every other failure
+    re-raises unchanged.
   - `_adopt_or_close_popups`: a popup spawned by the SDUI custom-invite anchor
     is adopted iff it hosts the invite compose; blank/irrelevant popups are
     closed; no popup → the main page, with no bounded settle wait paid.
@@ -36,6 +37,7 @@ _INTERCEPT_MSG = (
 class FakeLocator:
     def __init__(self, failures: list[Exception] | None = None) -> None:
         self.calls: list[dict] = []
+        self.dispatched: list[str] = []
         self._failures = list(failures or [])
 
     def click(self, **kwargs) -> None:
@@ -43,26 +45,31 @@ class FakeLocator:
         if self._failures:
             raise self._failures.pop(0)
 
+    def dispatch_event(self, event: str) -> None:
+        self.dispatched.append(event)
 
-def test_clean_click_never_forces() -> None:
+
+def test_clean_click_never_forces_or_dispatches() -> None:
     loc = FakeLocator()
     _click_through_overlay(loc)
-    assert len(loc.calls) == 1
-    assert "force" not in loc.calls[0]
+    assert loc.calls[0]["trial"] is True
+    assert all("force" not in c for c in loc.calls)
+    assert loc.dispatched == []
 
 
-def test_overlay_intercept_timeout_retries_once_with_force() -> None:
+def test_overlay_intercept_dispatches_the_click_to_the_target_once() -> None:
     loc = FakeLocator(failures=[PlaywrightTimeoutError(_INTERCEPT_MSG)])
     _click_through_overlay(loc)
-    assert len(loc.calls) == 2
-    assert loc.calls[1]["force"] is True
+    assert len(loc.calls) == 1  # the trial only: no press lands on the overlay
+    assert loc.dispatched == ["click"]
 
 
-def test_unrelated_timeout_reraises_without_force() -> None:
+def test_unrelated_timeout_reraises_without_dispatch() -> None:
     loc = FakeLocator(failures=[PlaywrightTimeoutError("Timeout 10000ms exceeded: detached")])
     with pytest.raises(PlaywrightTimeoutError):
         _click_through_overlay(loc)
     assert len(loc.calls) == 1
+    assert loc.dispatched == []
 
 
 def test_non_timeout_error_propagates_unchanged() -> None:
@@ -70,18 +77,7 @@ def test_non_timeout_error_propagates_unchanged() -> None:
     with pytest.raises(PlaywrightError):
         _click_through_overlay(loc)
     assert len(loc.calls) == 1
-
-
-def test_intercepted_force_retry_failure_still_raises() -> None:
-    loc = FakeLocator(
-        failures=[
-            PlaywrightTimeoutError(_INTERCEPT_MSG),
-            PlaywrightTimeoutError(_INTERCEPT_MSG),
-        ]
-    )
-    with pytest.raises(PlaywrightTimeoutError):
-        _click_through_overlay(loc)
-    assert len(loc.calls) == 2  # exactly one force retry, never a loop
+    assert loc.dispatched == []
 
 
 class FakePopup:

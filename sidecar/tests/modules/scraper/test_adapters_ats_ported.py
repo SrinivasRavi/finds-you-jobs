@@ -50,8 +50,9 @@ def test_smartrecruiters_fetch_normalizes_and_rewrites_url():
     first = jobs[0]
     assert first.title == "Senior Backend Engineer"
     # ref (api host) rewritten to the public careers URL
+    # The shape the live site serves; `/postings/<id>` is a 404 there (audit 8.4).
     assert first.canonical_url == (
-        "https://jobs.smartrecruiters.com/Continental/postings/744000012345678"
+        "https://jobs.smartrecruiters.com/Continental/744000012345678"
     )
     assert first.company == "Continental"  # slug fallback
     assert first.location == "Bengaluru, Karnataka, in"

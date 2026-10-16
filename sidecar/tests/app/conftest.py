@@ -34,6 +34,15 @@ def _no_real_llm_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(claude_engine.ClaudeCliEngine, "complete", _refuse)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_liveness_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scan's daily liveness pass would read seeded jobs' pages live. Every read
+    answers "unknown" here; liveness tests pass their own reader."""
+    from sidecar.app.registry import liveness
+
+    monkeypatch.setattr(liveness, "_default_reader", lambda: lambda url: (None, url, ""))
+
+
 @pytest.fixture
 def db_url(tmp_path: Path) -> str:
     return f"sqlite:///{tmp_path / 'db.sqlite'}"

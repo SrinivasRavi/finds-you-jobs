@@ -242,6 +242,17 @@ def sample_interval_ms(
     return min(max(raw, MIN_INTERVAL_MS), MAX_INTERVAL_MS)
 
 
+def typing_ceiling_s(text: str, persona: TypingPersona = DEFAULT_PERSONA) -> float:
+    """A generous upper bound on how long `human_type` takes to type `text`: twice
+    the persona's mean interval at the slowest digraph, plus the full punctuation
+    penalty. A lane deadline built on it must never fire on a message that is only
+    long (architecture-audit-2026-10-14.md section 4.1)."""
+    mean_ms = math.exp(persona.iki_mu + persona.iki_sigma**2 / 2)
+    per_char_ms = 2.0 * mean_ms * DIGRAPH_FACTOR["same_finger"]
+    punct_ms = PUNCTUATION_PENALTY_MS[1] * sum(ch in PUNCTUATION for ch in text)
+    return (len(text) * per_char_ms + punct_ms) / 1000.0
+
+
 def sample_hold_ms(
     ch: str,
     persona: TypingPersona = DEFAULT_PERSONA,

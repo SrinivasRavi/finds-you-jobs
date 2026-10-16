@@ -78,7 +78,8 @@ _CLOSED_HINTS = re.compile(
 )
 _CONFIRMATION_HINTS = re.compile(
     r"\b(application (received|submitted|complete)|thank you for (applying|your application)|"
-    r"we('ve| have) received your application|successfully submitted)\b",
+    r"we('ve| have) received your application|successfully submitted|"
+    r"(you('ve| have) )?already (applied|submitted)( (to|for) this (job|position|role))?)\b",
     re.IGNORECASE,
 )
 _VALIDATION_HINTS = re.compile(

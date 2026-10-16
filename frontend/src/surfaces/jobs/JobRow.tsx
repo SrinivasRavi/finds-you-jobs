@@ -235,7 +235,15 @@ export const JobRow = memo(function JobRow({
             {t("jobBoard.row.scoring")}
           </span>
         )}
-        {expired ? (
+        {job.closed ? (
+          <span
+            data-testid="closed-label"
+            title={t("jobBoard.row.noLongerListedTitle")}
+            className="inline-flex items-center rounded-full border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[9.5px] font-medium text-ink-3"
+          >
+            {t("jobBoard.row.noLongerListed")}
+          </span>
+        ) : expired ? (
           <span
             data-testid="expired-label"
             title={t("jobBoard.row.olderListingTitle")}

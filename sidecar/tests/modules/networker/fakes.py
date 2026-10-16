@@ -45,6 +45,8 @@ class FakeVoyagerDriver:
         }
         self._connection = connection_result or {"op": "send-connection", "ok": True, "sent": True}
         self._dm = dm_result or {"op": "send-dm", "ok": True, "sent": True}
+        # What each send was told about an earlier unconfirmed attempt.
+        self.unconfirmed_since: list[float | None] = []
         self._status = status_result or {"op": "status", "ok": True, "status": "qualified"}
         self._search_jobs = search_jobs_result or {
             "op": "search-jobs", "ok": True, "count": 0, "total": 0, "jobs": [],
@@ -98,8 +100,11 @@ class FakeVoyagerDriver:
         self._maybe_raise("search_jobs")
         return self._search_jobs
 
-    def send_connection(self, public_identifier, note, *, dry_run, on_step=None) -> dict:
+    def send_connection(
+        self, public_identifier, note, *, dry_run, on_step=None, unconfirmed_since=None
+    ) -> dict:
         self.calls.append(("send_connection", public_identifier, note, dry_run))
+        self.unconfirmed_since.append(unconfirmed_since)
         self._maybe_raise("send_connection")
         # Mirror the real driver's narration: report the invite plan's steps
         # as "completed" when a canned send succeeds (tests assert the host
@@ -109,8 +114,11 @@ class FakeVoyagerDriver:
                 on_step(step)
         return self._connection
 
-    def send_dm(self, public_identifier, message, *, dry_run, on_step=None) -> dict:
+    def send_dm(
+        self, public_identifier, message, *, dry_run, on_step=None, unconfirmed_since=None
+    ) -> dict:
         self.calls.append(("send_dm", public_identifier, message, dry_run))
+        self.unconfirmed_since.append(unconfirmed_since)
         self._maybe_raise("send_dm")
         if on_step is not None and not dry_run and self._dm.get("sent"):
             for step in ("dm1", "dm2", "dm3", "dm4"):

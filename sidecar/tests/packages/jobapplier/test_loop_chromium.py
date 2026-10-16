@@ -420,3 +420,49 @@ async def test_browser_crash_during_captcha_wait(
         
     assert result.status is ApplyStatus.BLOCKED
     assert "browser closed while waiting" in result.summary
+
+
+async def test_a_closed_window_is_a_coded_interruption(tmp_path: Path) -> None:
+    """AUD-10, Applier half: the user closing the window must land a coded
+    `window_closed` blocker the panel can put in words, not Playwright's text."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake resume")
+    request = _request(tmp_path, _fixture_url("jd.html"), resume)
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        await page.close()  # the user shut the tab before the run reached it
+        try:
+            result = await run_apply(
+                page, request, FakeApplyEngine([]), lambda _e: None, ApplyControl(),
+                policy=UrlPolicy(allow_local=True),
+            )
+        finally:
+            await browser.close()
+
+    assert result.status is ApplyStatus.INTERRUPTED
+    assert [b.kind for b in result.blockers] == ["window_closed"]
+    assert "Target" not in result.summary and "closed" in result.summary
+
+
+async def test_a_hung_page_ends_the_run_at_the_step_deadline(tmp_path: Path) -> None:
+    """AUD-12: the 20-minute budget was checked between steps only, and a page read
+    has no timeout of its own, so a page whose script never yields held the run
+    forever. A step past its deadline now ends the run as interrupted, in words."""
+    hung = tmp_path / "hung.html"
+    hung.write_text(
+        "<html><body><form><label>Full name <input name='n'></label></form>"
+        "<script>setTimeout(() => { for (;;) {} }, 1500)</script></body></html>"
+    )
+    script: list[FakeStep] = [
+        _action("wait", seconds=2),
+        _action("scroll", direction="down"),  # input to a page that never yields
+        _action("finish", reason="done"),
+    ]
+    request = replace(_request(tmp_path, hung.as_uri()), step_deadline_s=2.0)
+    started = asyncio.get_running_loop().time()
+    result, _, _ = await asyncio.wait_for(_run(request, FakeApplyEngine(script)), 30)
+
+    assert asyncio.get_running_loop().time() - started < 15
+    assert result.status is ApplyStatus.INTERRUPTED
+    assert [b.kind for b in result.blockers] == ["page_died"]

@@ -80,6 +80,22 @@ test("an upload that isn't a resume is flagged, and the user can continue", asyn
   await expect(page.getByTestId("onboarding-continue")).toBeEnabled();
 });
 
+// TAILOR-FLAT: a real resume with no headings or bullets gets a plain warning.
+test("a flat resume upload is flagged, and the user can continue", async ({ page }) => {
+  await page.goto("/onboarding");
+  await page.getByTestId("resume-upload").setInputFiles({
+    name: "resume.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "Ada Lovelace\nBackend engineer, London.\n\nExperience\nSenior Engineer, Analytical Co. 2019 - 2024. Built Python services and the billing pipeline; led a team of 4.\nEngineer, Difference Ltd. 2015 - 2019. PostgreSQL, AWS, on-call.\n\nEducation\nBSc Mathematics, University of London, 2015.\n\nSkills\nPython, Go, PostgreSQL, Kubernetes.\n",
+    ),
+  });
+  await expect(page.getByTestId("resume-warning-flat")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("resume-warning-not_a_resume")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/resume-warning-flat.png`, fullPage: true });
+  await expect(page.getByTestId("onboarding-continue")).toBeEnabled();
+});
+
 // S-C58: a role typed but not yet a chip counts, so Continue isn't greyed out.
 test("a typed role is enough to continue", async ({ page }) => {
   await page.goto("/onboarding");
@@ -142,18 +158,23 @@ test("provider step offers the subscription-CLI family beside BYOK", async ({ pa
   await page.getByTestId("onboarding-continue").click();
   await expect(page.getByTestId("onboarding-step-2")).toBeVisible();
 
-  // The full provider menu: 4 BYOK + 3 subscription CLIs.
-  for (const id of [
-    "openrouter",
-    "local",
-    "anthropic",
-    "openai",
-    "claude-cli",
-    "codex-cli",
-    "antigravity-cli",
-  ]) {
-    await expect(page.getByTestId(`provider-${id}`)).toBeVisible();
+  // The full provider menu, in 3 groups by what the user already has: an API key
+  // (6), a logged-in subscription (3), a model on this computer (1).
+  const groups = page.getByTestId("provider-group");
+  await expect(groups).toHaveCount(3);
+  const expected = [
+    ["openrouter", "anthropic", "openai", "zai", "zai-coding", "opencode"],
+    ["claude-cli", "codex-cli", "antigravity-cli"],
+    ["local"],
+  ];
+  for (const [i, ids] of expected.entries()) {
+    for (const id of ids) {
+      await expect(groups.nth(i).getByTestId(`provider-${id}`)).toBeVisible();
+    }
   }
+  await expect(groups.nth(0)).toContainText("With an API key");
+  await expect(groups.nth(0)).toContainText("OpenCode");
+  await page.screenshot({ path: `${DIR}/onboarding-step2-provider-groups.png`, fullPage: true });
 
   // A CLI selection swaps the key input for the no-key hint (verify-only path).
   await page.getByTestId("provider-codex-cli").click();

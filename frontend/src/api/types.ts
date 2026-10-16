@@ -171,6 +171,8 @@ export interface Job {
   duplicate_notice: boolean;
   saved: boolean;
   board_state: BoardState;
+  /** The employer's board stopped listing it, or its page said it closed. */
+  closed: boolean;
 }
 
 /** One page of the paginated Job Board feed + header meta (FR-JB-02/10). */
@@ -818,6 +820,11 @@ export type OperationKind =
   // A user's queued page-view on the browser surface (2026-08-16) — ledger'd
   // with the contact as its subject, so Analytics must know it.
   | "view_page"
+  // The autopilot tick (audit-2026-10-14.md section 8.10): enqueues the work the
+  // user put on autopilot, and lands in the ledger like every kind.
+  | "autopilot"
+  // 1 turn of the chat agent (audit-2026-10-14.md section 8.11).
+  | "chat"
   // Watch-company attempts (2026-07-22): synchronous API action recorded into
   // the ledger so Analytics → Logs keeps the verbatim refusal reason.
   | "watch_company";
@@ -862,6 +869,9 @@ export interface EngineVerifyResult {
    *  `not_logged_in` (open a terminal, log in) vs `error`. Other providers map
    *  ok→"ok" / not-ok→"error". Optional for back-compat with older payloads. */
   status?: "ok" | "not_found" | "not_logged_in" | "error";
+  /** An OpenAI-style provider's `/models` ids, and the 1 Verify suggests saving. */
+  models?: string[];
+  suggested_model?: string | null;
 }
 
 /** Save/replace one provider's config. Omitting `key` keeps the sealed key. */
@@ -936,6 +946,13 @@ export type ScoringMethod = {
   needs: ScoringMethodNeed | null;
 };
 
+/** A settings write. The 2 grouped records take only the fields that changed,
+ *  so an edit never writes back another field from an older copy. */
+export type SettingsPatch = Omit<Partial<Settings>, "observability" | "lifecycle"> & {
+  observability?: Partial<Settings["observability"]>;
+  lifecycle?: Partial<Settings["lifecycle"]>;
+};
+
 export interface Settings {
   /** Legacy combined flag = resume && cover. Kept for consumers that read a
    *  single value (JobBoard per-job slider seed); the Settings UI drives the
@@ -982,6 +999,17 @@ export interface Settings {
   providers: ProviderConfig[];
   routing: EngineRoute[];
   networking_enabled: boolean;
+  /** Autopilot (audit-2026-10-14.md section 8.10): each switch off means the user
+   *  confirms each action. Typed preference columns; the sidecar refuses on them. */
+  autopilot_apply: boolean;
+  autopilot_invite: boolean;
+  autopilot_dm: boolean;
+  /** 0-100: the lowest score autopilot acts on. */
+  autopilot_min_score: number;
+  /** 1-100: background applies in any 24 hours. */
+  autopilot_applies_per_day: number;
+  /** 1-10: people autopilot asks per job. */
+  autopilot_contacts_per_job: number;
   /** LinkedIn Job Search (logged-in one-shot search) — its own experimental
    *  opt-in, separate from Referral Outreach but sharing the same LinkedIn
    *  session. Both break LinkedIn's ToS; each gates independently. */
@@ -1187,3 +1215,9 @@ export interface Span {
   attributes: Record<string, unknown>;
   events: { name: string; attributes: Record<string, unknown> }[];
 }
+
+// ─── The chat agent (audit-2026-10-14.md section 8.11) ─────────────────────────
+export type ChatSummary = Schemas["ChatSummaryDTO"];
+export type Chat = Schemas["ChatDTO"];
+export type ChatMessage = Schemas["ChatMessageDTO"];
+export type ChatSendAccepted = Schemas["ChatSendAccepted"];

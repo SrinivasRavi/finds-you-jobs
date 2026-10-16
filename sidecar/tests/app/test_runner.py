@@ -181,6 +181,29 @@ def test_happy_path_persists_state_usage_and_events(migrated_db: Database) -> No
     assert states == ["queued", "running", "succeeded"]
 
 
+def test_the_op_sees_the_caller_its_row_records(migrated_db: Database) -> None:
+    """`autonomy.authorize` trusts `ctx.requested_by`, so it must be the row's
+    column (audit-2026-10-14.md section 8.10)."""
+    seen: dict[str, str] = {}
+
+    def _capture(ctx: OperationContext) -> OperationOutcome:
+        seen[ctx.input_snapshot["tag"]] = ctx.requested_by
+        return OperationOutcome()
+
+    runner = OperationRunner(migrated_db, registry=OperationRegistry({"scan": _capture}))
+    runner.start()
+    try:
+        clicked = runner.submit("scan", {"tag": "click"}, requested_by="user")
+        wait_for_state(migrated_db, clicked, "succeeded")
+        background = runner.submit("scan", {"tag": "timer"})
+        wait_for_state(migrated_db, background, "succeeded")
+        batch = runner.submit_many([("scan", {"tag": "tick"})])
+        wait_for_state(migrated_db, batch[0], "succeeded")
+    finally:
+        runner.shutdown(drain_timeout=2)
+    assert seen == {"click": "user", "timer": "app", "tick": "app"}
+
+
 def test_failure_records_error_verbatim(migrated_db: Database) -> None:
     db = migrated_db
     events: list[dict] = []

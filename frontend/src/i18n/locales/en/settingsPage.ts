@@ -204,6 +204,19 @@ const settingsPage = {
     queueShared: "1 shared queue",
     parallelHintPerKind: "How many jobs score at once in the background.",
   },
+  autopilot: {
+    intro: "Autopilot acts without asking you first. Off means you confirm each action yourself. It checks every 30 minutes.",
+    applyLabel: "Submit applications",
+    applyHint: "Applies to open jobs that score {{min}} or more and have no card yet. It submits a form only if it filled every field and no question is left. Up to {{perDay}} in 24 hours.",
+    inviteLabel: "Send LinkedIn invites",
+    inviteHint: "For each job that scores high enough, it finds people at the company, writes a note to up to {{perJob}} of them, and sends the invites. LinkedIn's limits in Networking still apply.",
+    dmLabel: "Message LinkedIn connections",
+    dmHint: "Writes to people you're already connected with at the company, the same way.",
+    needsOutreach: "Turn on Referral Outreach in Networking first.",
+    minScoreLabel: "Minimum score",
+    perDayLabel: "Applications in 24 hours",
+    perJobLabel: "People per job",
+  },
   automation: {
     title: "Automation on Save",
     intro: "Defaults applied to every job you save.",
@@ -224,6 +237,8 @@ const settingsPage = {
   },
   providers: {
     title: "Select the LLM Providers",
+    chatModelTitle: "Assistant model",
+    chatModelHint: "The model the Assistant runs on. Each reply takes 1 model call or more.",
     unconfiguredWarning:
       "An operation is routed to a provider that isn't set up yet — verify and save it below, or pick a different engine under Prompts & Models.",
     aiOffWarning: "AI features are off, because no provider is set up yet. Set one up below and every AI feature turns on.",
@@ -233,6 +248,10 @@ const settingsPage = {
     openrouterDesc: "One key, most models — the simplest bring-your-own-key path.",
     anthropicDesc: "Direct Anthropic API key (x-api-key).",
     openaiDesc: "Direct OpenAI API key (Bearer).",
+    zaiDesc: "Z.ai's general API (GLM models), over the OpenAI-compatible format. Verify lists the models your key can use.",
+    zaiCodingDesc: "The GLM Coding Plan's own endpoint, for a plan you already pay for. Verify lists the models it covers.",
+    opencodeDesc: "OpenCode Console, pay as you go. finds-you-jobs uses its chat-format models (GLM, Kimi, DeepSeek, Qwen); its Claude and GPT models use other formats.",
+    modelPlaceholder: "Model id (Verify lists yours)",
     localDesc:
       "Point at a running Ollama / LM Studio / vLLM server — nothing leaves your machine.",
     keySavedPlaceholder: "Key saved ({{hint}}) — paste to replace",

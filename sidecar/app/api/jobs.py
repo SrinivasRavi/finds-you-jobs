@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 
 from sidecar.modules.scraper import ScraperError, probe_url
 from sidecar.modules.scraper.canonical import canonicalize_url
@@ -26,6 +27,7 @@ from sidecar.modules.scraper.types import ScanPrefs
 from ..db.base import now_utc
 from ..db.models import OP_ACTIVE_STATES
 from ..registry import networker_ops as networker_ops
+from ..registry.autonomy import caller
 from ..registry.persistence import (
     delete_job_cascade,
     saved_job_ids,
@@ -450,21 +452,32 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
                 canonical_url=canonical or "",
                 posted_at=payload.posted_at,
             )
-            job = repos.jobs.create(
-                canonical_url=canonical,
-                content_hash=digest,
-                fingerprint=to_signed64(simhash64(payload.description)) or None,
-                title=payload.title,
-                company=payload.company,
-                location=payload.location,
-                description=payload.description,
-                posted_at=payload.posted_at,
-                salary=payload.salary,
-                source_adapter=payload.source_adapter,
-                origin="manual",
-                trust_score=trust_score,
-                trust_flags=trust_flags,
-            )
+            try:
+                with repos.session.begin_nested():
+                    job = repos.jobs.create(
+                        canonical_url=canonical,
+                        content_hash=digest,
+                        fingerprint=to_signed64(simhash64(payload.description)) or None,
+                        title=payload.title,
+                        company=payload.company,
+                        location=payload.location,
+                        description=payload.description,
+                        posted_at=payload.posted_at,
+                        salary=payload.salary,
+                        source_adapter=payload.source_adapter,
+                        origin="manual",
+                        trust_score=trust_score,
+                        trust_flags=trust_flags,
+                    )
+            except IntegrityError:
+                # A second identical request inserted between our read and this
+                # write (a double click). First seen wins (S-C81).
+                first = repos.jobs.get_by_identity(
+                    canonical_url=canonical or "", content_hash=digest or ""
+                )
+                if first is None:
+                    raise
+                return dto.job_dto(first)
             # The cross-scan duplicate check, at write (url-less-jobs.md 9.6).
             # One narrow scan here keeps the board's render free of it.
             from ..registry.persistence import flag_near_duplicate
@@ -481,7 +494,7 @@ def create_job(request: Request, payload: dto.JobCreate) -> dto.JobDTO:
         _runner(request).submit(
             "score",
             {"job_id": job_id, "profile_version": profile_version},
-            requested_by="user",
+            requested_by=caller(),
         )
     return result
 
@@ -752,7 +765,7 @@ def explain_job(request: Request, job_id: str) -> dto.OperationAccepted:
     operation_id = _runner(request).submit(
         "score",
         {"job_id": job_id, "profile_version": version, "force_mode": "llm"},
-        requested_by="user",
+        requested_by=caller(),
     )
     return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
 
@@ -771,7 +784,7 @@ def rescore_job(request: Request, job_id: str) -> dto.OperationAccepted:
     operation_id = _runner(request).submit(
         "score",
         {"job_id": job_id, "profile_version": version, "rescore": True},
-        requested_by="user",
+        requested_by=caller(),
     )
     return dto.OperationAccepted(id=operation_id, kind="score", state="queued")
 

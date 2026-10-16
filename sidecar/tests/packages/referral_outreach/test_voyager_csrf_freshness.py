@@ -67,7 +67,7 @@ class _InlineSurface:
     def __init__(self, page: Any, context: Any) -> None:
         self._session = _SurfaceSession(page, context)
 
-    def run_on_lane(self, fn: Callable[[Any], Any]) -> Future:
+    def run_on_lane(self, fn: Callable[[Any], Any], deadline_s: float | None = None) -> Future:
         fut: Future = Future()
         try:
             fut.set_result(fn(self._session))

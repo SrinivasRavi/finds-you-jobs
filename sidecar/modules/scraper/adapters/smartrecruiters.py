@@ -53,19 +53,22 @@ def _location(raw: dict) -> str:
 
 
 def _public_url(raw: dict, slug: str) -> str:
-    """Rewrite the API `ref` to the public careers URL; synthesise from id else."""
+    """The posting's public page, `/<company>/<id>`. The API `ref` is
+    `/v1/companies/<company>/postings/<id>`, and that path on the public host
+    is a 404 (audit-2026-10-14.md section 8.4)."""
     ref = raw.get("ref")
     if isinstance(ref, str) and ref:
         parts = urlsplit(ref)
+        segments = parts.path.strip("/").split("/")
         if (
-            parts.scheme == "https"
-            and parts.netloc.lower() == _API_HOST
-            and parts.path.startswith("/v1/companies/")
+            parts.netloc.lower() == _API_HOST
+            and len(segments) == 5
+            and segments[:2] == ["v1", "companies"]
+            and segments[3] == "postings"
         ):
-            rest = parts.path[len("/v1/companies/") :]
-            return f"https://jobs.smartrecruiters.com/{rest}"
+            return f"https://jobs.smartrecruiters.com/{segments[2]}/{segments[4]}"
     job_id = str(raw.get("id") or "")
-    return f"https://jobs.smartrecruiters.com/{slug}/postings/{job_id}" if job_id else ""
+    return f"https://jobs.smartrecruiters.com/{slug}/{job_id}" if job_id else ""
 
 
 def detect(entry: SourceEntry) -> str:
@@ -80,8 +83,8 @@ def fetch_detail(job: NormalizedJob, fetcher: Fetcher) -> str:
     unexpected."""
     if urlsplit(job.canonical_url).netloc.lower() not in _CAREERS_HOSTS:
         return ""
-    # 2 shapes: the `/<slug>/postings/<id>` this adapter writes, and the
-    # `/<slug>/<id>-<title>` the site itself serves (a pasted link).
+    # The `/<slug>/<id>` this adapter writes, `/<slug>/<id>-<title>` from a
+    # pasted link, and `/<slug>/postings/<id>` from rows written before 8.4.
     segments = path_segments(job.canonical_url)
     if len(segments) >= 3 and segments[1] == "postings":
         slug, posting_id = segments[0], segments[2]
@@ -131,4 +134,6 @@ def fetch(entry: SourceEntry, fetcher: Fetcher) -> list[NormalizedJob]:
             )
         if len(content) < _PAGE_SIZE:
             break  # last (short) page
+    else:
+        fetcher.truncated = True  # _MAX_PAGES ran out before the board did
     return jobs

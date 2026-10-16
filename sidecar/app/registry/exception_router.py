@@ -1,10 +1,10 @@
 """The exception router for logged-in LinkedIn runs (section 11, Our Claim 12).
 
-A router, not a decision-maker: a recognized worker error maps to its coded
-handler; an unrecognized one to `unknown`, which hard-stops, captures the DOM and
-a screenshot, and asks the model for 1 diagnosis label. Handlers act. Imports
-the GPLv3 error types through the AGPL facade, never `upstream.*` (F-P10), so
-this file stays AGPL-3.0-only."""
+A router, not a decision-maker: a recognized worker error maps to its coded handler.
+An unrecognized one hard-stops, captures the page (URL, DOM, screenshot), and gets 1
+diagnosis label: from fixed rules over that evidence when one matches, at no cost,
+else from the model. `explain` turns the label into words the user reads. Imports
+the GPLv3 error types through the AGPL facade, never `upstream.*` (F-P10)."""
 
 from __future__ import annotations
 
@@ -20,6 +20,34 @@ UNKNOWN = "unknown"
 # this set clamps to `unknown`, so the vocabulary can never widen — a label,
 # never an action (Our Claim 12).
 MODEL_DIAGNOSES = ("transient", "interface_drift", "throttle_signal", "account_wall", UNKNOWN)
+
+# What the user reads for each label: what happened, and what to do about it.
+EXPLANATIONS: dict[str, str] = {
+    "transient": "LinkedIn didn't load in time or the connection dropped. Trying again "
+    "later should work.",
+    "interface_drift": "LinkedIn's page changed, so a button or field wasn't where the "
+    "app expected it.",
+    "throttle_signal": "LinkedIn is limiting this account's activity right now. Wait "
+    "before sending more.",
+    "account_wall": "LinkedIn wants you to verify the account (a sign-in, checkpoint or "
+    "captcha). Open LinkedIn and clear it before anything else runs.",
+    UNKNOWN: "The app couldn't tell what LinkedIn showed.",
+}
+
+# Fixed rules over the evidence, checked before any model call: (label, signals),
+# first match wins. Each signal is a lowercase substring of the error chain, the
+# page URL, or the captured DOM.
+_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("account_wall", ("/checkpoint", "/authwall", "/uas/login", "captcha",
+                      "security verification", "let's do a quick security check")),
+    ("throttle_signal", ("http 999", "http 429", "too many requests",
+                         "unusual activity", "you've reached the weekly")),
+    ("interface_drift", ("no connect affordance", "could not be confirmed sent",
+                         "waiting for locator", "selector")),
+    ("transient", ("timeouterror", "timeout", "net::err_", "target page, context or "
+                   "browser has been closed", "browseractiontimeout",
+                   "browser surface", "connection reset")),
+)
 
 # How much of the page a captured DOM contributes to the model prompt.
 _MAX_DOM_CHARS = 8000
@@ -65,7 +93,18 @@ class RoutedException:
 
     @property
     def is_unknown(self) -> bool:
-        return self.handled_by == "model"
+        """An unrecognized error, labelled by the rules or the model."""
+        return self.handled_by != "coded"
+
+    @property
+    def explanation(self) -> str:
+        """The label in words, for an unrecognized error; "" for a coded one, whose
+        own message already says what happened."""
+        return explain(self.diagnosis) if self.is_unknown else ""
+
+
+def explain(label: str) -> str:
+    return EXPLANATIONS.get(label, EXPLANATIONS[UNKNOWN])
 
 
 def classify(exc: BaseException) -> str | None:
@@ -120,23 +159,44 @@ def route(
     exc: BaseException, *, surface: Any = None, engine: Any = None
 ) -> RoutedException:
     """Route one worker error. A recognized state names its coded handler and the
-    model is never called. An unrecognized state hard-stops: capture the DOM and a
-    screenshot, log a dump, and let the model name it (one label from the fixed
-    set, never an action)."""
+    model is never called. An unrecognized state hard-stops: capture the page, log a
+    dump, and name it, by rule when the evidence decides, else by the model (one
+    label from the fixed set, never an action)."""
     label = classify(exc)
     if label is not None:
         return RoutedException(diagnosis=label, handled_by="coded", rationale=str(exc))
+    url = _capture_url(surface)
     dom = _capture_dom(surface)
     screenshot = _capture_screenshot(surface)
-    diagnosis = _diagnose(exc, dom=dom, engine=engine)
+    ruled = _rule_diagnosis(exc, url=url, dom=dom)
+    diagnosis = ruled or _diagnose(exc, url=url, dom=dom, engine=engine)
     _log_dump(exc, diagnosis, dom, screenshot)
     return RoutedException(
         diagnosis=diagnosis.label,
-        handled_by="model",
+        handled_by="rules" if ruled else "model",
         rationale=diagnosis.rationale,
         dom=dom,
         screenshot=screenshot,
     )
+
+
+def _rule_diagnosis(exc: BaseException, *, url: str, dom: str | None) -> Diagnosis | None:
+    """The first rule whose signal appears in the evidence, or None."""
+    chain = " ".join(f"{type(link).__name__} {link}" for link in _chain(exc))
+    haystacks = ((chain.lower(), "the error"), (url.lower(), "the page URL"),
+                 ((dom or "")[:_MAX_DOM_CHARS].lower(), "the page"))
+    for label, signals in _RULES:
+        for text, where in haystacks:
+            hit = next((sig for sig in signals if sig in text), None)
+            if hit is not None:
+                return Diagnosis(label, f"{where} contains {hit!r}")
+    return None
+
+
+def _capture_url(surface: Any) -> str:
+    """The surface's committed URL, read off the broker's own copy (no lane trip)."""
+    url = getattr(surface, "page_url", "") if surface is not None else ""
+    return url if isinstance(url, str) else ""
 
 
 def _capture_dom(surface: Any) -> str | None:
@@ -168,12 +228,12 @@ def _capture_screenshot(surface: Any) -> bytes | None:
     return bytes(data) if isinstance(data, (bytes, bytearray)) else None
 
 
-def _diagnose(exc: BaseException, *, dom: str | None, engine: Any) -> Diagnosis:
+def _diagnose(exc: BaseException, *, url: str, dom: str | None, engine: Any) -> Diagnosis:
     """Ask the model for exactly one diagnosis. No engine, or a model failure,
     diagnoses `unknown` — the stop still stands; only the label is missing."""
     if engine is None:
         return Diagnosis(UNKNOWN, "no engine configured for the exception agent")
-    user = _build_user_prompt(exc, dom)
+    user = _build_user_prompt(exc, url, dom)
     try:
         text, _usage = engine.complete(_SYSTEM_PROMPT, user)
     except Exception as exc_model:  # noqa: BLE001 — a model failure never crashes the stop
@@ -182,11 +242,12 @@ def _diagnose(exc: BaseException, *, dom: str | None, engine: Any) -> Diagnosis:
     return _parse_diagnosis(text)
 
 
-def _build_user_prompt(exc: BaseException, dom: str | None) -> str:
+def _build_user_prompt(exc: BaseException, url: str, dom: str | None) -> str:
     snippet = (dom or "")[:_MAX_DOM_CHARS]
     return (
         f"ERROR_TYPE: {type(exc).__name__}\n"
         f"ERROR_MESSAGE: {exc}\n"
+        f"PAGE_URL: {url}\n"
         f"PAGE_DOM (truncated):\n{snippet}\n"
     )
 

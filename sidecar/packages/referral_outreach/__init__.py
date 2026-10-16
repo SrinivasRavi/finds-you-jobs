@@ -9,26 +9,7 @@ combination; the `upstream/` files retain their GPL notices.
 
 from __future__ import annotations
 
-from .client import EventSink, ReferralAutomation
 from .facade import referral_surface_slug
-from .fake import FakeReferralAutomation
-from .types import (
-    AccountRef,
-    ConnectionRequest,
-    ContactProbeRequest,
-    ContactProbeResult,
-    DirectMessageRequest,
-    DiscoveredContact,
-    DiscoverRequest,
-    DiscoverResult,
-    Quota,
-    ResumeResult,
-    SendResult,
-    SessionCaptureRequest,
-    SessionCaptureResult,
-    SessionStatus,
-    SessionStatusRequest,
-)
 
 # The enforced cap tables (NFR-LI-02). Re-exported so the app derives every
 # user-visible cap from the SAME numbers the send path enforces — the app-side
@@ -61,23 +42,5 @@ __all__ = [
     "plan_for_membership",
     "resolve_membership",
     "resolve_profile",
-    "AccountRef",
-    "ConnectionRequest",
-    "ContactProbeRequest",
-    "ContactProbeResult",
-    "DirectMessageRequest",
-    "DiscoveredContact",
-    "DiscoverRequest",
-    "DiscoverResult",
-    "EventSink",
-    "FakeReferralAutomation",
-    "Quota",
-    "ReferralAutomation",
-    "ResumeResult",
-    "SendResult",
-    "SessionCaptureRequest",
-    "SessionCaptureResult",
-    "SessionStatus",
-    "SessionStatusRequest",
     "referral_surface_slug",
 ]

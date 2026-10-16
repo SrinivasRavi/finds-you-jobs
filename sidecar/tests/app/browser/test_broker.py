@@ -1,9 +1,9 @@
 """Covers: the browser-session broker's contract (`sidecar/app/browser`).
 
 No real Chrome except the `test_real_*` cases: fakes enter through the `opener`
-seam, so the real thread, marshalling and ack accounting run. Worth breaking a
-build over: exactly 1 ack per frame, at capture; the ack never waits for the
-run loop (the watchability fix); overflow keeps the newest frame."""
+seam, and a fake host thread delivers their events, so the real lane thread,
+marshalling and ack accounting run. Worth breaking a build over: exactly 1 ack per
+frame, at capture; nothing polls; overflow keeps the newest frame."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -59,20 +59,53 @@ def _frame_params(session_id: int, *, data: bytes = FRAME_BYTES) -> dict[str, An
     }
 
 
-class FakeCdp:
+class FakeHost:
+    """The browser host's stand-in: 1 thread that delivers events in order."""
+
     def __init__(self) -> None:
+        self._events: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            self._events.get()()
+
+    def post(self, fn: Callable[[], None]) -> None:
+        self._events.put(fn)
+
+
+class _Emitter:
+    def __init__(self, host: FakeHost) -> None:
+        self.host = host
+        self.handlers: dict[str, list[Callable[..., None]]] = {}
+
+    def on(self, event: str, handler: Callable[..., None]) -> None:
+        self.handlers.setdefault(event, []).append(handler)
+
+    def emit(self, event: str, *args: Any) -> None:
+        for handler in self.handlers.get(event, []):
+            self.host.post(lambda h=handler: h(*args))
+
+
+class FakeCdp(_Emitter):
+    def __init__(self, host: FakeHost) -> None:
+        super().__init__(host)
         self.sends: list[tuple[str, dict[str, Any]]] = []
-        self.handlers: dict[str, Callable[[dict[str, Any]], None]] = {}
         self.detached = 0
         self._lock = threading.Lock()
-
-    def on(self, event: str, handler: Callable[[dict[str, Any]], None]) -> None:
-        self.handlers[event] = handler
 
     def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
             self.sends.append((method, dict(params or {})))
         return _cdp_reply(method, params or {})
+
+    def fire(self, name: str, *args: Any) -> None:
+        getattr(self, name)(*args)
+
+    def frame(self, params: dict[str, Any]) -> None:
+        """Run the frame handler here, as the host would mid-action."""
+        for handler in self.handlers["Page.screencastFrame"]:
+            handler(params)
 
     def detach(self) -> None:
         self.detached += 1
@@ -86,26 +119,33 @@ class FakeCdp:
         return [int(params["sessionId"]) for params in self.methods("Page.screencastFrameAck")]
 
 
-class FakePage:
-    """`wait_for_timeout` is where a real surface thread sits, so it is also
-    where a real frame callback fires. The fake fires queued frames from there,
-    on the surface thread, so the handoff under test is the real one."""
+class FakeFrame(NamedTuple):
+    url: str
+    parent_frame: Any = None
+
+
+class FakePage(_Emitter):
+    """Setting `url` commits a main-frame navigation, which Playwright reports as a
+    `framenavigated` event on the host. `waits` counts any pump of Playwright."""
 
     def __init__(self, cdp: FakeCdp) -> None:
+        super().__init__(cdp.host)
         self.cdp = cdp
-        self.pending: queue.SimpleQueue[dict[str, Any]] = queue.SimpleQueue()
         self.calls: list[tuple[str, Any]] = []
-        # The committed main-frame URL, as Playwright's `page.url` exposes it;
-        # `goto` updates it, and `navigate` reads it back to the caller.
-        self.url = ""
+        self.waits = 0
+        self._url = ""
+
+    @property
+    def url(self) -> str:
+        return self._url
+
+    @url.setter
+    def url(self, value: str) -> None:
+        self._url = value
+        self.emit("framenavigated", FakeFrame(value))
 
     def wait_for_timeout(self, _ms: float) -> None:
-        try:
-            params = self.pending.get_nowait()
-        except queue.Empty:
-            time.sleep(0.001)
-            return
-        self.cdp.handlers["Page.screencastFrame"](params)
+        self.waits += 1
 
     def goto(self, url: str, **_kwargs: Any) -> str:
         self.calls.append(("goto", url))
@@ -117,8 +157,9 @@ class FakePage:
         return f"evaluated:{expression}"
 
 
-class FakeContext:
-    def __init__(self) -> None:
+class FakeContext(_Emitter):
+    def __init__(self, host: FakeHost) -> None:
+        super().__init__(host)
         self.closed = 0
         self.saved: list[str] = []
 
@@ -132,43 +173,33 @@ class FakeContext:
         return {}
 
 
-class FakePlaywright:
-    def __init__(self) -> None:
-        self.stopped = 0
-
-    def stop(self) -> None:
-        self.stopped += 1
-
-
 class FakeBrowser:
     """One fake launch, plus what the opener recorded about it."""
 
     def __init__(self) -> None:
-        self.cdp = FakeCdp()
+        self.cdp = FakeCdp(FakeHost())
         self.page = FakePage(self.cdp)
-        self.context = FakeContext()
-        self.playwright = FakePlaywright()
+        self.context = FakeContext(self.cdp.host)
         self.opened: list[tuple[Path, dict[str, Any]]] = []
 
     def opener(self, profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
         self.opened.append((Path(profile_dir), dict(launch_kwargs)))
-        return SurfaceSession(
-            playwright=self.playwright, context=self.context, page=self.page, cdp=self.cdp
-        )
+        return SurfaceSession(context=self.context, page=self.page, cdp=self.cdp)
 
     def emit(self, session_id: int, *, data: bytes = FRAME_BYTES) -> None:
-        """Queue a frame for the surface thread to deliver."""
-        self.page.pending.put(_frame_params(session_id, data=data))
+        """Deliver a frame from the host, as Chrome would."""
+        self.cdp.emit("Page.screencastFrame", _frame_params(session_id, data=data))
 
 
 class CrashingPage(FakePage):
-    """A page whose run-loop park raises, standing in for a Chrome that died
-    under a live surface: the surface thread's loop exits and the surface has to
-    be marked dead. Startup still succeeds, so `wait_ready` returns — the whole
-    point of the zombie the broker has to evict."""
+    """A page Chrome closes right after the launch, standing in for a Chrome that
+    died under a live surface. Startup still succeeds, so `wait_ready` returns:
+    the whole point of the zombie the broker has to evict."""
 
-    def wait_for_timeout(self, _ms: float) -> None:
-        raise RuntimeError("Chrome crashed under a live surface")
+    def on(self, event: str, handler: Callable[..., None]) -> None:
+        super().on(event, handler)
+        if event == "close":
+            self.emit("close", self)
 
 
 async def _until(predicate: Callable[[], bool], within: float = 3.0) -> bool:
@@ -237,10 +268,19 @@ async def test_nothing_launches_until_a_surface_is_asked_for(
     broker.shutdown()
 
 
-async def test_screencast_starts_once_with_the_expected_params(
+async def test_the_screencast_runs_only_while_a_viewer_watches(
     broker: BrowserBroker, fake: FakeBrowser
 ) -> None:
-    await broker.surface("pane-a").wait_ready()
+    """Audit 2026-10-14 section 8.5: an unwatched surface captured all day. rAF runs
+    without a screencast (measured), so capture follows the viewer."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    await asyncio.sleep(0.05)
+    assert fake.cdp.methods("Page.startScreencast") == []
+
+    viewer = Viewer()
+    surface.set_viewer(viewer)
+    assert await _until(lambda: len(fake.cdp.methods("Page.startScreencast")) == 1)
     assert fake.cdp.methods("Page.startScreencast") == [
         {
             "format": "jpeg",
@@ -250,6 +290,24 @@ async def test_screencast_starts_once_with_the_expected_params(
             "everyNthFrame": 1,
         }
     ]
+    surface.detach(viewer)
+    assert await _until(lambda: len(fake.cdp.methods("Page.stopScreencast")) == 1)
+
+
+async def test_the_lane_never_pumps_playwright_and_still_runs_work_at_once(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """The 8 ms poll cost about 10% of a core (audit 8.5). Events come from the host
+    now, so the lane sleeps on a wake event, watched or not; a command wakes it."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    surface.set_viewer(Viewer())
+    await asyncio.sleep(0.5)
+    assert fake.page.waits == 0  # an 8 ms poll would be about 60
+
+    started = time.monotonic()
+    assert await asyncio.wrap_future(surface.evaluate("1 + 1")) == "evaluated:1 + 1"
+    assert time.monotonic() - started < 0.1
 
 
 async def test_the_launcher_gets_the_guardrailed_kwargs(
@@ -367,8 +425,8 @@ async def test_frames_keep_flowing_while_a_lane_action_holds_the_surface_thread(
     def long_action(session: SurfaceSession) -> str:
         # Chrome hands two frames to the handler while the action still runs,
         # exactly as a real send's typing repaints the page.
-        session.cdp.handlers["Page.screencastFrame"](_frame_params(81, data=b"early"))
-        session.cdp.handlers["Page.screencastFrame"](_frame_params(82, data=b"late"))
+        session.cdp.frame(_frame_params(81, data=b"early"))
+        session.cdp.frame(_frame_params(82, data=b"late"))
         acked_mid_action.extend(fake.cdp.acked)
         return "done"
 
@@ -379,6 +437,24 @@ async def test_frames_keep_flowing_while_a_lane_action_holds_the_surface_thread(
     # wake-up, so by now the slot deterministically holds the freshest frame.
     assert viewer.queue.get_nowait().session_id == 82
     assert viewer.queue.empty()
+
+
+async def test_a_viewer_that_attaches_mid_action_gets_frames_at_once(
+    broker: BrowserBroker, fake: FakeBrowser
+) -> None:
+    """The lane used to start the screencast only between actions, so a viewer who
+    opened the pane during a long send saw nothing until it ended."""
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    release = threading.Event()
+    held = surface.run_on_lane(lambda _s: release.wait(5))
+    await asyncio.sleep(0.05)
+
+    surface.set_viewer(Viewer())
+    started = await _until(lambda: bool(fake.cdp.methods("Page.startScreencast")), 1.0)
+    release.set()
+    await asyncio.wrap_future(held)
+    assert started
 
 
 async def test_navigate_and_evaluate_run_on_the_surface_thread(
@@ -426,7 +502,10 @@ async def test_spontaneous_url_change_is_published_without_a_navigate(
     assert await _until(lambda: not viewer.urls.empty())
     assert viewer.urls.get_nowait() == "https://example.test/spa-route"
 
-    # Only CHANGES are published — the same URL never repeats on the wire.
+    # Only CHANGES are published: the same URL never repeats on the wire, and a
+    # child frame's navigation is not the page's.
+    fake.page.url = "https://example.test/spa-route"
+    fake.page.emit("framenavigated", FakeFrame("https://ads.test/", parent_frame=object()))
     await asyncio.sleep(0.05)
     assert viewer.urls.empty()
 
@@ -568,6 +647,8 @@ async def test_resize_moves_the_frame_ceiling_and_clamps_it(
 ) -> None:
     surface = broker.surface("pane-a")
     await surface.wait_ready()
+    surface.set_viewer(Viewer())
+    assert await _until(lambda: len(fake.cdp.methods("Page.startScreencast")) == 1)
 
     await asyncio.wrap_future(surface.resize(960, 540))
     await asyncio.wrap_future(surface.resize(99999, 1))
@@ -674,7 +755,6 @@ async def test_shutdown_tears_the_session_down_and_is_idempotent(
     assert fake.cdp.methods("Page.stopScreencast") == [{}]
     assert fake.cdp.detached == 1
     assert fake.context.closed == 1
-    assert fake.playwright.stopped == 1
 
     surface.shutdown()
     assert fake.cdp.methods("Page.stopScreencast") == [{}]
@@ -704,7 +784,7 @@ async def test_broker_shutdown_closes_every_surface(tmp_path: Path) -> None:
 
     broker.shutdown()
     assert broker.live_slugs == frozenset()
-    assert all(f.context.closed == 1 and f.playwright.stopped == 1 for f in fakes.values())
+    assert all(f.context.closed == 1 for f in fakes.values())
     broker.shutdown()  # idempotent
     assert all(f.context.closed == 1 for f in fakes.values())
 
@@ -767,6 +847,162 @@ async def test_a_dead_surface_is_evicted_and_relaunched(tmp_path: Path) -> None:
         healthy.emit(71)
         assert await _until(lambda: not viewer.queue.empty())
         assert viewer.queue.get_nowait().session_id == 71
+    finally:
+        broker.shutdown()
+
+
+async def test_a_dead_surface_fails_queued_and_later_work(tmp_path: Path) -> None:
+    """Work queued on a surface whose Chrome dies used to hang forever, and so did
+    work submitted after (architecture-audit-2026-10-14.md section 3.3). Both fail."""
+    dying = FakeBrowser()
+    release = threading.Event()
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=dying.opener,
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=0.3,
+    )
+    try:
+        surface = broker.surface("pane-a")
+        await surface.wait_ready()
+
+        def held(_session: SurfaceSession) -> None:
+            # Chrome dies under the running action: the host reports the close,
+            # then the action's own call fails.
+            release.wait(5)
+            dying.page.emit("close", dying.page)
+            deadline = time.monotonic() + 3
+            while not surface.is_dead and time.monotonic() < deadline:
+                time.sleep(0.005)
+            raise RuntimeError("Target page, context or browser has been closed")
+
+        running = surface.run_on_lane(held)
+        queued = surface.evaluate("1 + 1")
+        await asyncio.sleep(0.05)
+        assert not queued.done()  # behind the running action
+
+        release.set()
+        with pytest.raises(RuntimeError, match="closed"):
+            await asyncio.wait_for(asyncio.wrap_future(running), 3.0)
+        with pytest.raises(BrowserLaunchError, match="stopped"):
+            await asyncio.wait_for(asyncio.wrap_future(queued), 3.0)
+        assert surface.is_dead
+        with pytest.raises(BrowserLaunchError, match="shut down"):
+            surface.evaluate("2 + 2").result(timeout=0)
+        assert surface.idle_seconds is not None  # nothing left counted in flight
+    finally:
+        broker.shutdown()
+
+
+async def test_a_hung_lane_action_is_killed_at_its_deadline_and_the_slug_relaunches(
+    tmp_path: Path,
+) -> None:
+    """A lane action that never returned wedged the surface until restart
+    (architecture-audit-2026-10-14.md section 3.3). Past its deadline the surface's
+    Chrome is killed, the caller gets a coded timeout, and the slug relaunches."""
+    stuck = FakeBrowser()
+    fresh = FakeBrowser()
+    browsers = iter([stuck, fresh])
+    unstick = threading.Event()
+    killed: list[Path] = []
+
+    def opener(profile_dir: Path, kwargs: dict[str, Any]) -> SurfaceSession:
+        return next(browsers).opener(profile_dir, kwargs)
+
+    def killer(profile_dir: Path) -> int:
+        # Killing Chrome is what makes the stuck Playwright call raise.
+        killed.append(profile_dir)
+        unstick.set()
+        return 1
+
+    def hang(_session: SurfaceSession) -> None:
+        unstick.wait(10)
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        opener=opener,
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=0.3,
+        killer=killer,
+    )
+    try:
+        surface = broker.surface("pane-a")
+        await surface.wait_ready()
+        hung = surface.run_on_lane(hang, deadline_s=0.2)
+        queued_behind = surface.evaluate("1 + 1")
+        with pytest.raises(broker_module.BrowserActionTimeout, match="0s deadline"):
+            await asyncio.wait_for(asyncio.wrap_future(hung), 3.0)
+        assert killed == [broker.profile_dir("pane-a")]
+        assert surface.is_dead
+        with pytest.raises(BrowserLaunchError):
+            await asyncio.wait_for(asyncio.wrap_future(queued_behind), 3.0)
+
+        relaunched = broker.surface("pane-a")
+        assert relaunched is not surface
+        await relaunched.wait_ready()
+        assert await asyncio.wrap_future(relaunched.evaluate("2 + 2")) == "evaluated:2 + 2"
+    finally:
+        broker.shutdown()
+
+
+async def test_an_action_that_finishes_inside_its_deadline_kills_nothing(
+    broker: BrowserBroker,
+) -> None:
+    surface = broker.surface("pane-a")
+    await surface.wait_ready()
+    result = await asyncio.wrap_future(surface.run_on_lane(lambda _s: 7, deadline_s=5.0))
+    assert result == 7
+    await asyncio.sleep(0.05)
+    assert not surface.is_dead
+
+
+async def test_real_hung_page_script_is_killed_and_the_surface_recovers(
+    tmp_path: Path,
+) -> None:
+    """Against REAL Chrome: a page script that never returns used to wedge the lane
+    until restart. The deadline kills that profile's Chrome, the call fails coded,
+    no Chrome is left on the profile, and the next surface for the slug works."""
+    pytest.importorskip("playwright.sync_api")
+    from sidecar.app.browser.process import browser_processes
+
+    broker = BrowserBroker(
+        tmp_path / "data",
+        asyncio.get_running_loop(),
+        user_agent_resolver=lambda: FAKE_UA,
+        geometry_timeout=5.0,
+    )
+    surface = broker.surface("pane-a")
+    try:
+        try:
+            await surface.wait_ready(timeout_seconds=60)
+        except BrowserLaunchError as exc:  # pragma: no cover, CI without Chrome
+            pytest.skip(f"real Chrome unavailable: {exc}")
+        profile = broker.profile_dir("pane-a")
+        assert browser_processes(profile), "the matcher must see the live Chrome"
+
+        started = time.monotonic()
+        with pytest.raises(broker_module.BrowserActionTimeout):
+            await asyncio.wait_for(
+                asyncio.wrap_future(
+                    surface.run_on_lane(
+                        lambda s: s.page.evaluate("() => new Promise(() => {})"),
+                        deadline_s=2.0,
+                    )
+                ),
+                15.0,
+            )
+        assert time.monotonic() - started < 8.0
+        assert await _until(lambda: not browser_processes(profile), within=5.0)
+
+        relaunched = broker.surface("pane-a")
+        assert relaunched is not surface
+        await relaunched.wait_ready(timeout_seconds=60)
+        assert await asyncio.wrap_future(
+            relaunched.run_on_lane(lambda s: s.page.evaluate("() => 6 * 7"))
+        ) == 42
     finally:
         broker.shutdown()
 

@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from . import networker_ops
+from .autonomy import authorize
 from .operations import OperationContext, OperationOutcome
 
 # One page-load has 45 s to commit — same bound the retired /api/browser/open
@@ -34,7 +35,7 @@ def _same_page(current: str, target: str) -> bool:
 
 def view_page_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Show the snapshot's `url` on its broker surface, once the lane is ours."""
-    networker_ops._require_presence(ctx)  # a click path set user_initiated
+    authorize(ctx.db, "view", ctx.requested_by)  # the live view opens on a click only
     snapshot = ctx.input_snapshot
     url = str(snapshot.get("url") or "")
     slug = str(snapshot.get("surface") or "default")

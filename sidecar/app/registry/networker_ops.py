@@ -13,7 +13,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,18 +23,18 @@ from sidecar.modules.networker import draft as net_draft
 from sidecar.modules.networker import resolve as net_resolve
 from sidecar.modules.networker import send as net_send
 from sidecar.modules.networker.driver import DirectVoyagerDriver, VoyagerDriver
-from sidecar.modules.networker.types import Audience, NetworkerError, Warmth
+from sidecar.modules.networker.types import Audience, Warmth
 from sidecar.packages.referral_outreach import PacingProfile, plan_for_membership
 
 from ..db.base import now_utc
 from ..db.database import resolve_data_dir
 from ..db.models import CONTACT_ENGAGED_STATUSES, OP_ACTIVE_STATES, OP_ALL_STATES
 from ..events import make_event
+from .autonomy import authorize
 from .company_anchor import employer_domain, resolution_key
 from .engines import EngineNotConfiguredError
 from .exception_router import route_cause
 from .operations import OperationContext, OperationOutcome, llm_outcome
-from .presence_gate import PresenceAbsent, decide_presence
 
 if TYPE_CHECKING:
     from ..db import Repos
@@ -57,6 +57,20 @@ DriverFactory = Callable[["PacingProfile | None"], VoyagerDriver]
 # which the tests use via `DRIVER_FACTORY`.
 SurfaceProvider = Callable[[str], Any]
 SURFACE_PROVIDER: SurfaceProvider | None = None
+# The referral surface if it's live right now, without launching one: the exception
+# router reads the page a failure left behind. Set beside SURFACE_PROVIDER.
+LIVE_SURFACE: Callable[[], Any] | None = None
+
+
+def live_surface() -> Any:
+    return LIVE_SURFACE() if LIVE_SURFACE is not None else None
+
+
+def build_live_surface(broker: Any) -> Callable[[], Any]:
+    """A peek at the referral surface that never launches Chrome."""
+    from sidecar.packages.referral_outreach import referral_surface_slug
+
+    return lambda: broker.live_surface(referral_surface_slug())
 
 
 def build_surface_provider(
@@ -73,22 +87,6 @@ def build_surface_provider(
         return surface
 
     return _provider
-
-
-# ---------------------------------------------------------------------------
-# Presence gate (invariant 3 / Our Claim 9, as revised 2026-08-14).
-# ---------------------------------------------------------------------------
-
-
-def _require_presence(ctx: OperationContext) -> None:
-    """Refuse a logged-in LinkedIn run unless the user asked (invariant 3): the run
-    must carry the `user_initiated` marker only a click sets. Viewer and visibility
-    checks were dropped on 2026-08-14 (presence_gate.py). Raises `PresenceAbsent`."""
-    verdict = decide_presence(
-        user_initiated=bool(ctx.input_snapshot.get("user_initiated"))
-    )
-    if not verdict.present:
-        raise PresenceAbsent(verdict.reason)
 
 
 def linkedin_data_dir() -> Path:
@@ -418,9 +416,9 @@ def discover_entrypoint(ctx: OperationContext) -> OperationOutcome:
     company_url = snap.get("company_url")  # a pasted LinkedIn company URL (authoritative)
     if ctx.db is None:
         raise RuntimeError("discover operation requires a database context")
-    # Presence gate (invariant 3): no LinkedIn read starts unless the user is
-    # present. Refuses before the first typeahead touches the network.
-    _require_presence(ctx)
+    # A background discover runs only with outreach autopilot on (section 8.10).
+    # Refuses before the first typeahead touches the network.
+    authorize(ctx.db, "linkedin_read", ctx.requested_by)
 
     with ctx.db.repos() as repos:
         profile = resolve_pacing_profile(repos)
@@ -676,6 +674,23 @@ def send_progress(operation_id: str) -> dict[str, Any] | None:
     return {"channel": entry["channel"], "steps": list(entry["steps"])}
 
 
+# A log row with no operation to date its attempt from reads this far back: past the
+# longest typing deadline plus the settle reads, so our own message still counts.
+_UNCONFIRMED_LOOKBACK = timedelta(minutes=15)
+
+
+def _unconfirmed_since(repos: Repos, contact_id: str) -> float | None:
+    """When the contact's last send ended unconfirmed, the moment that attempt began
+    (its operation's start, which precedes any typing), so the retry reads LinkedIn
+    for it before sending. None when the last attempt was settled either way."""
+    log = repos.outreach_logs.latest_for_contacts([contact_id]).get(contact_id)
+    if log is None or log.outcome != "unconfirmed":
+        return None
+    op = repos.operations.get(log.operation_id) if log.operation_id else None
+    started = op.started_at if op is not None and op.started_at else None
+    return (started or log.created_at - _UNCONFIRMED_LOOKBACK).timestamp()
+
+
 def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     """Send one referral-ask via the voyager driver; persist the audit (US-REF-04)."""
     snap = ctx.input_snapshot
@@ -687,10 +702,6 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     dry_run = bool(snap.get("dry_run", False))
     if ctx.db is None:
         raise RuntimeError("send operation requires a database context")
-    # Presence gate (invariant 3): no send touches LinkedIn unless the user is
-    # present. Refuses before the driver is built or the wire is touched.
-    _require_presence(ctx)
-
     with ctx.db.repos() as repos:
         row = repos.contacts.get(contact_id)
         if row is None:
@@ -699,6 +710,10 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
         profile = resolve_pacing_profile(repos)
         is_first_degree = row.is_first_degree
         audience_tag = row.audience_tag
+        unconfirmed_since = _unconfirmed_since(repos, contact_id)
+    # A background send runs only with that channel's autopilot on (section 8.10).
+    # Refuses before the driver is built or the wire is touched.
+    authorize(ctx.db, "dm" if is_first_degree else "invite", ctx.requested_by)
 
     # The send announces itself (`sending`, with the routed channel), then reports
     # each completed step (`send_step`) from the code that drove it: the pacing wait,
@@ -732,23 +747,25 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
     try:
         result = net_send(
             message, net_contact, driver=driver, dry_run=dry_run,
-            on_step=_publish_step,
+            on_step=_publish_step, unconfirmed_since=unconfirmed_since,
         )
-    except (NetworkerError, OSError, RuntimeError) as exc:
-        # Catches every exception, not just `NetworkerError`: the driver wraps only
-        # `VoyagerError`, so launch failures, an unresponsive browser, an exhausted 5xx
-        # retry and navigation guards all escaped, leaving no OutreachLog row and a row
-        # stuck on "Sending". `route_cause` clamps an unrecognized cause to `unknown`.
+    except Exception as exc:
+        # Every exception: the driver wraps only `VoyagerError`, and a 3-class tuple
+        # here let Playwright's TimeoutError escape (2026-10-16 live), with no
+        # OutreachLog row and an autopilot that waited on the contact for good.
+        # `route_cause` clamps an unrecognized cause to `unknown`.
         SEND_PROGRESS.pop(op_id, None)
         # S-C14: name the failure. A recognized worker state routes to its coded
         # label; an unrecognized one hard-stops, captures evidence and asks the
         # model for one label. The router never picks an action.
-        routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
+        routed = route_cause(
+            exc, surface=live_surface(), engine=ctx.engine.engine if ctx.engine else None
+        )
         # Every attempt gets an OutreachLog row, failures included (NFR-SIDE-04); a hard
-        # failure once skipped it (6 failed sends, 0 logs). Persist the verbatim failure,
-        # emit send_failed, then re-raise so the op still fails.
+        # failure once skipped it (6 failed sends, 0 logs). Persist the verbatim failure
+        # with what the router made of it, emit send_failed, then re-raise.
         channel = "dm" if is_first_degree else "connection_note"
-        detail = str(exc)
+        detail = " ".join(part for part in (routed.explanation, str(exc)) if part)
         now = now_utc()
         with ctx.db.repos() as repos:
             repos.outreach_logs.create(
@@ -772,7 +789,14 @@ def send_entrypoint(ctx: OperationContext) -> OperationOutcome:
             }))
         raise
 
-    outcome_str = "sent" if result.sent else ("pending" if dry_run else "failed")
+    # `unconfirmed`: the browser failed mid-send and LinkedIn couldn't be read to
+    # check. The next send to this contact reads LinkedIn first (`_unconfirmed_since`).
+    if result.sent:
+        outcome_str = "sent"
+    elif dry_run:
+        outcome_str = "pending"
+    else:
+        outcome_str = "unconfirmed" if result.error == "unconfirmed" else "failed"
     # Reason first: `error` is a terse code (`cap_or_backoff`), `reason` the
     # explanation ("…the free-plan personalized-note allowance is out…"). The
     # old error-first order rendered the code in the referrals modal and the

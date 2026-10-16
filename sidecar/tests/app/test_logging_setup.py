@@ -83,3 +83,26 @@ def test_a_symlinked_log_dir_still_counts_as_the_same_file(tmp_path):
         for handler in _file_handlers(log_path):
             get_logger().removeHandler(handler)
             handler.close()
+
+
+def test_the_linkedin_and_applier_packages_reach_the_recorder(tmp_path):
+    """The LinkedIn worker logs as `voyager_py.*` and the Applier as `fyj.jobapplier`.
+    Neither is under `fyj.sidecar`, so a discover's "dropping X: employer changed"
+    reached no file (2026-10-16 live: 4 of 10 found, no line said why)."""
+    import logging
+
+    log_path = setup_flight_recorder(tmp_path)
+    try:
+        setup_flight_recorder(tmp_path)
+        logging.getLogger("voyager_py.discovery").info("discovery: dropping a")
+        logging.getLogger("fyj.jobapplier.upstream").info("applier step b")
+        text = log_path.read_text(encoding="utf-8")
+        assert text.count("discovery: dropping a") == 1
+        assert text.count("applier step b") == 1
+    finally:
+        for name in ("fyj.sidecar", "fyj.jobapplier", "voyager_py"):
+            logger = logging.getLogger(name)
+            for handler in list(logger.handlers):
+                if isinstance(handler, RotatingFileHandler):
+                    logger.removeHandler(handler)
+                    handler.close()

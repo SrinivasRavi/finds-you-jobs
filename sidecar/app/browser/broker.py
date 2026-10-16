@@ -1,12 +1,11 @@
 """The browser-session broker: 1 persistent headless surface per slug.
 
 A surface is a real Chrome profile behind a CDP session, streamed as JPEG frames
-and named by a runtime slug (plugin-architecture.md section 8.1 rule 5). Each
-surface owns 1 OS thread, the only one that touches its Playwright objects; the
-event loop talks to it through thread-safe queues and `call_soon_threadsafe`
-(async-first). Frames are acked at once inside the frame event, so capture keeps
-running mid-action (acking after the socket send froze the view during sends).
-Flow control is the viewer's 1-slot keep-newest queue."""
+and named by a runtime slug (plugin-architecture.md section 8.1 rule 5). Chrome
+runs on the 1 browser host (`host.py`); each surface keeps 1 lane thread that runs
+its actions in order through sync proxies. Frames, URL changes and a closed page
+arrive as host events, so nothing polls, and frames flow while an action runs.
+Each frame is acked at capture; the viewer's 1-slot queue keeps the newest."""
 
 from __future__ import annotations
 
@@ -17,12 +16,14 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from ..logging_setup import get_logger
-from .launch import minimal_launch_kwargs, open_persistent_context, resolve_user_agent
+from .host import get_host, launch
+from .launch import minimal_launch_kwargs, resolve_user_agent
+from .process import kill_browser
 
 # Screencast wire settings. JPEG at 60 keeps a full-page frame in the tens of
 # kilobytes, which a loopback websocket ships without thinking about it.
@@ -35,9 +36,6 @@ DEFAULT_MAX_HEIGHT = 800
 MIN_FRAME_EDGE = 160
 MAX_FRAME_EDGE = 3840
 
-# Each pass the surface thread parks inside Playwright for this long, which is
-# what lets the sync `.on` handlers fire, and bounds command latency.
-THREAD_TICK_MS = 8
 # How long a caller waits for Chrome to come up before calling it a failure.
 LAUNCH_TIMEOUT_SECONDS = 60.0
 # How long `shutdown` waits for a surface thread to finish its teardown.
@@ -53,6 +51,11 @@ GEOMETRY_TIMEOUT_SECONDS = 10.0
 # one. Reopening relaunches lazily with the profile intact, so being wrong costs
 # 1 relaunch. Generous: a watched or busy surface is never idle.
 IDLE_SHUTDOWN_SECONDS = 300.0
+# Every lane action has a deadline. Past it the surface's Chrome is killed, the only
+# interrupt a stuck sync Playwright call honours, and the surface relaunches on its
+# next use (architecture-audit-2026-10-14.md section 3.3). Callers that know their
+# work runs longer (typing, paced reads) pass their own.
+DEFAULT_ACTION_DEADLINE_SECONDS = 120.0
 
 # How many Chromes may be live at once (backlog S-C20). Past it, launching a
 # new surface first closes the longest-idle one; a surface in use is never
@@ -74,9 +77,20 @@ class BrowserLaunchError(RuntimeError):
     launch that timed out. Raised to the caller that asked for the surface."""
 
 
+class BrowserActionTimeout(RuntimeError):
+    """A lane action ran past its deadline, so the surface's Chrome was killed. The
+    action's effect on the page is unknown: a write that raised this may have landed."""
+
+    def __init__(self, slug: str, deadline_s: float) -> None:
+        super().__init__(
+            f"browser surface {slug!r}: an action ran past its {deadline_s:.0f}s deadline"
+        )
+        self.deadline_s = deadline_s
+
+
 class Frame(NamedTuple):
     """One decoded screencast frame. `session_id` is Chrome's capture id (the
-    ack already quoted it back, at capture, on the surface thread)."""
+    ack already quoted it back, at capture, on the browser host)."""
 
     jpeg: bytes
     session_id: int
@@ -95,33 +109,35 @@ class Viewer:
 
 
 class SurfaceSession(NamedTuple):
-    """What one launch yields — the four objects the surface thread drives."""
+    """What one launch yields: the 3 objects the lane drives, as sync proxies."""
 
-    playwright: Any
     context: Any
     page: Any
     cdp: Any
 
 
 Opener = Callable[[Path, dict[str, Any]], SurfaceSession]
+Killer = Callable[[Path], int]
 
 
 def open_session(profile_dir: Path, launch_kwargs: dict[str, Any]) -> SurfaceSession:
-    """Default opener, on the surface thread. `new_cdp_session` is the only CDP path:
-    a persistent context has no Browser object behind it."""
-    from playwright.sync_api import sync_playwright
-
+    """Default opener, on the surface thread: launch on the host, hand back proxies.
+    `new_cdp_session` is the only CDP path: a persistent context has no Browser."""
+    host = get_host()
     profile_dir.mkdir(parents=True, exist_ok=True)
-    playwright = sync_playwright().start()
-    try:
-        context = open_persistent_context(playwright, str(profile_dir), **launch_kwargs)
-    except Exception:
-        playwright.stop()
-        raise
-    page = context.pages[0] if context.pages else context.new_page()
-    return SurfaceSession(
-        playwright=playwright, context=context, page=page, cdp=context.new_cdp_session(page)
-    )
+
+    async def _open() -> tuple[Any, Any, Any]:
+        context = await launch((await host.playwright()).chromium, str(profile_dir),
+                               **launch_kwargs)
+        try:
+            page = context.pages[0] if context.pages else await context.new_page()
+            return context, page, await context.new_cdp_session(page)
+        except Exception:
+            await context.close()
+            raise
+
+    context, page, cdp = host.run(_open)
+    return SurfaceSession(context=host.proxy(context), page=host.proxy(page), cdp=host.proxy(cdp))
 
 
 class BrowserSurface:
@@ -136,6 +152,7 @@ class BrowserSurface:
         *,
         opener: Opener = open_session,
         geometry_timeout: float = GEOMETRY_TIMEOUT_SECONDS,
+        killer: Killer = kill_browser,
     ) -> None:
         self.slug = slug
         self._profile_dir = Path(profile_dir)
@@ -146,6 +163,7 @@ class BrowserSurface:
         self._launch_kwargs = launch_kwargs
         self._opener = opener
         self._geometry_timeout = geometry_timeout
+        self._killer = killer
         self._log = get_logger()
         self._thread: threading.Thread | None = None
         self._stopping = threading.Event()
@@ -167,13 +185,20 @@ class BrowserSurface:
         self._inflight = 0
         self._activity_lock = threading.Lock()
         self._commands: queue.SimpleQueue[
-            tuple[Future[Any], Callable[[SurfaceSession], Any]]
+            tuple[Future[Any], Callable[[SurfaceSession], Any], float]
         ] = queue.SimpleQueue()
         self._viewer: Viewer | None = None
+        # Set by anything the idle surface thread must act on now: a command, a
+        # viewer coming or going, a kill, a shutdown.
+        self._wake = threading.Event()
+        # Whether Chrome is capturing. The lane and the serving loop both toggle it.
+        self._casting = False
+        self._cast_lock = threading.Lock()
+        self._session: SurfaceSession | None = None
         self._max_width = DEFAULT_MAX_WIDTH
         self._max_height = DEFAULT_MAX_HEIGHT
-        # Committed main-frame URL tracking. `_last_url` is the surface thread's
-        # change detector; `_page_url` is the serving-loop copy a late-attaching
+        # Committed main-frame URL tracking. `_last_url` is the host's change
+        # detector; `_page_url` is the serving-loop copy a late-attaching
         # viewer is seeded from, so a reconnect shows where the page already is.
         self._last_url = ""
         self._page_url = ""
@@ -206,6 +231,7 @@ class BrowserSurface:
         """Stop the screencast, close the profile, join the thread. Idempotent —
         the second call finds no thread and returns."""
         self._stopping.set()
+        self._wake.set()
         thread, self._thread = self._thread, None
         self._viewer = None
         if thread is None:
@@ -238,15 +264,17 @@ class BrowserSurface:
             # Compute the launch kwargs here, on the surface thread: it may spend a
             # throwaway Chrome launch to de-headless the UA (`resolve_user_agent`).
             session = self._opener(self._profile_dir, self._launch_kwargs())
-            session.cdp.on(
-                "Page.screencastFrame",
-                lambda params: self._on_frame(session, params),
-            )
-            # The continuous screencast (everyNthFrame:1) is also the surface's
-            # requestAnimationFrame cadence source: Chrome services rAF while it is
-            # capturing. It must never be paused while a surface is live, or the
-            # page's animation loop stalls with it.
-            session.cdp.send("Page.startScreencast", self._screencast_params())
+            opened = session
+            # The handlers run on the browser host, never on this thread.
+            session.cdp.on("Page.screencastFrame", lambda params: self._on_frame(opened, params))
+            session.page.on("framenavigated", self._on_navigated)
+            for target, event in ((session.page, "close"), (session.page, "crash"),
+                                  (session.context, "close")):
+                target.on(event, self._on_closed)
+            self._session = session
+            # No screencast until a viewer attaches. rAF runs at 60/s without one
+            # (measured, audit-2026-10-14.md section 8.5).
+            self._sync_screencast(session)
         except Exception as exc:  # noqa: BLE001 — reported through `wait_ready`
             self._error = exc
             self._log.exception("browser surface %r failed to start", self.slug)
@@ -256,20 +284,38 @@ class BrowserSurface:
             return
         self._signal_ready()
         try:
-            while not self._stopping.is_set():
+            # A deadline kill marks the surface dead from another thread; the loop
+            # stops there rather than drive a Chrome that's gone.
+            # Events need no pump, so the thread sleeps until there is work.
+            while not self._stopping.is_set() and not self._dead.is_set():
+                self._wake.clear()
                 self._drain_commands(session)
-                self._watch_url(session)
-                # Parking inside Playwright is what lets its sync event
-                # handlers run, so the frame callbacks fire from here.
-                session.page.wait_for_timeout(THREAD_TICK_MS)
+                if not self._stopping.is_set() and not self._dead.is_set():
+                    self._wake.wait()
         except Exception:  # noqa: BLE001 — a dead page ends the surface, not the app
             self._log.exception("browser surface %r stopped", self.slug)
         finally:
+            self._session = None
             self._teardown(session)
             # The run loop is over, cleanly or crashed. Mark it so the broker
             # can tell this surface apart from a live one and relaunch a fresh
             # Chrome for the slug instead of handing back this corpse.
             self._dead.set()
+            self._fail_pending()
+
+    def _sync_screencast(self, session: SurfaceSession | None) -> None:
+        """Capture exactly while a viewer is attached. Fired, not awaited, so the
+        serving loop calls it too and a viewer sees frames even mid-action."""
+        if session is None:
+            return
+        with self._cast_lock:
+            wanted = self._viewer is not None
+            if wanted and not self._casting:
+                session.cdp.fire("send", "Page.startScreencast", self._screencast_params())
+                self._casting = True
+            elif not wanted and self._casting:
+                session.cdp.fire("send", "Page.stopScreencast", {})
+                self._casting = False
 
     def _screencast_params(self) -> dict[str, Any]:
         return {
@@ -281,26 +327,65 @@ class BrowserSurface:
         }
 
     def _drain_commands(self, session: SurfaceSession) -> None:
-        while True:
+        while not self._dead.is_set():
             try:
-                future, action = self._commands.get_nowait()
+                future, action, deadline_s = self._commands.get_nowait()
             except queue.Empty:
                 return
             if not future.set_running_or_notify_cancel():
                 self._finished_one()
                 continue
+            timer = threading.Timer(deadline_s, self._on_deadline, args=(future, deadline_s))
+            timer.daemon = True
+            timer.start()
             try:
-                future.set_result(action(session))
+                _resolve(future, result=action(session))
             except Exception as exc:  # noqa: BLE001 — travels to the caller
-                future.set_exception(exc)
+                _resolve(future, error=exc)
             finally:
+                timer.cancel()
                 self._finished_one()
 
-    def _watch_url(self, session: SurfaceSession) -> None:
-        """Emit the committed main-frame URL whenever it changes, once per tick on the
-        surface thread. `page.url` is Playwright's locally tracked URL, so the read
-        costs no CDP round-trip the page could observe. Publishes on change only."""
-        url = session.page.url
+    def _on_deadline(self, future: Future[Any], deadline_s: float) -> None:
+        """On a timer thread: the running action is past its deadline. Mark the surface
+        dead first, so nothing new is queued on it and the broker relaunches, then kill
+        its Chrome so the stuck call fails, then answer the caller."""
+        self._log.error(
+            "browser surface %r: lane action past its %.0fs deadline, killing Chrome",
+            self.slug, deadline_s,
+        )
+        # Answer first: the stuck call fails the instant Chrome dies, and its own
+        # error must not be what the caller sees.
+        _resolve(future, error=BrowserActionTimeout(self.slug, deadline_s))
+        self._dead.set()
+        self._wake.set()
+        self._fail_pending()
+        try:
+            self._killer(self._profile_dir)
+        except Exception:  # noqa: BLE001, the caller already has its answer
+            self._log.exception("browser surface %r: killing Chrome failed", self.slug)
+
+    def kill_browser(self) -> None:
+        """Kill this surface's Chrome from any thread. Whatever is running on the lane
+        fails, queued work fails, and the next `surface(slug)` launches a fresh one."""
+        self._dead.set()
+        self._wake.set()
+        self._fail_pending()
+        self._killer(self._profile_dir)
+
+    def _on_closed(self, *_args: Any) -> None:
+        """Chrome closed the page or the context (a crash, a kill), on the host: the
+        lane stops, and the broker relaunches on the next ask."""
+        self._dead.set()
+        self._wake.set()
+
+    def _on_navigated(self, frame: Any) -> None:
+        """Publish the committed main-frame URL on change, on the host. SPA route
+        changes fire this too. `frame.url` is Playwright's own record, so the read
+        costs no CDP round-trip the page could observe."""
+        if frame.parent_frame is not None:
+            return
+        url = frame.url
         if url == self._last_url:
             return
         self._last_url = url
@@ -332,11 +417,11 @@ class BrowserSurface:
     def _teardown(self, session: SurfaceSession | None) -> None:
         if session is None:
             return
+        # The host owns the Playwright driver, so it outlives every surface.
         for label, action in (
             ("stop screencast", lambda: session.cdp.send("Page.stopScreencast", {})),
             ("detach cdp", session.cdp.detach),
             ("close context", session.context.close),
-            ("stop playwright", session.playwright.stop),
         ):
             try:
                 action()
@@ -349,19 +434,16 @@ class BrowserSurface:
     # -- frames ------------------------------------------------------------
 
     def _on_frame(self, session: SurfaceSession, params: dict[str, Any]) -> None:
-        """CDP `Page.screencastFrame` on the surface thread: decode here, ack at once so
-        Chrome keeps capturing (the liveness fix, module docstring), then hand the bytes
-        over. The nested `cdp.send` from a handler is a documented shape."""
+        """CDP `Page.screencastFrame` on the host: decode here, ack at once so Chrome
+        keeps capturing (the liveness fix), then hand the bytes over. The ack is
+        fired: a handler on the host loop cannot wait on a call."""
         try:
             jpeg = base64.b64decode(params["data"])
             session_id = int(params["sessionId"])
         except Exception:  # noqa: BLE001 — one unreadable frame is not fatal
             self._log.warning("unreadable screencast frame", exc_info=True)
             return
-        try:
-            session.cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
-        except Exception:  # noqa: BLE001 — the session may already be gone
-            self._log.debug("screencast ack dropped", exc_info=True)
+        session.cdp.fire("send", "Page.screencastFrameAck", {"sessionId": session_id})
         metadata = params.get("metadata") or {}
         self._call_on_loop(
             self._offer,
@@ -396,6 +478,7 @@ class BrowserSurface:
         stops receiving (its queued frame is already acked, so nothing stalls).
         """
         self._viewer = viewer
+        self._sync_screencast(self._session)
         # Seed the incoming viewer with where the page already is, so a
         # reconnect (or a tab re-mount) never reads "no page yet" over a live,
         # fully loaded page.
@@ -410,6 +493,7 @@ class BrowserSurface:
         if self._viewer is not viewer:
             return
         self._viewer = None
+        self._sync_screencast(self._session)
         # Start the idle clock HERE, not from the last submitted action. A
         # viewer can watch a static page for an hour without submitting
         # anything, and reaping the instant they close the pane would make a
@@ -483,9 +567,13 @@ class BrowserSurface:
         override this baseline doesn't do."""
         self._max_width = max(MIN_FRAME_EDGE, min(width, MAX_FRAME_EDGE))
         self._max_height = max(MIN_FRAME_EDGE, min(height, MAX_FRAME_EDGE))
-        return self._submit(
-            lambda s: s.cdp.send("Page.startScreencast", self._screencast_params())
-        )
+
+        def _recast(session: SurfaceSession) -> None:
+            with self._cast_lock:
+                if self._casting:  # else the next attach starts at the new size
+                    session.cdp.fire("send", "Page.startScreencast", self._screencast_params())
+
+        return self._submit(_recast)
 
     def evaluate(self, expression: str) -> Future[Any]:
         """Evaluate `expression` in the page and return its value through the
@@ -493,13 +581,17 @@ class BrowserSurface:
         `Runtime` CDP call of our own."""
         return self._submit(lambda s: s.page.evaluate(expression))
 
-    def run_on_lane(self, action: Callable[[SurfaceSession], Any]) -> Future[Any]:
+    def run_on_lane(
+        self,
+        action: Callable[[SurfaceSession], Any],
+        deadline_s: float = DEFAULT_ACTION_DEADLINE_SECONDS,
+    ) -> Future[Any]:
         """The public name for the surface's single serialized operation lane:
         queue `action` for the surface thread and hand back its future. This is
         the integration hook an external driver submits its own callables onto,
         so "one account, one lane" stays a structural guarantee (section 5.4).
-        Internal callers keep using `_submit`; it is the same machinery."""
-        return self._submit(action)
+        Past `deadline_s` the future fails with `BrowserActionTimeout`."""
+        return self._submit(action, deadline_s)
 
     def screenshot(self) -> Future[bytes]:
         """Capture the surface as image bytes for the exception agent, over CDP
@@ -563,11 +655,15 @@ class BrowserSurface:
 
         return self._submit(_eval)
 
-    def _submit(self, action: Callable[[SurfaceSession], Any]) -> Future[Any]:
+    def _submit(
+        self,
+        action: Callable[[SurfaceSession], Any],
+        deadline_s: float = DEFAULT_ACTION_DEADLINE_SECONDS,
+    ) -> Future[Any]:
         """Queue work for the surface thread. Returns immediately with a future
         the caller can wrap (`asyncio.wrap_future`) or ignore."""
         future: Future[Any] = Future()
-        if self._stopping.is_set():
+        if self._stopping.is_set() or self._dead.is_set():
             future.set_exception(
                 BrowserLaunchError(f"browser surface {self.slug!r} is shut down")
             )
@@ -575,8 +671,27 @@ class BrowserSurface:
         with self._activity_lock:
             self._last_activity = time.monotonic()
             self._inflight += 1
-        self._commands.put((future, action))
+        self._commands.put((future, action, deadline_s))
+        self._wake.set()
+        # The thread may have died between the check above and the put, after
+        # its own final drain; nothing else would ever resolve this future.
+        if self._dead.is_set():
+            self._fail_pending()
         return future
+
+    def _fail_pending(self) -> None:
+        """Fail every queued action once the run loop is over. A dead surface used to
+        leave them unresolved forever (architecture-audit-2026-10-14.md section 3.3)."""
+        while True:
+            try:
+                future, _, _ = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            if future.set_running_or_notify_cancel():
+                future.set_exception(
+                    BrowserLaunchError(f"browser surface {self.slug!r} stopped")
+                )
+            self._finished_one()
 
     def touch(self) -> None:
         """Mark the surface as just taken. Without this stamp the gap before a caller's
@@ -622,6 +737,20 @@ class BrowserSurface:
         self._call_on_loop(self._ready.set)
 
 
+def _resolve(
+    future: Future[Any], *, result: Any = None, error: BaseException | None = None
+) -> None:
+    """Settle `future` unless the deadline timer or the action already did: the 2 race
+    by design, and whichever lands first is the caller's answer."""
+    try:
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+    except InvalidStateError:
+        pass
+
+
 class BrowserBroker:
     """Get-or-create browser surfaces by slug.
 
@@ -637,12 +766,14 @@ class BrowserBroker:
         opener: Opener = open_session,
         user_agent_resolver: Callable[[], str] = resolve_user_agent,
         geometry_timeout: float = GEOMETRY_TIMEOUT_SECONDS,
+        killer: Killer = kill_browser,
     ) -> None:
         self._root = Path(data_dir) / "browser"
         self._loop = loop
         self._opener = opener
         self._user_agent_resolver = user_agent_resolver
         self._geometry_timeout = geometry_timeout
+        self._killer = killer
         # The de-headlessed UA, resolved once (a throwaway launch) and reused by
         # every later surface. Guarded because two surfaces can launch at once.
         self._user_agent: str | None = None
@@ -720,6 +851,7 @@ class BrowserBroker:
                     self._guardrailed_launch_kwargs,
                     opener=self._opener,
                     geometry_timeout=self._geometry_timeout,
+                    killer=self._killer,
                 )
                 self._surfaces[slug] = surface
             surface.start()

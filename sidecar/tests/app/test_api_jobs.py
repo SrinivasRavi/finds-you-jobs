@@ -44,7 +44,7 @@ def test_schedules_seeded_disabled(app_client: tuple[FastAPI, TestClient]) -> No
     # scan/score_new seeded OFF (no unattended LLM spend); cleanup_trash +
     # archive_stale_contacts are zero-LLM, zero-network housekeeping → seeded ON.
     assert set(kinds) == {
-        "scan", "score_new", "cleanup_trash", "archive_stale_contacts",
+        "scan", "score_new", "cleanup_trash", "archive_stale_contacts", "autopilot",
     }
     assert not kinds["scan"]["enabled"]
     assert not kinds["score_new"]["enabled"]
@@ -52,6 +52,9 @@ def test_schedules_seeded_disabled(app_client: tuple[FastAPI, TestClient]) -> No
     assert kinds["cleanup_trash"]["enabled"]
     # US-NW-11: zero-LLM, zero-network kanban housekeeping → seeded ON.
     assert kinds["archive_stale_contacts"]["enabled"]
+    # Section 8.10: the tick reads the autopilot switches, all off by default, so
+    # seeded ON it enqueues nothing until the user turns 1 on.
+    assert kinds["autopilot"]["enabled"]
     # US-NW-12 / FR-NW-15: contact_sync is deliberately NOT a schedule any more.
     # It is the only housekeeping op that talks to LinkedIn, and a timer meant it
     # did so with nobody present (`docs/internal/linkedin-addon.md` section 5,
@@ -467,3 +470,31 @@ def test_scrape_cadence_enables_scan_schedule(app_client: tuple[FastAPI, TestCli
     )
     assert scan["enabled"] is True and scan["interval_minutes"] == 360
 
+
+
+def test_a_double_submit_returns_the_first_row_not_a_500(
+    app_client: tuple[FastAPI, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2 identical creates at once both miss the identity read, and the second
+    insert hit the unique index as a 500 (backlog S-C81). First seen wins."""
+    from sidecar.app.db.repos import JobsRepo
+
+    _app, client = app_client
+    first = _add_job(client, "https://example.com/double-submit")
+    real = JobsRepo.get_by_identity
+    misses = {"left": 1}
+
+    def racing_read(self: JobsRepo, **kw: str) -> object:
+        if misses["left"]:
+            misses["left"] -= 1
+            return None  # the other request's insert landed after this read
+        return real(self, **kw)
+
+    monkeypatch.setattr(JobsRepo, "get_by_identity", racing_read)
+    second = client.post(
+        "/api/jobs",
+        headers=AUTH,
+        json={"canonical_url": "https://example.com/double-submit", "title": "T"},
+    )
+    assert second.status_code in (200, 201), second.text
+    assert second.json()["id"] == first["id"]

@@ -1,0 +1,38 @@
+<!-- finds-you-jobs — AGPL-3.0-only. Fixture: review_form.html, but the ATS
+     confirms 25 s after Submit, past the executor's 20 s wait, so the first
+     Submit ends unconfirmed (audit-2026-10-14.md section 8.2). A second click
+     would be a second application: `window.__submits` counts them. -->
+<!DOCTYPE html>
+<html>
+<head><title>Apply — Staff Engineer at Initech</title></head>
+<body>
+  <h1>Apply for Staff Engineer</h1>
+  <div id="page">
+  <form id="application" onsubmit="return handle(event)">
+    <label for="name">Full name</label>
+    <input id="name" name="name" type="text" />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <button type="submit">Submit application</button>
+  </form>
+  </div>
+  <script>
+    window.__submits = 0;
+    function handle(e) {
+      e.preventDefault();
+      window.__submits += 1;
+      document.title = 'submits=' + window.__submits;
+      setTimeout(function () {
+        document.getElementById('page').innerHTML =
+          '<h2>Application received</h2><p>Submissions: ' + window.__submits + '</p>';
+      }, 25000);
+      return false;
+    }
+  </script>
+</body>
+</html>

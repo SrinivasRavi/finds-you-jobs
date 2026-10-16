@@ -417,3 +417,103 @@ def test_urllib_transport_refuses_non_http_scheme_fail_fast():
     with pytest.raises(EngineError, match="non-http") as ei:
         UrllibTransport().request("GET", "file:///etc/passwd", headers={})
     assert ei.value.retryable is False  # a config error — never worth a retry
+
+
+# --- 10-10 report 4.6: Z.ai and OpenCode over the OpenAI-compatible engine ---
+
+
+def test_zai_and_opencode_tiles_use_the_openai_compatible_engine():
+    from sidecar.app.registry.engine_config import PROVIDERS
+
+    assert PROVIDERS["zai"].default_base_url == "https://api.z.ai/api/paas/v4"
+    assert PROVIDERS["zai-coding"].default_base_url == "https://api.z.ai/api/coding/paas/v4"
+    assert PROVIDERS["opencode"].default_base_url == "https://opencode.ai/inference/v1"
+    for pid in ("zai", "zai-coding", "opencode"):
+        assert PROVIDERS[pid].engine_kind == "openai-compatible"
+        assert PROVIDERS[pid].needs_key is True
+
+
+def test_verify_returns_the_accounts_models_and_a_suggested_one():
+    """The provider's own /models list, not a guess: Z.ai's ids aren't published in
+    one place, so the suggestion is the first preferred id this account serves."""
+    from sidecar.app.registry.engine_config import verify_provider
+
+    listing = {"data": [{"id": "glm-4.5"}, {"id": "glm-5.1"}, {"id": "glm-5"}]}
+    result = verify_provider(
+        "zai", api_key="k", base_url=None, transport=FakeTransport([_resp(200, listing)])
+    )
+    assert result.ok
+    assert result.models == ("glm-4.5", "glm-5.1", "glm-5")
+    assert result.suggested_model == "glm-5.1"
+
+
+def test_opencode_suggests_only_a_chat_format_model():
+    """OpenCode serves Claude and GPT ids over other wire formats; our engine
+    speaks chat completions, so the suggestion skips them."""
+    from sidecar.app.registry.engine_config import verify_provider
+
+    listing = {"data": [{"id": "claude-opus-5-5"}, {"id": "gpt-5.5"}, {"id": "kimi-k3"}]}
+    probe = _resp(404, {"error": {"message": "model not found"}})
+    transport = FakeTransport([_resp(200, listing), probe])
+    result = verify_provider("opencode", api_key="k", base_url=None, transport=transport)
+    assert result.suggested_model == "kimi-k3"
+
+
+def test_a_401_from_zai_reads_verbatim():
+    from sidecar.app.registry.engine_config import verify_provider
+
+    body = {"error": {"code": "1001", "message": "Authentication parameter not received in Header"}}
+    result = verify_provider(
+        "zai-coding", api_key="bad", base_url=None, transport=FakeTransport([_resp(401, body)])
+    )
+    assert not result.ok and "Authentication parameter" in result.detail
+
+
+def test_opencode_verify_proves_the_key_since_its_model_list_is_public():
+    """`/models` answers with no key at all, so a 200 there proves nothing. The
+    key is proven by a chat call naming no real model: 401 means a bad key, and
+    any other answer means the key passed (no model ran, so nothing is spent)."""
+    from sidecar.app.registry.engine_config import verify_provider
+
+    listing = {"data": [{"id": "glm-5.3"}]}
+    refused = _resp(401, {"error": {"message": "Missing API key."}})
+    bad = FakeTransport([_resp(200, listing), refused])
+    result = verify_provider("opencode", api_key="bad", base_url=None, transport=bad)
+    assert not result.ok and "Missing API key" in result.detail
+    assert bad.calls[1].method == "POST" and bad.calls[1].url.endswith("/chat/completions")
+
+    unknown_model = _resp(404, {"error": {"message": "model not found"}})
+    good = FakeTransport([_resp(200, listing), unknown_model])
+    result = verify_provider("opencode", api_key="good", base_url=None, transport=good)
+    assert result.ok and result.suggested_model == "glm-5.3"
+
+
+def test_the_transport_names_itself(monkeypatch):
+    """Python's default User-Agent is refused by Cloudflare-fronted providers
+    (OpenCode answered 403 "error code: 1010", measured 2026-10-15)."""
+    import urllib.request
+
+    from sidecar.app.registry import engines_http
+
+    seen = {}
+
+    class _Resp:
+        status = 200
+        headers = {}
+
+        def read(self, n=-1):  # noqa: ANN001, ANN202
+            return b"{}"
+
+        def __enter__(self):  # noqa: ANN204
+            return self
+
+        def __exit__(self, *a):  # noqa: ANN002, ANN204
+            return False
+
+    def fake_urlopen(req, timeout=60):  # noqa: ANN001, ANN202
+        seen["ua"] = req.get_header("User-agent")
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    engines_http.UrllibTransport().request("GET", "https://example.com/models", headers={})
+    assert seen["ua"].startswith("finds-you-jobs/")

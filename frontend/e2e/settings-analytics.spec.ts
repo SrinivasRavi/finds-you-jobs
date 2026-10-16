@@ -37,6 +37,15 @@ test("settings renders every restored section across its panes", async ({ page }
   await expect(page.getByTestId("provider-tile-embedded")).toHaveCount(0);
   await page.screenshot({ path: `${DIR}/settings-cli-providers.png`, fullPage: true });
 
+  // Z.ai and OpenCode tiles (10-10 report 4.6): suggested models, plus a free
+  // model box that Verify fills with the ids the account's /models lists.
+  await page.getByTestId("provider-tile-opencode").click();
+  await expect(page.getByTestId("model-chip-kimi-k3")).toBeVisible();
+  await expect(page.getByTestId("engine-model-input")).toBeVisible();
+  await page.getByTestId("provider-tile-zai-coding").click();
+  await expect(page.getByTestId("model-chip-glm-5.3")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/settings-zai-provider.png`, fullPage: true });
+
   // Scoring pane — the method menu, the batch cap, AND the rubric the AI
   // method follows, which used to live 2 categories away (2026-10-08 split).
   await page.getByTestId("settings-nav-scoring").click();
@@ -739,4 +748,56 @@ test("the new panes render translated, not as an English fallback", async ({ pag
   await page.getByTestId("settings-nav-appearance").click();
   await picker.selectOption("en");
   await expect(page.getByTestId("settings-nav-scoring")).toContainText("Scoring");
+});
+
+test("the Autopilot pane saves each switch and limit (audit 8.10)", async ({ page, request }) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  const prefs = async () =>
+    (await (await request.get(`${base}/api/settings`, { headers: auth })).json()).preferences;
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: false, autopilot_apply: false, autopilot_min_score: 80 },
+  });
+  try {
+    await page.goto("/settings");
+    await page.getByTestId("settings-nav-autopilot").click();
+    const pane = page.getByTestId("autopilot-section");
+    await expect(pane).toContainText("Off means you confirm each action yourself");
+    // Outreach needs Referral Outreach on: the switches are inert and say why.
+    await expect(page.getByTestId("autopilot-needs-outreach")).toBeVisible();
+    await page.getByTestId("autopilot-invite-toggle").click();
+    await expect(page.getByTestId("autopilot-invite-toggle")).toHaveAttribute("aria-checked", "false");
+
+    await page.getByTestId("autopilot-apply-toggle").click();
+    await expect(page.getByTestId("autopilot-apply-toggle")).toHaveAttribute("aria-checked", "true");
+    const minScore = page.getByTestId("autopilot-min-score");
+    await minScore.fill("150"); // out of range: clamped, never a 422
+    await minScore.press("Enter");
+    await expect(minScore).toHaveValue("100");
+    await minScore.fill("72");
+    await minScore.press("Enter");
+    await expect(pane).toContainText("score 72 or more");
+    await expect(async () => {
+      const p = await prefs();
+      expect([p.autopilot_apply, p.autopilot_min_score, p.autopilot_invite]).toEqual([true, 72, false]);
+    }).toPass({ timeout: 10_000 });
+    await page.screenshot({ path: `${DIR}/autopilot-pane.png`, fullPage: true });
+
+    await request.post(`${base}/api/settings`, { headers: auth, data: { voyager_risk_marker_on: true } });
+    await page.reload();
+    await page.getByTestId("settings-nav-autopilot").click();
+    await expect(page.getByTestId("autopilot-needs-outreach")).toHaveCount(0);
+    await page.getByTestId("autopilot-invite-toggle").click();
+    await expect(async () => expect((await prefs()).autopilot_invite).toBe(true)).toPass({ timeout: 10_000 });
+    await page.screenshot({ path: `${DIR}/autopilot-pane-outreach.png`, fullPage: true });
+  } finally {
+    await request.post(`${base}/api/settings`, {
+      headers: auth,
+      data: {
+        voyager_risk_marker_on: false, autopilot_apply: false, autopilot_invite: false,
+        autopilot_dm: false, autopilot_min_score: 80,
+      },
+    });
+  }
 });

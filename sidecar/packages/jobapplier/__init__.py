@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from .classifier import classify
 from .executor import UrlPolicy
-from .loop import ApplyEngine, run_apply
+from .loop import ApplyEngine, is_closed_target, run_apply
 from .observe import Observation, ObservedElement, observe
 from .submit import SubmitOutcome, submit_application
 from .types import (
@@ -33,6 +33,7 @@ from .types import (
 )
 
 __all__ = [
+    "is_closed_target",
     "ApplyControl",
     "ApplyEngine",
     "ApplyError",

@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- The 2026-10-16 live layout: the SDUI Connect link sits under a paragraph
+     whose wrapper intercepts pointer events. A click that lands on the link
+     sets `window.__connectClicked`; a click on the paragraph does not. -->
+<html>
+  <head><meta charset="utf-8" /><title>Rajeev Example</title>
+    <style>
+      .actions { position: relative; }
+      .cover { position: absolute; inset: 0; z-index: 10; }
+      .cover p { margin: 0; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section componentkey="com.linkedin.sdui.profile.card.TopCard">
+        <h1>Rajeev Example</h1>
+        <div class="actions">
+          <a aria-label="Invite Rajeev Example to connect" href="#invite"
+             componentkey="ConnectButtonstate:invitation:urn:li:member:1_connect"
+             onclick="window.__connectClicked = true; return false;"><span>Connect</span></a>
+          <div class="cover"><p>Mutual connections and a long headline</p></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -180,13 +180,14 @@ def login_entrypoint(ctx: OperationContext) -> OperationOutcome:
     except NetworkerError as exc:
         # S-C14: route it first, so an unrecognized login failure captures its
         # evidence instead of collapsing into one verbatim string.
-        route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
+        routed = route_cause(exc, engine=ctx.engine.engine if ctx.engine else None)
         # Cancel / timeout / no-cookie — an expected domain outcome, not a crash.
-        # Persist a disconnected session + surface it, then let the op record the
-        # verbatim reason in the ledger (NFR-SIDE-04) by re-raising.
+        # Persist a disconnected session + surface it, with what the router made of
+        # it, then let the op record the verbatim reason (NFR-SIDE-04) by re-raising.
         with ctx.db.repos() as repos:
             repos.linkedin_session.update(status="never_set")
-        _publish_linkedin(ctx, "disconnected", error=str(exc))
+        error = " ".join(part for part in (routed.explanation, str(exc)) if part)
+        _publish_linkedin(ctx, "disconnected", error=error)
         raise
     finally:
         LOGIN_CONTROL.remove(control_key)

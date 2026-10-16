@@ -12,6 +12,7 @@ from ..db.base import now_utc
 from ..observability import reconfigure_observability
 from ..observability.config import observability_config
 from ..registry import networker_ops as networker_ops
+from ..registry.autonomy import caller
 from ..registry.engine_config import apply_routing
 from ..registry.persistence import (
     scoring_mode,
@@ -70,7 +71,7 @@ def extract_application_profile(request: Request) -> dto.OperationAccepted:
     with _db(request).repos() as repos:
         if repos.profile.get_current() is None:
             raise HTTPException(status_code=404, detail="no master profile to extract from")
-    operation_id = _runner(request).submit("extract", {}, requested_by="user")
+    operation_id = _runner(request).submit("extract", {}, requested_by=caller())
     return dto.OperationAccepted(id=operation_id, kind="extract", state="queued")
 
 
@@ -181,6 +182,9 @@ def _thread_scan_cadence(repos: Any, ui_state: dict[str, Any] | None) -> None:
 def update_settings(
     request: Request, payload: dto.PreferencesUpdate
 ) -> dto.SettingsDTO:
+    # The autopilot switches live here, so only the user's click may write them.
+    if caller() != "user":
+        raise HTTPException(status_code=403, detail="only the user changes settings")
     fields = payload.model_dump(exclude_none=True)
     with _db(request).repos() as repos:
         before_mode = scoring_mode(repos.preferences.get_or_create())
@@ -370,6 +374,16 @@ def test_prompt(
                     status_code=422,
                     detail="pick a job from the board or paste a job description",
                 )
+            if kind == "score":
+                from sidecar.modules.scorer.deterministic import MIN_JD_CHARS
+
+                # Shorter, the scorer runs Keyword whatever the draft says (S-C80).
+                if len(str(snap["job"]).strip()) < MIN_JD_CHARS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"a score test needs a job description of {MIN_JD_CHARS}"
+                        " characters or more; shorter, the app scores it by keywords",
+                    )
             # Deliberately NO job_id in the snapshot: that is what stops the
             # score path persisting onto the real job row.
             profile = repos.profile.get_current()
@@ -392,7 +406,7 @@ def test_prompt(
     # cap, Stop and Retry come for free and its spend compares with a real run's
     # (url-less-jobs.md section 11.4).
     op_kind = spec.operation_kind()
-    operation_id = _runner(request).submit(op_kind, snap, requested_by="user")
+    operation_id = _runner(request).submit(op_kind, snap, requested_by=caller())
     return dto.OperationAccepted(id=operation_id, kind=op_kind, state="queued")
 
 

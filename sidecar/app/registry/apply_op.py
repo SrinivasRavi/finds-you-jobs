@@ -29,6 +29,7 @@ from sidecar.packages.jobapplier import (
     PageState,
     UrlPolicy,
     classify,
+    is_closed_target,
     observe,
     run_apply,
     submit_application,
@@ -49,6 +50,7 @@ from .applier_window import (
     BrowserMissingError,
     window_for,
 )
+from .autonomy import NotAuthorized, authorize
 from .engines import EngineNotConfiguredError
 from .operations import OperationContext, OperationOutcome
 from .pdf import render_resume_pdf_async
@@ -107,6 +109,14 @@ def _apply(ctx: OperationContext) -> OperationOutcome:
     application_id = str(ctx.input_snapshot.get("application_id", ""))
     if not application_id:
         raise ValueError("apply requires application_id")
+    # A background apply runs only with Submit autopilot on (section 8.10).
+    try:
+        authorize(ctx.db, "apply", ctx.requested_by)
+    except NotAuthorized as exc:
+        run_id = str(ctx.input_snapshot.get("run_id") or "")
+        if run_id:
+            finalize_run_failed(ctx.db, run_id, exc.reason)
+        raise
 
     control = APPLY_CONTROL.setdefault(ctx.operation_id, ApplyControl())
     # F-M7: a runner-level cancel can land in the window between dispatch and
@@ -158,6 +168,9 @@ def has_application_profile(repos: Any) -> bool:
 
     profile = repos.profile.get_current()
     return profile is not None and details_confirmed(profile.application_profile)
+
+
+_WINDOW_CLOSED = "the Applier window was closed before the run finished"
 
 
 def _run_dir(run_id: str) -> Path:
@@ -295,6 +308,12 @@ async def _apply_async(
             if is_browser_missing(str(exc)):
                 raise BrowserMissingError(BROWSER_MISSING_DETAIL) from exc
             raise
+        close_after = ctx.input_snapshot.get("dev_close_tab_after_s") if dev else None
+        if close_after is not None:
+            # The e2e's stand-in for the user closing the window mid-run (AUD-10).
+            asyncio.get_running_loop().call_later(
+                float(close_after), lambda: asyncio.ensure_future(page.close())
+            )
         try:
             try:
                 await render_resume_pdf_async(
@@ -339,6 +358,12 @@ async def _apply_async(
                 control,
                 policy=UrlPolicy(allow_local=allow_local),
             )
+            if result.status is ApplyStatus.READY_FOR_HUMAN and _submits_on_autopilot(db, result):
+                # Submit autopilot (section 8.10): a clean fill submits once, through the
+                # same settle-by-reading path as the user's own request. Doubt or a missed
+                # button falls through to the review window, for the user.
+                if await _run_submit(ctx, run_id, page, by="autopilot"):
+                    review_wait_s = 0
             if result.status is ApplyStatus.READY_FOR_HUMAN and review_wait_s > 0:
                 # The row stays `running` while the tab is held, so the panel needs the
                 # fill's outcome now, not once the window ends (audit A22).
@@ -379,6 +404,18 @@ async def _apply_async(
                     blockers=[
                         {"kind": "browser_missing", "detail": str(exc), "field_label": ""}
                     ],
+                )
+            elif is_closed_target(exc):
+                finalize_run_interrupted(
+                    db,
+                    run_id,
+                    _WINDOW_CLOSED,
+                    blockers=[{"kind": "window_closed", "detail": "", "field_label": ""}],
+                )
+                # The user closed it: a worded outcome, not a raw exception in the ledger.
+                return OperationOutcome(
+                    result_ref={"run_id": run_id, "status": "interrupted"},
+                    error=_WINDOW_CLOSED,
                 )
             else:
                 finalize_run_failed(db, run_id, f"{type(exc).__name__}: {exc}")
@@ -475,27 +512,39 @@ def _persist_event(ctx: OperationContext, run_id: str, event: ApplyEvent) -> Non
             repos.apply_runs.update(run_id, **fields)
 
 
-async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> bool:
-    """Click Submit once, because the USER asked (S-A5). The agent cannot reach
-    this: `submit_application` sits outside the model's tool vocabulary and the
-    only caller is the request the human made from the review surface. The
-    outcome is recorded verbatim, including a failure, and the confirmation
-    poll below keeps running either way."""
-    outcome = await submit_application(page)
+async def _run_submit(
+    ctx: OperationContext, run_id: str, page: Any, *, by: str = "user"
+) -> bool:
+    """Click Submit once, because the user asked (S-A5) or Submit autopilot is on
+    (`by="autopilot"`, section 8.10). The agent cannot reach this:
+    `submit_application` sits outside the model's tool vocabulary. The outcome is
+    recorded verbatim, including a failure, and the confirmation poll below keeps
+    running either way."""
     db = ctx.db
     assert db is not None
+    with db.repos() as repos:
+        prior = repos.apply_runs.get(run_id)
+    after_doubt = prior is not None and prior.submit_evidence == "unconfirmed"
+    outcome = await submit_application(page, after_doubt=after_doubt)
+    # The proof first, then 1 write: a run never reads "submitted" without it.
+    shot = await _post_submit_shot(run_id, page) if outcome.confirmed else None
     with db.repos() as repos:
         fields: dict[str, Any] = {"summary": outcome.note}
         if outcome.final_url:
             fields["final_url"] = outcome.final_url
         if outcome.confirmed:
             fields["status"] = "submitted"
-            fields["submit_evidence"] = "user_submitted"
+            fields["submit_evidence"] = f"{by}_submitted"
+            current = repos.apply_runs.get(run_id)
+            if shot and current is not None:
+                fields["screenshots"] = list(current.screenshots) + [shot]
+        elif outcome.unconfirmed:
+            fields["submit_evidence"] = "unconfirmed"
         repos.apply_runs.update(run_id, **fields)
         if outcome.confirmed:
             run = repos.apply_runs.get(run_id)
             if run is not None:
-                advance_card_to_applied(repos, run.application_id, by="user_submitted")
+                advance_card_to_applied(repos, run.application_id, by=f"{by}_submitted")
     if ctx.publish is not None:
         ctx.publish(
             make_event(
@@ -504,8 +553,10 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
                     "run_id": run_id,
                     "operation_id": ctx.operation_id,
                     "event": "apply.user_submitted",
+                    "by": by,
                     "clicked": outcome.clicked,
                     "confirmed": outcome.confirmed,
+                    "unconfirmed": outcome.unconfirmed,
                     "note": outcome.note,
                 },
             )
@@ -513,19 +564,23 @@ async def _run_user_submit(ctx: OperationContext, run_id: str, page: Any) -> boo
     return outcome.confirmed
 
 
-async def _save_post_submit_shot(ctx: OperationContext, run_id: str, page: Any) -> None:
+def _submits_on_autopilot(db: Database, result: ApplyResult) -> bool:
+    """Submit autopilot is on, and the fill left nothing for the user: no blocker
+    and no field that failed."""
+    if result.blockers or not all(f.ok for f in result.fields):
+        return False
+    with db.repos() as repos:
+        return repos.preferences.get_or_create().autopilot_apply
+
+
+async def _post_submit_shot(run_id: str, page: Any) -> str | None:
     """The confirmation page, kept as the run's evidence that it was sent."""
     shot = _run_dir(run_id) / "screenshots" / "post-submit.png"
     try:
         await page.screenshot(path=str(shot))
     except Exception:
-        return
-    db = ctx.db
-    assert db is not None
-    with db.repos() as repos:
-        run = repos.apply_runs.get(run_id)
-        if run is not None:
-            repos.apply_runs.update(run_id, screenshots=list(run.screenshots) + [str(shot)])
+        return None
+    return str(shot)
 
 
 async def _review_window(
@@ -547,8 +602,7 @@ async def _review_window(
         if page.is_closed():
             return result  # user closed after reviewing; run stays ready_for_human
         if control.take_submit_request():
-            if await _run_user_submit(ctx, run_id, page):
-                await _save_post_submit_shot(ctx, run_id, page)
+            if await _run_submit(ctx, run_id, page):
                 return result  # sent and confirmed; nothing left to watch for
             continue
         try:
@@ -556,14 +610,17 @@ async def _review_window(
         except Exception:
             return result
         if PageState.CONFIRMATION in classify(obs):
-            await _save_post_submit_shot(ctx, run_id, page)
+            shot = await _post_submit_shot(run_id, page)
             db = ctx.db
             assert db is not None
             with db.repos() as repos:
+                run = repos.apply_runs.get(run_id)
+                shots = list(run.screenshots) if run is not None else []
                 repos.apply_runs.update(
                     run_id,
                     submit_evidence="confirmation_detected",
                     final_url=obs.url,
+                    screenshots=shots + [shot] if shot else shots,
                 )
             if ctx.publish is not None:
                 ctx.publish(
@@ -609,20 +666,24 @@ def finalize_run_failed(
         )
 
 
-def finalize_run_interrupted(db: Database, run_id: str, summary: str) -> None:
+def finalize_run_interrupted(
+    db: Database, run_id: str, summary: str, *, blockers: list[dict[str, str]] | None = None
+) -> None:
     """Land the run row `interrupted` when a queued `apply` op is cancelled before
-    its entrypoint runs; otherwise it stays active and Apply keeps returning it.
-    Guarded to active rows, so a no-op if the entrypoint finalized it first."""
+    its entrypoint runs, or its window closed; otherwise it stays active and Apply
+    keeps returning it. Guarded to active rows, so a no-op if finalized first."""
     with db.repos() as repos:
         run = repos.apply_runs.get(run_id)
         if run is None or run.status not in APPLY_RUN_ACTIVE_STATUSES:
             return
+        fields: dict[str, Any] = {} if blockers is None else {"blockers": blockers}
         repos.apply_runs.update(
             run_id,
             status="interrupted",
             phase="interrupted",
             summary=summary,
             ended_at=now_utc(),
+            **fields,
         )
 
 

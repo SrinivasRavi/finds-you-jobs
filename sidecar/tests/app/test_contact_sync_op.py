@@ -251,6 +251,18 @@ def test_batch_failure_does_not_kill_tick(db: Database) -> None:
     assert ref["unprobed"] == 1
 
 
+def test_a_failed_batch_says_what_the_router_made_of_it(db: Database) -> None:
+    """The router's label used to reach only a log line. It rides the result now,
+    and the Networking header words it (`syncStoppedKey`)."""
+    _make_contact(db, status="sent", sent_at=now_utc())
+    drv = FakeVoyagerDriver(raise_on="contact_sync_states",
+                            error=NetworkerError("voyager", "TimeoutError: lane deadline"))
+    cs.DRIVER_FACTORY = lambda tier: drv
+    ref = _nn(cs.contact_sync_entrypoint(_ctx(db)).result_ref)
+    assert ref["stopped"] == "batch_failed"
+    assert ref["diagnosis"] == "transient"
+
+
 def test_per_contact_probe_failure_does_not_kill_sweep(db: Database) -> None:
     """A 403/404-class miss on one contact skips THAT contact only — the rest
     of the one-session sweep still probes and transitions (error isolation),

@@ -73,11 +73,14 @@ def build() -> None:
         geonameid, name, ascii_name, alt = f[0], f[1], f[2], f[3]
         country, admin1, admin2, population = f[8], f[10], f[11], f[14]
         cities.append(f"{geonameid}\t{name}\t{admin1}\t{country}\t{population}\t{admin2}")
-        keys = {fold(name), fold(ascii_name)}
-        if int(population or 0) >= ALIAS_POPULATION_FLOOR:
-            keys.update(fold(a) for a in alt.split(",") if a)
+        big = int(population or 0) >= ALIAS_POPULATION_FLOOR
+        names = {fold(name), fold(ascii_name)}
+        keys = names | ({fold(a) for a in alt.split(",") if a} if big else set())
         for key in sorted(keys):
-            if MIN_ALIAS < len(key) < MAX_ALIAS and LATIN.match(key):
+            # A 3-letter own name counts for a big city (Ufa, Hue); a town's would
+            # read words as places (backlog S-C76).
+            short = len(key) == MIN_ALIAS and big and key in names
+            if (short or MIN_ALIAS < len(key) < MAX_ALIAS) and LATIN.match(key):
                 aliases.append(f"{key}\t{geonameid}")
 
     admin1_rows = [

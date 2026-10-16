@@ -28,6 +28,15 @@ def _word(haystack: str, *words: str) -> bool:
     return False
 
 
+_IC_ROLES = ("engineer", "developer", "swe", "sde", "programmer", "scientist",
+             "designer", "architect", "analyst", "consultant", "specialist")
+# "Lead" up to 2 words before an IC role is a senior IC ("Lead Data Scientist"),
+# not a hiring manager; "Team Lead" and "Tech Lead" still lead people.
+_IC_LEAD = re.compile(
+    r"(?<![a-z0-9])lead\s+(?:[a-z-]+\s+){0,2}(?:" + "|".join(_IC_ROLES) + r")(?![a-z0-9])"
+)
+
+
 # Ordered most-specific-first: recruiter, then leadership, then hiring manager,
 # then peer (IC). First match wins; unmatched → OTHER (US-REF-02).
 def tag_audience(title: str, headline: str = "") -> Audience:
@@ -45,10 +54,11 @@ def tag_audience(title: str, headline: str = "") -> Audience:
              "co-founder", "president", "vp", "svp", "evp", "vice president",
              "head", "director", "partner"):
         return Audience.LEADERSHIP
-    if _word(hay, "manager", "lead", "em", "supervisor") or "hiring manager" in hay:
+    if _word(hay, "manager", "em", "supervisor") or "hiring manager" in hay:
         return Audience.HM
-    if _word(hay, "engineer", "developer", "swe", "sde", "programmer", "scientist",
-             "designer", "architect", "analyst", "consultant", "specialist"):
+    if _word(hay, "lead") and not _IC_LEAD.search(hay):
+        return Audience.HM
+    if _word(hay, *_IC_ROLES):
         return Audience.PEER
     return Audience.OTHER
 

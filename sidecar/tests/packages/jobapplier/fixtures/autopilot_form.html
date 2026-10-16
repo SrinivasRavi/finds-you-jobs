@@ -1,0 +1,35 @@
+<!-- finds-you-jobs — AGPL-3.0-only. Fixture: a prefilled application form that
+     confirms at once on Submit, for Submit autopilot (audit-2026-10-14.md
+     section 8.10). `window.__submits` counts the clicks, so a test can prove
+     autopilot clicked exactly once. Local only, no network. -->
+<!DOCTYPE html>
+<html>
+<head><title>Apply — Staff Engineer at Initech</title></head>
+<body>
+  <h1>Apply for Staff Engineer</h1>
+  <div id="page">
+  <form id="application" onsubmit="return handle(event)">
+    <label for="name">Full name</label>
+    <input id="name" name="name" type="text" value="Ada Lovelace" />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" value="ada@example.com" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <button type="submit">Submit application</button>
+  </form>
+  </div>
+  <script>
+    window.__submits = 0;
+    function handle(e) {
+      e.preventDefault();
+      window.__submits += 1;
+      document.getElementById('page').innerHTML =
+        '<h2>Application received</h2><p>Submissions: ' + window.__submits + '</p>';
+      return false;
+    }
+  </script>
+</body>
+</html>

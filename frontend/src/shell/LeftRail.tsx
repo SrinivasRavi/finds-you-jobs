@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 
 import logoUrl from "../assets/logo.png";
 import { useLinkedInSession } from "../api/queries";
+import { ChatRailButton } from "./ChatDrawer";
 import { Icon } from "./icons";
 
 type IconName =
@@ -106,6 +107,9 @@ export function LeftRail() {
         ))}
       </ul>
       <ul className="flex flex-col items-center gap-1 pb-1" role="list">
+        <li>
+          <ChatRailButton />
+        </li>
         {BOTTOM.map((it) => (
           <li key={it.to}>
             <Tile {...it} />

@@ -236,3 +236,43 @@ test("the salary chips say they keep a range that reaches the line (audit A11)",
   await expect(group).toHaveAttribute("title", /\$80k to \$120k stays at \$100k\+/);
   await group.screenshot({ path: `${DIR}/salary-chips.png` });
 });
+
+test("a posting whose board dropped it reads No longer listed, on the board and in the tracker (audit 8.7)", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  const job = await (
+    await request.post(`${base}/api/jobs`, {
+      headers: auth,
+      data: {
+        canonical_url: "https://example.com/e2e-closed-posting",
+        title: "Closed Posting Engineer",
+        company: "Initrode",
+        location: "Remote",
+        description: "This posting closes before the user gets to it.",
+        source_adapter: "paste-url",
+      },
+    })
+  ).json();
+  const closed = await request.post(`${base}/api/dev/jobs/${job.id}/close`, { headers: auth });
+  expect(closed.status(), await closed.text()).toBe(200);
+
+  await page.goto("/jobs");
+  const row = page.getByTestId("job-row").filter({ hasText: "Closed Posting Engineer" });
+  await expect(row.getByTestId("closed-label")).toHaveText("No longer listed", { timeout: 15_000 });
+  await expect(row.getByTestId("expired-label")).toHaveCount(0);
+  await page.screenshot({ path: `${DIR}/board-no-longer-listed.png`, fullPage: true });
+
+  const seeded = await (await request.post(`${base}/api/dev/seed-application`, { headers: auth })).json();
+  await request.post(`${base}/api/dev/jobs/${seeded.job_id}/close`, { headers: auth });
+  await page.goto("/applications");
+  await page.getByTestId("tracker-card").filter({ hasText: "Dev Sample Engineer" }).first().click();
+  await expect(page.getByTestId("posting-closed-note")).toBeVisible();
+  await page.screenshot({ path: `${DIR}/tracker-posting-closed.png`, fullPage: true });
+});

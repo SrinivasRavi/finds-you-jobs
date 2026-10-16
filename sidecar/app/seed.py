@@ -71,6 +71,13 @@ def seed_defaults(db: Database) -> None:
                 "cleanup_trash", 1440,
                 next_due_at=now_utc() + timedelta(days=1), enabled=True,
             )
+        # The autopilot tick (audit-2026-10-14.md section 8.10). Seeded enabled:
+        # with every autopilot switch off, a tick reads settings and enqueues nothing.
+        if "autopilot" not in existing:
+            repos.schedules.create(
+                "autopilot", 30,
+                next_due_at=now_utc() + timedelta(minutes=30), enabled=True,
+            )
         # US-NW-12 / FR-NW-15: contact sync is no longer scheduled. A 12 h timer touched
         # LinkedIn with nobody present, breaking "every LinkedIn action is user-initiated"
         # (linkedin-addon.md section 5). The Sync button is the only trigger. Existing

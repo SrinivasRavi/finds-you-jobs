@@ -26,7 +26,10 @@ class _FakeSession:
     def __init__(self, **kwargs):  # noqa: D401 — mirrors AccountSession's ctor
         pass
 
-    def run_browser(self, action):
+    timeouts: list[float | None] = []
+
+    def run_browser(self, action, timeout_s=None):
+        _FakeSession.timeouts.append(timeout_s)
         # The action-on-the-lane bridge (broker-backed) / inline self-launch:
         # the fake just runs the (monkeypatched) action inline, like the legacy
         # self-launch path does when no broker surface is provided.
@@ -186,6 +189,42 @@ def test_dm_unproven_send_stays_charged(tmp_path, fake_browser, no_jitter, monke
     assert Pacer(resolve_profile(None), state_dir=tmp_path).remaining()["dm_daily_sent"] == 1
 
 
+def test_dm_lane_deadline_is_sized_from_the_message(tmp_path, fake_browser, no_jitter, monkeypatch):
+    """A flat 45 s fired mid-type on a 262-char DM, which sent anyway and was logged
+    failed (architecture-audit-2026-10-14.md 4.1). The deadline grows with the text."""
+    monkeypatch.setattr(actions, "send_dm", lambda s, p, m, on_step=None: True)
+    _FakeSession.timeouts.clear()
+    worker.send_dm("someone", "hi", state_dir=str(tmp_path))
+    worker.send_dm("someone", "x" * 524, state_dir=str(tmp_path))
+    short, long = _FakeSession.timeouts
+    assert short == pytest.approx(session.typed_action_timeout_s("hi"))
+    # 84 s is the measured mean typing time for 524 characters.
+    assert long is not None and long > 84.0 + session.LANE_TIMEOUT_S
+
+
+def test_discover_drives_each_step_through_its_own_lane_action(
+    tmp_path, fake_browser, monkeypatch
+):
+    """Discover hands `run_browser` to the walk, so the search and each candidate are
+    separate lane actions with the default deadline, never 1 action for the lot."""
+    from sidecar.packages.referral_outreach.upstream import discovery
+
+    urls = [f"https://www.linkedin.com/in/p-{i}" for i in range(3)]
+    monkeypatch.setattr(discovery, "search_candidates", lambda *a, **k: urls)
+    monkeypatch.setattr(
+        discovery,
+        "enrich_candidate",
+        lambda _s, url, pid, _u: {"public_identifier": pid, "url": url, "connection_degree": 1},
+    )
+    monkeypatch.setattr(discovery, "_enrich_pause", lambda: None)
+    _FakeSession.timeouts.clear()
+    out = worker.discover(
+        "Acme", limit=10, state_dir=str(tmp_path), company_urn="urn:li:fsd_company:1"
+    )
+    assert out["ok"] and out["count"] == 3
+    assert _FakeSession.timeouts == [None, None, None, None]
+
+
 # ── job search: the package-owned 25 ceiling ─────────────────────────────────
 
 
@@ -210,7 +249,7 @@ class _FakeSearchSession:
     def ensure_browser(self) -> None:
         pass
 
-    def run_browser(self, action):
+    def run_browser(self, action, timeout_s=None):
         return action()
 
     def close(self) -> None:

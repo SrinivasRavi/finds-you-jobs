@@ -602,6 +602,59 @@ test("a budget-stopped sync shows the warn note inside the Sync button", async (
   await request.post(`${base}/api/linkedin/disconnect`, { headers: auth });
 });
 
+// A failed sync batch says what the exception router made of it, which used to
+// reach only a log line (architecture-audit-2026-10-14.md section 4.4). Injected at
+// the network edge; the sidecar side is test_contact_sync_op.py.
+test("a failed sync batch names the cause inside the Sync button", async ({
+  page,
+  request,
+}) => {
+  const { base, token } = sidecarInfo();
+  const auth = { Authorization: `Bearer ${token}` };
+  await request.post(`${base}/api/profile`, {
+    headers: auth,
+    data: { resume_markdown: "# E2E Candidate\n\nBackend engineer." },
+  });
+  await request.post(`${base}/api/settings`, {
+    headers: auth,
+    data: { voyager_risk_marker_on: true },
+  });
+  const marked = await request.post(`${base}/api/dev/linkedin/mark-session-valid`, {
+    headers: auth,
+  });
+  expect(marked.ok()).toBeTruthy();
+
+  await page.route("**/api/linkedin/session", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const res = await route.fetch();
+    const body = (await res.json()) as Record<string, unknown>;
+    Object.assign(body, {
+      contact_sync_last_outcome: {
+        at: new Date().toISOString(),
+        synced: 0,
+        failed: 0,
+        stopped: "batch_failed",
+        unprobed: 3,
+        diagnosis: "account_wall",
+      },
+    });
+    await route.fulfill({ response: res, body: JSON.stringify(body) });
+  });
+
+  await page.goto("/networking");
+  await expect(page.getByTestId("networking-kanban")).toBeVisible({ timeout: 15_000 });
+  const note = page.getByTestId("sync-stopped-note");
+  await expect(note).toBeVisible();
+  await expect(note).toHaveAttribute(
+    "title",
+    /LinkedIn wants you to verify the account, open LinkedIn to clear it · 3 not checked/,
+  );
+  await page.screenshot({ path: `${DIR}/sync-stopped-diagnosis.png`, fullPage: true });
+
+  await page.unrouteAll();
+  await request.post(`${base}/api/linkedin/disconnect`, { headers: auth });
+});
+
 // A voyager read refusal must render as "Search paused by your rate limits"
 // with the pacer's reason, never as "No contacts found" (the Kaseya 2026-08-15
 // bug). The sidecar side is pytest-covered (test_networker_ops_n3.py); here the

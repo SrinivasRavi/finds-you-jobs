@@ -46,6 +46,7 @@ def enqueue_packet(
     resume: bool,
     cover: bool,
     guidance: str = "",
+    requested_by: str = "user",
 ) -> list[str]:
     """Enqueue the requested packet operations. Returns the operation ids."""
     with db.repos() as repos:
@@ -65,7 +66,7 @@ def enqueue_packet(
             "guidance": guidance,
             "profile_version": profile_version,
         }
-        op_id = runner.submit(op_kind, snapshot, requested_by="user")
+        op_id = runner.submit(op_kind, snapshot, requested_by=requested_by)
         op_ids.append(op_id)
         artifact_kind = _ARTIFACT_KIND[op_kind]
         with db.repos() as repos:

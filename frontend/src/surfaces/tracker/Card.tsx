@@ -151,7 +151,15 @@ export const Card = memo(function Card({
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {app.job.score ? (
-          <span className={`text-[11px] font-semibold ${tier?.text}`}>
+          // Keyword reads grey, as on the board: the free floor never wears a
+          // paid score's colour.
+          <span
+            data-testid="card-score"
+            data-method={app.job.score.method}
+            className={`text-[11px] font-semibold ${
+              app.job.score.method === "keyword" ? "text-ink-3" : tier?.text
+            }`}
+          >
             {app.job.score.score_0_100}
           </span>
         ) : app.origin === "manual" ? (

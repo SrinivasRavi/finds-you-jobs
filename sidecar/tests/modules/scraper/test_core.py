@@ -293,3 +293,22 @@ def test_portals_config_errors_are_typed_and_verbatim(tmp_path):
 
     with pytest.raises(ScraperError):
         load_portals(tmp_path / "missing.toml")
+
+
+def test_smartrecruiters_links_key_to_the_shape_the_site_serves() -> None:
+    """Audit 2026-10-14 section 8.4: `/postings/<id>` is a 404 on the live site,
+    and a pasted `/<id>-<title>` link is the same job as a scanned one."""
+    from sidecar.modules.scraper.canonical import canonicalize_url
+
+    want = "https://jobs.smartrecruiters.com/Continental/744000155086199"
+    for url in (
+        "https://jobs.smartrecruiters.com/Continental/postings/744000155086199",
+        "https://jobs.smartrecruiters.com/Continental/744000155086199",
+        "https://jobs.smartrecruiters.com/Continental/744000155086199-bestdrive-sales-associate",
+        "https://careers.smartrecruiters.com/Continental/744000155086199?trid=x",
+    ):
+        assert canonicalize_url(url) == want, url
+    # A company page is not a posting and keeps its path.
+    assert canonicalize_url("https://jobs.smartrecruiters.com/Continental") == (
+        "https://jobs.smartrecruiters.com/Continental"
+    )

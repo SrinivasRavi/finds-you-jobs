@@ -14,6 +14,7 @@ from ..db.base import now_utc
 from ..db.models import OP_ACTIVE_STATES
 from ..logging_setup import get_logger
 from ..registry import networker_ops as networker_ops
+from ..registry.autonomy import caller
 from ..registry.company_anchor import resolution_key
 from ..registry.contact_sync_op import payload_with_status_meta
 from ..registry.linkedin_op import (
@@ -334,9 +335,6 @@ def discover_referrals(
     snapshot: dict[str, Any] = {
         "company": company, "job_id": job_id, "limit": max(1, payload.limit),
         "page": max(1, payload.page),
-        # The explicit user-initiated marker the presence gate reads (invariant
-        # 3): this discover was triggered by a human clicking, never a timer.
-        "user_initiated": True,
     }
     if payload.company_urn:
         snapshot["company_urn"] = payload.company_urn
@@ -345,7 +343,7 @@ def discover_referrals(
         snapshot["company_industry"] = payload.company_industry or ""
     if payload.company_url:
         snapshot["company_url"] = payload.company_url
-    operation_id = _runner(request).submit("discover", snapshot, requested_by="user")
+    operation_id = _runner(request).submit("discover", snapshot, requested_by=caller())
     return dto.OperationAccepted(id=operation_id, kind="discover", state="queued")
 
 
@@ -358,7 +356,7 @@ def draft_referral(
     with _db(request).repos() as repos:
         _found(repos.contacts.get(contact_id), "contact", contact_id)
     operation_id = _runner(request).submit(
-        "draft", {"contact_id": contact_id, "job_id": job_id}, requested_by="user"
+        "draft", {"contact_id": contact_id, "job_id": job_id}, requested_by=caller()
     )
     return dto.OperationAccepted(id=operation_id, kind="draft", state="queued")
 
@@ -414,10 +412,7 @@ def reach_out(request: Request, payload: dto.ReachOutRequest) -> dto.ReachOutRes
                 "batch_id": batch_id,
                 "message": c.message,
                 "dry_run": payload.dry_run,
-                # The user clicked "Send now": the marker the presence gate reads
-                # (invariant 3), so a background caller can never start a send.
-                "user_initiated": True,
-            }, requested_by="user")
+            }, requested_by=caller())
         )
     return dto.ReachOutResult(enqueued=enqueued, skipped_contact_ids=skipped)
 
@@ -457,7 +452,7 @@ def networking_contact_sync(request: Request) -> dto.ContactSyncAccepted:
     if in_flight:
         return dto.ContactSyncAccepted(state="already_running")
 
-    operation_id = _runner(request).submit("contact_sync", {}, requested_by="user")
+    operation_id = _runner(request).submit("contact_sync", {}, requested_by=caller())
     return dto.ContactSyncAccepted(id=operation_id, state="queued")
 
 
@@ -494,6 +489,7 @@ def _linkedin_session_base(repos: Any) -> tuple[dto.LinkedInSessionDTO, Any]:
                 failed=int(ref.get("failed") or 0),
                 stopped=str(ref.get("stopped") or ""),
                 unprobed=int(ref.get("unprobed") or 0),
+                diagnosis=str(ref.get("diagnosis") or ""),
             )
     return base, profile
 
@@ -558,7 +554,7 @@ def linkedin_connect(
         snap["login_url"] = payload.login_url
     if payload is not None and payload.timeout_s:
         snap["timeout_s"] = payload.timeout_s
-    operation_id = _runner(request).submit("linkedin_login", snap, requested_by="user")
+    operation_id = _runner(request).submit("linkedin_login", snap, requested_by=caller())
     return dto.OperationAccepted(id=operation_id, kind="linkedin_login", state="queued")
 
 
@@ -605,7 +601,7 @@ def linkedin_search(
                    "reset, or raise it in Settings › LinkedIn self-imposed rate limits.",
         )
     operation_id = _runner(request).submit(
-        "linkedin_search", {"mode": mode}, requested_by="user"
+        "linkedin_search", {"mode": mode}, requested_by=caller()
     )
     return dto.OperationAccepted(id=operation_id, kind="linkedin_search", state="queued")
 
@@ -762,9 +758,6 @@ def view_browser_page(
     snapshot: dict[str, Any] = {
         "url": url,
         "surface": payload.surface or "default",
-        # The click IS the presence (invariant 3) — only this route sets it,
-        # and the generic enqueue refuses the kind.
-        "user_initiated": True,
     }
     if (
         isinstance(payload.width, int)
@@ -774,5 +767,5 @@ def view_browser_page(
         snapshot.update(width=payload.width, height=payload.height, dpr=payload.dpr)
     if payload.contact_id:
         snapshot["contact_id"] = payload.contact_id
-    operation_id = _runner(request).submit("view_page", snapshot, requested_by="user")
+    operation_id = _runner(request).submit("view_page", snapshot, requested_by=caller())
     return dto.OperationAccepted(id=operation_id, kind="view_page", state="queued")

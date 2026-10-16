@@ -38,6 +38,10 @@ class OperationContext:
     # raising `CompletionCancelled`. None when the runner predates the token
     # (fake-entrypoint tests) — treat as never cancelled.
     cancelled: Callable[[], bool] | None = None
+    # The op row's `requested_by`: "user" for a click, "app" for the scheduler and
+    # the autopilot. `autonomy.authorize` reads it. "app" by default, so a caller
+    # that forgets it is refused, never trusted.
+    requested_by: str = "app"
 
 
 @dataclass
@@ -207,6 +211,10 @@ def scan_entrypoint(ctx: OperationContext) -> OperationOutcome:
         prefs = resolve_scan_prefs(snap)
     result = scan(portals, prefs=prefs)
     result_ref = persist_scan(ctx.db, result)
+    # Every scan also reads the pages no complete board vouches for, 1 a day each.
+    from .liveness import check_due
+
+    result_ref["liveness"] = check_due(ctx.db)
     record_brave_usage(ctx.db, result_ref)
     return OperationOutcome(result_ref=result_ref, usage=scan_usage(result))
 
@@ -880,7 +888,7 @@ def extract_entrypoint(ctx: OperationContext) -> OperationOutcome:
 # ops a cancel can reach (F-M7). Next to the registry so a new kind faces the
 # question. `apply` checks once at dispatch; its real cancel is the apply-run
 # route. Queued ops of any kind stay cancellable.
-CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover"})
+CANCELLABLE_RUNNING_KINDS: frozenset[str] = frozenset({"score", "tailor", "cover", "chat"})
 
 
 def default_operation_registry() -> OperationRegistry:
@@ -890,6 +898,8 @@ def default_operation_registry() -> OperationRegistry:
     # the networking package's playwright import cost unless a networking kind is
     # actually wired.
     from .apply_op import apply_entrypoints
+    from .autopilot_op import autopilot_entrypoint
+    from .chat_op import chat_entrypoint
     from .contact_sync_op import contact_sync_entrypoints
     from .linkedin_op import linkedin_entrypoints
     from .networker_ops import networker_entrypoints
@@ -908,6 +918,8 @@ def default_operation_registry() -> OperationRegistry:
             **contact_sync_entrypoints(),  # contact_sync
             **apply_entrypoints(),  # apply (the Applier agent)
             **view_page_entrypoints(),  # view_page (queued watch-surface show)
+            "autopilot": autopilot_entrypoint,  # enqueues work the user put on autopilot
+            "chat": chat_entrypoint,  # 1 turn of the chat agent
         },
         services={"score": score_service},
     )

@@ -12,8 +12,9 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections.abc import Awaitable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
@@ -57,6 +58,18 @@ class DeciderEngine(Protocol):
     (Option 11) plugs in here."""
 
     def decide(self, obs: Observation, request: ApplyRequest) -> Action: ...
+
+
+def is_closed_target(exc: BaseException) -> bool:
+    """Whether a Playwright error means the page, tab or window was closed."""
+    return type(exc).__name__ == "TargetClosedError" or "has been closed" in str(exc)
+
+
+T = TypeVar("T")
+
+
+class StepTimeout(PlaywrightError):
+    """A page step ran past `ApplyRequest.step_deadline_s` (AUD-12)."""
 
 
 _NO_PROGRESS_OBSERVATIONS = 3  # materially identical observations in a row
@@ -132,8 +145,17 @@ class _Run:
         self._phase = phase
         self._emit(ApplyEvent(ApplyEventType.PHASE_CHANGED, {"phase": phase.value}))
 
+    async def _step(self, coro: Awaitable[T]) -> T:
+        """1 page step under its deadline. A page read or an input event has no
+        timeout of its own, so a page that never yields held the run forever."""
+        deadline = self._request.step_deadline_s
+        try:
+            return await asyncio.wait_for(coro, deadline)
+        except TimeoutError as exc:
+            raise StepTimeout(f"a page step ran past its {deadline:.0f}s deadline") from exc
+
     async def _observe(self) -> Observation:
-        obs = await observe(self._page)
+        obs = await self._step(observe(self._page))
         self._executor.bind_observation(obs)
         self._emit(
             ApplyEvent(
@@ -247,14 +269,19 @@ class _Run:
             return await self._run_inner()
         except PlaywrightError as exc:
             # The human closed the browser, or the page died mid-action. Not a
-            # success, not a lie — an interruption (section 8.3).
-            self._emit(ApplyEvent(ApplyEventType.INTERRUPTED, {"reason": str(exc)}))
-            self._set_phase(ApplyPhase.INTERRUPTED)
-            return self._result(
-                ApplyStatus.INTERRUPTED,
-                "the browser closed or the page died before the run finished",
-                None,
+            # success, not a lie — an interruption (section 8.3), coded so the
+            # panel says it in words (AUD-10).
+            closed = is_closed_target(exc)
+            kind = "window_closed" if closed else "page_died"
+            summary = (
+                "the Applier window was closed before the run finished"
+                if closed
+                else "the page stopped responding before the run finished"
             )
+            self._blockers.append(Blocker(kind=kind, detail=summary))
+            self._emit(ApplyEvent(ApplyEventType.INTERRUPTED, {"reason": kind}))
+            self._set_phase(ApplyPhase.INTERRUPTED)
+            return self._result(ApplyStatus.INTERRUPTED, summary, None)
 
     async def _run_inner(self) -> ApplyResult:
         self._set_phase(ApplyPhase.OPENING)
@@ -469,7 +496,7 @@ class _Run:
                 )
             )
             try:
-                outcome = await self._executor.execute(action)
+                outcome = await self._step(self._executor.execute(action))
             except StaleElementError as exc:
                 failure_streak += 1
                 self._history.append(f"(stale) {action.tool}: {exc}")

@@ -8,7 +8,7 @@ single session (one short transaction per unit of work — AM4).
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -26,6 +26,8 @@ from .models import (
     ApplicationEvent,
     ApplyRun,
     Artifact,
+    Chat,
+    ChatMessage,
     CompanyResolution,
     Contact,
     Document,
@@ -222,6 +224,15 @@ class OperationsRepo:
             Operation.kind == kind, Operation.state.in_(states)
         )
         return list(self._s.scalars(stmt))
+
+    def count_since(self, kind: str, requested_by: str, since: datetime) -> int:
+        """Ops of `kind` this caller created since `since`: the autopilot's daily cap."""
+        stmt = select(func.count()).select_from(Operation).where(
+            Operation.kind == kind,
+            Operation.requested_by == requested_by,
+            Operation.created_at >= since,
+        )
+        return int(self._s.scalar(stmt) or 0)
 
     def list_for_job(
         self, kind: str, states: Collection[str], job_id: str | None
@@ -481,6 +492,32 @@ class JobsRepo:
         stmt = select(Job).where(Job.id.in_(job_ids))
         return {job.id: job for job in self._s.scalars(stmt)}
 
+    def list_autopilot_targets(self, min_score: int, limit: int) -> list[Job]:
+        """Open, linked jobs at or above `min_score` with no card and no open
+        duplicate pair with a carded job, best first (audit section 8.10)."""
+        carded = select(Application.job_id)
+        open_pair = JobDuplicate.dismissed_at.is_(None)
+        copies = select(JobDuplicate.job_id).where(
+            open_pair, JobDuplicate.other_job_id.in_(carded)
+        ).union(
+            select(JobDuplicate.other_job_id).where(open_pair, JobDuplicate.job_id.in_(carded))
+        )
+        stmt = (
+            select(Job)
+            .where(
+                Job.feed_state == "active",
+                Job.closed_at.is_(None),
+                Job.canonical_url.is_not(None),
+                Job.canonical_url != "",
+                Job.score >= min_score,
+                Job.id.not_in(carded),
+                Job.id.not_in(copies),
+            )
+            .order_by(Job.score.desc(), Job.ingested_at.desc())
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
     def get_by_canonical_url(self, canonical_url: str) -> Job | None:
         if not canonical_url:
             return None
@@ -717,6 +754,49 @@ class JobsRepo:
         job.feed_state = "active"
         return job
 
+    def titles_on_board(self, limit: int = 2000) -> list[str]:
+        """Distinct titles of the jobs on the board, newest first."""
+        stmt = (
+            select(Job.title)
+            .where(Job.feed_state.in_(ON_BOARD_STATES))
+            .group_by(Job.title)
+            .order_by(func.max(Job.ingested_at).desc())
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_by_canonical_urls(self, urls: list[str]) -> list[Job]:
+        if not urls:
+            return []
+        return list(self._s.scalars(select(Job).where(Job.canonical_url.in_(urls))))
+
+    def list_liveness_due(self, checked_before: datetime, limit: int) -> list[Job]:
+        """Jobs with a link that no complete board lists (or hasn't for 2 days: the
+        user may have stopped scanning it), unread since `checked_before`, the
+        never-read first."""
+        stale = checked_before - timedelta(days=1)
+        stmt = (
+            select(Job)
+            .where(
+                Job.canonical_url.is_not(None),
+                Job.source_board.is_(None) | (Job.last_seen_at < stale),
+                Job.feed_state != "removed",
+                (Job.liveness_checked_at.is_(None)) | (Job.liveness_checked_at < checked_before),
+            )
+            .order_by(Job.liveness_checked_at.is_not(None), Job.liveness_checked_at)
+            .limit(limit)
+        )
+        return list(self._s.scalars(stmt))
+
+    def list_open_on_board(self, board: str) -> list[Job]:
+        """Jobs a complete scan last listed on `board` and that aren't closed yet."""
+        stmt = select(Job).where(
+            Job.source_board == board,
+            Job.closed_at.is_(None),
+            Job.feed_state.in_(ON_BOARD_STATES),
+        )
+        return list(self._s.scalars(stmt))
+
     def list_trashed_before(self, cutoff: datetime) -> list[Job]:
         """Trashed rows whose TTL has run out. A row with no `trashed_at` is
         excluded and lazily stamped by the caller, so its clock starts once."""
@@ -884,6 +964,22 @@ class ApplicationsRepo:
             Application.archived_at.is_not(None), Application.archived_at <= cutoff
         )
         return list(self._s.scalars(stmt))
+
+    def list_outreach_targets(self, min_score: int) -> list[tuple[Application, Job]]:
+        """Active cards before the interview stages whose job is open and at or
+        above `min_score`, best first: the autopilot's referral targets."""
+        stmt = (
+            select(Application, Job)
+            .join(Job, Job.id == Application.job_id)
+            .where(
+                Application.archived_at.is_(None),
+                Application.column.in_(("saved", "seeking_referral", "applied")),
+                Job.closed_at.is_(None),
+                Job.score >= min_score,
+            )
+            .order_by(Job.score.desc())
+        )
+        return [(app, job) for app, job in self._s.execute(stmt).tuples()]
 
     def job_ids(self, *, include_archived: bool = True) -> set[str]:
         """The set of job ids that have an Application — i.e. Saved (and later)
@@ -1450,6 +1546,16 @@ class JobDuplicatesRepo:
             )
         ).first()
 
+    def open_partners(self, job_id: str) -> set[str]:
+        """Every job this one is an undismissed probable copy of, from either side."""
+        rows = self._s.scalars(
+            select(JobDuplicate).where(
+                JobDuplicate.dismissed_at.is_(None),
+                or_(JobDuplicate.job_id == job_id, JobDuplicate.other_job_id == job_id),
+            )
+        )
+        return {r.other_job_id if r.job_id == job_id else r.job_id for r in rows}
+
     def record(self, job_id: str, other_ids: list[str]) -> int:
         """Record `job_id` as a probable copy of each of `other_ids`, skipping
         pairs already known from either side. Returns how many were new."""
@@ -1700,6 +1806,49 @@ class ApplyRunsRepo:
         return list(self._s.scalars(stmt))
 
 
+class ChatsRepo:
+    """The chat agent's conversations and their messages, oldest message first."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def create(self, title: str = "") -> Chat:
+        chat = Chat(title=title)
+        self._s.add(chat)
+        self._s.flush()
+        return chat
+
+    def get(self, chat_id: str) -> Chat | None:
+        return self._s.get(Chat, chat_id)
+
+    def list_recent(self, limit: int = 50) -> list[Chat]:
+        stmt = select(Chat).order_by(Chat.updated_at.desc()).limit(limit)
+        return list(self._s.scalars(stmt))
+
+    def add_message(
+        self, chat_id: str, role: str, payload: dict[str, Any],
+        *, operation_id: str | None = None,
+    ) -> ChatMessage:
+        msg = ChatMessage(chat_id=chat_id, role=role, payload=payload, operation_id=operation_id)
+        self._s.add(msg)
+        chat = self._s.get(Chat, chat_id)
+        if chat is not None:
+            chat.updated_at = now_utc()
+        self._s.flush()
+        return msg
+
+    def get_message(self, message_id: str) -> ChatMessage | None:
+        return self._s.get(ChatMessage, message_id)
+
+    def messages(self, chat_id: str) -> list[ChatMessage]:
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.chat_id == chat_id)
+            .order_by(ChatMessage.created_at, ChatMessage.id)
+        )
+        return list(self._s.scalars(stmt))
+
+
 class Repos:
     """One session, every aggregate repo. Feature commits add their repos here."""
 
@@ -1724,6 +1873,7 @@ class Repos:
         self.linkedin_session = LinkedInSessionRepo(session)
         self.linkedin_search_cursor = LinkedInSearchCursorRepo(session)
         self.apply_runs = ApplyRunsRepo(session)
+        self.chats = ChatsRepo(session)
 
     def all_time_cost_totals(self) -> CostTotals:
         """Live-ledger sum + the pruned aggregate = every op ever recorded. The

@@ -83,6 +83,8 @@ const jobBoard = {
     },
     scoring: "scoring…",
     olderListing: "Older listing",
+    noLongerListed: "No longer listed",
+    noLongerListedTitle: "The employer's job board stopped listing this posting, or its page says it's closed. Greyed listings leave the feed about a month later; a saved job stays.",
     olderListingTitle:
       "On your board longer than your feed-aging window (14 days by default — Settings › Privacy & Data). Greyed listings are removed from the feed about a month later; Save the job or use Restore listing to keep it.",
     keywordScoreTitle: "Keyword scoring (free, on your machine) — grey, not an LLM, Jev or Laya score",

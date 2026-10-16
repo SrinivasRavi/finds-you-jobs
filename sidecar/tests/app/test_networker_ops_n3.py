@@ -82,22 +82,17 @@ def wired(migrated_db: Database) -> Iterator[Wired]:  # noqa: F811
 
 def _ctx(
     db: Database, kind: str, snap: dict, *,
-    engine=None, events=None, stamp_user_initiated: bool = True,
+    engine=None, events=None, requested_by: str = "user",
 ) -> OperationContext:
     publish = (lambda e: events.append(e)) if events is not None else None
-    # Stamp the click marker the way every gated route does (the presence gate,
-    # invariant 3, refuses without it) — these tests emulate user-clicked flows.
-    # The gate's own negative tests opt out with stamp_user_initiated=False.
-    if stamp_user_initiated and kind in ("send", "discover"):
-        snap = {"user_initiated": True, **snap}
     # A real Operation row so FK-linked writes (OutreachLog.operation_id) hold,
     # exactly as the runner creates one before dispatching an entrypoint.
     with db.repos() as repos:
-        op = repos.operations.create(kind, snap)
+        op = repos.operations.create(kind, snap, requested_by=requested_by)
         op_id = op.id
     return OperationContext(
         kind=kind, input_snapshot=snap, engine=engine, db=db,
-        operation_id=op_id, publish=publish,
+        operation_id=op_id, publish=publish, requested_by=requested_by,
     )
 
 
@@ -560,6 +555,42 @@ def test_send_failure_records_verbatim_reason_no_flip(wired: Wired) -> None:
         assert "weekly invitation limit" in logs[0].outcome_detail  # verbatim (NFR-SIDE-04)
 
 
+def test_an_unconfirmed_send_is_stored_so_and_the_next_send_reads_first(
+    wired: Wired,
+) -> None:
+    """A send the browser lost mid-way and LinkedIn couldn't be read for is stored
+    `unconfirmed`, never `failed`, and the next send to that contact carries the
+    first attempt's start so the worker reads LinkedIn before typing anything."""
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/raj-io")).id
+    first = FakeVoyagerDriver(dm_result={
+        "op": "send-dm", "ok": False, "sent": False, "error": "unconfirmed",
+        "reason": "The browser failed mid-send and LinkedIn couldn't be read to check.",
+    })
+    ops.DRIVER_FACTORY = lambda tier: first
+    ctx = _ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Raj!"})
+    with wired.db.repos() as repos:
+        started = now_utc() - timedelta(minutes=3)
+        _nn(repos.operations.get(_nn(ctx.operation_id))).started_at = started
+    ops.send_entrypoint(ctx)
+    assert first.unconfirmed_since == [None]
+    with wired.db.repos() as repos:
+        logs = repos.outreach_logs.list_for_contact(cid)
+        assert [log.outcome for log in logs] == ["unconfirmed"]
+
+    second = FakeVoyagerDriver()
+    ops.DRIVER_FACTORY = lambda tier: second
+    ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Raj!"}))
+    assert second.unconfirmed_since == [pytest.approx(started.timestamp())]
+
+    third = FakeVoyagerDriver()
+    ops.DRIVER_FACTORY = lambda tier: third
+    ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Again"}))
+    assert third.unconfirmed_since == [None]  # the last attempt settled as sent
+
+
 def test_send_cap_refusal_surfaces_reason_not_code(wired: Wired) -> None:
     """A cap/backoff refusal carries BOTH the `cap_or_backoff` code and an
     explanatory reason — the log and result_ref must surface the reason, not
@@ -619,6 +650,30 @@ def test_send_raised_error_still_writes_outreach_log(wired: Wired) -> None:
     assert any(e["payload"]["phase"] == "send_failed" for e in events)
 
 
+def test_a_playwright_timeout_mid_send_still_writes_outreach_log(wired: Wired) -> None:
+    # 2026-10-16 live: an overlay covered Connect, `Locator.click` timed out, and
+    # Playwright's TimeoutError is none of NetworkerError, OSError or RuntimeError.
+    # It escaped with no OutreachLog, and the autopilot then waited on the
+    # contact for good ("a send ran and wrote no log yet").
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
+    _seed(wired, with_job=False)
+    with wired.db.repos() as repos:
+        cid = _nn(repos.contacts.get_by_url("https://www.linkedin.com/in/lee-tech")).id
+    verbatim = "Locator.click: Timeout 30000ms exceeded."
+    ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
+        raise_on="send_connection", error=PlaywrightTimeoutError(verbatim),
+    )
+    with pytest.raises(PlaywrightTimeoutError):
+        ops.send_entrypoint(_ctx(wired.db, "send", {"contact_id": cid, "message": "Hi Lee"}))
+    with wired.db.repos() as repos:
+        logs = repos.outreach_logs.list_for_contact(cid)
+        assert len(logs) == 1
+        assert logs[0].outcome == "failed"
+        assert verbatim in logs[0].outcome_detail
+
+
 def test_send_dry_run_plans_without_flip(wired: Wired) -> None:
     ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
     _seed(wired, with_job=False)
@@ -657,8 +712,8 @@ def _enqueue_batch(w: Wired, contact_ids: list[str], batch_id: str) -> list[str]
         for cid in contact_ids:
             op = repos.operations.create("send", {
                 "contact_id": cid, "job_id": w.job_id, "application_id": w.app_id,
-                "batch_id": batch_id, "message": "Hi", "user_initiated": True,
-            })
+                "batch_id": batch_id, "message": "Hi",
+            }, requested_by="user")
             op_ids.append(op.id)
     return op_ids
 
@@ -679,9 +734,9 @@ def _run_send(w: Wired, op_id: str, contact_id: str, batch_id: str, *, sent: boo
         kind="send",
         input_snapshot={
             "contact_id": contact_id, "job_id": w.job_id, "application_id": w.app_id,
-            "batch_id": batch_id, "message": "Hi", "user_initiated": True,
+            "batch_id": batch_id, "message": "Hi",
         },
-        engine=None, db=w.db, operation_id=op_id, publish=None,
+        engine=None, db=w.db, operation_id=op_id, publish=None, requested_by="user",
     )
     ops.send_entrypoint(ctx)
     with w.db.repos() as repos:  # runner marks it terminal after the entrypoint
@@ -854,8 +909,10 @@ def test_send_failure_is_routed_to_its_coded_label(wired: Wired) -> None:
 
 
 def test_unrecognized_send_failure_routes_to_unknown(wired: Wired) -> None:
-    """S-C14 — a surprise takes the unknown path. With no engine configured the
-    label is `unknown` and the stop still stands; only the naming is missing."""
+    """S-C14 — a surprise takes the unknown path. With no engine configured and no
+    rule matching the evidence, the label is `unknown` and the stop still stands.
+    (A vanished selector now matches the interface-drift rule, so this uses an
+    error no rule recognizes.)"""
     ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(discover_result=DISCOVER_ROWS)
     _seed(wired)
     with wired.db.repos() as repos:
@@ -863,7 +920,7 @@ def test_unrecognized_send_failure_routes_to_unknown(wired: Wired) -> None:
 
     ops.DRIVER_FACTORY = lambda tier: FakeVoyagerDriver(
         raise_on="send_connection",
-        error=_wrapped(RuntimeError("selector vanished"), "selector vanished"),
+        error=_wrapped(RuntimeError("an unfamiliar state"), "an unfamiliar state"),
     )
     events: list[dict] = []
     with pytest.raises(NetworkerError):

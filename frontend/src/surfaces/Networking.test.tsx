@@ -519,6 +519,18 @@ describe("sync stopped note", () => {
       .toBe("networking.sync.stoppedOther");
   });
 
+  it("a failed batch shows what the exception router made of it", () => {
+    expect(syncStoppedKey({ stopped: "batch_failed", diagnosis: "account_wall" }))
+      .toBe("networking.sync.stoppedWall");
+    expect(syncStoppedKey({ stopped: "batch_failed", diagnosis: "throttle_signal" }))
+      .toBe("networking.sync.stoppedThrottle");
+    expect(syncStoppedKey({ stopped: "batch_failed", diagnosis: "unknown" }))
+      .toBe("networking.sync.stoppedOther");
+    // Only a failed batch carries a diagnosis; a cap stop keeps its own copy.
+    expect(syncStoppedKey({ stopped: "cap_or_backoff", diagnosis: "transient" }))
+      .toBe("networking.sync.stoppedCap");
+  });
+
   it("a refused press shows the warn note with the untouched-tail size", () => {
     h.session = {
       enabled: true,

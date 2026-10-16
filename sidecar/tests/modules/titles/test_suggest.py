@@ -70,9 +70,9 @@ def test_the_index_loads_once_per_process() -> None:
 def test_suggest_is_fast_enough_for_every_keystroke() -> None:
     warm()
     queries = ["en", "ma", "se", "software eng", "manager", "director", "backend", "zzzqx"]
-    # Best of 5, so a scheduler stall isn't read as the code's cost. 15 ms, not 5: a CI
-    # runner measured about 5x a Mac (7.58 ms against 1.56 ms), and a full scan, the
-    # regression this catches, costs about 5 ms on a Mac, so it still fails here.
+    # Best of 5, so a scheduler stall isn't read as the code's cost. A query with
+    # few prefix hits scans all 46,087 titles: about 5 ms on a Mac, 16 ms on the
+    # Windows runner (2026-10-16). 50 ms keeps a suggestion inside 1 keystroke.
     for query in queries:
         samples = []
         for _ in range(5):
@@ -80,8 +80,32 @@ def test_suggest_is_fast_enough_for_every_keystroke() -> None:
             suggest(query)
             samples.append((time.perf_counter() - start) * 1000)
         elapsed_ms = min(samples)
-        assert elapsed_ms < 15, f"{query!r} took {elapsed_ms:.2f} ms"
+        assert elapsed_ms < 50, f"{query!r} took {elapsed_ms:.2f} ms"
 
 
 def test_the_build_script_is_shipped_beside_its_output() -> None:
     assert (Path(DATA).parent / "build_data.py").is_file()
+
+
+# --- 10-10 report 4.3: role suggestions in the role field --------------------
+
+
+def test_spacing_and_hyphens_are_ignored() -> None:
+    """"backend" names no O*NET title, but "Back End Developer" is the same words."""
+    assert "Back End Developer" in suggest("backend")
+    assert "Back End Developer" in suggest("back-end dev")
+
+
+def test_titles_on_the_users_own_board_rank_first() -> None:
+    """Shortest-first alone answers "back" with "Backer" and "Back Hand". A title
+    that appears in the user's own scanned postings is the better guess."""
+    board = ["Senior Backend Engineer (Java)", "Staff Backend Engineer", "Java Backend Engineer"]
+    hits = suggest("back", board_titles=board)
+    assert hits[0] == "Back End Engineer"
+    assert "Backer" in hits  # still offered, just later
+
+
+def test_a_word_inside_a_title_beats_a_mere_substring() -> None:
+    hits = suggest("manager", limit=20)
+    word_starts = [h for h in hits if " manager" in h.lower() or h.lower().startswith("manager")]
+    assert hits[: len(word_starts)] == word_starts

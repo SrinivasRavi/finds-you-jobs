@@ -57,6 +57,8 @@ class _FetchOutcome:
     report: SourceReport
     fetched: list[NormalizedJob] = field(default_factory=list)
     adapter: object | None = None
+    # A company ATS board, read without error or page cap: its list is the board.
+    complete: bool = False
 
 
 def _fetch_source(
@@ -97,7 +99,14 @@ def _fetch_source(
         # instead of the whole scan (and every scheduled rescan) dying on it.
         report.errors.append(f"unexpected {type(e).__name__}: {e}")
         return _FetchOutcome(key=key, report=report, adapter=adapter)
-    return _FetchOutcome(key=key, report=report, fetched=fetched, adapter=adapter)
+    complete = (
+        getattr(adapter, "KIND", "") == "ats"
+        and bool(fetched)
+        and not getattr(fetcher, "truncated", False)
+    )
+    return _FetchOutcome(
+        key=key, report=report, fetched=fetched, adapter=adapter, complete=complete
+    )
 
 
 def _is_disabled(entry: object, disabled: set[str]) -> bool:
@@ -156,6 +165,19 @@ def _enrich_source(
             assess(job, now=now)  # re-annotate: JD-dependent flags now real
 
 
+def _record_listing(result: ScanResult, outcome: _FetchOutcome, partial: set[str]) -> None:
+    """Keep a complete board's whole list; a key any entry read only in part has none."""
+    if not outcome.complete or outcome.report.errors or outcome.key in partial:
+        partial.add(outcome.key)
+        result.listed.pop(outcome.key, None)
+        return
+    urls = result.listed.setdefault(outcome.key, [])
+    for job in outcome.fetched:
+        url = canonicalize_url(job.canonical_url)
+        if url and url not in urls:
+            urls.append(url)
+
+
 def _merge_report(result: ScanResult, outcome: _FetchOutcome) -> SourceReport:
     """Attach (or accumulate, if two entries share a key) a source's report."""
     existing = result.per_source.get(outcome.key)
@@ -208,8 +230,10 @@ def scan(
     seen: set[str] = set()
     enrich_buckets: dict[str, _EnrichBucket] = {}
     kept_pairs: list[tuple[NormalizedJob, SourceReport]] = []
+    partial: set[str] = set()  # a key any entry read only in part
     for outcome in outcomes:
         report = _merge_report(result, outcome)
+        _record_listing(result, outcome, partial)
         if not outcome.fetched:
             continue
         report.fetched += len(outcome.fetched)

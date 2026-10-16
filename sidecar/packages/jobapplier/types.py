@@ -72,6 +72,7 @@ class ApplyRequest:
     artifacts: tuple[ArtifactRef, ...]  # the ONLY uploadable files
     resume_label: str  # "master resume" | "tailored resume" (section 3.1 honesty label)
     deadline_s: float = 20 * 60.0  # total run budget (section 5.2)
+    step_deadline_s: float = 90.0  # 1 page step's budget; a hung page ends here (AUD-12)
     screenshot_dir: str = ""  # where evidence PNGs are written
     portal_skill: str | None = None  # reserved (section 7); no skills ship yet
 

@@ -25,6 +25,8 @@ from fastapi.responses import JSONResponse
 from sidecar.modules.geo.gazetteer import warm as warm_gazetteer
 
 from .api.applications import router as applications_router
+from .api.browser_tools import router as browser_tools_router
+from .api.chat import router as chat_router
 from .api.discovery import router as discovery_router
 from .api.engines import router as engines_router
 from .api.ingest import router as ingest_router
@@ -311,8 +313,18 @@ def create_app(
         app.state.data_dir = resolved_data_dir
         app.state.browser = browser
 
+        # The autopilot tick enqueues through the same runner as every other caller.
+        from .registry import autopilot_op
+
+        autopilot_op.RUNNER = runner
+
+        # The chat agent calls routes in-process, on this loop, as caller "agent".
+        from .chat import dispatch as chat_dispatch
+
+        chat_dispatch.bind(app, asyncio.get_running_loop())
+
         # Referral Outreach runs on the browser broker's serialized lane, and
-        # its presence gate reads the broker's live surface. Wiring both here
+        # the exception router reads the broker's live surface. Wiring both here
         # activates the broker-backed path; unset, the referral ops self-launch
         # (the pre-broker behaviour). The slugs are the referral package's own
         # runtime values, so nothing vendor-named enters this core module.
@@ -321,6 +333,7 @@ def create_app(
         networker_ops.SURFACE_PROVIDER = networker_ops.build_surface_provider(
             browser, asyncio.get_running_loop()
         )
+        networker_ops.LIVE_SURFACE = networker_ops.build_live_surface(browser)
 
         # A degraded boot: the shell saw 3 consecutive runs end the same bad way
         # and started us with no scheduler, so the window opens and nothing
@@ -417,11 +430,14 @@ def create_app(
             from .registry.applier_window import shutdown_windows
 
             shutdown_windows()
+            from .browser.host import shutdown_host
+
+            shutdown_host()
             db.dispose()
             log.info("sidecar app stopped")
 
     app = FastAPI(
-        title="finds-you-jobs sidecar", version="0.5.9", lifespan=lifespan
+        title="finds-you-jobs sidecar", version="0.5.10", lifespan=lifespan
     )
 
     # Unexpected route crashes land in the flight recorder (2026-07-24):
@@ -466,6 +482,8 @@ def create_app(
     app.include_router(discovery_router)
     app.include_router(ingest_router)
     app.include_router(screencast_router)
+    app.include_router(chat_router)
+    app.include_router(browser_tools_router)
 
     # Schema-emission glue only (F-M2/F-L3): /api/events streams the SSEEnvelope
     # union, which FastAPI can't infer from a StreamingResponse — inject those

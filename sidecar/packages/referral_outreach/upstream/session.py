@@ -35,6 +35,13 @@
 #     origin before each fetch (`ensure_linkedin_origin`, called from
 #     `client._fetch`), navigating to the feed only when the page sits
 #     elsewhere. DOM-driving actions are untouched. See `provenance.md`.
+#   - Lane deadline sized from the typing (finds-you-jobs, 2026-10-14): a send that
+#     types a message waits `typed_action_timeout_s`, not a flat 45 s. See
+#     `provenance.md`.
+#   - 1 browser host (finds-you-jobs, 2026-10-15): self-launch and the headed login
+#     open Chrome through the app's browser host (`_host_launch`) and drive it
+#     through its sync proxies; the 2 local launch copies are gone. See
+#     `provenance.md`.
 """Standalone LinkedIn browser session: launch Chromium, load saved cookies,
 navigate at a human pace. Chromium is fetched on first use, never bundled, and
 torn down after each run (NFR-MEM-02)."""
@@ -50,7 +57,6 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
 
 from .errors import BrowserUnresponsiveError, SkipProfile
 from .secure_store import UnreadableStateFile, load_state_file, save_state_file
@@ -70,6 +76,21 @@ _AUTH_COOKIE_NAME = "li_at"
 SURFACE_SLUG = "linkedin"
 
 T = TypeVar("T")
+
+# How long a caller waits on one lane action before giving up on it. An action
+# that types a message waits this plus the typing ceiling (`typed_action_timeout_s`).
+LANE_TIMEOUT_S = 45.0
+# How long past a lane deadline the caller waits for the surface's kill to land.
+LANE_KILL_GRACE_S = 10.0
+
+
+def typed_action_timeout_s(text: str) -> float:
+    """The lane deadline for an action that `human_type`s `text` on the compose and
+    note path (bounds 10, 50). A flat 45 s fired mid-type on a 262-char DM, which
+    then sent anyway and was logged failed (architecture-audit-2026-10-14.md 4.1)."""
+    from .typing_dynamics import persona_for_legacy_bounds, typing_ceiling_s
+
+    return LANE_TIMEOUT_S + typing_ceiling_s(text, persona_for_legacy_bounds(10, 50))
 
 # Page-load jitter between actions (upstream conf.MIN_DELAY / MAX_DELAY).
 MIN_DELAY = 5
@@ -173,73 +194,22 @@ _LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled", "--no-first-run
 _IGNORE_DEFAULT_ARGS = ["--enable-automation"]
 
 
-def _is_sandbox_launch_error(message: str) -> bool:
-    # Conservative: Chromium's sandbox-launch failures name the sandbox ("No
-    # usable sandbox!", "--no-sandbox") or the missing kernel facility ("Failed
-    # to move to new namespace…"). Anything else is not a sandbox problem and
-    # must not silently drop the sandbox.
-    msg = message.lower()
-    return "sandbox" in msg or "namespace" in msg
+def _host_launch(user_data_dir: str | None, *, headless: bool):
+    """A persistent context on `user_data_dir`, or a browser when it is None, opened
+    by the app's 1 browser host and returned as a sync proxy. The host holds the
+    launch policy: installed Chrome first, the sandbox on (2026-08-02 dogfood)."""
+    from sidecar.app.browser.host import get_host, launch
 
+    host = get_host()
 
-def _sandboxed_launch(launch: Callable[[bool], object]):
-    """Launch with the Chromium sandbox ON (2026-08-02 headed dogfood: Playwright
-    disables it by default — the "--no-sandbox" banner — leaving LinkedIn's
-    pages rendering outside Chromium's exploit containment). Desktop macOS and
-    Windows always support the sandbox; the single warned retry with it off
-    exists only for Linux setups without unprivileged user namespaces, where
-    the sandboxed launch fails outright."""
-    try:
-        return launch(True)
-    except Exception as e:  # noqa: BLE001 — non-sandbox failures re-raise below
-        if not _is_sandbox_launch_error(str(e)):
-            raise
-        logger.warning(
-            "Chromium sandbox unavailable (%s) — retrying with "
-            "chromium_sandbox=False; expected only on Linux without "
-            "unprivileged user namespaces", e
-        )
-        return launch(False)
-
-
-def _launch_persistent(playwright, user_data_dir: str, *, headless: bool):
-    kwargs = {
-        "headless": headless,
-        "args": _LAUNCH_ARGS,
-        "ignore_default_args": _IGNORE_DEFAULT_ARGS,
-    }
-    try:
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch_persistent_context(
-                user_data_dir, channel="chrome", chromium_sandbox=sandbox, **kwargs
-            )
-        )
-    except Exception as e:  # noqa: BLE001 — no installed Chrome → bundled build
-        logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch_persistent_context(
-                user_data_dir, chromium_sandbox=sandbox, **kwargs
-            )
+    async def _open():
+        pw = await host.playwright()
+        return await launch(
+            pw.chromium, user_data_dir, headless=headless,
+            args=_LAUNCH_ARGS, ignore_default_args=_IGNORE_DEFAULT_ARGS,
         )
 
-
-def _launch_browser(playwright, *, headless: bool):
-    kwargs = {
-        "headless": headless,
-        "args": _LAUNCH_ARGS,
-        "ignore_default_args": _IGNORE_DEFAULT_ARGS,
-    }
-    try:
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch(
-                channel="chrome", chromium_sandbox=sandbox, **kwargs
-            )
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.info("installed Chrome unavailable (%s) — using bundled Chromium", e)
-        return _sandboxed_launch(
-            lambda sandbox: playwright.chromium.launch(chromium_sandbox=sandbox, **kwargs)
-        )
+    return host.proxy(host.run(_open))
 
 
 def dismiss_comply_gate(page, timeout_ms: int = 5000) -> bool:
@@ -314,7 +284,6 @@ class AccountSession:
         self.page = None
         self.context = None
         self.browser = None
-        self.playwright = None
 
     # --- lifecycle ---
     def _load_storage_state(self) -> dict | None:
@@ -330,10 +299,7 @@ class AccountSession:
         assert self.user_data_dir is not None
         first_run = not self.user_data_dir.exists() or not any(self.user_data_dir.iterdir())
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
-        self.playwright = sync_playwright().start()
-        self.context = _launch_persistent(
-            self.playwright, str(self.user_data_dir), headless=not self.headed
-        )
+        self.context = _host_launch(str(self.user_data_dir), headless=not self.headed)
         self.browser = None  # persistent context owns its own browser
         self.context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
         self.context.set_default_navigation_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
@@ -364,8 +330,7 @@ class AccountSession:
             self._start_persistent()
             return
         storage_state = self._load_storage_state()
-        self.playwright = sync_playwright().start()
-        self.browser = _launch_browser(self.playwright, headless=not self.headed)
+        self.browser = _host_launch(None, headless=not self.headed)
         self.context = self.browser.new_context(storage_state=storage_state)
         self.context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
         self.context.set_default_navigation_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
@@ -400,12 +365,17 @@ class AccountSession:
         """The broker surface for this session's slug, fetched (and cached) once.
         The provider returns a READY surface — the host resolves the surface and
         awaits its launch OFF the serving loop before handing it back."""
+        if self._surface is not None and getattr(self._surface, "is_dead", False):
+            # Killed at a deadline or crashed: the broker relaunches the slug, and the
+            # new Chrome gets the saved session seeded like the first one did.
+            self._surface = None
+            self._surface_seeded = False
         if self._surface is None:
             assert self._surface_provider is not None
             self._surface = self._surface_provider(self._surface_slug)
         return self._surface
 
-    def run_browser(self, action: Callable[[], T]) -> T:
+    def run_browser(self, action: Callable[[], T], timeout_s: float = LANE_TIMEOUT_S) -> T:
         """Run one page-driving `action()` where the browser actually lives.
 
         Broker-backed: `action` is submitted to the surface's single serialized
@@ -434,7 +404,23 @@ class AccountSession:
             self._seed_surface_session()
             return action()
 
-        return surface.run_on_lane(_on_surface).result(timeout=45.0)
+        # The surface enforces the deadline (it kills a stuck Chrome); the grace
+        # only covers the kill itself, so this wait always ends in an answer.
+        return surface.run_on_lane(_on_surface, deadline_s=timeout_s).result(
+            timeout=timeout_s + LANE_KILL_GRACE_S
+        )
+
+    def kill_browser(self) -> None:
+        """End a hung page from another thread. Broker-backed: kill the surface's
+        Chrome, the only interrupt a sync Playwright call honours (a cross-thread
+        `context.close()` raises and leaves the call running). Self-launch: close
+        the context, best-effort, as before."""
+        if self.broker_backed:
+            if self._surface is not None:
+                self._surface.kill_browser()
+            return
+        if self.context is not None:
+            self.context.close()
 
     def _seed_surface_session(self) -> None:
         """On the FIRST lane bind, seed the broker surface's context with the
@@ -513,16 +499,16 @@ class AccountSession:
             self._surface = None
             logger.info("voyager session detached from broker surface")
             return
+        # The browser host owns the Playwright driver, so nothing here stops it.
         for closer in (
             lambda: self.context and self.context.close(),
             lambda: self.browser and self.browser.close(),
-            lambda: self.playwright and self.playwright.stop(),
         ):
             try:
                 closer()
             except Exception as e:  # noqa: BLE001 - teardown must never mask the real error
                 logger.debug("teardown step raised: %s", e)
-        self.page = self.context = self.browser = self.playwright = None
+        self.page = self.context = self.browser = None
         logger.info("voyager session closed")
 
 
@@ -705,14 +691,13 @@ def capture_login(
     The password is never handled here: the human logs in in the visible browser.
     """
     out_path = Path(storage_state_path)
-    playwright = sync_playwright().start()
     browser = None
     if user_data_dir is not None:
         Path(user_data_dir).mkdir(parents=True, exist_ok=True)
-        context = _launch_persistent(playwright, str(user_data_dir), headless=not headed)
+        context = _host_launch(str(user_data_dir), headless=not headed)
         page = context.pages[0] if context.pages else context.new_page()
     else:
-        browser = _launch_browser(playwright, headless=not headed)
+        browser = _host_launch(None, headless=not headed)
         context = browser.new_context()
         page = context.new_page()
     context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
@@ -766,7 +751,6 @@ def capture_login(
         closers = [context.close]
         if browser is not None:
             closers.append(browser.close)
-        closers.append(playwright.stop)
         for closer in closers:
             try:
                 closer()

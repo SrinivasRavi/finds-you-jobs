@@ -91,6 +91,7 @@ export const LLM_KIND_ROWS: Record<LlmKind, true> = {
   score: true,
   tailor: true,
   cover: true,
+  chat: true,
   extract: true,
   draft: true,
   apply: true,
@@ -187,6 +188,7 @@ export function toJob(d: JobDTO, saved: boolean): Job {
     duplicates: d.duplicates ?? 0,
     duplicate_notice: d.duplicateNotice ?? false,
     saved,
+    closed: !!d.closed_at,
     board_state:
       d.feed_state === "removed"
         ? "trashed"
@@ -223,7 +225,7 @@ export function placeholderJob(jobId: string): JobDTO {
   };
 }
 
-// preview_screenshot and posting_closed have no live source on this sidecar,
+// preview_screenshot has no live source on this sidecar,
 // so they're null and false; referrals_state and referrals_count come from every
 // ApplicationDTO.
 export function toApplication(d: ApplicationDTO, job: Job): Application {
@@ -256,7 +258,7 @@ export function toApplication(d: ApplicationDTO, job: Job): Application {
     cover_letter_md: cover?.markdown ? cover.markdown : null,
     cover_notes: (cover?.notes ?? []) as string[],
     preview_screenshot: null,
-    posting_closed: false,
+    posting_closed: job.closed,
     referrals_state: (d.referralsState as Application["referrals_state"]) ?? "none",
     referrals_count: d.referralsCount ?? 0,
     // Latest Apply Run lifecycle (applier-as-built.md section 8.2) — drives the card's Apply slot

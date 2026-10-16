@@ -18,6 +18,10 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 LOGGER_NAME = "fyj.sidecar"
+# The vendored packages log under their own roots: the LinkedIn worker as
+# `voyager_py.*`, the Applier as `fyj.jobapplier.*`. At INFO, because the mouse
+# and scroll loggers write a DEBUG line per step.
+_PACKAGE_LOGGERS = ("voyager_py", "fyj.jobapplier")
 
 # Repo root = sidecar/app/logging_setup.py -> parents[2]. Swapped for the
 # platform app-data dir in the packaged build (see FYJ_LOG_DIR below).
@@ -79,6 +83,7 @@ def setup_flight_recorder(
             isinstance(handler, RotatingFileHandler)
             and Path(handler.baseFilename).resolve() == resolved
         ):
+            _attach_packages(handler)
             return log_path
 
     handler = RotatingFileHandler(
@@ -97,7 +102,23 @@ def setup_flight_recorder(
 
     attach_redaction(handler)
     logger.addHandler(handler)
+    _attach_packages(handler)
     return log_path
+
+
+def _attach_packages(handler: logging.Handler) -> None:
+    for name in _PACKAGE_LOGGERS:
+        package = logging.getLogger(name)
+        package.setLevel(logging.INFO)
+        package.propagate = False
+        package.disabled = False
+        if handler not in package.handlers:
+            package.addHandler(handler)
+        # A config call with `disable_existing_loggers` (Alembic's) disables each
+        # child logger already created, not just the root of the tree.
+        for child_name, child in logging.root.manager.loggerDict.items():
+            if child_name.startswith(name + ".") and isinstance(child, logging.Logger):
+                child.disabled = False
 
 
 def get_logger() -> logging.Logger:

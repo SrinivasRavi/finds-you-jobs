@@ -17,7 +17,7 @@ import json
 import sqlite3
 import statistics
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 KINDS = ("scan", "score", "tailor", "cover", "apply")
@@ -33,10 +33,16 @@ def default_db() -> Path:
     return base / "finds-you-jobs" / "db.sqlite"
 
 
+def _utc(stamp: str) -> datetime:
+    """The ledger stores UTC, some rows without the offset (backlog S-C77)."""
+    parsed = datetime.fromisoformat(stamp)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def _seconds(start: str | None, end: str | None) -> float | None:
     if not start or not end:
         return None
-    return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
+    return (_utc(end) - _utc(start)).total_seconds()
 
 
 def _pct(values: list[float], q: float) -> float:

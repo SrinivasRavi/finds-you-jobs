@@ -71,9 +71,10 @@ def test_export_without_chromium_is_coded(
 ) -> None:
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
     from sidecar.app.api import system as routes_mod
-    from sidecar.app.browser import launch
+    from sidecar.app.browser import host
 
-    monkeypatch.setattr(launch, "PREFERRED_CHANNEL", None)  # no installed Chrome either
+    monkeypatch.setattr(host, "PREFERRED_CHANNEL", None)  # no installed Chrome either
+    host.shutdown_host()  # the driver reads the browsers path when it starts
     monkeypatch.setattr(routes_mod, "downloads_dir", lambda: tmp_path / "downloads")
     app = create_app(
         token=TOKEN, original_ppid=None, data_dir=tmp_path / "data", enable_scheduler=False
@@ -152,3 +153,18 @@ def test_install_status_is_readable_after_a_missed_event(
             time.sleep(0.05)
     assert status["state"] == "done", status
     assert any(argv[-2:] == ["install", "chromium"] for argv in calls)
+
+
+
+def test_the_missing_marker_matches_a_persistent_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The broker and the Applier window launch persistent contexts, a path no other
+    test asks real Playwright about; a bump that rewords it would turn Download into
+    a raw error (architecture-audit-2026-10-14.md section 4.5)."""
+    from playwright.sync_api import sync_playwright
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
+    with sync_playwright() as p, pytest.raises(Exception) as caught:  # noqa: PT011
+        p.chromium.launch_persistent_context(str(tmp_path / "profile"))
+    assert browser.is_browser_missing(str(caught.value))

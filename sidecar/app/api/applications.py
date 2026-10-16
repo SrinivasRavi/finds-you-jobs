@@ -39,6 +39,7 @@ from ..registry.apply_op import (
     has_extracted_profile,
     purge_run_dirs,
 )
+from ..registry.autonomy import NotAuthorized, authorize, caller
 from ..registry.persistence import (
     delete_application_cascade,
 )
@@ -709,7 +710,7 @@ def start_apply(
         if has_master and not has_read and not reading and (
             engines is None or engines.resolve("extract") is not None
         ):
-            runner.submit("extract", {}, requested_by="user")
+            runner.submit("extract", {}, requested_by=caller())
         raise HTTPException(status_code=409, detail=NO_APPLICATION_PROFILE_DETAIL)
 
     snapshot: dict[str, Any] = {"application_id": application_id}
@@ -735,7 +736,7 @@ def start_apply(
         run_id = run.id
     snapshot["run_id"] = run_id
     try:
-        operation_id = runner.submit("apply", snapshot, requested_by="user")
+        operation_id = runner.submit("apply", snapshot, requested_by=caller())
     except Exception as exc:
         # Enqueue failed (2026-07-25): the just-created row would strand
         # `queued` until boot sweep — land it terminal-failed, then let the
@@ -823,6 +824,11 @@ def submit_apply_run(request: Request, run_id: str) -> dto.ApplyRunDTO:
     The outcome arrives on the `apply` SSE stream and the run row."""
     from ..registry.apply_op import APPLY_CONTROL
 
+    # Submit creates no op, so the op's own gate never sees this caller.
+    try:
+        authorize(_db(request), "apply", caller())
+    except NotAuthorized as e:
+        raise HTTPException(status_code=403, detail=e.reason) from e
     with _db(request).repos() as repos:
         run = _found(repos.apply_runs.get(run_id), "run", run_id)
         if not apply_run_in_review(run):

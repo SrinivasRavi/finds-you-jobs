@@ -5,12 +5,13 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useSettings, useUpdateSettings } from "../api/queries";
-import type { Settings as SettingsT } from "../api/types";
+import type { SettingsPatch } from "../api/types";
 import { AboutSection } from "./settings/AboutSection";
 import { AIProvidersPanel } from "./settings/AIProvidersPanel";
 import { ApplicantDetailsForm } from "./settings/ApplicantDetails";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { AutomationSection } from "./settings/AutomationSection";
+import { AutopilotSection } from "./settings/AutopilotSection";
 import { DiscoveryKeysSection, DiscoverySourcesSection } from "./settings/DiscoverySources";
 import { FollowedCompaniesSection } from "./settings/FollowedCompaniesSection";
 import { LifecycleSection } from "./settings/LifecycleSection";
@@ -35,7 +36,7 @@ export function Settings() {
   // v5) so the memoized pane sections only re-render when `settings` changes.
   const updateMutate = update.mutate;
   const patch = useCallback(
-    (p: Partial<SettingsT>) => {
+    (p: SettingsPatch) => {
       updateMutate(p);
     },
     [updateMutate],
@@ -178,11 +179,21 @@ export function Settings() {
           </div>
           )}
 
+          {cat === "autopilot" && <AutopilotSection settings={settings} patch={patch} />}
+
           {cat === "providers" && (
           <div className="space-y-8">
           {/* LLM Providers (FR-SET-06 / US-SET-07) — tile grid + Verify + Save */}
           <Section title={t("settingsPage.providers.title")}>
             <AIProvidersPanel settings={settings} />
+          </Section>
+          <Section title={t("settingsPage.providers.chatModelTitle")}>
+            <ModelPicker
+              kind="chat"
+              settings={settings}
+              patch={patch}
+              hint={t("settingsPage.providers.chatModelHint")}
+            />
           </Section>
           </div>
           )}

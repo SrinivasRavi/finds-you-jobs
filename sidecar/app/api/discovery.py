@@ -740,3 +740,17 @@ def delete_discovery_credential(
     # The seeded [[sources]] entries stay — the next scan reports a clear
     # missing-key error per source, and the user can untick them.
     return _credentials(request)
+
+
+@router.get("/api/titles/suggest")
+def suggest_titles(request: Request, q: str = "", limit: int = 8) -> list[str]:
+    """The role field's suggestions (10-10 report 4.3): O*NET titles, the ones the
+    user's own board carries first. Advisory only; the field takes any text. A
+    plain `def`, so the first index load runs in the threadpool."""
+    from sidecar.modules.titles.suggest import MIN_QUERY_LEN, suggest
+
+    if len(q.strip()) < MIN_QUERY_LEN:
+        return []
+    with _db(request).repos() as repos:
+        board = repos.jobs.titles_on_board()
+    return suggest(q.strip(), limit=max(1, min(limit, 20)), board_titles=board)

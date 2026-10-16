@@ -34,9 +34,9 @@ async def render_resume_pdf_async(pw: Any, markdown_text: str, out_path: str) ->
         "<!doctype html><html><head><meta charset='utf-8'>"
         f"<style>{_CSS}</style></head><body>{body}</body></html>"
     )
-    from ..browser.launch import launch_browser_async
+    from ..browser.host import launch
 
-    browser = await launch_browser_async(pw.chromium, headless=True)
+    browser = await launch(pw.chromium, headless=True)
     try:
         page = await browser.new_page()
         await page.set_content(html, wait_until="load")
@@ -60,38 +60,18 @@ class PdfRenderError(RuntimeError):
 
 
 def render_resume_pdf(markdown_text: str, out_path: str) -> None:
-    """Sync render for worker-thread callers (the `/api/export/pdf` route).
+    """Sync render for worker-thread callers (the `/api/export/pdf` route), on the
+    browser host's Playwright. Never call it from the host loop."""
+    from playwright.async_api import Error as PlaywrightError
 
-    Same pipeline/CSS as the async path; sync Playwright refuses to start
-    inside a running asyncio loop, so callers must run this in a thread."""
-    from playwright.sync_api import Error as PlaywrightError
-    from playwright.sync_api import sync_playwright
+    from ..browser.host import get_host
 
-    from ..browser.launch import launch_browser
+    host = get_host()
 
-    body = MarkdownIt("commonmark").render(markdown_text)
-    html = (
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        f"<style>{_CSS}</style></head><body>{body}</body></html>"
-    )
+    async def _render() -> None:
+        await render_resume_pdf_async(await host.playwright(), markdown_text, out_path)
+
     try:
-        with sync_playwright() as pw:
-            browser = launch_browser(pw.chromium, headless=True)
-            try:
-                page = browser.new_page()
-                page.set_content(html, wait_until="load")
-                page.pdf(
-                    path=out_path,
-                    format="A4",
-                    print_background=True,
-                    margin={
-                        "top": "14mm",
-                        "bottom": "14mm",
-                        "left": "13mm",
-                        "right": "13mm",
-                    },
-                )
-            finally:
-                browser.close()
+        host.submit(_render()).result()
     except PlaywrightError as e:
         raise PdfRenderError(f"could not render the PDF: {e}") from e

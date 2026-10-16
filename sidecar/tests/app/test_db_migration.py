@@ -35,6 +35,8 @@ _EXPECTED = {
     "apply_runs",
     "documents",
     "job_duplicates",
+    "chats",
+    "chat_messages",
 }
 
 
@@ -481,3 +483,54 @@ def test_the_5_location_columns_go_and_come_back_empty(tmp_path: Path) -> None:
     with engine.connect() as conn:
         back = conn.execute(text(f"SELECT {', '.join(names)} FROM jobs WHERE id = 'j'")).one()  # noqa: S608 — fixed names
     assert tuple(back) == (None,) * 5
+
+
+def test_smartrecruiters_links_move_to_the_shape_the_site_serves(tmp_path: Path) -> None:
+    """Audit 2026-10-14 section 8.4: every stored `/postings/<id>` link opened a 404.
+    Jobs and tombstones move to `/<company>/<id>`; a row whose new link is taken
+    keeps its old one rather than break the unique key."""
+    from alembic import command
+    from sqlalchemy import text
+
+    from sidecar.app.db.migrate import make_alembic_config
+
+    url = f"sqlite:///{tmp_path / 'sr.db'}"
+    cfg = make_alembic_config(url)
+    command.upgrade(cfg, "c5f1a8d3e6b2")
+    engine = create_engine(url)
+    old = "https://jobs.smartrecruiters.com/Acme/postings/{}"
+    new = "https://jobs.smartrecruiters.com/Acme/{}"
+    insert = (
+        "INSERT INTO jobs (id, canonical_url, title, company, location, description,"
+        " source_adapter, trust_score, trust_flags, ingested_at, feed_state, feed_since)"
+        " VALUES (:id, :url, 'SWE', 'Acme', '', 'JD', 'smartrecruiters', 100, '[]',"
+        " '2026-10-01', 'active', '2026-10-01')"
+    )
+    with engine.begin() as conn:
+        conn.execute(text(insert), {"id": "a", "url": old.format(1)})
+        conn.execute(text(insert), {"id": "b", "url": old.format(2)})
+        conn.execute(text(insert), {"id": "c", "url": new.format(2)})  # pasted already
+        conn.execute(text(insert), {"id": "d", "url": "https://jobs.lever.co/x/postings/9"})
+        conn.execute(text("INSERT INTO tombstones (id, canonical_url, reason)"
+                          " VALUES ('t', :u, 'manual')"), {"u": old.format(3)})
+
+    command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        urls = {r[0]: r[1] for r in conn.execute(text("SELECT id, canonical_url FROM jobs"))}
+        tomb = conn.execute(text("SELECT canonical_url FROM tombstones")).scalar()
+    assert urls == {
+        "a": new.format(1),
+        "b": old.format(2),  # its new link belongs to c
+        "c": new.format(2),
+        "d": "https://jobs.lever.co/x/postings/9",
+    }
+    assert tomb == new.format(3)
+    # b and c are 1 posting twice: the duplicate notice asks which to keep.
+    with engine.connect() as conn:
+        pairs = conn.execute(text("SELECT job_id, other_job_id FROM job_duplicates")).all()
+    assert len(pairs) == 1 and set(pairs[0]) == {"b", "c"}
+
+    command.downgrade(cfg, "c5f1a8d3e6b2")
+    with engine.connect() as conn:
+        back = conn.execute(text("SELECT canonical_url FROM jobs WHERE id = 'a'")).scalar()
+    assert back == old.format(1)

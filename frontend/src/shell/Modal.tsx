@@ -47,8 +47,13 @@ export function Modal({
         data-testid="modal-backdrop"
       />
       <div
-        className="fixed left-1/2 top-1/2 z-50 flex max-h-[94vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[14px] border border-border bg-surface shadow-[0_50px_100px_rgba(0,0,0,0.4)]"
-        style={{ width, maxWidth: "96vw" }}
+        className="fixed top-1/2 z-50 flex max-h-[94vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[14px] border border-border bg-surface shadow-[0_50px_100px_rgba(0,0,0,0.4)]"
+        // Centred in the room the Assistant drawer leaves (`--fyj-chat-w`, ChatDrawer.tsx).
+        style={{
+          width,
+          left: "calc((100vw - var(--fyj-chat-w, 0px)) / 2)",
+          maxWidth: "calc(96vw - var(--fyj-chat-w, 0px))",
+        }}
         role="dialog"
         aria-label={title}
       >

@@ -10,6 +10,7 @@ import i18n from "../i18n";
 import { LinkedInBrowserProvider } from "../surfaces/LinkedInBrowserProvider";
 import { inTauri } from "./host";
 import { LeftRail } from "./LeftRail";
+import { ChatProvider } from "./ChatDrawer";
 import { DegradedBootBanner } from "./DegradedBootBanner";
 import { MutationErrorBanner } from "./MutationErrorBanner";
 
@@ -57,6 +58,7 @@ export function Layout() {
     // popup, and any send path — its provider wraps every routed surface so all
     // of them share the one opener + op feed (maintainer, 2026-08-16).
     <LinkedInBrowserProvider>
+      <ChatProvider>
       <div className="grid h-screen grid-cols-[76px_1fr] overflow-hidden bg-canvas">
         <LeftRail />
         <div className="flex min-h-0 flex-col overflow-hidden">
@@ -88,6 +90,7 @@ export function Layout() {
         </div>
         <MutationErrorBanner />
       </div>
+      </ChatProvider>
     </LinkedInBrowserProvider>
   );
 }

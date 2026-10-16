@@ -107,6 +107,9 @@ class JobDTO(BaseModel):
     trust_flags: list[str]
     feed_state: str
     ingested_at: datetime
+    # When the employer's board stopped listing it, or its page said it closed
+    # (audit-2026-10-14.md 8.7). Null while open, or never checked.
+    closed_at: datetime | None = None
     # Best-effort work style (US-JB-01 row chip) derived app-side from the
     # location + description text — NOT part of the frozen NormalizedJob scraper
     # contract. `REMOTE` | `HYBRID` | `ONSITE`, or `""` when undeterminable (never
@@ -548,6 +551,12 @@ class PreferencesDTO(BaseModel):
     linkedin_search_ack_at: datetime | None
     engine_routing: dict[str, Any]
     ui_state: dict[str, Any]
+    autopilot_invite: bool
+    autopilot_dm: bool
+    autopilot_apply: bool
+    autopilot_min_score: int
+    autopilot_contacts_per_job: int
+    autopilot_applies_per_day: int
 
 
 class PreferencesUpdate(BaseModel):
@@ -564,6 +573,12 @@ class PreferencesUpdate(BaseModel):
     linkedin_search_ack_at: datetime | None = None
     engine_routing: dict[str, Any] | None = None
     ui_state: dict[str, Any] | None = None
+    autopilot_invite: bool | None = None
+    autopilot_dm: bool | None = None
+    autopilot_apply: bool | None = None
+    autopilot_min_score: int | None = Field(default=None, ge=0, le=100)
+    autopilot_contacts_per_job: int | None = Field(default=None, ge=1, le=10)
+    autopilot_applies_per_day: int | None = Field(default=None, ge=1, le=100)
 
 
 class DiscoverySourceDTO(BaseModel):
@@ -998,6 +1013,9 @@ class ContactSyncOutcomeDTO(BaseModel):
     failed: int = 0
     stopped: str = ""
     unprobed: int = 0
+    # The exception router's label when a batch failed (transient |
+    # interface_drift | throttle_signal | account_wall | unknown), else "".
+    diagnosis: str = ""
 
 
 class LinkedInSessionDTO(BaseModel):
@@ -1162,6 +1180,9 @@ class EngineVerifyResult(BaseModel):
     # the subscription CLIs (claude-cli / codex-cli / antigravity-cli) use the
     # non-`ok`/`error` values; every BYOK provider maps ok→"ok" / not-ok→"error".
     status: Literal["ok", "not_found", "not_logged_in", "error"] = "ok"
+    # An OpenAI-style provider's `/models` ids, and the 1 Verify suggests saving.
+    models: list[str] = Field(default_factory=list)
+    suggested_model: str | None = None
 
 
 class EngineSettingUpsert(BaseModel):
@@ -1778,3 +1799,88 @@ def cost_totals_dto(totals: dict[str, Any]) -> CostTotalsDTO:
         failed=int(totals.get("failed", 0)),
         by_kind={k: float(v) for k, v in (totals.get("by_kind") or {}).items()},
     )
+
+
+# -- the chat agent (audit-2026-10-14.md section 8.11) -------------------------
+
+
+class ChatSummaryDTO(BaseModel):
+    id: str
+    title: str
+    updated_at: datetime
+
+
+class ChatMessageDTO(BaseModel):
+    """`payload` by role: `text` (user, agent); `tool`, `args`, `result` (tool);
+    `tool`, `args`, `reason`, `state`, `result` (confirm)."""
+
+    id: str
+    role: str
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class ChatDTO(BaseModel):
+    id: str
+    title: str
+    messages: list[ChatMessageDTO]
+    # A turn is queued or running, so more messages are on their way.
+    busy: bool
+    # Why the last turn failed, verbatim; None when it didn't.
+    error: str | None = None
+
+
+class ChatSendRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    chat_id: str | None = None
+
+
+class ChatSendAccepted(BaseModel):
+    chat_id: str
+    operation_id: str
+
+
+class BrowserPageDTO(BaseModel):
+    """What the in-app browser shows: its URL, its title, and 1 line per element
+    the agent can act on, by id (`e1`, `e2`, ...). The ids hold until the next read."""
+
+    url: str
+    title: str
+    elements: str
+
+
+class BrowserTextDTO(BaseModel):
+    """The page's visible text, cut to a bound."""
+
+    url: str
+    text: str
+    truncated: bool
+
+
+class BrowserNavigateRequest(BaseModel):
+    url: str
+
+
+class BrowserElementRequest(BaseModel):
+    element_id: str  # an id from the last page read
+
+
+class BrowserTypeRequest(BrowserElementRequest):
+    text: str
+
+
+class BrowserChooseRequest(BrowserElementRequest):
+    option: str
+
+
+class BrowserUploadRequest(BrowserElementRequest):
+    # "master_resume", or the id of 1 of the user's tailored resumes or cover letters.
+    document_id: str
+
+
+class BrowserActionResult(BaseModel):
+    """1 browser action, read back: `ok` is what the page shows after it."""
+
+    ok: bool
+    note: str
+    url: str

@@ -321,6 +321,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dev/jobs/{job_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dev Close Job
+         * @description Close a job the way a scan does when its board stops listing it, so the
+         *     board's "No longer listed" state can be seen without a live board. Dev-only.
+         */
+        post: operations["dev_close_job_api_dev_jobs__job_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -1995,6 +2016,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/titles/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggest Titles
+         * @description The role field's suggestions (10-10 report 4.3): O*NET titles, the ones the
+         *     user's own board carries first. Advisory only; the field takes any text. A
+         *     plain `def`, so the first index load runs in the threadpool.
+         */
+        get: operations["suggest_titles_api_titles_suggest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profile/ingest": {
         parameters: {
             query?: never;
@@ -2006,6 +2049,231 @@ export interface paths {
         put?: never;
         /** Ingest Resume */
         post: operations["ingest_resume_api_profile_ingest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Chats
+         * @description The chats, most recent first.
+         */
+        get: operations["list_chats_api_chats_get"];
+        put?: never;
+        /**
+         * Send Chat Message
+         * @description Store the user's message and queue 1 agent turn. No `chat_id` starts a chat.
+         */
+        post: operations["send_chat_message_api_chats_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats/{chat_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chat */
+        get: operations["get_chat_api_chats__chat_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats/{chat_id}/cards/{message_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Chat Card
+         * @description The user's click on a card: run the card's call as the user, once.
+         */
+        post: operations["confirm_chat_card_api_chats__chat_id__cards__message_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chats/{chat_id}/cards/{message_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss Chat Card */
+        post: operations["dismiss_chat_card_api_chats__chat_id__cards__message_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser Page
+         * @description Read the in-app browser: its URL, title and every element you can act on, as
+         *     `e1`, `e2`, ... Read it before you click, type, choose or upload, and again
+         *     after the page changes: the ids hold until the next read.
+         */
+        get: operations["browser_page_api_browser_page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/page/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser Page Text
+         * @description The visible text of the page the in-app browser shows.
+         */
+        get: operations["browser_page_text_api_browser_page_text_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/navigate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Navigate
+         * @description Open a URL in the in-app browser, logged in as the user. The user confirms
+         *     each one you ask for: a URL can carry data out.
+         */
+        post: operations["browser_navigate_api_browser_navigate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/click": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Click
+         * @description Click an element from the last page read. A click can send or submit, so the
+         *     user confirms each one you ask for.
+         */
+        post: operations["browser_click_api_browser_click_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Type
+         * @description Type text into a field from the last page read, replacing its value, and read
+         *     it back. It never presses Enter and never fills a password.
+         */
+        post: operations["browser_type_api_browser_type_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/choose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Choose
+         * @description Choose an option in a select or a dropdown from the last page read.
+         */
+        post: operations["browser_choose_api_browser_choose_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/browser/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser Upload
+         * @description Attach 1 of the user's documents to a file field from the last page read, as
+         *     a PDF: "master_resume", or the id of a tailored resume or cover letter. A page
+         *     can send a file the moment it is picked, so the user confirms each one.
+         */
+        post: operations["browser_upload_api_browser_upload_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2433,6 +2701,30 @@ export interface components {
             file: string;
         };
         /**
+         * BrowserActionResult
+         * @description 1 browser action, read back: `ok` is what the page shows after it.
+         */
+        BrowserActionResult: {
+            /** Ok */
+            ok: boolean;
+            /** Note */
+            note: string;
+            /** Url */
+            url: string;
+        };
+        /** BrowserChooseRequest */
+        BrowserChooseRequest: {
+            /** Element Id */
+            element_id: string;
+            /** Option */
+            option: string;
+        };
+        /** BrowserElementRequest */
+        BrowserElementRequest: {
+            /** Element Id */
+            element_id: string;
+        };
+        /**
          * BrowserInstallResult
          * @description The `POST /api/system/install-browser` response (A5b / A0.6).
          */
@@ -2454,6 +2746,50 @@ export interface components {
              */
             message: string;
         };
+        /** BrowserNavigateRequest */
+        BrowserNavigateRequest: {
+            /** Url */
+            url: string;
+        };
+        /**
+         * BrowserPageDTO
+         * @description What the in-app browser shows: its URL, its title, and 1 line per element
+         *     the agent can act on, by id (`e1`, `e2`, ...). The ids hold until the next read.
+         */
+        BrowserPageDTO: {
+            /** Url */
+            url: string;
+            /** Title */
+            title: string;
+            /** Elements */
+            elements: string;
+        };
+        /**
+         * BrowserTextDTO
+         * @description The page's visible text, cut to a bound.
+         */
+        BrowserTextDTO: {
+            /** Url */
+            url: string;
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** BrowserTypeRequest */
+        BrowserTypeRequest: {
+            /** Element Id */
+            element_id: string;
+            /** Text */
+            text: string;
+        };
+        /** BrowserUploadRequest */
+        BrowserUploadRequest: {
+            /** Element Id */
+            element_id: string;
+            /** Document Id */
+            document_id: string;
+        };
         /**
          * BrowserViewRequest
          * @description POST /api/browser/view: queue a `view_page` op that shows `url` on a
@@ -2473,6 +2809,65 @@ export interface components {
             dpr?: number | null;
             /** Contact Id */
             contact_id?: string | null;
+        };
+        /** ChatDTO */
+        ChatDTO: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Messages */
+            messages: components["schemas"]["ChatMessageDTO"][];
+            /** Busy */
+            busy: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * ChatMessageDTO
+         * @description `payload` by role: `text` (user, agent); `tool`, `args`, `result` (tool);
+         *     `tool`, `args`, `reason`, `state`, `result` (confirm).
+         */
+        ChatMessageDTO: {
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ChatSendAccepted */
+        ChatSendAccepted: {
+            /** Chat Id */
+            chat_id: string;
+            /** Operation Id */
+            operation_id: string;
+        };
+        /** ChatSendRequest */
+        ChatSendRequest: {
+            /** Text */
+            text: string;
+            /** Chat Id */
+            chat_id?: string | null;
+        };
+        /** ChatSummaryDTO */
+        ChatSummaryDTO: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * ContactCreate
@@ -2607,6 +3002,11 @@ export interface components {
              * @default 0
              */
             unprobed: number;
+            /**
+             * Diagnosis
+             * @default
+             */
+            diagnosis: string;
         };
         /**
          * ContactUpdate
@@ -2873,6 +3273,10 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "not_found" | "not_logged_in" | "error";
+            /** Models */
+            models?: string[];
+            /** Suggested Model */
+            suggested_model?: string | null;
         };
         /**
          * ExplainCostDTO
@@ -3001,6 +3405,8 @@ export interface components {
              * Format: date-time
              */
             ingested_at: string;
+            /** Closed At */
+            closed_at?: string | null;
             /**
              * Workstyle
              * @default
@@ -3472,6 +3878,18 @@ export interface components {
             ui_state: {
                 [key: string]: unknown;
             };
+            /** Autopilot Invite */
+            autopilot_invite: boolean;
+            /** Autopilot Dm */
+            autopilot_dm: boolean;
+            /** Autopilot Apply */
+            autopilot_apply: boolean;
+            /** Autopilot Min Score */
+            autopilot_min_score: number;
+            /** Autopilot Contacts Per Job */
+            autopilot_contacts_per_job: number;
+            /** Autopilot Applies Per Day */
+            autopilot_applies_per_day: number;
         };
         /** PreferencesUpdate */
         PreferencesUpdate: {
@@ -3515,6 +3933,18 @@ export interface components {
             ui_state?: {
                 [key: string]: unknown;
             } | null;
+            /** Autopilot Invite */
+            autopilot_invite?: boolean | null;
+            /** Autopilot Dm */
+            autopilot_dm?: boolean | null;
+            /** Autopilot Apply */
+            autopilot_apply?: boolean | null;
+            /** Autopilot Min Score */
+            autopilot_min_score?: number | null;
+            /** Autopilot Contacts Per Job */
+            autopilot_contacts_per_job?: number | null;
+            /** Autopilot Applies Per Day */
+            autopilot_applies_per_day?: number | null;
         };
         /** ProfileDTO */
         ProfileDTO: {
@@ -4188,7 +4618,7 @@ export interface components {
          * @description The routable LLM operation kinds (single source: registry/engine_config.LLM_KINDS).
          * @enum {string}
          */
-        LlmKind: "score" | "tailor" | "cover" | "extract" | "draft" | "apply";
+        LlmKind: "score" | "tailor" | "cover" | "extract" | "draft" | "apply" | "chat";
         SharedConstants: {
             preset_location_penalty: {
                 /** @enum {number} */
@@ -4269,7 +4699,7 @@ export interface components {
             /** @enum {string} */
             score_weight_preset: "balanced" | "location_first" | "seniority_first" | "skills_only";
             /** @enum {string} */
-            cancellable_running_kind: "cover" | "score" | "tailor";
+            cancellable_running_kind: "chat" | "cover" | "score" | "tailor";
             /** @enum {string} */
             browser_lane_kind: "contact_sync" | "discover" | "linkedin_login" | "linkedin_search" | "send" | "view_page";
             /** @enum {string} */
@@ -4644,6 +5074,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    dev_close_job_api_dev_jobs__job_id__close_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7365,6 +7828,38 @@ export interface operations {
             };
         };
     };
+    suggest_titles_api_titles_suggest_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     ingest_resume_api_profile_ingest_post: {
         parameters: {
             query?: never;
@@ -7385,6 +7880,359 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProfileIngestResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chats_api_chats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSummaryDTO"][];
+                };
+            };
+        };
+    };
+    send_chat_message_api_chats_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSendAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_api_chats__chat_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_chat_card_api_chats__chat_id__cards__message_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_chat_card_api_chats__chat_id__cards__message_id__dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_page_api_browser_page_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserPageDTO"];
+                };
+            };
+        };
+    };
+    browser_page_text_api_browser_page_text_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserTextDTO"];
+                };
+            };
+        };
+    };
+    browser_navigate_api_browser_navigate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserNavigateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_click_api_browser_click_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserElementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_type_api_browser_type_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserTypeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_choose_api_browser_choose_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserChooseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_upload_api_browser_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResult"];
                 };
             };
             /** @description Validation Error */

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field, replace
 
 # The AI kinds the 2 queue choices lane (queueing.md section 5). `apply` calls a
 # model too, but holds a browser, so it keeps its own lane of 1 in both.
-AI_KINDS = frozenset({"score", "tailor", "cover", "draft", "extract"})
+AI_KINDS = frozenset({"score", "tailor", "cover", "draft", "extract", "chat"})
 WRITING_KINDS = frozenset({"tailor", "cover", "draft"})
 QUEUE_PER_KIND = "per_kind"
 QUEUE_SHARED = "shared"
@@ -46,7 +46,7 @@ class ConcurrencyPolicy:
                 return "llm"
             if kind in WRITING_KINDS:
                 return "ai_writing"
-            if requested_by == "user":
+            if requested_by in ("user", "agent"):  # someone is waiting for it
                 return "ai_requests"
             return "llm" if kind == "score" else kind
         return self.groups.get(kind, kind)
@@ -67,34 +67,37 @@ DEFAULT_POLICY = ConcurrencyPolicy(
         # exclusive dead-locked that wait until the packet timeout
         # (2026-07-17 dogfood: "Waiting for résumé" for 15 minutes).
         "apply": "apply",
-        # Networking voyager ops (Track N3) are each single-flight: LinkedIn
-        # automation must never fan out in parallel (account-safety, NFR-LI-*).
-        "discover": "networker_discover",
-        "send": "networker_send",
+        # Every op that drives the shared browser surface waits in 1 lane: LinkedIn
+        # automation must never fan out in parallel (account-safety, NFR-LI-*), and
+        # 1 lane per kind let 4 kinds interleave navigations on 1 account
+        # (architecture-audit-2026-10-14.md section 3.3).
+        "discover": "browser_lane",
+        "send": "browser_lane",
+        "contact_sync": "browser_lane",
+        "linkedin_search": "browser_lane",
         # The headed login (Track N4) opens a visible browser the user drives —
         # exclusive so nothing else contends for it.
         "linkedin_login": "linkedin_login",
         "archive_stale_contacts": "archive_stale_contacts",
         # A user's queued page-view on the shared browser surface (2026-08-16).
-        "view_page": "view_page",
+        "view_page": "browser_lane",
     },
     group_limits={
         # 4 = DEFAULT_LLM_CONCURRENCY below; the boot wiring overrides from
         # thresholds.llm_concurrency (Settings → Scoring → Parallel AI calls).
         "llm": 4, "ai_writing": FIXED_LANE_LIMIT, "ai_requests": FIXED_LANE_LIMIT,
         "extract": 1, "scan": 1, "cleanup_trash": 1, "apply": APPLY_PARALLEL,
-        "networker_discover": 1, "networker_send": 1,
-        "linkedin_login": 1, "archive_stale_contacts": 1, "view_page": 1,
+        "browser_lane": 1, "linkedin_login": 1, "archive_stale_contacts": 1,
     },
     exclusive_kinds=frozenset({"linkedin_login"}),
 )
 
 
 # The op kinds that drive the shared browser lane (mirrors the frontend queue
-# panel's tracked set). A user's `view_page` must never slot a navigation into
-# the gap BETWEEN a running op's lane actions (discover and contact_sync take
-# the lane several times per op), so admission — not just the lane — keeps a
-# view and any other lane kind mutually exclusive; see `can_start` rule 3.
+# panel's tracked set). No op may slot a navigation into the gap BETWEEN another
+# op's lane actions (discover and contact_sync take the lane several times per
+# op), so admission, not just the lane, runs them 1 at a time: the
+# `browser_lane` group above, and `linkedin_login` is exclusive.
 BROWSER_LANE_KINDS = frozenset(
     {"send", "discover", "contact_sync", "linkedin_search", "linkedin_login", "view_page"}
 )
@@ -186,20 +189,15 @@ def can_start(
     requested_by: str = "app",
 ) -> bool:
     """True if `kind` may start given what's running: nothing beside an exclusive op;
-    an exclusive kind only when idle; `view_page` and other browser-lane kinds never
-    together, either way (`send` and `discover` admission untouched); otherwise
-    while its lane is under its limit. A bare kind in `running_ops` reads as `app`."""
+    an exclusive kind only when idle; otherwise while its lane is under its limit
+    (every browser-lane kind shares 1 lane of 1). A bare kind in `running_ops`
+    reads as `app`."""
     pairs = [(op, "app") if isinstance(op, str) else op for op in running_ops]
     running = [k for k, _ in pairs]
     if any(k in policy.exclusive_kinds for k in running):
         return False
     if kind in policy.exclusive_kinds:
         return len(running) == 0
-    if kind == "view_page":
-        if any(k in BROWSER_LANE_KINDS for k in running):
-            return False
-    elif kind in BROWSER_LANE_KINDS and "view_page" in running:
-        return False
     group = policy.group_for(kind, requested_by)
     running_in_group = sum(1 for k, by in pairs if policy.group_for(k, by) == group)
     return running_in_group < policy.limit_for_group(group)

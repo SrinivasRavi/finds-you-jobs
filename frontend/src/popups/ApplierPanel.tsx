@@ -73,13 +73,13 @@ function seedFeed(run: ApplyRun): FeedItem[] {
   run.blockers.forEach((b, i) => {
     items.push({
       id: `seed-blocker-${i}`,
-      text:
-        i18n.t("popups.applier.feed.blocker", { kind: b.kind }) +
-        `${b.field_label ? ` [${b.field_label}]` : ""}${b.detail ? `: ${b.detail}` : ""}`,
+      text: blockerLine(b),
       tone: "bad",
     });
   });
-  if (run.summary) items.push({ id: "seed-summary", text: formatEngineError(run.summary) || run.summary, tone: "info" });
+  const sentence = run.blockers.some((b) => SENTENCE_BLOCKERS.has(b.kind));
+  if (run.summary && !sentence)
+    items.push({ id: "seed-summary", text: formatEngineError(run.summary) || run.summary, tone: "info" });
   return items;
 }
 
@@ -98,11 +98,13 @@ type ApplyEventPayload = {
   action?: string;
   clicked?: boolean;
   confirmed?: boolean;
+  unconfirmed?: boolean;
+  by?: "user" | "autopilot";
 };
 
 /** Map one redacted `apply` SSE event to a feed line. Returns null for events
  *  that carry no narration (screenshot_ready drives the image, not the feed). */
-function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
+export function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
   const id = `ev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const who = p.label || p.tool || i18n.t("popups.applier.feed.actionFallback");
   switch (p.event) {
@@ -136,9 +138,7 @@ function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
     case "apply.blocker_found":
       return {
         id,
-        text:
-          i18n.t("popups.applier.feed.blocker", { kind: p.kind ?? "" }) +
-          `${p.field_label ? ` [${p.field_label}]` : ""}${p.detail ? `: ${p.detail}` : ""}`,
+        text: blockerLine({ kind: p.kind ?? "", field_label: p.field_label, detail: p.detail }),
         tone: "bad",
       };
     case "apply.waiting_for_packet":
@@ -147,11 +147,30 @@ function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
       return { id, text: i18n.t("popups.applier.feed.readyForHuman"), tone: "warn" };
     case "apply.confirmation_detected":
       return { id, text: i18n.t("popups.applier.feed.confirmationDetected"), tone: "ok" };
-    case "apply.user_submitted":
-      if (p.confirmed) return { id, text: i18n.t("popups.applier.feed.userSubmitConfirmed"), tone: "ok" };
-      return p.clicked
-        ? { id, text: i18n.t("popups.applier.feed.userSubmitUnconfirmed"), tone: "warn" }
-        : { id, text: i18n.t("popups.applier.feed.userSubmitNotFound"), tone: "bad" };
+    case "apply.user_submitted": {
+      const labels = {
+        submitForMe: i18n.t("popups.applier.submitForMe"),
+        iSubmitted: i18n.t("popups.applier.iSubmitted"),
+        didntSubmit: i18n.t("popups.applier.didntSubmit"),
+      };
+      if (p.by === "autopilot") {
+        if (p.confirmed) {
+          return { id, text: i18n.t("popups.applier.feed.autopilotSubmitConfirmed"), tone: "ok" };
+        }
+        const key = p.unconfirmed ? "autopilotSubmitUnconfirmed" : "autopilotSubmitNotFound";
+        const tone = p.unconfirmed ? "warn" : "bad";
+        return { id, text: i18n.t(`popups.applier.feed.${key}`, labels), tone };
+      }
+      if (p.confirmed) {
+        const key = p.clicked ? "userSubmitConfirmed" : "userSubmitSettled";
+        return { id, text: i18n.t(`popups.applier.feed.${key}`), tone: "ok" };
+      }
+      if (p.unconfirmed) {
+        const key = p.clicked ? "userSubmitUnconfirmed" : "userSubmitPageMoved";
+        return { id, text: i18n.t(`popups.applier.feed.${key}`, labels), tone: "warn" };
+      }
+      return { id, text: i18n.t("popups.applier.feed.userSubmitNotFound"), tone: "bad" };
+    }
     case "apply.interrupted":
       return { id, text: i18n.t("popups.applier.feed.interrupted"), tone: "bad" };
     case "apply.completed":
@@ -160,6 +179,41 @@ function formatApplyEvent(p: ApplyEventPayload): FeedItem | null {
       return null;
   }
 }
+
+// A blocker's code, in words. The 2 interruption codes are whole sentences that
+// replace the engine's English summary; the rest keep the engine's detail.
+const BLOCKER_KEY: Record<string, string> = {
+  window_closed: "blockerWindowClosed",
+  page_died: "blockerPageDied",
+  ungrounded_field: "blockerUngroundedField",
+  login_wall: "blockerLoginWall",
+  captcha: "blockerCaptcha",
+  posting_closed: "blockerPostingClosed",
+  no_form: "blockerNoForm",
+  error: "blockerError",
+  browser_missing: "blockerBrowserMissing",
+};
+const SENTENCE_BLOCKERS = new Set(["window_closed", "page_died"]);
+
+function blockerLabel(kind: string): string {
+  return i18n.t(`popups.applier.${BLOCKER_KEY[kind] ?? "blockerOther"}`);
+}
+
+function blockerLine(b: { kind: string; field_label?: string | null; detail?: string | null }): string {
+  if (SENTENCE_BLOCKERS.has(b.kind)) return blockerLabel(b.kind);
+  return (
+    blockerLabel(b.kind) +
+    `${b.field_label ? ` [${b.field_label}]` : ""}${b.detail ? `: ${b.detail}` : ""}`
+  );
+}
+
+// How a run was submitted, in words; a code never reaches the screen.
+const EVIDENCE_KEY: Record<string, string> = {
+  user_submitted: "evidenceUserSubmitted",
+  confirmation_detected: "evidenceConfirmationDetected",
+  user_attested: "evidenceUserAttested",
+  autopilot_submitted: "evidenceAutopilotSubmitted",
+};
 
 function fmtRemaining(ms: number): string {
   if (ms <= 0) return "0:00";
@@ -238,6 +292,7 @@ export function ApplierPanel({
   // ── Latest evidence screenshot (screenshot_count-1), via authed blob fetch ──
   const shotCount = run?.screenshot_count ?? 0;
   const [shotUrl, setShotUrl] = useState<string | null>(null);
+  const [shotIndex, setShotIndex] = useState(-1);
   const shotUrlRef = useRef<string | null>(null);
   useEffect(() => {
     if (shotCount <= 0) return;
@@ -250,6 +305,7 @@ export function ApplierPanel({
         if (shotUrlRef.current) URL.revokeObjectURL(shotUrlRef.current);
         shotUrlRef.current = url;
         setShotUrl(url);
+        setShotIndex(shotCount - 1);
       })
       .catch(() => {
         /* a not-yet-written screenshot is fine — the count-driven refetch retries */
@@ -295,6 +351,7 @@ export function ApplierPanel({
   const isRetryable = NON_SUCCESS_TERMINALS.includes(status);
   // No Chrome and no Chromium: the run failed coded, and Download replaces the raw text (A18).
   const browserMissing = run?.blockers.some((b) => b.kind === "browser_missing") ?? false;
+  const runSentence = run?.blockers.some((b) => SENTENCE_BLOCKERS.has(b.kind)) ?? false;
   // The run's tab in the Applier window (applier/window.md section 4.5). It lives
   // while the run is `running`, review included; status `ready_for_human` lands after.
   const hasTab = status === "running";
@@ -371,8 +428,10 @@ export function ApplierPanel({
         {status === "submitted" ? (
           <div className="border-b border-border bg-good-wash px-5 py-2.5 text-[12.5px] font-medium text-good">
             {t("popups.applier.submittedBanner")}
-            {run?.submit_evidence ? (
-              <span className="ml-1 font-normal text-ink-2">{run.submit_evidence}</span>
+            {run && EVIDENCE_KEY[run.submit_evidence] ? (
+              <span className="ml-1 font-normal text-ink-2">
+                {t(`popups.applier.${EVIDENCE_KEY[run.submit_evidence]}`)}
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -417,6 +476,7 @@ export function ApplierPanel({
               {shotUrl ? (
                 <img
                   src={shotUrl}
+                  data-shot-index={shotIndex}
                   alt={t("popups.applier.screenshotAlt")}
                   className="max-h-full max-w-full rounded-md border border-border object-contain"
                 />
@@ -442,11 +502,21 @@ export function ApplierPanel({
                 ? " " +
                   t("popups.applier.couldntComplete", {
                     blockers: run.blockers
-                      .map((b) => `${b.kind}${b.field_label ? ` (${b.field_label})` : ""}`)
+                      .map((b) => `${blockerLabel(b.kind)}${b.field_label ? ` (${b.field_label})` : ""}`)
                       .join(", "),
                   })
-                : " " + t("popups.applier.neverSubmits")}
+                : " " + t("popups.applier.reviewHint")}
             </div>
+            {run?.submit_evidence === "unconfirmed" ? (
+              <div
+                className="mt-2 rounded-md border border-warn bg-surface px-3 py-2 text-[12px] text-ink-2"
+                data-testid="applier-unconfirmed-notice"
+              >
+                {t("popups.applier.unconfirmedNotice", {
+                  submitForMe: t("popups.applier.submitForMe"),
+                })}
+              </div>
+            ) : null}
             {confirmingSubmit ? (
               <div
                 className="mt-3 rounded-md border border-warn bg-surface px-3 py-2"
@@ -513,7 +583,7 @@ export function ApplierPanel({
           <div className="border-t border-border bg-bad-wash px-5 py-3">
             <div className="text-[13px] font-semibold text-bad">
               {phase.label}
-              {run?.summary && !browserMissing ? <span className="ml-1 font-normal text-ink-2">— {formatEngineError(run.summary, t)}</span> : null}
+              {run?.summary && !browserMissing && !runSentence ? <span className="ml-1 font-normal text-ink-2">— {formatEngineError(run.summary, t)}</span> : null}
             </div>
             {browserMissing ? (
               <div className="mt-1.5">
@@ -528,11 +598,7 @@ export function ApplierPanel({
                 {run.blockers.map((b, i) => (
                   <li key={i} className="flex items-start gap-1.5">
                     <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-bad" />
-                    <span>
-                      {b.kind}
-                      {b.field_label ? ` [${b.field_label}]` : ""}
-                      {b.detail ? `: ${b.detail}` : ""}
-                    </span>
+                    <span data-testid="applier-blocker">{blockerLine(b)}</span>
                   </li>
                 ))}
               </ul>

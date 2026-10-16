@@ -731,7 +731,7 @@ async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> 
     because the run's own timing is not what is under test."""
     from playwright.async_api import async_playwright
 
-    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.apply_op import _run_submit
     from sidecar.app.registry.operations import OperationContext
 
     app, client = app_client
@@ -750,7 +750,7 @@ async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> 
         page = await browser.new_page()
         try:
             await page.goto((FIXTURES / "submit_form.html").as_uri())
-            await _run_user_submit(ctx, run_id, page)
+            await _run_submit(ctx, run_id, page)
         finally:
             await browser.close()
 
@@ -761,6 +761,9 @@ async def test_user_submit_reaches_the_executor_on_the_live_page(app_client) -> 
         assert row.submit_evidence == "user_submitted"
         assert "Submit application" in row.summary
         assert "confirmation detected" in row.summary
+        # A run reads "submitted" only with its proof saved, in the same write:
+        # the e2e read a sent run with no confirmation shot (2026-10-15).
+        assert row.screenshots and row.screenshots[-1].endswith("post-submit.png")
     card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
     assert card["column"] == "applied"
 
@@ -772,7 +775,7 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
     """A page with no submit control must not advance the card or claim a send."""
     from playwright.async_api import async_playwright
 
-    from sidecar.app.registry.apply_op import _run_user_submit
+    from sidecar.app.registry.apply_op import _run_submit
     from sidecar.app.registry.operations import OperationContext
 
     app, client = app_client
@@ -787,7 +790,7 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
         page = await browser.new_page()
         try:
             await page.goto((FIXTURES / "jd.html").as_uri())
-            await _run_user_submit(ctx, run_id, page)
+            await _run_submit(ctx, run_id, page)
         finally:
             await browser.close()
 
@@ -798,6 +801,119 @@ async def test_user_submit_records_an_honest_failure(app_client) -> None:
         assert row.submit_evidence != "user_submitted"
     card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
     assert card["column"] != "applied"
+
+
+async def _user_submit_on(app_client, html: str, tmp_path: Path, *, evidence: str = "none"):
+    from playwright.async_api import async_playwright
+
+    from sidecar.app.registry.apply_op import _run_submit
+    from sidecar.app.registry.operations import OperationContext
+
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
+    db = app.state.db
+    with db.repos() as repos:
+        run_id = repos.apply_runs.create(
+            app_id, status="ready_for_human", submit_evidence=evidence
+        ).id
+    events: list[dict] = []
+    ctx = OperationContext(
+        kind="apply", input_snapshot={}, db=db, operation_id="op-doubt",
+        publish=events.append,
+    )
+    page_file = tmp_path / "form.html"
+    page_file.write_text(html, encoding="utf-8")
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        try:
+            await page.goto(page_file.as_uri())
+            await _run_submit(ctx, run_id, page)
+        finally:
+            await browser.close()
+    with db.repos() as repos:
+        row = repos.apply_runs.get(run_id)
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    return row, card, [e["payload"] for e in events]
+
+
+@pytest.fixture
+def short_submit_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sidecar.packages.jobapplier import submit as submit_mod
+
+    monkeypatch.setattr(submit_mod, "_CONFIRM_POLL_S", 0.05)
+    monkeypatch.setattr(submit_mod, "_CONFIRM_WAIT_S", 0.2)
+    monkeypatch.setattr(submit_mod, "_SETTLE_WAIT_S", 0.3)
+
+
+_SILENT_FORM = (
+    "<html><body><form onsubmit='return false'><input name='a' value='x'>"
+    "<button type='submit'>Submit application</button></form></body></html>"
+)
+
+
+async def test_a_submit_with_no_confirmation_is_recorded_unconfirmed(
+    app_client, short_submit_waits: None, tmp_path: Path
+) -> None:
+    """AUD-4, Applier half: past the click, silence is doubt. The row says so,
+    so the next Submit reads before it clicks."""
+    row, card, payloads = await _user_submit_on(app_client, _SILENT_FORM, tmp_path)
+
+    assert row is not None
+    assert row.submit_evidence == "unconfirmed"
+    assert row.status == "ready_for_human"
+    assert card["column"] != "applied"
+    assert any(p.get("event") == "apply.user_submitted" and p["unconfirmed"] for p in payloads)
+
+
+async def test_a_submit_after_doubt_reads_first_and_records_the_send(
+    app_client, short_submit_waits: None, tmp_path: Path
+) -> None:
+    """The earlier click went through; the page now confirms. No 2nd click."""
+    html = "<html><body><h2>Application received</h2></body></html>"
+    row, card, payloads = await _user_submit_on(
+        app_client, html, tmp_path, evidence="unconfirmed"
+    )
+
+    assert row is not None
+    assert row.status == "submitted"
+    assert row.submit_evidence == "user_submitted"
+    assert card["column"] == "applied"
+    assert any(p.get("event") == "apply.user_submitted" and not p["clicked"] for p in payloads)
+
+
+def test_a_window_closed_mid_run_is_coded_never_raw(app_client, monkeypatch) -> None:
+    """AUD-10, Applier half: closing the Applier window while the resume PDF
+    renders raised TargetClosedError, and its text became the run's summary."""
+    from playwright._impl._errors import TargetClosedError
+
+    from sidecar.app.registry import apply_op
+
+    async def closed(*_a, **_k):
+        raise TargetClosedError("Target page, context or browser has been closed")
+
+    monkeypatch.setattr(apply_op, "render_resume_pdf_async", closed)
+    app, client = app_client
+    _job_id, app_id = _seed_card(client, app)
+    run = client.post(f"/api/applications/{app_id}/apply", headers=AUTH, json={
+        "dev": {"engine_script": [_action("finish", reason="x")],
+                "allow_local": True, "headed": False, "review_wait_s": 0}
+    }).json()
+    done = _wait_terminal(client, run["id"])
+
+    assert done["status"] == "interrupted"
+    assert [b["kind"] for b in done["blockers"]] == ["window_closed"]
+    assert "TargetClosedError" not in done["summary"]
+    assert "Target page" not in done["summary"]
+    deadline = time.monotonic() + 30
+    op: dict = {}
+    while time.monotonic() < deadline:
+        op = client.get(f"/api/operations/{done['operation_id']}", headers=AUTH).json()
+        if op.get("state") not in ("queued", "running"):
+            break
+        time.sleep(0.2)
+    assert "TargetClosedError" not in (op.get("error") or "")
+    assert "window was closed" in (op.get("error") or "")
 
 
 def test_user_submit_is_409_once_the_browser_is_gone(app_client) -> None:
@@ -960,12 +1076,14 @@ def test_apply_with_no_browser_at_all_is_coded(
 ) -> None:
     """A18: no installed Chrome and no downloaded Chromium. The run lands failed with
     a `browser_missing` blocker, never Playwright's raw "Executable doesn't exist"."""
-    from sidecar.app.browser import launch
+    from sidecar.app.browser import host
     from sidecar.app.registry.applier_window import BROWSER_MISSING_DETAIL, shutdown_windows
 
-    shutdown_windows()  # a window started under the real browser path
+    # The driver reads the browsers path when it starts, so restart the host after it.
+    shutdown_windows()
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
-    monkeypatch.setattr(launch, "PREFERRED_CHANNEL", None)
+    host.shutdown_host()
+    monkeypatch.setattr(host, "PREFERRED_CHANNEL", None)
     app, client = app_client
     _job_id, app_id = _seed_card(client, app)
     run = client.post(
@@ -1086,3 +1204,64 @@ def test_only_a_filled_form_is_in_review() -> None:
     for status, phase, want in rows:
         run = ApplyRun(application_id="a", status=status, phase=phase)
         assert apply_run_in_review(run) is want, (status, phase)
+
+
+# -- Submit autopilot (audit-2026-10-14.md section 8.10) ---------------------
+
+
+def _card_on(client: TestClient, app: FastAPI, fixture: str) -> str:
+    resp = client.post(
+        "/api/profile", headers=AUTH, json={"resume_markdown": "# Ada Lovelace\n\nEngineer."}
+    )
+    assert resp.status_code in (200, 201)
+    seed_application_profile(app.state.db)
+    job_id = _seed_fixture_job(app, fixture)
+    return client.post(
+        "/api/applications", headers=AUTH,
+        json={"job_id": job_id, "generate_resume": False, "generate_cover": False},
+    ).json()["id"]
+
+
+def _apply_with(client: TestClient, app_id: str, script: list[str]) -> dict:
+    resp = client.post(
+        f"/api/applications/{app_id}/apply", headers=AUTH,
+        json={"dev": {
+            "engine_script": script, "allow_local": True, "headed": False,
+            "review_wait_s": 0,
+        }},
+    )
+    assert resp.status_code == 202, resp.text
+    return _wait_terminal(client, resp.json()["id"])
+
+
+def test_submit_autopilot_submits_a_clean_fill_once(app_client) -> None:
+    app, client = app_client
+    app_id = _card_on(client, app, "autopilot_form.html")
+    client.post("/api/settings", headers=AUTH, json={"autopilot_apply": True})
+    final = _apply_with(client, app_id, [_action("finish", reason="all fields prefilled")])
+    assert final["status"] == "submitted", final
+    assert final["submit_evidence"] == "autopilot_submitted"
+    assert "Submissions: 1" not in final["summary"]  # redacted summary, never page text
+    card = client.get(f"/api/applications/{app_id}", headers=AUTH).json()
+    assert card["column"] == "applied"
+
+
+def test_submit_autopilot_leaves_a_fill_with_a_blocker_for_the_user(app_client) -> None:
+    app, client = app_client
+    app_id = _card_on(client, app, "autopilot_form.html")
+    client.post("/api/settings", headers=AUTH, json={"autopilot_apply": True})
+    final = _apply_with(client, app_id, [
+        _action("report_blocked", kind="needs_answer", detail="visa question",
+                field_label="Visa"),
+        _action("finish", reason="1 question left"),
+    ])
+    assert final["status"] == "ready_for_human", final
+    assert final["submit_evidence"] == "none"
+
+
+def test_with_submit_on_confirm_a_clean_fill_waits_for_the_user(app_client) -> None:
+    app, client = app_client
+    app_id = _card_on(client, app, "autopilot_form.html")
+    final = _apply_with(client, app_id, [_action("finish", reason="all fields prefilled")])
+    assert final["status"] == "ready_for_human", final
+    assert final["submit_evidence"] == "none"

@@ -48,6 +48,9 @@ class _FakeResponse:
     def read(self, n: int = -1) -> bytes:
         return self._body if n < 0 else self._body[:n]
 
+    def geturl(self) -> str:
+        return "https://example.com/after-redirects"
+
     def __enter__(self) -> _FakeResponse:
         return self
 

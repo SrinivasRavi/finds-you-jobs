@@ -47,6 +47,9 @@ const DEGRADED_AFTER: usize = 3;
 const OUTCOME_RUNNING: &str = "unknown";
 const OUTCOME_CLEAN: &str = "clean";
 const OUTCOME_GAVE_UP: &str = "gave_up";
+// A run healthy for `HEALTHY_RESET` is past the crash loop the latch guards
+// against, so a later hard kill (a dev restart, an OS restart) is not a bad ending.
+const OUTCOME_RAN: &str = "ran";
 
 /// PROD sidecar binary (PyInstaller onedir), resolved against the packaged
 /// app's resource dir at spawn time — resolve_prod_sidecar_bin() below.
@@ -314,7 +317,9 @@ fn write_boot_history(records: &[serde_json::Value]) {
 /// "All the same" is what separates a repeating fault from bad luck.
 fn is_degraded(recent: &[String]) -> bool {
     recent.len() == DEGRADED_AFTER
-        && recent.iter().all(|o| o != OUTCOME_CLEAN)
+        && recent
+            .iter()
+            .all(|o| o != OUTCOME_CLEAN && o != OUTCOME_RAN)
         && recent.windows(2).all(|w| w[0] == w[1])
 }
 
@@ -412,6 +417,7 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
     let mut first_failure_at: Option<Instant> = None;
     let mut healthy_since: Option<Instant> = None;
     let mut busy_polls: u32 = 0;
+    let mut stamped_ran = false;
 
     // Startup grace for the initial spawn: the health loop below treats an
     // unanswered /healthz as a crash signal, which is only fair once the
@@ -459,6 +465,10 @@ pub fn supervise(app: AppHandle, state: Arc<Mutex<Inner>>, mut child: Child, cwd
                 Some(since) if since.elapsed() >= HEALTHY_RESET => {
                     failures = 0;
                     first_failure_at = None;
+                    if !stamped_ran {
+                        close_boot_record(OUTCOME_RAN);
+                        stamped_ran = true;
+                    }
                 }
                 _ => {}
             }
@@ -578,7 +588,7 @@ pub fn shutdown(state: &Arc<Mutex<Inner>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_degraded, OUTCOME_CLEAN, OUTCOME_GAVE_UP, OUTCOME_RUNNING};
+    use super::{is_degraded, OUTCOME_CLEAN, OUTCOME_GAVE_UP, OUTCOME_RAN, OUTCOME_RUNNING};
 
     fn outcomes(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| (*v).to_string()).collect()
@@ -604,6 +614,16 @@ mod tests {
             OUTCOME_CLEAN,
             OUTCOME_GAVE_UP,
             OUTCOME_GAVE_UP
+        ])));
+    }
+
+    #[test]
+    fn runs_that_were_healthy_then_killed_never_degrade() {
+        // The maintainer's 2026-10-15 history: a 26 h run, then a hard kill.
+        assert!(!is_degraded(&outcomes(&[
+            OUTCOME_RAN,
+            OUTCOME_RAN,
+            OUTCOME_RAN
         ])));
     }
 

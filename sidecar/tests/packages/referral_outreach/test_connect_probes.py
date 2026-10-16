@@ -48,12 +48,33 @@ def test_top_card_connect_primary(browser):
         page.close()
 
 
+def test_top_card_connect_under_an_overlay_still_clicks_the_link(browser):
+    # 2026-10-16 live: a paragraph covered the Connect link, and the plain click
+    # timed out at 30 s with no invite. The click must reach the link itself.
+    page = _page_for(browser, "connect_covered.html")
+    try:
+        assert find_and_click_connect(page, wait_ms=1000) == "top-card-connect"
+        assert page.evaluate("window.__connectClicked === true")
+    finally:
+        page.close()
+
+
 def test_connect_inside_more_menu_with_pagewide_fallback(browser):
     # No matching top-card wrapper here → page-wide fallback; Connect is revealed
     # only after the More menu is opened.
     page = _page_for(browser, "connect_more_menu.html")
     try:
         assert find_and_click_connect(page, wait_ms=2000) == "more-menu-connect"
+    finally:
+        page.close()
+
+
+def test_more_menu_under_an_overlay_still_opens(browser):
+    # A covered More button: a press at its screen point lands on the overlay
+    # and opens nothing, so the menu's Connect never appears.
+    page = _page_for(browser, "connect_more_covered.html")
+    try:
+        assert find_and_click_connect(page, wait_ms=1000) == "more-menu-connect"
     finally:
         page.close()
 

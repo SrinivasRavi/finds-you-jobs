@@ -37,6 +37,7 @@ import type {
   PromptTestResult,
   ReachOutInput,
   Settings,
+  SettingsPatch,
   Stage,
 } from "./types";
 
@@ -73,6 +74,8 @@ export const qk = {
   linkedinSession: ["linkedinSession"] as const,
   applyRun: ["applyRun"] as const,
   applyRuns: ["applyRuns"] as const,
+  chats: ["chats"] as const,
+  chat: ["chat"] as const,
 };
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
@@ -91,6 +94,16 @@ export function useExplainCost(enabled: boolean) {
 
 /** The location picker's suggestions for what's typed (place-picker.md section 3).
  *  Cached per query, so backspacing re-uses answers instead of re-asking. */
+export function useTitleSuggestions(q: string) {
+  const query = q.trim();
+  return useQuery({
+    queryKey: ["titleSuggest", query.toLowerCase()],
+    queryFn: () => api.suggestTitles(query),
+    enabled: query.length >= 2,
+    staleTime: 60_000,
+  });
+}
+
 export function usePlaceSuggestions(q: string) {
   const query = q.trim();
   return useQuery({
@@ -755,9 +768,32 @@ export function useCountries() {
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: Partial<Settings>) => Promise.resolve(api.updateSettings(patch)),
+    // Each write reads, merges and posts the whole record, and a pane builds its
+    // patch from the cached settings. So writes run 1 at a time, the cache takes
+    // each patch at once, and only the last write refetches; else 2 quick edits
+    // lost 1 (journey-settings.spec.ts).
+    mutationKey: qk.settings,
+    scope: { id: "settings" },
+    mutationFn: (patch: SettingsPatch) => Promise.resolve(api.updateSettings(patch)),
+    onMutate: async (patch) => {
+      await qc.cancelQueries({ queryKey: qk.settings });
+      qc.setQueryData<Settings>(qk.settings, (cur) =>
+        cur
+          ? {
+              ...cur,
+              ...patch,
+              observability: { ...cur.observability, ...patch.observability },
+              lifecycle: { ...cur.lifecycle, ...patch.lifecycle },
+            }
+          : cur,
+      );
+    },
+    onSettled: () => {
+      if (qc.isMutating({ mutationKey: qk.settings }) <= 1) {
+        qc.invalidateQueries({ queryKey: qk.settings });
+      }
+    },
     onSuccess: (_r, patch) => {
-      qc.invalidateQueries({ queryKey: qk.settings });
       // Switching to keyword mode backfills scores server-side in the same
       // request — refetch the board so the grey scores appear immediately.
       if (patch.scoring_mode !== undefined) invalidateFeed(qc);
@@ -1552,4 +1588,53 @@ export function useSSEInvalidation(qc: QueryClient): void {
       invalidateApplications.cancel();
     };
   }, [qc]);
+}
+
+// ─── The chat agent (audit-2026-10-14.md section 8.11) ─────────────────────────
+
+const CHAT_POLL_MS = 1_000;
+
+export function useChats(enabled: boolean) {
+  return useQuery({ queryKey: qk.chats, queryFn: () => api.listChats(), enabled });
+}
+
+/** 1 chat. Polls while a turn runs, since each step lands as its own message. A
+ *  finished turn may have changed anything the agent touched, so every query
+ *  refetches then. */
+export function useChat(id: string | null) {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: [...qk.chat, id],
+    queryFn: () => api.getChat(id as string),
+    enabled: id != null,
+    refetchInterval: (q) => (q.state.data?.busy ? CHAT_POLL_MS : false),
+  });
+  const busy = query.data?.busy ?? false;
+  const [wasBusy, setWasBusy] = useState(false);
+  useEffect(() => {
+    if (wasBusy && !busy) void qc.invalidateQueries();
+    setWasBusy(busy);
+  }, [busy, wasBusy, qc]);
+  return query;
+}
+
+export function useSendChatMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ text, chatId }: { text: string; chatId: string | null }) =>
+      api.sendChatMessage(text, chatId),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: [...qk.chat, r.chat_id] });
+      void qc.invalidateQueries({ queryKey: qk.chats });
+    },
+  });
+}
+
+export function useAnswerChatCard(chatId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ messageId, answer }: { messageId: string; answer: "confirm" | "dismiss" }) =>
+      api.answerChatCard(chatId as string, messageId, answer),
+    onSettled: () => void qc.invalidateQueries(),
+  });
 }
