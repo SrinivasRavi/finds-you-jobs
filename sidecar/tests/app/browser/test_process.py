@@ -37,7 +37,9 @@ def test_kill_reaches_only_the_profile_it_names(tmp_path: Path) -> None:
         assert _wait_seen(mine, target.pid)
         assert target.pid not in {p.pid for p in browser_processes(other)}
 
-        assert kill_browser(mine) == 1
+        # At least 1: on Windows the venv's python.exe is a launcher that starts
+        # the interpreter as its child, so 1 spawn is 2 processes (2026-10-16 CI).
+        assert kill_browser(mine) >= 1
         assert target.wait(timeout=5) is not None
         assert bystander.poll() is None  # the other profile's process lives
         assert browser_processes(mine) == []
