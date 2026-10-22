@@ -679,23 +679,40 @@ def _credentials(request: Request) -> list[dto.DiscoveryCredentialDTO]:
         return out
 
 
-def _seed_sources(repos, adapter_id: str) -> None:  # noqa: ANN001 — Repos
-    """First key save: add the adapter's `DEFAULT_SOURCES` the user doesn't
-    have yet (an entry carrying every default field counts), so they exist and
-    toggle without touching existing rows."""
-    portals, save = _portals_for_update(repos)
-    sources = list(portals.get("sources", []))
-    missing = [
+def _missing_sources(sources: list, defaults: tuple) -> list:
+    """Defaults the user does not already have, matched on every declared field."""
+    return [
         default
-        for default in _KEYED[adapter_id].DEFAULT_SOURCES
+        for default in defaults
         if not any(
             isinstance(raw, dict) and all(str(raw.get(k, "")) == v for k, v in default.items())
             for raw in sources
         )
     ]
-    if missing:
-        portals["sources"] = sources + [dict(d) for d in missing]
-        save()
+
+
+def _seed_sources(repos, adapter_id: str) -> None:  # noqa: ANN001 — Repos
+    """First key save: add the adapter's `DEFAULT_SOURCES` the user doesn't
+    have yet (an entry carrying every default field counts), so they exist and
+    toggle without touching existing rows. `OPTIONAL_SOURCES`, when the adapter
+    declares them, are added the same way and start disabled."""
+    adapter = _KEYED[adapter_id]
+    portals, save = _portals_for_update(repos)
+    sources = list(portals.get("sources", []))
+    missing = _missing_sources(sources, adapter.DEFAULT_SOURCES)
+    optional = _missing_sources(sources, getattr(adapter, "OPTIONAL_SOURCES", ()))
+    if not missing and not optional:
+        return
+    portals["sources"] = sources + [dict(d) for d in missing] + [dict(d) for d in optional]
+    if optional:
+        disabled = set(portals.get("disabled_sources", []))
+        field = getattr(adapter, "SUB_SOURCE_FIELD", "")
+        for src in optional:
+            sub = src.get(field, "") if field else ""
+            if sub:
+                disabled.add(f"{adapter_id}:{sub}")
+        portals["disabled_sources"] = sorted(disabled)
+    save()
 
 
 @router.get("/api/discovery/credentials")

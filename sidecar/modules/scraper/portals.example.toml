@@ -74,6 +74,15 @@ board = "linkedin"     # public guest job search — no account, no ban risk
                        # (the authenticated Voyager path is a separate opt-in).
                        # Needs role aliases + locations set in [filters]/prefs.
 
+# Optional Indeed search. Saving an Apify key adds this row unticked under
+# Settings → Discovery sources; tick "Indeed search (via Apify)" to run it.
+# It stays off here too. The default Indeed actor is unchanged.
+# A location that names a country (for example "india") selects that Indeed
+# site, and a posted date that is an absolute day is kept.
+# [[sources]]
+# board = "apify"
+# actor = "johnvc/indeed-jobs-api"
+
 [[sources]]
 url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
 type = "rss"

@@ -182,6 +182,95 @@ def test_seek_builds_url_from_id_and_indeed_drops_relative_dates():
     assert indeed_jobs[0].source_adapter == "indeed"
 
 
+def test_indeed_search_maps_flat_rows_and_drops_non_jobs():
+    """Optional Indeed search. Off by default. A non-job row is not a posting."""
+    captured: list[object] = []
+
+    def _run(url: str, body: object) -> object:
+        captured.append(body)
+        return [
+            {
+                "result_type": "job",
+                "jobId": "example-job-1",
+                "jobTitle": "Software Engineer",
+                "jobUrl": "https://in.indeed.com/viewjob?jk=example",
+                "companyName": "Example Co",
+                "location": "Bengaluru, Karnataka",
+                "descriptionMarkdown": "Build APIs.",
+                "datePosted": "2026-10-20",
+                "salaryText": "Example pay",
+            },
+            {
+                "result_type": "other",
+                "jobTitle": "Other result",
+                "jobUrl": "https://in.indeed.com/viewjob?jk=other",
+            },
+        ]
+
+    prefs = ScanPrefs(
+        title_allow=["software engineer"],
+        location_allow=["india"],
+        credentials={"apify": "apify_api_TESTTOKEN"},
+    )
+    jobs = apify.search(
+        _entry("johnvc/indeed-jobs-api"),
+        prefs,
+        routed({"johnvc~indeed-jobs-api": _run})(),
+    )
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.title == "Software Engineer"
+    assert job.canonical_url == "https://in.indeed.com/viewjob?jk=example"
+    assert job.company == "Example Co"
+    assert job.location == "Bengaluru, Karnataka"
+    assert job.description == "Build APIs."
+    assert job.posted_at == "2026-10-20"
+    assert job.salary == "Example pay"
+    assert job.source_adapter == "indeed"
+    assert captured == [
+        {
+            "mode": "search",
+            "keywords": ["software engineer"],
+            "maxResultsPerInput": apify.MAX_ITEMS,
+            "uniqueJobsOnly": True,
+            "location": "india",
+            "country": "IN",
+        }
+    ]
+    assert "johnvc/indeed-jobs-api" not in apify.DEFAULT_ACTORS
+    assert "johnvc/indeed-jobs-api" in apify.OPTIONAL_ACTORS
+
+
+def test_indeed_search_sends_ireland_site():
+    """Dublin, Ireland selects the IE site instead of the actor's US default."""
+    captured: list[object] = []
+
+    def _run(url: str, body: object) -> object:
+        captured.append(body)
+        return []
+
+    prefs = ScanPrefs(
+        title_allow=["software engineer"],
+        location_allow=["Dublin, Ireland"],
+        credentials={"apify": "apify_api_TESTTOKEN"},
+    )
+    apify.search(
+        _entry("johnvc/indeed-jobs-api"),
+        prefs,
+        routed({"johnvc~indeed-jobs-api": _run})(),
+    )
+    assert captured == [
+        {
+            "mode": "search",
+            "keywords": ["software engineer"],
+            "maxResultsPerInput": apify.MAX_ITEMS,
+            "uniqueJobsOnly": True,
+            "location": "Dublin, Ireland",
+            "country": "IE",
+        }
+    ]
+
+
 def test_partial_run_failure_keeps_other_runs_and_schema_drift_is_loud():
     calls = {"n": 0}
 

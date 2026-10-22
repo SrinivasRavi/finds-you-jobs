@@ -251,13 +251,19 @@ def test_apify_key_save_seeds_actor_sources_and_catalog_rows(
     settings = client.get("/api/settings", headers=AUTH).json()
     sources = settings["preferences"]["portals_config"]["sources"]
     seeded = {s["actor"] for s in sources if s.get("board") == "apify"}
-    assert seeded == set(apify.DEFAULT_ACTORS)
+    assert seeded == set(apify.DEFAULT_ACTORS) | set(apify.OPTIONAL_ACTORS)
+    optional_id = f"apify:{apify.OPTIONAL_ACTORS[0]}"
+    assert optional_id in settings["preferences"]["portals_config"]["disabled_sources"]
 
     # Catalog now carries one per-actor row each, plus the family row.
+    # The optional Indeed search is present and unticked; the defaults stay on.
     catalog = client.get("/api/discovery/sources", headers=AUTH).json()
     actor_rows = [r for r in catalog if r["id"].startswith("apify:")]
-    assert {r["id"] for r in actor_rows} == {f"apify:{a}" for a in apify.DEFAULT_ACTORS}
-    assert all(r["enabled"] for r in actor_rows)
+    assert {r["id"] for r in actor_rows} == {
+        f"apify:{a}" for a in apify.DEFAULT_ACTORS
+    } | {optional_id}
+    assert all(r["enabled"] for r in actor_rows if r["id"] != optional_id)
+    assert next(r["enabled"] for r in actor_rows if r["id"] == optional_id) is False
 
     # Family master toggle off → every actor row reads disabled.
     client.post(
@@ -274,7 +280,9 @@ def test_apify_key_save_seeds_actor_sources_and_catalog_rows(
     )
     settings = client.get("/api/settings", headers=AUTH).json()
     sources = settings["preferences"]["portals_config"]["sources"]
-    assert len([s for s in sources if s.get("board") == "apify"]) == len(apify.DEFAULT_ACTORS)
+    actor_count = len(apify.DEFAULT_ACTORS) + len(apify.OPTIONAL_ACTORS)
+    assert len([s for s in sources if s.get("board") == "apify"]) == actor_count
+    assert optional_id in settings["preferences"]["portals_config"]["disabled_sources"]
 
 
 def test_scan_entrypoint_injects_credentials_in_memory_only(

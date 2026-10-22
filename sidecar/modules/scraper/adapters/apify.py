@@ -220,11 +220,90 @@ def _indeed_item(item: dict) -> NormalizedJob | None:
     )
 
 
+# Location text that names a country, so a search for "india" uses that
+# Indeed site instead of the actor default (US). City names are left alone.
+_INDEED_SEARCH_COUNTRIES = {
+    "india": "IN",
+    "united states": "US",
+    "united states of america": "US",
+    "usa": "US",
+    "united kingdom": "GB",
+    "great britain": "GB",
+    "uk": "GB",
+    "canada": "CA",
+    "australia": "AU",
+    "germany": "DE",
+    "france": "FR",
+    "netherlands": "NL",
+    "spain": "ES",
+    "italy": "IT",
+    "brazil": "BR",
+    "mexico": "MX",
+    "japan": "JP",
+    "singapore": "SG",
+    "ireland": "IE",
+}
+
+
+def _indeed_search_country(location: str) -> str:
+    parts = [part.strip().lower() for part in location.split(",") if part.strip()]
+    for part in reversed(parts):
+        code = _INDEED_SEARCH_COUNTRIES.get(part)
+        if code:
+            return code
+    return ""
+
+
+# -- johnvc/indeed-jobs-api (optional; not seeded on) --------------------------
+
+
+def _indeed_search_runs(queries: list[SearchQuery]) -> list[dict]:
+    runs = []
+    for q in select_queries(queries, MAX_RUNS):
+        payload: dict = {
+            "mode": "search",
+            "keywords": [q.keyword],
+            "maxResultsPerInput": MAX_ITEMS,
+            "uniqueJobsOnly": True,
+        }
+        if q.location:
+            payload["location"] = q.location
+            country = _indeed_search_country(q.location)
+            if country:
+                payload["country"] = country
+        runs.append(payload)
+    return runs
+
+
+def _indeed_search_item(item: dict) -> NormalizedJob | None:
+    # Dataset rows that are not jobs (result_type other than "job") never
+    # enter the feed. A row with no result_type is still parsed as a job.
+    if _s(item.get("result_type")) not in ("", "job"):
+        return None
+    title = _s(item.get("jobTitle"))
+    url = _s(item.get("jobUrl"))
+    if not title or not url:
+        return None
+    posted = _s(item.get("datePosted"))
+    location = item.get("location")
+    return NormalizedJob(
+        title=title,
+        canonical_url=url,
+        company=_s(item.get("companyName")),
+        location=_s(location) if isinstance(location, str) else "",
+        description=_s(item.get("descriptionMarkdown")),
+        posted_at=posted if posted[:4].isdigit() else "",
+        salary=_s(item.get("salaryText")),
+        source_adapter="indeed",
+    )
+
+
 ACTORS: dict[str, _ActorSpec] = {
     "memo23/naukri-scraper": _ActorSpec(_naukri_runs, _naukri_item),
     "curious_coder/linkedin-jobs-scraper": _ActorSpec(_linkedin_runs, _linkedin_item),
     "epicscrapers/seek-job-scraper": _ActorSpec(_seek_runs, _seek_item),
     "misceres/indeed-scraper": _ActorSpec(_indeed_runs, _indeed_item),
+    "johnvc/indeed-jobs-api": _ActorSpec(_indeed_search_runs, _indeed_search_item),
 }
 
 # The real board each actor scrapes, stamped as `source_adapter`, so the user
@@ -236,6 +315,7 @@ ACTOR_SOURCE_IDS: dict[str, str] = {
     "curious_coder/linkedin-jobs-scraper": "linkedin",
     "epicscrapers/seek-job-scraper": "seek",
     "misceres/indeed-scraper": "indeed",
+    "johnvc/indeed-jobs-api": "indeed",
 }
 
 # The entries seeded into portals_config when the user saves an Apify key —
@@ -249,6 +329,10 @@ DEFAULT_ACTORS: tuple[str, ...] = (
     "curious_coder/linkedin-jobs-scraper",
 )
 
+# Present in Settings after an Apify key is saved, but left unticked. The
+# default Indeed actor above is unchanged.
+OPTIONAL_ACTORS: tuple[str, ...] = ("johnvc/indeed-jobs-api",)
+
 # What discovery reads instead of naming Apify (F-P6): the key's label, the
 # entries a saved key adds, and each actor entry as its own Settings toggle,
 # counted in Analytics under the board it stamps.
@@ -256,11 +340,15 @@ CREDENTIAL = "Apify"
 DEFAULT_SOURCES: tuple[dict[str, str], ...] = tuple(
     {"board": ID, "actor": actor} for actor in DEFAULT_ACTORS
 )
+OPTIONAL_SOURCES: tuple[dict[str, str], ...] = tuple(
+    {"board": ID, "actor": actor} for actor in OPTIONAL_ACTORS
+)
 SUB_SOURCE_FIELD = "actor"
 SUB_SOURCE_IDS = ACTOR_SOURCE_IDS
 SUB_SOURCE_LABELS: dict[str, str] = {
     "memo23/naukri-scraper": "Naukri (via Apify)",
     "misceres/indeed-scraper": "Indeed (via Apify)",
+    "johnvc/indeed-jobs-api": "Indeed search (via Apify)",
     "epicscrapers/seek-job-scraper": "Seek (via Apify)",
     "curious_coder/linkedin-jobs-scraper": "LinkedIn deep-JD (via Apify)",
 }
